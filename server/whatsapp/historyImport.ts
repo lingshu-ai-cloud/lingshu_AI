@@ -7,7 +7,7 @@ import { prioritizeCustomer } from '../autonomy/prioritize.js';
 import { ambiguousFaqClarification, resolveKnowledgeGapPlan, scenarioHasGroundedEvidence } from '../agents/knowledgeGapPlaybook.js';
 import { retrieveContext, type RetrievedContext } from '../knowledge/retrieve.js';
 import { distillSalesStyleProfile, markStyleMemoryWonForCustomer } from '../knowledge/styleMemory.js';
-import { readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
+import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
 import { assessBant, selectProgressionGoal, type BantAssessment, type ProgressionGoal } from '../sales/qualification.js';
 import { automationFailureHandoff, evaluateHandoff, notifyCustomerHandoff, shouldRestrictToPublicInfo } from '../sales/handoff.js';
 import { advanceSpinStage, selectSpinGuidance, type SpinState, type SpinGuidance } from '../sales/spin.js';
@@ -305,6 +305,9 @@ function writeImportStatus(status: ImportStatus): void {
 }
 
 function autonomyLevel(profile: EnterpriseProfile): AutonomyLevel {
+  const policy = customerServicePolicy(profile);
+  if (!policy.enabled) return 'remind';
+  if (!customerServiceStatus(profile).autoReplyReady) return 'draft';
   const value = profile?.strategy?.aiAutonomy;
   return value === 'remind' || value === 'draft' || value === 'auto' ? value : 'draft';
 }
@@ -932,6 +935,20 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
   if (options.skipAutonomy) return;
 
   const profile = await readTenantEnterpriseProfile(tenantId);
+  const servicePolicy = customerServicePolicy(profile);
+  if (!servicePolicy.enabled) {
+    upsertCustomer({
+      tenantId,
+      waNumber: message.waNumber,
+      patch: {
+        handlingMode: 'human_needed',
+        handlingReason: '智能客服未开启，客户消息已进入收件箱等待人工回复',
+        pendingDraft: undefined,
+        blockedAutoReplyReason: undefined,
+      },
+    });
+    return;
+  }
   const autonomy = autonomyLevel(profile);
   const rules = handoffRules(profile);
   const handoffKeyword = matchedHandoffKeyword(message.body, rules.keywords);

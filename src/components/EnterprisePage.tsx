@@ -119,6 +119,15 @@ interface SalesStyleProfile {
   sample_pairs?: Array<{ trigger: string; final: string; evidence?: string }>;
 }
 
+interface CustomerServiceSettings {
+  enabled: boolean;
+  enabledAt?: string;
+  disabledAt?: string;
+  partialAutoReplyEnabled: boolean;
+  partialAutoReplyDecision: 'pending' | 'enabled' | 'declined';
+  partialAutoReplyDecisionAt?: string;
+}
+
 type CooperationRoute = 'oem_odm' | 'wholesale_distribution' | 'consumer_retail';
 type SocialStrategy = { enabledRoutes: CooperationRoute[]; routeStrategies: Partial<Record<CooperationRoute, { targetBuyerRoles: string[]; primaryCta: string }>>; manuallyEditedFields?: string[] };
 
@@ -135,6 +144,7 @@ interface Profile {
   faq?: FaqItem[];
   notifications?: NotificationSettings;
   handoffRules?: HandoffRules;
+  customerService?: CustomerServiceSettings;
   salesStyleProfile?: SalesStyleProfile;
   knowledgeIntake?: { lastExtractedAt?: string; source?: 'history' | 'products' | 'interview'; extractedMessages?: number; confirmedSections?: string[] };
   dataGovernance?: { aiAccessEnabled: boolean; lastSavedAt?: string; lastSavedSource?: 'diagnosis' | 'enterprise_center' | 'knowledge_intake' | 'system' | 'template' };
@@ -161,6 +171,7 @@ const DEFAULT: Profile = {
   faq: [],
   notifications: { receivers: [], workHours: { start: '09:00', end: '22:00' }, quietOutsideHours: true, nightMode: { enabled: false, autoCategories: 'approved' }, lastTestAt: '' },
   handoffRules: { keywords: ['人工', '老板', 'manager', 'complaint', 'refund'], missStreakToDraft: 2, negativeSentiment: true },
+  customerService: { enabled: false, enabledAt: '', disabledAt: '', partialAutoReplyEnabled: false, partialAutoReplyDecision: 'pending', partialAutoReplyDecisionAt: '' },
   salesStyleProfile: { learnedFromCount: 0, sample_pairs: [] },
   knowledge: '',
 };
@@ -624,6 +635,15 @@ export default function EnterprisePage() {
               : DEFAULT.handoffRules!.missStreakToDraft,
             negativeSentiment: data.handoffRules?.negativeSentiment !== false,
           },
+          customerService: {
+            ...DEFAULT.customerService!,
+            ...data.customerService,
+            enabled: data.customerService?.enabled === true,
+            partialAutoReplyEnabled: data.customerService?.partialAutoReplyEnabled === true,
+            partialAutoReplyDecision: data.customerService?.partialAutoReplyDecision === 'enabled' || data.customerService?.partialAutoReplyDecision === 'declined'
+              ? data.customerService.partialAutoReplyDecision
+              : 'pending',
+          },
           salesStyleProfile: {
             ...DEFAULT.salesStyleProfile!,
             ...data.salesStyleProfile,
@@ -706,7 +726,22 @@ export default function EnterprisePage() {
   const notificationCompleted = Boolean((profile.notifications?.receivers ?? []).length >= 1 && profile.notifications?.lastTestAt);
   const missingImageRatio = products.length ? (products.length - assetStats.withImage) / products.length : 0;
   const approvedFaqCount = (profile.faq ?? []).filter(item => item.approvedForAuto && item.question.trim() && item.answer.trim()).length;
-  const canAutoReply = approvedFaqCount >= 5;
+  const customerServiceEnabled = profile.customerService?.enabled === true;
+  const customerServiceEnabledAt = Date.parse(profile.customerService?.enabledAt || '');
+  const customerServiceObservationFinished = customerServiceEnabled
+    && Number.isFinite(customerServiceEnabledAt)
+    && Date.now() - customerServiceEnabledAt >= 3 * 24 * 60 * 60 * 1000;
+  const partialAutoReplyAuthorized = customerServiceObservationFinished && profile.customerService?.partialAutoReplyEnabled === true;
+  const canAutoReply = partialAutoReplyAuthorized && approvedFaqCount >= 5;
+  const autoReplyBlockReason = !customerServiceEnabled
+    ? '先在“我的客户”开启智能客服总开关'
+    : !customerServiceObservationFinished
+      ? '建议模式运行满 3 天后，才可开放部分直接回复'
+      : !partialAutoReplyAuthorized
+        ? '请先在“我的客户”确认是否开放部分直接回复'
+        : approvedFaqCount < 5
+          ? '需要先录入并审批至少 5 条常见问答'
+          : '';
   const configuredAutonomy = profile.strategy?.aiAutonomy ?? 'draft';
   const effectiveAutonomy: AutonomyLevel = configuredAutonomy === 'auto' && !canAutoReply ? 'draft' : configuredAutonomy;
 
@@ -936,7 +971,7 @@ export default function EnterprisePage() {
 
   const setAutonomy = (value: AutonomyLevel) => {
     if (value === 'auto' && !canAutoReply) {
-      window.alert('需要先录入并审批至少 5 条常见问答');
+      window.alert(autoReplyBlockReason || '当前暂不能开放直接回复');
       return;
     }
     if (value === 'auto' && profile.strategy?.aiAutonomy !== 'auto') {
@@ -1243,6 +1278,35 @@ export default function EnterprisePage() {
           当前：{AUTONOMY_OPTIONS.find(item => item.value === effectiveAutonomy)?.title}
         </span>
       </div>
+      {!customerServiceEnabled && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="text-xs font-semibold text-slate-700">智能客服总开关未开启，社媒账号接入后也只收消息，不会自动处理。</p>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'conversion' } }))}
+            className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-black text-white"
+          >
+            去开启
+          </button>
+        </div>
+      )}
+      {customerServiceEnabled && !customerServiceObservationFinished && (
+        <p className="mt-4 rounded-lg border border-cyan-100 bg-cyan-50 px-3 py-2.5 text-xs font-semibold text-cyan-900">
+          当前处于 3 天建议观察期：AI 只生成建议，所有消息都由你确认后发送。
+        </p>
+      )}
+      {customerServiceObservationFinished && !partialAutoReplyAuthorized && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5">
+          <p className="text-xs font-semibold text-amber-900">建议模式已满 3 天，请在“我的客户”决定是否开放部分直接回复。</p>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'conversion' } }))}
+            className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-black text-white"
+          >
+            去决定
+          </button>
+        </div>
+      )}
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
         {AUTONOMY_OPTIONS.map(option => {
           const active = effectiveAutonomy === option.value;
@@ -1251,7 +1315,7 @@ export default function EnterprisePage() {
             <button
               key={option.value}
               type="button"
-              title={disabled ? '需要先录入并审批至少 5 条常见问答' : undefined}
+              title={disabled ? autoReplyBlockReason : undefined}
               disabled={disabled}
               onClick={() => setAutonomy(option.value)}
               className={`min-h-[118px] rounded-lg border p-3 text-left transition-all disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${active ? 'border-slate-950 bg-slate-950 text-white shadow-sm' : 'border-border bg-white text-text-primary hover:border-slate-300 hover:bg-surface-2'}`}
@@ -1261,14 +1325,14 @@ export default function EnterprisePage() {
               </span>
               <p className="mt-2 text-xs font-black">{option.title}</p>
               <p className={`mt-2 text-[11px] leading-5 ${active ? 'text-white/80' : disabled ? 'text-slate-400' : 'text-text-muted'}`}>{option.desc}</p>
-              <p className={`text-[11px] leading-5 ${active ? 'text-white/80' : disabled ? 'text-slate-400' : 'text-text-muted'}`}>{disabled ? '需要先录入并审批至少 5 条常见问答' : option.detail}</p>
+              <p className={`text-[11px] leading-5 ${active ? 'text-white/80' : disabled ? 'text-slate-400' : 'text-text-muted'}`}>{disabled ? autoReplyBlockReason : option.detail}</p>
             </button>
           );
         })}
       </div>
       {configuredAutonomy === 'auto' && !canAutoReply && (
         <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-          已审批问答不足 5 条，自动发送已由服务端暂停，当前按“草稿需确认”执行。
+          {autoReplyBlockReason}，当前按“草稿需确认”执行。
         </p>
       )}
       <div className="mt-4 border-t border-border pt-4">

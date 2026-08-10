@@ -25,6 +25,7 @@ import {
   Languages,
   MessageSquare,
   Phone,
+  Power,
   RefreshCw,
   Send,
   Sparkles,
@@ -46,6 +47,7 @@ import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
+import { getCustomerServiceStatus, updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
 
 type CustomerView = 'inbox' | 'leads' | 'won' | 'silent';
 type AutomationLevel = 'auto' | 'confirm' | 'manual';
@@ -411,8 +413,8 @@ async function requestDraft(customer: CustomerProfile, instruction?: string, mod
         intent,
       }),
     });
+    const data = await resp.json().catch(() => ({}));
     if (resp.ok) {
-      const data = await resp.json();
       if (data?.handoffRequired) {
         const bridgeDraft = typeof data?.draft === 'string' ? data.draft.trim() : '';
         return {
@@ -459,6 +461,14 @@ async function requestDraft(customer: CustomerProfile, instruction?: string, mod
             : [],
         };
       }
+    }
+    if (resp.status === 409 && data?.error === 'customer_service_disabled') {
+      return {
+        draft: '',
+        originalDraft: '',
+        handlingReason: typeof data.message === 'string' ? data.message : '智能客服尚未开启',
+        category: '智能客服未开启',
+      };
     }
   } catch {
     // Use local fallback when the API is unavailable in local preview.
@@ -1162,6 +1172,8 @@ function PrimaryActionCard({
   onFocusReply,
   onViewDraft,
   onCompleteTodo,
+  customerServiceEnabled,
+  autoReplyReady,
 }: {
   customer: CustomerProfile;
   notificationReady: boolean;
@@ -1171,6 +1183,8 @@ function PrimaryActionCard({
   onFocusReply: () => void;
   onViewDraft: () => void;
   onCompleteTodo: () => void;
+  customerServiceEnabled: boolean;
+  autoReplyReady: boolean;
 }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
@@ -1245,7 +1259,11 @@ function PrimaryActionCard({
       return;
     }
     if (suggestion.suggestionType === 'handoff') {
-      switchMode('ai_auto', '已交回 AI 接待');
+      if (!customerServiceEnabled) {
+        onToast('先开启智能客服，开启后只会给建议');
+        return;
+      }
+      switchMode(autoReplyReady ? 'ai_auto' : 'ai_draft', autoReplyReady ? '已交回 AI 接待' : '已改为 AI 只给建议');
       return;
     }
     if (suggestion.suggestionType === 'draft_review' || suggestion.suggestionType === 'blocked_auto') {
@@ -1267,7 +1285,7 @@ function PrimaryActionCard({
   };
   const secondaryLabel: Record<PrioritySuggestion['suggestionType'], string> = {
     call: '暂不处理',
-    handoff: '交回 AI',
+    handoff: !customerServiceEnabled ? '先开启客服' : autoReplyReady ? '交回 AI' : '改为 AI 建议',
     draft_review: '忽略此条',
     touch: '暂不处理',
     blocked_auto: '忽略此条',
@@ -1338,9 +1356,10 @@ function RulesDisclosure() {
       </button>
       {open && (
         <div className="mt-3 space-y-2 text-xs leading-relaxed text-text-secondary">
-          <p>· 新客户咨询价格/产品/物流 → AI 用企业知识库自动回复</p>
+          <p>· 开启后的前 3 天 → AI 只给建议，你确认后再发</p>
           <p>· 出现采购数量/样品/收货信息 → AI 写草稿，你确认后发送</p>
-          <p>· 讨价还价/订单条款/大单/新高价值客户 → 提醒你亲自接手</p>
+          <p>· 满 3 天并由你授权后 → 仅已审批的简单问答可直接回复</p>
+          <p>· 讨价还价/订单条款/大单/高价值客户 → 仍提醒你亲自接手</p>
           <button
             type="button"
             onClick={() => {
@@ -1368,6 +1387,8 @@ function CustomerInfoRail({
   onFocusReply,
   onViewDraft,
   onCompleteTodo,
+  customerServiceEnabled,
+  autoReplyReady,
 }: {
   customer: CustomerProfile | null;
   autonomyLevel: AutonomyLevel;
@@ -1379,6 +1400,8 @@ function CustomerInfoRail({
   onFocusReply: () => void;
   onViewDraft: () => void;
   onCompleteTodo: () => void;
+  customerServiceEnabled: boolean;
+  autoReplyReady: boolean;
 }) {
   const [widgetOrder, setWidgetOrder] = useState<CustomerWidgetId[]>(() => readWidgetOrder());
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -1387,7 +1410,7 @@ function CustomerInfoRail({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   useEffect(() => {
-    if (!customer) {
+    if (!customer || !customerServiceEnabled) {
       setSuggestions([]);
       return;
     }
@@ -1401,7 +1424,7 @@ function CustomerInfoRail({
     return () => {
       alive = false;
     };
-  }, [customer]);
+  }, [customer, customerServiceEnabled]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -1442,7 +1465,7 @@ function CustomerInfoRail({
         <p className="text-xs font-black text-text-primary">今日处理</p>
       </div>
       <div className="grid gap-3">
-        <PrimaryActionCard customer={customer} notificationReady={notificationReady} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} />
+        <PrimaryActionCard customer={customer} notificationReady={notificationReady} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} />
       </div>
 
       <div className="mt-3">
@@ -1609,6 +1632,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const { customers, updateCustomer, appendTimelineEvent, updateTimelineEvent, removeTimelineEvent } = useCustomers(0, includeMockCustomers, mockCustomerScope);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>('draft');
+  const [customerServiceStatus, setCustomerServiceStatus] = useState<CustomerServiceStatus | null>(null);
+  const [customerServiceSaving, setCustomerServiceSaving] = useState(false);
   const [dailyBriefingOpen, setDailyBriefingOpen] = useState(false);
   const [draftSuggestion, setDraftSuggestion] = useState<string | null>(null);
   const [draftMeta, setDraftMeta] = useState<DraftResult | null>(null);
@@ -1629,6 +1654,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   ), [customers, selectedId]);
   const customersInActiveView = useMemo(() => filterCustomers(view, customers), [view, customers]);
   const activeView = VIEW_META[view];
+  const partialAutoReplyActive = Boolean(customerServiceStatus?.autoReplyReady && autonomyLevel === 'auto');
   const customerPendingCount = useMemo(() => pendingCount(customers), [customers]);
   const customerTodoItems = useMemo(() => (
     dailyTodoCustomers(customers).map(customer => {
@@ -1675,6 +1701,14 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       }
     });
   }, [customers, updateCustomer]);
+
+  useEffect(() => {
+    let alive = true;
+    void getCustomerServiceStatus()
+      .then(status => { if (alive) setCustomerServiceStatus(status); })
+      .catch(() => { if (alive) setCustomerServiceStatus(null); });
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     fetch('/api/overseas/enterprise/profile', { headers: authHeader() })
@@ -1761,6 +1795,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     if (!selected) return;
+    if (!customerServiceStatus?.enabled) {
+      setDraftSuggestion(null);
+      setDraftMeta(null);
+      return;
+    }
     if (selected.isMock) {
       setDraftSuggestion(null);
       setDraftMeta(null);
@@ -1780,7 +1819,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       setDraftSuggestion(result.draft);
       setDraftMeta(result);
     });
-  }, [selected, lastDraftKey]);
+  }, [selected, lastDraftKey, customerServiceStatus?.enabled]);
 
   useEffect(() => {
     const viewLabel = selected ? `客户详情 / ${selected.name}` : activeView.label;
@@ -1804,6 +1843,50 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const showToast = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(current => current === message ? null : current), 2200);
+  };
+
+  const changeCustomerServiceEnabled = async (enabled: boolean) => {
+    if (customerServiceSaving) return;
+    if (!enabled && customerServiceStatus?.enabled) {
+      const confirmed = window.confirm('关闭后，新客户消息只进入收件箱，灵小枢不再生成建议，也不会自动发送。确定关闭吗？');
+      if (!confirmed) return;
+    }
+    setCustomerServiceSaving(true);
+    try {
+      const status = await updateCustomerServiceStatus({ enabled });
+      setCustomerServiceStatus(status);
+      setAutonomyLevel('draft');
+      setDraftSuggestion(null);
+      setDraftMeta(null);
+      showToast(enabled ? '智能客服已开启，当前只给建议，不会直接发送' : '智能客服已关闭');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '设置保存失败');
+    } finally {
+      setCustomerServiceSaving(false);
+    }
+  };
+
+  const decidePartialAutoReply = async (decision: 'enabled' | 'declined') => {
+    if (customerServiceSaving) return;
+    setCustomerServiceSaving(true);
+    try {
+      const status = await updateCustomerServiceStatus({ partialAutoReplyDecision: decision });
+      setCustomerServiceStatus(status);
+      setAutonomyLevel(decision === 'enabled' ? 'auto' : 'draft');
+      showToast(decision === 'enabled'
+        ? (status.autoReplyReady ? '已开放低风险常见问答直回' : '权限已开放，知识库准备好前仍只给建议')
+        : '继续保持建议模式');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '设置保存失败');
+    } finally {
+      setCustomerServiceSaving(false);
+    }
+  };
+
+  const ensureCustomerServiceEnabled = () => {
+    if (customerServiceStatus?.enabled) return true;
+    showToast('先开启智能客服，开启后只会给建议，不会直接发送');
+    return false;
   };
 
   const persistCustomerPatch = (id: string, patch: Partial<CustomerProfile>) => {
@@ -1905,6 +1988,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const updateHandlingMode = (mode: HandlingMode) => {
     if (!selected) return;
+    if (mode === 'ai_auto' && !partialAutoReplyActive) {
+      if (!ensureCustomerServiceEnabled()) return;
+      showToast('当前只给建议，满 3 天并授权后才可部分自动回复');
+      mode = 'ai_draft';
+    }
     persistCustomerPatch(selected.id, {
       handlingMode: mode,
       needCall: mode === 'human_needed' ? selected.needCall : false,
@@ -1919,6 +2007,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const customerWithMessage = { ...selected, timeline: [...selected.timeline, buyerEvent] };
     appendTimelineEvent(selected.id, buyerEvent);
     updateCustomer(selected.id, { hasUnread: true, lastActive: '刚刚', lastActiveAt: buyerEvent.timestamp, inboxReason: 'reply' });
+    if (!customerServiceStatus?.enabled) {
+      updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: '智能客服未开启，等待人工回复' });
+      showToast('智能客服未开启，这条消息只进入收件箱');
+      return;
+    }
     setLastDraftKey(`${selected.id}:${buyerEvent.id}`);
     setDraftSuggestion(null);
     setDraftMeta(null);
@@ -1937,6 +2030,18 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       showToast(result.safeToSendBeforeHandoff && result.draft.trim()
         ? 'AI 已先承接客户，并把完整上下文转给人工'
         : result.handlingReason || '该消息已转人工处理');
+      return;
+    }
+    if (!partialAutoReplyActive) {
+      setDraftSuggestion(result.draft);
+      setDraftMeta(result);
+      updateCustomer(selected.id, {
+        handlingMode: 'ai_draft',
+        handlingReason: 'AI 已生成建议，等待你确认后发送',
+        hasUnread: true,
+        fallbackCount: result.fallbackCount ?? selected.fallbackCount,
+      });
+      showToast('已生成建议回复，确认后再发送');
       return;
     }
     const reply = translateChineseReplyForCustomer(customerWithMessage, result.draft);
@@ -2043,6 +2148,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const generateManualDraft = async (instruction: string, intent: DraftIntent = 'reply') => {
     if (!selected) return;
+    if (!ensureCustomerServiceEnabled()) return;
     if (intent !== 'polish' && isWaitingForHumanQuote(selected)) {
       showToast('客户正在询价，已标记等待人工报价，请由销售亲自回复。');
       return;
@@ -2067,6 +2173,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const regenerateDraft = async () => {
     if (!selected) return;
+    if (!ensureCustomerServiceEnabled()) return;
     if (isWaitingForHumanQuote(selected)) {
       showToast('报价问题不生成 AI 回复，请由销售亲自回复。');
       return;
@@ -2089,6 +2196,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const polishInput = async () => {
     if (!selected || !input.trim() || isPolishing) return;
+    if (!ensureCustomerServiceEnabled()) return;
     setIsPolishing(true);
     try {
       const polished = await requestDraft(selected, input, 'polish', 'polish');
@@ -2156,6 +2264,23 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     focusReplyInput();
   };
 
+  const customerServiceLabel = !customerServiceStatus
+    ? '正在读取'
+    : !customerServiceStatus.enabled
+      ? '已关闭'
+      : partialAutoReplyActive
+        ? '部分直回'
+        : `只给建议 · 第 ${customerServiceStatus.observationDay}/3 天`;
+  const customerServiceSummary = !customerServiceStatus?.enabled
+    ? '账号消息只进入收件箱，灵小枢不会自行处理。'
+    : partialAutoReplyActive
+      ? '仅高置信命中已审批常见问答时直回；其余内容仍等你确认。'
+      : customerServiceStatus.partialAutoReplyEnabled
+        ? '已开放权限，但已审批问答不足 5 条，目前仍只给建议。'
+        : customerServiceStatus.eligibleForPartialAutoReply
+          ? '建议模式已运行满 3 天，是否开放部分直接回复由你决定。'
+          : '灵小枢只生成建议回复，所有消息都要由你确认后发送。';
+
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-white" data-lingshu-guide="customer-workbench">
@@ -2166,6 +2291,34 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           </div>
           <span className="text-sm font-semibold text-text-primary">我的客户</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${customerServiceStatus?.enabled ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
+            {customerServiceLabel}
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(customerServiceStatus?.enabled)}
+            aria-label="智能客服总开关"
+            title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
+            disabled={!customerServiceStatus || customerServiceSaving}
+            onClick={() => void changeCustomerServiceEnabled(!customerServiceStatus?.enabled)}
+            className={`relative h-7 w-12 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
+          >
+            <span className={`absolute top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${customerServiceStatus?.enabled ? 'translate-x-6' : 'translate-x-1'}`}>
+              <Power size={11} className={customerServiceStatus?.enabled ? 'text-cyan-700' : 'text-slate-400'} />
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div className={`flex min-h-10 shrink-0 items-center justify-between gap-3 border-b px-5 py-2 text-xs ${customerServiceStatus?.enabled ? 'border-cyan-100 bg-cyan-50/70 text-cyan-900' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+        <p className="font-semibold">{customerServiceSummary}</p>
+        {customerServiceStatus?.enabled && customerServiceStatus.eligibleForPartialAutoReply && customerServiceStatus.partialAutoReplyDecision === 'declined' && (
+          <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')} className="shrink-0 rounded-lg border border-cyan-200 bg-white px-3 py-1.5 text-[11px] font-black text-cyan-800 disabled:opacity-50">
+            开放部分直回
+          </button>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -2208,8 +2361,36 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onFocusReply={focusReplyInput}
           onViewDraft={viewDraftSuggestion}
           onCompleteTodo={markSelectedTodoCompleted}
+          customerServiceEnabled={Boolean(customerServiceStatus?.enabled)}
+          autoReplyReady={partialAutoReplyActive}
         />
       </div>
+      {customerServiceStatus?.shouldAskPartialAutoReply && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/35 px-4">
+          <div role="dialog" aria-modal="true" aria-labelledby="partial-auto-reply-title" className="w-full max-w-lg rounded-3xl border border-border bg-white p-6 shadow-2xl">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700">
+              <Bot size={21} />
+            </div>
+            <h2 id="partial-auto-reply-title" className="mt-4 text-lg font-black text-text-primary">建议模式已经用了 3 天</h2>
+            <p className="mt-2 text-sm leading-6 text-text-secondary">
+              要不要把一小部分简单问题交给灵小枢直接回？只有高置信命中你已审批的常见问答才会发送，报价、折扣、付款、交期和风险问题仍然交给你。
+            </p>
+            {customerServiceStatus.approvedFaqCount < 5 && (
+              <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+                目前已审批 {customerServiceStatus.approvedFaqCount} 条问答。你可以先开放权限，达到 5 条前系统仍只给建议。
+              </p>
+            )}
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('declined')} className="rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-bold text-text-secondary disabled:opacity-50">
+                继续只看建议
+              </button>
+              <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')} className="rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
+                开放部分直接回复
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {dailyBriefingOpen && (
         <DailyBriefing customers={customers} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
       )}

@@ -8,6 +8,7 @@ import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppTemplate, sendTenantWhatsAppText } from '../whatsapp/send.js';
+import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
@@ -164,6 +165,13 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'whatsapp_recipient_required', message: 'WhatsApp recipient is missing.' });
     return;
   }
+  if (req.body?.auto === true) {
+    const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
+    if (!status.autoReplyReady) {
+      res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
+      return;
+    }
+  }
   if (mode === 'free_text' && req.body?.outsideWindow) {
     res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过24小时，请使用模板消息发送。' });
     return;
@@ -203,9 +211,11 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     return;
   }
   const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
-  if (req.body?.auto === true && suspendedUntil > Date.now()) {
-    res.status(409).json({ error: 'manual_active', message: '人工正在回复，AI 自动发送已挂起，只生成草稿。' });
-    return;
+  if (req.body?.auto === true) {
+    if (suspendedUntil > Date.now()) {
+      res.status(409).json({ error: 'manual_active', message: '人工正在回复，AI 自动发送已挂起，只生成草稿。' });
+      return;
+    }
   }
   let sentMessages: string[] = [];
   try {
@@ -243,6 +253,10 @@ const SYSTEM_PROMPT = `你是灵枢 AI「我的客户」里的转化助手。
 
 customerSuggestionsRouter.get('/:id/suggestions', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
+  if (!customerServicePolicy(await readTenantEnterpriseProfile(tenantId)).enabled) {
+    res.status(409).json({ items: [], error: 'customer_service_disabled', message: '请先开启智能客服。' });
+    return;
+  }
   const id = String(req.params.id ?? '');
   const customer = getWhatsAppCustomers(tenantId).find(item => item.id === id);
   if (!customer) {

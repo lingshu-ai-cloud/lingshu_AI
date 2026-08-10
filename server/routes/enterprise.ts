@@ -70,6 +70,34 @@ export interface HandoffRules {
   negativeSentiment: boolean;
 }
 
+export type PartialAutoReplyDecision = 'pending' | 'enabled' | 'declined';
+
+export interface CustomerServiceSettings {
+  enabled: boolean;
+  enabledAt?: string;
+  disabledAt?: string;
+  partialAutoReplyEnabled: boolean;
+  partialAutoReplyDecision: PartialAutoReplyDecision;
+  partialAutoReplyDecisionAt?: string;
+}
+
+export interface CustomerServicePolicy {
+  enabled: boolean;
+  enabledAt: string;
+  observationDay: number;
+  remainingHours: number;
+  eligibleForPartialAutoReply: boolean;
+  partialAutoReplyEnabled: boolean;
+  partialAutoReplyDecision: PartialAutoReplyDecision;
+  shouldAskPartialAutoReply: boolean;
+  canAutoSend: boolean;
+}
+
+export interface CustomerServiceStatus extends CustomerServicePolicy {
+  approvedFaqCount: number;
+  autoReplyReady: boolean;
+}
+
 export interface SalesStyleProfile {
   learnedFromCount: number;
   lastDistilledAt?: string;
@@ -190,6 +218,7 @@ export interface EnterpriseProfile {
   faq?: FaqItem[];
   notifications?: NotificationSettings;
   handoffRules?: HandoffRules;
+  customerService?: CustomerServiceSettings;
   salesStyleProfile?: SalesStyleProfile;
   knowledgeIntake?: {
     lastExtractedAt?: string;
@@ -230,6 +259,16 @@ const DEFAULT_NOTIFICATIONS: NotificationSettings = {
   quietOutsideHours: true,
   nightMode: { enabled: false, autoCategories: 'approved' },
   lastTestAt: '',
+};
+
+const CUSTOMER_SERVICE_OBSERVATION_MS = 3 * 24 * 60 * 60 * 1000;
+const DEFAULT_CUSTOMER_SERVICE: CustomerServiceSettings = {
+  enabled: false,
+  enabledAt: '',
+  disabledAt: '',
+  partialAutoReplyEnabled: false,
+  partialAutoReplyDecision: 'pending',
+  partialAutoReplyDecisionAt: '',
 };
 
 const DEFAULT_HANDOFF_RULES: HandoffRules = {
@@ -287,6 +326,7 @@ function readProfile(): EnterpriseProfile {
       faq: [],
       notifications: { ...DEFAULT_NOTIFICATIONS, workHours: { ...DEFAULT_NOTIFICATIONS.workHours } },
       handoffRules: { ...DEFAULT_HANDOFF_RULES, keywords: [...DEFAULT_HANDOFF_RULES.keywords] },
+      customerService: { ...DEFAULT_CUSTOMER_SERVICE },
       salesStyleProfile: { learnedFromCount: 0, sample_pairs: [] },
       knowledge: '',
     });
@@ -547,6 +587,76 @@ function emptyProduct(index: number): NonNullable<EnterpriseProfile['products'][
   };
 }
 
+function normalizedIso(value: unknown): string {
+  const timestamp = Date.parse(text(value));
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+}
+
+function normalizeCustomerServiceSettings(input: EnterpriseProfile['customerService']): CustomerServiceSettings {
+  const enabled = input?.enabled === true;
+  const partialAutoReplyEnabled = enabled && input?.partialAutoReplyEnabled === true;
+  const rawDecision = input?.partialAutoReplyDecision;
+  const partialAutoReplyDecision: PartialAutoReplyDecision = partialAutoReplyEnabled
+    ? 'enabled'
+    : rawDecision === 'declined'
+      ? 'declined'
+      : 'pending';
+  return {
+    enabled,
+    enabledAt: enabled ? normalizedIso(input?.enabledAt) : '',
+    disabledAt: normalizedIso(input?.disabledAt),
+    partialAutoReplyEnabled,
+    partialAutoReplyDecision,
+    partialAutoReplyDecisionAt: normalizedIso(input?.partialAutoReplyDecisionAt),
+  };
+}
+
+export function customerServicePolicyFromSettings(
+  input: CustomerServiceSettings | undefined,
+  nowMs = Date.now(),
+): CustomerServicePolicy {
+  const settings = normalizeCustomerServiceSettings(input);
+  const enabledAtMs = Date.parse(settings.enabledAt || '');
+  const elapsedMs = settings.enabled && Number.isFinite(enabledAtMs)
+    ? Math.max(0, nowMs - enabledAtMs)
+    : 0;
+  const eligibleForPartialAutoReply = settings.enabled
+    && Number.isFinite(enabledAtMs)
+    && elapsedMs >= CUSTOMER_SERVICE_OBSERVATION_MS;
+  const partialAutoReplyEnabled = eligibleForPartialAutoReply && settings.partialAutoReplyEnabled;
+  return {
+    enabled: settings.enabled,
+    enabledAt: settings.enabledAt || '',
+    observationDay: settings.enabled ? Math.min(3, Math.floor(elapsedMs / (24 * 60 * 60 * 1000)) + 1) : 0,
+    remainingHours: settings.enabled
+      ? Math.max(0, Math.ceil((CUSTOMER_SERVICE_OBSERVATION_MS - elapsedMs) / (60 * 60 * 1000)))
+      : 72,
+    eligibleForPartialAutoReply,
+    partialAutoReplyEnabled,
+    partialAutoReplyDecision: settings.partialAutoReplyDecision,
+    shouldAskPartialAutoReply: eligibleForPartialAutoReply
+      && settings.partialAutoReplyDecision === 'pending'
+      && !partialAutoReplyEnabled,
+    canAutoSend: settings.enabled && partialAutoReplyEnabled,
+  };
+}
+
+export function customerServicePolicy(profile: EnterpriseProfile, nowMs = Date.now()): CustomerServicePolicy {
+  return customerServicePolicyFromSettings(profile.customerService, nowMs);
+}
+
+export function customerServiceStatus(profile: EnterpriseProfile, nowMs = Date.now()): CustomerServiceStatus {
+  const policy = customerServicePolicy(profile, nowMs);
+  const approvedFaqCount = (profile.faq ?? []).filter(item => item.approvedForAuto && item.question && item.answer).length;
+  return {
+    ...policy,
+    approvedFaqCount,
+    autoReplyReady: policy.canAutoSend
+      && approvedFaqCount >= 5
+      && normalizeAutonomy(profile.strategy?.aiAutonomy) === 'auto',
+  };
+}
+
 function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const companyInput = (profile.company ?? {}) as Partial<EnterpriseProfile['company']>;
   const company = {
@@ -587,6 +697,7 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const bizRules = normalizeBizRules(profile.bizRules, products, operations);
   const notifications = normalizeNotifications(profile.notifications);
   const handoffRules = normalizeHandoffRules(profile.handoffRules);
+  const customerService = normalizeCustomerServiceSettings(profile.customerService);
   const salesStyleProfile = normalizeSalesStyleProfile(profile.salesStyleProfile);
   const faq = normalizeFaq(profile.faq);
   const strategy = { ...(profile.strategy ?? {}), aiAutonomy: normalizeAutonomy(profile.strategy?.aiAutonomy) };
@@ -625,6 +736,7 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     faq,
     notifications,
     handoffRules,
+    customerService,
     salesStyleProfile,
     dataGovernance,
     socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [] },
@@ -1300,6 +1412,79 @@ enterpriseRouter.get('/profile', async (_req, res) => {
   res.json(await readTenantProfile(tenantId));
 });
 
+enterpriseRouter.get('/customer-service/status', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(customerServiceStatus(await readTenantProfile(tenantId)));
+});
+
+enterpriseRouter.patch('/customer-service/status', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const current = await readTenantProfile(tenantId);
+    const now = new Date().toISOString();
+    let settings = normalizeCustomerServiceSettings(current.customerService);
+    let strategy = { ...(current.strategy ?? {}), aiAutonomy: normalizeAutonomy(current.strategy?.aiAutonomy) };
+
+    if (typeof req.body?.enabled === 'boolean' && req.body.enabled !== settings.enabled) {
+      settings = req.body.enabled
+        ? {
+          enabled: true,
+          enabledAt: now,
+          disabledAt: settings.disabledAt || '',
+          partialAutoReplyEnabled: false,
+          partialAutoReplyDecision: 'pending',
+          partialAutoReplyDecisionAt: '',
+        }
+        : {
+          enabled: false,
+          enabledAt: '',
+          disabledAt: now,
+          partialAutoReplyEnabled: false,
+          partialAutoReplyDecision: 'pending',
+          partialAutoReplyDecisionAt: '',
+        };
+      strategy = { ...strategy, aiAutonomy: 'draft' };
+    }
+
+    const decision = req.body?.partialAutoReplyDecision;
+    if (decision === 'enabled' || decision === 'declined') {
+      const policy = customerServicePolicyFromSettings(settings);
+      if (!policy.enabled) {
+        res.status(409).json({ error: 'customer_service_disabled', message: '请先开启智能客服。' });
+        return;
+      }
+      if (!policy.eligibleForPartialAutoReply) {
+        res.status(409).json({
+          error: 'observation_period_active',
+          message: `建议模式还需运行 ${policy.remainingHours} 小时，暂不能开放直接回复。`,
+          status: customerServiceStatus({ ...current, customerService: settings }),
+        });
+        return;
+      }
+      settings = {
+        ...settings,
+        partialAutoReplyEnabled: decision === 'enabled',
+        partialAutoReplyDecision: decision,
+        partialAutoReplyDecisionAt: now,
+      };
+      strategy = { ...strategy, aiAutonomy: decision === 'enabled' ? 'auto' : 'draft' };
+    }
+
+    const profile = markProfileSaved(normalizeProfile({
+      ...current,
+      strategy,
+      customerService: settings,
+    }), 'enterprise_center');
+    await writeTenantProfile(tenantId, profile, userId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, status: customerServiceStatus(profile), profile });
+  } catch (error) {
+    console.error('[enterprise] customer service status update failed', error);
+    res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '智能客服设置暂时无法保存，请稍后重试。' });
+  }
+});
+
 enterpriseRouter.post('/style-profile/distill', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   try {
@@ -1806,7 +1991,11 @@ enterpriseRouter.get('/assets/:file', async (req, res) => {
 enterpriseRouter.post('/profile', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   try {
-    const profile = markProfileSaved(normalizeProfile(req.body as EnterpriseProfile), 'enterprise_center');
+    const current = await readTenantProfile(tenantId);
+    const profile = markProfileSaved(normalizeProfile({
+      ...(req.body as EnterpriseProfile),
+      customerService: current.customerService,
+    }), 'enterprise_center');
     await writeTenantProfile(tenantId, profile, userId);
     res.json({ ok: true, profile });
   } catch (error) {
@@ -1820,7 +2009,10 @@ enterpriseRouter.patch('/profile', async (req, res) => {
   const source = req.header('x-enterprise-save-source') === 'diagnosis' ? 'diagnosis' : 'enterprise_center';
   try {
     const current = await readTenantProfile(tenantId);
-    const profile = markProfileSaved(mergeEnterpriseProfile(current, req.body as Partial<EnterpriseProfile>), source);
+    const profile = markProfileSaved(normalizeProfile({
+      ...mergeEnterpriseProfile(current, req.body as Partial<EnterpriseProfile>),
+      customerService: current.customerService,
+    }), source);
     await writeTenantProfile(tenantId, profile, userId);
     res.json({ ok: true, profile });
   } catch (error) {

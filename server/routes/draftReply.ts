@@ -43,7 +43,7 @@ import {
   strategyEvidence,
   type RetrievedStrategy,
 } from '../knowledge/strategyRetrieve.js';
-import { readTenantEnterpriseProfile, type BizRules, type SalesStyleProfile } from './enterprise.js';
+import { customerServicePolicy, readTenantEnterpriseProfile, type BizRules, type SalesStyleProfile } from './enterprise.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 
 export const draftReplyRouter = Router();
@@ -210,6 +210,14 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const body = req.body ?? {};
   const timeline = Array.isArray(body.timeline) ? body.timeline.slice(-20) : [];
   const intent = normalizeIntent(body.intent || body.mode);
+  const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
+  if (!customerServicePolicy(enterpriseProfile).enabled) {
+    res.status(409).json({
+      error: 'customer_service_disabled',
+      message: '智能客服尚未开启。开启后，AI 只生成建议回复并等待你确认。',
+    });
+    return;
+  }
   const language = String(body.language ?? '').trim() || 'English';
   const latestMessage = latestBuyerMessage(timeline) || String(body.message || body.instruction || body.product || '');
   const phase = conversationPhase(timeline);
@@ -376,7 +384,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     sentiment: context.sentiment,
   });
   const styleMemories = await retrieveStyleMemories(tenantId, categoryForIntent(intent), latestMessage, String(body.customerId ?? ''));
-  const salesStyleProfile = (await readTenantEnterpriseProfile(tenantId)).salesStyleProfile;
+  const salesStyleProfile = enterpriseProfile.salesStyleProfile;
   const suppressPrice = shouldSuppressPriceFromRules(context.bizRules);
   const hardNoPriceDigits = false;
   const rememberedGreetingProduct = rememberedProductForGreeting(timeline, body.product);

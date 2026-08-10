@@ -55,10 +55,11 @@
     "test:studio-script": "tsx server/routes/studioScriptNormalization.test.ts",
     "test:tenant-isolation": "tsx server/security/tenantIsolation.test.ts",
     "test:onboarding-reset": "tsx server/security/onboardingReset.test.ts",
+    "test:customer-service-activation": "tsx server/security/customerServiceActivation.test.ts",
     "test:scheduled-publishing": "tsx server/publishing/scheduledPublisher.test.ts",
     "test:pb-admin": "tsx server/storage/pb.test.ts",
     "test:tenant-sync-smoke": "tsx scripts/verify-tenant-sync.ts",
-    "test": "npm run test:outbound-guard && npm run test:autonomy && npm run test:knowledge-policy && npm run test:strategy-policy && npm run test:script-strategy && npm run test:script-matrix && npm run test:studio-script && npm run test:tenant-isolation && npm run test:onboarding-reset && npm run test:schedule-policy && npm run test:scheduled-publishing && npm run test:pb-admin",
+    "test": "npm run test:outbound-guard && npm run test:autonomy && npm run test:knowledge-policy && npm run test:strategy-policy && npm run test:script-strategy && npm run test:script-matrix && npm run test:studio-script && npm run test:tenant-isolation && npm run test:onboarding-reset && npm run test:customer-service-activation && npm run test:schedule-policy && npm run test:scheduled-publishing && npm run test:pb-admin",
     "desktop": "electron desktop/main.cjs",
     "lint": "tsc --noEmit",
     "migrate:thumbnails-to-pb": "tsx scripts/migrate-thumbnails-to-pb.ts"
