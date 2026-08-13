@@ -11,6 +11,7 @@ import {
   Save,
   Search,
   ShoppingCart,
+  Trash2,
   TrendingUp,
 } from 'lucide-react';
 import {
@@ -98,6 +99,7 @@ export default function OrderManagementPage() {
   const [market, setMarket] = useState('全部');
   const [channel, setChannel] = useState('全部');
   const [status, setStatus] = useState<'全部' | OrderStatus>('全部');
+  const [feedback, setFeedback] = useState('');
 
   useEffect(() => {
     fetch('/api/overseas/enterprise/orders', { headers: authHeader() })
@@ -184,9 +186,28 @@ export default function OrderManagementPage() {
       body: JSON.stringify({ status: nextStatus }),
     }).then(r => r.json());
     setOrders(prev => prev.map(order => order.id === id ? updated : order));
+    setFeedback(`订单 ${updated.orderNo} 已更新为${updated.status}`);
+  };
+
+  const removeOrder = async (order: OrderRecord) => {
+    if (!window.confirm(`确认删除订单 ${order.orderNo}？此操作用于纠正误录数据，删除后无法恢复。`)) return;
+    const resp = await fetch(`/api/overseas/enterprise/orders/${encodeURIComponent(order.id)}`, {
+      method: 'DELETE',
+      headers: authHeader(),
+    });
+    if (!resp.ok) {
+      setFeedback(`订单 ${order.orderNo} 删除失败，请稍后重试`);
+      return;
+    }
+    setOrders(prev => prev.filter(item => item.id !== order.id));
+    setFeedback(`已删除误录订单 ${order.orderNo}`);
   };
 
   const exportCsv = () => {
+    if (!filtered.length) {
+      setFeedback('当前筛选没有可导出的订单');
+      return;
+    }
     const headers = ['订单号', '客户', '市场', '渠道', '商品', '数量', 'GMV', '成本', '状态', '日期', '负责人', '来源', '来源凭证'];
     const rows = filtered.map(order => [order.orderNo, order.buyer, order.market, order.channel, order.product, order.quantity, order.amount, order.cost, order.status, order.orderDate, order.owner, order.source || '', order.sourceRef || '']);
     const csv = [headers, ...rows].map(row => row.map(cell => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n');
@@ -195,8 +216,11 @@ export default function OrderManagementPage() {
     const link = document.createElement('a');
     link.href = url;
     link.download = `lingshu-orders-${today}.csv`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setFeedback(`已导出 ${filtered.length} 条订单`);
   };
 
   const input = 'h-9 rounded-lg border border-border bg-surface px-3 text-xs outline-none transition-colors hover:border-border-bright focus:border-accent';
@@ -211,10 +235,13 @@ export default function OrderManagementPage() {
           </div>
           <p className="text-sm font-black text-text-primary">我的订单</p>
         </div>
-        <button type="button" onClick={exportCsv} className="btn-ghost flex items-center gap-2 !px-3 !py-2">
+        <div className="flex items-center gap-3">
+          <span aria-live="polite" className="text-xs font-semibold text-text-muted">{feedback}</span>
+          <button type="button" onClick={exportCsv} className="btn-ghost flex items-center gap-2 !px-3 !py-2">
           <Download size={14} />
           导出 CSV
-        </button>
+          </button>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -278,22 +305,22 @@ export default function OrderManagementPage() {
             <p className="text-sm font-semibold text-text-primary">新增订单记录</p>
           </div>
           <div className="grid gap-3 lg:grid-cols-6">
-            <input value={draft.buyer} onChange={e => setDraft(s => ({ ...s, buyer: e.target.value }))} placeholder="客户名称" className={smallInput} />
-            <input value={draft.product} onChange={e => setDraft(s => ({ ...s, product: e.target.value }))} placeholder="商品 / SKU" className={smallInput} />
-            <select value={draft.market} onChange={e => setDraft(s => ({ ...s, market: e.target.value }))} className={smallInput}>
+            <input aria-label="客户名称" value={draft.buyer} onChange={e => setDraft(s => ({ ...s, buyer: e.target.value }))} placeholder="客户名称" className={smallInput} />
+            <input aria-label="商品 / SKU" value={draft.product} onChange={e => setDraft(s => ({ ...s, product: e.target.value }))} placeholder="商品 / SKU" className={smallInput} />
+            <select aria-label="市场" value={draft.market} onChange={e => setDraft(s => ({ ...s, market: e.target.value }))} className={smallInput}>
               {markets.filter(x => x !== '全部').map(x => <option key={x} value={x}>{x}</option>)}
             </select>
-            <select value={draft.channel} onChange={e => setDraft(s => ({ ...s, channel: e.target.value }))} className={smallInput}>
+            <select aria-label="渠道" value={draft.channel} onChange={e => setDraft(s => ({ ...s, channel: e.target.value }))} className={smallInput}>
               {channels.filter(x => x !== '全部').map(x => <option key={x} value={x}>{x}</option>)}
             </select>
-            <input type="number" min={1} value={draft.quantity} onChange={e => setDraft(s => ({ ...s, quantity: Number(e.target.value) }))} placeholder="数量" className={smallInput} />
-            <input type="date" value={draft.orderDate} onChange={e => setDraft(s => ({ ...s, orderDate: e.target.value }))} className={smallInput} />
-            <input type="number" min={0} value={draft.amount || ''} onChange={e => setDraft(s => ({ ...s, amount: Number(e.target.value) }))} placeholder="GMV / 美元" className={smallInput} />
-            <input type="number" min={0} value={draft.cost || ''} onChange={e => setDraft(s => ({ ...s, cost: Number(e.target.value) }))} placeholder="成本 / 美元" className={smallInput} />
-            <select value={draft.status} onChange={e => setDraft(s => ({ ...s, status: e.target.value as OrderStatus }))} className={smallInput}>
+            <input aria-label="数量" type="number" min={1} value={draft.quantity} onChange={e => setDraft(s => ({ ...s, quantity: Number(e.target.value) }))} placeholder="数量" className={smallInput} />
+            <input aria-label="订单日期" type="date" value={draft.orderDate} onChange={e => setDraft(s => ({ ...s, orderDate: e.target.value }))} className={smallInput} />
+            <input aria-label="GMV / 美元" type="number" min={0} value={draft.amount || ''} onChange={e => setDraft(s => ({ ...s, amount: Number(e.target.value) }))} placeholder="GMV / 美元" className={smallInput} />
+            <input aria-label="成本 / 美元" type="number" min={0} value={draft.cost || ''} onChange={e => setDraft(s => ({ ...s, cost: Number(e.target.value) }))} placeholder="成本 / 美元" className={smallInput} />
+            <select aria-label="订单状态" value={draft.status} onChange={e => setDraft(s => ({ ...s, status: e.target.value as OrderStatus }))} className={smallInput}>
               {statusList.map(x => <option key={x} value={x}>{x}</option>)}
             </select>
-            <input value={draft.owner} onChange={e => setDraft(s => ({ ...s, owner: e.target.value }))} placeholder="负责人" className={smallInput} />
+            <input aria-label="负责人" value={draft.owner} onChange={e => setDraft(s => ({ ...s, owner: e.target.value }))} placeholder="负责人" className={smallInput} />
             <button type="button" onClick={addOrder} disabled={!canSave} className="btn-primary flex h-9 items-center justify-center gap-2 !px-3 !py-0 disabled:cursor-not-allowed disabled:opacity-50 lg:col-span-2">
               <Save size={14} />
               保存订单
@@ -311,9 +338,9 @@ export default function OrderManagementPage() {
               <Filter size={13} />
               筛选
             </div>
-            <select value={market} onChange={e => setMarket(e.target.value)} className={input}>{markets.map(x => <option key={x} value={x}>{x === '全部' ? '全部市场' : x}</option>)}</select>
-            <select value={channel} onChange={e => setChannel(e.target.value)} className={input}>{channels.map(x => <option key={x} value={x}>{x === '全部渠道' ? x : x}</option>)}</select>
-            <select value={status} onChange={e => setStatus(e.target.value as '全部' | OrderStatus)} className={input}>
+            <select aria-label="筛选市场" value={market} onChange={e => setMarket(e.target.value)} className={input}>{markets.map(x => <option key={x} value={x}>{x === '全部' ? '全部市场' : x}</option>)}</select>
+            <select aria-label="筛选渠道" value={channel} onChange={e => setChannel(e.target.value)} className={input}>{channels.map(x => <option key={x} value={x}>{x === '全部渠道' ? x : x}</option>)}</select>
+            <select aria-label="筛选状态" value={status} onChange={e => setStatus(e.target.value as '全部' | OrderStatus)} className={input}>
               <option value="全部">全部状态</option>
               {statusList.map(x => <option key={x} value={x}>{x}</option>)}
             </select>
@@ -359,9 +386,14 @@ export default function OrderManagementPage() {
                       <td className="px-4 py-3 whitespace-nowrap text-text-secondary">{order.orderDate}</td>
                       <td className="px-4 py-3 text-text-secondary">{order.owner}</td>
                       <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
                         <select aria-label={`${order.orderNo} 订单状态：${order.status}`} value={order.status} onChange={e => setOrderStatus(order.id, e.target.value as OrderStatus)} className="rounded-md border border-border bg-white px-2 py-1 text-[11px] outline-none">
                           {statusList.map(x => <option key={x} value={x}>{x}</option>)}
                         </select>
+                        <button type="button" onClick={() => void removeOrder(order)} aria-label={`删除订单 ${order.orderNo}`} title="删除误录订单" className="rounded-md border border-red-100 p-1.5 text-red-600 hover:bg-red-50">
+                          <Trash2 size={13} />
+                        </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -2161,7 +2161,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
             title={expanded ? '还原侧栏' : '放大为主操作界面'}>
             {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
+          <button type="button" onClick={onClose} aria-label="关闭爆款详情" title="关闭" className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
             <X size={15} />
           </button>
         </div>
@@ -2896,7 +2896,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [favoritingMaterialIds, setFavoritingMaterialIds] = useState<string[]>([]);
   const [materialMessage, setMaterialMessage] = useState('');
   const [localMaterials, setLocalMaterials] = useState<Material[]>([]);
-  const [manageTarget, setManageTarget] = useState<{ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material } | null>(null);
+  const [manageTarget, setManageTarget] = useState<(({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action: 'edit' | 'delete' }) | null>(null);
   const [manageName, setManageName] = useState('');
   const [manageTags, setManageTags] = useState('');
   const [manageBusy, setManageBusy] = useState(false);
@@ -3300,7 +3300,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const generateNeedMaterial = async (need: ShootingNeed) => {
     setGeneratingNeedId(need.id);
-    setMaterialMessage('');
+    setMaterialMessage(`正在生成“${need.title}”，通常需要几分钟；可以留在本页等待结果。`);
     try {
       const output = await studioApi.seedanceVideo({
         script: `${need.title}\n${need.suggestion}\n参考分镜：${need.example?.visual || ''}\n输出 ${need.ratio} 社媒短视频素材。`,
@@ -3567,9 +3567,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
 
-  const openManageDialog = (target: { kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) => {
+  const openManageDialog = (target: ({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action?: 'edit' | 'delete' }) => {
     if (!target.item.canManage) return;
-    setManageTarget(target);
+    setManageTarget({ ...target, action: target.action || 'edit' });
     setManageName(target.kind === 'video' ? target.item.title : target.item.name);
     setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : String(target.item.tags || ''));
   };
@@ -3665,6 +3665,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         </div>
 
         <div className="px-6 py-5 pl-[74px]">
+            {materialMessage && (
+              <div role="status" aria-live="polite" className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-4 py-2.5 text-sm font-semibold text-accent">
+                {materialMessage}
+              </div>
+            )}
             {innerView === 'inspiration' && <div className="mb-4 space-y-2.5">
               <div className="flex items-center gap-2.5">
                 <div className="relative min-w-0 flex-1">
@@ -3675,7 +3680,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowAccountsModal(true)}
+                  onClick={() => { setSelectedVideo(null); setShowAccountsModal(true); }}
+                  aria-haspopup="dialog"
                   className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-accent/30 bg-accent-glow px-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent hover:text-white"
                   title="爬取对标账号主页最新视频"
                 >
@@ -3798,8 +3804,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <Download size={18} />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-text-primary">暂无真实视频数据</p>
-                    <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开视频，或从对标账号导入真实内容。</p>
+                    <p className="text-sm font-semibold text-text-primary">暂无真实{contentFormat === 'image' ? '图文' : '视频'}数据</p>
+                    <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开{contentFormat === 'image' ? '图文' : '视频'}，或从对标账号导入真实内容。</p>
                   </div>
                   {localMaterials.length > 0 && (
                     <button
@@ -3825,8 +3831,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
               {video.canManage && (
                 <div className="absolute right-2 top-9 z-20 flex gap-1">
-                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-accent"><Pencil size={14} /></button>
-                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-red-600"><Trash2 size={14} /></button>
+                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-accent"><Pencil size={14} /></button>
+                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-red-600"><Trash2 size={14} /></button>
                 </div>
               )}
 
@@ -3856,12 +3862,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     {videosLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                     加载更多
                   </button>
-                </div>
-              )}
-              {filtered.length === 0 && (
-                <div className="text-center py-20">
-                  <Search size={28} className="mx-auto text-text-muted mb-3 opacity-30" />
-                  <p className="text-text-muted text-sm">没有找到相关视频</p>
                 </div>
               )}
             </>
@@ -4011,8 +4011,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       <p className="truncate text-sm font-bold text-text-primary">{material.name}</p>
                   {material.canManage && (
                     <div className="mt-2 flex gap-2 border-t border-border pt-2">
-                      <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-accent"><Pencil size={12} />编辑</button>
-                      <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-red-600"><Trash2 size={12} />删除</button>
+                      <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-accent"><Pencil size={12} />编辑</button>
+                      <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-red-600"><Trash2 size={12} />删除</button>
                     </div>
                   )}
 
@@ -4134,7 +4134,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                             className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
                           >
                             {generatingNeedId === need.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                            AI生成素材
+                            {generatingNeedId === need.id ? '生成中，请勿关闭' : 'AI生成素材'}
                           </button>
                         </div>
                       </div>
@@ -4181,23 +4181,24 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         }}
       />
       {manageTarget && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true" aria-label="编辑素材">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true" aria-label={manageTarget.action === 'delete' ? '删除素材' : '编辑素材'}>
           <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-black text-text-primary">编辑{manageTarget.kind === 'video' ? '爆款视频' : '素材'}</h3>
+              <h3 className="text-base font-black text-text-primary">{manageTarget.action === 'delete' ? '删除' : '编辑'}{manageTarget.kind === 'video' ? '爆款视频' : '素材'}</h3>
               <button type="button" title="关闭" aria-label="关闭" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 hover:text-text-primary"><X size={18} /></button>
             </div>
-            <label className="mt-4 block text-xs font-bold text-text-secondary">名称</label>
-            <input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
-            <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
-            <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
-            <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
-            <div className="mt-5 flex items-center justify-between gap-3">
-              <button type="button" onClick={() => void deleteManagedItem()} disabled={manageBusy} className="inline-flex items-center gap-1.5 rounded-md border border-red-200 px-3 py-2 text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-50"><Trash2 size={15} />确认删除</button>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md border border-border px-3 py-2 text-sm font-bold text-text-secondary hover:bg-surface-2">取消</button>
-                <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>
-              </div>
+            {manageTarget.action === 'edit' ? <>
+              <label className="mt-4 block text-xs font-bold text-text-secondary">名称</label>
+              <input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
+              <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
+            </> : <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">确认删除“{manageName}”？删除后无法恢复。</p>}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md border border-border px-3 py-2 text-sm font-bold text-text-secondary hover:bg-surface-2">取消</button>
+              {manageTarget.action === 'delete'
+                ? <button type="button" onClick={() => void deleteManagedItem()} disabled={manageBusy} className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={15} />{manageBusy ? '删除中...' : '确认删除'}</button>
+                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
             </div>
           </div>
         </div>

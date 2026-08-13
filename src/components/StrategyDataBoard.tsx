@@ -239,11 +239,11 @@ export default function StrategyDataBoard({
         id: 'conversion' as const,
         icon: <TrendingUp size={15} className="text-green-600" />,
         label: '询盘转化率',
-        value: inquiryCount ? pct(conversionRate) : '/',
+        value: inquiryCount && validOrders.length ? pct(conversionRate) : '/',
         desc: validOrders.length
           ? `按已报价/成交 WhatsApp 询盘计算，并参考 ${validOrders.length} 个有效订单。`
           : '按已报价/成交 WhatsApp 询盘计算；订单未打通时不额外推断。',
-        source: '来源：我的客户 + 我的订单',
+        source: validOrders.length ? '来源：我的客户 + 我的订单' : '订单链路未打通，暂不展示转化率',
         trend: '',
       },
       {

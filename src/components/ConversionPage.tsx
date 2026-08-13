@@ -567,12 +567,14 @@ function CompactCustomerList({
   customers,
   onOpen,
   onViewChange,
+  onVisibleSelectionChange,
 }: {
   view: CustomerView;
   selectedId: string | null;
   customers: CustomerProfile[];
   onOpen: (id: string) => void;
   onViewChange: (view: CustomerView) => void;
+  onVisibleSelectionChange: (id: string | null, filteredEmpty: boolean) => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -596,6 +598,11 @@ function CompactCustomerList({
   const countryOptions = optionList(customers.map(customer => customer.countryName));
   const languageOptions = optionList(customers.map(customer => customer.language));
   const tagOptions = optionList(customers.flatMap(customer => customer.tags));
+
+  useEffect(() => {
+    if (selectedId && list.some(customer => customer.id === selectedId)) return;
+    onVisibleSelectionChange(list[0]?.id ?? null, activeFilterCount > 0 && list.length === 0);
+  }, [activeFilterCount, list, onVisibleSelectionChange, selectedId]);
   const FilterSelect = ({ label, value, onChange, options, renderLabel }: {
     label: string;
     value: string;
@@ -654,14 +661,13 @@ function CompactCustomerList({
           <button
             type="button"
             onClick={() => setFilterOpen(open => !open)}
-            className={`relative flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${activeFilterCount ? 'border-[#0891b2] bg-[#0891b2]/10 text-[#0891b2]' : 'border-transparent text-text-muted hover:border-border hover:bg-surface-2'}`}
-            title="筛选客户"
+            className={`relative flex h-8 items-center justify-center gap-1 rounded-lg border px-2 transition-colors ${activeFilterCount ? 'border-[#0891b2] bg-[#0891b2]/10 text-[#0891b2]' : 'w-8 border-transparent text-text-muted hover:border-border hover:bg-surface-2'}`}
+            title={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'}
+            aria-label={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'}
           >
             <Filter size={14} />
             {activeFilterCount > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#0891b2] px-1 text-[9px] font-black text-white">
-                {activeFilterCount}
-              </span>
+              <span className="text-[10px] font-black">{activeFilterCount} 项</span>
             )}
           </button>
           {filterOpen && (
@@ -728,6 +734,16 @@ function CompactCustomerList({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {list.map(renderCustomer)}
+        {list.length === 0 && (
+          <div className="px-5 py-10 text-center">
+            <p className="text-xs font-bold text-text-secondary">没有符合当前条件的客户</p>
+            {activeFilterCount > 0 && (
+              <button type="button" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)} className="mt-3 text-xs font-bold text-[#0891b2] hover:underline">
+                清空筛选
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );
@@ -1189,6 +1205,7 @@ function PrimaryActionCard({
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
   const [handoffSummary, setHandoffSummary] = useState('');
+  const [isPrimaryLoading, setIsPrimaryLoading] = useState(false);
   const rawSuggestion = buildPrioritySuggestion(customer);
   const dismissed = rawSuggestion.suggestionType !== 'none' && isSuggestionDismissed(customer.id, rawSuggestion.suggestionType);
   const suggestion: PrioritySuggestion = dismissed
@@ -1233,9 +1250,15 @@ function PrimaryActionCard({
 
   void dismissTick;
 
-  const primaryAction = () => {
+  const primaryAction = async () => {
     if (suggestion.suggestionType === 'call') {
-      void onGenerateDraft('生成一条主动触达草稿，语气自然，不承诺价格、折扣、付款条款或交期。', 'reactivate');
+      if (isPrimaryLoading) return;
+      setIsPrimaryLoading(true);
+      try {
+        await onGenerateDraft('生成一条主动触达草稿，语气自然，不承诺价格、折扣、付款条款或交期。', 'reactivate');
+      } finally {
+        setIsPrimaryLoading(false);
+      }
       return;
     }
     if (suggestion.suggestionType === 'handoff') {
@@ -1248,7 +1271,13 @@ function PrimaryActionCard({
       return;
     }
     if (suggestion.suggestionType === 'touch') {
-      void onGenerateDraft('生成一条主动触达草稿，语气自然，不承诺价格、折扣、付款条款或交期。', 'reactivate');
+      if (isPrimaryLoading) return;
+      setIsPrimaryLoading(true);
+      try {
+        await onGenerateDraft('生成一条主动触达草稿，语气自然，不承诺价格、折扣、付款条款或交期。', 'reactivate');
+      } finally {
+        setIsPrimaryLoading(false);
+      }
       return;
     }
   };
@@ -1307,8 +1336,8 @@ function PrimaryActionCard({
       <p className="mt-2 text-xs leading-relaxed opacity-85">{suggestion.reason}</p>
       {suggestion.suggestionType !== 'none' && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" onClick={primaryAction} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800">
-            {primaryLabel[suggestion.suggestionType]}
+          <button type="button" onClick={() => void primaryAction()} disabled={isPrimaryLoading} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
+            {isPrimaryLoading ? '草稿生成中…' : primaryLabel[suggestion.suggestionType]}
           </button>
           {secondaryLabel[suggestion.suggestionType] && (
             <button type="button" onClick={secondaryAction} className="rounded-xl border border-current/20 bg-white px-3 py-2 text-xs font-bold hover:bg-white/80">
@@ -1649,6 +1678,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [notificationReady, setNotificationReady] = useState(true);
   const [lastDraftKey, setLastDraftKey] = useState('');
   const deepLinkConsumedRef = useRef(false);
+  const filterEmptySelectionRef = useRef(false);
   const selected = useMemo(() => (
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
@@ -1689,6 +1719,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     if (selectedId && customersInActiveView.some(customer => customer.id === selectedId)) return;
+    if (!selectedId && filterEmptySelectionRef.current) return;
     setSelectedId(customersInActiveView[0]?.id ?? null);
   }, [customersInActiveView, selectedId]);
 
@@ -2322,7 +2353,17 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <CompactCustomerList view={view} selectedId={selectedId} customers={customers} onOpen={openCustomer} onViewChange={setView} />
+        <CompactCustomerList
+          view={view}
+          selectedId={selectedId}
+          customers={customers}
+          onOpen={openCustomer}
+          onViewChange={(nextView) => { filterEmptySelectionRef.current = false; setView(nextView); }}
+          onVisibleSelectionChange={(id, filteredEmpty) => {
+            filterEmptySelectionRef.current = filteredEmpty;
+            setSelectedId(id);
+          }}
+        />
         <ChatThread
           customer={selected}
           draftSuggestion={draftSuggestion}

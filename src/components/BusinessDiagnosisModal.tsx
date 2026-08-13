@@ -510,6 +510,7 @@ export default function BusinessDiagnosisModal({ open, session, onClose, onDismi
                       <option value="">请选择海外平台经验</option>
                       {PLATFORM_OPTIONS.map(item => <option key={item} value={item}>{item}</option>)}
                     </select>
+                    {!platform && <p className="mt-2 text-xs font-medium text-amber-700">请选择海外平台经验后才能继续；如果暂时不确定，可以使用下方“跳过此步”。</p>}
                   </div>
                   <div className="flex justify-end gap-3 pt-2">
                     <button type="button" className="rounded-xl border border-border px-5 py-3 text-sm font-bold text-text-secondary" onClick={() => setStep(2)}>跳过此步</button>

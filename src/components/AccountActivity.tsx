@@ -176,6 +176,9 @@ export default function AccountActivity() {
       }));
       setComments(next); setAccountOptions(nextAccounts); setSyncIssues(data.unavailable || []);
       setSelectedIds(current => current.filter(id => next.some(item => item.id === id)));
+      setNotice(nextAccounts.length
+        ? `同步完成：${nextAccounts.length} 个账号，${next.length} 条评论。`
+        : '暂无已授权社媒账号，无法同步动态。请先前往集成中心连接账号。');
       void translateComments(next);
     } catch (error) { setNotice(error instanceof Error ? error.message : '评论同步失败'); }
     finally { setLoading(false); }
@@ -274,6 +277,13 @@ export default function AccountActivity() {
           </div>
         </div>
       </div>
+
+      {notice && (
+        <div role="status" aria-live="polite" className="mx-6 mt-3 flex items-center justify-between gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700">
+          <span>{notice}</span>
+          <button type="button" onClick={() => setNotice('')} aria-label="关闭同步提示" className="rounded p-1 hover:bg-sky-100"><X size={13} /></button>
+        </div>
+      )}
 
       {tab === 'overview' && <div className="px-6 py-5"><ChannelOverview /></div>}
 
@@ -417,7 +427,6 @@ export default function AccountActivity() {
                     </div>
                   </div>
                   {selected.status !== 'pending' && <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"><CheckCircle2 size={14} /> 当前状态：{statusLabel[selected.status]}</div>}
-                  {notice && <div className="mt-3 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700">{notice}</div>}
                 </div>
               </div>
               </motion.aside>

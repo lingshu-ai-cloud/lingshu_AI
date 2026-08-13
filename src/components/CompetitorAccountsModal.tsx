@@ -173,7 +173,7 @@ export default function CompetitorAccountsModal({
                   <p className="text-xs text-text-muted">粘贴对标账号主页，一键采集其最新视频进入爆款灵感</p>
                 </div>
               </div>
-              <button type="button" onClick={onClose}
+              <button type="button" onClick={onClose} aria-label="关闭对标账号库"
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-muted hover:bg-surface-2" title="关闭">
                 <X size={16} />
               </button>

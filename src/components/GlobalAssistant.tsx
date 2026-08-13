@@ -253,7 +253,10 @@ async function loadLiveIntegrationFacts(): Promise<string> {
   const socialPlatforms = Array.from(new Set(socialAccounts
     .map(item => String(item.platform || item.provider || '').trim())
     .filter(Boolean)));
-  const whatsappInquiries = customers.filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
+  // `/customers` returns customer profiles imported from WhatsApp. A profile is
+  // not itself an inquiry event, so keep that distinction explicit in the
+  // grounding context supplied to the model.
+  const whatsappCustomers = customers.filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
   const accountViews = [...socialAccounts, ...youtubeAccounts].reduce(
     (sum, item) => sum + Math.max(0, Number(item.viewCount ?? item.views ?? 0)),
     0,
@@ -263,11 +266,12 @@ async function loadLiveIntegrationFacts(): Promise<string> {
   if (youtubeAccounts.length) confirmed.push(`YouTube 账号 ${youtubeAccounts.length} 个`);
   if (collectedVideos > 0) confirmed.push(`已采集视频 ${collectedVideos} 条`);
   if (accountViews > 0) confirmed.push(`账号内容曝光 ${accountViews.toLocaleString('zh-CN')}`);
-  if (whatsappInquiries.length) confirmed.push(`WhatsApp 询盘 ${whatsappInquiries.length} 条`);
+  if (whatsappCustomers.length) confirmed.push(`WhatsApp 客户档案 ${whatsappCustomers.length} 条`);
   return [
     `核验时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`,
     `已确认接入/真实数据：${confirmed.length ? confirmed.join('；') : '本次实时接口未返回可确认项目'}`,
-    `客户总记录：${customers.length} 条；WhatsApp 询盘：${whatsappInquiries.length} 条。`,
+    `客户档案总数：${customers.length} 条；其中 WhatsApp 来源客户档案：${whatsappCustomers.length} 条。`,
+    '统计边界：客户档案数量不等于询盘事件数量。当前事实未提供消息正文、关键词命中数、询盘事件数或历史订单数；不得推断或编造这些数字。',
     '判定规则：以上来自当前租户授权接口，优先级高于企业摘要；接口未返回某项只能说“本次未核验到”，不得说“未接入”。',
   ].join('\n');
 }

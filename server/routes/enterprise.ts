@@ -406,6 +406,19 @@ async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolea
   return Boolean(await store.create('tenant_orders', { tenant_id: tenantId, order_no: order.orderNo, order }));
 }
 
+async function deleteOrder(tenantId: string, orderId: string): Promise<boolean> {
+  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) {
+    const orders = readLocalTenantOrders(tenantId);
+    const next = orders.filter(order => order.id !== orderId);
+    if (next.length === orders.length) return false;
+    writeLocalTenantOrders(tenantId, next);
+    return true;
+  }
+  const records = await listStoredTenantOrders(tenantId);
+  const record = records.find(item => storedOrder(item)?.id === orderId);
+  return record?.id ? store.delete('tenant_orders', String(record.id)) : false;
+}
+
 async function authenticatedTenantId(req: Request): Promise<string | null> {
   return (await auth.verifyToken(req.headers.authorization))?.tenantId || null;
 }
@@ -1839,6 +1852,16 @@ enterpriseRouter.patch('/orders/:id/status', async (req, res) => {
     return;
   }
   res.json(orders[index]);
+});
+
+enterpriseRouter.delete('/orders/:id', async (req, res) => {
+  const tenantId = await authenticatedTenantId(req);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  if (!await deleteOrder(tenantId, req.params.id)) {
+    res.status(404).json({ error: 'order not found' });
+    return;
+  }
+  res.status(204).end();
 });
 
 enterpriseRouter.post('/orders/import', async (req, res) => {

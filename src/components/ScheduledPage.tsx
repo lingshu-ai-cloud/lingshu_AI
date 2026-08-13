@@ -291,6 +291,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<{ taskId: string; message: string; error: boolean } | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [runNotice, setRunNotice] = useState<{ taskId: string; message: string; error: boolean } | null>(null);
   const [videoStats, setVideoStats] = useState<VideoStatsPayload | null>(null);
   const [analysisQueueOpen, setAnalysisQueueOpen] = useState(() => window.sessionStorage.getItem('scheduled.analysisQueueOpen') === 'true');
   const [analysisActionId, setAnalysisActionId] = useState<string | null>(null);
@@ -498,10 +499,18 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
   async function runTaskNow(id: string) {
     setRunningId(id);
+    setRunNotice({ taskId: id, message: '任务已提交，正在执行…', error: false });
     try {
-      await fetch(`/api/overseas/scheduler/${id}/run`, { method: 'POST', headers: authHeader() });
+      const response = await fetch(`/api/overseas/scheduler/${id}/run`, { method: 'POST', headers: authHeader() });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || `执行失败（${response.status}）`);
+      }
       await fetchTasks();
       await fetchVideoStats();
+      setRunNotice({ taskId: id, message: '执行完成，结果和上次执行时间已刷新。', error: false });
+    } catch (error) {
+      setRunNotice({ taskId: id, message: error instanceof Error ? error.message : '任务执行失败，请稍后重试。', error: true });
     } finally {
       setRunningId(null);
     }
@@ -1557,6 +1566,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                           <Trash2 size={12} />
                         </button>
                       </div>
+                      {runNotice?.taskId === task.id && (
+                        <p role="status" className={`mt-2 text-[11px] ${runNotice.error ? 'text-red-600' : 'text-green-700'}`}>{runNotice.message}</p>
+                      )}
                     </div>
                   );
                 })}

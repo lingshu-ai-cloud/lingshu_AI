@@ -6419,7 +6419,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         spec: collectSpec(),
         thumbSeed: cover,
       });
-      if (project?.id && status !== 'template') setProjectId(project.id);
+      if (project?.id && status !== 'template') {
+        setProjectId(project.id);
+        setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
+      }
       if (!silent) {
         completeDemoStep('traffic');
         setSavedTick(true);
@@ -9889,6 +9892,9 @@ function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onL
                 <p className="text-[10px] text-text-muted mt-0.5">{new Date(p.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
               </div>
               <button
+                type="button"
+                aria-label={`删除草稿：${p.title}`}
+                title="删除草稿"
                 onClick={e => { e.stopPropagation(); onDelete(p.id); }}
                 className="absolute top-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red">
                 <Trash2 size={12} />
@@ -9915,7 +9921,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onL
             <FolderOpen size={15} style={{ color: TRAFFIC_GREEN }} />
             <span className="text-sm font-bold text-text-primary">我的创作</span>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
+          <button type="button" onClick={onClose} aria-label="关闭我的创作" title="关闭" className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
             <X size={15} />
           </button>
         </div>

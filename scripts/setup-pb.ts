@@ -30,6 +30,18 @@ type Field = { name: string; type: string; required?: boolean; [k: string]: unkn
 /** Collection definitions, derived from what the route handlers write/read. */
 const COLLECTIONS: { name: string; fields: Field[] }[] = [
   {
+    name: 'assistant_threads',
+    fields: [
+      { name: 'tenantId', type: 'text', required: true },
+      { name: 'agentId', type: 'text', required: true },
+      { name: 'messages', type: 'json', maxSize: 2000000 },
+      { name: 'draftInput', type: 'text', max: 200000 },
+      { name: 'scrollPosition', type: 'number' },
+      { name: 'unreadCount', type: 'number' },
+      { name: 'updatedAt', type: 'text' },
+    ],
+  },
+  {
     name: 'studio_projects',
     fields: [
       { name: 'tenant_id', type: 'text', required: true },

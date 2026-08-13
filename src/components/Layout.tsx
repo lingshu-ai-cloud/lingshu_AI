@@ -177,6 +177,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   const [quotaOpen, setQuotaOpen] = useState(false);
   const quotaAreaRef = useRef<HTMLDivElement>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
+  const [quotaError, setQuotaError] = useState('');
   const [quotaUpdatedAt, setQuotaUpdatedAt] = useState<number | null>(null);
   const [liveSession, setLiveSession] = useState<AuthSession | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -239,11 +240,14 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   const showDemoGuide = Boolean(demoGuideActive && (activeSession?.demo?.enabled || isTrialAccount));
   const refreshQuota = async () => {
     setQuotaLoading(true);
+    setQuotaError('');
     try {
       const latest = await authApi.me();
       setLiveSession(latest);
       onSessionUpdate?.(latest);
       setQuotaUpdatedAt(Date.now());
+    } catch (error) {
+      setQuotaError(error instanceof Error ? error.message : '额度读取失败，请稍后重试');
     } finally {
       setQuotaLoading(false);
     }
@@ -384,7 +388,13 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                   </div>
                 </div>
 
-                {demo && isTrialAccount ? (
+                {quotaError ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-3">
+                    <p className="text-xs font-semibold text-red-700">额度读取失败</p>
+                    <p className="mt-1 text-[10px] leading-relaxed text-red-600">{quotaError}</p>
+                    <button type="button" onClick={() => void refreshQuota()} disabled={quotaLoading} className="mt-2 text-[10px] font-bold text-red-700 underline disabled:opacity-60">重新读取</button>
+                  </div>
+                ) : demo && isTrialAccount ? (
                   <div className="space-y-3">
                     <div className="rounded-xl bg-surface-2 border border-border px-3 py-2.5">
                       <div className="flex items-baseline justify-between">
@@ -465,8 +475,8 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                   </div>
                 ) : (
                   <div className="rounded-xl bg-surface-2 border border-border px-3 py-3">
-                    <p className="text-xs font-semibold text-text-primary">暂未读取到额度</p>
-                    <p className="text-[10px] text-text-muted mt-1">点击刷新按钮重新读取测试版账号额度。</p>
+                    <p className="text-xs font-semibold text-text-primary">当前账号无试用 Token 配额</p>
+                    <p className="text-[10px] text-text-muted mt-1">正式订阅账号不展示测试版额度；如需核对用量，请联系管理员。</p>
                   </div>
                 )}
               </motion.div>
