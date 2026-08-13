@@ -506,9 +506,16 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
         const body = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `执行失败（${response.status}）`);
       }
-      await fetchTasks();
+      const body = await response.json() as { result?: string };
+      const completedAt = new Date().toISOString();
+      setTasks(current => current.map(task => task.id === id ? {
+        ...task,
+        lastRun: completedAt,
+        lastResult: body.result || task.lastResult || '任务执行完成',
+      } : task));
       await fetchVideoStats();
-      setRunNotice({ taskId: id, message: '执行完成，结果和上次执行时间已刷新。', error: false });
+      setRunNotice({ taskId: id, message: `执行完成（${new Date(completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}），结果已刷新。`, error: false });
+      window.setTimeout(() => { void fetchTasks(false); }, 800);
     } catch (error) {
       setRunNotice({ taskId: id, message: error instanceof Error ? error.message : '任务执行失败，请稍后重试。', error: true });
     } finally {
@@ -1577,6 +1584,11 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           )}
         </div>
       </div>
+      {runNotice && (
+        <div role="status" aria-live="assertive" className={`fixed right-6 top-20 z-[80] max-w-sm rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg ${runNotice.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-white text-green-700'}`}>
+          {runNotice.message}
+        </div>
+      )}
       </div>
 
       {/* Add Task Modal */}
@@ -1883,6 +1895,11 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
               {exportNotice?.taskId === resultTask.id && (
                 <div role="status" aria-live="polite" className={`mx-5 mt-3 rounded-lg border px-3 py-2 text-xs font-medium ${exportNotice.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`}>
                   {exportNotice.message}
+                </div>
+              )}
+              {runNotice?.taskId === resultTask.id && (
+                <div role="status" aria-live="assertive" className={`mx-5 mt-3 rounded-lg border px-3 py-2 text-xs font-medium ${runNotice.error ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`}>
+                  {runNotice.message}
                 </div>
               )}
 
