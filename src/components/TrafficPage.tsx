@@ -29,6 +29,7 @@ import {
   resolveInitialTrafficViewMode,
   resolveNavigationEventViewMode,
   resolveSignalViewMode,
+  resolveWorkflowNavigationPage,
   type TrafficViewMode,
 } from './trafficViewMode';
 
@@ -336,6 +337,11 @@ export default function TrafficPage({
 
   const handleEnterWorkflow = (payload: unknown) => {
     try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
+    const targetPage = resolveWorkflowNavigationPage(initialView, showModeTabs);
+    if (targetPage) {
+      onNavigate?.(targetPage);
+      return;
+    }
     setViewMode('create');
   };
 

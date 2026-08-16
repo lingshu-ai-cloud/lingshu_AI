@@ -3,6 +3,7 @@ import {
   resolveInitialTrafficViewMode,
   resolveNavigationEventViewMode,
   resolveSignalViewMode,
+  resolveWorkflowNavigationPage,
 } from './trafficViewMode';
 
 assert.equal(
@@ -30,5 +31,9 @@ assert.equal(
   'a programmatic materials event must not interrupt creation',
 );
 assert.equal(resolveNavigationEventViewMode('materials', 'create'), 'create');
+
+assert.equal(resolveWorkflowNavigationPage('materials', false), 'smartAssets');
+assert.equal(resolveWorkflowNavigationPage('materials', true), null);
+assert.equal(resolveWorkflowNavigationPage('create', false), null);
 
 console.log('traffic view mode tests passed');

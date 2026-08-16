@@ -2095,27 +2095,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
     onEnterWorkflow?.({ source: 'seedance_video', script: result, video, scriptType, language, productInfo, generatedVideo: videoResult });
   };
 
-  const enterQuickCutFromAnalysis = async (confirmedAnalysis?: ScriptAnalysis) => {
+  const enterQuickCutFromAnalysis = (confirmedAnalysis?: ScriptAnalysis) => {
     const realAnalysis = confirmedAnalysis || getAnalysis(video);
     setRefinementSyncError('');
-    if (video.contentFormat !== 'image') {
-      if (!video.recordId) {
-        setRefinementSyncError('当前视频缺少入库记录，无法同步到定时任务的视频分析页面。');
-        return;
-      }
-      try {
-        const response = await fetch(`/api/overseas/videos/${video.recordId}/refinement-sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeader() },
-          body: JSON.stringify({ source: 'inspiration_analysis' }),
-        });
-        const payload = await response.json().catch(() => ({})) as { error?: string };
-        if (!response.ok) throw new Error(payload.error || '精修视频同步失败');
-      } catch (error) {
-        setRefinementSyncError(error instanceof Error ? error.message : '精修视频同步失败');
-        return;
-      }
-    }
     onEnterWorkflow?.({
       source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
       video,
@@ -2130,6 +2112,25 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
       } : undefined,
     });
     onClose();
+
+    // Navigation must not wait for the optional scheduler sync. A slow or failed
+    // sync used to make the primary CTA appear broken even though the editor
+    // payload was already ready.
+    if (video.contentFormat !== 'image' && video.recordId) {
+      void (async () => {
+        try {
+          const response = await fetch(`/api/overseas/videos/${video.recordId}/refinement-sync`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader() },
+            body: JSON.stringify({ source: 'inspiration_analysis' }),
+          });
+          const payload = await response.json().catch(() => ({})) as { error?: string };
+          if (!response.ok) throw new Error(payload.error || '精修视频同步失败');
+        } catch (error) {
+          console.warn('精修视频同步失败，已继续进入智能素材。', error);
+        }
+      })();
+    }
   };
 
   const selectedLang = LANGUAGES.find(l => l.code === language);
