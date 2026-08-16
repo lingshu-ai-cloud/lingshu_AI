@@ -39,7 +39,7 @@ import { clearAssetSessionCookie } from '../lib/assetAccess.js';
 
 export const authRouter = Router();
 
-type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
+export type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
 interface PbUser { id: string; email?: string; name?: string; tenantId?: string; role?: OrganizationRole }
 
 const LOCAL_AUTH_PREFIX = 'local-demo.';
@@ -145,6 +145,7 @@ function parseLocalToken(authHeader: string | undefined): LocalIdentity | null {
       email: data.email,
       name: data.name,
       accountType: data.accountType,
+      role: data.role,
     } : null;
   } catch {
     return null;
@@ -312,11 +313,19 @@ function publicUser(r: PbUser) {
   return { id: r.id, email: r.email ?? '', name: r.name ?? '', tenantId: r.tenantId ?? '', role: normalizedRole(r.role) };
 }
 
-async function requestOrganizationRole(authorization: string | undefined, userId: string): Promise<OrganizationRole> {
+export async function requestOrganizationRole(authorization: string | undefined, userId: string): Promise<OrganizationRole> {
   const local = parseLocalToken(authorization);
   if (local) return normalizedRole(local.role);
   const user = await pbGet('users', userId) as PbUser | null;
   return normalizedRole(user?.role);
+}
+
+/** Least-privilege role lookup for security-sensitive enterprise governance writes. */
+export async function requestOrganizationRoleStrict(authorization: string | undefined, userId: string): Promise<OrganizationRole | null> {
+  const local = parseLocalToken(authorization);
+  if (local) return ORGANIZATION_ROLES.has(local.role as OrganizationRole) ? local.role as OrganizationRole : null;
+  const user = await pbGet('users', userId) as PbUser | null;
+  return ORGANIZATION_ROLES.has(user?.role as OrganizationRole) ? user!.role as OrganizationRole : null;
 }
 
 function pbFilterValue(value: string): string {

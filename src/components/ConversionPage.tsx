@@ -390,6 +390,13 @@ interface StyleMemoryPayload {
   edited: boolean;
   category: string;
   strategyIds: string[];
+  nodeId: string;
+  riskLevel: 'L2' | 'L3' | 'L4';
+  diffTags: string[];
+  interventionType: 'expression_edit' | 'progression_edit' | 'fact_review' | 'risk_handoff' | 'direct_adoption';
+  outcome3Turn: string;
+  outcome24h: string;
+  finalOutcome: string;
 }
 
 async function requestDraft(customer: CustomerProfile, instruction?: string, mode?: 'draft' | 'polish', intent: DraftIntent = mode === 'polish' ? 'polish' : 'reply'): Promise<DraftResult> {
@@ -2098,13 +2105,27 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const original = meta?.originalDraft || meta?.draft || '';
     const trigger = meta?.buyerMessage || latestBuyerText(customer);
     if (!original || !finalZh.trim() || !trigger) return null;
+    const edited = original.trim() !== finalZh.trim();
+    const riskLevel = customer.handlingMode === 'human_needed' ? 'L4' : customer.handlingMode === 'ai_draft' ? 'L3' : 'L2';
+    const interventionType = !edited ? 'direct_adoption'
+      : meta?.knowledgeMiss ? 'fact_review'
+      : riskLevel === 'L4' ? 'risk_handoff'
+      : customer.progressionGoal ? 'progression_edit'
+      : 'expression_edit';
     return {
       triggerMessage: `中文概括：客户询问 ${customer.product || customer.outboundProduct} 相关问题\n原文：${trigger}`,
       draftOriginal: original,
       finalSent: finalZh,
-      edited: original.trim() !== finalZh.trim(),
+      edited,
       category: meta?.category || 'reply',
       strategyIds: meta?.strategies?.map(item => item.id).filter(Boolean) ?? [],
+      nodeId: `${customer.stage}:${meta?.category || 'reply'}`,
+      riskLevel,
+      diffTags: edited ? [interventionType, 'human_final_differs_from_ai_draft'] : ['direct_adoption'],
+      interventionType,
+      outcome3Turn: 'pending_observation',
+      outcome24h: 'pending_observation',
+      finalOutcome: customer.stage === 'won' ? 'won' : 'not_yet_attributed',
     };
   };
 

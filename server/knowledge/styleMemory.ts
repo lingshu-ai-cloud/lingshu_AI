@@ -18,7 +18,23 @@ export interface StyleMemoryRecord {
   strategy_ids?: string[] | string;
   source?: string;
   source_fingerprint?: string;
+  status?: 'pending' | 'confirmed' | 'paused' | 'superseded';
+  learning_scope?: 'enterprise_style' | 'customer_private';
+  source_kind?: 'employee_edit' | 'ai_inferred' | 'imported_winning' | 'manual';
+  evidence_source?: string;
+  node_id?: string;
+  risk_level?: string;
+  diff_tags?: string[] | string;
+  intervention_type?: string;
+  outcome_3_turn?: string;
+  outcome_24h?: string;
+  fact_learning_allowed?: boolean;
+  expires_at?: string;
+  confirmed_by?: string;
+  confirmed_at?: string;
+  updated_by?: string;
   created?: string;
+  updated?: string;
 }
 
 export interface WriteStyleMemoryInput {
@@ -30,6 +46,13 @@ export interface WriteStyleMemoryInput {
   edited: boolean;
   category: string;
   strategyIds?: string[];
+  nodeId?: string;
+  riskLevel?: string;
+  diffTags?: string[];
+  interventionType?: string;
+  outcome3Turn?: string;
+  outcome24h?: string;
+  finalOutcome?: string;
 }
 
 const PHONE_RE = /(?:\+?\d[\d\s().-]{7,}\d)/g;
@@ -91,6 +114,11 @@ export async function importWinningStyleMemories(
       strategy_ids: [],
       source: 'winning_history_style_only',
       source_fingerprint: fingerprint,
+      status: 'pending',
+      learning_scope: 'enterprise_style',
+      source_kind: 'imported_winning',
+      evidence_source: '成交会话风格导入',
+      fact_learning_allowed: false,
     });
     if (created) {
       fingerprints.add(fingerprint);
@@ -179,15 +207,68 @@ export async function recordStyleMemory(input: WriteStyleMemoryInput): Promise<v
     category,
     outcome: '',
     strategy_ids: strategyIds,
+    status: 'pending',
+    learning_scope: 'enterprise_style',
+    source_kind: 'employee_edit',
+    evidence_source: 'AI 草稿与员工最终发送内容',
+    node_id: text(input.nodeId).slice(0, 120),
+    risk_level: text(input.riskLevel).slice(0, 30),
+    diff_tags: (input.diffTags ?? []).map(text).filter(Boolean).slice(0, 20),
+    intervention_type: text(input.interventionType).slice(0, 80) || (input.edited ? 'employee_edit' : 'direct_adoption'),
+    outcome_3_turn: text(input.outcome3Turn).slice(0, 80) || 'pending_observation',
+    outcome_24h: text(input.outcome24h).slice(0, 80) || 'pending_observation',
+    fact_learning_allowed: false,
+    ...(text(input.finalOutcome) ? { outcome: text(input.finalOutcome).slice(0, 80) } : {}),
   });
   await updateWeeklyStyleAdoption(tenantId, Boolean(input.edited));
-  if (input.edited && strategyIds.length) {
-    void Promise.all(strategyIds.map(strategyId => distillResponseStrategyPreference(tenantId, strategyId)))
-      .catch(error => console.warn('[strategy-memory:distill-failed]', error));
-  } else if (input.edited) {
-    void discoverResponseStrategy(tenantId)
-      .catch(error => console.warn('[strategy-memory:discover-failed]', error));
-  }
+}
+
+function notExpired(item: StyleMemoryRecord, now = Date.now()): boolean {
+  const expiry = Date.parse(String(item.expires_at || ''));
+  return !Number.isFinite(expiry) || expiry > now;
+}
+
+/** Legacy records predate governance and remain usable; every new record starts pending. */
+export function styleMemoryUsable(item: StyleMemoryRecord, now = Date.now()): boolean {
+  return (!item.status || item.status === 'confirmed')
+    && item.learning_scope !== 'customer_private'
+    && notExpired(item, now);
+}
+
+function customerCoverage(items: StyleMemoryRecord[]): number {
+  return new Set(items.map(item => text(item.customer_id)).filter(Boolean)).size;
+}
+
+function timePeriodCoverage(items: StyleMemoryRecord[]): number {
+  return new Set(items.map(item => {
+    const date = new Date(String(item.created || ''));
+    return Number.isFinite(date.getTime()) ? weekKey(date) : '';
+  }).filter(Boolean)).size;
+}
+
+export async function styleEvidenceReadiness(tenantId: string): Promise<{
+  total: number;
+  pending: number;
+  confirmed: number;
+  editedConfirmed: number;
+  customerCount: number;
+  periodCount: number;
+}> {
+  const result = await store.list<StyleMemoryRecord>(COLLECTION, {
+    where: { tenant_id: tenantId },
+    sort: '-created',
+    perPage: 1000,
+  });
+  const confirmed = result.items.filter(styleMemoryUsable);
+  const editedConfirmed = confirmed.filter(item => item.edited);
+  return {
+    total: result.totalItems,
+    pending: result.items.filter(item => item.status === 'pending').length,
+    confirmed: confirmed.length,
+    editedConfirmed: editedConfirmed.length,
+    customerCount: customerCoverage(editedConfirmed),
+    periodCount: timePeriodCoverage(editedConfirmed),
+  };
 }
 
 function weekKey(date = new Date()): string {
@@ -216,7 +297,7 @@ export async function retrieveStyleMemories(tenantId: string, category: string, 
     sort: '-created',
     perPage: 100,
   });
-  const items = result.items.filter(item => item.trigger_message && item.final_sent);
+  const items = result.items.filter(item => styleMemoryUsable(item) && item.trigger_message && item.final_sent);
   if (items.length < 2) return [];
   return items
     .sort((a, b) => styleMemoryRelevanceScore(b, message, customerId) - styleMemoryRelevanceScore(a, message, customerId))
@@ -255,6 +336,52 @@ export async function markStyleMemoryWonForCustomer(tenantId: string, customerId
   return changed;
 }
 
+function eventTimestampMs(event: Record<string, unknown>): number | null {
+  const rawTimestamp = Number(event.timestamp);
+  if (Number.isFinite(rawTimestamp) && rawTimestamp > 0) return rawTimestamp < 10_000_000_000 ? rawTimestamp * 1000 : rawTimestamp;
+  const parsed = Date.parse(text(event.time));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Attach observable follow-up windows to earlier interventions without claiming causal success. */
+export async function observeStyleMemoryOutcomes(input: {
+  tenantId: string;
+  customerId: string;
+  timeline: Array<Record<string, unknown>>;
+  stage?: string;
+  now?: number;
+}): Promise<number> {
+  if (!input.tenantId || !input.customerId) return 0;
+  const now = input.now ?? Date.now();
+  const buyerEvents = input.timeline
+    .filter(event => text(event.actor).toLowerCase() === 'buyer' || text(event.type).includes('msg_in'))
+    .map(eventTimestampMs)
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b);
+  const result = await store.list<StyleMemoryRecord>(COLLECTION, {
+    where: { tenant_id: input.tenantId, customer_id: input.customerId },
+    sort: '-created',
+    perPage: 100,
+  });
+  let updated = 0;
+  for (const record of result.items) {
+    const createdAt = Date.parse(text(record.created));
+    if (!Number.isFinite(createdAt)) continue;
+    const nextBuyerReply = buyerEvents.find(timestamp => timestamp > createdAt);
+    const patch: Record<string, unknown> = {};
+    if ((!record.outcome_3_turn || record.outcome_3_turn === 'pending_observation') && nextBuyerReply) {
+      patch.outcome_3_turn = 'buyer_replied_within_next_3_turns';
+    }
+    if (!record.outcome_24h || record.outcome_24h === 'pending_observation') {
+      if (nextBuyerReply) patch.outcome_24h = nextBuyerReply - createdAt <= 86_400_000 ? 'buyer_replied_within_24h' : 'buyer_replied_after_24h';
+      else if (now - createdAt >= 86_400_000) patch.outcome_24h = 'no_buyer_reply_within_24h';
+    }
+    if (/\bwon\b|成交/i.test(text(input.stage)) && record.outcome !== 'won') patch.outcome = 'won';
+    if (Object.keys(patch).length && await store.update(COLLECTION, record.id, patch)) updated += 1;
+  }
+  return updated;
+}
+
 function parseDistilledJson(raw: string): Partial<SalesStyleProfile> {
   const cleaned = raw.replace(/```json|```/gi, '').trim();
   const match = cleaned.match(/\{[\s\S]*}/);
@@ -285,8 +412,8 @@ export async function distillSalesStyleProfile(tenantId = 'local_tenant_default'
     sort: '-created',
     perPage: 200,
   });
-  const samples = result.items.filter(item => item.trigger_message && item.draft_original && item.final_sent);
-  if (samples.length < 20) return null;
+  const samples = result.items.filter(item => styleMemoryUsable(item) && item.trigger_message && item.draft_original && item.final_sent);
+  if (samples.length < 20 || customerCoverage(samples) < 3) return null;
   const prompt = [
     'You distill a Yiwu seller sales style profile from real edited replies.',
     'Return strict JSON only with keys: greeting_style, quoting_stance, followup_rhythm, taboo_phrases, sample_pairs.',
@@ -334,6 +461,10 @@ interface StrategyPreferenceRecord {
   risk_link?: string;
   escalate?: string;
   updated?: string;
+  version?: number | string;
+  rollout_percent?: number | string;
+  evidence_customer_count?: number | string;
+  evidence_period_count?: number | string;
 }
 
 function strategyIds(item: StyleMemoryRecord): string[] {
@@ -367,9 +498,9 @@ export async function distillResponseStrategyPreference(tenantId: string, strate
     perPage: 300,
   });
   const samples = result.items
-    .filter(item => strategyIds(item).includes(strategyId) && item.trigger_message && item.draft_original && item.final_sent)
+    .filter(item => styleMemoryUsable(item) && strategyIds(item).includes(strategyId) && item.trigger_message && item.draft_original && item.final_sent)
     .slice(0, 80);
-  if (samples.length < 5) return null;
+  if (samples.length < 5 || customerCoverage(samples) < 3 || timePeriodCoverage(samples) < 2) return null;
 
   const existingResult = await store.list<StrategyPreferenceRecord>('response_strategy_memory', {
     where: { tenant_id: tenantId, strategy_id: strategyId },
@@ -407,8 +538,13 @@ export async function distillResponseStrategyPreference(tenantId: string, strate
     strategy_id: strategyId,
     adjustment,
     evidence_count: samples.length,
-    status: 'active',
+    status: existing?.status === 'active' ? 'active' : 'candidate',
     source: existing?.source || 'real_seller_edits',
+    evidence_customer_count: customerCoverage(samples),
+    evidence_period_count: timePeriodCoverage(samples),
+    version: Math.max(1, Number(existing?.version || 0) || 1),
+    rollout_percent: existing?.status === 'active' ? Math.max(1, Number(existing?.rollout_percent || 100)) : 0,
+    risk_boundary: '仅学习对话方法；价格、MOQ、库存、交期、认证、付款、折扣及商务承诺必须使用当前企业事实并按风险规则转人工。',
   };
   if (existing?.id) await store.update('response_strategy_memory', existing.id, payload);
   else await store.create('response_strategy_memory', payload);
@@ -465,9 +601,9 @@ export async function discoverResponseStrategy(tenantId: string): Promise<string
     perPage: 200,
   });
   const unassigned = result.items
-    .filter(item => strategyIds(item).length === 0 && item.trigger_message && item.draft_original && item.final_sent)
+    .filter(item => styleMemoryUsable(item) && strategyIds(item).length === 0 && item.trigger_message && item.draft_original && item.final_sent)
     .slice(0, 60);
-  if (unassigned.length < 6) return null;
+  if (unassigned.length < 6 || customerCoverage(unassigned) < 3 || timePeriodCoverage(unassigned) < 2) return null;
 
   const prompt = [
     'Discover at most one repeatable buyer scenario and response tactic from real seller edits that did not match the built-in strategy library.',
@@ -491,6 +627,8 @@ export async function discoverResponseStrategy(tenantId: string): Promise<string
   });
   const discovered = parseDiscoveredStrategy(raw, unassigned.length);
   if (!discovered) return null;
+  const evidenceSamples = discovered.evidenceIndexes.map(index => unassigned[index - 1]).filter(Boolean);
+  if (customerCoverage(evidenceSamples) < 3 || timePeriodCoverage(evidenceSamples) < 2) return null;
 
   const strategyId = customStrategyId(discovered);
   const existingResult = await store.list<StrategyPreferenceRecord>('response_strategy_memory', {
@@ -502,7 +640,7 @@ export async function discoverResponseStrategy(tenantId: string): Promise<string
     strategy_id: strategyId,
     adjustment: '',
     evidence_count: discovered.evidenceIndexes.length,
-    status: 'active',
+    status: 'candidate',
     source: 'learned_custom',
     scenario: discovered.scenario,
     signals: discovered.signals,
@@ -510,6 +648,11 @@ export async function discoverResponseStrategy(tenantId: string): Promise<string
     strategy_steps: discovered.tactics,
     risk_link: discovered.riskLink,
     escalate: discovered.escalate,
+    version: Math.max(1, Number(existingResult.items[0]?.version || 0) || 1),
+    rollout_percent: 0,
+    evidence_customer_count: customerCoverage(evidenceSamples),
+    evidence_period_count: timePeriodCoverage(evidenceSamples),
+    risk_boundary: '候选策略必须由管理员确认；L4、价格、折扣、MOQ、认证、付款、交期与法律承诺不得自动启用。',
   };
   const existing = existingResult.items[0];
   if (existing?.id) await store.update('response_strategy_memory', existing.id, payload);
