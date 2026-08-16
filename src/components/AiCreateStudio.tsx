@@ -8093,7 +8093,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   {referenceAnalysisIncomplete && (
                     <button
                       type="button"
-                      onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'traffic', view: 'materials' } }))}
+                      onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view: 'materials' } }))}
                       className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-800 hover:bg-amber-100"
                     >
                       返回灵感大屏补全分析

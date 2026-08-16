@@ -104,6 +104,10 @@ interface Props {
   onScriptPanelOpen?: () => void;
   onScriptPanelClose?: () => void;
   onSessionRefresh?: () => void;
+  initialView?: ViewMode;
+  showModeTabs?: boolean;
+  visibleModes?: ViewMode[];
+  pageTitle?: string;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -262,8 +266,13 @@ export default function TrafficPage({
   kickoff,
   onScriptPanelOpen,
   onScriptPanelClose,
+  initialView,
+  showModeTabs = true,
+  visibleModes,
+  pageTitle = '我的社媒',
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (initialView) return initialView;
     try {
       const initialView = localStorage.getItem('lingshu:traffic:initial-view');
       const persistedView = localStorage.getItem('lingshu:traffic:view-mode');
@@ -277,6 +286,10 @@ export default function TrafficPage({
   useEffect(() => {
     try { localStorage.setItem('lingshu:traffic:view-mode', viewMode); } catch { /* ignore */ }
   }, [viewMode]);
+
+  useEffect(() => {
+    if (initialView) setViewMode(initialView);
+  }, [initialView]);
 
   useEffect(() => {
     if (restore || kickoff) setViewMode(current => resolveSignalViewMode(current, true));
@@ -349,18 +362,21 @@ export default function TrafficPage({
           <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
             <Zap size={13} />
           </div>
-          <span className="text-sm font-semibold text-text-primary">我的社媒</span>
+          <span className="text-sm font-semibold text-text-primary">{pageTitle}</span>
         </div>
       </header>
 
-      <div className="flex-shrink-0 border-b border-border bg-surface px-6 py-3">
-        <div className="grid w-full grid-cols-4 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
+      {showModeTabs && <div className="flex-shrink-0 border-b border-border bg-surface px-6 py-3">
+        <div
+          className="grid w-full gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm"
+          style={{ gridTemplateColumns: `repeat(${visibleModes?.length || 4}, minmax(0, 1fr))` }}
+        >
           {[
             { mode: 'materials' as ViewMode, icon: <Film size={18} />, label: '灵感大屏', guide: 'social-inspiration' },
             { mode: 'create' as ViewMode, icon: <Wand2 size={18} />, label: 'AI智能素材', guide: 'ai-create' },
             { mode: 'publish' as ViewMode, icon: <Send size={18} />, label: '一键发布', guide: 'publishing-workbench' },
             { mode: 'accounts' as ViewMode, icon: <BarChart3 size={18} />, label: '账号动态', guide: 'social-performance' },
-          ].map(({ mode, icon, label, guide }) => {
+          ].filter(item => !visibleModes || visibleModes.includes(item.mode)).map(({ mode, icon, label, guide }) => {
             const active = viewMode === mode;
             return (
               <button
@@ -378,7 +394,7 @@ export default function TrafficPage({
             );
           })}
         </div>
-      </div>
+      </div>}
 
       <main className="min-h-0 flex-1 overflow-hidden">
         <AnimatePresence mode="wait">

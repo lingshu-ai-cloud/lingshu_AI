@@ -18,10 +18,15 @@ import AdminDashboard from './components/AdminDashboard';
 import AdminDeliveryPage from './components/AdminDeliveryPage';
 import AssistLinkPage from './components/AssistLinkPage';
 import LegalPages from './components/LegalPages';
+import { AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage } from './components/WorkspaceManagementPages';
 
 export type Page =
   | 'strategy'
   | 'traffic'
+  | 'socialInspiration'
+  | 'scriptLibrary'
+  | 'smartAssets'
+  | 'accountManagement'
   | 'conversion'
   | 'retention'
   | 'orders'
@@ -31,7 +36,9 @@ export type Page =
   | 'admin'
   | 'adminDelivery'
   | 'channels'
-  | 'youtube';
+  | 'youtube'
+  | 'agentMemory'
+  | 'organizationPermissions';
 
 export type AgentType = 'strategy' | 'traffic' | 'conversion' | 'retention';
 
@@ -59,7 +66,17 @@ export interface KickoffSignal { text: string; key: string }
 export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
-const ALL_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention', 'orders', 'enterprise', 'plugins', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube'];
+const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
+  super_admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  customer_service: new Set(['strategy', 'conversion', 'retention', 'orders', 'scheduled']),
+};
+const ALL_PAGES: Page[] = [
+  'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
+  'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
+  'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
+];
 const BUSINESS_DIAGNOSIS_SEEN_KEY = 'ow_business_diagnosis_seen_scope_v3';
 const isAdminSession = (session: AuthSession | null) => Boolean(session && !session.supportAccess && (
   session.user.email === 'lingshu-admin@local.test' ||
@@ -248,6 +265,11 @@ export default function App() {
   }, [page]);
   useEffect(() => {
     if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('strategy');
+  }, [page, session]);
+  useEffect(() => {
+    if (!session) return;
+    const role = session.user.role || 'super_admin';
+    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('strategy');
   }, [page, session]);
 
   // 每次对话推进都记录/更新会话历史
@@ -450,6 +472,7 @@ export default function App() {
           )}
           {page === 'traffic' && (
             <TrafficPage
+              key="legacy-traffic"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={conversation?.agent === 'traffic'}
@@ -462,6 +485,48 @@ export default function App() {
               onSessionRefresh={() => void refreshSession()}
             />
           )}
+          {page === 'socialInspiration' && (
+            <TrafficPage
+              key="social-inspiration"
+              onEnterConversation={enterConversation}
+              onLeaveConversation={leaveConversation}
+              isInConversation={false}
+              onNavigate={handleNavigate}
+              onScriptPanelOpen={() => setScriptPanelOpen(true)}
+              onScriptPanelClose={() => setScriptPanelOpen(false)}
+              initialView="materials"
+              showModeTabs={false}
+              pageTitle="灵感大屏"
+            />
+          )}
+          {page === 'smartAssets' && (
+            <TrafficPage
+              key="smart-assets"
+              onEnterConversation={enterConversation}
+              onLeaveConversation={leaveConversation}
+              isInConversation={false}
+              onNavigate={handleNavigate}
+              onScriptPanelOpen={() => setScriptPanelOpen(true)}
+              onScriptPanelClose={() => setScriptPanelOpen(false)}
+              initialView="create"
+              showModeTabs
+              visibleModes={['create', 'publish']}
+              pageTitle="智能素材"
+            />
+          )}
+          {page === 'accountManagement' && (
+            <TrafficPage
+              key="account-management"
+              onEnterConversation={enterConversation}
+              onLeaveConversation={leaveConversation}
+              isInConversation={false}
+              onNavigate={handleNavigate}
+              initialView="accounts"
+              showModeTabs={false}
+              pageTitle="账号管理"
+            />
+          )}
+          {page === 'scriptLibrary' && <ScriptLibraryPage />}
           {page === 'conversion' && (
             <ConversionPage
               onEnterConversation={enterConversation}
@@ -478,7 +543,9 @@ export default function App() {
           )}
           {page === 'orders' && <OrderManagementPage />}
           {page === 'enterprise' && <EnterprisePage />}
+          {page === 'agentMemory' && <AgentMemoryPage />}
           {page === 'plugins' && <IntegrationsPage />}
+          {page === 'organizationPermissions' && <OrganizationPermissionsPage />}
           {page === 'scheduled' && <ScheduledPage onAction={startAgentTask} />}
           {page === 'admin' && <AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} />}
           {page === 'adminDelivery' && <AdminDeliveryPage />}

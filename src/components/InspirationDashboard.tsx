@@ -2926,8 +2926,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   }, []);
 
   const openMaterialSmartGeneration = () => {
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'traffic', view: 'create' } }));
-    onNavigate?.('traffic');
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
+    onNavigate?.('smartAssets');
   };
 
   useEffect(() => {

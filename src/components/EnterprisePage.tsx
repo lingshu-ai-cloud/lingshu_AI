@@ -1574,7 +1574,7 @@ export default function EnterprisePage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-surface-2" data-lingshu-guide="enterprise-center">
+    <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-white px-5">
         <div className="flex items-center gap-2.5">
           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">

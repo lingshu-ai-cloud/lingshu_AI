@@ -461,7 +461,7 @@ async function ensureFields(token: string, name: string, want: Field[]): Promise
   console.log(`  ✓ ${name}: added ${missing.map((f) => f.name).join(', ')}`);
 }
 
-/** Ensure the users auth collection has a tenantId field. */
+/** Ensure the users auth collection has tenant and organization-role fields. */
 async function ensureUsersTenantId(token: string): Promise<void> {
   const res = await fetch(`${PB_URL}/api/collections/users`, {
     headers: { Authorization: token },
@@ -472,21 +472,25 @@ async function ensureUsersTenantId(token: string): Promise<void> {
   }
   const col = (await res.json()) as { fields?: { name: string }[]; schema?: { name: string }[] };
   const fields = col.fields ?? col.schema ?? [];
-  if (fields.some((f) => f.name === 'tenantId')) {
-    console.log('  = users.tenantId already present');
+  const additions = [
+    !fields.some((f) => f.name === 'tenantId') ? { name: 'tenantId', type: 'text', required: false } : null,
+    !fields.some((f) => f.name === 'role') ? { name: 'role', type: 'select', required: false, maxSelect: 1, values: ['super_admin', 'admin', 'social_operator', 'customer_service'] } : null,
+  ].filter(Boolean);
+  if (!additions.length) {
+    console.log('  = users tenant/role fields already present');
     return;
   }
   const key = col.fields ? 'fields' : 'schema';
   const patch = {
-    [key]: [...fields, { name: 'tenantId', type: 'text', required: false }],
+    [key]: [...fields, ...additions],
   };
   const up = await fetch(`${PB_URL}/api/collections/users`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: token },
     body: JSON.stringify(patch),
   });
-  if (!up.ok) throw new Error(`add users.tenantId failed: ${up.status} ${await up.text()}`);
-  console.log('  ✓ added users.tenantId');
+  if (!up.ok) throw new Error(`add users tenant/role fields failed: ${up.status} ${await up.text()}`);
+  console.log('  ✓ added users tenant/role fields');
 }
 
 async function ensureUsersCollection(token: string, existing: Map<string, unknown>): Promise<void> {
@@ -503,6 +507,7 @@ async function ensureUsersCollection(token: string, existing: Map<string, unknow
       fields: [
         { name: 'name', type: 'text', required: false },
         { name: 'tenantId', type: 'text', required: true },
+        { name: 'role', type: 'select', required: false, maxSelect: 1, values: ['super_admin', 'admin', 'social_operator', 'customer_service'] },
       ],
       passwordAuth: { enabled: true, identityFields: ['email'] },
     }),
