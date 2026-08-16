@@ -205,11 +205,12 @@ const PAGE_SIZE = 5;
 const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
 
 type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'socialStrategy' | 'materials' | 'salesStyle' | 'advanced';
-type EnterpriseArea = 'facts' | 'service';
+type EnterpriseArea = 'facts' | 'social' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
     const value = localStorage.getItem('lingshu:enterprise:initial-view') as KnowledgeView | null;
+    if (value === 'materials') return 'products';
     if (value && ['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'materials', 'salesStyle', 'advanced'].includes(value)) return value;
   } catch { /* ignore */ }
   return 'company';
@@ -217,9 +218,7 @@ function advisorInitialEnterpriseView(): KnowledgeView {
 
 const FACT_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
   { id: 'company', label: '公司与市场', hint: '你是谁' },
-  { id: 'socialStrategy', label: '社媒策略', hint: '脚本默认值' },
   { id: 'products', label: '产品资料', hint: '你卖什么' },
-  { id: 'materials', label: '素材库', hint: '内容创作' },
 ];
 
 const SERVICE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
@@ -228,6 +227,12 @@ const SERVICE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> =
   { id: 'salesStyle', label: '销售风格', hint: '持续学习' },
   { id: 'advanced', label: '接待与转人工', hint: '权限和提醒' },
 ];
+
+function enterpriseAreaForView(view: KnowledgeView): EnterpriseArea {
+  if (view === 'socialStrategy') return 'social';
+  if (['bizRules', 'faq', 'salesStyle', 'advanced'].includes(view)) return 'service';
+  return 'facts';
+}
 
 const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
   company: Globe2,
@@ -550,10 +555,9 @@ export default function EnterprisePage() {
   const [notificationMessage, setNotificationMessage] = useState('');
   const [notificationMessageError, setNotificationMessageError] = useState(false);
   const [knowledgeView, setKnowledgeView] = useState<KnowledgeView>(advisorInitialEnterpriseView);
-  const [enterpriseArea, setEnterpriseArea] = useState<EnterpriseArea>(() => ['bizRules', 'faq', 'salesStyle', 'advanced'].includes(advisorInitialEnterpriseView()) ? 'service' : 'facts');
+  const [enterpriseArea, setEnterpriseArea] = useState<EnterpriseArea>(() => enterpriseAreaForView(advisorInitialEnterpriseView()));
   const [languageSettingsHighlight, setLanguageSettingsHighlight] = useState(false);
   const [productPage, setProductPage] = useState(1);
-  const [materialPage, setMaterialPage] = useState(1);
   const [faqPage, setFaqPage] = useState(1);
   const [notificationsHighlight, setNotificationsHighlight] = useState(false);
   const [bizRulesHighlight, setBizRulesHighlight] = useState(false);
@@ -718,7 +722,6 @@ export default function EnterprisePage() {
 
   const products = normalizeProductItems(profile.products);
   const visibleProducts = products.slice((productPage - 1) * PAGE_SIZE, productPage * PAGE_SIZE);
-  const visibleMaterialProducts = products.slice((materialPage - 1) * PAGE_SIZE, materialPage * PAGE_SIZE);
   const faqItems = profile.faq ?? [];
   const visibleFaqs = faqItems.slice((faqPage - 1) * PAGE_SIZE, faqPage * PAGE_SIZE);
   const assetStats = productAssetStats(products);
@@ -746,7 +749,6 @@ export default function EnterprisePage() {
   const effectiveAutonomy: AutonomyLevel = configuredAutonomy === 'auto' && !canAutoReply ? 'draft' : configuredAutonomy;
 
   useEffect(() => { setProductPage(page => Math.min(page, Math.max(1, Math.ceil(products.length / PAGE_SIZE)))); }, [products.length]);
-  useEffect(() => { setMaterialPage(page => Math.min(page, Math.max(1, Math.ceil(products.length / PAGE_SIZE)))); }, [products.length]);
   useEffect(() => { setFaqPage(page => Math.min(page, Math.max(1, Math.ceil(faqItems.length / PAGE_SIZE)))); }, [faqItems.length]);
 
   const applyKnowledgeProfile = (updated: AppliedProfile) => {
@@ -1470,7 +1472,7 @@ export default function EnterprisePage() {
       <Field label="公司简介">
         <textarea className={textareaCls} rows={4} value={profile.company.description} onChange={e => set('company')('description', e.target.value)} placeholder="介绍公司背景、主营品类、供应链优势、交付能力和海外服务经验。" />
       </Field>
-      <button type="button" onClick={() => setKnowledgeView('socialStrategy')} className="mt-4 flex w-full items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-left hover:bg-emerald-50">
+      <button type="button" onClick={() => { setEnterpriseArea('social'); setKnowledgeView('socialStrategy'); }} className="mt-4 flex w-full items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3 text-left hover:bg-emerald-50">
         <span><span className="block text-xs font-black text-emerald-900">社媒脚本策略</span><span className="mt-1 block text-[11px] text-emerald-700">已启用 {profile.socialStrategy?.enabledRoutes.length ?? 0} 条合作路线 · 管理默认买家与主 CTA</span></span>
         <ChevronRight size={16} className="text-emerald-700" />
       </button>
@@ -1599,9 +1601,10 @@ export default function EnterprisePage() {
       </div>
 
       <div className="shrink-0 border-b border-border bg-surface px-6 py-3">
-        <div className="grid w-full grid-cols-2 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
+        <div className="grid w-full grid-cols-3 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
           {([
             { id: 'facts' as EnterpriseArea, label: '企业真实资料', icon: Building2, initialView: 'company' as KnowledgeView },
+            { id: 'social' as EnterpriseArea, label: '社媒策略', icon: Megaphone, initialView: 'socialStrategy' as KnowledgeView },
             { id: 'service' as EnterpriseArea, label: '智能客服规范', icon: MessageSquare, initialView: 'bizRules' as KnowledgeView },
           ]).map(item => {
             const active = enterpriseArea === item.id;
@@ -1627,32 +1630,34 @@ export default function EnterprisePage() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl space-y-5 px-6 py-5">
-          <div className="overflow-x-auto pb-0.5">
-            <div className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm ${enterpriseArea === 'facts' ? 'min-w-[640px] grid-cols-4' : 'min-w-[680px] grid-cols-4'}`}>
-              {(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
-                const active = knowledgeView === item.id;
-                const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setKnowledgeView(item.id)}
-                    title={`${item.label} · ${item.hint}`}
-                    className={`flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-black transition-all ${active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60 hover:text-text-secondary'}`}
-                  >
-                    <Icon size={16} className={active ? (enterpriseArea === 'facts' ? 'text-emerald-600' : 'text-sky-600') : 'text-text-muted'} />
-                    <span className="min-w-0 truncate">{item.label}</span>
-                  </button>
-                );
-              })}
+          {enterpriseArea !== 'social' && (
+            <div className="overflow-x-auto pb-0.5">
+              <div className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm ${enterpriseArea === 'facts' ? 'min-w-[360px] grid-cols-2' : 'min-w-[680px] grid-cols-4'}`}>
+                {(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
+                  const active = knowledgeView === item.id;
+                  const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setKnowledgeView(item.id)}
+                      title={`${item.label} · ${item.hint}`}
+                      className={`flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-black transition-all ${active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60 hover:text-text-secondary'}`}
+                    >
+                      <Icon size={16} className={active ? (enterpriseArea === 'facts' ? 'text-emerald-600' : 'text-sky-600') : 'text-text-muted'} />
+                      <span className="min-w-0 truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : 'border-sky-100 bg-sky-50/60'}`}>
+          <div className={`rounded-lg border p-4 ${enterpriseArea === 'facts' ? 'border-emerald-100 bg-emerald-50/60' : enterpriseArea === 'social' ? 'border-violet-100 bg-violet-50/60' : 'border-sky-100 bg-sky-50/60'}`}>
             <div className="flex items-start gap-3">
-              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : <ShieldCheck size={15} className="mt-0.5 shrink-0 text-sky-700" />}
+              {enterpriseArea === 'facts' ? <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" /> : enterpriseArea === 'social' ? <Megaphone size={15} className="mt-0.5 shrink-0 text-violet-700" /> : <ShieldCheck size={15} className="mt-0.5 shrink-0 text-sky-700" />}
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-black text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : '设置客服边界'}</p>
+                <p className="text-xs font-black text-text-primary">{enterpriseArea === 'facts' ? '已保存资料可供 AI 使用' : enterpriseArea === 'social' ? '设置社媒创作默认策略' : '设置客服边界'}</p>
               </div>
               {enterpriseArea === 'service' && (
                 <button type="button" onClick={openKnowledgeIntake} className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-2 text-[11px] font-black text-sky-700 hover:bg-sky-50">
@@ -1671,7 +1676,7 @@ export default function EnterprisePage() {
             title="产品资料"
             purpose="AI 推荐产品、整理询价条件和生成内容的原料"
             completed={completions.products}
-            stat={`已录入 ${products.length} 个产品 · ${assetStats.withImage} 个有主图`}
+            stat={`${products.length} 个产品 · ${assetStats.images} 张图 · ${assetStats.videos} 个视频 · ${assetStats.documents} 份文书`}
           >
             {missingImageRatio > 0.5 && (
               <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">缺少图片的产品无法生成视频</p>
@@ -1724,36 +1729,14 @@ export default function EnterprisePage() {
                   <Field label="产品卖点">
                     <textarea className={textareaCls} rows={2} value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} placeholder="核心卖点、适用场景、可定制项、交付优势" />
                   </Field>
-                </div>
-                );
-              })}
-              {!products.length && <p className="rounded-lg bg-surface-2 px-3 py-3 text-xs text-text-muted">还没有产品，先添加一个产品或导入产品表。</p>}
-            </div>
-            <PaginationControls page={productPage} total={products.length} pageSize={PAGE_SIZE} onChange={setProductPage} />
-          </KnowledgeCard>
-          )}
-
-          {knowledgeView === 'materials' && (
-          <KnowledgeCard
-            icon={Image}
-            title="素材库"
-            purpose="AI 创作室的剪辑素材来源"
-            completed={completions.materials}
-            stat={`${assetStats.images} 张图 · ${assetStats.videos} 个视频 · ${assetStats.documents} 份文书`}
-          >
-            <div className="space-y-3">
-              {visibleMaterialProducts.map((product, pageIndex) => {
-                const index = (materialPage - 1) * PAGE_SIZE + pageIndex;
-                const groups = [
-                  { key: 'images' as const, label: '产品图', limit: MAX_PRODUCT_ASSETS.images, accept: 'image/*', icon: Image, assets: product.images ?? [] },
-                  { key: 'videos' as const, label: '视频', limit: MAX_PRODUCT_ASSETS.videos, accept: 'video/*', icon: Video, assets: product.videos ?? [] },
-                  { key: 'documents' as const, label: '资质文书', limit: MAX_PRODUCT_ASSETS.documents, accept: '.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg', icon: FileText, assets: product.documents ?? [] },
-                ];
-                return (
-                  <div key={index} className="rounded-lg border border-border bg-surface-2/40 p-3">
-                    <p className="mb-3 text-xs font-black text-text-primary">{product.name || `产品${index + 1}`}</p>
+                  <div className="mt-3 border-t border-border pt-3">
+                    <p className="mb-2 text-[11px] font-black text-text-secondary">产品素材 <span className="font-normal text-text-muted">· AI 创作时优先调用</span></p>
                     <div className="grid grid-cols-3 gap-3">
-                      {groups.map(({ key, label, limit, accept, icon: Icon, assets }) => (
+                      {([
+                        { key: 'images' as const, label: '产品图', limit: MAX_PRODUCT_ASSETS.images, accept: 'image/*', icon: Image, assets: product.images ?? [] },
+                        { key: 'videos' as const, label: '实拍视频', limit: MAX_PRODUCT_ASSETS.videos, accept: 'video/*', icon: Video, assets: product.videos ?? [] },
+                        { key: 'documents' as const, label: '资质文书', limit: MAX_PRODUCT_ASSETS.documents, accept: '.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg', icon: FileText, assets: product.documents ?? [] },
+                      ]).map(({ key, label, limit, accept, icon: Icon, assets }) => (
                         <div key={key} className="min-w-0 rounded-lg border border-border bg-white p-3">
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-text-secondary"><Icon size={12} />{label}</span>
@@ -1776,10 +1759,12 @@ export default function EnterprisePage() {
                       ))}
                     </div>
                   </div>
+                </div>
                 );
               })}
+              {!products.length && <p className="rounded-lg bg-surface-2 px-3 py-3 text-xs text-text-muted">还没有产品，先添加一个产品或导入产品表。</p>}
             </div>
-            <PaginationControls page={materialPage} total={products.length} pageSize={PAGE_SIZE} onChange={setMaterialPage} />
+            <PaginationControls page={productPage} total={products.length} pageSize={PAGE_SIZE} onChange={setProductPage} />
           </KnowledgeCard>
           )}
 
