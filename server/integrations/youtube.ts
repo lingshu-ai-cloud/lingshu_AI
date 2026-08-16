@@ -89,6 +89,7 @@ const accessTokenCache = new Map<string, { value: string; expiresAt: number }>()
 const GOOGLE_AUTH_URL = 'https://oauth2.googleapis.com/token';
 const YOUTUBE_API_URL = 'https://www.googleapis.com/youtube/v3';
 const YOUTUBE_UPLOAD_URL = 'https://www.googleapis.com/upload/youtube/v3';
+const YOUTUBE_ANALYTICS_URL = 'https://youtubeanalytics.googleapis.com/v2/reports';
 
 function tokenCacheKey(config: YouTubeConfig) {
   return `${config.clientId}\0${config.refreshToken ?? config.accessToken ?? ''}`;
@@ -620,6 +621,66 @@ export async function getChannelAnalytics(config: YouTubeConfig): Promise<{
     totalViews: parseInt(item?.statistics?.viewCount || '0'),
     totalVideos: parseInt(item?.statistics?.videoCount || '0'),
   };
+}
+
+export interface YouTubeAnalyticsRow {
+  date: string;
+  views: number;
+  estimatedMinutesWatched: number;
+  averageViewDuration: number;
+  averageViewPercentage: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  subscribersGained: number;
+  subscribersLost: number;
+}
+
+/** Daily, owner-only channel performance from the YouTube Analytics API. */
+export async function getYouTubeAnalyticsReport(
+  config: YouTubeConfig,
+  input: { startDate: string; endDate: string },
+): Promise<{ range: { startDate: string; endDate: string }; rows: YouTubeAnalyticsRow[] }> {
+  const token = await getAccessToken(config);
+  const metrics = [
+    'views',
+    'estimatedMinutesWatched',
+    'averageViewDuration',
+    'averageViewPercentage',
+    'likes',
+    'comments',
+    'shares',
+    'subscribersGained',
+    'subscribersLost',
+  ];
+  const res = await axios.get(YOUTUBE_ANALYTICS_URL, {
+    params: {
+      ids: 'channel==MINE',
+      startDate: input.startDate,
+      endDate: input.endDate,
+      dimensions: 'day',
+      metrics: metrics.join(','),
+      sort: 'day',
+    },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const headers = (res.data?.columnHeaders ?? []).map((header: any) => String(header.name));
+  const rows = (res.data?.rows ?? []).map((values: unknown[]) => {
+    const item = Object.fromEntries(headers.map((header: string, index: number) => [header, values[index]]));
+    return {
+      date: String(item.day || ''),
+      views: Number(item.views || 0),
+      estimatedMinutesWatched: Number(item.estimatedMinutesWatched || 0),
+      averageViewDuration: Number(item.averageViewDuration || 0),
+      averageViewPercentage: Number(item.averageViewPercentage || 0),
+      likes: Number(item.likes || 0),
+      comments: Number(item.comments || 0),
+      shares: Number(item.shares || 0),
+      subscribersGained: Number(item.subscribersGained || 0),
+      subscribersLost: Number(item.subscribersLost || 0),
+    };
+  });
+  return { range: input, rows };
 }
 
 /**

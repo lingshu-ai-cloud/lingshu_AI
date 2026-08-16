@@ -11,6 +11,7 @@ import {
   getMyVideoComments,
   getSuperChats,
   getChannelAnalytics,
+  getYouTubeAnalyticsReport,
   verifyYouTubeCredentials,
   getChannelCommentsByApiKey,
   getVideoCommentsByApiKey,
@@ -24,6 +25,7 @@ import {
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
 import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -31,6 +33,7 @@ const YOUTUBE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/youtube.force-ssl',
+  'https://www.googleapis.com/auth/yt-analytics.readonly',
 ];
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -829,11 +832,49 @@ youtubeRouter.get('/accounts/:id/analytics', async (req, res) => {
       accessToken: record.accessToken,
     };
 
-    const analytics = await getChannelAnalytics(config);
-    res.json(analytics);
+    const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : new Date().toISOString().slice(0, 10);
+    const startDefault = new Date(`${endDate}T00:00:00.000Z`);
+    startDefault.setUTCDate(startDefault.getUTCDate() - 29);
+    const startDate = typeof req.query.startDate === 'string' ? req.query.startDate : startDefault.toISOString().slice(0, 10);
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (!datePattern.test(startDate) || !datePattern.test(endDate) || startDate > endDate) {
+      res.status(400).json({ error: 'startDate/endDate 必须是 YYYY-MM-DD 且开始日期不能晚于结束日期' });
+      return;
+    }
+    const days = (Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86_400_000;
+    if (!Number.isFinite(days) || days > 366) {
+      res.status(400).json({ error: '单次查询范围不能超过 366 天' });
+      return;
+    }
+    const analytics = await getYouTubeAnalyticsReport(config, { startDate, endDate });
+    await Promise.all(analytics.rows.map(row => saveSocialMetricSnapshot({
+      tenantId,
+      platform: 'youtube',
+      accountId: req.params.id,
+      capturedAt: `${row.date}T12:00:00.000Z`,
+      valueKind: 'daily',
+      metrics: {
+        views: row.views,
+        watchTimeMinutes: row.estimatedMinutesWatched,
+        averageViewDurationSeconds: row.averageViewDuration,
+        averageViewPercentage: row.averageViewPercentage,
+        likes: row.likes,
+        comments: row.comments,
+        shares: row.shares,
+        subscribers: row.subscribersGained,
+      },
+      rawMetrics: { source: 'youtube_analytics', subscribersLost: row.subscribersLost },
+    })));
+    res.json({ ...analytics, fetchedAt: new Date().toISOString() });
   } catch (error) {
     console.error('Error fetching analytics:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics' });
+    const status = (error as any)?.response?.status === 403 ? 403 : 500;
+    res.status(status).json({
+      error: status === 403
+        ? '当前授权没有 YouTube Analytics 读取权限，请重新连接 YouTube 完成授权'
+        : 'Failed to fetch analytics',
+      ...(status === 403 ? { code: 'YOUTUBE_ANALYTICS_PERMISSION_REQUIRED' } : {}),
+    });
   }
 });
 

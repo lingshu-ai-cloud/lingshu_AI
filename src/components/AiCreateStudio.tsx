@@ -24,6 +24,7 @@ const CANVA_VIDEO_COVER_URL = 'https://www.canva.cn/create/video-covers/';
 const CANVA_COVER_RETURN_KEY = 'ow_canva_cover_return';
 const CANVA_COVER_RETURN_TTL = 6 * 60 * 60 * 1000;
 const PUBLISH_RETURN_PREVIEW_KEY = 'ow_publish_return_to_preview';
+const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -6504,6 +6505,37 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setShowProjects(false);
     setPublished(false);
   };
+
+  useEffect(() => {
+    let raw = '';
+    try {
+      raw = localStorage.getItem(STUDIO_OPEN_PROJECT_KEY) || '';
+      if (raw) localStorage.removeItem(STUDIO_OPEN_PROJECT_KEY);
+    } catch { return; }
+    if (!raw) return;
+    try {
+      const state = JSON.parse(raw) as { at?: number; projectId?: string };
+      if (!state.at || Date.now() - state.at > 10 * 60 * 1000 || !state.projectId) return;
+      void studioApi.listProjects().then(list => {
+        setProjects(list);
+        const project = list.find(item => item.id === state.projectId && item.status === 'draft');
+        if (!project) {
+          setModeNotice('未找到该历史创作草稿。');
+          return;
+        }
+        applySpec(project.spec);
+        setProjectId(project.id);
+        setProjectTitle(project.title);
+        autoGen.current = true;
+        setStepIdx(0);
+        setShowProjects(false);
+        setPublished(false);
+        setModeNotice(`已恢复历史创作草稿“${project.title}”。`);
+      }).catch(() => setModeNotice('历史创作草稿读取失败，请稍后重试。'));
+    } catch {
+      // Ignore malformed navigation payloads from older local builds.
+    }
+  }, []);
 
   const reuseProject = async (p: StudioProject) => {
     if (voiceDraftLoading || ttsLoading || savingProj) return;

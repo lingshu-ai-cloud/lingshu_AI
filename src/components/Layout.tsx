@@ -24,8 +24,8 @@ const SOCIAL_NAV: NavSection = {
   label: '社媒运营',
   items: [
     { id: 'socialInspiration', label: '灵感大屏', icon: <Clapperboard size={16} /> },
-    { id: 'scriptLibrary', label: '脚本库', icon: <FileText size={16} /> },
     { id: 'smartAssets', label: '智能素材', icon: <WandSparkles size={16} /> },
+    { id: 'scriptLibrary', label: '脚本库', icon: <FileText size={16} /> },
     { id: 'accountManagement', label: '账号管理', icon: <RadioTower size={16} /> },
   ],
 };

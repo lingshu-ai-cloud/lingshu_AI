@@ -6,11 +6,13 @@ import {
   exchangeTikTokCode,
   getFacebookComments,
   getFacebookPage,
+  getFacebookPageInsights,
   getFacebookVideos,
   getInstagramAccount,
   getInstagramAccountFromPage,
   getInstagramComments,
   getInstagramMedia,
+  getInstagramAccountInsights,
   getMetaBusinessPages,
   getMetaPages,
   getTikTokUser,
@@ -25,6 +27,7 @@ import {
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
 import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 
 const COL = 'social_accounts';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -43,6 +46,8 @@ const META_SCOPES = [
   'instagram_basic',
   'instagram_content_publish',
   'instagram_manage_comments',
+  'instagram_manage_insights',
+  'read_insights',
 ];
 
 export const socialRouter = Router();
@@ -724,7 +729,89 @@ async function getAccount(req: Request, res: any) {
   return record;
 }
 
+function insightDateRange(req: Request) {
+  const until = typeof req.query.until === 'string' ? req.query.until : new Date().toISOString().slice(0, 10);
+  const sinceDefault = new Date(`${until}T00:00:00.000Z`);
+  sinceDefault.setUTCDate(sinceDefault.getUTCDate() - 29);
+  const since = typeof req.query.since === 'string' ? req.query.since : sinceDefault.toISOString().slice(0, 10);
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!datePattern.test(since) || !datePattern.test(until) || since > until) return null;
+  const days = (Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`)) / 86_400_000;
+  if (!Number.isFinite(days) || days > 92) return null;
+  return { since, until };
+}
+
+socialRouter.get('/accounts/:id/insights', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const account = await getAccount(req, res);
+  if (!account) {
+    res.status(404).json({ error: 'Account not found' });
+    return;
+  }
+  if (account.platform === 'tiktok') {
+    res.status(400).json({
+      error: 'TikTok 标准 OAuth 不提供账号级留存或流量来源；请使用视频列表中的播放、点赞、评论和分享指标生成趋势。',
+      code: 'TIKTOK_ACCOUNT_INSIGHTS_UNAVAILABLE',
+    });
+    return;
+  }
+  const range = insightDateRange(req);
+  if (!range) {
+    res.status(400).json({ error: 'since/until 必须是 YYYY-MM-DD，范围不能超过 92 天' });
+    return;
+  }
+  try {
+    const points = account.platform === 'facebook'
+      ? await getFacebookPageInsights(account.providerAccountId, account.accessToken, graphVersion(), range)
+      : await getInstagramAccountInsights(account.providerAccountId, account.accessToken, graphVersion(), range);
+    const metricKeys: Record<string, 'views' | 'reach' | 'likes' | 'comments' | 'shares' | 'saves' | 'followers' | 'profileViews' | 'watchTimeMinutes'> = {
+      page_impressions_unique: 'reach',
+      page_video_views: 'views',
+      page_video_view_time: 'watchTimeMinutes',
+      reach: 'reach',
+      follower_count: 'followers',
+      profile_views: 'profileViews',
+      likes: 'likes',
+      comments: 'comments',
+      shares: 'shares',
+      saves: 'saves',
+    };
+    const byDate = new Map<string, Record<string, number>>();
+    for (const point of points) {
+      const key = metricKeys[point.metric];
+      if (!key || typeof point.value !== 'number' || !Number.isFinite(point.value)) continue;
+      // Meta reports Facebook video view time in milliseconds.
+      const value = point.metric === 'page_video_view_time' ? point.value / 60_000 : point.value;
+      const date = point.endTime ? new Date(point.endTime).toISOString().slice(0, 10) : range.until;
+      const metrics = byDate.get(date) || {};
+      metrics[key] = value;
+      byDate.set(date, metrics);
+    }
+    await Promise.all([...byDate].map(([date, metrics]) => saveSocialMetricSnapshot({
+      tenantId,
+      platform: account.platform,
+      accountId: account.id,
+      capturedAt: `${date}T12:00:00.000Z`,
+      valueKind: 'daily',
+      metrics,
+      rawMetrics: { source: 'meta_insights' },
+    })));
+    res.json({ platform: account.platform, accountId: account.id, range, points, fetchedAt: new Date().toISOString() });
+  } catch (error: any) {
+    console.error(`${account.platform} insights error:`, error?.response?.data ?? error?.message ?? error);
+    const apiCode = error?.response?.data?.error?.code;
+    const status = error?.response?.status === 403 || apiCode === 10 || apiCode === 200 ? 403 : (error?.response?.status || 500);
+    res.status(status).json({
+      error: status === 403
+        ? '当前授权没有 Insights 读取权限，请完成 Meta 应用审核并重新授权账号'
+        : readableSocialError(error),
+      ...(status === 403 ? { code: 'META_INSIGHTS_PERMISSION_REQUIRED' } : {}),
+    });
+  }
+});
+
 socialRouter.get('/accounts/:id/videos', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const account = await getAccount(req, res);
   if (!account) {
     res.status(404).json({ error: 'Account not found' });
@@ -736,6 +823,25 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
     if (account.platform === 'tiktok') videos = await getTikTokVideos(account.accessToken, maxResults);
     if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
     if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
+    await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
+      const metrics: Record<string, number> = {
+        likes: Number(video.likeCount || 0),
+        comments: Number(video.commentCount || 0),
+      };
+      // Instagram media listing does not return plays, and Facebook listing does
+      // not return shares. Omit unavailable metrics instead of writing fake zeroes.
+      if (account.platform !== 'instagram') metrics.views = Number(video.viewCount || 0);
+      if (account.platform === 'tiktok') metrics.shares = Number(video.shareCount || 0);
+      return saveSocialMetricSnapshot({
+        tenantId,
+        platform: account.platform,
+        accountId: account.id,
+        contentId: String(video.id || ''),
+        valueKind: 'cumulative',
+        metrics,
+        rawMetrics: { source: 'platform_video_list' },
+      });
+    }));
     res.json({ videos });
   } catch (error: any) {
     console.error(`${account.platform} videos error:`, error?.response?.data ?? error?.message ?? error);

@@ -174,9 +174,72 @@ export async function getTikTokVideos(accessToken: string, maxResults = 20) {
     viewCount: Number(v.view_count || 0),
     likeCount: Number(v.like_count || 0),
     commentCount: Number(v.comment_count || 0),
+    shareCount: Number(v.share_count || 0),
     duration: String(v.duration || ''),
     permalinkUrl: String(v.share_url || ''),
   }));
+}
+
+export interface PlatformInsightPoint {
+  metric: string;
+  period: string;
+  value: number | Record<string, unknown>;
+  endTime?: string;
+}
+
+function normalizeMetaInsights(data: any): PlatformInsightPoint[] {
+  return (data?.data ?? []).flatMap((metric: any) =>
+    (metric.values ?? [{ value: metric.total_value?.value ?? metric.value }]).map((point: any) => ({
+      metric: String(metric.name || metric.id || ''),
+      period: String(metric.period || 'lifetime'),
+      value: typeof point?.value === 'number' ? point.value : (point?.value ?? {}),
+      ...(point?.end_time ? { endTime: String(point.end_time) } : {}),
+    })),
+  ).filter((point: PlatformInsightPoint) => point.metric);
+}
+
+/** Page-level metrics for a Facebook Page owned by the authorized user. */
+export async function getFacebookPageInsights(
+  pageId: string,
+  pageAccessToken: string,
+  graphVersion: string,
+  input: { since: string; until: string },
+) {
+  const res = await axios.get(`${META_GRAPH}/${graphVersion}/${pageId}/insights`, {
+    params: {
+      access_token: pageAccessToken,
+      metric: [
+        'page_impressions_unique',
+        'page_post_engagements',
+        'page_video_views',
+        'page_video_view_time',
+      ].join(','),
+      period: 'day',
+      since: input.since,
+      until: input.until,
+    },
+  });
+  return normalizeMetaInsights(res.data);
+}
+
+/** Account-level metrics for an Instagram professional account. */
+export async function getInstagramAccountInsights(
+  igUserId: string,
+  pageAccessToken: string,
+  graphVersion: string,
+  input: { since: string; until: string },
+) {
+  const res = await axios.get(`${META_GRAPH}/${graphVersion}/${igUserId}/insights`, {
+    params: {
+      access_token: pageAccessToken,
+      metric: 'reach,follower_count,profile_views,accounts_engaged,total_interactions,likes,comments,shares,saves',
+      period: 'day',
+      metric_type: 'total_value',
+      since: input.since,
+      until: input.until,
+    },
+  });
+  return normalizeMetaInsights(res.data);
 }
 
 export async function uploadTikTokVideo(accessToken: string, input: SocialUploadInput): Promise<SocialUploadResult> {
