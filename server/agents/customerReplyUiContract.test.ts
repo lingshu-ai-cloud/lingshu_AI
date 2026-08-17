@@ -4,6 +4,22 @@ import { isPredominantlyChineseText } from '../../src/lib/messageLanguage.js';
 
 const source = fs.readFileSync('src/components/ConversionPage.tsx', 'utf8');
 
+assert.doesNotMatch(
+  source,
+  /disabled=\{!customerServiceStatus\s*\|\|\s*customerServiceSaving\}/,
+  'a transient status-loading failure must not permanently disable the customer-service switch',
+);
+assert.match(
+  source,
+  /attempt\s*<\s*4/,
+  'customer-service status loading must retry transient startup failures',
+);
+assert.doesNotMatch(
+  source,
+  /if \(selected\.isMock\)\s*\{\s*setDraftSuggestion\(null\);\s*setDraftMeta\(null\);/,
+  'a mock customer timeline update must not erase the draft that was just generated',
+);
+
 const translatedDraftMappings = source.match(/translatedDraft:\s*typeof data\.translatedDraft/g) ?? [];
 assert.ok(
   translatedDraftMappings.length >= 2,

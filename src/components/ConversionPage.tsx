@@ -1669,6 +1669,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>('draft');
   const [customerServiceStatus, setCustomerServiceStatus] = useState<CustomerServiceStatus | null>(null);
+  const [customerServiceStatusLoadFailed, setCustomerServiceStatusLoadFailed] = useState(false);
   const [customerServiceSaving, setCustomerServiceSaving] = useState(false);
   const [dailyBriefingOpen, setDailyBriefingOpen] = useState(false);
   const [draftSuggestion, setDraftSuggestion] = useState<string | null>(null);
@@ -1742,10 +1743,32 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     let alive = true;
-    void getCustomerServiceStatus()
-      .then(status => { if (alive) setCustomerServiceStatus(status); })
-      .catch(() => { if (alive) setCustomerServiceStatus(null); });
-    return () => { alive = false; };
+    let retryTimer: number | null = null;
+    let attempt = 0;
+
+    const loadStatus = async () => {
+      try {
+        const status = await getCustomerServiceStatus();
+        if (!alive) return;
+        setCustomerServiceStatus(status);
+        setCustomerServiceStatusLoadFailed(false);
+      } catch {
+        if (!alive) return;
+        attempt += 1;
+        if (attempt < 4) {
+          retryTimer = window.setTimeout(() => void loadStatus(), 700 * (2 ** (attempt - 1)));
+          return;
+        }
+        setCustomerServiceStatus(null);
+        setCustomerServiceStatusLoadFailed(true);
+      }
+    };
+
+    void loadStatus();
+    return () => {
+      alive = false;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -1838,11 +1861,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       setDraftMeta(null);
       return;
     }
-    if (selected.isMock) {
-      setDraftSuggestion(null);
-      setDraftMeta(null);
-      return;
-    }
+    // Mock messages request their draft inside pushMockBuyerMessage. Do not clear
+    // that freshly generated draft when the customer timeline state updates.
+    if (selected.isMock) return;
     const lastBuyer = [...selected.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer');
     if (!lastBuyer) return;
     if (isWaitingForHumanQuote(selected)) {
@@ -1893,6 +1914,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     try {
       const status = await updateCustomerServiceStatus({ enabled });
       setCustomerServiceStatus(status);
+      setCustomerServiceStatusLoadFailed(false);
       setAutonomyLevel('draft');
       setDraftSuggestion(null);
       setDraftMeta(null);
@@ -2317,14 +2339,18 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const customerServiceLabel = !customerServiceStatus
-    ? '正在读取'
+    ? (customerServiceStatusLoadFailed ? '读取失败' : '正在读取')
     : !customerServiceStatus.enabled
       ? '已关闭'
       : partialAutoReplyActive
         ? '部分直回'
         : `只给建议 · 第 ${customerServiceStatus.observationDay}/3 天`;
-  const customerServiceSummary = !customerServiceStatus?.enabled
-    ? '账号消息只进入收件箱，灵小枢不会自行处理。'
+  const customerServiceSummary = !customerServiceStatus
+    ? (customerServiceStatusLoadFailed
+      ? '暂时没读到客服状态，点一下开关可重新尝试。'
+      : '正在读取智能客服状态…')
+    : !customerServiceStatus.enabled
+      ? '账号消息只进入收件箱，灵小枢不会自行处理。'
     : partialAutoReplyActive
       ? '仅高置信命中已审批常见问答时直回；其余内容仍等你确认。'
       : customerServiceStatus.partialAutoReplyEnabled
@@ -2353,7 +2379,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             aria-checked={Boolean(customerServiceStatus?.enabled)}
             aria-label="智能客服总开关"
             title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
-            disabled={!customerServiceStatus || customerServiceSaving}
+            disabled={customerServiceSaving}
             onClick={() => void changeCustomerServiceEnabled(!customerServiceStatus?.enabled)}
             className={`relative h-7 w-12 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
           >
