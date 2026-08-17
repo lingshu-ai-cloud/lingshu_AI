@@ -89,5 +89,11 @@ const ui = read('src/components/ConversionPage.tsx');
 assert.match(ui, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
 assert.match(ui, /建议模式已经用了 3 天[\s\S]*?继续只看建议[\s\S]*?开放部分直接回复/, 'the three-day permission choice must be explicit');
 assert.match(ui, /partialAutoReplyActive = Boolean\(customerServiceStatus\?\.autoReplyReady && autonomyLevel === 'auto'\)/, 'the UI must respect a later return to draft-only mode');
+assert.doesNotMatch(ui, /if \(selected\.isMock\) return;/, 'administrator mock conversations must generate drafts through the same endpoint');
+assert.match(ui, /setDraftSuggestion\(null\);[\s\S]*?setLastDraftKey\(''\);[\s\S]*?setInput\(''\);/, 'reselecting a customer must allow the latest buyer message to generate a fresh draft');
+
+const mockCustomers = read('src/mocks/customerProfiles.ts');
+assert.match(mockCustomers, /timeline:\s*\[\{[\s\S]*?actor:\s*'buyer'[\s\S]*?body:\s*'Hi, I saw your products on Instagram\. What do you have\?'/, 'the administrator reply lab must open with a realistic buyer message');
+assert.match(read('src/hooks/useCustomers.ts'), /MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v3'/, 'existing blank mock storage must be refreshed for the draft-enabled reply lab');
 
 console.log('customer service activation tests passed');

@@ -3,10 +3,11 @@ import { authHeader } from '../lib/auth';
 import { createMockCustomers } from '../mocks/customerProfiles';
 import type { CustomerProfile, TimelineEvent } from '../types/customer';
 
+const MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v3';
 const LEGACY_MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v2';
 
 function mockStorageKey(scope: string): string {
-  return `${LEGACY_MOCK_STORAGE_KEY}:${scope || 'admin'}`;
+  return `${MOCK_STORAGE_KEY}:${scope || 'admin'}`;
 }
 
 function storedMockCustomers(storageKey: string): CustomerProfile[] {

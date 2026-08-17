@@ -1829,6 +1829,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   useEffect(() => {
     setDraftSuggestion(null);
     setDraftMeta(null);
+    setLastDraftKey('');
     setInput('');
     setTranslatedInput('');
   }, [selectedId]);
@@ -1861,9 +1862,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       setDraftMeta(null);
       return;
     }
-    // Mock messages request their draft inside pushMockBuyerMessage. Do not clear
-    // that freshly generated draft when the customer timeline state updates.
-    if (selected.isMock) return;
     const lastBuyer = [...selected.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer');
     if (!lastBuyer) return;
     if (isWaitingForHumanQuote(selected)) {
