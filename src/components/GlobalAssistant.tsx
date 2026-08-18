@@ -82,6 +82,22 @@ const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
     summary: '当前在我的社媒，适合做素材筛选、脚本生成、发布节奏和内容复盘。',
     suggestions: ['生成主推品短视频脚本', '拆解爆款素材方向', '规划本周发布节奏', '联网核验平台内容趋势'],
   },
+  socialInspiration: {
+    agent: 'traffic', label: '灵感大屏', summary: '当前在灵感大屏，适合发现、筛选和拆解高潜社媒内容。',
+    suggestions: ['拆解爆款素材方向', '筛选适合目标市场的内容', '把素材转成创作任务'],
+  },
+  scriptLibrary: {
+    agent: 'traffic', label: '脚本库', summary: '当前在脚本库，适合整理、复用和迭代历史脚本。',
+    suggestions: ['查找可复用脚本', '优化脚本开头', '按平台改写脚本'],
+  },
+  smartAssets: {
+    agent: 'traffic', label: '智能素材', summary: '当前在智能素材，适合生成脚本、画面、口播和成片。',
+    suggestions: ['生成主推品短视频', '优化前三秒钩子', '生成多平台素材'],
+  },
+  accountManagement: {
+    agent: 'traffic', label: '账号管理', summary: '当前在账号管理，适合查看账号表现、评论与发布状态。',
+    suggestions: ['检查账号表现', '查看高意向评论', '规划发布节奏'],
+  },
   conversion: {
     agent: 'conversion',
     label: '我的客户',
@@ -99,6 +115,14 @@ const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
     label: '企业中心',
     summary: '当前在企业中心，适合完善企业资料、产品画像和全局知识。',
     suggestions: ['检查企业资料缺口', '整理产品卖点', '生成客户画像字段'],
+  },
+  agentMemory: {
+    agent: 'strategy', label: '智能体记忆', summary: '当前在智能体记忆，适合治理业务事实、客户偏好与行为规则。',
+    suggestions: ['检查记忆来源', '梳理客户偏好', '制定记忆治理规则'],
+  },
+  organizationPermissions: {
+    agent: 'strategy', label: '组织与权限', summary: '当前在组织与权限，适合规划成员角色和数据访问边界。',
+    suggestions: ['设计成员角色', '检查数据权限', '规划最小权限'],
   },
   scheduled: {
     agent: 'strategy',
@@ -147,16 +171,22 @@ type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
 const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
   strategy: 'happy',
   traffic: 'excited',
+  socialInspiration: 'excited',
+  scriptLibrary: 'thinking',
+  smartAssets: 'excited',
+  accountManagement: 'thinking',
   conversion: 'thinking',
   retention: 'happy',
   orders: 'wink',
   enterprise: 'thinking',
+  agentMemory: 'thinking',
   plugins: 'excited',
   scheduled: 'wink',
   admin: 'thinking',
   adminDelivery: 'thinking',
   channels: 'excited',
   youtube: 'excited',
+  organizationPermissions: 'thinking',
 };
 
 const LAUNCHER_MASCOT_CROP_LEFT: Record<AssistantExpression, number> = {

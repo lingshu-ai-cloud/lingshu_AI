@@ -73,7 +73,7 @@ assert.match(calendarPlannerUi, /kind: 'slot'[\s\S]*?startHour[\s\S]*?endHour[\s
 assert.match(calendarPlannerUi, /fallbackPeakScore[\s\S]*?Math\.sin/, 'publishing tide must retain a useful curve when live score data is temporarily unavailable');
 assert.doesNotMatch(calendarPlannerUi, /setError\(loadError instanceof Error \? loadError\.message : 'load_failed'\)/, 'calendar UI must not expose raw transport errors');
 const strategyUi = read('src/components/StrategyDataBoard.tsx');
-assert.match(strategyUi, /已接入账号 \{exposure\.accountCount\}[\s\S]*?openWorkspaceView\('traffic', 'accounts'\)/, 'home connected-account affordance must navigate to social account activity');
+assert.match(strategyUi, /已接入账号 \{exposure\.accountCount\}[\s\S]*?openWorkspaceView\('accountManagement', 'accounts'\)/, 'home connected-account affordance must navigate to the current account management page');
 const publishingRoutes = read('server/routes/publishing.ts');
 assert.match(publishingRoutes, /scheduleLocked: req\.body\?\.scheduleLocked === true/, 'calendar creation must persist the fixed-time lock');
 assert.match(publishingRoutes, /currentStats\.scheduleLocked === true[\s\S]*?定点排期时间已锁定/, 'calendar API must reject accidental fixed-time changes');

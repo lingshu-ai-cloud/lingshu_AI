@@ -58,6 +58,13 @@ async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: st
     edited: Boolean(memory.edited),
     category: String(memory.category || 'reply'),
     strategyIds: Array.isArray(memory.strategyIds) ? memory.strategyIds.map(String) : [],
+    nodeId: String(memory.nodeId || ''),
+    riskLevel: String(memory.riskLevel || ''),
+    diffTags: Array.isArray(memory.diffTags) ? memory.diffTags.map(String) : [],
+    interventionType: String(memory.interventionType || ''),
+    outcome3Turn: String(memory.outcome3Turn || ''),
+    outcome24h: String(memory.outcome24h || ''),
+    finalOutcome: String(memory.finalOutcome || ''),
   }).catch(error => console.warn('[style-memory:record-failed]', error));
 }
 

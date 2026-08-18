@@ -30,3 +30,10 @@ export function resolveNavigationEventViewMode(
   if (current === 'create' && requested === 'materials') return current;
   return requested;
 }
+
+export function resolveWorkflowNavigationPage(
+  initialView: TrafficViewMode | undefined,
+  showModeTabs: boolean | undefined,
+): 'smartAssets' | null {
+  return initialView === 'materials' && showModeTabs === false ? 'smartAssets' : null;
+}

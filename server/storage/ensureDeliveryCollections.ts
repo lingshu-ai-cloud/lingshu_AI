@@ -93,6 +93,21 @@ const STYLE_MEMORY_FIELDS: FieldDef[] = [
   { name: 'category', type: 'text' },
   { name: 'outcome', type: 'text' },
   { name: 'strategy_ids', type: 'json' },
+  { name: 'status', type: 'select', values: ['pending', 'confirmed', 'paused', 'superseded'] },
+  { name: 'learning_scope', type: 'select', values: ['enterprise_style', 'customer_private'] },
+  { name: 'source_kind', type: 'select', values: ['employee_edit', 'ai_inferred', 'imported_winning', 'manual'] },
+  { name: 'evidence_source', type: 'text' },
+  { name: 'node_id', type: 'text' },
+  { name: 'risk_level', type: 'text' },
+  { name: 'diff_tags', type: 'json' },
+  { name: 'intervention_type', type: 'text' },
+  { name: 'outcome_3_turn', type: 'text' },
+  { name: 'outcome_24h', type: 'text' },
+  { name: 'fact_learning_allowed', type: 'bool' },
+  { name: 'expires_at', type: 'date' },
+  { name: 'confirmed_by', type: 'text' },
+  { name: 'confirmed_at', type: 'date' },
+  { name: 'updated_by', type: 'text' },
 ];
 
 const RESPONSE_STRATEGY_MEMORY_FIELDS: FieldDef[] = [
@@ -100,7 +115,7 @@ const RESPONSE_STRATEGY_MEMORY_FIELDS: FieldDef[] = [
   { name: 'strategy_id', type: 'text', required: true },
   { name: 'adjustment', type: 'text' },
   { name: 'evidence_count', type: 'number' },
-  { name: 'status', type: 'select', values: ['active', 'paused'] },
+  { name: 'status', type: 'select', values: ['candidate', 'active', 'paused', 'archived'] },
   { name: 'source', type: 'text' },
   { name: 'scenario', type: 'text' },
   { name: 'signals', type: 'json' },
@@ -108,6 +123,52 @@ const RESPONSE_STRATEGY_MEMORY_FIELDS: FieldDef[] = [
   { name: 'strategy_steps', type: 'json' },
   { name: 'risk_link', type: 'text' },
   { name: 'escalate', type: 'text' },
+  { name: 'version', type: 'number' },
+  { name: 'rollout_percent', type: 'number' },
+  { name: 'evidence_customer_count', type: 'number' },
+  { name: 'evidence_period_count', type: 'number' },
+  { name: 'risk_boundary', type: 'text' },
+  { name: 'previous_snapshot', type: 'json' },
+  { name: 'confirmed_by', type: 'text' },
+  { name: 'confirmed_at', type: 'date' },
+  { name: 'updated_by', type: 'text' },
+  { name: 'last_used_at', type: 'date' },
+  { name: 'use_count', type: 'number' },
+];
+
+const CUSTOMER_MEMORY_FIELDS: FieldDef[] = [
+  { name: 'tenant_id', type: 'text', required: true },
+  { name: 'customer_id', type: 'text', required: true },
+  { name: 'memory_key', type: 'text', required: true },
+  { name: 'memory_value', type: 'text', required: true },
+  { name: 'evidence', type: 'text' },
+  { name: 'status', type: 'select', values: ['pending', 'confirmed', 'paused', 'superseded', 'conflict'] },
+  { name: 'source_kind', type: 'select', values: ['human', 'ai_inferred'] },
+  { name: 'confidence', type: 'number' },
+  { name: 'expires_at', type: 'date' },
+  { name: 'conflict_with', type: 'text' },
+  { name: 'superseded_by', type: 'text' },
+  { name: 'created_by', type: 'text' },
+  { name: 'confirmed_by', type: 'text' },
+  { name: 'confirmed_at', type: 'date' },
+  { name: 'updated_by', type: 'text' },
+];
+
+const AGENT_MEMORY_AUDIT_FIELDS: FieldDef[] = [
+  { name: 'tenant_id', type: 'text', required: true },
+  { name: 'actor_user_id', type: 'text' },
+  { name: 'action', type: 'text', required: true },
+  { name: 'target_type', type: 'text' },
+  { name: 'target_id', type: 'text' },
+  { name: 'reply_id', type: 'text' },
+  { name: 'customer_id', type: 'text' },
+  { name: 'node_id', type: 'text' },
+  { name: 'memory_ids', type: 'json' },
+  { name: 'strategy_ids', type: 'json' },
+  { name: 'model_version', type: 'text' },
+  { name: 'knowledge_version', type: 'text' },
+  { name: 'metadata', type: 'json' },
+  { name: 'created_at', type: 'date', required: true },
 ];
 
 const STYLE_ADOPTION_STATS_FIELDS: FieldDef[] = [
@@ -251,6 +312,8 @@ export async function ensureDeliveryCollections(): Promise<void> {
   await ensureCollection('posting_stats', POSTING_STATS_FIELDS);
   await ensureCollection('style_memory', STYLE_MEMORY_FIELDS);
   await ensureCollection('response_strategy_memory', RESPONSE_STRATEGY_MEMORY_FIELDS);
+  await ensureCollection('customer_memory', CUSTOMER_MEMORY_FIELDS);
+  await ensureCollection('agent_memory_audit', AGENT_MEMORY_AUDIT_FIELDS);
   await ensureCollection('style_adoption_stats', STYLE_ADOPTION_STATS_FIELDS);
   await ensureCollection('tenant_profiles', TENANT_PROFILE_FIELDS);
   await ensureCollection('tenant_orders', TENANT_ORDER_FIELDS);

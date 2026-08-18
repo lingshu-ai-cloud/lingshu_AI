@@ -1,37 +1,75 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Home, Share2, Users, LayoutGrid,
-  Building2, PlugZap, Clock,
+  Home, Users, LayoutGrid,
+  Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, BookOpen, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
+  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
-import { authApi, exitSupportSession, type AuthSession } from '../lib/auth';
+import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
 import AccountSettingsModal from './AccountSettingsModal';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 
 interface NavSection {
+  label: string;
   items: { id: Page; label: string; icon: ReactNode }[];
 }
 
 const HOME_NAV_ITEM = { id: 'strategy' as Page, label: '首页', icon: <Home size={16} /> };
 
-const PRIMARY_NAV: NavSection = {
+const SOCIAL_NAV: NavSection = {
+  label: '社媒运营',
   items: [
-    { id: 'traffic',    label: '我的社媒', icon: <Share2 size={16} /> },
-    { id: 'conversion', label: '我的客户', icon: <Users size={16} /> },
-    { id: 'orders',     label: '我的订单', icon: <LayoutGrid size={16} /> },
+    { id: 'socialInspiration', label: '灵感大屏', icon: <Clapperboard size={16} /> },
+    { id: 'smartAssets', label: '智能素材', icon: <WandSparkles size={16} /> },
+    { id: 'scriptLibrary', label: '脚本库', icon: <FileText size={16} /> },
+    { id: 'accountManagement', label: '账号管理', icon: <RadioTower size={16} /> },
   ],
 };
 
-const SECONDARY_NAV: NavSection = {
+const CUSTOMER_NAV: NavSection = {
+  label: '客户管理',
   items: [
-    { id: 'enterprise', label: '企业中心', icon: <Building2 size={16} /> },
-    { id: 'plugins',    label: '集成中心', icon: <PlugZap size={16} /> },
-    { id: 'scheduled',  label: '定时任务', icon: <Clock size={16} /> },
+    { id: 'conversion', label: '我的会话', icon: <Users size={16} /> },
+    { id: 'orders', label: '订单管理', icon: <LayoutGrid size={16} /> },
   ],
+};
+
+const AGENT_NAV: NavSection = {
+  label: '智能体管理',
+  items: [
+    { id: 'enterprise', label: '企业知识库', icon: <Building2 size={16} /> },
+    { id: 'agentMemory', label: '智能体记忆', icon: <BrainCircuit size={16} /> },
+    { id: 'scheduled', label: '定时任务', icon: <Clock size={16} /> },
+  ],
+};
+
+const ADMIN_NAV: NavSection = {
+  label: '管理员权限',
+  items: [
+    { id: 'admin', label: '账号总控', icon: <ShieldCheck size={16} /> },
+    { id: 'adminDelivery', label: '客户运维', icon: <PlugZap size={16} /> },
+  ],
+};
+
+const SYSTEM_NAV: NavSection = {
+  label: '系统设置',
+  items: [
+    { id: 'plugins', label: '集成中心', icon: <PlugZap size={16} /> },
+    { id: 'organizationPermissions', label: '组织与权限', icon: <UserRoundCog size={16} /> },
+  ],
+};
+
+const NAV_SECTIONS = [SOCIAL_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+
+const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
+  super_admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  social_operator: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  customer_service: new Set<Page>(['strategy', 'conversion', 'orders', 'scheduled']),
 };
 
 interface LayoutProps {
@@ -193,6 +231,12 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   const activeSession = liveSession && liveSessionIdentityScope === sessionIdentityScope ? liveSession : session;
   const guideScope = activeSession?.demo?.guideScope || (activeSession?.demo?.expiresAt ? `${activeSession.user.id}:${activeSession.demo.expiresAt}` : activeSession?.user?.id || 'demo-guide');
   const supportAccess = activeSession?.supportAccess;
+  const organizationRole = activeSession?.user.role || 'super_admin';
+  const allowedPages = ROLE_PAGE_ACCESS[organizationRole];
+  const roleSections = NAV_SECTIONS
+    .map(section => ({ ...section, items: section.items.filter(item => allowedPages.has(item.id)) }))
+    .filter(section => section.items.length > 0);
+  const navSections = isAdminSession(activeSession) ? [...roleSections, ADMIN_NAV] : roleSections;
 
   const leaveSupportSession = () => {
     if (!exitSupportSession()) authApi.logout();
@@ -210,13 +254,6 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     setQuotaOpen(false);
     setAccountMenuOpen(false);
   });
-  const secondaryItems = isAdminSession(activeSession)
-    ? [
-      ...SECONDARY_NAV.items,
-      { id: 'admin' as Page, label: '账号总控', icon: <ShieldCheck size={16} /> },
-      { id: 'adminDelivery' as Page, label: '客户运维', icon: <PlugZap size={16} /> },
-    ]
-    : SECONDARY_NAV.items;
   const tenantName = activeSession?.tenant?.name || activeSession?.user?.name || activeSession?.user?.email?.split('@')[0] || '未命名';
   const subStatus = activeSession?.tenant?.subscriptionStatus || activeSession?.subscription?.status || 'none';
   const initial = (tenantName[0] || '灵').toUpperCase();
@@ -304,43 +341,28 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           />
         </nav>
 
-        {/* Primary nav */}
-        <nav className="px-3 space-y-0.5">
-          {!sidebarCollapsed && <p className="px-3 pt-1 pb-1.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">业务中台</p>}
-          {PRIMARY_NAV.items.map(item => (
-            <NavItem
-              key={item.id}
-              item={item}
-              active={page === item.id}
-              onClick={() => onNavigate(item.id)}
-              collapsed={sidebarCollapsed}
-            />
+        <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+          {navSections.map((section, index) => (
+            <div key={section.label}>
+              {index > 0 && <div className="mx-4 my-2 border-t border-border" />}
+              <nav className="px-3 space-y-0.5">
+                {!sidebarCollapsed && <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
+                {section.items.map(item => (
+                  <NavItem
+                    key={item.id}
+                    item={item}
+                    active={page === item.id}
+                    onClick={() => onNavigate(item.id)}
+                    collapsed={sidebarCollapsed}
+                  />
+                ))}
+              </nav>
+            </div>
           ))}
-        </nav>
 
-        {/* Divider */}
-        <div className="mx-4 my-3 border-t border-border" />
+          {!sidebarCollapsed && <AdminPageGuide page={page} />}
+        </div>
 
-        {/* Secondary nav */}
-        <nav className="px-3 space-y-0.5">
-          {!sidebarCollapsed && <p className="px-3 pb-1.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">系统设置</p>}
-          {secondaryItems.map(item => (
-            <NavItem
-              key={item.id}
-              item={item}
-              active={page === item.id}
-              onClick={() => onNavigate(item.id)}
-              collapsed={sidebarCollapsed}
-            />
-          ))}
-        </nav>
-
-        {/* Divider */}
-        <div className="mx-4 my-3 border-t border-border" />
-
-        {!sidebarCollapsed && <AdminPageGuide page={page} />}
-
-        <div className="flex-1 min-h-0" />
 
         {onOpenBusinessDiagnosis && (
           <div className="px-3 pb-2">

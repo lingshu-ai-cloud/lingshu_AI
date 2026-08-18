@@ -32,7 +32,9 @@ import {
 } from '../agents/replyPlanning.js';
 import { isGreetingOrProcessIntent, retrieveContext, type RetrievedContext } from '../knowledge/retrieve.js';
 import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
-import { buildStyleMemoryPromptBlock, retrieveStyleMemories } from '../knowledge/styleMemory.js';
+import { buildStyleMemoryPromptBlock, observeStyleMemoryOutcomes, retrieveStyleMemories } from '../knowledge/styleMemory.js';
+import { buildCustomerMemoryPromptBlock, retrieveCustomerMemories } from '../knowledge/customerMemory.js';
+import { recordMemoryAudit, touchStrategyUsage } from '../knowledge/memoryAudit.js';
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
 import { buildHandoffSummary } from '../agents/handoffSummary.js';
 import { faithfullyPolishSellerDraft } from '../agents/polishDraft.js';
@@ -206,7 +208,7 @@ function directConversationPayload(pair: { draft: string; draftZh: string }, cat
 }
 
 draftReplyRouter.post('/conversion/draft', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId, userId } = res.locals as AuthLocals;
   const body = req.body ?? {};
   const timeline = Array.isArray(body.timeline) ? body.timeline.slice(-20) : [];
   const intent = normalizeIntent(body.intent || body.mode);
@@ -221,6 +223,14 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const language = String(body.language ?? '').trim() || 'English';
   const latestMessage = latestBuyerMessage(timeline) || String(body.message || body.instruction || body.product || '');
   const phase = conversationPhase(timeline);
+  if (intent === 'reply' && body.customerId) {
+    await observeStyleMemoryOutcomes({
+      tenantId,
+      customerId: String(body.customerId),
+      timeline,
+      stage: String(body.stage || ''),
+    }).catch(error => console.warn('[style-memory:outcome-observation-failed]', error));
+  }
   const processIntent = isGreetingOrProcessIntent(latestMessage);
   body.__latestMessage = latestMessage;
   body.__conversationPhase = phase;
@@ -382,8 +392,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     redFlagCount: salesActionInput.redFlagCount,
     fallbackCount: salesActionInput.fallbackCount,
     sentiment: context.sentiment,
+    customerId: String(body.customerId ?? ''),
   });
   const styleMemories = await retrieveStyleMemories(tenantId, categoryForIntent(intent), latestMessage, String(body.customerId ?? ''));
+  const customerMemories = await retrieveCustomerMemories(tenantId, String(body.customerId ?? ''));
   const salesStyleProfile = enterpriseProfile.salesStyleProfile;
   const suppressPrice = shouldSuppressPriceFromRules(context.bizRules);
   const hardNoPriceDigits = false;
@@ -407,7 +419,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   });
   const enterpriseKnowledge = buildKnowledgePromptBlock(context);
   const dialogueStrategy = [buildStrategyPromptBlock(strategies), followUpGuidance].filter(Boolean).join('\n');
-  const sellerStyle = [buildSalesStyleProfilePromptBlock(salesStyleProfile), buildStyleMemoryPromptBlock(styleMemories)].filter(Boolean).join('\n');
+  const sellerStyle = [buildCustomerMemoryPromptBlock(customerMemories), buildSalesStyleProfilePromptBlock(salesStyleProfile), buildStyleMemoryPromptBlock(styleMemories)].filter(Boolean).join('\n');
   const preferredGoal = followUpGuidance
     || strategies[0]?.strategy.goal
     || strategies[0]?.strategy.intent
@@ -556,6 +568,27 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const responseDraft = messages.join('\n\n');
     const translatedDraft = intent === 'handoff_summary' ? '' : await translateDraftToChinese(responseDraft, language);
     const translatedMessages = translatedDraft ? splitMobileChatMessages(translatedDraft) : [];
+    await recordMemoryAudit({
+      tenantId,
+      actorUserId: userId,
+      action: 'ai_reply_generated',
+      targetType: 'customer_reply',
+      replyId: String(body.replyId || ''),
+      customerId: String(body.customerId || ''),
+      nodeId: String(body.nodeId || body.currentNode || ''),
+      memoryIds: [...styleMemories.map(item => item.id), ...customerMemories.map(item => item.id)],
+      strategyIds: strategies.map(item => item.strategy.id),
+      modelVersion: process.env.REPLY_MODEL || process.env.QWEN_TEXT_MODEL || 'qwen-plus',
+      knowledgeVersion: String(body.knowledgeVersion || ''),
+      metadata: {
+        intent,
+        handlingMode: knowledgeGapHandoffRequired ? 'human_needed' : 'ai_draft',
+        progressionGoal: preferredGoal,
+        verificationStatus: finalVerification.status,
+        outcomeAtGeneration: 'not_yet_attributed',
+      },
+    });
+    await touchStrategyUsage(tenantId, strategies.map(item => item.strategy.id));
     res.json({
       draft: responseDraft,
       messages,
@@ -574,6 +607,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       sentiment: context.sentiment,
       category: categoryForIntent(intent),
       styleMemoryUsed: styleMemories.length,
+      customerMemoryUsed: customerMemories.length,
       strategies: strategies.map(match => ({
         id: match.strategy.id,
         scenario: match.strategy.scenario,
@@ -598,6 +632,19 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const messages = intent === 'handoff_summary' ? [sanitizedSafeDraft] : splitMobileChatMessages(sanitizedSafeDraft);
     const generatedTranslation = intent === 'handoff_summary' ? '' : await translateDraftToChinese(messages.join('\n\n'), language);
     const translatedDraft = generatedTranslation || (!usesGreetingFallback && knowledgeGapActive ? gapPlan.draftZh : '');
+    await recordMemoryAudit({
+      tenantId,
+      actorUserId: userId,
+      action: 'ai_reply_safe_fallback_generated',
+      targetType: 'customer_reply',
+      customerId: String(body.customerId || ''),
+      nodeId: String(body.nodeId || body.currentNode || ''),
+      memoryIds: [...styleMemories.map(item => item.id), ...customerMemories.map(item => item.id)],
+      strategyIds: strategies.map(item => item.strategy.id),
+      modelVersion: process.env.REPLY_MODEL || process.env.QWEN_TEXT_MODEL || 'qwen-plus',
+      metadata: { intent, handlingMode: knowledgeGapHandoffRequired ? 'human_needed' : 'safe_fallback', progressionGoal: preferredGoal, error: error instanceof Error ? error.message : String(error) },
+    });
+    await touchStrategyUsage(tenantId, strategies.map(item => item.strategy.id));
     res.json({
       draft: messages.join('\n\n'),
       messages,
@@ -616,6 +663,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       sentiment: context.sentiment,
       category: categoryForIntent(intent),
       styleMemoryUsed: styleMemories.length,
+      customerMemoryUsed: customerMemories.length,
       strategies: strategies.map(match => ({
         id: match.strategy.id,
         scenario: match.strategy.scenario,

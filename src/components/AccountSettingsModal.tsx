@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { KeyRound, Loader2, Plus, Trash2, UserRound, UsersRound, X } from 'lucide-react';
-import { authApi, type EmployeeAccount } from '../lib/auth';
+import { authApi, type EmployeeAccount, type OrganizationRole } from '../lib/auth';
 
 interface Props { open: boolean; onClose: () => void; onLogout?: () => void }
 const field = 'w-full rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm text-text-primary outline-none focus:border-accent focus:bg-white';
@@ -20,6 +20,7 @@ export default function AccountSettingsModal({ open, onClose, onLogout }: Props)
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [initialPassword, setInitialPassword] = useState('');
+  const [employeeRole, setEmployeeRole] = useState<OrganizationRole>('social_operator');
 
   useEffect(() => {
     if (!open || tab !== 'employees') return;
@@ -41,7 +42,7 @@ export default function AccountSettingsModal({ open, onClose, onLogout }: Props)
   const submitEmployee = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setSaving(true);
     try {
-      const employee = await authApi.addEmployee({ name, email, password: initialPassword });
+      const employee = await authApi.addEmployee({ name, email, password: initialPassword, role: employeeRole });
       setEmployees(items => [...items, employee]); setAdding(false); setName(''); setEmail(''); setInitialPassword('');
     } catch (e) { setError(e instanceof Error ? e.message : '添加员工失败'); }
     finally { setSaving(false); }
@@ -71,6 +72,11 @@ export default function AccountSettingsModal({ open, onClose, onLogout }: Props)
           {adding && <form name="lingshu-add-employee" autoComplete="off" onSubmit={submitEmployee} className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-border bg-surface-2 p-4">
             <input value={name} onChange={e => setName(e.target.value)} name="employee-display-name" autoComplete="off" data-1p-ignore data-lpignore="true" placeholder="员工姓名" className={field} />
             <input required type="email" value={email} onChange={e => setEmail(e.target.value)} name="employee-invite-email" autoComplete="off" data-1p-ignore data-lpignore="true" placeholder="登录邮箱" className={field} />
+            <select value={employeeRole} onChange={e => setEmployeeRole(e.target.value as OrganizationRole)} className={`${field} col-span-2`}>
+              <option value="admin">管理员</option>
+              <option value="social_operator">社媒运营专员</option>
+              <option value="customer_service">客户服务专员</option>
+            </select>
             <input required minLength={8} type="password" value={initialPassword} onChange={e => setInitialPassword(e.target.value)} name="employee-initial-password" autoComplete="new-password" data-1p-ignore data-lpignore="true" placeholder="初始密码（至少 8 位）" className={`${field} col-span-2`} />
             <p className="col-span-2 text-[11px] text-text-muted">请为新员工设置独立初始密码，不要使用当前账号或管理员密码。</p>
             <div className="col-span-2 flex justify-end gap-2"><button type="button" onClick={() => { setAdding(false); setName(''); setEmail(''); setInitialPassword(''); }} className="px-3 py-2 text-xs font-semibold text-text-muted">取消</button><button disabled={saving} className="rounded-lg bg-accent px-4 py-2 text-xs font-bold text-white">保存员工</button></div>

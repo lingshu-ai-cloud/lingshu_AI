@@ -5,6 +5,11 @@ import type { AgentAction, AgentType } from '../App';
 import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
+import {
+  CONTENT_ACTION_STORAGE,
+  consumeSessionPrefill,
+  type ScheduleActionPrefill,
+} from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
 
 interface ScheduledTask {
@@ -300,6 +305,27 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [businessDynamicsLoading, setBusinessDynamicsLoading] = useState(true);
   const [businessDynamicsError, setBusinessDynamicsError] = useState('');
   const didAutoOpenDemoTask = useRef(false);
+
+  useEffect(() => {
+    const prefill = consumeSessionPrefill<ScheduleActionPrefill>(CONTENT_ACTION_STORAGE.schedule);
+    if (!prefill) return;
+    const inferredTemplateId = prefill.templateId
+      || (prefill.platform ? `${prefill.platform}_video_keyword_crawl` : 'trend_report');
+    const template = TASK_TEMPLATES.find(item => item.templateId === inferredTemplateId);
+    if (!template) return;
+    const schedule = templateSchedule(template);
+    setActiveGroup(taskAgentGroup(template.taskType));
+    setSocialTaskTab('crawler');
+    setSelectedTemplateIds([template.templateId]);
+    setCustomName(prefill.name || '');
+    setTaskKeywords(prefill.keywords || String(template.config && 'keywords' in template.config ? template.config.keywords || 'foundation' : 'foundation'));
+    setScheduleTime(prefill.time || schedule.time);
+    setScheduleDays(prefill.days || schedule.days);
+    setRunAfterCreate(prefill.runAfterCreate ?? true);
+    setConfirmedKeywordSignature('');
+    setCreateError('');
+    setShowAdd(true);
+  }, []);
 
   const closeResultPanel = () => {
     // 用户主动关闭后，本次页面生命周期内不再由演示引导自动拉起任务侧栏。

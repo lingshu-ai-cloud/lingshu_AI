@@ -30,6 +30,7 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const YOUTUBE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/yt-analytics.readonly',
 ];
 const META_SCOPES = [
   'pages_show_list',
@@ -41,6 +42,8 @@ const META_SCOPES = [
   'instagram_basic',
   'instagram_content_publish',
   'instagram_manage_comments',
+  'instagram_manage_insights',
+  'read_insights',
 ];
 const TIKTOK_SCOPES = [
   'user.info.basic',

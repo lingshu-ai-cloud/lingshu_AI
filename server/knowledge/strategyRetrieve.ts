@@ -38,6 +38,9 @@ interface StrategyMemoryRecord {
   strategy_steps?: string[] | string;
   risk_link?: string;
   escalate?: string;
+  evidence_customer_count?: number | string;
+  evidence_period_count?: number | string;
+  rollout_percent?: number | string;
 }
 
 export interface RetrievedStrategy {
@@ -60,6 +63,7 @@ export interface StrategyRetrieveInput {
   redFlagCount?: number;
   fallbackCount?: number;
   sentiment?: string;
+  customerId?: string;
 }
 
 interface ScoredStrategy {
@@ -217,7 +221,9 @@ function customStrategies(records: StrategyMemoryRecord[]): ResponseStrategy[] {
     const signals = jsonStringArray(item.signals);
     const steps = jsonStringArray(item.strategy_steps);
     const evidenceCount = Number(item.evidence_count || 0);
-    if (item.source !== 'learned_custom' || evidenceCount < 5 || !text(item.scenario) || signals.length < 2 || steps.length < 2) return [];
+    const customerCount = Number(item.evidence_customer_count || 0);
+    const periodCount = Number(item.evidence_period_count || 0);
+    if (item.source !== 'learned_custom' || evidenceCount < 5 || customerCount < 3 || periodCount < 2 || !text(item.scenario) || signals.length < 2 || steps.length < 2) return [];
     return [{
       id: text(item.strategy_id),
       scenario: text(item.scenario),
@@ -237,12 +243,29 @@ function customStrategies(records: StrategyMemoryRecord[]): ResponseStrategy[] {
   });
 }
 
+function rolloutBucket(customerId: string, strategyId: string): number {
+  const input = `${customerId || 'anonymous'}:${strategyId}`;
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0) % 100;
+}
+
+export function strategyMemoryWithinRollout(record: StrategyMemoryRecord, customerId = ''): boolean {
+  const percent = Math.max(0, Math.min(100, Number(record.rollout_percent ?? 100)));
+  return percent >= 100 || (percent > 0 && rolloutBucket(customerId, record.strategy_id) < percent);
+}
+
 function attachTenantMemory(records: StrategyMemoryRecord[], matches: RetrievedStrategy[]): RetrievedStrategy[] {
   const byStrategy = new Map(records.map(item => [text(item.strategy_id), item]));
   return matches.map(match => {
     const memory = byStrategy.get(match.strategy.id);
     const evidenceCount = Number(memory?.evidence_count || 0);
-    if (!memory?.adjustment || evidenceCount < 5) return match;
+    if (!memory?.adjustment || evidenceCount < 5
+      || Number(memory.evidence_customer_count || 0) < 3
+      || Number(memory.evidence_period_count || 0) < 2) return match;
     return {
       ...match,
       learnedAdjustment: text(memory.adjustment),
@@ -254,7 +277,7 @@ function attachTenantMemory(records: StrategyMemoryRecord[], matches: RetrievedS
 export async function retrieveResponseStrategies(tenantId: string, input: StrategyRetrieveInput): Promise<RetrievedStrategy[]> {
   let memoryRecords: StrategyMemoryRecord[] = [];
   try {
-    memoryRecords = await tenantStrategyMemory(tenantId);
+    memoryRecords = (await tenantStrategyMemory(tenantId)).filter(record => strategyMemoryWithinRollout(record, input.customerId));
   } catch {
     // Built-in strategies remain available while tenant memory storage is unavailable.
   }

@@ -280,9 +280,11 @@ export default function StrategyDataBoard({
   const actionItems = advisor?.recommendations ?? [];
 
   const executeAdvisorAction = (item: AdvisorRecommendation) => {
-    const { page, view } = item.action;
+    const { page: requestedPage, view } = item.action;
+    const page: Page = requestedPage === 'traffic'
+      ? (view === 'accounts' ? 'accountManagement' : view === 'materials' ? 'socialInspiration' : 'smartAssets')
+      : requestedPage;
     try {
-      if (page === 'traffic' && view) localStorage.setItem('lingshu:traffic:initial-view', view);
       if (page === 'conversion' && view) localStorage.setItem('lingshu:conversion:initial-view', view);
       if (page === 'enterprise' && view) localStorage.setItem('lingshu:enterprise:initial-view', view);
       localStorage.setItem('lingshu:advisor:last-action', JSON.stringify({ id: item.id, title: item.title, at: Date.now() }));
@@ -292,7 +294,6 @@ export default function StrategyDataBoard({
 
   const openWorkspaceView = (page: Page, view?: string) => {
     try {
-      if (page === 'traffic' && view) localStorage.setItem('lingshu:traffic:initial-view', view);
       if (page === 'conversion' && view) localStorage.setItem('lingshu:conversion:initial-view', view);
     } catch { /* ignore unavailable storage */ }
     window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page, view } }));
@@ -300,7 +301,7 @@ export default function StrategyDataBoard({
   };
 
   const openMetric = (metric: MetricId) => {
-    if (metric === 'exposure') openWorkspaceView('traffic', 'accounts');
+    if (metric === 'exposure') openWorkspaceView('accountManagement', 'accounts');
     else openWorkspaceView('conversion', metric === 'followup' ? 'inbox' : 'leads');
   };
 
@@ -338,7 +339,7 @@ export default function StrategyDataBoard({
                 <h2 className="text-base font-black text-text-primary">当前获客经营总览</h2>
                 <p className="mt-1 text-[11px] text-text-muted">从内容曝光到成交推进，先看趋势，再看渠道和待办。</p>
               </div>
-              <button type="button" onClick={() => openWorkspaceView('traffic', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往我的社媒 · 账号动态">
+              <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往社媒运营 · 账号管理">
                 已接入账号 {exposure.accountCount} · 查看动态 →
               </button>
             </div>
@@ -500,7 +501,7 @@ export default function StrategyDataBoard({
 
         <div className="min-h-[520px] border-t border-border" id={tab === 'traffic' ? 'social-real-data' : undefined}>
           {tab === 'traffic'
-            ? <TrafficDataBoard windowDays={windowDays} onOpenAccounts={() => openWorkspaceView('traffic', 'accounts')} />
+            ? <TrafficDataBoard windowDays={windowDays} onOpenAccounts={() => openWorkspaceView('accountManagement', 'accounts')} />
             : <Active windowDays={windowDays} />}
         </div>
       </div>

@@ -12,7 +12,8 @@ export function authHeader(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-export interface AuthUser { id: string; email: string; name: string; tenantId: string }
+export type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
+export interface AuthUser { id: string; email: string; name: string; tenantId: string; role: OrganizationRole }
 export interface AuthTenant {
   id: string; name: string;
   subscriptionStatus: string;
@@ -45,7 +46,7 @@ export interface AuthSession {
   };
 }
 
-export interface EmployeeAccount { id: string; email: string; name: string; isCurrent: boolean; created: string }
+export interface EmployeeAccount { id: string; email: string; name: string; role: OrganizationRole; isCurrent: boolean; created: string }
 
 async function authenticatedJson<T>(path: string, options?: RequestInit): Promise<T> {
   const r = await fetch(`/api/overseas/auth/${path}`, { ...options, headers: { ...authHeader(), ...(options?.body ? { 'Content-Type': 'application/json' } : {}), ...(options?.headers ?? {}) } });
@@ -137,7 +138,8 @@ export const authApi = {
     await authenticatedJson('change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword, passwordConfirm }) });
   },
   employees: async (): Promise<EmployeeAccount[]> => (await authenticatedJson<{ employees: EmployeeAccount[] }>('employees')).employees,
-  addEmployee: async (input: { email: string; name: string; password: string }): Promise<EmployeeAccount> => (await authenticatedJson<{ employee: EmployeeAccount }>('employees', { method: 'POST', body: JSON.stringify(input) })).employee,
+  addEmployee: async (input: { email: string; name: string; password: string; role: OrganizationRole }): Promise<EmployeeAccount> => (await authenticatedJson<{ employee: EmployeeAccount }>('employees', { method: 'POST', body: JSON.stringify(input) })).employee,
+  updateEmployeeRole: async (employeeId: string, role: OrganizationRole): Promise<void> => { await authenticatedJson(`employees/${encodeURIComponent(employeeId)}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }); },
   deleteEmployee: async (employeeId: string): Promise<void> => { await authenticatedJson(`employees/${encodeURIComponent(employeeId)}`, { method: 'DELETE' }); },
   logout: () => {
     void fetch('/api/overseas/auth/logout', { method: 'POST', headers: authHeader() }).catch(() => {});
