@@ -9,6 +9,12 @@ lingshu_docx_render_*/
 !.env.*.example
 .env.local
 *.bak.*
+*.bak-*
+*.bak
+.codex-backups/
+backups/
+data.pre-migrate-*/
+data.repo-template/
 pb_data/
 .local-bin/
 
@@ -24,6 +30,11 @@ data/bgm.json
 data/tts/
 data/covers/
 data/analysis-temp/
+data/imports/
+data/migrations/
+data/publishing-uploads/
+data/seedance-budget-usage.json
+data/social-publish-records.json
 data/qwen-reanalysis-original.json
 data/studio-variation-batches.json
 data/studio-video-versions.json
