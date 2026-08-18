@@ -1582,7 +1582,7 @@ export default function EnterprisePage() {
           <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
             <Building2 size={13} />
           </span>
-          <span className="text-sm font-semibold text-text-primary">企业中心</span>
+          <span className="text-sm font-semibold text-text-primary">企业知识库</span>
         </div>
         <div className="flex items-center gap-2">
           {saveError && <span className="max-w-72 truncate text-[11px] font-bold text-red-600" title={saveError}>{saveError}</span>}
@@ -2086,7 +2086,7 @@ export default function EnterprisePage() {
           <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
             <Building2 size={13} />
           </div>
-          <span className="text-sm font-semibold text-text-primary">企业中心</span>
+          <span className="text-sm font-semibold text-text-primary">企业知识库</span>
         </div>
         <div className="flex items-center gap-2">
           {saveError && <span className="max-w-72 truncate text-[11px] font-bold text-red-600" title={saveError}>{saveError}</span>}

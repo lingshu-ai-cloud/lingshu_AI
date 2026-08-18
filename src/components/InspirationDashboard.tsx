@@ -2974,7 +2974,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       // page (or a temporary search result). Only refresh it from an unfiltered
       // tenant list response; admin aggregation must not overwrite it.
       if (requestId === videoRequestRef.current && r.ok && !keyword) {
-        setTenantVideoTotalItems(Math.max(0, Number(data.inventoryTotalItems || 0)));
+        setTenantVideoTotalItems(Math.max(0, Number(data.inventoryTotalItems ?? data.totalItems ?? data.items?.length ?? 0)));
       }
 
       const applyResult = (result: typeof data) => {

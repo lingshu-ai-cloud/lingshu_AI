@@ -240,7 +240,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
               <thead className="bg-surface-2 text-text-muted">
                 <tr className="text-left">
                   <th className="px-3 py-2 font-semibold">账号</th>
-                  <th className="px-3 py-2 font-semibold">密码</th>
+                  <th className="px-3 py-2 font-semibold">登录凭证</th>
                   <th className="px-3 py-2 font-semibold">流转状态</th>
                   <th className="px-3 py-2 font-semibold">试用进度</th>
                   <th className="px-3 py-2 font-semibold">激活时间</th>
@@ -259,14 +259,14 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                   return (
                     <tr key={account.email} className="hover:bg-surface-2/60">
                       <td className="px-3 py-2 font-semibold text-text-primary whitespace-nowrap">{account.email}</td>
-                      <td className="px-3 py-2 font-mono text-text-secondary whitespace-nowrap">{account.password}</td>
+                      <td className="px-3 py-2 text-text-muted whitespace-nowrap">已安全保存 · 不可回显</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.status}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.trialDays ? `第 ${account.trialDay ?? '-'} / ${account.trialDays} 天，剩余 ${account.daysRemaining ?? '-'} 天` : '长期有效'}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{fmtDate(account.activatedAt)}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{fmtDate(account.expiresAt)}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{fmtTokens(account.tokenUsedToday)} / {fmtTokens(account.tokenUsedTotal)}{account.tokenLimit ? ` / ${fmtTokens(account.tokenLimit)}` : ''}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">对话 {account.aiChatToday} · 生成 {account.generationToday} · 渲染 {account.renderToday} · 视频 {account.videoGenerationToday}</td>
-                      <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.rotatedAt ? `${fmtDate(account.rotatedAt)} · ${account.rotationPassword ?? '-'}` : '-'}</td>
+                      <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.rotatedAt ? fmtDate(account.rotatedAt) : '-'}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <button
                           type="button"
@@ -309,7 +309,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                   <th className="px-3 py-2 font-semibold">联系人</th>
                   <th className="px-3 py-2 font-semibold">所属行业</th>
                   <th className="px-3 py-2 font-semibold">登录账号</th>
-                  <th className="px-3 py-2 font-semibold">初始密码</th>
+                  <th className="px-3 py-2 font-semibold">登录凭证</th>
                   <th className="px-3 py-2 font-semibold">已使用邀请码</th>
                   <th className="px-3 py-2 font-semibold">订阅方案</th>
                   <th className="px-3 py-2 font-semibold">账号状态</th>
@@ -332,7 +332,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.contactName || '-'}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.industry || '未标注行业'}</td>
                       <td className="px-3 py-2 text-text-secondary">{registered ? account.emails.join('、') : '待客户注册'}</td>
-                      <td className="px-3 py-2 font-mono text-text-secondary whitespace-nowrap">{account.password || '待客户注册'}</td>
+                      <td className="px-3 py-2 text-text-muted whitespace-nowrap">{registered ? '已安全保存 · 不可回显' : '待客户注册'}</td>
                       <td className="px-3 py-2 font-mono text-text-secondary whitespace-nowrap">{account.inviteCode || '-'}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.subscriptionPlan}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.subscriptionStatus}</td>

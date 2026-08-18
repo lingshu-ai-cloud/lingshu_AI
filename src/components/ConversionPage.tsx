@@ -2341,7 +2341,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           <div className="flex h-6 w-6 items-center justify-center rounded-lg" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
             <Users size={13} />
           </div>
-          <span className="text-sm font-semibold text-text-primary">我的客户</span>
+          <span className="text-sm font-semibold text-text-primary">我的会话</span>
         </div>
         <div className="flex items-center gap-2">
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${customerServiceStatus?.enabled ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>

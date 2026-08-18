@@ -141,11 +141,14 @@ async function jsonFetch(url: string, init?: RequestInit) {
   return json;
 }
 
-function CopyLine({ label, value }: { label: string; value: string }) {
+function CopyLine({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
+  const [visible, setVisible] = useState(false);
+  const displayValue = secret && value && !visible ? '••••••••••••' : value;
   return (
     <div className="flex items-center gap-2">
       <span className="w-24 shrink-0 text-[11px] font-bold text-text-muted">{label}</span>
-      <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-2 py-1 text-[11px] text-text-secondary">{value || '保存配置后生成'}</code>
+      <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-2 py-1 text-[11px] text-text-secondary">{displayValue || '保存配置后生成'}</code>
+      {secret && value && <button type="button" onClick={() => setVisible(current => !current)} className="rounded-lg border border-border bg-white px-2 py-1 text-[10px] font-bold text-text-muted hover:text-text-primary">{visible ? '隐藏' : '显示'}</button>}
       <button type="button" onClick={() => value && navigator.clipboard?.writeText(value)} className="rounded-lg border border-border bg-white p-1.5 text-text-muted hover:text-text-primary">
         <Clipboard size={12} />
       </button>
@@ -527,7 +530,7 @@ function PlatformWizard({
           {activeStep === 'metaApp' && (
             <div className="grid gap-3">
               <Field required label="App ID" hint="开发者后台首页" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="App Secret" hint="应用设置 > 基本" value={appValue(drafts, app, 'appSecret')} placeholder="填写 App Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret label="App Secret" hint="应用设置 > 基本" value={appValue(drafts, app, 'appSecret')} placeholder="填写 App Secret" onChange={value => update({ appSecret: value })} />
               <Field label="Business ID" hint="BM 设置里可找到" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="privacy_domain_saved" label="隐私政策和域名已填" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -539,7 +542,7 @@ function PlatformWizard({
                 <p className="mb-2 text-xs font-black text-text-primary">复制到 Meta 后台</p>
                 <div className="space-y-2">
                   <CopyLine label="Webhook URL" value={app.webhookUrl} />
-                  <CopyLine label="Verify Token" value={app.webhookVerifyToken} />
+                  <CopyLine secret label="Verify Token" value={app.webhookVerifyToken} />
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -584,7 +587,7 @@ function PlatformWizard({
           {activeStep === 'wecomApp' && (
             <div className="grid gap-3">
               <Field required label="企业 ID / CorpID" hint="企业微信管理后台 > 我的企业" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="应用 Secret" hint="自建应用 Secret" value={appValue(drafts, app, 'appSecret')} placeholder="填写应用 Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret label="应用 Secret" hint="自建应用 Secret" value={appValue(drafts, app, 'appSecret')} placeholder="填写应用 Secret" onChange={value => update({ appSecret: value })} />
               <Field required label="AgentId" hint="自建应用详情页" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="wecom_app_visible_range_set" label="应用可见范围已包含客户接待人员" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -596,7 +599,7 @@ function PlatformWizard({
                 <p className="mb-2 text-xs font-black text-text-primary">复制到企业微信后台</p>
                 <div className="space-y-2">
                   <CopyLine label="回调 URL" value={app.webhookUrl} />
-                  <CopyLine label="Token" value={app.webhookVerifyToken} />
+                  <CopyLine secret label="Token" value={app.webhookVerifyToken} />
                 </div>
               </div>
               <Field required completed={app.wecomEncodingAesKeySet} label="EncodingAESKey" hint={app.wecomEncodingAesKeySet ? savedSecretHint(app.wecomEncodingAesKeyLength, '已保存') : '企业微信后台随机生成'} secret placeholder={app.wecomEncodingAesKeySet ? savedSecretPlaceholder(app.wecomEncodingAesKeyLength) : '43 位 EncodingAESKey'} onChange={value => update({ wecomEncodingAesKey: value })} />
@@ -618,7 +621,7 @@ function PlatformWizard({
           {activeStep === 'googleApp' && (
             <div className="grid gap-3">
               <Field required label="Client ID" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="Client Secret" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret label="Client Secret" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
               <ChecklistButton app={app} id="google_consent_published" label="OAuth 同意屏幕已发布到生产" drafts={drafts} setDrafts={setDrafts} />
             </div>
           )}
@@ -633,7 +636,7 @@ function PlatformWizard({
           {activeStep === 'tiktokApp' && (
             <div className="grid gap-3">
               <Field required label="Client Key" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="Client Secret" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret label="Client Secret" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
             </div>
           )}
 
