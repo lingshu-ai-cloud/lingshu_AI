@@ -21,6 +21,7 @@
     "restore:production-data": "bash scripts/restore-production-data.sh",
     "demo:sync-accounts": "tsx scripts/sync-demo-accounts.ts",
     "demo:seed-external-customer-service": "tsx scripts/seed-external-customer-service-demo.ts",
+    "demo:verify-external-customer-service": "tsx scripts/verify-external-customer-service-demo.ts",
     "import:trend-videos": "tsx scripts/import-trend-videos.ts",
     "worker:crawl": "NODE_USE_ENV_PROXY=1 tsx scripts/local-crawl-worker.ts",
     "demo:seed": "tsx scripts/demo-seed.ts",
