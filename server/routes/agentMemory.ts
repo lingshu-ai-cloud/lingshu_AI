@@ -164,8 +164,8 @@ function styleEvidenceToClient(record: StyleMemoryRecord) {
     factLearningAllowed: false,
     expiresAt: text(record.expires_at),
     confirmedAt: text(record.confirmed_at),
-    created: text(record.created),
-    updated: text(record.updated),
+    created: text(record.created || record.confirmed_at),
+    updated: text(record.updated || record.confirmed_at),
     deletionScope: '仅删除学习证据，不删除原始会话或聊天记录。',
   };
 }

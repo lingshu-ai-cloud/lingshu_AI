@@ -75,6 +75,9 @@ assert.match(deliverySchema, /STYLE_MEMORY_FIELDS[\s\S]*?RECORD_TIMESTAMP_FIELDS
 assert.match(deliverySchema, /RESPONSE_STRATEGY_MEMORY_FIELDS[\s\S]*?RECORD_TIMESTAMP_FIELDS/, 'response strategies must include sortable timestamps');
 assert.match(deliverySchema, /CUSTOMER_MEMORY_FIELDS[\s\S]*?RECORD_TIMESTAMP_FIELDS/, 'customer-private memory must include sortable timestamps');
 
+const agentMemoryRoute = fs.readFileSync(path.join(root, 'server/routes/agentMemory.ts'), 'utf8');
+assert.match(agentMemoryRoute, /created: text\(record\.created \|\| record\.confirmed_at\)/, 'migrated demo evidence must retain its confirmed time in the UI');
+
 const basicInfo = fs.readFileSync(path.join(root, 'src/components/customers/widgets/BasicInfoWidget.tsx'), 'utf8');
 for (const label of ['模拟客户名称', '模拟客户国家或地区', '模拟客户语言', '模拟客户需求']) {
   assert.match(basicInfo, new RegExp(`aria-label="${label}"`), `${label} must be editable in the blank sandbox`);
