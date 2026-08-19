@@ -73,5 +73,9 @@ services:
 
 volumes:
   pb_data:
+    external: true
+    # Keep the test environment attached to its original persistent dataset,
+    # even when the Compose project name or checkout directory changes.
+    name: ${PB_DATA_VOLUME_NAME:-lingshu-ai-cs-preview_preview_pb_data}
   caddy_data:
   caddy_config:
