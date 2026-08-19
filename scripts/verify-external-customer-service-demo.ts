@@ -42,7 +42,7 @@ const [memoryOverview, styleEvidence, customerMemory, responseStrategies] = awai
 if (session.user?.email !== email || session.user?.role !== 'admin') throw new Error('Demo workspace permission verification failed');
 if ((session.tenant?.subscriptionPlan || session.subscription?.plan) !== 'customer') throw new Error('Demo account is not isolated as a customer tenant');
 if (session.subscription?.status !== 'active') throw new Error('Demo subscription is not active');
-if (profile.company?.name !== '苏州凌锐智能装备有限公司' || !profile.company.mainMarkets?.includes('苏州')) throw new Error('Industrial equipment enterprise profile is incomplete');
+if (profile.company?.name !== '文澜天下' || !profile.company.mainMarkets?.includes('苏州')) throw new Error('Industrial equipment enterprise profile is incomplete');
 if ((profile.products?.items?.length || 0) < 5 || (profile.faq?.length || 0) < 8) throw new Error('Demo knowledge base is incomplete');
 if ((profile.salesStyleProfile?.learnedFromCount || 0) < 10) throw new Error('Learning history was not seeded');
 if (!status.enabled || status.canAutoSend) throw new Error('Customer service must be enabled in suggestion-only mode');
@@ -66,7 +66,7 @@ const entryAsset = indexHtml.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
 if (!entryAsset) throw new Error('Frontend entry asset was not found');
 const entryPath = path.join(distDir, entryAsset.replace(/^\/+/, ''));
 const entryJs = fs.readFileSync(entryPath, 'utf8');
-for (const marker of ['customer-demo@lingshu.site', 'mock-big-order-suzhou-semiconductor', 'AI 草稿 · 人工改过', '客服演示沙盘']) {
+for (const marker of ['wenlantianxia-test@local.test', 'mock-big-order-suzhou-semiconductor', 'AI 草稿 · 人工改过', '客服演示沙盘']) {
   if (!entryJs.includes(marker)) throw new Error(`Frontend bundle is stale; missing marker: ${marker}`);
 }
 

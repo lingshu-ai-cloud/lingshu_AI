@@ -63,7 +63,7 @@ async function ensureExternalDemoAccount(): Promise<void> {
   const existingUser = await findPocketBaseRecord(token, 'users', `email = "${escapeFilterValue(email)}"`);
   let tenantId = String(existingUser?.tenantId || '');
   const tenantBody = {
-    name: '苏州凌锐智能装备有限公司',
+    name: '文澜天下',
     subscriptionStatus: 'active',
     subscriptionPlan: 'customer',
     subscriptionExpiresAt: '',
@@ -207,7 +207,7 @@ const [savedStyles, savedCustomers, savedStrategies] = await Promise.all([
 ]);
 
 if (!customerServiceEnabled) throw new Error('Customer service master switch was not enabled');
-if (savedProfile.company?.name !== '苏州凌锐智能装备有限公司') throw new Error('Enterprise profile verification failed');
+if (savedProfile.company?.name !== '文澜天下') throw new Error('Enterprise profile verification failed');
 const savedDemoStyleCount = (savedStyles.items || []).filter(item => String(item.evidenceSource || '').startsWith('外部演示初始化')).length;
 const savedDemoCustomerCount = (savedCustomers.items || []).filter(item => String(item.customerId || '').startsWith('mock-')).length;
 const savedDemoStrategyCount = (savedStrategies.items || []).filter(item => String(item.strategyId || '').startsWith('T_')).length;

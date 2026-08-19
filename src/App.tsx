@@ -83,7 +83,7 @@ const isAdminSession = (session: AuthSession | null) => Boolean(session && !sess
   session.tenant?.subscriptionPlan === 'admin' ||
   session.subscription?.plan === 'admin'
 ));
-const EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAIL = 'customer-demo@lingshu.site';
+const EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAIL = 'wenlantianxia-test@local.test';
 const isExternalCustomerServiceDemoSession = (session: AuthSession | null) => (
   session?.user.email.trim().toLowerCase() === EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAIL
 );
