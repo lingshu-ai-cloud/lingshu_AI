@@ -22,9 +22,9 @@ services:
     expose:
       - "8788"
     ports:
-      # Test-host ingress stays bound to loopback and is published through the
-      # shared Caddy instance, so it cannot collide with other deployments.
-      - "127.0.0.1:${APP_HOST_PORT:-18788}:8788"
+      # The shared Caddy container reaches this bridge-only address. It is not
+      # bound to the server's public network interface.
+      - "172.17.0.1:${APP_HOST_PORT:-18788}:8788"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/health"]
       interval: 15s
