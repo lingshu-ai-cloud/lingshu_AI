@@ -69,6 +69,28 @@ function assText(value) {
     .trim();
 }
 
+function wrappedAssText(value, maxChars = 34) {
+  const text = assText(value);
+  if (!text || text.length <= maxChars) return text;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= 1) {
+    return (text.match(new RegExp(`.{1,${maxChars}}`, 'g')) || [text]).join('\\N');
+  }
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (current && next.length > maxChars) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.join('\\N');
+}
+
 function filterPath(value) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -82,12 +104,13 @@ function cuesToAss(cues, width, height) {
     .map(cue => ({
       start: Math.max(0, Number(cue && cue.start) || 0),
       end: Math.max(0, Number(cue && cue.end) || 0),
-      text: assText(cue && cue.text),
+      text: wrappedAssText(cue && cue.text),
     }))
     .filter(cue => cue.text && cue.end > cue.start);
   if (!valid.length) return '';
 
-  const fontSize = Math.max(34, Math.round(width / 22));
+  // 竖屏短视频在手机端观看时需要更醒目的字幕；1080 宽画面约为 60px。
+  const fontSize = Math.max(40, Math.round(width / 18));
   const marginV = Math.round(height / 3);
   const events = valid.map(cue =>
     `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${cue.text}`
@@ -138,13 +161,21 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
   try {
     // 1) 拉取真实素材片段与 BGM
-    const timeline = (manifest && manifest.timeline ? manifest.timeline : []).filter(t => t && t.url);
+    const requestedTimeline = manifest && Array.isArray(manifest.timeline) ? manifest.timeline.filter(Boolean) : [];
+    const timeline = requestedTimeline.filter(t => t && t.url);
+    if (requestedTimeline.length && timeline.length !== requestedTimeline.length) {
+      throw new Error(`渲染清单缺少真实素材地址：需要 ${requestedTimeline.length} 段，有效 ${timeline.length} 段。已停止生成，避免输出空画面。`);
+    }
     const localClips = [];
     for (let i = 0; i < timeline.length; i++) {
       const u = timeline[i].url;
       const ext = (u.split('?')[0].split('.').pop() || 'mp4').toLowerCase();
       const dest = path.join(tmp, `clip${i}.${ext}`);
       try { await downloadTo(u, dest, downloadOptions); localClips.push({ ...timeline[i], file: dest, image: IMAGE_RE.test(u) }); } catch { /* 跳过失败片段 */ }
+    }
+
+    if (timeline.length && localClips.length !== timeline.length) {
+      throw new Error(`分镜素材下载不完整：需要 ${timeline.length} 段，成功 ${localClips.length} 段。已停止生成，避免输出空画面。`);
     }
 
     let bgmFile = null;
@@ -163,6 +194,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         voFile = path.join(tmp, `vo${path.extname(voUrl.split('?')[0]) || '.wav'}`);
         await downloadTo(voUrl, voFile, downloadOptions);
       } catch { voFile = null; }
+    }
+
+    if (voUrl && !voFile) {
+      throw new Error('配音音频下载失败。已停止生成，避免输出静音成片。');
     }
 
     if (process.env.RENDER_DEBUG) console.error(`[render] downloaded clips=${localClips.length} bgm=${bgmFile ? 'yes' : 'no'} voiceover=${voFile ? 'yes' : 'no'}`);
