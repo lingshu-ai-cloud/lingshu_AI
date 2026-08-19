@@ -28,6 +28,18 @@ assert.ok(customers.some(customer => customer.timeline.some(event => event.audit
 assert.ok(customers.some(customer => customer.stage === 'won'), 'the lab must include a repeat-purchase customer');
 assert.ok(customers.some(customer => customer.stage === 'silent30'), 'the lab must include a reactivation customer');
 
+const foreignCustomers = createMockCustomers('wenlantianxia-test@local.test');
+const foreignById = new Map(foreignCustomers.map(customer => [customer.id, customer]));
+const foreignContextualScenarios = foreignCustomers.filter(customer => !customer.simulation?.editable);
+assert.equal(foreignCustomers.length, 8, 'the Wenlan account should have seven overseas sales stages plus one editable sandbox');
+assert.ok(foreignContextualScenarios.every(customer => !/中国/.test(customer.countryName)), 'all predefined Wenlan customers must come from overseas markets');
+assert.ok(foreignContextualScenarios.every(customer => customer.timeline.length >= 5), 'every overseas customer needs a complete timeline from first inquiry to the current stage');
+assert.ok(foreignContextualScenarios.every(customer => customer.timeline[0]?.actor === 'buyer'), 'every overseas timeline must start with the buyer entering the conversation');
+assert.ok(foreignContextualScenarios.every(customer => customer.timeline.some(event => event.audit?.editedByHuman)), 'every overseas context should show human-AI collaboration');
+assert.ok(foreignById.get('mock-export-big-order-saudi-packaging')?.simulation?.warning, 'the Saudi group opportunity must trigger a large-order warning');
+assert.ok(foreignCustomers.some(customer => customer.language === '西语'), 'the foreign-trade lab must include Spanish conversations');
+assert.ok(foreignCustomers.some(customer => customer.language === '阿语'), 'the foreign-trade lab must include Arabic conversations');
+
 const app = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
 assert.match(app, /customer-demo@lingshu\.site/, 'the original external account must keep access to the simulation lab');
 assert.match(app, /wenlantianxia-test@local\.test/, 'the new external account must also be allowed to see the simulation lab');
@@ -62,7 +74,7 @@ assert.match(customerUi, /客服演示沙盘/, 'the dedicated account must clear
 
 const memoryUi = fs.readFileSync(path.join(root, 'src/components/WorkspaceManagementPages.tsx'), 'utf8');
 assert.match(memoryUi, /includeMockCustomers/, 'the memory workspace must be able to show the same simulation customer contexts');
-assert.match(memoryUi, /createMockCustomers\(\)/, 'simulation customer context must be shared instead of duplicated');
+assert.match(memoryUi, /createMockCustomers\(mockCustomerScope\)/, 'simulation customer context must be shared with the account-specific scope');
 assert.match(memoryUi, /includeMockCustomers \? 'style' : 'content'/, 'the demo account should open on visible learning evidence instead of an empty operations tab');
 
 const verificationScript = fs.readFileSync(path.join(root, 'scripts/verify-external-customer-service-demo.ts'), 'utf8');
@@ -92,5 +104,19 @@ assert.ok(profile.products.items.length >= 5, 'industrial equipment demo profile
 assert.ok(profile.faq.length >= 5, 'the demo knowledge base should support safe common-question testing');
 assert.ok(profile.salesStyleProfile.learnedFromCount >= 10, 'the demo profile should visibly demonstrate learning history');
 assert.equal(profile.strategy.aiAutonomy, 'draft', 'external testing must start in suggestion-only mode');
+
+const foreignProfile = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-foreign-trade-profile.json'), 'utf8')) as Record<string, any>;
+assert.equal(foreignProfile.company.name, '文澜天下');
+assert.match(foreignProfile.company.mainMarkets, /中东.*欧洲.*拉丁美洲.*东南亚/);
+assert.doesNotMatch(`${foreignProfile.company.mainMarkets} ${foreignProfile.customers.targetProfiles}`, /苏州|无锡|常州/);
+assert.ok(foreignProfile.salesStyleProfile.learnedFromCount >= 20, 'the Wenlan profile should visibly show accumulated learning');
+assert.equal(foreignProfile.strategy.aiAutonomy, 'draft');
+
+const foreignMemory = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-foreign-trade-memory.json'), 'utf8')) as Record<string, any>;
+assert.ok(foreignMemory.records.styleMemory.length >= 8, 'every key overseas stage needs auditable human-edit evidence');
+assert.equal(foreignMemory.records.customerMemory.length, 7, 'every predefined overseas customer needs isolated memory');
+assert.ok(foreignMemory.records.responseStrategies.length >= 5, 'foreign-trade learning should cover contact, continuity, compliance, handoff and reactivation');
+assert.ok(foreignMemory.records.styleMemory.every((item: Record<string, unknown>) => String(item.customer_id || '').startsWith('mock-export-')), 'Wenlan style evidence must only refer to its overseas simulations');
+assert.ok(foreignMemory.records.customerMemory.every((item: Record<string, unknown>) => String(item.customer_id || '').startsWith('mock-export-')), 'Wenlan customer memory must stay isolated to overseas simulations');
 
 console.log('external customer service demo tests passed');

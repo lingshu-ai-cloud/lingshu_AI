@@ -3,8 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const profilePath = path.join(root, 'data', 'external-customer-service-demo-profile.json');
-const memoryPath = path.join(root, 'data', 'external-customer-service-demo-memory.json');
+function fixturePath(envName: string, fallbackName: string): string {
+  const configured = String(process.env[envName] || '').trim();
+  if (!configured) return path.join(root, 'data', fallbackName);
+  return path.isAbsolute(configured) ? configured : path.join(root, configured);
+}
+
+const profilePath = fixturePath('EXTERNAL_DEMO_PROFILE_FILE', 'external-customer-service-demo-profile.json');
+const memoryPath = fixturePath('EXTERNAL_DEMO_MEMORY_FILE', 'external-customer-service-demo-memory.json');
 const baseUrl = String(process.env.EXTERNAL_DEMO_BASE_URL || 'http://127.0.0.1:8788').replace(/\/$/, '');
 const email = String(process.env.EXTERNAL_DEMO_EMAIL || '').trim().toLowerCase();
 const password = String(process.env.EXTERNAL_DEMO_PASSWORD || '');
@@ -14,6 +20,7 @@ const pbUrl = String(process.env.PB_URL || 'http://127.0.0.1:8090').replace(/\/$
 const pbAdminEmail = String(process.env.PB_ADMIN_EMAIL || '').trim();
 const pbAdminPassword = String(process.env.PB_ADMIN_PASSWORD || '');
 const skipAccountProvisioning = String(process.env.EXTERNAL_DEMO_SKIP_ACCOUNT_PROVISIONING || '').trim().toLowerCase() === 'true';
+const replaceMockMemory = String(process.env.EXTERNAL_DEMO_REPLACE_MOCK_MEMORY || '').trim().toLowerCase() === 'true';
 
 if (!email || !password) throw new Error('EXTERNAL_DEMO_EMAIL / EXTERNAL_DEMO_PASSWORD are required');
 
@@ -139,6 +146,42 @@ const [existingStyles, existingCustomers, existingStrategies] = await Promise.al
   jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/customer-memories', { headers }),
   jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/strategies', { headers }),
 ]);
+async function pruneSupersededMockRecords(
+  items: RecordMap[],
+  keep: (item: RecordMap) => boolean,
+  isManaged: (item: RecordMap) => boolean,
+  route: string,
+): Promise<RecordMap[]> {
+  if (!replaceMockMemory) return items;
+  const kept: RecordMap[] = [];
+  for (const item of items) {
+    const id = String(item.id || '');
+    if (isManaged(item) && !keep(item)) {
+      if (id) await jsonRequest(`${route}/${encodeURIComponent(id)}`, { method: 'DELETE', headers });
+      continue;
+    }
+    kept.push(item);
+  }
+  return kept;
+}
+const scopedStyles = await pruneSupersededMockRecords(
+  existingStyles.items || [],
+  item => fixtureStyleKeys.has(`${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`),
+  item => String(item.customerId || '').startsWith('mock-'),
+  '/api/overseas/agent-memory/style-evidence',
+);
+const scopedCustomers = await pruneSupersededMockRecords(
+  existingCustomers.items || [],
+  item => fixtureCustomerKeys.has(`${String(item.customerId || '')}\n${String(item.key || '')}`),
+  item => String(item.customerId || '').startsWith('mock-'),
+  '/api/overseas/agent-memory/customer-memories',
+);
+const scopedStrategies = await pruneSupersededMockRecords(
+  existingStrategies.items || [],
+  item => fixtureStrategyIds.has(String(item.strategyId || '')),
+  item => /^(?:T_|FT_)/.test(String(item.strategyId || '')),
+  '/api/overseas/agent-memory/strategies',
+);
 async function pruneDuplicateRecords(
   items: RecordMap[],
   keyOf: (item: RecordMap) => string,
@@ -160,19 +203,19 @@ async function pruneDuplicateRecords(
   return kept;
 }
 const dedupedStyles = await pruneDuplicateRecords(
-  existingStyles.items || [],
+  scopedStyles,
   item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`,
   fixtureStyleKeys,
   '/api/overseas/agent-memory/style-evidence',
 );
 const dedupedCustomers = await pruneDuplicateRecords(
-  existingCustomers.items || [],
+  scopedCustomers,
   item => `${String(item.customerId || '')}\n${String(item.key || '')}`,
   fixtureCustomerKeys,
   '/api/overseas/agent-memory/customer-memories',
 );
 const dedupedStrategies = await pruneDuplicateRecords(
-  existingStrategies.items || [],
+  scopedStrategies,
   item => String(item.strategyId || ''),
   fixtureStrategyIds,
   '/api/overseas/agent-memory/strategies',
@@ -213,9 +256,9 @@ const [savedStyles, savedCustomers, savedStrategies] = await Promise.all([
 
 if (!customerServiceEnabled) throw new Error('Customer service master switch was not enabled');
 if (savedProfile.company?.name !== companyName) throw new Error('Enterprise profile verification failed');
-const savedDemoStyleCount = (savedStyles.items || []).filter(item => String(item.evidenceSource || '').startsWith('外部演示初始化')).length;
-const savedDemoCustomerCount = (savedCustomers.items || []).filter(item => String(item.customerId || '').startsWith('mock-')).length;
-const savedDemoStrategyCount = (savedStrategies.items || []).filter(item => String(item.strategyId || '').startsWith('T_')).length;
+const savedDemoStyleCount = (savedStyles.items || []).filter(item => fixtureStyleKeys.has(`${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`)).length;
+const savedDemoCustomerCount = (savedCustomers.items || []).filter(item => fixtureCustomerKeys.has(`${String(item.customerId || '')}\n${String(item.key || '')}`)).length;
+const savedDemoStrategyCount = (savedStrategies.items || []).filter(item => fixtureStrategyIds.has(String(item.strategyId || ''))).length;
 if (savedDemoStyleCount < memoryFixture.records.styleMemory.length) throw new Error('Demo style evidence seeding is incomplete');
 if (savedDemoCustomerCount < memoryFixture.records.customerMemory.length) throw new Error('Demo customer memory seeding is incomplete');
 if (savedDemoStrategyCount < memoryFixture.records.responseStrategies.length) throw new Error('Demo response strategy seeding is incomplete');

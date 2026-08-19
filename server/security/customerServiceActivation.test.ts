@@ -94,6 +94,6 @@ assert.match(ui, /setDraftSuggestion\(null\);[\s\S]*?setLastDraftKey\(''\);[\s\S
 
 const mockCustomers = read('src/mocks/customerProfiles.ts');
 assert.match(mockCustomers, /id: 'mock-lead-suzhou-vision'[\s\S]*?message\('lead-1', 'buyer'/, 'the reply lab must open with a realistic buyer message');
-assert.match(read('src/hooks/useCustomers.ts'), /MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v4'/, 'existing single-customer mock storage must be refreshed for the staged reply lab');
+assert.match(read('src/hooks/useCustomers.ts'), /MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v5'/, 'existing mock storage must be refreshed for the account-specific foreign-trade reply lab');
 
 console.log('customer service activation tests passed');

@@ -471,7 +471,7 @@ export function ScriptLibraryPage() {
   );
 }
 
-export function AgentMemoryPage({ includeMockCustomers = false }: { includeMockCustomers?: boolean } = {}) {
+export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScope = 'admin' }: { includeMockCustomers?: boolean; mockCustomerScope?: string } = {}) {
   type MemoryTab = 'content' | 'style' | 'customer' | 'strategy';
   type ContentMemory = {
     id: string; kind: 'analysis' | 'draft'; title: string; source: string; updated?: string;
@@ -669,7 +669,7 @@ export function AgentMemoryPage({ includeMockCustomers = false }: { includeMockC
         const customerPayload = customers as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
         const liveCustomerContexts = Array.isArray(customerPayload) ? customerPayload : Array.isArray(customerPayload.items) ? customerPayload.items : [];
         const mockCustomerContexts = includeMockCustomers
-          ? createMockCustomers().map(customer => ({
+          ? createMockCustomers(mockCustomerScope).map(customer => ({
             id: customer.id,
             name: customer.name,
             product: customer.product,
@@ -690,7 +690,7 @@ export function AgentMemoryPage({ includeMockCustomers = false }: { includeMockC
       .catch(() => active && setContentMemories([]))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [includeMockCustomers]);
+  }, [includeMockCustomers, mockCustomerScope]);
 
   useEffect(() => {
     let active = true;

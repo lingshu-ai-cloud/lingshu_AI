@@ -545,13 +545,16 @@ export default function App() {
               onSessionRefresh={() => void refreshSession()}
               isDemo={Boolean(session.demo?.enabled)}
               includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
-              mockCustomerScope={session.user.id || session.tenant?.id || 'admin'}
+              mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
           {page === 'orders' && <OrderManagementPage />}
           {page === 'enterprise' && <EnterprisePage />}
           {page === 'agentMemory' && (
-            <AgentMemoryPage includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()} />
+            <AgentMemoryPage
+              includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
+              mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
+            />
           )}
           {page === 'plugins' && <IntegrationsPage />}
           {page === 'organizationPermissions' && <OrganizationPermissionsPage />}

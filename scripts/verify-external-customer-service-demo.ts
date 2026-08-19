@@ -5,6 +5,12 @@ const baseUrl = String(process.env.EXTERNAL_DEMO_BASE_URL || 'http://127.0.0.1:8
 const email = String(process.env.EXTERNAL_DEMO_EMAIL || '').trim().toLowerCase();
 const password = String(process.env.EXTERNAL_DEMO_PASSWORD || '');
 const expectedCompanyName = String(process.env.EXTERNAL_DEMO_COMPANY_NAME || '苏州凌锐智能装备有限公司').trim();
+const isForeignTradeDemo = email === 'wenlantianxia-test@local.test';
+const expectedMarketMarker = String(process.env.EXTERNAL_DEMO_MARKET_MARKER || (isForeignTradeDemo ? '中东' : '苏州')).trim();
+const expectedCustomerPrefix = isForeignTradeDemo ? 'mock-export-' : 'mock-';
+const expectedStrategyIds = isForeignTradeDemo
+  ? ['FT_FIRST_CONTACT', 'FT_CONTINUOUS_CHAT', 'FT_COMPLIANCE_BOUNDARY', 'FT_HIGH_VALUE_HANDOFF', 'FT_REACTIVATION']
+  : ['T_CONTINUOUS_CHAT', 'T_PILOT_ENTRY', 'T_HIGH_VALUE_HANDOFF'];
 
 if (!email || !password) throw new Error('EXTERNAL_DEMO_EMAIL / EXTERNAL_DEMO_PASSWORD are required');
 
@@ -43,16 +49,16 @@ const [memoryOverview, styleEvidence, customerMemory, responseStrategies] = awai
 if (session.user?.email !== email || session.user?.role !== 'admin') throw new Error('Demo workspace permission verification failed');
 if ((session.tenant?.subscriptionPlan || session.subscription?.plan) !== 'customer') throw new Error('Demo account is not isolated as a customer tenant');
 if (session.subscription?.status !== 'active') throw new Error('Demo subscription is not active');
-if (profile.company?.name !== expectedCompanyName || !profile.company.mainMarkets?.includes('苏州')) throw new Error('Industrial equipment enterprise profile is incomplete');
+if (profile.company?.name !== expectedCompanyName || !profile.company.mainMarkets?.includes(expectedMarketMarker)) throw new Error('Industrial equipment enterprise profile is incomplete');
 if ((profile.products?.items?.length || 0) < 5 || (profile.faq?.length || 0) < 8) throw new Error('Demo knowledge base is incomplete');
 if ((profile.salesStyleProfile?.learnedFromCount || 0) < 10) throw new Error('Learning history was not seeded');
 if (!status.enabled || status.canAutoSend) throw new Error('Customer service must be enabled in suggestion-only mode');
 const demoStyleEvidence = (styleEvidence.items || []).filter(item => String(item.evidenceSource || '').startsWith('外部演示初始化'));
-const demoCustomerMemory = (customerMemory.items || []).filter(item => String(item.customerId || '').startsWith('mock-'));
+const demoCustomerMemory = (customerMemory.items || []).filter(item => String(item.customerId || '').startsWith(expectedCustomerPrefix));
 const demoStrategyIds = new Set((responseStrategies.items || []).map(item => String(item.strategyId || '')));
 if (demoStyleEvidence.length < 8) throw new Error('Demo style evidence is missing');
 if (demoCustomerMemory.length < 6) throw new Error('Demo customer-private memory is missing');
-for (const strategyId of ['T_CONTINUOUS_CHAT', 'T_PILOT_ENTRY', 'T_HIGH_VALUE_HANDOFF']) {
+for (const strategyId of expectedStrategyIds) {
   if (!demoStrategyIds.has(strategyId)) throw new Error(`Demo response strategy is missing: ${strategyId}`);
 }
 if ((memoryOverview.readiness?.editedConfirmed || 0) < 8 || (memoryOverview.readiness?.customerCount || 0) < 6) {
@@ -67,12 +73,35 @@ const entryAsset = indexHtml.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
 if (!entryAsset) throw new Error('Frontend entry asset was not found');
 const entryPath = path.join(distDir, entryAsset.replace(/^\/+/, ''));
 const entryJs = fs.readFileSync(entryPath, 'utf8');
-for (const marker of ['customer-demo@lingshu.site', 'wenlantianxia-test@local.test', 'mock-big-order-suzhou-semiconductor', 'AI 草稿 · 人工改过', '客服演示沙盘']) {
+for (const marker of ['customer-demo@lingshu.site', 'wenlantianxia-test@local.test', isForeignTradeDemo ? 'mock-export-big-order-saudi-packaging' : 'mock-big-order-suzhou-semiconductor', 'AI 草稿 · 人工改过', '客服演示沙盘']) {
   if (!entryJs.includes(marker)) throw new Error(`Frontend bundle is stale; missing marker: ${marker}`);
 }
 
 type DraftResult = { draft?: string; handoffRequired?: boolean; category?: string; verification?: { status?: string } };
-const draftCases = [
+const draftCases = isForeignTradeDemo ? [
+  {
+    name: 'solution_discovery',
+    body: {
+      customerId: 'online-export-solution', language: 'English', stage: '需求确认', product: 'Flexible battery assembly line', internalProduct: 'LX-Trace Flexible Assembly Line', intent: 'reply',
+      timeline: [
+        { id: '1', actor: 'buyer', body: 'We need one pilot battery line in Germany. Changeover takes 55 minutes.' },
+        { id: '2', actor: 'seller', body: 'A pilot makes sense. Which interface does your MES use?' },
+        { id: '3', actor: 'buyer', body: 'OPC UA. What data do you need from us first?' },
+      ],
+    },
+  },
+  {
+    name: 'large_order_handoff',
+    body: {
+      customerId: 'online-export-large-order', language: 'English', stage: '报价谈判', product: '12 packaging lines in Saudi Arabia', internalProduct: 'LX-Pack Export Project', intent: 'reply',
+      bant: { total: 98, budget: 25, authority: 25, need: 25, timing: 23 },
+      timeline: [
+        { id: '1', actor: 'buyer', body: 'Our group has approved the budget for 12 lines and our COO will join the meeting.' },
+        { id: '2', actor: 'buyer', body: 'Can you confirm the final price and local installation schedule this week?' },
+      ],
+    },
+  },
+] as const : [
   {
     name: 'solution_discovery',
     body: {

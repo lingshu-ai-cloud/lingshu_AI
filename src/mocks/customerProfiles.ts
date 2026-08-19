@@ -1,4 +1,15 @@
 import type { BantAssessment, CustomerProfile, TimelineEvent } from '../types/customer';
+import { createForeignTradeMockCustomers } from './foreignTradeCustomerProfiles';
+
+const FOREIGN_TRADE_DEMO_SCOPES = new Set([
+  'wenlantianxia-test@local.test',
+  'kzw14f0w3dl0ujl',
+  'ajcht1koyhwp4lf',
+]);
+
+export function isForeignTradeDemoScope(scope = ''): boolean {
+  return FOREIGN_TRADE_DEMO_SCOPES.has(String(scope || '').trim().toLowerCase());
+}
 
 const minute = 60_000;
 const day = 24 * 60 * minute;
@@ -59,7 +70,8 @@ function bant(input: {
   };
 }
 
-export function createMockCustomers(): CustomerProfile[] {
+export function createMockCustomers(scope = ''): CustomerProfile[] {
+  if (isForeignTradeDemoScope(scope)) return createForeignTradeMockCustomers();
   const customers: CustomerProfile[] = [
     {
       id: 'mock-lead-suzhou-vision',

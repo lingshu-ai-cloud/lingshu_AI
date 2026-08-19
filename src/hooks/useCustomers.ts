@@ -3,8 +3,9 @@ import { authHeader } from '../lib/auth';
 import { createMockCustomers } from '../mocks/customerProfiles';
 import type { CustomerProfile, TimelineEvent } from '../types/customer';
 
-const MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v4';
+const MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v5';
 const LEGACY_MOCK_STORAGE_KEYS = [
+  'lingshu:mock-customer-conversations:v4',
   'lingshu:mock-customer-conversations:v3',
   'lingshu:mock-customer-conversations:v2',
 ];
@@ -14,25 +15,32 @@ function mockStorageKey(scope: string): string {
 }
 
 function storedMockCustomers(storageKey: string): CustomerProfile[] {
+  const scope = storageKey.slice(`${MOCK_STORAGE_KEY}:`.length);
+  const seededCustomers = () => createMockCustomers(scope);
   try {
     const scopedValue = localStorage.getItem(storageKey);
     const parsed = JSON.parse(scopedValue || '[]');
     if (!Array.isArray(parsed) || !parsed.length || !parsed.some(customer => customer?.id === 'mock-free-sandbox')) {
-      const scope = storageKey.slice(`${MOCK_STORAGE_KEY}:`.length);
       LEGACY_MOCK_STORAGE_KEYS.forEach(key => {
         localStorage.removeItem(key);
         localStorage.removeItem(`${key}:${scope}`);
       });
-      return createMockCustomers();
+      return seededCustomers();
     }
     const stored = parsed.map(cloneCustomer);
     if (stored.some(customer => /LED pendant lights|吊灯/i.test(`${customer.product} ${customer.outboundProduct} ${customer.timeline.map(item => item.body).join(' ')}`))) {
       localStorage.removeItem(storageKey);
-      return createMockCustomers();
+      return seededCustomers();
+    }
+    const expectsForeignCustomers = scope === 'wenlantianxia-test@local.test' || scope === 'kzw14f0w3dl0ujl' || scope === 'ajcht1koyhwp4lf';
+    const hasForeignCustomers = stored.some(customer => String(customer.id || '').startsWith('mock-export-'));
+    if (expectsForeignCustomers !== hasForeignCustomers) {
+      localStorage.removeItem(storageKey);
+      return seededCustomers();
     }
     return stored;
   } catch {
-    return createMockCustomers();
+    return seededCustomers();
   }
 }
 
