@@ -1,13 +1,20 @@
 import { adminFetch } from './pb.js';
 
-type FieldType = 'text' | 'select' | 'bool' | 'date' | 'json' | 'number';
+type FieldType = 'text' | 'select' | 'bool' | 'date' | 'autodate' | 'json' | 'number';
 
 interface FieldDef {
   name: string;
   type: FieldType;
   required?: boolean;
   values?: string[];
+  onCreate?: boolean;
+  onUpdate?: boolean;
 }
+
+const RECORD_TIMESTAMP_FIELDS: FieldDef[] = [
+  { name: 'created', type: 'autodate', onCreate: true, onUpdate: false },
+  { name: 'updated', type: 'autodate', onCreate: true, onUpdate: true },
+];
 
 const TENANTS_FIELDS: FieldDef[] = [
   { name: 'name', type: 'text', required: true },
@@ -108,6 +115,7 @@ const STYLE_MEMORY_FIELDS: FieldDef[] = [
   { name: 'confirmed_by', type: 'text' },
   { name: 'confirmed_at', type: 'date' },
   { name: 'updated_by', type: 'text' },
+  ...RECORD_TIMESTAMP_FIELDS,
 ];
 
 const RESPONSE_STRATEGY_MEMORY_FIELDS: FieldDef[] = [
@@ -134,6 +142,7 @@ const RESPONSE_STRATEGY_MEMORY_FIELDS: FieldDef[] = [
   { name: 'updated_by', type: 'text' },
   { name: 'last_used_at', type: 'date' },
   { name: 'use_count', type: 'number' },
+  ...RECORD_TIMESTAMP_FIELDS,
 ];
 
 const CUSTOMER_MEMORY_FIELDS: FieldDef[] = [
@@ -152,6 +161,7 @@ const CUSTOMER_MEMORY_FIELDS: FieldDef[] = [
   { name: 'confirmed_by', type: 'text' },
   { name: 'confirmed_at', type: 'date' },
   { name: 'updated_by', type: 'text' },
+  ...RECORD_TIMESTAMP_FIELDS,
 ];
 
 const AGENT_MEMORY_AUDIT_FIELDS: FieldDef[] = [
@@ -202,7 +212,11 @@ function oldSchemaField(field: FieldDef) {
     name: field.name,
     type: field.type,
     required: Boolean(field.required),
-    options: field.type === 'select' ? { values: field.values ?? [] } : {},
+    options: field.type === 'select'
+      ? { values: field.values ?? [] }
+      : field.type === 'autodate'
+        ? { onCreate: Boolean(field.onCreate), onUpdate: Boolean(field.onUpdate) }
+        : {},
   };
 }
 
@@ -212,6 +226,7 @@ function newField(field: FieldDef) {
     type: field.type,
     required: Boolean(field.required),
     ...(field.type === 'select' ? { values: field.values ?? [] } : {}),
+    ...(field.type === 'autodate' ? { onCreate: Boolean(field.onCreate), onUpdate: Boolean(field.onUpdate) } : {}),
   };
 }
 

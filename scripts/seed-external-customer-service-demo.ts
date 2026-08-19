@@ -12,6 +12,7 @@ const accountName = String(process.env.EXTERNAL_DEMO_ACCOUNT_NAME || '智能客�
 const pbUrl = String(process.env.PB_URL || 'http://127.0.0.1:8090').replace(/\/$/, '');
 const pbAdminEmail = String(process.env.PB_ADMIN_EMAIL || '').trim();
 const pbAdminPassword = String(process.env.PB_ADMIN_PASSWORD || '');
+const skipAccountProvisioning = String(process.env.EXTERNAL_DEMO_SKIP_ACCOUNT_PROVISIONING || '').trim().toLowerCase() === 'true';
 
 if (!email || !password) throw new Error('EXTERNAL_DEMO_EMAIL / EXTERNAL_DEMO_PASSWORD are required');
 
@@ -107,7 +108,7 @@ async function jsonRequest<T>(urlPath: string, init: RequestInit = {}): Promise<
   return data;
 }
 
-await ensureExternalDemoAccount();
+if (!skipAccountProvisioning) await ensureExternalDemoAccount();
 
 const login = await jsonRequest<{ token: string; tenant?: { id?: string } }>('/api/overseas/auth/login', {
   method: 'POST',
@@ -125,14 +126,55 @@ await jsonRequest('/api/overseas/enterprise/profile', {
 });
 
 const memoryFixture = JSON.parse(fs.readFileSync(memoryPath, 'utf8')) as DemoMemoryFixture;
+const fixtureStyleKeys = new Set(memoryFixture.records.styleMemory.map(item => `${String(item.customer_id || '')}\n${String(item.trigger_message || '')}`));
+const fixtureCustomerKeys = new Set(memoryFixture.records.customerMemory.map(item => `${String(item.customer_id || '')}\n${String(item.memory_key || '')}`));
+const fixtureStrategyIds = new Set(memoryFixture.records.responseStrategies.map(item => String(item.strategy_id || '')));
 const [existingStyles, existingCustomers, existingStrategies] = await Promise.all([
   jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/style-evidence', { headers }),
   jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/customer-memories', { headers }),
   jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/strategies', { headers }),
 ]);
-const existingStyleKeys = new Set((existingStyles.items || []).map(item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`));
-const existingCustomerKeys = new Set((existingCustomers.items || []).map(item => `${String(item.customerId || '')}\n${String(item.key || '')}`));
-const existingStrategyIds = new Set((existingStrategies.items || []).map(item => String(item.strategyId || '')));
+async function pruneDuplicateRecords(
+  items: RecordMap[],
+  keyOf: (item: RecordMap) => string,
+  fixtureKeys: Set<string>,
+  route: string,
+): Promise<RecordMap[]> {
+  const seen = new Set<string>();
+  const kept: RecordMap[] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    const id = String(item.id || '');
+    if (!fixtureKeys.has(key) || !seen.has(key)) {
+      if (fixtureKeys.has(key)) seen.add(key);
+      kept.push(item);
+      continue;
+    }
+    if (id) await jsonRequest(`${route}/${encodeURIComponent(id)}`, { method: 'DELETE', headers });
+  }
+  return kept;
+}
+const dedupedStyles = await pruneDuplicateRecords(
+  existingStyles.items || [],
+  item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`,
+  fixtureStyleKeys,
+  '/api/overseas/agent-memory/style-evidence',
+);
+const dedupedCustomers = await pruneDuplicateRecords(
+  existingCustomers.items || [],
+  item => `${String(item.customerId || '')}\n${String(item.key || '')}`,
+  fixtureCustomerKeys,
+  '/api/overseas/agent-memory/customer-memories',
+);
+const dedupedStrategies = await pruneDuplicateRecords(
+  existingStrategies.items || [],
+  item => String(item.strategyId || ''),
+  fixtureStrategyIds,
+  '/api/overseas/agent-memory/strategies',
+);
+const existingStyleKeys = new Set(dedupedStyles.map(item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`));
+const existingCustomerKeys = new Set(dedupedCustomers.map(item => `${String(item.customerId || '')}\n${String(item.key || '')}`));
+const existingStrategyIds = new Set(dedupedStrategies.map(item => String(item.strategyId || '')));
 const missingMemory = {
   styleMemory: memoryFixture.records.styleMemory.filter(item => !existingStyleKeys.has(`${String(item.customer_id || '')}\n${String(item.trigger_message || '')}`)),
   customerMemory: memoryFixture.records.customerMemory.filter(item => !existingCustomerKeys.has(`${String(item.customer_id || '')}\n${String(item.memory_key || '')}`)),

@@ -38,6 +38,7 @@ assert.match(seedScript, /subscriptionPlan: 'customer'/, 'the account must remai
 assert.match(seedScript, /role: 'admin'/, 'the account must have every customer-facing workspace permission');
 assert.match(seedScript, /agent-memory\/backup\/restore/, 'the dedicated account must receive the demo memory records');
 assert.match(seedScript, /missingMemoryCount/, 'demo memory provisioning must be idempotent');
+assert.match(seedScript, /pruneDuplicateRecords/, 're-running the demo seed must remove duplicate fixture records');
 
 const memoryFixture = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-demo-memory.json'), 'utf8')) as Record<string, any>;
 assert.equal(memoryFixture.schemaVersion, 1);
@@ -66,6 +67,13 @@ const verificationScript = fs.readFileSync(path.join(root, 'scripts/verify-exter
 for (const marker of ['Demo style evidence is missing', 'Demo customer-private memory is missing', 'Frontend bundle is stale']) {
   assert.match(verificationScript, new RegExp(marker), `online verification must catch: ${marker}`);
 }
+
+const deliverySchema = fs.readFileSync(path.join(root, 'server/storage/ensureDeliveryCollections.ts'), 'utf8');
+assert.match(deliverySchema, /name: 'created', type: 'autodate', onCreate: true, onUpdate: false/, 'memory records need an automatic creation timestamp for sorted retrieval');
+assert.match(deliverySchema, /name: 'updated', type: 'autodate', onCreate: true, onUpdate: true/, 'memory records need an automatic update timestamp for sorted retrieval');
+assert.match(deliverySchema, /STYLE_MEMORY_FIELDS[\s\S]*?RECORD_TIMESTAMP_FIELDS/, 'style memory must include sortable timestamps');
+assert.match(deliverySchema, /RESPONSE_STRATEGY_MEMORY_FIELDS[\s\S]*?RECORD_TIMESTAMP_FIELDS/, 'response strategies must include sortable timestamps');
+assert.match(deliverySchema, /CUSTOMER_MEMORY_FIELDS[\s\S]*?RECORD_TIMESTAMP_FIELDS/, 'customer-private memory must include sortable timestamps');
 
 const basicInfo = fs.readFileSync(path.join(root, 'src/components/customers/widgets/BasicInfoWidget.tsx'), 'utf8');
 for (const label of ['模拟客户名称', '模拟客户国家或地区', '模拟客户语言', '模拟客户需求']) {
