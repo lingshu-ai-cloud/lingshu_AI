@@ -52,6 +52,8 @@ assert.match(seedScript, /role: 'admin'/, 'the account must have every customer-
 assert.match(seedScript, /agent-memory\/backup\/restore/, 'the dedicated account must receive the demo memory records');
 assert.match(seedScript, /missingMemoryCount/, 'demo memory provisioning must be idempotent');
 assert.match(seedScript, /pruneDuplicateRecords/, 're-running the demo seed must remove duplicate fixture records');
+assert.match(seedScript, /attachExistingIds/, 'replacement mode must update matching fixture records instead of leaving stale values');
+assert.match(seedScript, /Only after the replacement payload has been safely restored/, 'replacement mode must restore before pruning so transient failures cannot empty the isolated tenant');
 assert.match(seedScript, /EXTERNAL_DEMO_COMPANY_NAME/, 'the same fixture must support tenant-specific company names');
 
 const memoryFixture = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-demo-memory.json'), 'utf8')) as Record<string, any>;
@@ -115,8 +117,14 @@ assert.equal(foreignProfile.strategy.aiAutonomy, 'draft');
 const foreignMemory = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-foreign-trade-memory.json'), 'utf8')) as Record<string, any>;
 assert.ok(foreignMemory.records.styleMemory.length >= 8, 'every key overseas stage needs auditable human-edit evidence');
 assert.equal(foreignMemory.records.customerMemory.length, 7, 'every predefined overseas customer needs isolated memory');
-assert.ok(foreignMemory.records.responseStrategies.length >= 5, 'foreign-trade learning should cover contact, continuity, compliance, handoff and reactivation');
+assert.ok(foreignMemory.records.responseStrategies.length >= 6, 'foreign-trade learning should cover contact, pilot, continuity, compliance, handoff and reactivation');
 assert.ok(foreignMemory.records.styleMemory.every((item: Record<string, unknown>) => String(item.customer_id || '').startsWith('mock-export-')), 'Wenlan style evidence must only refer to its overseas simulations');
 assert.ok(foreignMemory.records.customerMemory.every((item: Record<string, unknown>) => String(item.customer_id || '').startsWith('mock-export-')), 'Wenlan customer memory must stay isolated to overseas simulations');
+assert.ok(foreignMemory.records.styleMemory.filter((item: Record<string, unknown>) => item.category === '报价').length >= 7, 'foreign-trade reply evidence must use the runtime reply category so learning is actually retrieved');
+assert.ok(foreignMemory.records.styleMemory.some((item: Record<string, unknown>) => item.category === 'followup'), 'foreign-trade follow-up evidence must remain available to the follow-up intent');
+assert.ok(foreignMemory.records.responseStrategies.every((item: Record<string, unknown>) => item.status === 'active' && item.source === 'learned_custom' && item.rollout_percent === 100), 'foreign-trade learned strategies must be active and fully available in the isolated demo tenant');
+const foreignStrategyIds = new Set(foreignMemory.records.responseStrategies.map((item: Record<string, unknown>) => String(item.strategy_id || '')));
+const referencedStrategyIds = new Set(foreignMemory.records.styleMemory.flatMap((item: Record<string, unknown>) => Array.isArray(item.strategy_ids) ? item.strategy_ids.map(String) : []));
+assert.deepEqual([...referencedStrategyIds].filter(strategyId => !foreignStrategyIds.has(strategyId)), [], 'every learned strategy referenced by overseas evidence must exist');
 
 console.log('external customer service demo tests passed');

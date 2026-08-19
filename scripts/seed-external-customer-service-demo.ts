@@ -164,24 +164,6 @@ async function pruneSupersededMockRecords(
   }
   return kept;
 }
-const scopedStyles = await pruneSupersededMockRecords(
-  existingStyles.items || [],
-  item => fixtureStyleKeys.has(`${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`),
-  item => String(item.customerId || '').startsWith('mock-'),
-  '/api/overseas/agent-memory/style-evidence',
-);
-const scopedCustomers = await pruneSupersededMockRecords(
-  existingCustomers.items || [],
-  item => fixtureCustomerKeys.has(`${String(item.customerId || '')}\n${String(item.key || '')}`),
-  item => String(item.customerId || '').startsWith('mock-'),
-  '/api/overseas/agent-memory/customer-memories',
-);
-const scopedStrategies = await pruneSupersededMockRecords(
-  existingStrategies.items || [],
-  item => fixtureStrategyIds.has(String(item.strategyId || '')),
-  item => /^(?:T_|FT_)/.test(String(item.strategyId || '')),
-  '/api/overseas/agent-memory/strategies',
-);
 async function pruneDuplicateRecords(
   items: RecordMap[],
   keyOf: (item: RecordMap) => string,
@@ -202,33 +184,55 @@ async function pruneDuplicateRecords(
   }
   return kept;
 }
-const dedupedStyles = await pruneDuplicateRecords(
-  scopedStyles,
-  item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`,
-  fixtureStyleKeys,
-  '/api/overseas/agent-memory/style-evidence',
-);
-const dedupedCustomers = await pruneDuplicateRecords(
-  scopedCustomers,
-  item => `${String(item.customerId || '')}\n${String(item.key || '')}`,
-  fixtureCustomerKeys,
-  '/api/overseas/agent-memory/customer-memories',
-);
-const dedupedStrategies = await pruneDuplicateRecords(
-  scopedStrategies,
-  item => String(item.strategyId || ''),
-  fixtureStrategyIds,
-  '/api/overseas/agent-memory/strategies',
-);
-const existingStyleKeys = new Set(dedupedStyles.map(item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`));
-const existingCustomerKeys = new Set(dedupedCustomers.map(item => `${String(item.customerId || '')}\n${String(item.key || '')}`));
-const existingStrategyIds = new Set(dedupedStrategies.map(item => String(item.strategyId || '')));
+const currentStyles = existingStyles.items || [];
+const currentCustomers = existingCustomers.items || [];
+const currentStrategies = existingStrategies.items || [];
+const existingStyleKeys = new Set(currentStyles.map(item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`));
+const existingCustomerKeys = new Set(currentCustomers.map(item => `${String(item.customerId || '')}\n${String(item.key || '')}`));
+const existingStrategyIds = new Set(currentStrategies.map(item => String(item.strategyId || '')));
 const missingMemory = {
   styleMemory: memoryFixture.records.styleMemory.filter(item => !existingStyleKeys.has(`${String(item.customer_id || '')}\n${String(item.trigger_message || '')}`)),
   customerMemory: memoryFixture.records.customerMemory.filter(item => !existingCustomerKeys.has(`${String(item.customer_id || '')}\n${String(item.memory_key || '')}`)),
   responseStrategies: memoryFixture.records.responseStrategies.filter(item => !existingStrategyIds.has(String(item.strategy_id || ''))),
 };
-const missingMemoryCount = missingMemory.styleMemory.length + missingMemory.customerMemory.length + missingMemory.responseStrategies.length;
+function attachExistingIds(
+  fixtureItems: RecordMap[],
+  existingItems: RecordMap[],
+  fixtureKey: (item: RecordMap) => string,
+  existingKey: (item: RecordMap) => string,
+): RecordMap[] {
+  const firstByKey = new Map<string, RecordMap>();
+  for (const item of existingItems) {
+    const key = existingKey(item);
+    if (!firstByKey.has(key)) firstByKey.set(key, item);
+  }
+  return fixtureItems.map(item => {
+    const existing = firstByKey.get(fixtureKey(item));
+    const id = String(existing?.id || '');
+    return id ? { ...item, id } : item;
+  });
+}
+const memoryToRestore = replaceMockMemory ? {
+  styleMemory: attachExistingIds(
+    memoryFixture.records.styleMemory,
+    currentStyles,
+    item => `${String(item.customer_id || '')}\n${String(item.trigger_message || '')}`,
+    item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`,
+  ),
+  customerMemory: attachExistingIds(
+    memoryFixture.records.customerMemory,
+    currentCustomers,
+    item => `${String(item.customer_id || '')}\n${String(item.memory_key || '')}`,
+    item => `${String(item.customerId || '')}\n${String(item.key || '')}`,
+  ),
+  responseStrategies: attachExistingIds(
+    memoryFixture.records.responseStrategies,
+    currentStrategies,
+    item => String(item.strategy_id || ''),
+    item => String(item.strategyId || ''),
+  ),
+} : missingMemory;
+const missingMemoryCount = memoryToRestore.styleMemory.length + memoryToRestore.customerMemory.length + memoryToRestore.responseStrategies.length;
 if (missingMemoryCount > 0) {
   await jsonRequest('/api/overseas/agent-memory/backup/restore', {
     method: 'POST',
@@ -237,10 +241,49 @@ if (missingMemoryCount > 0) {
       schemaVersion: memoryFixture.schemaVersion,
       sourceTenantId: login.tenant?.id || '',
       exportedAt: new Date().toISOString(),
-      records: missingMemory,
+      records: memoryToRestore,
     }),
   });
 }
+// Only after the replacement payload has been safely restored do we remove
+// obsolete mock records and duplicate natural keys. A transient request failure
+// can therefore be retried without leaving the demo tenant empty.
+const scopedStyles = await pruneSupersededMockRecords(
+  currentStyles,
+  item => fixtureStyleKeys.has(`${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`),
+  item => String(item.customerId || '').startsWith('mock-'),
+  '/api/overseas/agent-memory/style-evidence',
+);
+const scopedCustomers = await pruneSupersededMockRecords(
+  currentCustomers,
+  item => fixtureCustomerKeys.has(`${String(item.customerId || '')}\n${String(item.key || '')}`),
+  item => String(item.customerId || '').startsWith('mock-'),
+  '/api/overseas/agent-memory/customer-memories',
+);
+const scopedStrategies = await pruneSupersededMockRecords(
+  currentStrategies,
+  item => fixtureStrategyIds.has(String(item.strategyId || '')),
+  item => /^(?:T_|FT_)/.test(String(item.strategyId || '')),
+  '/api/overseas/agent-memory/strategies',
+);
+await pruneDuplicateRecords(
+  scopedStyles,
+  item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`,
+  fixtureStyleKeys,
+  '/api/overseas/agent-memory/style-evidence',
+);
+await pruneDuplicateRecords(
+  scopedCustomers,
+  item => `${String(item.customerId || '')}\n${String(item.key || '')}`,
+  fixtureCustomerKeys,
+  '/api/overseas/agent-memory/customer-memories',
+);
+await pruneDuplicateRecords(
+  scopedStrategies,
+  item => String(item.strategyId || ''),
+  fixtureStrategyIds,
+  '/api/overseas/agent-memory/strategies',
+);
 const statusResponse = await jsonRequest<{ status?: { enabled?: boolean }; enabled?: boolean }>('/api/overseas/enterprise/customer-service/status', {
   method: 'PATCH',
   headers,

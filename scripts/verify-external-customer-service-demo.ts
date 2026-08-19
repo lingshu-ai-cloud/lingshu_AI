@@ -9,7 +9,7 @@ const isForeignTradeDemo = email === 'wenlantianxia-test@local.test';
 const expectedMarketMarker = String(process.env.EXTERNAL_DEMO_MARKET_MARKER || (isForeignTradeDemo ? '中东' : '苏州')).trim();
 const expectedCustomerPrefix = isForeignTradeDemo ? 'mock-export-' : 'mock-';
 const expectedStrategyIds = isForeignTradeDemo
-  ? ['FT_FIRST_CONTACT', 'FT_CONTINUOUS_CHAT', 'FT_COMPLIANCE_BOUNDARY', 'FT_HIGH_VALUE_HANDOFF', 'FT_REACTIVATION']
+  ? ['FT_FIRST_CONTACT', 'FT_PILOT_ENTRY', 'FT_CONTINUOUS_CHAT', 'FT_COMPLIANCE_BOUNDARY', 'FT_HIGH_VALUE_HANDOFF', 'FT_REACTIVATION']
   : ['T_CONTINUOUS_CHAT', 'T_PILOT_ENTRY', 'T_HIGH_VALUE_HANDOFF'];
 
 if (!email || !password) throw new Error('EXTERNAL_DEMO_EMAIL / EXTERNAL_DEMO_PASSWORD are required');
