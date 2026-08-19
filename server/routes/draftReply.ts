@@ -36,6 +36,7 @@ import { buildStyleMemoryPromptBlock, observeStyleMemoryOutcomes, retrieveStyleM
 import { buildCustomerMemoryPromptBlock, retrieveCustomerMemories } from '../knowledge/customerMemory.js';
 import { recordMemoryAudit, touchStrategyUsage } from '../knowledge/memoryAudit.js';
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
+import { evaluateHandoff } from '../sales/handoff.js';
 import { buildHandoffSummary } from '../agents/handoffSummary.js';
 import { faithfullyPolishSellerDraft } from '../agents/polishDraft.js';
 import { fastProductInquiryReply, isFastProductInquiry } from '../agents/fastProductInquiry.js';
@@ -338,7 +339,18 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   };
   const matchedSalesActions = matchSalesActions(salesActionInput);
   const forcedHandoffActions = matchedSalesActions.filter(action => shouldEscalateSalesAction(action, latestMessage));
-  const forceHandoff = forcedHandoffActions.length > 0;
+  const buyerConversation = timeline
+    .filter((event: any) => String(event?.actor || '').toLowerCase() === 'buyer' || String(event?.type || '').includes('msg_in'))
+    .map((event: any) => String(event?.body || ''))
+    .filter(Boolean)
+    .join('\n');
+  const opportunityHandoff = evaluateHandoff({
+    message: buyerConversation || latestMessage,
+    bantTotal: Number(body.bant?.total ?? body.bant?.rawTotal ?? 0),
+    salesActions: matchedSalesActions,
+  });
+  const highValueHandoff = opportunityHandoff.lines.includes('business_value');
+  const forceHandoff = forcedHandoffActions.length > 0 || highValueHandoff;
   const productDiscoveryNames = groundedProductNames(
     context.products.map(product => product.name).filter(Boolean),
     body.product,
@@ -380,7 +392,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const knowledgeGapHandoffRequired = knowledgeGapActive
     ? forceHandoff || !clarifyBeforeHandoff || Number(nextFallbackCount) >= 2
     : false;
-  const actionIssues = forcedHandoffActions.map(action => `销售动作 ${action.id} 要求人工接管：${action.scenario}`);
+  const actionIssues = [
+    ...forcedHandoffActions.map(action => `销售动作 ${action.id} 要求人工接管：${action.scenario}`),
+    ...(highValueHandoff ? opportunityHandoff.reasons.map(reason => `高价值商机要求人工接管：${reason}`) : []),
+  ];
   const strategies = await retrieveResponseStrategies(tenantId, {
     latestMessage,
     conversation,

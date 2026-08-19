@@ -37,6 +37,9 @@ assert.match(seedScript, /ensureExternalDemoAccount\(\)/, 'the demo account must
 assert.match(seedScript, /subscriptionPlan: 'customer'/, 'the account must remain outside the delivery administrator area');
 assert.match(seedScript, /role: 'admin'/, 'the account must have every customer-facing workspace permission');
 
+const draftRoute = fs.readFileSync(path.join(root, 'server/routes/draftReply.ts'), 'utf8');
+assert.match(draftRoute, /evaluateHandoff\([\s\S]*?bantTotal:[\s\S]*?highValueHandoff/, 'high-value BANT opportunities must force a server-side human handoff');
+
 const customerUi = fs.readFileSync(path.join(root, 'src/components/ConversionPage.tsx'), 'utf8');
 assert.match(customerUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
 assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
