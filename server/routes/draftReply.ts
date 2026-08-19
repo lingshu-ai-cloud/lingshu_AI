@@ -645,7 +645,13 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       : knowledgeGapActive ? gapPlan.draft : fallbackDraft(body, intent, suppressPrice);
     const sanitizedSafeDraft = sanitizeDraft(safeDraft, body, intent, suppressPrice, hardNoPriceDigits);
     const messages = intent === 'handoff_summary' ? [sanitizedSafeDraft] : splitMobileChatMessages(sanitizedSafeDraft);
-    const generatedTranslation = intent === 'handoff_summary' ? '' : await translateDraftToChinese(messages.join('\n\n'), language);
+    // The reply itself must remain available even when the translation provider is
+    // temporarily unreachable.  This catch block is the last safety net for the
+    // customer-service endpoint, so a secondary translation failure must never
+    // abort the HTTP response.
+    const generatedTranslation = intent === 'handoff_summary'
+      ? ''
+      : await translateDraftToChinese(messages.join('\n\n'), language).catch(() => '');
     const translatedDraft = generatedTranslation || (!usesGreetingFallback && knowledgeGapActive ? gapPlan.draftZh : '');
     await recordMemoryAudit({
       tenantId,
