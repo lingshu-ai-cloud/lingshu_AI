@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 const baseUrl = String(process.env.EXTERNAL_DEMO_BASE_URL || 'http://127.0.0.1:8788').replace(/\/$/, '');
 const email = String(process.env.EXTERNAL_DEMO_EMAIL || '').trim().toLowerCase();
 const password = String(process.env.EXTERNAL_DEMO_PASSWORD || '');
@@ -29,6 +32,12 @@ const profile = await jsonRequest<{
   salesStyleProfile?: { learnedFromCount?: number };
 }>('/api/overseas/enterprise/profile', { headers });
 const status = await jsonRequest<{ enabled?: boolean; canAutoSend?: boolean }>('/api/overseas/enterprise/customer-service/status', { headers });
+const [memoryOverview, styleEvidence, customerMemory, responseStrategies] = await Promise.all([
+  jsonRequest<{ readiness?: { editedConfirmed?: number; customerCount?: number } }>('/api/overseas/agent-memory/overview', { headers }),
+  jsonRequest<{ items?: Array<Record<string, unknown>> }>('/api/overseas/agent-memory/style-evidence', { headers }),
+  jsonRequest<{ items?: Array<Record<string, unknown>> }>('/api/overseas/agent-memory/customer-memories', { headers }),
+  jsonRequest<{ items?: Array<Record<string, unknown>> }>('/api/overseas/agent-memory/strategies', { headers }),
+]);
 
 if (session.user?.email !== email || session.user?.role !== 'admin') throw new Error('Demo workspace permission verification failed');
 if ((session.tenant?.subscriptionPlan || session.subscription?.plan) !== 'customer') throw new Error('Demo account is not isolated as a customer tenant');
@@ -37,6 +46,29 @@ if (profile.company?.name !== '苏州凌锐智能装备有限公司' || !profile
 if ((profile.products?.items?.length || 0) < 5 || (profile.faq?.length || 0) < 8) throw new Error('Demo knowledge base is incomplete');
 if ((profile.salesStyleProfile?.learnedFromCount || 0) < 10) throw new Error('Learning history was not seeded');
 if (!status.enabled || status.canAutoSend) throw new Error('Customer service must be enabled in suggestion-only mode');
+const demoStyleEvidence = (styleEvidence.items || []).filter(item => String(item.evidenceSource || '').startsWith('外部演示初始化'));
+const demoCustomerMemory = (customerMemory.items || []).filter(item => String(item.customerId || '').startsWith('mock-'));
+const demoStrategyIds = new Set((responseStrategies.items || []).map(item => String(item.strategyId || '')));
+if (demoStyleEvidence.length < 8) throw new Error('Demo style evidence is missing');
+if (demoCustomerMemory.length < 6) throw new Error('Demo customer-private memory is missing');
+for (const strategyId of ['T_CONTINUOUS_CHAT', 'T_PILOT_ENTRY', 'T_HIGH_VALUE_HANDOFF']) {
+  if (!demoStrategyIds.has(strategyId)) throw new Error(`Demo response strategy is missing: ${strategyId}`);
+}
+if ((memoryOverview.readiness?.editedConfirmed || 0) < 8 || (memoryOverview.readiness?.customerCount || 0) < 6) {
+  throw new Error('Demo memory readiness is incomplete');
+}
+
+const distDir = path.resolve(process.env.EXTERNAL_DEMO_DIST_DIR || path.join(process.cwd(), 'dist'));
+const indexPath = path.join(distDir, 'index.html');
+if (!fs.existsSync(indexPath)) throw new Error(`Frontend bundle not found: ${indexPath}`);
+const indexHtml = fs.readFileSync(indexPath, 'utf8');
+const entryAsset = indexHtml.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
+if (!entryAsset) throw new Error('Frontend entry asset was not found');
+const entryPath = path.join(distDir, entryAsset.replace(/^\/+/, ''));
+const entryJs = fs.readFileSync(entryPath, 'utf8');
+for (const marker of ['customer-demo@lingshu.site', 'mock-big-order-suzhou-semiconductor', 'AI 草稿 · 人工改过', '客服演示沙盘']) {
+  if (!entryJs.includes(marker)) throw new Error(`Frontend bundle is stale; missing marker: ${marker}`);
+}
 
 type DraftResult = { draft?: string; handoffRequired?: boolean; category?: string; verification?: { status?: string } };
 const draftCases = [
@@ -85,5 +117,13 @@ console.log(JSON.stringify({
   account: { email, role: session.user.role, plan: session.tenant?.subscriptionPlan || session.subscription?.plan },
   enterprise: { company: profile.company.name, products: profile.products?.items?.length || 0, faq: profile.faq?.length || 0, learnedFrom: profile.salesStyleProfile?.learnedFromCount || 0 },
   customerService: { enabled: status.enabled, canAutoSend: status.canAutoSend },
+  memory: {
+    styleEvidence: demoStyleEvidence.length,
+    customerMemory: demoCustomerMemory.length,
+    responseStrategies: demoStrategyIds.size,
+    editedConfirmed: memoryOverview.readiness?.editedConfirmed || 0,
+    customerCoverage: memoryOverview.readiness?.customerCount || 0,
+  },
+  frontend: { entryAsset, simulationBundleVerified: true },
   drafts: draftSummary,
 }));

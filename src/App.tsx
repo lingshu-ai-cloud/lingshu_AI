@@ -547,7 +547,9 @@ export default function App() {
           )}
           {page === 'orders' && <OrderManagementPage />}
           {page === 'enterprise' && <EnterprisePage />}
-          {page === 'agentMemory' && <AgentMemoryPage />}
+          {page === 'agentMemory' && (
+            <AgentMemoryPage includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()} />
+          )}
           {page === 'plugins' && <IntegrationsPage />}
           {page === 'organizationPermissions' && <OrganizationPermissionsPage />}
           {page === 'scheduled' && <ScheduledPage onAction={startAgentTask} />}

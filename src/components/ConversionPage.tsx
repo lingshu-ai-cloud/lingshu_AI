@@ -1748,6 +1748,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const activeView = VIEW_META[view];
   const partialAutoReplyActive = Boolean(customerServiceStatus?.autoReplyReady && autonomyLevel === 'auto');
   const customerPendingCount = useMemo(() => pendingCount(customers), [customers]);
+  const mockCustomerCount = useMemo(() => customers.filter(customer => customer.isMock).length, [customers]);
   const customerTodoItems = useMemo(() => (
     dailyTodoCustomers(customers).map(customer => {
       const suggestion = buildPrioritySuggestion(customer);
@@ -2441,6 +2442,16 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           </button>
         </div>
       </div>
+
+      {includeMockCustomers && (
+        <div className="flex min-h-10 shrink-0 items-center justify-between gap-3 border-b border-cyan-100 bg-gradient-to-r from-cyan-50 to-emerald-50 px-5 py-2">
+          <div className="flex items-center gap-2 text-xs font-black text-cyan-900">
+            <Sparkles size={14} className="text-cyan-700" />
+            客服演示沙盘
+          </div>
+          <span className="text-[11px] font-bold text-cyan-800">{mockCustomerCount || 8} 个模拟客户 · 含完整上下文、人工修改和学习记忆</span>
+        </div>
+      )}
 
       <div className={`flex min-h-10 shrink-0 items-center justify-between gap-3 border-b px-5 py-2 text-xs ${customerServiceStatus?.enabled ? 'border-cyan-100 bg-cyan-50/70 text-cyan-900' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
         <p className="font-semibold">{customerServiceSummary}</p>

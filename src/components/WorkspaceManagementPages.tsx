@@ -7,6 +7,7 @@ import {
   RotateCcw, Pencil, Download, Upload, History,
 } from 'lucide-react';
 import { authApi, authHeader, type EmployeeAccount, type OrganizationRole } from '../lib/auth';
+import { createMockCustomers } from '../mocks/customerProfiles';
 import { studioApi, type StudioProject } from '../lib/studioApi';
 import { ContentOpsExecutionDialog, type ContentOpsExecutionIntent } from './ContentOpsExecutionDialog';
 import { HighConfidenceInsights, PlatformTrends, type OpsEvidence } from './ContentOpsDrilldowns';
@@ -470,13 +471,13 @@ export function ScriptLibraryPage() {
   );
 }
 
-export function AgentMemoryPage() {
+export function AgentMemoryPage({ includeMockCustomers = false }: { includeMockCustomers?: boolean } = {}) {
   type MemoryTab = 'content' | 'style' | 'customer' | 'strategy';
   type ContentMemory = {
     id: string; kind: 'analysis' | 'draft'; title: string; source: string; updated?: string;
     description: string; tags: string[]; poster?: string; evidence: string[]; usage: string;
   };
-  const [tab, setTab] = useState<MemoryTab>('content');
+  const [tab, setTab] = useState<MemoryTab>(includeMockCustomers ? 'style' : 'content');
   const [contentMemories, setContentMemories] = useState<ContentMemory[]>([]);
   const [styleProfile, setStyleProfile] = useState<Record<string, unknown> | null>(null);
   const [customerContexts, setCustomerContexts] = useState<Array<Record<string, unknown>>>([]);
@@ -666,14 +667,30 @@ export function AgentMemoryPage() {
         const enterpriseRecord = enterprise as { salesStyleProfile?: Record<string, unknown> };
         setStyleProfile(enterpriseRecord.salesStyleProfile || null);
         const customerPayload = customers as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
-        setCustomerContexts(Array.isArray(customerPayload) ? customerPayload : Array.isArray(customerPayload.items) ? customerPayload.items : []);
+        const liveCustomerContexts = Array.isArray(customerPayload) ? customerPayload : Array.isArray(customerPayload.items) ? customerPayload.items : [];
+        const mockCustomerContexts = includeMockCustomers
+          ? createMockCustomers().map(customer => ({
+            id: customer.id,
+            name: customer.name,
+            product: customer.product,
+            countryName: customer.countryName,
+            language: customer.language,
+            stage: customer.stage,
+            summary: customer.summary,
+            nextStep: customer.nextStep,
+            intentSignals: customer.intentSignals,
+            tags: [...customer.tags, '模拟场景'],
+          }))
+          : [];
+        const liveIds = new Set(liveCustomerContexts.map(customer => String(customer.id || '')));
+        setCustomerContexts([...liveCustomerContexts, ...mockCustomerContexts.filter(customer => !liveIds.has(customer.id))]);
         const strategyPayload = strategies as { items?: Array<Record<string, unknown>> };
         setResponseStrategies(Array.isArray(strategyPayload.items) ? strategyPayload.items : []);
       })
       .catch(() => active && setContentMemories([]))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, []);
+  }, [includeMockCustomers]);
 
   useEffect(() => {
     let active = true;

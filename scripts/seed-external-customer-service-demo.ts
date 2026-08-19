@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const profilePath = path.join(root, 'data', 'external-customer-service-demo-profile.json');
+const memoryPath = path.join(root, 'data', 'external-customer-service-demo-memory.json');
 const baseUrl = String(process.env.EXTERNAL_DEMO_BASE_URL || 'http://127.0.0.1:8788').replace(/\/$/, '');
 const email = String(process.env.EXTERNAL_DEMO_EMAIL || '').trim().toLowerCase();
 const password = String(process.env.EXTERNAL_DEMO_PASSWORD || '');
@@ -15,6 +16,14 @@ const pbAdminPassword = String(process.env.PB_ADMIN_PASSWORD || '');
 if (!email || !password) throw new Error('EXTERNAL_DEMO_EMAIL / EXTERNAL_DEMO_PASSWORD are required');
 
 type RecordMap = Record<string, unknown>;
+type DemoMemoryFixture = {
+  schemaVersion: number;
+  records: {
+    styleMemory: RecordMap[];
+    customerMemory: RecordMap[];
+    responseStrategies: RecordMap[];
+  };
+};
 
 function escapeFilterValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -114,6 +123,34 @@ await jsonRequest('/api/overseas/enterprise/profile', {
   headers,
   body: JSON.stringify(profile),
 });
+
+const memoryFixture = JSON.parse(fs.readFileSync(memoryPath, 'utf8')) as DemoMemoryFixture;
+const [existingStyles, existingCustomers, existingStrategies] = await Promise.all([
+  jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/style-evidence', { headers }),
+  jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/customer-memories', { headers }),
+  jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/strategies', { headers }),
+]);
+const existingStyleKeys = new Set((existingStyles.items || []).map(item => `${String(item.customerId || '')}\n${String(item.triggerMessage || '')}`));
+const existingCustomerKeys = new Set((existingCustomers.items || []).map(item => `${String(item.customerId || '')}\n${String(item.key || '')}`));
+const existingStrategyIds = new Set((existingStrategies.items || []).map(item => String(item.strategyId || '')));
+const missingMemory = {
+  styleMemory: memoryFixture.records.styleMemory.filter(item => !existingStyleKeys.has(`${String(item.customer_id || '')}\n${String(item.trigger_message || '')}`)),
+  customerMemory: memoryFixture.records.customerMemory.filter(item => !existingCustomerKeys.has(`${String(item.customer_id || '')}\n${String(item.memory_key || '')}`)),
+  responseStrategies: memoryFixture.records.responseStrategies.filter(item => !existingStrategyIds.has(String(item.strategy_id || ''))),
+};
+const missingMemoryCount = missingMemory.styleMemory.length + missingMemory.customerMemory.length + missingMemory.responseStrategies.length;
+if (missingMemoryCount > 0) {
+  await jsonRequest('/api/overseas/agent-memory/backup/restore', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      schemaVersion: memoryFixture.schemaVersion,
+      sourceTenantId: login.tenant?.id || '',
+      exportedAt: new Date().toISOString(),
+      records: missingMemory,
+    }),
+  });
+}
 const statusResponse = await jsonRequest<{ status?: { enabled?: boolean }; enabled?: boolean }>('/api/overseas/enterprise/customer-service/status', {
   method: 'PATCH',
   headers,
@@ -121,9 +158,20 @@ const statusResponse = await jsonRequest<{ status?: { enabled?: boolean }; enabl
 });
 const customerServiceEnabled = Boolean(statusResponse.status?.enabled ?? statusResponse.enabled);
 const savedProfile = await jsonRequest<{ company?: { name?: string }; products?: { items?: unknown[] }; faq?: unknown[] }>('/api/overseas/enterprise/profile', { headers });
+const [savedStyles, savedCustomers, savedStrategies] = await Promise.all([
+  jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/style-evidence', { headers }),
+  jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/customer-memories', { headers }),
+  jsonRequest<{ items?: RecordMap[] }>('/api/overseas/agent-memory/strategies', { headers }),
+]);
 
 if (!customerServiceEnabled) throw new Error('Customer service master switch was not enabled');
 if (savedProfile.company?.name !== '苏州凌锐智能装备有限公司') throw new Error('Enterprise profile verification failed');
+const savedDemoStyleCount = (savedStyles.items || []).filter(item => String(item.evidenceSource || '').startsWith('外部演示初始化')).length;
+const savedDemoCustomerCount = (savedCustomers.items || []).filter(item => String(item.customerId || '').startsWith('mock-')).length;
+const savedDemoStrategyCount = (savedStrategies.items || []).filter(item => String(item.strategyId || '').startsWith('T_')).length;
+if (savedDemoStyleCount < memoryFixture.records.styleMemory.length) throw new Error('Demo style evidence seeding is incomplete');
+if (savedDemoCustomerCount < memoryFixture.records.customerMemory.length) throw new Error('Demo customer memory seeding is incomplete');
+if (savedDemoStrategyCount < memoryFixture.records.responseStrategies.length) throw new Error('Demo response strategy seeding is incomplete');
 
 console.log(JSON.stringify({
   ok: true,
@@ -133,4 +181,10 @@ console.log(JSON.stringify({
   products: savedProfile.products?.items?.length || 0,
   faq: savedProfile.faq?.length || 0,
   customerServiceEnabled: true,
+  memory: {
+    styleEvidence: savedDemoStyleCount,
+    customerMemory: savedDemoCustomerCount,
+    responseStrategies: savedDemoStrategyCount,
+    newlyRestored: missingMemoryCount,
+  },
 }));
