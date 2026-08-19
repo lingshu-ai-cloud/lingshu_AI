@@ -1,6 +1,18 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate((app) => {
-  const collection = app.findCollectionByNameOrId("pbc_2538639081")
+  let collection
+  try {
+    collection = app.findCollectionByNameOrId("style_memory")
+  } catch {
+    return
+  }
+
+  try {
+    collection.fields.getByName("strategy_ids")
+    return
+  } catch {
+    // The field is genuinely missing, so this migration still has work to do.
+  }
 
   // add field
   collection.fields.addAt(9, new Field({
@@ -16,10 +28,22 @@ migrate((app) => {
 
   return app.save(collection)
 }, (app) => {
-  const collection = app.findCollectionByNameOrId("pbc_2538639081")
+  let collection
+  try {
+    collection = app.findCollectionByNameOrId("style_memory")
+  } catch {
+    return
+  }
+
+  let field
+  try {
+    field = collection.fields.getByName("strategy_ids")
+  } catch {
+    return
+  }
 
   // remove field
-  collection.fields.removeById("json3540800594")
+  collection.fields.removeById(field.id)
 
   return app.save(collection)
 })
