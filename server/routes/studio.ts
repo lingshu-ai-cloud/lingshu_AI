@@ -1295,6 +1295,12 @@ type ScriptMaterialInfo = {
   observations?: string[];
 };
 
+export function requiresMinimumVoiceoverLines(voiceoverMode: unknown, generationMode: unknown): boolean {
+  return voiceoverMode === 'ai' && generationMode !== 'clone';
+}
+
+export const MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS = 1;
+
 function normalizeMaterialInfos(value: unknown, fallbackNames: unknown, totalDuration: number): ScriptMaterialInfo[] {
   const raw = Array.isArray(value) ? value : [];
   const fromInfos = raw.reduce<ScriptMaterialInfo[]>((acc, item, index) => {
@@ -1358,6 +1364,40 @@ function materialInfoLines(infos: ScriptMaterialInfo[]): string {
     info.tags ? `人工/运营标签：${info.tags}` : '',
     info.observations?.length ? `已确认或待复核的分段观察：${info.observations.join(' | ')}` : '没有视频级分段观察，只能依据素材名和标签做保守剪辑',
   ].filter(Boolean).join('；')).join('\n');
+}
+
+function safeMaterialVoicePlan(infos: ScriptMaterialInfo[], cta: string, language: string): string[] {
+  const selected = infos.slice(0, 5);
+  const english = /english|英语|^en\b/i.test(language);
+  const lines = selected.map((info, index) => {
+    const name = String(info.name || `素材 ${index + 1}`).trim();
+    if (index === 0) return english
+      ? 'Brand buyers, which visible detail should you verify first?'
+      : '品牌方采购时，哪个可见细节最该先确认？';
+    return english ? `Review ${name}.` : `查看素材：${name}。`;
+  });
+  const safeCta = /whatsapp/i.test(cta)
+    ? (english ? 'Message us on WhatsApp for verified product details.' : '通过 WhatsApp 获取已核实的产品资料。')
+    : (english ? 'Message us for verified product details.' : '私信获取已核实的产品资料。');
+  if (!lines.length) return [];
+  lines[lines.length - 1] = safeCta;
+  return lines;
+}
+
+function safeMaterialScenes(infos: ScriptMaterialInfo[]): LockedStoryboardScene[] {
+  return infos.slice(0, 5).map((info, index) => {
+    const name = String(info.name || `素材 ${index + 1}`).trim();
+    const role = materialRoleFromFolder(info);
+    return {
+      environment: '按素材实际可见环境',
+      shot: info.type === 'image' ? '静态画面' : '按素材原镜头',
+      camera: info.type === 'image' ? '固定' : '沿用素材原运镜',
+      composition: '保留素材主体，不补写不可见细节',
+      purpose: index === 0 ? '主题钩子' : index === Math.min(4, infos.length - 1) ? 'CTA' : role,
+      visual: `使用素材《${name}》，仅展示素材中实际可见内容`,
+      music: '轻量中性节奏',
+    };
+  });
 }
 
 export const studioRouter = Router();
@@ -1763,7 +1803,7 @@ studioRouter.post('/script', async (req, res) => {
     materialInfos = [],
     existingScripts = [],
     variantSeed = 0,
-    voiceoverMode = 'ai',
+    voiceoverMode = 'unselected',
     cooperationRoute = '',
     provider,
   } = req.body ?? {};
@@ -1800,6 +1840,7 @@ studioRouter.post('/script', async (req, res) => {
   // 工作台脚本统一走千问；视频理解仍可使用独立的视觉模型配置。
   // 统一文本模型后，四类脚本可以共享同一套事实、结构和自然表达契约。
   const providerOpt: 'qwen' = 'qwen';
+  const hasNarrationDraft = voiceoverMode === 'ai' || voiceoverMode === 'unselected';
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
   const normalizedVideoTheme = typeof videoTheme === 'object' && videoTheme ? videoTheme as Record<string, unknown> : {};
@@ -1855,8 +1896,10 @@ studioRouter.post('/script', async (req, res) => {
     trend: '叙事公式：带来源的变化/信号 → 对目标买家的含义 → 企业产品证据如何回应 → 讨论需求。没有趋势来源时降级为常青采购问题，禁止编造“大盘正在增长”。',
     talking_head: '以已识别的真人出镜素材为主体，台词必须像自然讲解；人物动作、口型时长和每镜信息量必须匹配。',
   };
-  const voiceoverDirective = voiceoverMode === 'none'
-    ? '声音策略：用户已明确选择无口播。所有台词必须写“无”，信息由画面、字幕和配乐承担。'
+  const voiceoverDirective = voiceoverMode === 'unselected'
+    ? '声音策略：用户尚未选择配音方式。分镜可提供简短台词草案，也可写“无”；不得因口播数量阻断分镜生成。'
+    : voiceoverMode === 'none'
+      ? '声音策略：用户已明确选择无口播。所有台词必须写“无”，信息由画面、字幕和配乐承担。'
     : generationMode === 'clone'
       ? '声音策略：用户选择重建口播。若原片存在口播位，可在对应位置写短台词；不得增加原片不存在的口播镜头。'
       : '声音策略：用户选择 AI 口播。每个承担钩子、问题、证据、决策或 CTA 的关键分镜都必须有完整自然口播；先按完整句子安排时长，禁止截断句子。台词与字幕必须逐字一致。';
@@ -2022,7 +2065,7 @@ ${normalizedMaterialInfos.map((info, index) => {
 
   // Stage 1 owns words only. It cannot invent timestamps, subtitles or shots.
   // Those are locked by the server before the visual director sees them.
-  const generatedVoiceLines = generationMode === 'product' && voiceoverMode !== 'none' && !/润唇膏|lip balm/i.test(product)
+  const generatedVoiceLines = generationMode === 'product' && voiceoverMode === 'ai' && !/润唇膏|lip balm/i.test(product)
     ? parseLockedVoicePlan(await callLLM(`你是外贸美妆短视频口播编导。只输出 JSON：{"lines":["...", "...", "...", "..."]}。
 为${strategyRoute === 'oem_odm' ? 'OEM品牌创始人' : strategyRoute === 'wholesale_distribution' ? '进口商/经销商' : '终端消费者'}用${lang}写${productSceneCount}句完整自然口播。
 主题：${videoThemeTitle}。每句只说一个意思：买家角色+主题问题、产品A证据、产品B证据、唯一CTA依次完成。英语每句最多12词，中文每句最多18字；不得用逗号拼接多个主张。第一句必须明确说出${strategyRoute === 'oem_odm' ? 'brand founder、product manager 或 procurement' : strategyRoute === 'wholesale_distribution' ? 'importer 或 distributor' : 'consumer'}中的一个角色。字幕将逐字复制口播，所以不要写标题式短语。
@@ -2031,22 +2074,24 @@ ${normalizedMaterialInfos.map((info, index) => {
 唯一CTA：${primaryCta || '私信了解产品资料'}
 禁止功效、认证、价格、MOQ、交期、销量、趋势和包装外的臆测。`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined }), productSceneCount)
     : [];
-  const safeProductVoiceLines = generationMode === 'product' && voiceoverMode !== 'none'
+  const safeProductVoiceLines = generationMode === 'product' && hasNarrationDraft
     ? safeProductVoicePlan(videoThemeId as ContentTheme, product, primaryCta, language).slice(0, productSceneCount)
     : [];
   const generatedVoiceLinesMatchTheme = generatedVoiceLines.length === productSceneCount
     && productVoicePlanSupportsTheme(generatedVoiceLines, videoThemeId as ContentTheme);
   const lockedVoiceLines = generatedVoiceLinesMatchTheme
     ? generatedVoiceLines
-    : generationMode === 'product' && voiceoverMode !== 'none' && /润唇膏|lip balm/i.test(product)
+    : generationMode === 'product' && voiceoverMode === 'ai' && /润唇膏|lip balm/i.test(product)
       ? lipBalmFallbackVoicePlan(strategyRoute, videoThemeId, primaryCta || '私信了解产品资料', productSceneCount)
-      : generationMode === 'product' && voiceoverMode !== 'none'
+      : generationMode === 'product' && hasNarrationDraft
         ? safeProductVoiceLines
-        : generatedVoiceLines;
+        : generationMode === 'material' && voiceoverMode === 'unselected'
+          ? safeMaterialVoicePlan(normalizedMaterialInfos, primaryCta, language)
+          : generatedVoiceLines;
   const lockedNarrationRules = lockedVoiceLines.length
     ? `\n已锁定口播（不得改写、不得截断、不得新增；每段字幕必须逐字复制同一行）：\n${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}\n时间戳由后端按这些完整口播自动计算；只为每段补画面、环境、景别、运镜、构图、镜头功能和配乐。`
     : '';
-  const generatedVisualScenes = lockedVoiceLines.length && !/润唇膏|lip balm/i.test(product)
+  const generatedVisualScenes = voiceoverMode === 'ai' && lockedVoiceLines.length && !/润唇膏|lip balm/i.test(product)
     ? parseLockedStoryboardScenes(await callLLM(`只输出JSON：{"scenes":[{"environment":"","shot":"","camera":"","composition":"","purpose":"","visual":"","music":""}]}。
 为以下已锁定口播各写一个可拍产品短视频镜头。不得输出台词、字幕、时间戳或产品资料外的新事实。若资料只提供容器或包装信息，画面只能展示空容器、标签、外盒、颜色或结构，不得自行添加内装物和使用效果。
 产品资料：${product}
@@ -2055,10 +2100,14 @@ ${normalizedMaterialInfos.map((info, index) => {
     : [];
   const lockedVisualScenes = /润唇膏|lip balm/i.test(product) && lockedVoiceLines.length === productSceneCount
     ? defaultLipBalmScenes(strategyRoute, videoThemeId, selectedProductNames(product)[0] || '', productSceneCount)
+    : generationMode === 'product' && voiceoverMode === 'unselected' && lockedVoiceLines.length === productSceneCount
+      ? safeProductScenes(product, productSceneCount)
     : generatedVisualScenes.length === productSceneCount
       ? generatedVisualScenes
       : generationMode === 'product' && lockedVoiceLines.length === productSceneCount
         ? safeProductScenes(product, productSceneCount)
+        : generationMode === 'material' && voiceoverMode === 'unselected' && lockedVoiceLines.length
+          ? safeMaterialScenes(normalizedMaterialInfos)
         : generatedVisualScenes;
 
   const prompt = generationMode === 'material'
@@ -2193,13 +2242,12 @@ Requirements:
   try {
     // Structured product scripts already have locked narration and visual scenes.
     // Do not pay for a third, free-form storyboard call that can corrupt them.
-    const text = lockedVisualScenes.length === productSceneCount
+    const hasLockedDraft = lockedVisualScenes.length > 0 && lockedVisualScenes.length === lockedVoiceLines.length;
+    const text = hasLockedDraft
       ? ''
       : await callLLM(prompt, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
-    const isStructuredLockedProduct = generationMode === 'product'
-      && lockedVisualScenes.length === productSceneCount
-      && lockedVoiceLines.length === productSceneCount;
-    let script = isStructuredLockedProduct
+    const isStructuredLockedDraft = hasLockedDraft && (generationMode === 'product' || generationMode === 'material');
+    let script = isStructuredLockedDraft
       ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(lockedVisualScenes, lockedVoiceLines), productInfo)
       : normalizeScriptTimestamps(enforceProductNameInScript(stripScriptAnalysisSummary(text), productInfo));
     if (generationMode === 'material') script = repairMaterialScript(script, productInfo, structuredMaterials);
@@ -2212,11 +2260,11 @@ Requirements:
     const normalizeGeneratedScript = (value: string) => {
       let normalized = normalizeStoryboardFieldLines(normalizeScriptTimestamps(ensureSelectedProductNamesInScript(enforceProductNameInScript(stripScriptAnalysisSummary(value), productInfo), productInfo)));
       if (generationMode === 'product') {
-        if (voiceoverMode !== 'none' && !lockedVisualScenes.length) normalized = applyLockedVoicePlan(normalized, lockedVoiceLines);
+        if (hasNarrationDraft && !lockedVisualScenes.length) normalized = applyLockedVoicePlan(normalized, lockedVoiceLines);
         normalized = restoreProductStoryboardBoundaries(normalized);
       }
       if (generationMode === 'material') normalized = repairMaterialScript(normalized, productInfo, structuredMaterials);
-      if (voiceoverMode !== 'none') normalized = syncStoryboardSubtitles(normalized);
+      if (hasNarrationDraft) normalized = syncStoryboardSubtitles(normalized);
       return normalized;
     };
     const strictCommercialPolicyIssues = (candidate: string): string[] => {
@@ -2237,7 +2285,7 @@ Requirements:
       const spokenLines = Array.from(candidate.matchAll(/^台词[：:]\s*(.+)$/gm))
         .map(match => String(match[1] || '').trim())
         .filter(line => line && !/^(无|none|no voiceover)$/i.test(line));
-      if (voiceoverMode !== 'none' && generationMode !== 'clone' && spokenLines.length < 2) {
+      if (requiresMinimumVoiceoverLines(voiceoverMode, generationMode) && spokenLines.length < 2) {
         issues.push('已选择 AI 口播，但有效台词不足两段');
       }
       return issues;
@@ -2318,7 +2366,7 @@ Requirements:
     // draft. Subtitle/voice equality is mechanical and should not trigger up
     // to three extra LLM calls (or push the UI past its request timeout).
     script = normalizeGeneratedScript(script);
-    for (let repairAttempt = 0; !isStructuredLockedProduct && repairAttempt < 3; repairAttempt += 1) {
+    for (let repairAttempt = 0; !isStructuredLockedDraft && repairAttempt < MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS; repairAttempt += 1) {
       const issues = repairableIssues(script);
       if (!issues.length) break;
       const repaired = await callLLM(`你是脚本事实校对员。请直接修复下方草稿，只输出修复后的脚本，不要解释。
@@ -2350,7 +2398,7 @@ ${strategyPlanRules}
 ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
       script = normalizeGeneratedScript(repaired);
     }
-    if (!isStructuredLockedProduct) script = normalizeGeneratedScript(script);
+    if (!isStructuredLockedDraft) script = normalizeGeneratedScript(script);
     if (generationMode === 'clone') {
       // Competitor identifiers are never valid output facts. Remove the small
       // set extracted from the reference after the model repair passes, while
@@ -2369,7 +2417,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     }
     if (generationMode === 'clone' && voiceoverMode === 'none') {
       script = clearStoryboardSpeech(script);
-    } else if (voiceoverMode !== 'none'
+    } else if (voiceoverMode === 'ai'
       && ['material', 'clone'].includes(generationMode)
       && (storyboardSpeechIssues(script).length > 0
         || strategyExecutionIssues(script).some(issue => /^首段/.test(issue)))) {
@@ -2392,7 +2440,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         const normalizedName = normalizeProductIdentity(name);
         return normalizedName.length > 0 && !normalizedScriptIdentity.includes(normalizedName);
       });
-    const speechIssues = isStructuredLockedProduct ? [] : storyboardSpeechIssues(script);
+    const speechIssues = isStructuredLockedDraft ? [] : storyboardSpeechIssues(script);
     const groundingIssues = generationMode === 'material'
       ? materialGroundingIssues(script, productInfo, structuredMaterials)
       : [];
@@ -2407,11 +2455,11 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       && /真实使用场景|痛点特写|买家最关心的结果|采购这类|先看真实使用效果|把「[^」]+」放到真实使用场景/.test(script);
     const strictCommercialIssues = strictCommercialPolicyIssues(script);
     const strategyIssues = strategyExecutionIssues(script);
-    const duplicateStoryboardFields = isStructuredLockedProduct ? [] : duplicateStoryboardFieldIssues(script);
-    const subtitleVoiceIssues = isStructuredLockedProduct ? [] : subtitleVoiceMismatchIssues(script);
+    const duplicateStoryboardFields = isStructuredLockedDraft ? [] : duplicateStoryboardFieldIssues(script);
+    const subtitleVoiceIssues = isStructuredLockedDraft ? [] : subtitleVoiceMismatchIssues(script);
     const productStoryboardFields = ['环境', '景别', '运镜', '构图', '镜头功能', '画面', '配乐', '台词', '字幕'];
     const productStoryboardBlocks = script.split(/(?=^\[[^\]\r\n]+\][ \t]*$)/m).filter(block => /^\[[^\]]+\]/.test(block.trim()));
-    const incompleteProductStoryboard = generationMode === 'product' && !isStructuredLockedProduct
+    const incompleteProductStoryboard = generationMode === 'product' && !isStructuredLockedDraft
       && (productStoryboardBlocks.length < 3
         || productStoryboardBlocks.some(block => productStoryboardFields.some(field => !new RegExp(`^${field}[：:]`, 'm').test(block))));
     const unsafeScript = missingProduct

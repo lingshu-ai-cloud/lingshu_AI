@@ -11,12 +11,22 @@ import {
   normalizeStoryboardFieldLines,
   openingMatchesCooperationRoute,
   productVoicePlanSupportsTheme,
+  requiresMinimumVoiceoverLines,
+  MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS,
   repairMaterialScript,
   restoreProductStoryboardBoundaries,
   unsupportedNumericClaims,
   storyboardSpeechIssues,
   syncStoryboardSubtitles,
 } from './studio.js';
+
+assert.equal(requiresMinimumVoiceoverLines('unselected', 'material'), false);
+assert.equal(requiresMinimumVoiceoverLines('none', 'material'), false);
+assert.equal(requiresMinimumVoiceoverLines('upload', 'product'), false);
+assert.equal(requiresMinimumVoiceoverLines('ai', 'clone'), false);
+assert.equal(requiresMinimumVoiceoverLines('ai', 'material'), true);
+assert.equal(requiresMinimumVoiceoverLines('ai', 'product'), true);
+assert.equal(MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS, 1);
 
 const compact = '[0-3s] 素材：瓶身 环境：桌面 景别：特写 运镜：推进 构图：居中 镜头功能：钩子 画面：旋出膏体 配乐：轻快 台词：买家先看膏体。 字幕：旧字幕';
 const normalized = normalizeStoryboardFieldLines(compact);

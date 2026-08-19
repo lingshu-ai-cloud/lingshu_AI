@@ -3213,7 +3213,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [audioCapabilities, setAudioCapabilities] = useState<StudioAudioCapabilities | null>(null);
   const [minimaxDiagnostic, setMinimaxDiagnostic] = useState('');
   const [minimaxDiagnosing, setMinimaxDiagnosing] = useState(false);
-  const [voiceoverMode, setVoiceoverMode] = useState<'none' | 'ai' | 'upload'>('ai');
+  const [voiceoverMode, setVoiceoverMode] = useState<'unselected' | 'none' | 'ai' | 'upload'>('unselected');
   const [uploadedVoiceName, setUploadedVoiceName] = useState('');
   const [customVoiceId, setCustomVoiceId] = useState('');
   const [customVoiceName, setCustomVoiceName] = useState('');
@@ -3744,10 +3744,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const hasTimestampScript = Boolean(script.trim());
   const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url));
-  const canNext = contentMode === 'video' && step === 'material'
-    ? (mode === 'clone'
+  const canNext = contentMode === 'video' && step === 'script'
+    ? scriptStageTab === 'theme'
+      ? hasTimestampScript
+      : scriptStageTab === 'voiceover'
+        ? hasTimestampScript
+        : voiceoverMode === 'none'
+          || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
+          || (voiceoverMode === 'ai' && hasRequestedVoiceovers)
+    : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length
-      : (storyboardSlots.length > 0 ? assignedCount === storyboardSlots.length : selected.length > 0))
     : true;
   useEffect(() => {
     if (!assignedOrderedIds.length) return;
@@ -4350,7 +4356,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 
   const next = () => {
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'theme') {
-      setScriptStageTab('theme');
+      if (hasTimestampScript) setScriptStageTab('voiceover');
+      return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover') {
+      setScriptStageTab('audio');
       return;
     }
     const nextStep = activeSteps[stepIdx + 1]?.id;
@@ -6377,7 +6387,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (typeof s.activeModeScriptId === 'string') setActiveModeScriptId(s.activeModeScriptId);
     if (s.voice) setVoice(s.voice as string);
     if (Array.isArray(s.voiceCandidates)) setVoiceCandidates(s.voiceCandidates as string[]);
-    if (s.voiceoverMode === 'none' || s.voiceoverMode === 'ai' || s.voiceoverMode === 'upload') setVoiceoverMode(s.voiceoverMode);
+    if (s.voiceoverMode === 'unselected' || s.voiceoverMode === 'none' || s.voiceoverMode === 'ai' || s.voiceoverMode === 'upload') setVoiceoverMode(s.voiceoverMode);
     if (typeof s.uploadedVoiceName === 'string') setUploadedVoiceName(s.uploadedVoiceName);
     if (typeof s.customVoiceId === 'string') setCustomVoiceId(s.customVoiceId);
     if (typeof s.customVoiceName === 'string') setCustomVoiceName(s.customVoiceName);
@@ -6700,10 +6710,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     key={value}
                     type="button"
                     onClick={() => {
+                      if (value !== contentMode) {
+                        setScriptStageTab('theme');
+                        setVoiceoverMode('unselected');
+                        setScript('');
+                        setVoiceoverLines('');
+                        setVoiceDrafts({});
+                        setVoiceoverAudios({});
+                        setAlignedCuesByLang({});
+                        setVoiceoverUrl(null);
+                        setVoiceoverDur(0);
+                        setModeNotice('');
+                      }
                       setContentMode(value);
                       if (value === 'poster') {
                         setPlatform('facebook');
                         setRatio(ratio === '9:16' ? '1:1' : ratio);
+                      } else if (contentMode === 'poster') {
+                        setPlatform('tiktok');
+                        setRatio('9:16');
                       }
                     }}
                     className={`rounded-lg px-4 py-2 text-sm font-bold transition ${contentMode === value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
@@ -6718,6 +6743,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 const on = mode === m.id;
                 return (
                   <button key={m.id} onClick={() => {
+                    if (m.id !== mode) {
+                      setScriptStageTab('theme');
+                      setVoiceoverMode('unselected');
+                      setScript('');
+                      setVoiceoverLines('');
+                      setVoiceDrafts({});
+                      setVoiceoverAudios({});
+                      setAlignedCuesByLang({});
+                      setVoiceoverUrl(null);
+                      setVoiceoverDur(0);
+                      setModeNotice('');
+                    }
                     setMode(m.id);
                     const sourceTitle = videoKickoff?.video?.title || videoKickoff?.generatedVideo?.title || '';
                     setProjectTitle(contentMode === 'video' ? draftTitleForMode(m.id, sourceTitle) : m.title);
@@ -8058,8 +8095,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="mb-4 grid gap-2 md:grid-cols-3">
             {([
               { id: 'theme' as const, number: 1, title: '选择主题/分镜', desc: `${activeVideoTheme.title} · 选择主题并确认可执行分镜`, done: Boolean(videoThemeId) && hasTimestampScript },
-              { id: 'voiceover' as const, number: 2, title: '选择声音策略', desc: '保留无口播，或提取台词做多语适配', done: voiceoverMode === 'none' || hasRequestedVoiceDrafts },
-              { id: 'audio' as const, number: 3, title: '生成/确认声音', desc: voiceoverMode === 'none' ? '原片无口播，保留低信息噪声节奏' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
+              { id: 'voiceover' as const, number: 2, title: '提取口播/翻译', desc: '确认脚本口播，并生成需要的语言版本', done: hasRequestedVoiceDrafts },
+              { id: 'audio' as const, number: 3, title: '选择并确认声音', desc: voiceoverMode === 'unselected' ? '请选择不配音、AI 配音或上传真人音频' : voiceoverMode === 'none' ? '不配音，仅保留画面与字幕' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
             ]).map(item => (
                 <button type="button" key={item.number} onClick={() => setScriptStageTab(item.id)}
                   className={`rounded-xl border px-3 py-3 text-left transition ${scriptStageTab === item.id ? 'border-accent bg-accent/5 shadow-sm' : item.done ? 'border-accent/20 bg-surface hover:border-accent/40' : 'border-border bg-surface-2 hover:border-border-bright'}`}>
@@ -9828,7 +9865,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
               className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-40"
               style={{ background: TRAFFIC_GREEN }}>
               {step === 'script'
-                ? scriptStageTab === 'theme' ? '确认主题并进入分镜生成' : voiceoverMode === 'none' ? '确认字幕并进入素材匹配' : '试听确认并进入素材匹配'
+                ? scriptStageTab === 'theme'
+                  ? '确认分镜并处理口播'
+                  : scriptStageTab === 'voiceover'
+                    ? '确认口播并选择声音'
+                    : voiceoverMode === 'unselected'
+                      ? '请先选择声音策略'
+                      : voiceoverMode === 'none'
+                        ? '确认字幕并进入素材匹配'
+                        : '试听确认并进入素材匹配'
                 : step === 'material' && contentMode === 'video'
                   ? canNext
                     ? '完成选材并进入配乐'
