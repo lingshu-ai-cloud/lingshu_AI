@@ -32,6 +32,11 @@ const app = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
 assert.match(app, /customer-demo@lingshu\.site/, 'the dedicated external account must be allowed to see the simulation lab');
 assert.match(app, /isExternalCustomerServiceDemoSession/, 'simulation visibility must be scoped to the dedicated account');
 
+const seedScript = fs.readFileSync(path.join(root, 'scripts/seed-external-customer-service-demo.ts'), 'utf8');
+assert.match(seedScript, /ensureExternalDemoAccount\(\)/, 'the demo account must be provisioned idempotently');
+assert.match(seedScript, /subscriptionPlan: 'customer'/, 'the account must remain outside the delivery administrator area');
+assert.match(seedScript, /role: 'admin'/, 'the account must have every customer-facing workspace permission');
+
 const customerUi = fs.readFileSync(path.join(root, 'src/components/ConversionPage.tsx'), 'utf8');
 assert.match(customerUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
 assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
