@@ -4570,7 +4570,10 @@ async function generateMinimaxTts(text: string, voiceId: string, language: strin
   const json = await minimaxFetchJson('/v1/t2a_v2', payload, Number(process.env.MINIMAX_TTS_TIMEOUT_MS || 90_000));
   const audio = String(json?.data?.audio || '');
   const remoteUrl = outputFormat === 'url' && /^https?:\/\//i.test(audio) ? audio : '';
-  const duration = Math.max(1, Math.round(Number(json?.extra_info?.audio_length || 0) / 1000) || durationFromText(text));
+  const measuredDuration = Number(json?.extra_info?.audio_length || 0) / 1000;
+  const duration = measuredDuration > 0
+    ? Math.max(1, Number(measuredDuration.toFixed(3)))
+    : durationFromText(text);
   const cues = await minimaxSubtitleCues(json?.data?.subtitle_file, duration);
   if (remoteUrl) return { url: remoteUrl, duration, source: 'minimax', ...(cues.length ? { cues, alignmentSource: 'minimax_native' as const } : {}) };
 
@@ -4825,7 +4828,7 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), bytes);
   return {
     url: scopedStudioAssetUrl('tts', file),
-    duration: Math.max(1, Math.round(measuredDuration)),
+    duration: Math.max(1, Number(measuredDuration.toFixed(3))),
     source: 'qwen_tts',
   };
 }
@@ -4905,7 +4908,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
       try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
       const file = `${randomUUID()}.wav`;
       fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), wavFromPcm(pcm, sampleRate));
-      return { ok: true, source: 'ai', url: scopedStudioAssetUrl('tts', file), duration: Math.round(pcm.length / (sampleRate * 2)) };
+      return { ok: true, source: 'ai', url: scopedStudioAssetUrl('tts', file), duration: Number((pcm.length / (sampleRate * 2)).toFixed(3)) };
     } catch (e: any) {
       aiError = [aiError, `Gemini: ${String(e?.message ?? e).slice(0, 200)}`].filter(Boolean).join('；');
     }

@@ -184,7 +184,13 @@ const probeAudioDuration = (f: File) => new Promise<number>(res => {
   if (!f.type.startsWith('audio')) { res(0); return; }
   const a = document.createElement('audio');
   a.preload = 'metadata';
-  a.onloadedmetadata = () => { URL.revokeObjectURL(a.src); res(Math.round(a.duration) || 0); };
+  // Keep sub-second precision. Rounding 13.44s down to 13s makes the renderer
+  // stop before the final spoken word has finished.
+  a.onloadedmetadata = () => {
+    const measured = Number.isFinite(a.duration) ? Number(a.duration.toFixed(3)) : 0;
+    URL.revokeObjectURL(a.src);
+    res(measured);
+  };
   a.onerror = () => res(0);
   a.src = URL.createObjectURL(f);
 });
@@ -845,6 +851,51 @@ function parseStoryboardSlots(value: string, totalDuration: number): StoryboardS
   if (slots.length) return slots.slice(0, 12);
   // 没有真实时间戳脚本时不伪造等分分镜，选材页明确显示“暂无分镜”。
   return [];
+}
+
+/** Keep every storyboard shot, but make each language version end with its real voiceover. */
+export function fitTimelineToVoiceover<T extends {
+  trimStart?: number;
+  trimEnd?: number;
+  speed?: number;
+  targetStart?: number;
+  targetEnd?: number;
+  targetDuration: number;
+}>(timeline: T[], voiceoverDuration: number): T[] {
+  const sourceDuration = timeline.reduce((sum, item) => sum + Math.max(0, Number(item.targetDuration) || 0), 0);
+  if (!timeline.length || !Number.isFinite(voiceoverDuration) || voiceoverDuration <= 0 || sourceDuration <= 0) return timeline;
+  const minimumShotDuration = Math.min(0.5, voiceoverDuration / timeline.length);
+  const scale = voiceoverDuration / sourceDuration;
+  let cursor = 0;
+  return timeline.map((item, index) => {
+    const isLast = index === timeline.length - 1;
+    const remainingShots = timeline.length - index - 1;
+    const remainingRoom = Math.max(minimumShotDuration, voiceoverDuration - cursor - remainingShots * minimumShotDuration);
+    const targetDuration = isLast
+      ? Math.max(minimumShotDuration, voiceoverDuration - cursor)
+      : Math.min(remainingRoom, Math.max(minimumShotDuration, item.targetDuration * scale));
+    const targetStart = cursor;
+    cursor += targetDuration;
+    const sourceClipDuration = Math.max(0, (Number(item.trimEnd) || 0) - (Number(item.trimStart) || 0));
+    return {
+      ...item,
+      targetStart: +targetStart.toFixed(3),
+      targetEnd: +(isLast ? voiceoverDuration : cursor).toFixed(3),
+      targetDuration: +targetDuration.toFixed(3),
+      speed: sourceClipDuration > 0 ? Math.max(0.25, Math.min(4, sourceClipDuration / targetDuration)) : item.speed,
+    };
+  });
+}
+
+export function fitStoryboardSlotsToDuration(slots: StoryboardSlot[], duration: number): StoryboardSlot[] {
+  const sourceDuration = slots.reduce((max, slot) => Math.max(max, slot.end), 0);
+  if (!slots.length || !Number.isFinite(duration) || duration <= 0 || sourceDuration <= 0) return slots;
+  const scale = duration / sourceDuration;
+  return slots.map((slot, index) => {
+    const start = index === 0 ? 0 : slot.start * scale;
+    const end = index === slots.length - 1 ? duration : slot.end * scale;
+    return { ...slot, start: +start.toFixed(3), end: +end.toFixed(3), time: `${start.toFixed(1)}s-${end.toFixed(1)}s` };
+  });
 }
 
 function storyboardSlotScript(detail: string) {
@@ -3387,7 +3438,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const selectedClips = useMemo(() => selected.map(id => materialById.get(id)).filter(Boolean) as Clip[], [selected, materialById]);
   const totalDur = selectedClips.reduce((s, c) => s + (c.type === 'image' ? 3 : c.duration), 0);
   const matNames = selectedClips.map(c => c.name);
-  const storyboardSlots = useMemo(() => parseStoryboardSlots(script, duration), [script, duration]);
+  const storyboardSlots = useMemo(() => {
+    const parsed = parseStoryboardSlots(script, duration);
+    const activeAudioDuration = voiceoverMode === 'ai'
+      ? voiceoverAudios[activeVoiceLang]?.duration || 0
+      : voiceoverMode === 'upload' ? voiceoverDur : 0;
+    return fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
+  }, [activeVoiceLang, duration, script, voiceoverAudios, voiceoverDur, voiceoverMode]);
   const storyboardTimelineEnd = useMemo(() => storyboardSlots.reduce((max, slot) => Math.max(max, slot.end), 0), [storyboardSlots]);
   const recommendedSourceMode = (slot: StoryboardSlot): StoryboardSourceMode => {
     const text = `${slot.title} ${slot.detail}`.toLowerCase();
@@ -4060,6 +4117,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       if (!validStoryboard) return [];
       return languages.map((code, languageIndex) => {
         const bgmId = materialVersionBgms[materialVersionKey(plan.id, code)] ?? assemblyBgms[plan.id] ?? bgm;
+        const audioDuration = voiceoverMode === 'ai'
+          ? voiceoverAudios[code]?.duration || 0
+          : voiceoverMode === 'upload' && code === activeVoiceLang ? voiceoverDur : 0;
         return {
           key: renderCombinationKey(plan.id, code, bgmId),
           plan,
@@ -4068,7 +4128,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           languageIndex,
           bgmId,
           script: scriptForRenderLanguage(code),
-          timeline,
+          timeline: fitTimelineToVoiceover<(typeof timeline)[number]>(timeline, audioDuration),
         };
       });
     });
@@ -4185,7 +4245,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     const outputVoiceoverUrl = renderOverride?.voiceoverUrl ?? voiceoverUrl;
     const outputVoiceoverDur = renderOverride?.voiceoverDur ?? voiceoverDur;
     const outputScript = scriptOverride ?? (voiceDrafts[outputLanguage] || activeSpokenScript);
-    const outputTimeline = renderOverride?.timeline ?? renderTimeline;
+    const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
+    const outputTimeline = voiceoverMode === 'none'
+      ? requestedTimeline
+      : fitTimelineToVoiceover<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur);
     const validOutputStoryboard = storyboardSlots.length > 0
       && outputTimeline.length === storyboardSlots.length
       && outputTimeline.every(item => Boolean(item.url && item.type !== 'audio' && item.targetDuration > 0));
@@ -4315,7 +4378,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             voiceoverDur: audio.duration,
             cues: alignedCuesByLang[code] || audio.cues,
             outputOnly: true,
-            timeline: combination.timeline,
+            timeline: combination.timeline as typeof renderTimeline,
             bgmId,
           });
           const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
@@ -8561,7 +8624,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </div>
                   <div className="min-w-0">
                     <div className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2 text-xs leading-5 text-accent">
-                      下方是<strong>口播音轨的句级时间</strong>，用于校准配音与字幕，不是分镜切换时间。分镜画面时长仍由素材匹配步骤控制；修改这里只会调整字幕和口播在成片中的出现位置。
+                      下方是<strong>口播音轨的句级时间</strong>，用于校准配音与字幕，不是分镜切换时间。系统会先按当前语种的真实配音总时长自动校准分镜；进入素材匹配后仍可逐镜微调目标时长、素材入点、出点和速度。
                     </div>
                     <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
                       {cues.map((cue, i) => (

@@ -92,28 +92,62 @@ const selectedMetricByTab: Record<TabId, MetricId[]> = {
   crm: ['conversion', 'followup'],
 };
 
-const defaultActionItems = [
+const mockActionItems: AdvisorRecommendation[] = [
   {
-    title: '接入社媒与询盘真实数据',
-    desc: '先完成 TikTok / Instagram / YouTube 与 WhatsApp 授权，再生成获客和销转动作。',
-    basis: '依据：当前仪表盘未读取到真实社媒曝光、询盘、成交链路数据。',
-    agent: 'traffic' as const,
-    task: '检查社媒账号和 WhatsApp 询盘数据接入状态，只基于已授权的真实数据输出缺口和下一步接入清单。',
+    id: 'mock-content-reuse',
+    title: '复用高转化内容结构',
+    desc: '近 7 天“工厂生产对比”类内容询盘效率最高，建议追加 3 条同结构素材。',
+    basis: '依据：演示数据中该类内容的万次曝光询盘量高于账号均值 42%。',
+    target: '目标：本周新增 3 条同主题、不同 Hook 的测试视频。',
+    confidence: '高',
+    limitation: '当前为演示数据，接入真实账号后需重新计算。',
+    action: { page: 'traffic', view: 'materials' },
   },
   {
-    title: '整理企业中心可用经营资料',
-    desc: '把主推品、MOQ、认证、价格带、目标市场补齐，作为后续脚本和报价的可信依据。',
-    basis: '依据：企业中心资料可作为内容和报价生成的唯一内部业务来源。',
-    agent: 'conversion' as const,
-    task: '基于企业中心资料整理可用于询盘回复的产品、MOQ、认证、价格带和交期信息；缺失项必须标出，不允许补写。',
+    id: 'mock-followup',
+    title: '优先跟进 8 个高意向客户',
+    desc: '这些客户已询问 MOQ 或交期，但超过 24 小时未完成下一步沟通。',
+    basis: '依据：演示客户中有 8 人意向分大于 80，且处于待报价或待确认阶段。',
+    target: '目标：今日完成人工复核，并推进到报价阶段。',
+    confidence: '高',
+    limitation: '当前为演示数据，不代表真实客户待办。',
+    action: { page: 'conversion', view: 'inbox' },
   },
   {
-    title: '联网校验行业趋势后再给策略',
-    desc: '涉及市场趋势、平台打法或竞品机会时，必须引用可核验来源，不用猜测替代。',
-    basis: '依据：外部市场判断需来自公开行业数据、平台报告或可访问网页。',
-    agent: 'retention' as const,
-    task: '在没有真实客户和订单数据前，只输出需要联网核验的行业问题清单；不要生成未证实的复购名单或数字。',
+    id: 'mock-channel-focus',
+    title: '加码 TikTok 询盘承接',
+    desc: 'TikTok 贡献最多询盘，但转化率低于 WhatsApp 直达客户，建议优化首轮问诊话术。',
+    basis: '依据：演示数据中 TikTok 询盘量占比 43%，进入报价的比例为 22%。',
+    target: '目标：将首轮对话的关键信息采集率提升至 80%。',
+    confidence: '中',
+    limitation: '当前为演示数据，需用真实渠道归因数据验证。',
+    action: { page: 'conversion', view: 'leads' },
   },
+];
+
+const mockSnapshot = {
+  exposure: 1286000,
+  inquiries: 286,
+  converted: 74,
+  orders: 21,
+  followup: 38,
+};
+
+const mockTrendData = [
+  { date: '08/11', exposure: 12.8, inquiries: 28 },
+  { date: '08/12', exposure: 14.6, inquiries: 31 },
+  { date: '08/13', exposure: 16.2, inquiries: 35 },
+  { date: '08/14', exposure: 15.4, inquiries: 33 },
+  { date: '08/15', exposure: 19.8, inquiries: 44 },
+  { date: '08/16', exposure: 22.5, inquiries: 52 },
+  { date: '08/17', exposure: 27.3, inquiries: 63 },
+];
+
+const mockChannelData = [
+  { channel: 'TikTok', inquiries: 124, converted: 27 },
+  { channel: 'WhatsApp', inquiries: 78, converted: 26 },
+  { channel: 'Instagram', inquiries: 52, converted: 13 },
+  { channel: 'Facebook', inquiries: 32, converted: 8 },
 ];
 
 const titleLevel2 = 'text-base font-bold';
@@ -149,6 +183,7 @@ export default function StrategyDataBoard({
   const validOrders = useMemo(() => orders.filter(order => order.status !== '待付款' && order.status !== '退款'), [orders]);
   const convertedInquiries = useMemo(() => whatsAppInquiries.filter(customer => customer.stage === 'quoted' || customer.stage === 'won' || customer.orders.length > 0), [whatsAppInquiries]);
   const needsFollowup = useMemo(() => whatsAppInquiries.filter(customer => customer.handlingMode !== 'ai_auto' || customer.inboxReason), [whatsAppInquiries]);
+  const showMockData = exposure.loaded && !customersLoading && !exposure.ready && customers.length === 0 && orders.length === 0;
 
   useEffect(() => {
     let alive = true;
@@ -214,17 +249,20 @@ export default function StrategyDataBoard({
   }, [exposure.loaded, exposure.ready, exposure.value, exposure.accountCount, customersLoading, effectiveInquiries.length, convertedInquiries.length, validOrders.length, needsFollowup.length]);
 
   const chainMetrics = useMemo(() => {
-    const inquiryCount = effectiveInquiries.length;
-    const conversionRate = inquiryCount ? convertedInquiries.length / inquiryCount * 100 : 0;
+    const inquiryCount = showMockData ? mockSnapshot.inquiries : effectiveInquiries.length;
+    const convertedCount = showMockData ? mockSnapshot.converted : convertedInquiries.length;
+    const orderCount = showMockData ? mockSnapshot.orders : validOrders.length;
+    const exposureValue = showMockData ? mockSnapshot.exposure : exposure.value;
+    const conversionRate = inquiryCount ? convertedCount / inquiryCount * 100 : 0;
     return [
       {
         id: 'exposure' as const,
         icon: <Zap size={15} className="text-green-600" />,
         label: '视频曝光',
-        value: exposure.ready ? compact(exposure.value) : '/',
-        desc: exposure.ready ? '来自已授权社媒账号返回的视频播放量。' : '尚未接入可读取曝光量的社媒账号。',
-        source: exposure.ready ? '来源：社媒账号接口' : '暂无真实数据',
-        trend: '',
+        value: exposure.ready || showMockData ? compact(exposureValue) : '/',
+        desc: showMockData ? '用于展示首页完整经营视图的模拟曝光数据。' : exposure.ready ? '来自已授权社媒账号返回的视频播放量。' : '尚未接入可读取曝光量的社媒账号。',
+        source: showMockData ? '演示数据' : exposure.ready ? '来源：社媒账号接口' : '暂无真实数据',
+        trend: showMockData ? '较上期 +18.6%' : '',
       },
       {
         id: 'inquiry' as const,
@@ -232,31 +270,31 @@ export default function StrategyDataBoard({
         label: '有效询盘',
         value: String(inquiryCount),
         desc: '按我的客户 tab 中 WhatsApp 且意向分 >= 70 的客户计算。',
-        source: '来源：我的客户 / WhatsApp',
-        trend: '',
+        source: showMockData ? '演示数据' : '来源：我的客户 / WhatsApp',
+        trend: showMockData ? '较上期 +12.4%' : '',
       },
       {
         id: 'conversion' as const,
         icon: <TrendingUp size={15} className="text-green-600" />,
         label: '询盘转化率',
-        value: inquiryCount && validOrders.length ? pct(conversionRate) : '/',
-        desc: validOrders.length
-          ? `按已报价/成交 WhatsApp 询盘计算，并参考 ${validOrders.length} 个有效订单。`
+        value: inquiryCount && orderCount ? pct(conversionRate) : '/',
+        desc: orderCount
+          ? `按已报价/成交询盘计算，并参考 ${orderCount} 个有效订单。`
           : '按已报价/成交 WhatsApp 询盘计算；订单未打通时不额外推断。',
-        source: validOrders.length ? '来源：我的客户 + 我的订单' : '订单链路未打通，暂不展示转化率',
-        trend: '',
+        source: showMockData ? '演示数据' : validOrders.length ? '来源：我的客户 + 我的订单' : '订单链路未打通，暂不展示转化率',
+        trend: showMockData ? '较上期 +3.2%' : '',
       },
       {
         id: 'followup' as const,
         icon: <Target size={15} className="text-green-600" />,
         label: '客户待跟进',
-        value: String(needsFollowup.length),
+        value: String(showMockData ? mockSnapshot.followup : needsFollowup.length),
         desc: '按 WhatsApp 客户中需人工处理或有待办原因的记录计算。',
-        source: '来源：我的客户 / WhatsApp',
-        trend: '',
+        source: showMockData ? '演示数据' : '来源：我的客户 / WhatsApp',
+        trend: showMockData ? '8 个高意向' : '',
       },
     ];
-  }, [convertedInquiries.length, effectiveInquiries.length, exposure, needsFollowup.length, validOrders.length]);
+  }, [convertedInquiries.length, effectiveInquiries.length, exposure, needsFollowup.length, showMockData, validOrders.length]);
 
   const channelData = useMemo(() => {
     const grouped = new Map<string, { channel: string; inquiries: number; converted: number }>();
@@ -267,17 +305,18 @@ export default function StrategyDataBoard({
       if (customer.stage === 'quoted' || customer.stage === 'won' || customer.orders.length > 0) item.converted += 1;
       grouped.set(channel, item);
     }
-    return [...grouped.values()];
-  }, [customers]);
+    const realData = [...grouped.values()];
+    return showMockData ? mockChannelData : realData;
+  }, [customers, showMockData]);
 
   const funnelData = [
-    ['内容曝光', exposure.ready ? compact(exposure.value) : '/', exposure.ready ? '社媒账号接口' : '未接入'],
-    ['有效询盘', String(effectiveInquiries.length), '真实客户'],
-    ['进入报价', String(convertedInquiries.length), '真实客户'],
-    ['有效订单', String(validOrders.length), '真实订单'],
+    ['内容曝光', showMockData ? compact(mockSnapshot.exposure) : exposure.ready ? compact(exposure.value) : '/', showMockData ? '演示数据' : exposure.ready ? '社媒账号接口' : '未接入'],
+    ['有效询盘', String(showMockData ? mockSnapshot.inquiries : effectiveInquiries.length), showMockData ? '询盘率 2.22 / 万曝光' : '真实客户'],
+    ['进入报价', String(showMockData ? mockSnapshot.converted : convertedInquiries.length), showMockData ? '询盘转报价 25.9%' : '真实客户'],
+    ['有效订单', String(showMockData ? mockSnapshot.orders : validOrders.length), showMockData ? '报价转订单 28.4%' : '真实订单'],
   ];
 
-  const actionItems = advisor?.recommendations ?? [];
+  const actionItems = showMockData ? mockActionItems : advisor?.recommendations ?? [];
 
   const executeAdvisorAction = (item: AdvisorRecommendation) => {
     const { page: requestedPage, view } = item.action;
@@ -339,9 +378,12 @@ export default function StrategyDataBoard({
                 <h2 className="text-base font-black text-text-primary">当前获客经营总览</h2>
                 <p className="mt-1 text-[11px] text-text-muted">从内容曝光到成交推进，先看趋势，再看渠道和待办。</p>
               </div>
-              <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往社媒运营 · 账号管理">
-                已接入账号 {exposure.accountCount} · 查看动态 →
-              </button>
+              <div className="flex items-center gap-2">
+                {showMockData && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">演示数据</span>}
+                <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往社媒运营 · 账号管理">
+                  {showMockData ? '接入真实账号 · 立即配置 →' : <>已接入账号 {exposure.accountCount} · 查看动态 →</>}
+                </button>
+              </div>
             </div>
             <div className="grid gap-2.5 md:grid-cols-4">
               {chainMetrics.map(item => {
@@ -376,9 +418,35 @@ export default function StrategyDataBoard({
               <section className="rounded-2xl border border-border bg-white p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div><p className={bodyTitle}>获客趋势</p><p className="mt-1 text-[10px] text-text-muted">曝光持续增长时，询盘是否同步增长</p></div>
-                  <span className="rounded-lg bg-green-50 px-2 py-1 text-[10px] font-bold text-green-700">询盘效率 {exposure.ready && exposure.value > 0 ? `${(effectiveInquiries.length / exposure.value * 10000).toFixed(2)} / 万曝光` : '暂无真实数据'}</span>
+                  <span className="rounded-lg bg-green-50 px-2 py-1 text-[10px] font-bold text-green-700">询盘效率 {showMockData ? '2.22 / 万曝光' : exposure.ready && exposure.value > 0 ? `${(effectiveInquiries.length / exposure.value * 10000).toFixed(2)} / 万曝光` : '暂无真实数据'}</span>
                 </div>
-                <div className="flex h-[220px] items-center justify-center rounded-xl bg-surface-2 px-6 text-center text-xs text-text-muted">当前接口仅返回累计曝光，没有按日历史序列。接入平台 insights 时间序列后，这里将展示真实趋势。</div>
+                {showMockData ? (
+                  <div className="h-[220px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={mockTrendData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="mockExposureFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.28}/>
+                            <stop offset="95%" stopColor="#22c55e" stopOpacity={0.02}/>
+                          </linearGradient>
+                          <linearGradient id="mockInquiryFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.01}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false}/>
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}/>
+                        <YAxis yAxisId="exposure" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} unit="万"/>
+                        <YAxis yAxisId="inquiry" orientation="right" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}/>
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE} formatter={(value, name) => [name === '曝光' ? `${value} 万` : value, name]}/>
+                        <Area yAxisId="exposure" type="monotone" dataKey="exposure" name="曝光" stroke="#16a34a" strokeWidth={2.5} fill="url(#mockExposureFill)"/>
+                        <Area yAxisId="inquiry" type="monotone" dataKey="inquiries" name="询盘" stroke="#0284c7" strokeWidth={2} fill="url(#mockInquiryFill)"/>
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="flex h-[220px] items-center justify-center rounded-xl bg-surface-2 px-6 text-center text-xs text-text-muted">当前接口仅返回累计曝光，没有按日历史序列。接入平台 insights 时间序列后，这里将展示真实趋势。</div>
+                )}
               </section>
 
               <section className="rounded-2xl border border-border bg-white p-4">
@@ -493,7 +561,9 @@ export default function StrategyDataBoard({
                     )}
                   </div>
                 )}
-                {advisor?.dataQuality.note && <p className="mt-2 text-[10px] text-text-muted">数据口径：{advisor.dataQuality.note}</p>}
+                {showMockData
+                  ? <p className="mt-2 text-[10px] text-amber-700">数据口径：当前为产品演示数据；接入任一真实账号、客户或订单后将自动隐藏。</p>
+                  : advisor?.dataQuality.note && <p className="mt-2 text-[10px] text-text-muted">数据口径：{advisor.dataQuality.note}</p>}
               </section>
             </div>
           </section>

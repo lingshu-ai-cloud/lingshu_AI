@@ -1106,7 +1106,7 @@ function ChatThread({
               {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-primary/30 hover:bg-primary/5 hover:text-primary"><Sparkles size={13} /> {chip.label}</button>)}
             </div>
           )}
-          <div className="rounded-xl border border-border bg-surface-2 p-3">
+          <div data-customer-reply-composer className="rounded-xl border border-border bg-surface-2 p-3 transition-shadow focus-within:border-cyan-400 focus-within:ring-2 focus-within:ring-cyan-100">
             {previewOpen && translatedInput && <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary"><span className="font-black text-text-primary">{'\u8bd1\u6587\u9884\u89c8\uff1a'}</span>{translatedInput}</div>}
             {isOutsideWindow && typedTemplatePlan && input.trim() && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
@@ -1197,6 +1197,7 @@ function PrimaryActionCard({
   onCompleteTodo,
   customerServiceEnabled,
   autoReplyReady,
+  onEnableCustomerService,
 }: {
   customer: CustomerProfile;
   notificationReady: boolean;
@@ -1208,6 +1209,7 @@ function PrimaryActionCard({
   onCompleteTodo: () => void;
   customerServiceEnabled: boolean;
   autoReplyReady: boolean;
+  onEnableCustomerService: () => Promise<void> | void;
 }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
@@ -1296,7 +1298,7 @@ function PrimaryActionCard({
     }
     if (suggestion.suggestionType === 'handoff') {
       if (!customerServiceEnabled) {
-        onToast('先开启智能客服，开启后只会给建议');
+        void onEnableCustomerService();
         return;
       }
       switchMode(autoReplyReady ? 'ai_auto' : 'ai_draft', autoReplyReady ? '已交回 AI 接待' : '已改为 AI 只给建议');
@@ -1425,6 +1427,7 @@ function CustomerInfoRail({
   onCompleteTodo,
   customerServiceEnabled,
   autoReplyReady,
+  onEnableCustomerService,
 }: {
   customer: CustomerProfile | null;
   autonomyLevel: AutonomyLevel;
@@ -1438,6 +1441,7 @@ function CustomerInfoRail({
   onCompleteTodo: () => void;
   customerServiceEnabled: boolean;
   autoReplyReady: boolean;
+  onEnableCustomerService: () => Promise<void> | void;
 }) {
   const [widgetOrder, setWidgetOrder] = useState<CustomerWidgetId[]>(() => readWidgetOrder());
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -1501,7 +1505,7 @@ function CustomerInfoRail({
         <p className="text-xs font-black text-text-primary">今日处理</p>
       </div>
       <div className="grid gap-3">
-        <PrimaryActionCard customer={customer} notificationReady={notificationReady} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} />
+        <PrimaryActionCard customer={customer} notificationReady={notificationReady} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} onEnableCustomerService={onEnableCustomerService} />
       </div>
 
       <div className="mt-3">
@@ -1669,6 +1673,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>('draft');
   const [customerServiceStatus, setCustomerServiceStatus] = useState<CustomerServiceStatus | null>(null);
+  const [customerServiceLoadFailed, setCustomerServiceLoadFailed] = useState(false);
   const [customerServiceSaving, setCustomerServiceSaving] = useState(false);
   const [dailyBriefingOpen, setDailyBriefingOpen] = useState(false);
   const [draftSuggestion, setDraftSuggestion] = useState<string | null>(null);
@@ -1742,9 +1747,18 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     let alive = true;
+    setCustomerServiceLoadFailed(false);
     void getCustomerServiceStatus()
-      .then(status => { if (alive) setCustomerServiceStatus(status); })
-      .catch(() => { if (alive) setCustomerServiceStatus(null); });
+      .then(status => {
+        if (!alive) return;
+        setCustomerServiceStatus(status);
+        setCustomerServiceLoadFailed(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setCustomerServiceStatus(null);
+        setCustomerServiceLoadFailed(true);
+      });
     return () => { alive = false; };
   }, []);
 
@@ -1893,6 +1907,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     try {
       const status = await updateCustomerServiceStatus({ enabled });
       setCustomerServiceStatus(status);
+      setCustomerServiceLoadFailed(false);
       setAutonomyLevel('draft');
       setDraftSuggestion(null);
       setDraftMeta(null);
@@ -2304,7 +2319,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const focusReplyInput = () => {
     const inputEl = document.querySelector<HTMLTextAreaElement>('[data-customer-reply-input]');
     inputEl?.focus();
-    inputEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.querySelector<HTMLElement>('[data-customer-reply-composer]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const viewDraftSuggestion = () => {
@@ -2317,14 +2332,16 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const customerServiceLabel = !customerServiceStatus
-    ? '正在读取'
+    ? customerServiceLoadFailed ? '读取失败' : '正在读取'
     : !customerServiceStatus.enabled
       ? '已关闭'
       : partialAutoReplyActive
         ? '部分直回'
         : `只给建议 · 第 ${customerServiceStatus.observationDay}/3 天`;
-  const customerServiceSummary = !customerServiceStatus?.enabled
-    ? '账号消息只进入收件箱，灵小枢不会自行处理。'
+  const customerServiceSummary = !customerServiceStatus
+    ? customerServiceLoadFailed ? '客服状态读取失败，请点击右上角电源按钮重试。' : '正在读取智能客服状态。'
+    : !customerServiceStatus.enabled
+      ? '账号消息只进入收件箱，灵小枢不会自行处理。'
     : partialAutoReplyActive
       ? '仅高置信命中已审批常见问答时直回；其余内容仍等你确认。'
       : customerServiceStatus.partialAutoReplyEnabled
@@ -2353,8 +2370,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             aria-checked={Boolean(customerServiceStatus?.enabled)}
             aria-label="智能客服总开关"
             title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
-            disabled={!customerServiceStatus || customerServiceSaving}
-            onClick={() => void changeCustomerServiceEnabled(!customerServiceStatus?.enabled)}
+            disabled={customerServiceSaving}
+            onClick={() => void changeCustomerServiceEnabled(customerServiceStatus ? !customerServiceStatus.enabled : true)}
             className={`relative h-7 w-12 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
           >
             <span className={`absolute top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${customerServiceStatus?.enabled ? 'translate-x-6' : 'translate-x-1'}`}>
@@ -2425,6 +2442,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onCompleteTodo={markSelectedTodoCompleted}
           customerServiceEnabled={Boolean(customerServiceStatus?.enabled)}
           autoReplyReady={partialAutoReplyActive}
+          onEnableCustomerService={() => changeCustomerServiceEnabled(true)}
         />
       </div>
       {customerServiceStatus?.shouldAskPartialAutoReply && (

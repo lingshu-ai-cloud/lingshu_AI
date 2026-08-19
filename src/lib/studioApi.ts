@@ -138,6 +138,7 @@ export interface RenderSpec {
   materials: string[];
   timeline?: {
     name: string;
+    url?: string;
     trimStart?: number;
     trimEnd?: number;
     speed?: number;
@@ -207,6 +208,13 @@ export function getDesktopRender(): DesktopRenderBridge | undefined {
 
 /** 离线 / 未授权时的本地兜底 manifest，桥接服务端 buildManifest 的结构 */
 function localManifest(spec: RenderSpec): RenderManifest {
+  const absoluteBrowserAssetUrl = (value?: string | null): string | null => {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+    if (typeof window === 'undefined') return raw;
+    return new URL(raw.startsWith('/') ? raw : `/${raw}`, window.location.origin).toString();
+  };
   return {
     jobId: `local-${Date.now()}`,
     spec: {
@@ -219,9 +227,13 @@ function localManifest(spec: RenderSpec): RenderManifest {
     },
     script: spec.script ?? '',
     timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name })))
-      .map((item, index) => ({ index, ...item, url: null })),
-    voiceover: { voice: spec.voice ?? null, url: null },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: null },
+      .map((item, index) => ({
+        index,
+        ...item,
+        url: absoluteBrowserAssetUrl('url' in item && typeof item.url === 'string' ? item.url : null),
+      })),
+    voiceover: { voice: spec.voice ?? null, url: absoluteBrowserAssetUrl(spec.voiceoverUrl) },
+    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteBrowserAssetUrl(spec.coverUrl) },
     bgm: { id: spec.bgm ?? null, url: null },
     subtitles: spec.subtitles,
   };
