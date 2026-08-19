@@ -381,7 +381,7 @@ export default function StrategyDataBoard({
               <div className="flex items-center gap-2">
                 {showMockData && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">演示数据</span>}
                 <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往社媒运营 · 账号管理">
-                  {showMockData ? '接入真实账号 · 立即配置 →' : `已接入账号 ${exposure.accountCount} · 查看动态 →`}
+                  {showMockData ? '接入真实账号 · 立即配置 →' : <>已接入账号 {exposure.accountCount} · 查看动态 →</>}
                 </button>
               </div>
             </div>

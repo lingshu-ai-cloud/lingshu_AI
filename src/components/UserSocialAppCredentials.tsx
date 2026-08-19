@@ -219,7 +219,7 @@ export function WhatsAppConnectionPanel() {
     <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><SocialPlatformIcon platform="whatsapp" size={24} /></div>
-        <div className="min-w-0"><h2 className="text-sm font-semibold text-gray-900">WhatsApp Business 一键授权</h2><p className="mt-1 text-xs leading-relaxed text-gray-500">连接后，客户发来的 WhatsApp 消息会自动进入“我的客户”。</p></div>
+        <div className="min-w-0"><h2 className="text-sm font-semibold text-gray-900">WhatsApp Business 一键授权</h2><p className="mt-1 text-xs leading-relaxed text-gray-500">连接后，客户发来的 WhatsApp 消息会自动进入“我的会话”。</p></div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <button type="button" onClick={() => void load()} disabled={loading} title="刷新" className="rounded-lg border border-gray-200 p-2 text-gray-500 disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>

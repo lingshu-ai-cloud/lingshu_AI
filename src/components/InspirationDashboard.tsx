@@ -2974,7 +2974,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       // page (or a temporary search result). Only refresh it from an unfiltered
       // tenant list response; admin aggregation must not overwrite it.
       if (requestId === videoRequestRef.current && r.ok && !keyword) {
-        setTenantVideoTotalItems(Math.max(0, Number(data.inventoryTotalItems || 0)));
+        setTenantVideoTotalItems(Math.max(0, Number(data.inventoryTotalItems ?? data.totalItems ?? data.items?.length ?? 0)));
       }
 
       const applyResult = (result: typeof data) => {
@@ -3205,11 +3205,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (videosLoading || filtered.length === 0 || filtered.length >= 10 || videoPage >= videoTotalPages) return;
     void refreshVideos(videoPage + 1, true);
   }, [filtered.length, innerView, videoPage, videoTotalPages, videosLoading, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const recentThreeDayUploads = visibleVideos.filter(v => {
-    const t = v.crawledAt ? new Date(v.crawledAt).getTime() : 0;
-    return t > 0 && Date.now() - t <= 3 * 24 * 60 * 60 * 1000;
-  }).length;
 
   const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
   const materialFunctionOptions = useMemo(() => {
@@ -3783,7 +3778,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         {innerView === 'inspiration' && <div className="mb-4 grid grid-cols-3 gap-3 max-w-xl">
           {[
             { icon: <Zap size={13} />,       label: contentFormat === 'image' ? '全部图文' : '全部视频', value: `${tenantVideoTotalItems}`,    color: 'text-accent' },
-            { icon: <TrendingUp size={13} />, label: contentFormat === 'image' ? '已完成拆解' : '上升趋势', value: `${contentFormat === 'image' ? visibleVideos.filter(video => video.aiAnalysis?.imageEvidence?.status === 'analyzed').length : recentThreeDayUploads}`, color: 'text-green' },
+            { icon: <TrendingUp size={13} />, label: contentFormat === 'image' ? '已完成拆解' : '上升趋势', value: `${contentFormat === 'image' ? visibleVideos.filter(video => video.aiAnalysis?.imageEvidence?.status === 'analyzed').length : visibleVideos.filter(video => video.trend === 'rising').length}`, color: 'text-green' },
             { icon: <Globe size={13} />,      label: '覆盖平台', value: `${new Set(visibleVideos.map(v => v.platform)).size}`,       color: 'text-accent' },
           ].map(stat => (
             <div key={stat.label} className="card p-3 flex items-center gap-2.5">

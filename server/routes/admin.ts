@@ -603,11 +603,12 @@ function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEm
     callbacks: oauthCallbackUrls(req),
     values: {
       youtubeOAuthClientId: effective.youtubeOAuthClientId,
-      youtubeOAuthClientSecret: effective.youtubeOAuthClientSecret,
+      // Secrets are write-only. Never send credential material back to the browser.
+      youtubeOAuthClientSecret: '',
       metaSocialAppId: effective.metaSocialAppId,
-      metaSocialAppSecret: effective.metaSocialAppSecret,
+      metaSocialAppSecret: '',
       tiktokClientKey: effective.tiktokClientKey,
-      tiktokClientSecret: effective.tiktokClientSecret,
+      tiktokClientSecret: '',
       advancedManualConnectEnabled: effective.advancedManualConnectEnabled,
     },
     secretSet: {
@@ -646,7 +647,7 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         email: entry.email,
         tenantId: String(entry.tenantId || ''),
         tenantName: String(tenant?.name || entry.email.split('@')[0] || entry.tenantId || ''),
-        password: entry.password,
+        password: '',
         status: accountStage({ ...entry, expiresAt }),
         activatedAt,
         expiresAt,
@@ -661,7 +662,7 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         renderToday: usage.render,
         videoGenerationToday: usage.videoGeneration,
         rotatedAt: entry.rotatedAt ?? null,
-        rotationPassword: entry.rotationPassword ?? null,
+        rotationPassword: null,
       };
     }));
 
@@ -717,7 +718,7 @@ adminRouter.get('/demo-accounts', async (req, res) => {
           contactName: String(tenant.contactName || tenant.contact || ''),
           industry: String(tenant.industry || ''),
           emails: Array.from(new Set(emails)),
-          password: decryptRegistrationPassword(String(tenant.registeredPasswordCipher || '')) || promotedTrial?.password || '',
+          password: '',
           inviteCode: String(tenant.registrationInviteCode || tenant.inviteCode || ''),
           subscriptionPlan,
           subscriptionStatus,
@@ -755,7 +756,7 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         contactName: tenant.contactName,
         industry: tenant.industry,
         emails,
-        password: decryptRegistrationPassword(tenant.registeredPasswordCipher) || promotedTrial?.password || '',
+        password: '',
         inviteCode: tenant.registrationInviteCode || tenant.inviteCode,
         subscriptionPlan: tenant.subscriptionPlan,
         subscriptionStatus: tenant.subscriptionStatus,

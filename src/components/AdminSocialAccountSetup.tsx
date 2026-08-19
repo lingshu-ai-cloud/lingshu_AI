@@ -121,6 +121,7 @@ function CredentialField({
   required?: boolean;
   onChange: (value: string) => void;
 }) {
+  const isSecret = /secret/i.test(label);
   const isCompleted = Boolean(value.trim());
 
   return (
@@ -138,7 +139,7 @@ function CredentialField({
       </span>
       <input
         name={fieldName}
-        type="text"
+        type={isSecret ? 'password' : 'text'}
         required={required}
         aria-required={required}
         autoComplete="off"
@@ -147,7 +148,7 @@ function CredentialField({
         data-form-type="other"
         value={value}
         onChange={event => onChange(event.target.value)}
-        placeholder={label}
+        placeholder={isSecret && !value ? '已配置则留空；输入新值可替换' : label}
         className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-normal text-text-primary outline-none focus:border-emerald-400"
       />
     </label>
@@ -270,9 +271,9 @@ export default function AdminSocialAccountSetup() {
   }
 
   const oauthPanelsKey = config?.updatedAt || 'oauth-not-configured';
-  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim());
-  const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim());
-  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim());
+  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || config?.secretSet.youtubeOAuthClientSecret);
+  const metaConfigured = Boolean(form.metaSocialAppId.trim() || config?.secretSet.metaSocialAppSecret);
+  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || config?.secretSet.tiktokClientSecret);
 
   return (
     <>

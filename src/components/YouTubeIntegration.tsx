@@ -982,14 +982,30 @@ export function ChannelOverview() {
     const url = currentPlatform === 'youtube'
       ? `/api/overseas/youtube/accounts/${selectedAccountId}/videos?maxResults=50`
       : `/api/overseas/social/accounts/${selectedAccountId}/videos?maxResults=50`;
-    fetchJson<{ videos?: OverviewVideo[] }>(url)
-      .then(data => {
-        const list = data.videos ?? [];
-        setVideos(list);
-        setSelectedVideoId(list[0]?.id || '');
-      })
-      .catch(e => setError(e instanceof Error ? e.message : '无法读取视频列表'))
-      .finally(() => setVideosLoading(false));
+    let cancelled = false;
+    const loadVideos = async () => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const data = await fetchJson<{ videos?: OverviewVideo[] }>(url);
+          if (cancelled) return;
+          const list = data.videos ?? [];
+          setVideos(list);
+          setSelectedVideoId(list[0]?.id || '');
+          setVideosLoading(false);
+          return;
+        } catch (reason) {
+          lastError = reason;
+          if (attempt === 0) await new Promise(resolve => window.setTimeout(resolve, 500));
+        }
+      }
+      if (!cancelled) {
+        setError(lastError instanceof Error ? lastError.message : '无法读取视频列表');
+        setVideosLoading(false);
+      }
+    };
+    void loadVideos();
+    return () => { cancelled = true; };
   }, [selectedAccountId, currentPlatform]);
 
   useEffect(() => {
