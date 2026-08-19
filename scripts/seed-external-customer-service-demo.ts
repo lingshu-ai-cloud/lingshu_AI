@@ -9,6 +9,7 @@ const baseUrl = String(process.env.EXTERNAL_DEMO_BASE_URL || 'http://127.0.0.1:8
 const email = String(process.env.EXTERNAL_DEMO_EMAIL || '').trim().toLowerCase();
 const password = String(process.env.EXTERNAL_DEMO_PASSWORD || '');
 const accountName = String(process.env.EXTERNAL_DEMO_ACCOUNT_NAME || '智能客服对外演示').trim();
+const companyName = String(process.env.EXTERNAL_DEMO_COMPANY_NAME || '苏州凌锐智能装备有限公司').trim();
 const pbUrl = String(process.env.PB_URL || 'http://127.0.0.1:8090').replace(/\/$/, '');
 const pbAdminEmail = String(process.env.PB_ADMIN_EMAIL || '').trim();
 const pbAdminPassword = String(process.env.PB_ADMIN_PASSWORD || '');
@@ -63,7 +64,8 @@ async function ensureExternalDemoAccount(): Promise<void> {
   const existingUser = await findPocketBaseRecord(token, 'users', `email = "${escapeFilterValue(email)}"`);
   let tenantId = String(existingUser?.tenantId || '');
   const tenantBody = {
-    name: '文澜天下',
+    name: companyName,
+    companyName,
     subscriptionStatus: 'active',
     subscriptionPlan: 'customer',
     subscriptionExpiresAt: '',
@@ -119,6 +121,9 @@ if (!login.token) throw new Error('Demo login did not return a token');
 
 const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${login.token}` };
 const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8')) as Record<string, unknown>;
+if (profile.company && typeof profile.company === 'object') {
+  (profile.company as Record<string, unknown>).name = companyName;
+}
 await jsonRequest('/api/overseas/enterprise/profile', {
   method: 'POST',
   headers,
@@ -207,7 +212,7 @@ const [savedStyles, savedCustomers, savedStrategies] = await Promise.all([
 ]);
 
 if (!customerServiceEnabled) throw new Error('Customer service master switch was not enabled');
-if (savedProfile.company?.name !== '文澜天下') throw new Error('Enterprise profile verification failed');
+if (savedProfile.company?.name !== companyName) throw new Error('Enterprise profile verification failed');
 const savedDemoStyleCount = (savedStyles.items || []).filter(item => String(item.evidenceSource || '').startsWith('外部演示初始化')).length;
 const savedDemoCustomerCount = (savedCustomers.items || []).filter(item => String(item.customerId || '').startsWith('mock-')).length;
 const savedDemoStrategyCount = (savedStrategies.items || []).filter(item => String(item.strategyId || '').startsWith('T_')).length;

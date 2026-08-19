@@ -29,7 +29,8 @@ assert.ok(customers.some(customer => customer.stage === 'won'), 'the lab must in
 assert.ok(customers.some(customer => customer.stage === 'silent30'), 'the lab must include a reactivation customer');
 
 const app = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
-assert.match(app, /wenlantianxia-test@local\.test/, 'the dedicated external account must be allowed to see the simulation lab');
+assert.match(app, /customer-demo@lingshu\.site/, 'the original external account must keep access to the simulation lab');
+assert.match(app, /wenlantianxia-test@local\.test/, 'the new external account must also be allowed to see the simulation lab');
 assert.match(app, /isExternalCustomerServiceDemoSession/, 'simulation visibility must be scoped to the dedicated account');
 
 const seedScript = fs.readFileSync(path.join(root, 'scripts/seed-external-customer-service-demo.ts'), 'utf8');
@@ -39,6 +40,7 @@ assert.match(seedScript, /role: 'admin'/, 'the account must have every customer-
 assert.match(seedScript, /agent-memory\/backup\/restore/, 'the dedicated account must receive the demo memory records');
 assert.match(seedScript, /missingMemoryCount/, 'demo memory provisioning must be idempotent');
 assert.match(seedScript, /pruneDuplicateRecords/, 're-running the demo seed must remove duplicate fixture records');
+assert.match(seedScript, /EXTERNAL_DEMO_COMPANY_NAME/, 'the same fixture must support tenant-specific company names');
 
 const memoryFixture = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-demo-memory.json'), 'utf8')) as Record<string, any>;
 assert.equal(memoryFixture.schemaVersion, 1);
@@ -84,7 +86,7 @@ for (const label of ['模拟客户名称', '模拟客户国家或地区', '模�
 }
 
 const profile = JSON.parse(fs.readFileSync(path.join(root, 'data/external-customer-service-demo-profile.json'), 'utf8')) as Record<string, any>;
-assert.equal(profile.company.name, '文澜天下');
+assert.equal(profile.company.name, '苏州凌锐智能装备有限公司');
 assert.match(profile.company.mainMarkets, /苏州.*无锡.*常州/);
 assert.ok(profile.products.items.length >= 5, 'industrial equipment demo profile should have detailed products');
 assert.ok(profile.faq.length >= 5, 'the demo knowledge base should support safe common-question testing');
