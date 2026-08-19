@@ -114,14 +114,15 @@ await jsonRequest('/api/overseas/enterprise/profile', {
   headers,
   body: JSON.stringify(profile),
 });
-const status = await jsonRequest<{ enabled?: boolean }>('/api/overseas/enterprise/customer-service/status', {
+const statusResponse = await jsonRequest<{ status?: { enabled?: boolean }; enabled?: boolean }>('/api/overseas/enterprise/customer-service/status', {
   method: 'PATCH',
   headers,
   body: JSON.stringify({ enabled: true }),
 });
+const customerServiceEnabled = Boolean(statusResponse.status?.enabled ?? statusResponse.enabled);
 const savedProfile = await jsonRequest<{ company?: { name?: string }; products?: { items?: unknown[] }; faq?: unknown[] }>('/api/overseas/enterprise/profile', { headers });
 
-if (!status.enabled) throw new Error('Customer service master switch was not enabled');
+if (!customerServiceEnabled) throw new Error('Customer service master switch was not enabled');
 if (savedProfile.company?.name !== '苏州凌锐智能装备有限公司') throw new Error('Enterprise profile verification failed');
 
 console.log(JSON.stringify({
