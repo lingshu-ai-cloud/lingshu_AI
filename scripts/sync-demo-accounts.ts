@@ -22,6 +22,8 @@ const REGISTRY_FILE = path.join(__dirname, '..', 'data', 'demo-account-registry.
 type RegistryEntry = {
   email: string;
   password: string;
+  name?: string;
+  role?: 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
   userId?: string;
   tenantId?: string;
   activatedAt?: string | null;
@@ -77,7 +79,7 @@ async function createTenant(token: string, entry: RegistryEntry): Promise<Record
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      name: entry.email.split('@')[0],
+      name: entry.name || entry.email.split('@')[0],
       subscriptionStatus: isAdmin || isCustomer ? 'active' : 'trialing',
       subscriptionPlan: isAdmin ? 'admin' : isCustomer ? 'customer' : 'trial',
       subscriptionExpiresAt: isAdmin || isCustomer ? '' : (entry.expiresAt || ''),
@@ -129,6 +131,8 @@ async function syncAccount(token: string, entry: RegistryEntry): Promise<{ email
         } : {}),
         tenantId,
         emailVisibility: true,
+        name: entry.name || String(existing.name || email.split('@')[0]),
+        role: entry.role || String(existing.role || 'admin'),
       }),
     });
     return { email, action: 'updated', userId: String(existing.id), tenantId };
@@ -141,8 +145,9 @@ async function syncAccount(token: string, entry: RegistryEntry): Promise<{ email
       email,
       password: entry.password,
       passwordConfirm: entry.password,
-      name: email.split('@')[0],
+      name: entry.name || email.split('@')[0],
       tenantId,
+      role: entry.role || 'admin',
       emailVisibility: true,
     }),
   });

@@ -83,6 +83,10 @@ const isAdminSession = (session: AuthSession | null) => Boolean(session && !sess
   session.tenant?.subscriptionPlan === 'admin' ||
   session.subscription?.plan === 'admin'
 ));
+const EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAIL = 'customer-demo@lingshu.site';
+const isExternalCustomerServiceDemoSession = (session: AuthSession | null) => (
+  session?.user.email.trim().toLowerCase() === EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAIL
+);
 const isLocalCustomerReplyLab = () => (
   (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
   window.location.pathname.replace(/\/+$/, '') === '/customer-reply-lab'
@@ -537,7 +541,7 @@ export default function App() {
               onAction={startAgentTask}
               onSessionRefresh={() => void refreshSession()}
               isDemo={Boolean(session.demo?.enabled)}
-              includeMockCustomers={isAdminSession(session) || isLocalCustomerReplyLab()}
+              includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
               mockCustomerScope={session.user.id || session.tenant?.id || 'admin'}
             />
           )}

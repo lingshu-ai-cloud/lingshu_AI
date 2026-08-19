@@ -86,6 +86,22 @@ export interface TimelineEvent {
     knowledgeMiss?: boolean;
     buyerMessage?: string;
     evidence?: string[];
+    editedByHuman?: boolean;
+    originalDraft?: string;
+    memoryApplied?: string[];
+  };
+}
+
+export interface CustomerSimulationScenario {
+  checkpoint: string;
+  goal: string;
+  expectedBehavior: string;
+  humanEditCount?: number;
+  memoryApplied?: string[];
+  editable?: boolean;
+  warning?: {
+    title: string;
+    reason: string;
   };
 }
 
@@ -129,6 +145,7 @@ export interface CustomerProfile {
   hasUnread?: boolean;
   isReal?: boolean;
   isMock?: boolean;
+  simulation?: CustomerSimulationScenario;
   waNumber?: string;
   newProductMatch?: boolean;
   blockedAutoReplyReason?: string;

@@ -15,7 +15,9 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
+  AlertTriangle,
   Bot,
+  BrainCircuit,
   Check,
   ChevronDown,
   Eye,
@@ -649,7 +651,8 @@ function CompactCustomerList({
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-1.5">
                 <p className="truncate text-sm font-bold text-text-primary">{customer.name}</p>
-                {customer.isMock && <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">MOCK</span>}
+                {customer.isMock && <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">模拟</span>}
+                {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">大单预警</span>}
                 <SourceIcon source={customer.source} size={11} />
               </div>
               <span className="shrink-0 text-[11px] font-medium text-text-muted">{lastMessage?.time || customer.lastActive}</span>
@@ -1025,8 +1028,15 @@ function ChatThread({
   return (
     <section className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
-        <div>
-          <p className="text-sm font-black text-text-primary">{customer.name}</p>
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="truncate text-sm font-black text-text-primary">{customer.name}</p>
+            {customer.simulation?.checkpoint && (
+              <span className="max-w-52 truncate rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-black text-cyan-700" title={customer.simulation.checkpoint}>
+                {customer.simulation.checkpoint}
+              </span>
+            )}
+          </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
             <span>{STAGE_LABEL[customer.stage]}</span>
             <span>·</span>
@@ -1039,12 +1049,18 @@ function ChatThread({
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-3xl space-y-4">
+          {customer.simulation?.warning && (
+            <div className="rounded-2xl border-2 border-red-300 bg-red-50 px-4 py-3 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-black text-red-700"><AlertTriangle size={17} />{customer.simulation.warning.title}</div>
+              <p className="mt-1 text-xs font-semibold leading-5 text-red-700/85">{customer.simulation.warning.reason}</p>
+            </div>
+          )}
           {customer.isMock && (
             <form onSubmit={event => { event.preventDefault(); const value = mockInput.trim(); if (!value) return; onMockBuyerMessage(value); setMockInput(''); }} className="rounded-2xl border border-cyan-200 bg-cyan-50/70 p-4">
               <div className="flex items-center gap-2 text-xs font-black text-cyan-800"><UserRound size={14} />模拟客户输入</div>
-              <p className="mt-1 text-[11px] text-cyan-700">从第一句话开始模拟。这里输入的是客户可能会说的话，不会发送到 WhatsApp。</p>
+              <p className="mt-1 text-[11px] text-cyan-700">输入客户接下来会说的话，只在演示沙盘里推进，不会发送到真实平台。</p>
               <div className="mt-3 flex gap-2">
-                <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder="例如：Hi, can you customize the logo?" className="min-w-0 flex-1 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500" />
+                <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder={customer.simulation?.editable ? '例如：我们想改造一条装配线，怎么开始？' : '输入下一条客户消息…'} className="min-w-0 flex-1 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500" />
                 <button type="submit" disabled={!mockInput.trim()} className="rounded-xl bg-cyan-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">模拟发送</button>
               </div>
             </form>
@@ -1076,6 +1092,16 @@ function ChatThread({
                     <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
                   </div>
                   <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-secondary' : 'text-white'}`}>{event.body}</p>
+                  {!isBuyer && (event.audit?.editedByHuman || event.audit?.memoryApplied?.length) && (
+                    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+                      {event.audit.editedByHuman && (
+                        <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.originalDraft ? `AI 初稿：${event.audit.originalDraft}` : undefined}>AI 草稿 · 人工改过</span>
+                      )}
+                      {event.audit.memoryApplied?.length ? (
+                        <span className="rounded-full bg-emerald-100/25 px-2 py-0.5 text-[10px] font-bold text-white/90" title={event.audit.memoryApplied.join('；')}>已用学习记忆</span>
+                      ) : null}
+                    </div>
+                  )}
                   {translation && (
                     <div className={`mt-2 border-t pt-2 text-xs leading-relaxed ${isBuyer ? 'border-border text-text-muted' : 'border-white/20 text-white/80'}`}>
                       <span className="font-bold">{'\u4e2d\u6587\u7ffb\u8bd1\uff1a'}</span>{translation}
@@ -1412,6 +1438,33 @@ function RulesDisclosure() {
   );
 }
 
+function SimulationContextCard({ customer }: { customer: CustomerProfile }) {
+  const scenario = customer.simulation;
+  if (!scenario) return null;
+  return (
+    <div className={`mb-3 rounded-2xl border bg-white p-4 shadow-sm ${scenario.warning ? 'border-red-200' : 'border-cyan-100'}`}>
+      <div className="flex items-start gap-2.5">
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${scenario.warning ? 'bg-red-50 text-red-600' : 'bg-cyan-50 text-cyan-700'}`}>
+          {scenario.warning ? <AlertTriangle size={16} /> : <BrainCircuit size={16} />}
+        </span>
+        <div className="min-w-0">
+          <p className={`text-xs font-black ${scenario.warning ? 'text-red-700' : 'text-text-primary'}`}>{scenario.checkpoint}</p>
+          <p className="mt-1 text-[11px] font-semibold leading-5 text-text-secondary">{scenario.goal}</p>
+        </div>
+      </div>
+      <div className="mt-3 rounded-xl bg-surface-2 px-3 py-2 text-[11px] leading-5 text-text-secondary">
+        <span className="font-black text-text-primary">本轮看点：</span>{scenario.expectedBehavior}
+      </div>
+      {(scenario.humanEditCount || scenario.memoryApplied?.length) ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {scenario.humanEditCount ? <span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">人工优化 {scenario.humanEditCount} 次</span> : null}
+          {scenario.memoryApplied?.map(item => <span key={item} className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">记住：{item}</span>)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CustomerInfoRail({
   customer,
   autonomyLevel,
@@ -1497,6 +1550,7 @@ function CustomerInfoRail({
 
   return (
     <aside className="h-full w-[340px] shrink-0 overflow-y-auto border-l border-border bg-surface px-4 py-4">
+      <SimulationContextCard customer={customer} />
       <div className="mb-2 px-1">
         <p className="text-xs font-black text-text-primary">今日处理</p>
       </div>
