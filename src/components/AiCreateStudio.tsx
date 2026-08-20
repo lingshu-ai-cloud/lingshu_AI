@@ -520,6 +520,10 @@ const isClipCompatibleWithRatio = (clip: Clip, targetRatio: string) => {
   const orientation = (n: number) => n > 1.12 ? 'landscape' : n < 0.89 ? 'portrait' : 'square';
   return orientation(actual) === orientation(ratioNumber(targetRatio));
 };
+const clipRatioPreferenceScore = (clip: Clip, targetRatio?: string) => {
+  if (!targetRatio || !clipAspectRatio(clip)) return 0;
+  return isClipCompatibleWithRatio(clip, targetRatio) ? 14 : -4;
+};
 
 interface Bgm { id: string; name: string; mood: string; duration: number; url?: string; recommended?: boolean; scope?: 'shared' | 'tenant'; uploadedBy?: string }
 // 已移除内置曲库（生成质量不达标）；仅展示用户自行上传的音乐
@@ -624,7 +628,8 @@ export function matchMaterialsToStoryboardLocally(
       if (unused.has(clip.id)) score += 18;
       if (preferred.has(clip.id)) score += 7;
       if (clip.type === 'video') score += 5;
-      if (options.targetRatio) score += isClipCompatibleWithRatio(clip, options.targetRatio) ? 36 : -8;
+      // 横竖方向只作为排序偏好，不作为硬拦截；渲染器会统一居中裁切。
+      score += clipRatioPreferenceScore(clip, options.targetRatio);
       if (folderKeywords[clip.folder]?.test(slotText)) score += 28;
       const slotTerms = slotText.match(/[\u4e00-\u9fff]{2,4}|[a-z]{3,}/gi) || [];
       score += Math.min(24, slotTerms.filter(term => clipText.includes(term.toLowerCase())).length * 6);
@@ -2439,10 +2444,10 @@ function looksLikeStandaloneSpeech(value: string): boolean {
   // European languages in particular). Treat it as spoken prose too; the
   // previous CJK-only punctuation check caused valid translated cues to be
   // dropped before the voiceover validator saw them.
-  if (/[，。！？!?、,.:;]/.test(text)) return true;
+  if (/[，。！？!?؟؛、,.:;]/.test(text)) return true;
   if (/(吗|呢|吧|了|我|你|咱|这|那|真能|不是|马上|直接|发我|留言|私信)/.test(text) && text.length >= 6) return true;
   if (/\s/.test(text) && /^(check|send|watch|see|message|comment|dm|ask|get|try)\b/i.test(text)) return true;
-  return text.length >= 10 && /[\u4e00-\u9fff]/.test(text);
+  return text.length >= 6 && /\p{L}/u.test(text);
 }
 
 function cleanVoiceoverLine(value: string): string {
@@ -2554,7 +2559,9 @@ function parseTimestampedVoiceover(value: string): Array<{ time: string; text: s
     const quoted = !prefixed && !structuredStoryboard ? line.match(/[“"]([^”"]{2,})[”"]/) : null;
     const sameLine = timeMatch ? line.replace(timeMatch[0], '').trim() : '';
     let text = quoted?.[1] || prefixed?.[1] || '';
-    if (!text && sameLine && !structuredStoryboard && looksLikeStandaloneSpeech(sameLine)) text = sameLine;
+    if (!text && sameLine && !structuredStoryboard
+      && !looksLikeProductionInstruction(sameLine)
+      && !looksLikeOnScreenOnlyText(sameLine)) text = sameLine;
     text = cleanVoiceoverLine(text);
     if (!text || looksLikeProductionInstruction(text) || isNonSpeechSfx(text)) continue;
     if (!prefixed && looksLikeOnScreenOnlyText(text)) continue;
@@ -4770,7 +4777,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         return;
       }
       if (!storyboardSlots.length) {
-        const picked = pickMaterialClipsLocally(compatiblePool.length ? compatiblePool : allVisuals, duration, selected).selectedIds;
+        const rankedPool = [...allVisuals].sort((a, b) => clipRatioPreferenceScore(b, ratio) - clipRatioPreferenceScore(a, ratio));
+        const picked = pickMaterialClipsLocally(rankedPool, duration, selected).selectedIds;
         setSelected(picked);
         setScriptRecommendedMaterialIds(picked);
         setActiveFolder('recommend');
@@ -4791,10 +4799,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         .filter(item => item.id !== activeAssemblyId)
         .map(item => item.assignments)
         .filter(item => Object.keys(item).length > 0);
-      const targetUniqueCount = Math.min(storyboardSlots.length, allVisuals.length);
-      // 同画幅素材不足时，优先引入可安全裁切的其他素材，避免五个分镜只反复使用两条视频。
-      const pool = compatiblePool.length >= targetUniqueCount ? compatiblePool : allVisuals;
-      const usesCropFallback = pool === allVisuals && compatiblePool.length < targetUniqueCount;
+      // 所有视觉素材都可参与匹配；同方向优先，其他方向在渲染时居中裁切。
+      const pool = allVisuals;
+      const usesCropFallback = compatiblePool.length < Math.min(storyboardSlots.length, allVisuals.length);
       const hookClip = hookMaterialId ? materialById.get(hookMaterialId) : undefined;
       const slotsToMatch = hookClip ? storyboardSlots.slice(1) : storyboardSlots;
       const matchPool = hookClip ? pool.filter(item => item.id !== hookClip.id) : pool;
@@ -4856,9 +4863,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setModeActionStatus('正在快速匹配本地素材…');
     setModeNotice('');
     try {
-      const pool = materials.filter(item => item.type !== 'audio' && isClipCompatibleWithRatio(item, ratio));
+      const pool = materials.filter(item => item.type !== 'audio');
       if (pool.length === 0) {
-        setModeNotice(`素材库暂无与 ${ratio} 同方向的图片或视频，请先上传同画幅素材后再生成时间戳脚本。`);
+        setModeNotice('素材库暂无可用图片或视频，请先上传素材后再生成时间戳脚本。');
         setStepIdx(STEPS.findIndex(s => s.id === 'material'));
         return;
       }
@@ -7808,8 +7815,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           const slot = storyboardSlots.find(item => item.id === slotId);
           if (!clip || !slot) return;
           if (!isClipCompatibleWithRatio(clip, ratio)) {
-            setModeNotice(`“${clip.name}”与当前 ${ratio} 成片方向不一致，已阻止加入；请选择同方向素材。`);
-            return;
+            setModeNotice(`“${clip.name}”与当前 ${ratio} 方向不同，已加入分镜；成片时会自动居中裁切，可在预览页检查主体是否完整。`);
           }
           const detectedSource = clipSourceMode(clip);
           setStoryboardAssignments(prev => ({ ...prev, [slotId]: clipId }));
@@ -7906,8 +7912,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         };
         const bestLocalClipForSlot = (slot: StoryboardSlot) => {
           const folders = preferredFoldersForSlot(slot);
-          const candidates = materials.filter(item => item.type !== 'audio' && item.folder !== 'hot' && isClipCompatibleWithRatio(item, ratio));
+          const candidates = materials.filter(item => item.type !== 'audio' && item.folder !== 'hot');
           return [...candidates].sort((a, b) => {
+            const ratioDelta = clipRatioPreferenceScore(b, ratio) - clipRatioPreferenceScore(a, ratio);
+            if (ratioDelta) return ratioDelta;
             const aRank = folders.indexOf(a.folder);
             const bRank = folders.indexOf(b.folder);
             const normalizedA = aRank < 0 ? 999 : aRank;
@@ -8081,6 +8089,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 	                        tabIndex={0}
                         draggable={c.type !== 'audio'}
                         onDragStart={e => {
+                          e.dataTransfer.setData('application/x-lingshu-material-id', c.id);
                           e.dataTransfer.setData('text/plain', c.id);
                           e.dataTransfer.effectAllowed = 'copy';
                         }}
@@ -8321,7 +8330,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       }}
                       onDrop={event => {
                         event.preventDefault();
-                        assignClipToSlot(slot.id, event.dataTransfer.getData('text/plain'));
+                        const clipId = event.dataTransfer.getData('application/x-lingshu-material-id')
+                          || event.dataTransfer.getData('text/plain');
+                        if (clipId) assignClipToSlot(slot.id, clipId);
                       }}
                       className={`rounded-xl border p-3 transition-all ${activeStoryboardSlot?.id === slot.id ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(22,163,74,.16)]' : clip ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white hover:border-accent/50'}`}
                     >
@@ -8498,17 +8509,24 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           setScriptView('timestamp');
           setModeScripts(current => current.map(item => {
             if (item.id !== activeModeScriptId) return item;
-            const blockedDraft = item.qualityStatus === 'rejected' || item.qualityStatus === 'failed';
+            const previousReviewNotes = [
+              ...(item.validationIssues || []),
+              ...(item.validationWarnings || []),
+            ].map(note => String(note).trim()).filter(Boolean);
             return {
               ...item,
               script: value,
-              qualityStatus: blockedDraft ? item.qualityStatus : undefined,
-              qualityChecks: blockedDraft ? item.qualityChecks : undefined,
-              validationWarnings: blockedDraft ? item.validationWarnings : [],
-              validationIssues: blockedDraft ? ['草稿已修改，请重新生成并通过合规校验后继续。'] : [],
-              materialCoveragePercent: blockedDraft ? item.materialCoveragePercent : undefined,
-              pendingMaterialScenes: blockedDraft ? item.pendingMaterialScenes : undefined,
-              missingMaterials: blockedDraft ? item.missingMaterials : [],
+              // 人工修改是有效的修正流程，改完后转为待审核，而不是永久保留失败状态。
+              qualityStatus: 'warning',
+              qualityChecks: undefined,
+              validationWarnings: Array.from(new Set([
+                '内容已手动修改，等待人工审核。',
+                ...previousReviewNotes,
+              ])),
+              validationIssues: [],
+              materialCoveragePercent: undefined,
+              pendingMaterialScenes: undefined,
+              missingMaterials: [],
             };
           }));
           if (spoken.trim()) {
@@ -8741,9 +8759,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   )}
                   {(activeQualityStatus === 'rejected' || activeQualityStatus === 'failed') && (
                     <div className="mt-2 text-[11px] leading-5 text-rose-800">
-                      <p>当前草稿不能进入配音、选材或成片；修改后请重新生成并通过校验。</p>
                       {activeQualityIssues.length > 0 && (
-                        <ul className="mt-1 space-y-1">
+                        <ul className="space-y-1">
                           {activeQualityIssues.slice(0, 4).map((issue, index) => <li key={`${issue}-${index}`}>• {issue}</li>)}
                         </ul>
                       )}
@@ -8780,7 +8797,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${activeModeScriptId === item.id ? 'border-accent bg-accent-glow text-accent' : 'border-border bg-white text-text-muted hover:text-text-secondary'}`}
                     >
                       {item.title}
-                      {item.qualityStatus === 'rejected' || item.qualityStatus === 'failed' ? ' · 已拦截' : item.qualityStatus === 'needs_material' ? ' · 待补素材' : item.qualityStatus === 'passed_with_warnings' || item.qualityStatus === 'warning' || item.validationWarnings?.length ? ' · 有提示' : ''}
+                      {item.qualityStatus === 'rejected' || item.qualityStatus === 'failed' ? ' · 人工待审核' : item.qualityStatus === 'needs_material' ? ' · 待补素材' : item.qualityStatus === 'passed_with_warnings' || item.qualityStatus === 'warning' || item.validationWarnings?.length ? ' · 人工待审核' : ''}
                       {activeModeScriptId === item.id ? ' · 当前' : ''}
                     </button>
                   ))}
@@ -9281,12 +9298,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   )}
                   <button
                     type="button"
-                    onClick={() => void saveProject('draft')}
+                    onClick={() => void saveProject('draft').catch(error => {
+                      alert(error instanceof Error ? error.message : '草稿保存失败，请稍后重试。');
+                    })}
                     disabled={savingProj || voiceDraftLoading || ttsLoading}
                     className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50"
                   >
                     {savingProj ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
-                    保存
+                    {savedTick ? '已保存' : '保存'}
                   </button>
                 </div>
               </div>
@@ -10085,6 +10104,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         const activeOutputVersion = outputVersions.find(item => item.key === activeRenderCombinationKey)
           || outputVersions.find(item => item.key === fallbackActiveKey)
           || outputVersions[0];
+        const activeFormalPreviewUrl = activeOutputVersion?.output?.previewUrl
+          || activeOutputVersion?.generations.find(item => item.status === 'done' && item.previewUrl)?.previewUrl
+          || renderOutputPreviewUrl
+          || '';
         const hasFormalVideo = Boolean(renderOutputPath || outputVersions.some(version => (
           Boolean(version.output?.status === 'done' && version.output.path)
           || version.generations.some(generation => generation.status === 'done' && generation.path)
@@ -10098,6 +10121,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           if (version.output?.path) {
             setRenderOutputPath(version.output.path);
             setRenderOutputPreviewUrl(version.output.previewUrl || null);
+          } else {
+            setRenderOutputPath(null);
+            setRenderOutputPreviewUrl(null);
           }
         };
         return (
@@ -10106,7 +10132,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="flex-shrink-0">
               <div className="relative rounded-2xl overflow-hidden border border-border bg-black" style={{ width: 260 }}>
                 <div className="relative aspect-[9/16]">
-                  {activePreviewItem ? (
+                  {activeFormalPreviewUrl ? (
+                    <video
+                      key={`formal-preview-${activeFormalPreviewUrl}`}
+                      src={activeFormalPreviewUrl}
+                      controls
+                      playsInline
+                      preload="auto"
+                      className="absolute inset-0 h-full w-full bg-black object-contain"
+                      onPlay={stopPreview}
+                      onError={() => setRenderDownloadMessage('正式成片预览加载失败，请重新生成或下载后检查。')}
+                    />
+                  ) : activePreviewItem ? (
                     activePreviewItem.clip.type === 'image' ? (
                       <img src={activePreviewItem.clip.url} alt="" className="absolute inset-0 w-full h-full object-cover bg-black" />
                     ) : (
@@ -10140,12 +10177,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     <CoverFace coverUrl={coverUrl} frameUrl={coverFrameUrl} frameType={coverClip?.poster ? 'image' : coverClip?.type} fallbackVideoUrl={coverClip?.type === 'video' ? coverClip.url : undefined} title={coverTitle} style={coverStyle} />
                   )}
                 </div>
-                {activePreviewItem && (
+                {activeFormalPreviewUrl ? (
+                  <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">
+                    正式成片 · 连续 MP4
+                  </div>
+                ) : activePreviewItem && (
                   <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-black/60 px-2 py-1 text-[10px] font-bold text-white">
                     {previewIdx! + 1}/{previewTimeline.length} · {activePreviewItem.targetStart ?? 0}s-{activePreviewItem.targetEnd ?? activePreviewItem.targetDuration}s
                   </div>
                 )}
-                {previewIdx !== null && activePreviewCue && (
+                {!activeFormalPreviewUrl && previewIdx !== null && activePreviewCue && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-[7%] z-20 px-4 text-center">
                     <p className="inline-block max-w-full rounded-md bg-black/35 px-2 py-1 text-[17px] font-black leading-tight text-white"
                       style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
@@ -10153,7 +10194,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     </p>
                   </div>
                 )}
-                {previewIdx === null && (
+                {!activeFormalPreviewUrl && previewIdx === null && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     {rendering ? (
                       <div className="text-center">
@@ -10173,7 +10214,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 )}
                 <audio ref={previewBgmAudioRef} src={selectedBgmTrack?.url || undefined} preload="auto" />
                 <audio ref={previewVoiceAudioRef} src={activeVoiceoverUrl || undefined} preload="auto" />
-                {previewIdx !== null && (
+                {!activeFormalPreviewUrl && previewIdx !== null && (
                   <button onClick={stopPreview} className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-black/55 flex items-center justify-center text-white">
                     <X size={14} />
                   </button>

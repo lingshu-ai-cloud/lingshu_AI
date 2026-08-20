@@ -56,7 +56,7 @@
     "test:script-strategy": "tsx server/strategy/scriptBrief.test.ts",
     "test:script-matrix": "tsx server/strategy/scriptGenerationMatrix.test.ts",
     "test:studio-script": "tsx server/routes/studioScriptNormalization.test.ts && tsx server/routes/studioQualityRulesV2.test.ts && tsx server/routes/studioQualityRouteV2.test.ts",
-    "test:studio-media": "tsx src/components/AiCreateStudio.mediaRegression.test.ts && node desktop/render.test.cjs",
+    "test:studio-media": "tsx src/components/AiCreateStudio.mediaRegression.test.ts && tsx src/components/AiCreateStudio.sanitize.test.ts && node desktop/render.test.cjs",
     "test:tenant-isolation": "tsx server/security/tenantIsolation.test.ts",
     "test:onboarding-reset": "tsx server/security/onboardingReset.test.ts",
     "test:customer-service-activation": "tsx server/security/customerServiceActivation.test.ts",

@@ -168,7 +168,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
     // 2) 组装 ffmpeg 参数
     const n = localClips.length;
-    const args = ['-hide_banner', '-nostdin']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
+    const args = ['-hide_banner', '-nostdin', '-fflags', '+genpts']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
     const filters = [];
     let vlabel;
 
@@ -188,7 +188,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         const source = c.image
           ? `[${i}:v]trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`
           : `[${i}:v]trim=start=${trimStart.toFixed(3)}:end=${trimEnd.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},tpad=stop_mode=clone:stop_duration=${target.toFixed(3)},trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`;
-        filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,format=yuv420p[v${i}]`);
+        filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
       });
       filters.push(`${localClips.map((_, i) => `[v${i}]`).join('')}concat=n=${n}:v=1:a=0[vcat]`);
       vlabel = '[vcat]';
@@ -226,19 +226,21 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const voiceVol = Math.min(1.5, Math.max(0, (Number.isFinite(rawVoiceVol) ? rawVoiceVol : 100) / 100));
     if (voFile) {
       const duck = (vol * 0.5).toFixed(2); // 有人声时 BGM 再降一档
-      filters.push(`[${bgmIdx}:a]volume=${duck},aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
-      filters.push(`[${voIdx}:a]volume=${voiceVol.toFixed(2)},aformat=sample_rates=44100:channel_layouts=stereo[avo]`);
+      filters.push(`[${bgmIdx}:a]volume=${duck},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
+      filters.push(`[${voIdx}:a]volume=${voiceVol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[avo]`);
       filters.push(`[abgm][avo]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[aout]`);
     } else {
-      filters.push(`[${bgmIdx}:a]volume=${vol.toFixed(2)},aformat=sample_rates=44100:channel_layouts=stereo[aout]`);
+      filters.push(`[${bgmIdx}:a]volume=${vol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[aout]`);
     }
 
     args.push(
       '-filter_complex', filters.join(';'),
       '-map', '[vout]', '-map', '[aout]',
       '-t', String(duration),
-      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p',
+      '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0',
       '-c:a', 'aac', '-b:a', '128k',
+      '-avoid_negative_ts', 'make_zero',
       '-movflags', '+faststart',
       '-y', outputPath,
     );
