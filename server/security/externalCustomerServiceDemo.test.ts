@@ -70,6 +70,9 @@ assert.match(draftRoute, /evaluateHandoff\([\s\S]*?bantTotal:[\s\S]*?highValueHa
 
 const customerUi = fs.readFileSync(path.join(root, 'src/components/ConversionPage.tsx'), 'utf8');
 assert.match(customerUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
+assert.match(customerUi, /data-testid="large-order-warning-tag"/, 'the large-order warning must remain a compact right-rail tag');
+const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'), customerUi.indexOf('function SortableWidget'));
+assert.doesNotMatch(chatThreadUi, /simulation\?\.warning|大单预警/, 'the large-order warning must not occupy the conversation transcript');
 assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
 assert.match(customerUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
 assert.match(customerUi, /客服演示沙盘/, 'the dedicated account must clearly label the simulation workspace');

@@ -1056,12 +1056,6 @@ function ChatThread({
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <div className="mx-auto max-w-3xl space-y-4">
-          {customer.simulation?.warning && (
-            <div className="rounded-2xl border-2 border-red-300 bg-red-50 px-4 py-3 shadow-sm">
-              <div className="flex items-center gap-2 text-sm font-black text-red-700"><AlertTriangle size={17} />{customer.simulation.warning.title}</div>
-              <p className="mt-1 text-xs font-semibold leading-5 text-red-700/85">{customer.simulation.warning.reason}</p>
-            </div>
-          )}
           {customer.isMock && (
             <form onSubmit={event => { event.preventDefault(); const value = mockInput.trim(); if (!value) return; onMockBuyerMessage(value); setMockInput(''); }} className="rounded-2xl border border-cyan-200 bg-cyan-50/70 p-4">
               <div className="flex items-center gap-2 text-xs font-black text-cyan-800"><UserRound size={14} />模拟客户输入</div>
@@ -1565,6 +1559,19 @@ function CustomerInfoRail({
 
   return (
     <aside className="h-full w-72 shrink-0 overflow-y-auto border-l border-border bg-surface px-4 py-4 2xl:w-[320px]">
+      {customer.simulation?.warning && (
+        <div className="mb-3 flex items-center px-1">
+          <span
+            data-testid="large-order-warning-tag"
+            aria-label={`${customer.simulation.warning.title}：${customer.simulation.warning.reason}`}
+            title={`${customer.simulation.warning.title}：${customer.simulation.warning.reason}`}
+            className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-black text-red-700"
+          >
+            <AlertTriangle size={11} />
+            大单预警
+          </span>
+        </div>
+      )}
       <SimulationContextCard customer={customer} />
       <div className="mb-2 px-1">
         <p className="text-xs font-black text-text-primary">今日处理</p>

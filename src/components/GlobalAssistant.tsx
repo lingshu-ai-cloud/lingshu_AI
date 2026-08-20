@@ -45,6 +45,7 @@ const GUIDE_MEMORY_KEY = 'lingshu-feature-guides-human-v1';
 const GUIDE_HOVER_DELAY_MS = 900;
 const GUIDE_COOLDOWN_MS = 45_000;
 const GUIDE_VISIBLE_MS = 6_000;
+const ASSISTANT_AUTO_RETRACT_MS = 5_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 
 type GuideMemory = {
@@ -392,6 +393,7 @@ export default function GlobalAssistant({
 }: Props) {
   const reduceMotion = useReducedMotion();
   const [mode, setMode] = useState<'breathing' | 'expanded' | 'chat'>('breathing');
+  const [launcherRetracted, setLauncherRetracted] = useState(false);
   const [panelView, setPanelView] = useState<'todo' | 'chat'>('chat');
   const [activeAgent, setActiveAgent] = useState<OrbitAgentId>('strategy');
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
@@ -435,7 +437,8 @@ export default function GlobalAssistant({
   const panelTitle = assistantTool === 'knowledge-intake' ? '灵小枢 · 快速采集' : isCustomerTodoView ? '今日待办' : activeAgentLabel;
   const panelSubtitle = assistantTool === 'knowledge-intake' ? '当前：智能客服规范' : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const radius = 110;
-  const dockOnLeft = page === 'conversion' || page === 'enterprise' || page === 'agentMemory';
+  const dockOnLeft = page === 'enterprise' || page === 'agentMemory';
+  const launcherAtEdge = page === 'conversion' && mode === 'breathing' && launcherRetracted;
 
   const persistThread = useCallback((agentId: OrbitAgentId) => {
     const thread = useAssistantStore.getState().threads[agentId];
@@ -819,10 +822,20 @@ export default function GlobalAssistant({
     return () => document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
   }, [mode]);
 
+  useEffect(() => {
+    if (page !== 'conversion' || mode !== 'breathing') {
+      setLauncherRetracted(false);
+      return;
+    }
+    if (launcherRetracted) return;
+    const timer = window.setTimeout(() => setLauncherRetracted(true), ASSISTANT_AUTO_RETRACT_MS);
+    return () => window.clearTimeout(timer);
+  }, [launcherRetracted, mode, page]);
+
   if (suppressForRightSidebar) return null;
 
   return (
-    <div ref={assistantRootRef} data-global-assistant="root" className={`fixed bottom-5 z-[75] ${dockOnLeft ? 'left-4 lg:left-[292px]' : 'right-5'}`}>
+    <div ref={assistantRootRef} data-global-assistant="root" className={`fixed bottom-5 z-[75] transition-[left,right] duration-300 ${dockOnLeft ? 'left-4 lg:left-[292px]' : launcherAtEdge ? 'right-0' : 'right-5'}`}>
       {mode === 'expanded' && (
         <button
           type="button"
@@ -832,7 +845,7 @@ export default function GlobalAssistant({
         />
       )}
       <AnimatePresence>
-        {mode === 'breathing' && featureGuide && (
+        {mode === 'breathing' && !launcherAtEdge && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-lingshu-guide-bubble={featureGuide.id}
@@ -1095,7 +1108,25 @@ export default function GlobalAssistant({
         )}
       </AnimatePresence>
 
-      {mode !== 'chat' && (
+      {mode !== 'chat' && launcherAtEdge && (
+        <motion.button
+          type="button"
+          data-global-assistant="edge-launcher"
+          aria-label="唤出灵小枢智能助手"
+          title="唤出灵小枢智能助手"
+          onClick={() => setLauncherRetracted(false)}
+          initial={{ opacity: 0, x: 14, scale: 0.92 }}
+          animate={{ opacity: 1, x: 0, scale: 1 }}
+          exit={{ opacity: 0, x: 10, scale: 0.94 }}
+          transition={reduceMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 320, damping: 24 }}
+          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-2xl border border-r-0 border-emerald-200 bg-white text-emerald-700 shadow-[0_10px_26px_rgba(15,23,42,0.16)] outline-none hover:w-9 hover:bg-emerald-50 focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+        >
+          <Bot size={16} />
+          {pendingCount > 0 && <span className="absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-[9px] font-black text-white">{pendingBadge}</span>}
+        </motion.button>
+      )}
+
+      {mode !== 'chat' && !launcherAtEdge && (
         <div className="relative z-10 h-[72px] w-[60px]">
           <motion.button
             type="button"
