@@ -24,7 +24,7 @@ export function BasicInfoWidget({
   customer: CustomerProfile;
   onCustomerPatch?: (patch: Partial<CustomerProfile>) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [languageOpen, setLanguageOpen] = useState(false);
   const [sandboxEditing, setSandboxEditing] = useState(false);
   const [sandboxDraft, setSandboxDraft] = useState<{ name: string; countryName: string; language: string; product: string; estimatedValue: string; stage: CustomerStage }>({
@@ -42,7 +42,7 @@ export function BasicInfoWidget({
       estimatedValue: customer.estimatedValue,
       stage: customer.stage,
     });
-    setOpen(false);
+    setOpen(true);
     setSandboxEditing(false);
   }, [customer.id]);
 
@@ -99,12 +99,12 @@ export function BasicInfoWidget({
   };
 
   return (
-    <Card data-testid="customer-profile-disclosure">
+    <Card data-testid="customer-profile-disclosure" className="min-w-0 overflow-hidden">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
-        className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left"
+        className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
       >
         <span className="min-w-0">
           <span className="block text-xs font-bold text-text-primary">客户资料</span>
@@ -158,11 +158,11 @@ export function BasicInfoWidget({
           </div>
         )}
         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-xl bg-surface-2 p-3">
+          <div className="min-w-0 overflow-hidden rounded-xl bg-surface-2 p-3">
             <p className="text-text-muted">国家/地区</p>
-            <p className="mt-1 font-bold text-text-primary">{customer.countryName || '未知'}</p>
+            <p className="mt-1 truncate font-bold text-text-primary" title={customer.countryName || '未知'}>{customer.countryName || '未知'}</p>
           </div>
-          <div ref={languageMenuRef} className="relative rounded-xl bg-surface-2 p-3">
+          <div ref={languageMenuRef} className="relative min-w-0 rounded-xl bg-surface-2 p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-text-muted">语言</p>
               <div className="flex items-center gap-1">
@@ -181,7 +181,7 @@ export function BasicInfoWidget({
                 </button>
               </div>
             </div>
-            <p className="mt-1 font-bold text-text-primary">{customer.language}</p>
+            <p className="mt-1 truncate font-bold text-text-primary" title={customer.language}>{customer.language}</p>
             {languageOpen && (
               <div className="absolute right-2 top-11 z-30 w-32 overflow-hidden rounded-xl border border-border bg-white py-1 shadow-lg">
                 {LANGUAGE_OPTIONS.map(language => (
@@ -197,11 +197,11 @@ export function BasicInfoWidget({
               </div>
             )}
           </div>
-          <div className="rounded-xl bg-surface-2 p-3">
+          <div className="min-w-0 overflow-hidden rounded-xl bg-surface-2 p-3">
             <p className="text-text-muted">当地时间</p>
             <p className="mt-1 font-bold text-text-primary"><LiveLocalTime timeZone={customer.timeZone} /></p>
           </div>
-          <div className="rounded-xl bg-surface-2 p-3">
+          <div className="min-w-0 overflow-hidden rounded-xl bg-surface-2 p-3">
             <p className="text-text-muted">来源渠道</p>
             <div className="mt-1 flex items-center gap-1.5">
               <SourceIcon source={displaySource} size={16} />

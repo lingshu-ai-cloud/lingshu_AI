@@ -114,7 +114,9 @@ const agentMemoryRoute = fs.readFileSync(path.join(root, 'server/routes/agentMem
 assert.match(agentMemoryRoute, /created: text\(record\.created \|\| record\.confirmed_at\)/, 'migrated demo evidence must retain its confirmed time in the UI');
 
 const basicInfo = fs.readFileSync(path.join(root, 'src/components/customers/widgets/BasicInfoWidget.tsx'), 'utf8');
-assert.match(basicInfo, /data-testid="customer-profile-disclosure"/, 'customer profile details should stay compact until expanded');
+assert.match(basicInfo, /const \[open, setOpen\] = useState\(true\)/, 'customer profile details should open by default');
+assert.match(basicInfo, /setOpen\(true\)/, 'customer profile details should open when switching conversations');
+assert.match(basicInfo, /data-testid="customer-profile-disclosure"[^>]*className="min-w-0 overflow-hidden"/, 'customer profile details must stay inside the right rail');
 for (const label of ['模拟客户名称', '模拟客户国家或地区', '模拟客户语言', '模拟客户需求']) {
   assert.match(basicInfo, new RegExp(`aria-label="${label}"`), `${label} must be editable in the blank sandbox`);
 }
