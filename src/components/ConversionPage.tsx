@@ -7,11 +7,11 @@ import {
   ChevronDown,
   Eye,
   Filter,
-  Languages,
   MessageSquare,
   Power,
   RefreshCw,
   Send,
+  Smile,
   Sparkles,
   UserRound,
   X,
@@ -137,6 +137,8 @@ const HANDLING_COLOR: Record<HandlingMode, string> = {
   ai_draft: '#d97706',
   human_needed: '#dc2626',
 };
+
+const REPLY_EMOJIS = ['😊', '👍', '🙏', '🤝', '✅', '🎉', '📌', '📦', '🚚', '💬', '❤️', '✨'];
 
 function filterCustomers(view: CustomerView, customers: CustomerProfile[]) {
   if (view === 'inbox') return sortCustomersByLatestMessage(customers.filter(customer => customer.inboxReason));
@@ -860,11 +862,9 @@ function ChatThread({
   onEditDraft,
   onSendDraft,
   onDismissDraft,
-  onPolishInput,
   onRegenerateDraft,
   onSceneDraft,
   onPreviewTranslate,
-  isPolishing,
   templates,
   onManualActive,
   priceRulesReady,
@@ -884,11 +884,9 @@ function ChatThread({
   onEditDraft: () => void;
   onSendDraft: () => void;
   onDismissDraft: () => void;
-  onPolishInput: () => void;
   onRegenerateDraft: () => void;
   onSceneDraft: (intent: DraftIntent) => void;
   onPreviewTranslate: () => void;
-  isPolishing: boolean;
   templates: MessageTemplate[];
   onManualActive: () => void;
   priceRulesReady: boolean;
@@ -898,19 +896,30 @@ function ChatThread({
   onMockBuyerMessage: (text: string) => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const emojiMenuRef = useRef<HTMLDivElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [mockInput, setMockInput] = useState('');
   const composerState = draftSuggestion ? 'draft' : input.trim() ? 'typing' : 'idle';
   const isOutsideWindow = customer ? timelineEventAgeHours(lastBuyerEvent(customer)) > 24 : false;
   const templatePlan = customer && draftSuggestion ? buildTemplatePlan(customer, templates, draftSuggestion) : null;
   const typedTemplatePlan = customer && input.trim() ? buildTemplatePlan(customer, templates, input) : null;
   const chips = customer && composerState === 'idle' ? sceneChips(customer) : [];
+  useDismissibleLayer(emojiOpen, emojiMenuRef, () => setEmojiOpen(false));
 
-  useEffect(() => {
-    if (!inputRef.current) return;
-    inputRef.current.selectionStart = inputRef.current.value.length;
-    inputRef.current.selectionEnd = inputRef.current.value.length;
-  }, [input]);
+  const insertEmoji = (emoji: string) => {
+    const start = inputRef.current?.selectionStart ?? input.length;
+    const end = inputRef.current?.selectionEnd ?? input.length;
+    const next = `${input.slice(0, start)}${emoji}${input.slice(end)}`;
+    const nextCaret = start + emoji.length;
+    onManualActive();
+    onInputChange(next);
+    setEmojiOpen(false);
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+    }, 0);
+  };
 
   useEffect(() => {
     if (!previewOpen || !input.trim()) return;
@@ -1039,7 +1048,7 @@ function ChatThread({
               {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-primary/30 hover:bg-primary/5 hover:text-primary"><Sparkles size={13} /> {chip.label}</button>)}
             </div>
           )}
-          <div className="rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+          <div data-testid="conversation-composer" className="relative rounded-xl border border-border bg-surface-2 px-3 py-2.5">
             {previewOpen && translatedInput && <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary"><span className="font-black text-text-primary">{'\u8bd1\u6587\u9884\u89c8\uff1a'}</span>{translatedInput}</div>}
             {isOutsideWindow && typedTemplatePlan && input.trim() && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
@@ -1047,14 +1056,23 @@ function ChatThread({
                 <div className="mt-1">{typedTemplatePlan.template.status === 'approved' ? '\u6a21\u677f\u5df2\u901a\u8fc7\uff0c\u53ef\u53d1\u9001' : '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d\uff0c\u6682\u4e0d\u80fd\u53d1\u9001'}</div>
               </div>
             )}
-            <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder={`输入回复（中文或${replyLanguage(customer)}）…`} className="max-h-24 w-full resize-none bg-transparent text-sm leading-relaxed text-text-primary outline-none placeholder:text-text-muted" />
+            <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder={`输入回复（中文或${replyLanguage(customer)}）…`} className="max-h-24 w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-text-primary outline-none shadow-none placeholder:text-text-muted focus:border-0 focus:shadow-none" />
             <div className="mt-2 flex items-center justify-between gap-2">
-              {composerState === 'typing' ? (
-                <div className="flex items-center gap-1.5">
-                  <button type="button" onClick={onPolishInput} disabled={!input.trim() || isPolishing} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40" title="翻译润色"><Languages size={15} /></button>
+              <div ref={emojiMenuRef} className="relative flex items-center gap-1.5">
+                <button type="button" aria-expanded={emojiOpen} aria-label="添加表情" onClick={() => setEmojiOpen(open => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary" title="添加表情"><Smile size={15} /></button>
+                {emojiOpen && (
+                  <div role="menu" aria-label="选择表情" className="absolute bottom-10 left-0 z-30 grid w-48 grid-cols-6 gap-1 rounded-xl border border-border bg-white p-2 shadow-xl">
+                    {REPLY_EMOJIS.map(emoji => (
+                      <button key={emoji} type="button" role="menuitem" aria-label={`插入 ${emoji}`} onClick={() => insertEmoji(emoji)} className="flex h-7 w-7 items-center justify-center rounded-lg text-base hover:bg-surface-2">
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {composerState === 'typing' && (
                   <button type="button" onClick={() => { setPreviewOpen(open => !open); if (!previewOpen) onPreviewTranslate(); }} disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40" title="译文预览"><Eye size={15} /></button>
-                </div>
-              ) : <span />}
+                )}
+              </div>
                <button type="button" onClick={onSend} disabled={!input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
             </div>
           </div>
@@ -1625,7 +1643,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [learnDialogOpen, setLearnDialogOpen] = useState(false);
   const [input, setInput] = useState('');
   const [translatedInput, setTranslatedInput] = useState('');
-  const [isPolishing, setIsPolishing] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [undoSend, setUndoSend] = useState<null | { customerId: string; eventId: string; restoreText: string; timer: number }>(null);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -2241,18 +2258,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     savePendingDraft(selected, result.draft);
   };
 
-  const polishInput = async () => {
-    if (!selected || !input.trim() || isPolishing) return;
-    setIsPolishing(true);
-    try {
-      const polished = await requestDraft(selected, input, 'polish', 'polish', true);
-      setInput(polished.draft);
-      setTranslatedInput('');
-    } finally {
-      setIsPolishing(false);
-    }
-  };
-
   const previewTranslate = () => {
     if (!selected || !input.trim()) return;
     setTranslatedInput(translateChineseReplyForCustomer(selected, input));
@@ -2365,11 +2370,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onEditDraft={editDraft}
           onSendDraft={sendDraftDirectly}
           onDismissDraft={() => { setDraftSuggestion(null); setDraftMeta(null); if (selected) savePendingDraft(selected); }}
-          onPolishInput={polishInput}
           onRegenerateDraft={regenerateDraft}
           onSceneDraft={(intent) => void generateManualDraft('', intent)}
           onPreviewTranslate={previewTranslate}
-          isPolishing={isPolishing}
           templates={templates}
           onManualActive={reportManualActive}
           priceRulesReady={priceRulesReady}
