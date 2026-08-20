@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Lock, Pencil, X } from 'lucide-react';
+import { Check, ChevronDown, Lock, Pencil, X } from 'lucide-react';
 import { Card, CardContent } from '../../ui/card';
 import { SourceIcon, sourceLabel } from '../SourceIcon';
 import type { CustomerProfile, CustomerStage } from '../../../types/customer';
@@ -24,6 +24,7 @@ export function BasicInfoWidget({
   customer: CustomerProfile;
   onCustomerPatch?: (patch: Partial<CustomerProfile>) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const [languageOpen, setLanguageOpen] = useState(false);
   const [sandboxEditing, setSandboxEditing] = useState(false);
   const [sandboxDraft, setSandboxDraft] = useState<{ name: string; countryName: string; language: string; product: string; estimatedValue: string; stage: CustomerStage }>({
@@ -41,6 +42,7 @@ export function BasicInfoWidget({
       estimatedValue: customer.estimatedValue,
       stage: customer.stage,
     });
+    setOpen(false);
     setSandboxEditing(false);
   }, [customer.id]);
 
@@ -97,9 +99,21 @@ export function BasicInfoWidget({
   };
 
   return (
-    <Card>
-      <CardContent className="pt-4">
-        <p className="mb-3 text-xs font-bold text-text-primary">客户资料</p>
+    <Card data-testid="customer-profile-disclosure">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left"
+      >
+        <span className="min-w-0">
+          <span className="block text-xs font-bold text-text-primary">客户资料</span>
+          <span className="mt-0.5 block truncate text-[10px] text-text-muted">{customer.countryName || '未知地区'} · {customer.language}</span>
+        </span>
+        <ChevronDown size={14} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+      <CardContent className="border-t border-border pt-3">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-sm font-black">
             {customer.avatar}
@@ -204,6 +218,7 @@ export function BasicInfoWidget({
           </div>
         </div>
       </CardContent>
+      )}
     </Card>
   );
 }

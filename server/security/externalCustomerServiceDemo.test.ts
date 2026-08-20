@@ -75,6 +75,8 @@ const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'),
 assert.doesNotMatch(chatThreadUi, /simulation\?\.warning|大单预警/, 'the large-order warning must not occupy the conversation transcript');
 assert.match(customerUi, /data-testid="conversation-list"[^>]*w-52[^>]*xl:w-56/, 'the conversation list must stay compact so the transcript remains prominent on laptops');
 assert.match(customerUi, /data-testid="conversation-chat-thread"/, 'the main conversation transcript needs a stable layout target');
+assert.match(customerUi, /data-testid="conversation-workspace-main"/, 'the three-column workspace must start directly without stacked page banners');
+assert.doesNotMatch(customerUi, /mockCustomerCount/, 'the simulation workspace must not reserve a full-width banner above conversations');
 assert.doesNotMatch(customerUi, /今日处理/, 'per-customer action guidance must be merged into the AI intent panel');
 const customerRailUi = customerUi.slice(customerUi.indexOf('function CustomerInfoRail'), customerUi.indexOf('function createMessageEvent'));
 for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'BasicInfoWidget', 'TagsWidget', 'RulesDisclosure']) {
@@ -112,6 +114,7 @@ const agentMemoryRoute = fs.readFileSync(path.join(root, 'server/routes/agentMem
 assert.match(agentMemoryRoute, /created: text\(record\.created \|\| record\.confirmed_at\)/, 'migrated demo evidence must retain its confirmed time in the UI');
 
 const basicInfo = fs.readFileSync(path.join(root, 'src/components/customers/widgets/BasicInfoWidget.tsx'), 'utf8');
+assert.match(basicInfo, /data-testid="customer-profile-disclosure"/, 'customer profile details should stay compact until expanded');
 for (const label of ['模拟客户名称', '模拟客户国家或地区', '模拟客户语言', '模拟客户需求']) {
   assert.match(basicInfo, new RegExp(`aria-label="${label}"`), `${label} must be editable in the blank sandbox`);
 }

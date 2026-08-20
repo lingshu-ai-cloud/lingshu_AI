@@ -215,7 +215,9 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const timeline = Array.isArray(body.timeline) ? body.timeline.slice(-20) : [];
   const intent = normalizeIntent(body.intent || body.mode);
   const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
-  if (!customerServicePolicy(enterpriseProfile).enabled) {
+  const customerServiceEnabled = customerServicePolicy(enterpriseProfile).enabled;
+  const manualRequest = body.manualRequest === true;
+  if (!customerServiceEnabled && !manualRequest) {
     res.status(409).json({
       error: 'customer_service_disabled',
       message: '智能客服尚未开启。开启后，AI 只生成建议回复并等待你确认。',

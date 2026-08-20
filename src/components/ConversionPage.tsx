@@ -14,7 +14,6 @@ import {
   Send,
   Sparkles,
   UserRound,
-  Users,
   X,
 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
@@ -339,7 +338,13 @@ interface StyleMemoryPayload {
   finalOutcome: string;
 }
 
-async function requestDraft(customer: CustomerProfile, instruction?: string, mode?: 'draft' | 'polish', intent: DraftIntent = mode === 'polish' ? 'polish' : 'reply'): Promise<DraftResult> {
+async function requestDraft(
+  customer: CustomerProfile,
+  instruction?: string,
+  mode?: 'draft' | 'polish',
+  intent: DraftIntent = mode === 'polish' ? 'polish' : 'reply',
+  manualRequest = false,
+): Promise<DraftResult> {
   try {
     const resp = await fetch('/api/overseas/agents/conversion/draft', {
       method: 'POST',
@@ -358,6 +363,7 @@ async function requestDraft(customer: CustomerProfile, instruction?: string, mod
         instruction,
         mode,
         intent,
+        manualRequest,
       }),
     });
     const data = await resp.json().catch(() => ({}));
@@ -464,6 +470,7 @@ function CompactCustomerList({
   view,
   selectedId,
   customers,
+  showSimulationBadge,
   onOpen,
   onViewChange,
   onVisibleSelectionChange,
@@ -471,6 +478,7 @@ function CompactCustomerList({
   view: CustomerView;
   selectedId: string | null;
   customers: CustomerProfile[];
+  showSimulationBadge: boolean;
   onOpen: (id: string) => void;
   onViewChange: (view: CustomerView) => void;
   onVisibleSelectionChange: (id: string | null, filteredEmpty: boolean) => void;
@@ -559,7 +567,12 @@ function CompactCustomerList({
     <aside data-testid="conversation-list" className="flex h-full w-52 shrink-0 flex-col border-r border-border bg-white xl:w-56 2xl:w-60">
       <div className="relative z-20 border-b border-border px-3 py-3">
         <div ref={filterMenuRef} className="relative flex items-center justify-between gap-3">
-          <p className="text-[11px] text-text-muted">{list.length} 个待处理 · 按最近动态排序</p>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="truncate text-[11px] text-text-muted">{list.length} 个待处理 · 按最近动态排序</p>
+            {showSimulationBadge && (
+              <span title="客服演示沙盘" className="shrink-0 rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-bold text-cyan-700">演示</span>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setFilterOpen(open => !open)}
@@ -905,6 +918,14 @@ function ChatThread({
     return () => window.clearTimeout(timer);
   }, [previewOpen, input, onPreviewTranslate]);
 
+  useEffect(() => {
+    if (!draftSuggestion) return;
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [customer?.id, Boolean(draftSuggestion)]);
+
   if (!customer) {
     return (
       <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 items-center justify-center bg-white">
@@ -1061,7 +1082,6 @@ function intentLevelLabel(customer: CustomerProfile) {
 
 function CustomerIntentActionPanel({
   customer,
-  notificationReady,
   onModeChange,
   onToast,
   onGenerateDraft,
@@ -1073,7 +1093,6 @@ function CustomerIntentActionPanel({
   hasReplyReady,
 }: {
   customer: CustomerProfile;
-  notificationReady: boolean;
   onModeChange: (mode: HandlingMode) => void;
   onToast: (message: string) => void;
   onGenerateDraft: (instruction: string, intent?: DraftIntent) => Promise<void> | void;
@@ -1228,7 +1247,7 @@ function CustomerIntentActionPanel({
 
   return (
     <section data-testid="ai-intent-action-panel" className="rounded-2xl border border-border bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
         <div>
           <p className="text-xs font-bold text-text-primary">AI 意向信号</p>
           <p className="mt-0.5 text-[10px] text-text-muted">沟通阶段与下一步推进建议</p>
@@ -1237,50 +1256,42 @@ function CustomerIntentActionPanel({
           {intentLevelLabel(customer)} · {customer.intentScore}
         </span>
       </div>
-      <div className="p-3.5">
-      {!notificationReady && (
-        <button
-          type="button"
-          onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-notifications', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); onToast('已跳转到通知接收方式设置'); }}
-          className="mb-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
-        >
-          还没设置提醒接收方式，重要客户消息可能错过 → 去设置
-        </button>
-      )}
-      <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-        <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">当前沟通阶段</p>
-        <p className="mt-1 text-xs font-bold text-text-primary">{communicationStage}</p>
-        <p className="mt-1 text-[11px] leading-5 text-text-secondary">{communicationSummary}</p>
+      <div className="p-3">
+      <div className="border-b border-border pb-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">当前沟通阶段</p>
+          <p className="text-[11px] font-bold text-text-primary">{communicationStage}</p>
+        </div>
+        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">{communicationSummary}</p>
       </div>
-      <div className="mt-2.5 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-2.5">
-        <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">下一步推进建议</p>
-        <p className="mt-1 text-xs font-bold text-text-primary">{suggestion.headline}</p>
-        <p className="mt-1 text-[11px] leading-5 text-text-secondary">{nextMove || suggestion.reason}</p>
-        {nextMove && suggestion.reason && suggestion.reason !== nextMove && (
-          <p className="mt-1.5 text-[10px] leading-4 text-text-muted">{suggestion.reason}</p>
-        )}
+      <div className="pt-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">下一步推进建议</p>
+          <p className="text-[11px] font-bold text-text-primary">{suggestion.headline}</p>
+        </div>
+        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">{nextMove || suggestion.reason}</p>
       </div>
       {!!customer.intentSignals.length && (
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
+        <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
           {customer.intentSignals.slice(0, 6).map(signal => (
-            <span key={signal} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">{signal}</span>
+            <span key={signal} className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">{signal}</span>
           ))}
         </div>
       )}
       {suggestion.suggestionType !== 'none' && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" onClick={() => void primaryAction()} disabled={isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-2 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          <button type="button" onClick={() => void primaryAction()} disabled={isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
             {isPrimaryLoading ? '草稿生成中…' : primaryLabel[suggestion.suggestionType]}
           </button>
           {secondaryLabel[suggestion.suggestionType] && (
-            <button type="button" onClick={secondaryAction} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+            <button type="button" onClick={secondaryAction} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
               {secondaryLabel[suggestion.suggestionType]}
             </button>
           )}
         </div>
       )}
       {!!evidenceItems.length && (
-        <button type="button" onClick={() => setEvidenceOpen(open => !open)} className="mt-3 flex w-full items-center justify-between border-t border-border pt-3 text-left text-[11px] font-bold text-text-secondary">
+        <button type="button" onClick={() => setEvidenceOpen(open => !open)} className="mt-2.5 flex w-full items-center justify-between border-t border-border pt-2.5 text-left text-[11px] font-bold text-text-secondary">
           查看 AI 判断依据
           <ChevronDown size={14} className={`transition-transform ${evidenceOpen ? 'rotate-180' : ''}`} />
         </button>
@@ -1309,7 +1320,23 @@ function CustomerIntentActionPanel({
   );
 }
 
-function RulesDisclosure() {
+function RulesDisclosure({
+  customerServiceStatus,
+  customerServiceSaving,
+  customerServiceLabel,
+  customerServiceSummary,
+  notificationReady,
+  onToggleCustomerService,
+  onEnablePartialAutoReply,
+}: {
+  customerServiceStatus: CustomerServiceStatus | null;
+  customerServiceSaving: boolean;
+  customerServiceLabel: string;
+  customerServiceSummary: string;
+  notificationReady: boolean;
+  onToggleCustomerService: (enabled: boolean) => void;
+  onEnablePartialAutoReply: () => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-2xl border border-border bg-white shadow-sm">
@@ -1319,6 +1346,46 @@ function RulesDisclosure() {
       </button>
       {open && (
         <div className="space-y-2 border-t border-border px-3.5 py-3 text-[11px] leading-5 text-text-secondary">
+          <div className="mb-3 rounded-xl bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-bold text-text-primary">智能客服接待</p>
+                <p className="text-[10px] text-text-muted">{customerServiceLabel}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={Boolean(customerServiceStatus?.enabled)}
+                aria-label="智能客服总开关"
+                title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
+                disabled={customerServiceSaving}
+                onClick={() => onToggleCustomerService(!customerServiceStatus?.enabled)}
+                className={`relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
+              >
+                <span className={`absolute top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${customerServiceStatus?.enabled ? 'translate-x-5' : 'translate-x-1'}`}>
+                  <Power size={9} className={customerServiceStatus?.enabled ? 'text-cyan-700' : 'text-slate-400'} />
+                </span>
+              </button>
+            </div>
+            <p className="mt-2 text-[10px] leading-4 text-text-muted">{customerServiceSummary}</p>
+            {customerServiceStatus?.enabled && customerServiceStatus.eligibleForPartialAutoReply && customerServiceStatus.partialAutoReplyDecision === 'declined' && (
+              <button type="button" disabled={customerServiceSaving} onClick={onEnablePartialAutoReply} className="mt-2 text-[10px] font-bold text-cyan-700 hover:underline disabled:opacity-50">
+                开放部分直回
+              </button>
+            )}
+          </div>
+          {!notificationReady && (
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem('lingshu:enterprise:highlight-notifications', 'true');
+                window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
+              }}
+              className="mb-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-[10px] font-semibold leading-4 text-slate-600 hover:bg-slate-50"
+            >
+              设置重要消息提醒接收方式
+            </button>
+          )}
           <p>开启后的前 3 天：AI 只给建议，你确认后再发。</p>
           <p>出现采购数量、样品或收货信息：AI 写草稿，你确认后发送。</p>
           <p>满 3 天并由你授权后：仅已审批的简单问答可直接回复。</p>
@@ -1425,6 +1492,10 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
 
 function CustomerInfoRail({
   customer,
+  customerServiceStatus,
+  customerServiceSaving,
+  customerServiceLabel,
+  customerServiceSummary,
   notificationReady,
   onGenerateDraft,
   onHandlingModeChange,
@@ -1436,8 +1507,14 @@ function CustomerInfoRail({
   customerServiceEnabled,
   autoReplyReady,
   hasReplyReady,
+  onToggleCustomerService,
+  onEnablePartialAutoReply,
 }: {
   customer: CustomerProfile | null;
+  customerServiceStatus: CustomerServiceStatus | null;
+  customerServiceSaving: boolean;
+  customerServiceLabel: string;
+  customerServiceSummary: string;
   notificationReady: boolean;
   onGenerateDraft: (instruction: string, intent?: DraftIntent) => Promise<void> | void;
   onHandlingModeChange: (mode: HandlingMode) => void;
@@ -1449,6 +1526,8 @@ function CustomerInfoRail({
   customerServiceEnabled: boolean;
   autoReplyReady: boolean;
   hasReplyReady: boolean;
+  onToggleCustomerService: (enabled: boolean) => void;
+  onEnablePartialAutoReply: () => void;
 }) {
   if (!customer) {
     return (
@@ -1459,12 +1538,11 @@ function CustomerInfoRail({
   }
 
   return (
-    <aside data-testid="customer-info-rail" className="h-full w-64 shrink-0 overflow-y-auto border-l border-border bg-slate-50 px-3 py-3 xl:w-[272px] 2xl:w-72">
+    <aside data-testid="customer-info-rail" className="min-h-0 w-64 shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-slate-50 px-3 py-3 [scrollbar-gutter:stable] xl:w-[272px] 2xl:w-72">
       <div className="grid gap-2.5">
         <CustomerInsightDisclosure customer={customer} />
         <CustomerIntentActionPanel
           customer={customer}
-          notificationReady={notificationReady}
           onModeChange={onHandlingModeChange}
           onToast={onToast}
           onGenerateDraft={onGenerateDraft}
@@ -1477,7 +1555,15 @@ function CustomerInfoRail({
         />
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
         <TagsWidget customer={customer} />
-        <RulesDisclosure />
+        <RulesDisclosure
+          customerServiceStatus={customerServiceStatus}
+          customerServiceSaving={customerServiceSaving}
+          customerServiceLabel={customerServiceLabel}
+          customerServiceSummary={customerServiceSummary}
+          notificationReady={notificationReady}
+          onToggleCustomerService={onToggleCustomerService}
+          onEnablePartialAutoReply={onEnablePartialAutoReply}
+        />
       </div>
     </aside>
   );
@@ -1558,7 +1644,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const activeView = VIEW_META[view];
   const partialAutoReplyActive = Boolean(customerServiceStatus?.autoReplyReady && autonomyLevel === 'auto');
   const customerPendingCount = useMemo(() => pendingCount(customers), [customers]);
-  const mockCustomerCount = useMemo(() => customers.filter(customer => customer.isMock).length, [customers]);
   const customerTodoItems = useMemo(() => (
     dailyTodoCustomers(customers).map(customer => {
       const suggestion = buildPrioritySuggestion(customer);
@@ -1735,11 +1820,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     if (!selected) return;
-    if (!customerServiceStatus?.enabled) {
-      setDraftSuggestion(null);
-      setDraftMeta(null);
-      return;
-    }
+    if (!customerServiceStatus?.enabled) return;
     const lastBuyer = [...selected.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer');
     if (!lastBuyer) return;
     if (isWaitingForHumanQuote(selected)) {
@@ -2112,14 +2193,13 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const generateManualDraft = async (instruction: string, intent: DraftIntent = 'reply') => {
     if (!selected) return;
-    if (!ensureCustomerServiceEnabled()) return;
     if (intent !== 'polish' && isWaitingForHumanQuote(selected)) {
       showToast('客户正在询价，已标记等待人工报价，请由销售亲自回复。');
       return;
     }
     setDraftSuggestion(null);
     setDraftMeta(null);
-    const result = await requestDraft(selected, instruction, undefined, intent);
+    const result = await requestDraft(selected, instruction, undefined, intent, true);
     if (result.handoffRequired) {
       updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: result.handlingReason || '该消息需要人工接手' });
       if (result.safeToSendBeforeHandoff && result.draft.trim()) {
@@ -2139,12 +2219,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const regenerateDraft = async () => {
     if (!selected) return;
-    if (!ensureCustomerServiceEnabled()) return;
     if (isWaitingForHumanQuote(selected)) {
       showToast('报价问题不生成 AI 回复，请由销售亲自回复。');
       return;
     }
-    const result = await requestDraft(selected, undefined, undefined, 'reply');
+    const result = await requestDraft(selected, undefined, undefined, 'reply', true);
     if (result.handoffRequired) {
       updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: result.handlingReason || '该消息需要人工接手' });
       if (result.safeToSendBeforeHandoff && result.draft.trim()) {
@@ -2164,10 +2243,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const polishInput = async () => {
     if (!selected || !input.trim() || isPolishing) return;
-    if (!ensureCustomerServiceEnabled()) return;
     setIsPolishing(true);
     try {
-      const polished = await requestDraft(selected, input, 'polish', 'polish');
+      const polished = await requestDraft(selected, input, 'polish', 'polish', true);
       setInput(polished.draft);
       setTranslatedInput('');
     } finally {
@@ -2262,58 +2340,12 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-white" data-lingshu-guide="customer-workbench">
-      <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border px-5">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <Users size={13} />
-          </div>
-          <span className="text-sm font-semibold text-text-primary">我的客户</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${customerServiceStatus?.enabled ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
-            {customerServiceLabel}
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={Boolean(customerServiceStatus?.enabled)}
-            aria-label="智能客服总开关"
-            title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
-            disabled={customerServiceSaving}
-            onClick={() => void changeCustomerServiceEnabled(!customerServiceStatus?.enabled)}
-            className={`relative h-7 w-12 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
-          >
-            <span className={`absolute top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${customerServiceStatus?.enabled ? 'translate-x-6' : 'translate-x-1'}`}>
-              <Power size={11} className={customerServiceStatus?.enabled ? 'text-cyan-700' : 'text-slate-400'} />
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {includeMockCustomers && (
-        <div className="flex min-h-10 shrink-0 items-center justify-between gap-3 border-b border-cyan-100 bg-gradient-to-r from-cyan-50 to-emerald-50 px-5 py-2">
-          <div className="flex items-center gap-2 text-xs font-black text-cyan-900">
-            <Sparkles size={14} className="text-cyan-700" />
-            客服演示沙盘
-          </div>
-          <span className="text-[11px] font-bold text-cyan-800">{mockCustomerCount || 8} 个模拟客户 · 含完整上下文、人工修改和学习记忆</span>
-        </div>
-      )}
-
-      <div className={`flex min-h-10 shrink-0 items-center justify-between gap-3 border-b px-5 py-2 text-xs ${customerServiceStatus?.enabled ? 'border-cyan-100 bg-cyan-50/70 text-cyan-900' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
-        <p className="font-semibold">{customerServiceSummary}</p>
-        {customerServiceStatus?.enabled && customerServiceStatus.eligibleForPartialAutoReply && customerServiceStatus.partialAutoReplyDecision === 'declined' && (
-          <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')} className="shrink-0 rounded-lg border border-cyan-200 bg-white px-3 py-1.5 text-[11px] font-black text-cyan-800 disabled:opacity-50">
-            开放部分直回
-          </button>
-        )}
-      </div>
-
-      <div className="flex min-h-0 flex-1">
+      <div data-testid="conversation-workspace-main" className="flex min-h-0 flex-1">
         <CompactCustomerList
           view={view}
           selectedId={selectedId}
           customers={customers}
+          showSimulationBadge={includeMockCustomers}
           onOpen={openCustomer}
           onViewChange={(nextView) => { filterEmptySelectionRef.current = false; setView(nextView); }}
           onVisibleSelectionChange={(id, filteredEmpty) => {
@@ -2348,6 +2380,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         />
         <CustomerInfoRail
           customer={selected}
+          customerServiceStatus={customerServiceStatus}
+          customerServiceSaving={customerServiceSaving}
+          customerServiceLabel={customerServiceLabel}
+          customerServiceSummary={customerServiceSummary}
           notificationReady={notificationReady}
           onGenerateDraft={generateManualDraft}
           onHandlingModeChange={updateHandlingMode}
@@ -2361,6 +2397,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           customerServiceEnabled={Boolean(customerServiceStatus?.enabled)}
           autoReplyReady={partialAutoReplyActive}
           hasReplyReady={Boolean(draftSuggestion?.trim() || input.trim() || selected?.pendingDraft?.trim())}
+          onToggleCustomerService={(enabled) => void changeCustomerServiceEnabled(enabled)}
+          onEnablePartialAutoReply={() => void decidePartialAutoReply('enabled')}
         />
       </div>
       {customerServiceStatus?.shouldAskPartialAutoReply && (

@@ -49,6 +49,11 @@ assert.match(
   /blocked_auto: hasReplyReady \? '查看草稿' : '生成建议'/,
   'a blocked-auto card must not claim that an absent draft can be viewed',
 );
+assert.match(
+  source,
+  /\[data-draft-suggestion\][\s\S]{0,100}scrollIntoView\(\{ behavior: 'smooth', block: 'center' \}\)/,
+  'a newly generated draft must scroll into the visible conversation area',
+);
 
 const basicInfoSource = fs.readFileSync('src/components/customers/widgets/BasicInfoWidget.tsx', 'utf8');
 assert.match(

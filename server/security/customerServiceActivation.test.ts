@@ -79,7 +79,7 @@ assert.match(inbound, /if \(!servicePolicy\.enabled\)[\s\S]*?智能客服未开�
 assert.match(inbound, /customerServiceStatus\(profile\)\.autoReplyReady/, 'real inbound auto-send must require every safety gate');
 
 const drafts = read('server/routes/draftReply.ts');
-assert.match(drafts, /customerServicePolicy\(enterpriseProfile\)\.enabled[\s\S]*?customer_service_disabled/, 'the draft endpoint must reject generation while disabled');
+assert.match(drafts, /manualRequest = body\.manualRequest === true[\s\S]*?!customerServiceEnabled && !manualRequest[\s\S]*?customer_service_disabled/, 'automatic draft generation must stay disabled while explicit manual draft requests remain available');
 
 const outbox = read('server/routes/customerSuggestions.ts');
 assert.match(outbox, /req\.body\?\.auto === true[\s\S]*?customerServiceStatus[\s\S]*?!status\.autoReplyReady/, 'all automatic outbox sends must pass the activation gate');
@@ -87,6 +87,9 @@ assert.match(outbox, /get\('\/:id\/suggestions'[\s\S]*?customer_service_disabled
 
 const ui = read('src/components/ConversionPage.tsx');
 assert.match(ui, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
+assert.match(ui, /manualRequest[\s\S]*?requestDraft\(selected, instruction, undefined, intent, true\)/, 'manual AI drafts must remain available even when automatic customer service is off');
+assert.match(ui, /if \(!customerServiceStatus\?\.enabled\) return;/, 'the automatic draft effect must stop quietly without erasing a manually generated draft');
+assert.doesNotMatch(ui, /if \(!customerServiceStatus\?\.enabled\) \{\s*setDraftSuggestion\(null\)/, 'disabled automatic service must not clear manual AI output');
 assert.match(ui, /建议模式已经用了 3 天[\s\S]*?继续只看建议[\s\S]*?开放部分直接回复/, 'the three-day permission choice must be explicit');
 assert.match(ui, /partialAutoReplyActive = Boolean\(customerServiceStatus\?\.autoReplyReady && autonomyLevel === 'auto'\)/, 'the UI must respect a later return to draft-only mode');
 assert.doesNotMatch(ui, /if \(selected\.isMock\) return;/, 'administrator mock conversations must generate drafts through the same endpoint');
