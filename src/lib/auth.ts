@@ -48,6 +48,18 @@ export interface AuthSession {
 
 export interface EmployeeAccount { id: string; email: string; name: string; role: OrganizationRole; isCurrent: boolean; created: string }
 
+const JIANGZHE_TEST_EMAIL = 'wenlantianxia-test@local.test';
+const JIANGZHE_TEST_NAME = '灵枢测试07-江浙';
+
+function normalizeSessionIdentity<T extends { user?: AuthUser; tenant?: AuthTenant | null }>(session: T): T {
+  if (String(session.user?.email || '').trim().toLowerCase() !== JIANGZHE_TEST_EMAIL || !session.user) return session;
+  return {
+    ...session,
+    user: { ...session.user, name: JIANGZHE_TEST_NAME },
+    tenant: session.tenant ? { ...session.tenant, name: JIANGZHE_TEST_NAME } : session.tenant,
+  };
+}
+
 async function authenticatedJson<T>(path: string, options?: RequestInit): Promise<T> {
   const r = await fetch(`/api/overseas/auth/${path}`, { ...options, headers: { ...authHeader(), ...(options?.body ? { 'Content-Type': 'application/json' } : {}), ...(options?.headers ?? {}) } });
   const j = await r.json().catch(() => ({})) as T & { error?: string };
@@ -97,7 +109,7 @@ async function call(path: string, body: unknown): Promise<{ token: string; user:
   const r = await authRequest(path, body);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || '请求失败');
-  return j;
+  return normalizeSessionIdentity(j);
 }
 
 export const authApi = {
@@ -120,12 +132,12 @@ export const authApi = {
       if (!r.ok) {
         if ((r.status === 401 || r.status === 402) && exitSupportSession()) {
           const restored = await fetch('/api/overseas/auth/me', { headers: authHeader() });
-          if (restored.ok) return (await restored.json()) as AuthSession;
+          if (restored.ok) return normalizeSessionIdentity((await restored.json()) as AuthSession);
         }
         if (r.status === 401 || r.status === 402) clearToken();
         return null;
       }
-      return (await r.json()) as AuthSession;
+      return normalizeSessionIdentity((await r.json()) as AuthSession);
     } catch {
       return null;
     }

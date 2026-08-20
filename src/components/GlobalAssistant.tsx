@@ -48,6 +48,17 @@ const GUIDE_VISIBLE_MS = 6_000;
 const ASSISTANT_AUTO_RETRACT_MS = 5_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 
+type AssistantPerformance = { phase: string; message?: string };
+
+const PERFORMANCE_LINES: Record<string, string[]> = {
+  script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
+  storyboard: ['分镜正在排队出场，我先来一段热身。', '镜头衔接交给我，我会把节奏接顺。', '正在逐镜检查，避免成片时才发现问题。'],
+  voice: ['正在逐句处理配音，不会漏掉后面的台词。', '我在给每句话找合适的停顿和节奏。', '配音还在生成，我陪你等一小会儿。'],
+  material: ['我正在替每个分镜挑合适的素材。', '素材匹配中，先看动作，再看画面是否真的能用。', '稍等，我正在把重复镜头和不合适的素材筛掉。'],
+  render: ['成片正在合成，我先替进度条加加油。', '最后几步通常最费功夫，马上就能看成片。', '正在把画面、字幕和声音稳稳地合在一起。'],
+  default: ['任务正在处理中，我会一直在这里陪你。', '稍等一下，好结果正在路上。', '我先表演一个原地小跳，进度交给后台继续跑。'],
+};
+
 type GuideMemory = {
   seen: string[];
   lastShownAt: number;
@@ -401,6 +412,8 @@ export default function GlobalAssistant({
   const [featureGuide, setFeatureGuide] = useState<(AssistantGuide & { id: string }) | null>(null);
   const [enterpriseGuideSeen, setEnterpriseGuideSeen] = useState(false);
   const [enterpriseContext, setEnterpriseContext] = useState('');
+  const [performance, setPerformance] = useState<AssistantPerformance | null>(null);
+  const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const longPressRef = useRef<number | null>(null);
   const longPressedRef = useRef(false);
@@ -437,8 +450,10 @@ export default function GlobalAssistant({
   const panelTitle = assistantTool === 'knowledge-intake' ? '灵小枢 · 快速采集' : isCustomerTodoView ? '今日待办' : activeAgentLabel;
   const panelSubtitle = assistantTool === 'knowledge-intake' ? '当前：智能客服规范' : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const radius = 110;
-  const dockOnLeft = page === 'enterprise' || page === 'agentMemory';
-  const launcherAtEdge = page === 'conversion' && mode === 'breathing' && launcherRetracted;
+  const dockOnLeft = false;
+  const launcherAtEdge = mode === 'breathing' && launcherRetracted;
+  const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
+  const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
   const persistThread = useCallback((agentId: OrbitAgentId) => {
     const thread = useAssistantStore.getState().threads[agentId];
@@ -717,6 +732,28 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ active?: boolean; phase?: string; message?: string }>).detail;
+      if (!detail?.active) {
+        setPerformance(null);
+        setPerformanceLineIndex(0);
+        return;
+      }
+      setPerformance({ phase: detail.phase || 'default', message: detail.message?.trim() || undefined });
+      setPerformanceLineIndex(0);
+      setLauncherRetracted(false);
+    };
+    window.addEventListener('lingshu-assistant-performance', handler);
+    return () => window.removeEventListener('lingshu-assistant-performance', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!performance || performance.message) return;
+    const timer = window.setInterval(() => setPerformanceLineIndex(index => index + 1), 3_800);
+    return () => window.clearInterval(timer);
+  }, [performance]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ text?: string; assistantText?: string; context?: Partial<AssistantContext>; tool?: AssistantTool }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
@@ -823,14 +860,18 @@ export default function GlobalAssistant({
   }, [mode]);
 
   useEffect(() => {
-    if (page !== 'conversion' || mode !== 'breathing') {
+    setLauncherRetracted(false);
+  }, [page]);
+
+  useEffect(() => {
+    if (mode !== 'breathing' || performance) {
       setLauncherRetracted(false);
       return;
     }
     if (launcherRetracted) return;
     const timer = window.setTimeout(() => setLauncherRetracted(true), ASSISTANT_AUTO_RETRACT_MS);
     return () => window.clearTimeout(timer);
-  }, [launcherRetracted, mode, page]);
+  }, [launcherRetracted, mode, page, performance]);
 
   if (suppressForRightSidebar) return null;
 
@@ -845,7 +886,25 @@ export default function GlobalAssistant({
         />
       )}
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && featureGuide && (
+        {mode === 'breathing' && !launcherAtEdge && performance && (
+          <motion.div
+            key={`performance-${performance.phase}`}
+            data-lingshu-assistant-performance={performance.phase}
+            initial={{ opacity: 0, y: 10, scale: 0.94 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 7, scale: 0.96 }}
+            className="absolute bottom-1 right-[72px] z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢陪你等</p>
+            <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{performanceMessage}</p>
+            <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-emerald-500"/><span className="h-1 w-3 animate-pulse rounded-full bg-emerald-300 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-emerald-200 [animation-delay:320ms]"/></div>
+            <span className="absolute -right-2 bottom-6 h-4 w-4 rotate-45 border-r border-t border-emerald-200 bg-white" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mode === 'breathing' && !launcherAtEdge && !performance && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-lingshu-guide-bubble={featureGuide.id}
@@ -1136,8 +1195,10 @@ export default function GlobalAssistant({
             onPointerLeave={handlePointerUp}
             onClick={handleLauncherClick}
             className="absolute inset-0 flex items-center justify-center rounded-2xl bg-transparent outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[#6FDBA1] focus-visible:ring-offset-2"
-            animate={mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
-            transition={{ duration: 2.4, ease: 'easeInOut', repeat: mode === 'breathing' && pendingCount > 0 && !reduceMotion ? Infinity : 0 }}
+            animate={performance && !reduceMotion
+              ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
+              : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
+            transition={{ duration: performance ? 1.55 : 2.4, ease: 'easeInOut', repeat: (performance || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
             title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[orbitIdForAgent(pageContext.agent)]}` : '展开灵枢助手'}
           >
             <AssistantLauncherMascot expression={assistantExpression} />

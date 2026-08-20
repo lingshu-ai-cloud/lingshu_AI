@@ -16,9 +16,11 @@ interface Props {
   onAction?: AgentAction;
   onNavigate?: (page: Page) => void;
   onSessionRefresh?: () => void;
+  includeMockCustomers?: boolean;
+  mockCustomerScope?: string;
 }
 
-export default function StrategyPage({ onAction, onNavigate }: Props) {
+export default function StrategyPage({ onAction, onNavigate, includeMockCustomers = false, mockCustomerScope = 'admin' }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>('board');
 
   return (
@@ -47,7 +49,7 @@ export default function StrategyPage({ onAction, onNavigate }: Props) {
         <AnimatePresence mode="wait">
           {viewMode === 'board' ? (
             <motion.div key="board" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <StrategyDataBoard onAction={onAction} onNavigate={onNavigate} />
+              <StrategyDataBoard onAction={onAction} onNavigate={onNavigate} includeMockCustomers={includeMockCustomers} mockCustomerScope={mockCustomerScope} />
             </motion.div>
           ) : (
             <motion.div key="workspace" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">

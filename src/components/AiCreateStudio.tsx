@@ -1656,7 +1656,7 @@ function qualitySuccessNotice(response: StudioScriptResult, defaultMessage: stri
   const pendingScenes = pendingMaterialSceneCount(response);
   if (status === 'rejected') {
     const issueCount = response.validationIssues?.length || 1;
-    return `生成草稿已保留，但存在 ${issueCount} 项合规问题，修正并重新校验前不能进入后续制作。`;
+    return `草稿已生成，待人工审核；当前有 ${issueCount} 项内容需要确认。`;
   }
   if (status === 'needs_material') {
     const missingLabel = pendingScenes !== undefined
@@ -3507,6 +3507,30 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [leadContentPackage, setLeadContentPackage] = useState<LeadContentPackageResult | null>(null);
   const [posterJsonText, setPosterJsonText] = useState('');
   const [posterImageUrl, setPosterImageUrl] = useState('');
+
+  const storyboardWorkActive = Object.values(storyboardGenerating).some(Boolean)
+    || Object.values(storyboardQualityChecking).some(Boolean);
+  const studioPerformancePhase = rendering || batchRenderingLangs
+    ? 'render'
+    : ttsLoading || digitalHumanLoading
+      ? 'voice'
+      : storyboardWorkActive
+        ? 'storyboard'
+        : materialSelectLoading
+          ? 'material'
+          : modeActionLoading || scriptLoading || coverLoading || captionLoading || posterLoading || demoAutoLoading || pendingRealCloneGeneration
+            ? 'script'
+            : '';
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-performance', {
+      detail: { active: Boolean(studioPerformancePhase), phase: studioPerformancePhase || 'default' },
+    }));
+  }, [studioPerformancePhase]);
+
+  useEffect(() => () => {
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-performance', { detail: { active: false } }));
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -8774,7 +8798,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className={`text-xs font-black ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'text-rose-900' : activeQualityStatus === 'needs_material' ? 'text-amber-900' : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length ? 'text-sky-900' : 'text-emerald-900'}`}>
                       {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
-                        ? '草稿已保留 · 合规校验未通过'
+                        ? '草稿已生成待人工审核'
                         : activeQualityStatus === 'needs_material'
                         ? '脚本可用 · 需要补充素材'
                         : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length

@@ -22,12 +22,12 @@ function latestWhatsApp(customer: CustomerProfile) {
 }
 
 function isWhatsAppInquiry(customer: CustomerProfile) {
-  return customer.source === 'whatsapp';
+  return String(customer.source).startsWith('whatsapp');
 }
 
-export default function InquiryDataBoard(_props: { windowDays?: number }) {
+export default function InquiryDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin' }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string }) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const { customers, loading } = useCustomers(refreshKey);
+  const { customers, loading } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
 
   const inquiries = useMemo(() => [...customers]
     .filter(isWhatsAppInquiry)
@@ -45,8 +45,8 @@ export default function InquiryDataBoard(_props: { windowDays?: number }) {
     <div className="h-full overflow-y-auto px-6 py-5">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <p className="text-sm font-bold text-text-primary">询盘真实数据</p>
-          <p className="mt-1 text-xs text-text-muted">数据来自「我的客户」tab 中的 WhatsApp 客户会话。</p>
+          <p className="text-sm font-bold text-text-primary">询盘经营数据</p>
+          <p className="mt-1 text-xs text-text-muted">与「我的会话」使用同一套 WhatsApp 客户记录。</p>
         </div>
         <button type="button" onClick={() => setRefreshKey(v => v + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary">
           <RefreshCw size={12} />刷新

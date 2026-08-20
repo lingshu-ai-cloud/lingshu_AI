@@ -46,7 +46,9 @@ assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen
 assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
 assert.match(assistantUi, /setAssistantTool\(null\); setPanelView\('chat'\); setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
 assert.match(assistantUi, /ASSISTANT_AUTO_RETRACT_MS = 5_000/, 'the conversation launcher must automatically retract after a short delay');
-assert.match(assistantUi, /const dockOnLeft = page === 'enterprise' \|\| page === 'agentMemory'/, 'the conversation launcher must share the standard right-side position');
+assert.match(assistantUi, /const dockOnLeft = false/, 'all pages must share the same right-side assistant position');
+assert.match(assistantUi, /const launcherAtEdge = mode === 'breathing' && launcherRetracted/, 'all pages must share the same auto-retract behavior');
+assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 assert.match(assistantUi, /data-global-assistant="edge-launcher"[\s\S]*?aria-label="唤出灵小枢智能助手"/, 'the retracted assistant must leave an accessible edge launcher');
 const diagnosisUi = read('src/components/BusinessDiagnosisModal.tsx');
 assert.match(diagnosisUi, /onClick=\{onClose\}[\s\S]*?关闭接待设置/, 'the reception guide must be closable after it is reopened from the sidebar');

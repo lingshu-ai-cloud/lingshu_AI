@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, DollarSign, Loader2, PackageCheck, RefreshCw, ShoppingBag, Users } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { useCustomers } from '../hooks/useCustomers';
 
 type OrderStatus = '待付款' | '已付款' | '生产中' | '已发货' | '已完成' | '退款';
 
@@ -87,10 +88,11 @@ function aggregateCustomers(orders: OrderRecord[]): CustomerFromOrders[] {
   return [...map.values()].sort((a, b) => b.amount - a.amount || b.latestDate.localeCompare(a.latestDate));
 }
 
-export default function CrmDataBoard(_props: { windowDays?: number }) {
+export default function CrmDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin' }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string }) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const { customers: conversationCustomers, loading: customersLoading } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
 
   useEffect(() => {
     let alive = true;
@@ -106,13 +108,34 @@ export default function CrmDataBoard(_props: { windowDays?: number }) {
     return () => { alive = false; };
   }, [refreshKey]);
 
-  const customers = useMemo(() => aggregateCustomers(orders), [orders]);
-  const validOrders = useMemo(() => orders.filter(isValidOrder), [orders]);
+  const conversationOrders = useMemo<OrderRecord[]>(() => conversationCustomers.flatMap(customer => customer.orders.map((order, index) => {
+    const amount = Number(String(order.total || '').replace(/[^0-9.-]/g, '')) || 0;
+    const status: OrderStatus = order.status === 'paid' ? '已付款' : order.status === 'pending' ? '待付款' : '退款';
+    return {
+      id: order.id,
+      orderNo: order.id,
+      buyer: customer.name,
+      market: customer.countryName,
+      channel: customer.source,
+      product: order.items?.[0]?.name || customer.product,
+      quantity: order.items?.reduce((sum, item) => sum + item.qty, 0) || 1,
+      amount,
+      cost: Math.round(amount * 0.72),
+      status,
+      orderDate: order.createdAt || new Date().toISOString().slice(0, 10),
+      owner: '江浙业务组',
+      source: 'conversation',
+      sourceRef: `${customer.id}:${index}`,
+    };
+  })), [conversationCustomers]);
+  const effectiveOrders = orders.length ? orders : conversationOrders;
+  const customers = useMemo(() => aggregateCustomers(effectiveOrders), [effectiveOrders]);
+  const validOrders = useMemo(() => effectiveOrders.filter(isValidOrder), [effectiveOrders]);
 
   const summary = useMemo(() => {
     const revenue = validOrders.reduce((sum, order) => sum + order.amount, 0);
     const cost = validOrders.reduce((sum, order) => sum + order.cost, 0);
-    const pending = orders.filter(order => order.status === '已付款' || order.status === '生产中').length;
+    const pending = effectiveOrders.filter(order => order.status === '已付款' || order.status === '生产中').length;
     return {
       customerCount: customers.length,
       orderCount: validOrders.length,
@@ -120,24 +143,24 @@ export default function CrmDataBoard(_props: { windowDays?: number }) {
       margin: revenue ? (revenue - cost) / revenue * 100 : 0,
       pending,
     };
-  }, [customers.length, orders, validOrders]);
+  }, [customers.length, effectiveOrders, validOrders]);
 
   return (
     <div className="h-full overflow-y-auto px-6 py-5">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <p className="text-sm font-bold text-text-primary">客户真实数据</p>
-          <p className="mt-1 text-xs text-text-muted">数据来自「我的订单」tab 的订单记录。</p>
+          <p className="text-sm font-bold text-text-primary">客户经营数据</p>
+          <p className="mt-1 text-xs text-text-muted">客户名称与「我的会话」保持一致，订单按会话关联记录汇总。</p>
         </div>
         <button type="button" onClick={() => setRefreshKey(v => v + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary">
           <RefreshCw size={12} />刷新
         </button>
       </div>
 
-      {loading ? (
+      {loading || customersLoading ? (
         <div className="flex h-48 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />读取我的订单数据...</div>
-      ) : orders.length === 0 ? (
-        <EmptyState text="我的订单 tab 暂无订单记录，因此客户页不展示无订单来源支撑的客户画像、LTV 或复购组件。" />
+      ) : effectiveOrders.length === 0 ? (
+        <EmptyState text="当前会话客户暂无订单记录，成交后会自动汇总到这里。" />
       ) : (
         <>
           <div className="mb-4 grid gap-3 md:grid-cols-4">
@@ -197,7 +220,7 @@ export default function CrmDataBoard(_props: { windowDays?: number }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...orders].sort((a, b) => b.orderDate.localeCompare(a.orderDate)).slice(0, 50).map(order => (
+                  {[...effectiveOrders].sort((a, b) => b.orderDate.localeCompare(a.orderDate)).slice(0, 50).map(order => (
                     <tr key={order.id} className="border-t border-border">
                       <td className="px-3 py-2 font-semibold text-text-primary">{order.orderNo}</td>
                       <td className="px-3 py-2">{order.buyer}</td>

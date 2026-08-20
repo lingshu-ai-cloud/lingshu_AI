@@ -482,6 +482,8 @@ export default function App() {
               onAction={startAgentTask}
               onNavigate={handleNavigate}
               onSessionRefresh={() => void refreshSession()}
+              includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
+              mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
           {page === 'traffic' && (

@@ -257,7 +257,12 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     setQuotaOpen(false);
     setAccountMenuOpen(false);
   });
-  const tenantName = activeSession?.tenant?.name || activeSession?.user?.name || activeSession?.user?.email?.split('@')[0] || '未命名';
+  const accountEmail = String(activeSession?.user?.email || '').trim().toLowerCase();
+  const isJiangZheTestAccount = accountEmail === 'wenlantianxia-test@local.test';
+  const tenantName = isJiangZheTestAccount
+    ? '灵枢测试07-江浙'
+    : activeSession?.tenant?.name || activeSession?.user?.name || activeSession?.user?.email?.split('@')[0] || '未命名';
+  const accountDisplayName = isJiangZheTestAccount ? tenantName : activeSession?.user?.name || tenantName;
   const subStatus = activeSession?.tenant?.subscriptionStatus || activeSession?.subscription?.status || 'none';
   const initial = (tenantName[0] || '灵').toUpperCase();
   const demo = activeSession?.demo;
@@ -511,8 +516,8 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             {accountMenuOpen && (
               <motion.div initial={{ opacity: 0, y: 8, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: .98 }} className="absolute bottom-[68px] left-3 z-50 w-[260px] rounded-2xl border border-border bg-white p-3 shadow-xl">
                 <div className="flex items-center gap-3 border-b border-border px-2 pb-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white" style={{ background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}>{initial}</span>
-                  <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{activeSession?.user?.name || tenantName}</p><p className="truncate text-[10px] text-text-muted">{activeSession?.user?.email}</p></div>
+                  <span className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'text-white'}`} style={isJiangZheTestAccount ? undefined : { background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}>{isJiangZheTestAccount ? '' : initial}</span>
+                  <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate text-[10px] text-text-muted">{activeSession?.user?.email}</p></div>
                 </div>
                 <div className="pt-2">
                   <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>
@@ -528,10 +533,10 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
               title="账号菜单"
               aria-expanded={accountMenuOpen}
               aria-haspopup="menu"
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'text-white'}`}
+              style={isJiangZheTestAccount ? undefined : { background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}
             >
-              {initial}
+              {isJiangZheTestAccount ? '' : initial}
             </button>
             {!sidebarCollapsed && <button onClick={() => { setQuotaOpen(false); setAccountMenuOpen(value => !value); }} aria-expanded={accountMenuOpen} aria-haspopup="menu" className="flex-1 min-w-0 text-left rounded-lg -my-1 py-1 hover:bg-black/5 transition-colors">
               <p className="text-xs font-semibold text-text-primary truncate">{tenantName}</p>
