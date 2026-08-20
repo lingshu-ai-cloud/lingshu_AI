@@ -41,5 +41,10 @@ assert.match(studioSource, /voiceoverMode === 'ai' && hasAnyRequestedVoiceover/,
 assert.match(studioSource, /application\/x-lingshu-material-id/, 'material drag/drop must use a dedicated transfer type');
 assert.match(studioSource, /activeFormalPreviewUrl[\s\S]*正式成片 · 连续 MP4/, 'formal render preview must play the continuous MP4 instead of the stitched draft player');
 assert.doesNotMatch(studioSource, /方向不一致，已阻止加入/, 'opposite-orientation clips must be center-cropped instead of blocked');
+assert.doesNotMatch(studioSource, /合规校验未通过/, 'rejected drafts should use the human-review label');
+assert.doesNotMatch(studioSource, /当前草稿不能进入配音、选材或成片/, 'obsolete blocking copy must stay removed');
+assert.doesNotMatch(studioSource, /生成草稿已保留，但存在 .* 项合规问题/, 'duplicate yellow compliance notice must stay removed');
+assert.match(studioSource, /mt-4 grid items-start gap-3 md:grid-cols-3/, 'cooperation route, buyer and CTA must use three equal columns');
+assert.match(studioSource, /qualityStatus: 'warning',[\s\S]*内容已手动修改，等待人工审核/, 'manual edits must clear the rejected hard block');
 
 console.log('AiCreateStudio storyboard sanitizer tests passed');

@@ -1642,8 +1642,9 @@ function qualitySuccessNotice(response: StudioScriptResult, defaultMessage: stri
   const missing = missingMaterialLabels(response);
   const pendingScenes = pendingMaterialSceneCount(response);
   if (status === 'rejected') {
-    const issueCount = response.validationIssues?.length || 1;
-    return `生成草稿已保留，但存在 ${issueCount} 项合规问题，修正并重新校验前不能进入后续制作。`;
+    // The structured review panel below already carries the actionable issues.
+    // Do not duplicate them in a yellow blocking notice above the editor.
+    return '';
   }
   if (status === 'needs_material') {
     const missingLabel = pendingScenes !== undefined
@@ -8379,17 +8380,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           setScriptView('timestamp');
           setModeScripts(current => current.map(item => {
             if (item.id !== activeModeScriptId) return item;
-            const blockedDraft = item.qualityStatus === 'rejected' || item.qualityStatus === 'failed';
+            const previousReviewNotes = [
+              ...(item.validationIssues || []),
+              ...(item.validationWarnings || []),
+            ].map(note => String(note).trim()).filter(Boolean);
             return {
               ...item,
               script: value,
-              qualityStatus: blockedDraft ? item.qualityStatus : undefined,
-              qualityChecks: blockedDraft ? item.qualityChecks : undefined,
-              validationWarnings: blockedDraft ? item.validationWarnings : [],
-              validationIssues: blockedDraft ? ['草稿已修改，请重新生成并通过合规校验后继续。'] : [],
-              materialCoveragePercent: blockedDraft ? item.materialCoveragePercent : undefined,
-              pendingMaterialScenes: blockedDraft ? item.pendingMaterialScenes : undefined,
-              missingMaterials: blockedDraft ? item.missingMaterials : [],
+              // Manual editing is a legitimate correction workflow. Keeping a
+              // rejected flag here made the saved draft permanently unusable.
+              qualityStatus: 'warning',
+              qualityChecks: undefined,
+              validationWarnings: Array.from(new Set([
+                '内容已手动修改，等待人工审核。',
+                ...previousReviewNotes,
+              ])),
+              validationIssues: [],
+              materialCoveragePercent: undefined,
+              pendingMaterialScenes: undefined,
+              missingMaterials: [],
             };
           }));
           if (spoken.trim()) {
@@ -8527,8 +8536,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     </div>
                   </div>
                 )}
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {availableCooperationRoutes.length > 1 && <label className="block">
+                <div className="mt-4 grid items-start gap-3 md:grid-cols-3">
+                  <label className="min-w-0">
                     <span className="mb-1.5 block text-[10px] font-black text-text-secondary">本条视频合作路线</span>
                     <select value={cooperationRoute} onChange={event => {
                       const route = event.target.value;
@@ -8540,13 +8549,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     }} className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-text-primary outline-none focus:border-accent">
                       {availableCooperationRoutes.map(route => <option key={route} value={route}>{route === 'oem_odm' ? 'OEM / ODM' : route === 'wholesale_distribution' ? '现货批发 / 经销' : 'C 端零售'}</option>)}
                     </select>
-                  </label>}
-                  <label className="block">
+                  </label>
+                  <label className="min-w-0">
                     <span className="mb-1.5 block text-[10px] font-black text-text-secondary">目标买家</span>
                     <textarea value={audience} onChange={event => setAudience(event.target.value)} rows={3}
                       className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none focus:border-accent" />
                   </label>
-                  <label className="block">
+                  <label className="min-w-0">
                     <span className="mb-1.5 block text-[10px] font-black text-text-secondary">主 CTA</span>
                     <textarea value={enterprisePrimaryCta || primaryCta} readOnly rows={3} title="主 CTA 由企业社媒策略统一管理"
                       className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none" />
@@ -8631,7 +8640,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className={`text-xs font-black ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'text-rose-900' : activeQualityStatus === 'needs_material' ? 'text-amber-900' : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length ? 'text-sky-900' : 'text-emerald-900'}`}>
                       {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
-                        ? '草稿已保留 · 合规校验未通过'
+                        ? '草稿已保留 · 人工待审核'
                         : activeQualityStatus === 'needs_material'
                         ? '脚本可用 · 需要补充素材'
                         : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length
@@ -8651,9 +8660,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   )}
                   {(activeQualityStatus === 'rejected' || activeQualityStatus === 'failed') && (
                     <div className="mt-2 text-[11px] leading-5 text-rose-800">
-                      <p>当前草稿不能进入配音、选材或成片；修改后请重新生成并通过校验。</p>
                       {activeQualityIssues.length > 0 && (
-                        <ul className="mt-1 space-y-1">
+                        <ul className="space-y-1">
                           {activeQualityIssues.slice(0, 4).map((issue, index) => <li key={`${issue}-${index}`}>• {issue}</li>)}
                         </ul>
                       )}
@@ -8690,7 +8698,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${activeModeScriptId === item.id ? 'border-accent bg-accent-glow text-accent' : 'border-border bg-white text-text-muted hover:text-text-secondary'}`}
                     >
                       {item.title}
-                      {item.qualityStatus === 'rejected' || item.qualityStatus === 'failed' ? ' · 已拦截' : item.qualityStatus === 'needs_material' ? ' · 待补素材' : item.qualityStatus === 'passed_with_warnings' || item.qualityStatus === 'warning' || item.validationWarnings?.length ? ' · 有提示' : ''}
+                      {item.qualityStatus === 'rejected' || item.qualityStatus === 'failed' ? ' · 人工待审核' : item.qualityStatus === 'needs_material' ? ' · 待补素材' : item.qualityStatus === 'passed_with_warnings' || item.qualityStatus === 'warning' || item.validationWarnings?.length ? ' · 人工待审核' : ''}
                       {activeModeScriptId === item.id ? ' · 当前' : ''}
                     </button>
                   ))}
@@ -9188,12 +9196,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   )}
                   <button
                     type="button"
-                    onClick={() => void saveProject('draft')}
+                    onClick={() => void saveProject('draft').catch(error => {
+                      alert(error instanceof Error ? error.message : '草稿保存失败，请稍后重试。');
+                    })}
                     disabled={savingProj || voiceDraftLoading || ttsLoading}
                     className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50"
                   >
                     {savingProj ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
-                    保存
+                    {savedTick ? '已保存' : '保存'}
                   </button>
                 </div>
               </div>
