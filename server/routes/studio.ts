@@ -28,6 +28,7 @@ import {
   assessScriptQualityV2,
   isBusinessRoleEntity,
 } from '../lib/studioScriptQualityV2.js';
+import { normalizeStudioTranslationCandidate } from '../lib/studioTranslationQuality.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { fetchCloudMaterial, getCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
@@ -3277,12 +3278,13 @@ function createTranslationDeadline(req: Request, res: Response, timeoutMs: numbe
 
 // POST /studio/translate  Body: { text, target?, source? }
 studioRouter.post('/translate', async (req, res) => {
-  const { text = '', target = 'zh' } = req.body ?? {};
+  const { text = '', target = 'zh', source = '' } = req.body ?? {};
   const src = String(text).trim();
   if (!src) { res.json({ ok: true, source: 'noop', text: '' }); return; }
+  const sourceCode = String(source || '').trim();
   const targetLang = langName(target);
 
-  const prompt = `Translate the following voiceover lines into ${targetLang}.
+  const prompt = `Translate the following ${sourceCode ? langName(sourceCode) : 'source-language'} voiceover lines into ${targetLang}.
 Rules:
 - Preserve every timestamp label exactly, such as [0-3s].
 - Translate only the spoken text after each timestamp.
@@ -3302,10 +3304,16 @@ Text: ${src}`;
     try {
       out = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
       if (!out.trim()) throw new Error('qwen returned an empty translation');
+      const checked = normalizeStudioTranslationCandidate({ source: src, candidate: out, target: String(target), sourceCode });
+      if (!checked.ok) throw new Error(`qwen returned invalid translation: ${checked.error}`);
+      out = checked.text;
     } catch (qwenError) {
       if (deadline.signal.aborted) throw qwenError;
       out = await callLLM(prompt, { backend: 'gemini', signal: deadline.signal, timeoutMs: providerTimeoutMs });
       if (!out.trim()) throw new Error('gemini returned an empty translation');
+      const checked = normalizeStudioTranslationCandidate({ source: src, candidate: out, target: String(target), sourceCode });
+      if (!checked.ok) throw new Error(`gemini returned invalid translation: ${checked.error}`);
+      out = checked.text;
     }
     if (!res.writableEnded && !res.destroyed) res.json({ ok: true, source: 'ai', text: out.trim() });
   } catch (error) {
@@ -3358,26 +3366,6 @@ Rules:
 Source:
 ${src}`;
 
-  const invalid = (value: string, code: string) => {
-    const textValue = String(value || '').trim();
-    if (!textValue) return true;
-    const spokenValue = textValue
-      .replace(/\[[^\]]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*\]/gi, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!spokenValue) return true;
-    const timestampPattern = /\[[^\]]*?\d+(?:\.\d+)?\s*s?\s*-\s*\d+(?:\.\d+)?\s*s?[^\]]*\]/gi;
-    const sourceCueCount = (src.match(timestampPattern) || []).length;
-    const translatedCueCount = (textValue.match(timestampPattern) || []).length;
-    const minimumCueCount = sourceCueCount > 1 ? Math.max(2, Math.ceil(sourceCueCount * 0.6)) : sourceCueCount;
-    if (translatedCueCount < minimumCueCount) return true;
-    const compactSpokenValue = spokenValue.replace(/\s+/g, '');
-    if (compactSpokenValue.length < 6) return true;
-    if (code !== 'zh' && /[\u4e00-\u9fff]/.test(textValue)) return true;
-    if (/translation unavailable|无法翻译|不能翻译|作为AI|Here is|```/i.test(textValue)) return true;
-    return false;
-  };
-
   const run = async (backend: 'qwen' | 'gemini') => {
     const out = await callLLM(prompt, {
       backend,
@@ -3406,7 +3394,8 @@ ${src}`;
         const raw = parsed[code];
         value = Array.isArray(raw) ? raw.map(String).join('\n') : String(raw ?? '').trim();
       }
-      if (!invalid(value, code)) translations[code] = value;
+      const checked = normalizeStudioTranslationCandidate({ source: src, candidate: value, target: code, sourceCode });
+      if (checked.ok) translations[code] = checked.text;
     }
     return translations;
   };
@@ -3430,7 +3419,8 @@ ${src}`;
       timeoutMs: providerTimeoutMs,
     });
     const value = out.trim();
-    return invalid(value, code) ? '' : value;
+    const checked = normalizeStudioTranslationCandidate({ source: src, candidate: value, target: code, sourceCode });
+    return checked.ok ? checked.text : '';
   };
 
   const errors: string[] = [];

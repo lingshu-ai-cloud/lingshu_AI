@@ -500,6 +500,10 @@ const isClipCompatibleWithRatio = (clip: Clip, targetRatio: string) => {
   const orientation = (n: number) => n > 1.12 ? 'landscape' : n < 0.89 ? 'portrait' : 'square';
   return orientation(actual) === orientation(ratioNumber(targetRatio));
 };
+const clipRatioPreferenceScore = (clip: Clip, targetRatio?: string) => {
+  if (!targetRatio || !clipAspectRatio(clip)) return 0;
+  return isClipCompatibleWithRatio(clip, targetRatio) ? 14 : -4;
+};
 
 interface Bgm { id: string; name: string; mood: string; duration: number; url?: string; recommended?: boolean; scope?: 'shared' | 'tenant'; uploadedBy?: string }
 // 已移除内置曲库（生成质量不达标）；仅展示用户自行上传的音乐
@@ -549,7 +553,7 @@ function matchMaterialsToStoryboardLocally(
   pool: Clip[],
   slots: StoryboardSlot[],
   preferredIds: string[] = [],
-  options: { variantIndex?: number; previousAssignments?: Array<Record<string, string>> } = {},
+  options: { variantIndex?: number; previousAssignments?: Array<Record<string, string>>; targetRatio?: string } = {},
 ) {
   const preferred = new Set(preferredIds);
   const unused = new Set(pool.map(clip => clip.id));
@@ -604,6 +608,9 @@ function matchMaterialsToStoryboardLocally(
       if (unused.has(clip.id)) score += 18;
       if (preferred.has(clip.id)) score += 7;
       if (clip.type === 'video') score += 5;
+      // 横竖方向只作为排序偏好，不再作为硬拦截。渲染器会统一 center-crop，
+      // 否则竖版项目面对横版素材库时，一键匹配和手动拖拽都会完全失效。
+      score += clipRatioPreferenceScore(clip, options.targetRatio);
       if (folderKeywords[clip.folder]?.test(slotText)) score += 28;
       const slotTerms = slotText.match(/[\u4e00-\u9fff]{2,4}|[a-z]{3,}/gi) || [];
       score += Math.min(24, slotTerms.filter(term => clipText.includes(term.toLowerCase())).length * 6);
@@ -2418,10 +2425,14 @@ function looksLikeStandaloneSpeech(value: string): boolean {
   // European languages in particular). Treat it as spoken prose too; the
   // previous CJK-only punctuation check caused valid translated cues to be
   // dropped before the voiceover validator saw them.
-  if (/[，。！？!?、,.:;]/.test(text)) return true;
+  if (/[，。！？!?؟؛、,.:;]/.test(text)) return true;
   if (/(吗|呢|吧|了|我|你|咱|这|那|真能|不是|马上|直接|发我|留言|私信)/.test(text) && text.length >= 6) return true;
   if (/\s/.test(text) && /^(check|send|watch|see|message|comment|dm|ask|get|try)\b/i.test(text)) return true;
-  return text.length >= 10 && /[\u4e00-\u9fff]/.test(text);
+  // Timestamped translations may be Arabic or another non-CJK language and
+  // may not use Latin punctuation. At this point production labels and
+  // on-screen-only tokens have already been removed, so natural Unicode prose
+  // is valid spoken content.
+  return text.length >= 6 && /\p{L}/u.test(text);
 }
 
 function cleanVoiceoverLine(value: string): string {
@@ -2533,7 +2544,9 @@ function parseTimestampedVoiceover(value: string): Array<{ time: string; text: s
     const quoted = !prefixed && !structuredStoryboard ? line.match(/[“"]([^”"]{2,})[”"]/) : null;
     const sameLine = timeMatch ? line.replace(timeMatch[0], '').trim() : '';
     let text = quoted?.[1] || prefixed?.[1] || '';
-    if (!text && sameLine && !structuredStoryboard && looksLikeStandaloneSpeech(sameLine)) text = sameLine;
+    if (!text && sameLine && !structuredStoryboard
+      && !looksLikeProductionInstruction(sameLine)
+      && !looksLikeOnScreenOnlyText(sameLine)) text = sameLine;
     text = cleanVoiceoverLine(text);
     if (!text || looksLikeProductionInstruction(text) || isNonSpeechSfx(text)) continue;
     if (!prefixed && looksLikeOnScreenOnlyText(text)) continue;
@@ -2667,10 +2680,28 @@ function stripVoiceoverTimestamps(value: string): string {
     .join('\n');
 }
 
+function matchesTargetWritingSystem(text: string, target: string): boolean {
+  const spoken = String(text || '')
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/[\d\s\p{P}\p{S}]+/gu, '')
+    .trim();
+  if (!spoken) return false;
+  if (target === 'zh') return /[\u4e00-\u9fff]/.test(spoken);
+  if (target === 'ar') return /[\u0600-\u06ff]/.test(spoken);
+  if (target === 'ja') return /[\u3040-\u30ff]/.test(spoken);
+  if (target === 'ko') return /[\uac00-\ud7af]/.test(spoken);
+  if (target === 'ru' || target === 'uk') return /[\u0400-\u04ff]/.test(spoken);
+  if (target === 'hi') return /[\u0900-\u097f]/.test(spoken);
+  if (target === 'th') return /[\u0e00-\u0e7f]/.test(spoken);
+  if (target === 'el') return /[\u0370-\u03ff]/.test(spoken);
+  return /[A-Za-zÀ-ž]/.test(spoken)
+    && !/[\u4e00-\u9fff\u0600-\u06ff\u0400-\u04ff\u0900-\u097f\u0e00-\u0e7f]/.test(spoken);
+}
+
 function isBadTranslatedLine(text: string, target: string): boolean {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (!normalized) return true;
-  if (target !== 'zh' && /[\u4e00-\u9fa5]/.test(normalized)) return true;
+  if (!matchesTargetWritingSystem(normalized, target)) return true;
   if (/主推品|适合展示|产品替换|参考爆款|参考节奏|我方画面/.test(normalized)) return true;
   return looksLikeProductionInstruction(normalized);
 }
@@ -2688,23 +2719,19 @@ function isNonSpeechSfx(text: string): boolean {
   return false;
 }
 
-function fallbackTranslatedLine(source: string, target: string): string {
-  const text = source.replace(/\s+/g, ' ').trim();
-  const isSpanish = target === 'es';
-  const isEnglish = target === 'en';
-  if (isNonSpeechSfx(text)) return '';
-  if (/拒绝照骗|所见即所得/.test(text)) return isSpanish ? 'Sin engaños: lo que ves es lo que recibes.' : 'No fake visuals. What you see is what you get.';
-  if (/真实效果/.test(text)) return isSpanish ? 'Mira primero el resultado real.' : 'Check the real result first.';
-  if (/打样|样品/.test(text)) return isSpanish ? 'Confirm it with a sample first.' : 'Confirm it with a sample first.';
-  if (/报价|数量|包装/.test(text)) return isSpanish ? 'Send the quantity and packaging needs for a quote.' : 'Send the quantity and packaging needs for a quote.';
-  if (isEnglish) return 'Check this detail before bulk order.';
-  if (isSpanish) return 'Revisa este detalle antes del pedido grande.';
-  return '';
+function parseVoiceTranslationLines(value: string): Array<{ time: string; text: string }> {
+  return String(value || '').split(/\n+/).map(line => {
+    const match = line.match(/^\s*(\[[^\]]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*\])\s*(.+)$/i);
+    if (!match) return null;
+    const text = cleanVoiceoverLine(match[2] || '');
+    if (!text || isNonSpeechSfx(text) || looksLikeProductionInstruction(text)) return null;
+    return { time: normalizeScriptTimestamps(match[1] || ''), text };
+  }).filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
 function normalizeTranslatedVoiceover(base: string, translated: string, target: string): string {
-  const source = parseTimestampedVoiceover(base).filter(item => !isNonSpeechSfx(item.text));
-  const parsed = parseTimestampedVoiceover(translated);
+  const source = parseVoiceTranslationLines(base);
+  const parsed = parseVoiceTranslationLines(translated);
   if (!source.length) {
     const plain = translated.trim();
     return isBadTranslatedLine(plain, target) ? '' : plain;
@@ -2715,44 +2742,28 @@ function normalizeTranslatedVoiceover(base: string, translated: string, target: 
   const candidates = rawCandidates
     .map(item => item.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
-  if (!candidates.length) return '';
+  if (candidates.length !== source.length) return '';
   const uniqueTranslatedLines = new Set(candidates.map(item => item.toLowerCase()));
-  const looksRepeated = candidates.length >= 4 && uniqueTranslatedLines.size === 1;
-  const used = new Set<string>();
+  const uniqueSourceLines = new Set(source.map(item => compactComparable(item.text)));
+  if (source.length >= 2 && uniqueSourceLines.size > 1 && uniqueTranslatedLines.size === 1) return '';
   const lines: string[] = [];
   for (let index = 0; index < source.length; index += 1) {
     const item = source[index]!;
-    let candidate = candidates[index] || candidates[Math.min(index, candidates.length - 1)] || fallbackTranslatedLine(item.text, target);
-    if (isBadTranslatedLine(candidate, target)) candidate = fallbackTranslatedLine(item.text, target);
+    const candidate = candidates[index] || '';
+    if (isBadTranslatedLine(candidate, target)) return '';
     const key = candidate.replace(/\s+/g, ' ').trim().toLowerCase();
-    const duplicate = Boolean(key && used.has(key));
-    if (key) used.add(key);
-    if (looksRepeated || duplicate || isBadTranslatedLine(candidate, target)) {
-      candidate = fallbackTranslatedLine(item.text, target);
-    }
-    if (!candidate || isBadTranslatedLine(candidate, target)) return '';
+    const sourceKey = item.text.replace(/\s+/g, ' ').trim().toLowerCase();
+    const sourceLanguage = detectScriptLanguageCode(item.text);
+    if (target !== sourceLanguage && key === sourceKey && sourceKey.split(/\s+/).length >= 4) return '';
     lines.push(`${item.time} ${candidate}`);
   }
   return lines.join('\n');
 }
 
-function resolveTranslatedVoiceover(base: string, translated: string, target: string): string {
+export function resolveTranslatedVoiceover(base: string, translated: string, target: string): string {
   const raw = normalizeScriptTimestamps(String(translated || '')).trim();
   if (!raw) return '';
-  const aligned = normalizeTranslatedVoiceover(base, raw, target);
-  if (aligned.trim()) return aligned;
-
-  // The model can return a valid localized script whose line structure is not
-  // identical to the extracted source (for example after omitting an SFX or
-  // merging a very short cue). Do not discard the whole translation merely
-  // because the stricter index-based aligner could not rebuild every line.
-  const spoken = stripVoiceoverTimestamps(raw).trim();
-  if (!spoken || isBadTranslatedLine(spoken, target)) return '';
-  if (target !== 'zh' && /[\u4e00-\u9fff]/.test(spoken)) return '';
-  const sourceCueCount = parseTimestampedVoiceover(base).filter(item => !isNonSpeechSfx(item.text)).length;
-  const translatedCueCount = parseTimestampedVoiceover(raw).filter(item => !isNonSpeechSfx(item.text)).length;
-  if (sourceCueCount > 1 && translatedCueCount < Math.max(1, Math.ceil(sourceCueCount * 0.5))) return '';
-  return raw;
+  return normalizeTranslatedVoiceover(base, raw, target);
 }
 
 const VOICE_TRANSLATION_BATCH_TIMEOUT_MS = 30_000;
@@ -3936,6 +3947,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const hasTimestampScript = Boolean(script.trim());
   const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url));
+  const hasAnyRequestedVoiceover = voiceLangs.some(code => Boolean(voiceoverAudios[code]?.url));
   const activeScriptQualityStatus = modeScripts.find(item => item.id === activeModeScriptId)?.qualityStatus;
   const activeScriptQualityBlocked = activeScriptQualityStatus === 'rejected' || activeScriptQualityStatus === 'failed';
   const canNext = contentMode === 'video' && step === 'script'
@@ -3946,7 +3958,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         : !activeScriptQualityBlocked && (
           voiceoverMode === 'none'
           || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
-          || (voiceoverMode === 'ai' && hasRequestedVoiceovers)
+          // 素材匹配与语种无关：任一语种试听音频可用即可继续，缺失语种
+          // 仍可在后续返回本页补生成，不再用“一种失败”锁死整条流程。
+          || (voiceoverMode === 'ai' && hasAnyRequestedVoiceover)
         )
     : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length
@@ -4693,11 +4707,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     try {
       await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
       const allVisuals = materials.filter(item => item.type !== 'audio');
-      const pool = allVisuals.filter(item => isClipCompatibleWithRatio(item, ratio));
+      const pool = allVisuals;
       if (!pool.length) {
-        setModeNotice(allVisuals.length
-          ? `素材库里没有与 ${ratio} 同方向的素材，请上传同画幅素材或调整成片比例。`
-          : '素材库暂无可匹配的视频或图片，请先上传素材。');
+        setModeNotice('素材库暂无可匹配的视频或图片，请先上传素材。');
         return;
       }
       if (!storyboardSlots.length) {
@@ -4728,6 +4740,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       const matchedAssignments = matchMaterialsToStoryboardLocally(matchPool, slotsToMatch, selected.filter(id => id !== hookMaterialId), {
         variantIndex,
         previousAssignments,
+        targetRatio: ratio,
       });
       const assignments = hookClip && storyboardSlots[0]
         ? { ...matchedAssignments, [storyboardSlots[0].id]: hookClip.id }
@@ -4782,9 +4795,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setModeActionStatus('正在快速匹配本地素材…');
     setModeNotice('');
     try {
-      const pool = materials.filter(item => item.type !== 'audio' && isClipCompatibleWithRatio(item, ratio));
+      const pool = materials.filter(item => item.type !== 'audio');
       if (pool.length === 0) {
-        setModeNotice(`素材库暂无与 ${ratio} 同方向的图片或视频，请先上传同画幅素材后再生成时间戳脚本。`);
+        setModeNotice('素材库暂无图片或视频，请先上传素材后再生成时间戳脚本。');
         setStepIdx(STEPS.findIndex(s => s.id === 'material'));
         return;
       }
@@ -7693,8 +7706,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           const slot = storyboardSlots.find(item => item.id === slotId);
           if (!clip || !slot) return;
           if (!isClipCompatibleWithRatio(clip, ratio)) {
-            setModeNotice(`“${clip.name}”与当前 ${ratio} 成片方向不一致，已阻止加入；请选择同方向素材。`);
-            return;
+            setModeNotice(`“${clip.name}”与当前 ${ratio} 方向不同，已加入分镜；成片时会自动居中裁切，可在预览页检查主体是否完整。`);
           }
           const detectedSource = clipSourceMode(clip);
           setStoryboardAssignments(prev => ({ ...prev, [slotId]: clipId }));
@@ -7789,8 +7801,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         };
         const bestLocalClipForSlot = (slot: StoryboardSlot) => {
           const folders = preferredFoldersForSlot(slot);
-          const candidates = materials.filter(item => item.type !== 'audio' && item.folder !== 'hot' && isClipCompatibleWithRatio(item, ratio));
+          const candidates = materials.filter(item => item.type !== 'audio' && item.folder !== 'hot');
           return [...candidates].sort((a, b) => {
+            const ratioDelta = clipRatioPreferenceScore(b, ratio) - clipRatioPreferenceScore(a, ratio);
+            if (ratioDelta) return ratioDelta;
             const aRank = folders.indexOf(a.folder);
             const bRank = folders.indexOf(b.folder);
             const normalizedA = aRank < 0 ? 999 : aRank;
@@ -7964,6 +7978,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 	                        tabIndex={0}
                         draggable={c.type !== 'audio'}
                         onDragStart={e => {
+                          e.dataTransfer.setData('application/x-lingshu-material-id', c.id);
                           e.dataTransfer.setData('text/plain', c.id);
                           e.dataTransfer.effectAllowed = 'copy';
                         }}
@@ -8185,7 +8200,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       }}
                       onDrop={event => {
                         event.preventDefault();
-                        assignClipToSlot(slot.id, event.dataTransfer.getData('text/plain'));
+                        const clipId = event.dataTransfer.getData('application/x-lingshu-material-id')
+                          || event.dataTransfer.getData('text/plain');
+                        if (clipId) assignClipToSlot(slot.id, clipId);
                       }}
                       className={`rounded-xl border p-3 transition-all ${activeStoryboardSlot?.id === slot.id ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(22,163,74,.16)]' : clip ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white hover:border-accent/50'}`}
                     >
@@ -9107,9 +9124,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     )}
                   </div>
                   <div className="min-w-0">
-                    <div className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2 text-xs leading-5 text-accent">
-                      下方是<strong>口播音轨的句级时间</strong>，用于校准配音与字幕，不是分镜切换时间。系统会先按当前语种的真实配音总时长自动校准分镜；进入素材匹配后仍可逐镜微调目标时长、素材入点、出点和速度。
-                    </div>
                     <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
                       {cues.map((cue, i) => (
                         <div key={`${cue.start}-${i}`} onClick={() => setSubPreviewIdx(i)}
@@ -9972,6 +9986,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         const activeOutputVersion = outputVersions.find(item => item.key === activeRenderCombinationKey)
           || outputVersions.find(item => item.key === fallbackActiveKey)
           || outputVersions[0];
+        const activeFormalPreviewUrl = activeOutputVersion?.output?.previewUrl
+          || activeOutputVersion?.generations.find(item => item.status === 'done' && item.previewUrl)?.previewUrl
+          || renderOutputPreviewUrl
+          || '';
         const hasFormalVideo = Boolean(renderOutputPath || outputVersions.some(version => (
           Boolean(version.output?.status === 'done' && version.output.path)
           || version.generations.some(generation => generation.status === 'done' && generation.path)
@@ -9985,6 +10003,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           if (version.output?.path) {
             setRenderOutputPath(version.output.path);
             setRenderOutputPreviewUrl(version.output.previewUrl || null);
+          } else {
+            setRenderOutputPath(null);
+            setRenderOutputPreviewUrl(null);
           }
         };
         return (
@@ -9993,7 +10014,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="flex-shrink-0">
               <div className="relative rounded-2xl overflow-hidden border border-border bg-black" style={{ width: 260 }}>
                 <div className="relative aspect-[9/16]">
-                  {activePreviewItem ? (
+                  {activeFormalPreviewUrl ? (
+                    <video
+                      key={`formal-preview-${activeFormalPreviewUrl}`}
+                      src={activeFormalPreviewUrl}
+                      controls
+                      playsInline
+                      preload="auto"
+                      className="absolute inset-0 h-full w-full bg-black object-contain"
+                      onPlay={stopPreview}
+                      onError={() => setRenderDownloadMessage('正式成片预览加载失败，请重新生成或下载后检查。')}
+                    />
+                  ) : activePreviewItem ? (
                     activePreviewItem.clip.type === 'image' ? (
                       <img src={activePreviewItem.clip.url} alt="" className="absolute inset-0 w-full h-full object-cover bg-black" />
                     ) : (
@@ -10027,12 +10059,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     <CoverFace coverUrl={coverUrl} frameUrl={coverFrameUrl} frameType={coverClip?.poster ? 'image' : coverClip?.type} fallbackVideoUrl={coverClip?.type === 'video' ? coverClip.url : undefined} title={coverTitle} style={coverStyle} />
                   )}
                 </div>
-                {activePreviewItem && (
+                {activeFormalPreviewUrl ? (
+                  <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">
+                    正式成片 · 连续 MP4
+                  </div>
+                ) : activePreviewItem && (
                   <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-black/60 px-2 py-1 text-[10px] font-bold text-white">
                     {previewIdx! + 1}/{previewTimeline.length} · {activePreviewItem.targetStart ?? 0}s-{activePreviewItem.targetEnd ?? activePreviewItem.targetDuration}s
                   </div>
                 )}
-                {previewIdx !== null && activePreviewCue && (
+                {!activeFormalPreviewUrl && previewIdx !== null && activePreviewCue && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-[7%] z-20 px-4 text-center">
                     <p className="inline-block max-w-full rounded-md bg-black/35 px-2 py-1 text-[17px] font-black leading-tight text-white"
                       style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
@@ -10040,7 +10076,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     </p>
                   </div>
                 )}
-                {previewIdx === null && (
+                {!activeFormalPreviewUrl && previewIdx === null && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     {rendering ? (
                       <div className="text-center">
@@ -10060,7 +10096,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 )}
                 <audio ref={previewBgmAudioRef} src={selectedBgmTrack?.url || undefined} preload="auto" />
                 <audio ref={previewVoiceAudioRef} src={voiceoverMode === 'none' ? undefined : voiceoverUrl || undefined} preload="auto" />
-                {previewIdx !== null && (
+                {!activeFormalPreviewUrl && previewIdx !== null && (
                   <button onClick={stopPreview} className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-black/55 flex items-center justify-center text-white">
                     <X size={14} />
                   </button>
