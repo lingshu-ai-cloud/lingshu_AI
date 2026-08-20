@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, LogIn, RefreshCcw, ShieldCheck, UserCheck } from 'lucide-react';
 import {
   authApi,
@@ -73,6 +73,8 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
   const [supportError, setSupportError] = useState<{ tenantId: string; message: string } | null>(null);
   const [promotingTenantId, setPromotingTenantId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const loadInFlightRef = useRef(false);
+  const loadControllerRef = useRef<AbortController | null>(null);
 
   const industryAccounts = useMemo(() => customerAccounts.reduce<Array<{
     industry: string; customerCount: number; accountCount: number; customers: string[]; activeCount: number;
@@ -96,6 +98,11 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
   }, {})).slice(0, 6), [styleTrends]);
 
   const load = async (options: { silent?: boolean } = {}) => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
     if (!options.silent) setLoading(true);
     setError(null);
     try {
@@ -103,10 +110,12 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
         fetch(`/api/overseas/admin/demo-accounts?_=${Date.now()}`, {
           headers: authHeader(),
           cache: 'no-store',
+          signal: controller.signal,
         }),
         fetch(`/api/overseas/admin/style-adoption-trends?_=${Date.now()}`, {
           headers: authHeader(),
           cache: 'no-store',
+          signal: controller.signal,
         }),
       ]);
       const accountJson = await accountResp.json().catch(() => ({}));
@@ -117,8 +126,15 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
       setAccountsLoaded(true);
       setStyleTrends(trendResp.ok ? trendJson.items ?? [] : []);
     } catch (err) {
+      if (controller.signal.aborted) {
+        if (!options.silent) setError('读取超时，请稍后重试');
+        return;
+      }
       setError(err instanceof Error ? err.message : '读取失败');
     } finally {
+      window.clearTimeout(timeout);
+      if (loadControllerRef.current === controller) loadControllerRef.current = null;
+      loadInFlightRef.current = false;
       if (!options.silent) setLoading(false);
     }
   };
@@ -134,6 +150,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
     window.addEventListener('focus', refreshVisible);
     document.addEventListener('visibilitychange', refreshVisible);
     return () => {
+      loadControllerRef.current?.abort();
       window.clearInterval(timer);
       window.removeEventListener('focus', refreshVisible);
       document.removeEventListener('visibilitychange', refreshVisible);

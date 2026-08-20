@@ -260,6 +260,7 @@ export function CalendarPlanner({
   const calendarScrollRef = useRef<HTMLDivElement>(null);
   const tideScrollRef = useRef<HTMLDivElement>(null);
   const tideDragRef = useRef({ pointerId: -1, startX: 0, scrollLeft: 0, moved: false });
+  const calendarRequestRef = useRef<AbortController | null>(null);
 
   const market = MARKET_OPTIONS.find(option => option.id === selectedMarket) ?? MARKET_OPTIONS[0];
   const utcOffset = useMemo(
@@ -316,6 +317,13 @@ export function CalendarPlanner({
   }, [anchor, tideMonthDays]);
 
   const load = async (silent = false) => {
+    if (calendarRequestRef.current) {
+      if (silent) return;
+      calendarRequestRef.current.abort();
+    }
+    const controller = new AbortController();
+    calendarRequestRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
     if (!silent) {
       setLoading(true);
       setError('');
@@ -323,10 +331,11 @@ export function CalendarPlanner({
     try {
       const weekdays = [0, 1, 2, 3, 4, 5, 6];
       const [calendar, scoreRows] = await Promise.all([
-        api<{ items: CalendarPost[] }>(`/api/overseas/publishing/calendar?from=${encodeURIComponent(iso(range.from))}&to=${encodeURIComponent(iso(range.to))}`),
+        api<{ items: CalendarPost[] }>(`/api/overseas/publishing/calendar?from=${encodeURIComponent(iso(range.from))}&to=${encodeURIComponent(iso(range.to))}`, { signal: controller.signal }),
         Promise.all(weekdays.map(weekday =>
           api<BestTimeResponse>(
             `/api/overseas/publishing/best-time?platform=${encodeURIComponent(selectedPlatform)}&weekday=${weekday}&utcOffset=${encodeURIComponent(String(utcOffset))}`,
+            { signal: controller.signal },
           ),
         )),
       ]);
@@ -334,16 +343,25 @@ export function CalendarPlanner({
       setScores(Object.fromEntries(scoreRows.map(row => [row.weekday, row.scores])));
       setScoreSource(scoreRows.some(row => row.source === 'account_history') ? '账号真实数据' : '平台参考');
     } catch (loadError) {
-      if (!silent) setError(calendarErrorMessage(loadError));
+      if (!silent) setError(controller.signal.aborted ? '日历读取超时，请稍后重试' : calendarErrorMessage(loadError));
     } finally {
-      if (!silent) setLoading(false);
+      window.clearTimeout(timeout);
+      if (calendarRequestRef.current === controller) {
+        calendarRequestRef.current = null;
+        if (!silent) setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(true), 30_000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load(true);
+    }, 30_000);
+    return () => {
+      window.clearInterval(timer);
+      calendarRequestRef.current?.abort();
+    };
   }, [range.from.toISOString(), range.to.toISOString(), mode, selectedPlatform, utcOffset, refreshKey]);
 
   const itemsByDay = useMemo(() => {

@@ -93,24 +93,36 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
     }
     let alive = true;
     let timer: number | undefined;
+    let inFlight = false;
+    let activeController: AbortController | null = null;
     const loadLiveCustomers = async () => {
-      const data = await fetch('/api/overseas/customers', { headers: authHeader() }).then(resp => resp.ok ? resp.json() : null);
-      const items = Array.isArray(data?.items) ? data.items : [];
-      if (!alive) return;
-      const liveCustomers = items.map((item: CustomerProfile) => cloneCustomer({ ...item, isReal: true, isMock: false }));
-      setCustomers(current => {
-        if (!includeMockCustomers) return liveCustomers;
-        const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
-        return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMockCustomers(scopedMockStorageKey!))];
-      });
+      // 后端无响应时轮询不能继续叠加，否则会积累挂起请求并拖慢整个页面。
+      if (inFlight || !alive) return;
+      inFlight = true;
+      const controller = new AbortController();
+      activeController = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 15_000);
+      try {
+        const data = await fetch('/api/overseas/customers', { headers: authHeader(), signal: controller.signal })
+          .then(resp => resp.ok ? resp.json() : null);
+        const items = Array.isArray(data?.items) ? data.items : [];
+        if (!alive) return;
+        const liveCustomers = items.map((item: CustomerProfile) => cloneCustomer({ ...item, isReal: true, isMock: false }));
+        setCustomers(current => {
+          if (!includeMockCustomers) return liveCustomers;
+          const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
+          return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMockCustomers(scopedMockStorageKey!))];
+        });
+      } finally {
+        window.clearTimeout(timeout);
+        if (activeController === controller) activeController = null;
+        inFlight = false;
+      }
     };
     const load = async () => {
       setLoading(true);
       try {
         await loadLiveCustomers();
-        timer = window.setInterval(() => {
-          void loadLiveCustomers().catch(() => {});
-        }, 30_000);
       } catch {
         if (alive) setCustomers(current => {
           if (!includeMockCustomers) return [];
@@ -120,10 +132,15 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
       } finally {
         if (alive) setLoading(false);
       }
+      // 首次加载失败也保留恢复轮询，服务恢复后无需用户刷新整页。
+      if (alive) timer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') void loadLiveCustomers().catch(() => {});
+      }, 30_000);
     };
     void load();
     return () => {
       alive = false;
+      activeController?.abort();
       if (timer) window.clearInterval(timer);
     };
   }, [refreshKey, includeMockCustomers, scopedMockStorageKey]);

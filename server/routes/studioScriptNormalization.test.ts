@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {
   applySafeStoryboardSpeechFallback,
+  buildSafeCloneStoryboard,
   clearStoryboardSpeech,
   ctaSemanticallySatisfied,
   dedupeStoryboardFieldLines,
   ensureSelectedProductNamesInScript,
+  ensureStoryboardPrimaryCta,
   fitStoryboardSpeech,
   fitSpeechToShot,
   isPackagingOnlyProductInfo,
@@ -13,6 +15,9 @@ import {
   productVoicePlanSupportsTheme,
   repairMaterialScript,
   restoreProductStoryboardBoundaries,
+  storyboardReferenceLeakIssues,
+  stripStoryboardHashtags,
+  stripStoryboardReferenceLeaks,
   unsupportedNumericClaims,
   storyboardSpeechIssues,
   syncStoryboardSubtitles,
@@ -119,8 +124,62 @@ const namesPreservedAfterFallback = ensureSelectedProductNamesInScript(
 assert.match(namesPreservedAfterFallback, /^画面：两款空包装并排；展示 Mock Hydra Serum Dropper Bottle；展示 Mock Barrier Cream Airless Jar$/m);
 
 assert.ok(storyboardSpeechIssues(`[0-2s]\n台词：怎么判断这款包装是否适合你的品牌？`).length > 0);
-assert.equal(ctaSemanticallySatisfied('Message us for verified product details.', '引导跳转WhatsApp以触达'), true);
+assert.equal(ctaSemanticallySatisfied('Message us for verified product details.', '引导跳转WhatsApp以触达'), false);
+assert.equal(ctaSemanticallySatisfied('Message us on WhatsApp for verified product details.', '引导跳转WhatsApp以触达'), true);
 assert.equal(ctaSemanticallySatisfied('Read the catalog.', '引导跳转WhatsApp以触达'), false);
+const diagnosticCta = '发送工件、节拍、缺陷样本或现场布局，预约一次 30 分钟英文方案诊断';
+assert.equal(ctaSemanticallySatisfied('发工件和节拍，预约方案诊断。', diagnosticCta), true);
+assert.equal(ctaSemanticallySatisfied('联系我们了解详情。', diagnosticCta), false);
+const ctaInjectedStoryboard = ensureStoryboardPrimaryCta(
+  '[0-2s]\n环境：工厂\n台词：查看现场。\n字幕：查看现场。',
+  diagnosticCta,
+  'zh',
+);
+assert.equal(ctaSemanticallySatisfied(ctaInjectedStoryboard, diagnosticCta), true);
+assert.match(ctaInjectedStoryboard, /^台词：预约(?:方案)?诊断。$/m);
+assert.equal(storyboardSpeechIssues(ctaInjectedStoryboard).length, 0);
+const silentCtaStoryboard = ensureStoryboardPrimaryCta(
+  '[0-2s]\n环境：工厂\n台词：无\n字幕：无',
+  diagnosticCta,
+  'zh',
+  false,
+);
+assert.equal(ctaSemanticallySatisfied(silentCtaStoryboard, diagnosticCta), true);
+assert.match(silentCtaStoryboard, /^台词：无$/m);
+assert.match(silentCtaStoryboard, /^字幕：发工件和节拍，预约方案诊断。$/m);
+
+const safeCloneStoryboard = buildSafeCloneStoryboard(
+  '[0-3s]\n台词：电视屏幕。\n[3-7s]\n台词：Usefulhouse。\n[7-11s]\n台词：无',
+  '产品名称：Vision Inspection System',
+  diagnosticCta,
+  'zh',
+  'none',
+  'Factory Automation Manager',
+);
+assert.equal((safeCloneStoryboard.match(/^\[[^\]]+\]$/gm) || []).length, 3);
+assert.match(safeCloneStoryboard, /^台词：无$/m);
+assert.match(safeCloneStoryboard, /^字幕：发工件和节拍，预约方案诊断。$/m);
+assert.equal(ctaSemanticallySatisfied(safeCloneStoryboard, diagnosticCta), true);
+assert.doesNotMatch(safeCloneStoryboard, /Usefulhouse|电视|屏幕|#\w+/i);
+
+const referenceLeaks = storyboardReferenceLeakIssues(
+  '画面：Usefulhouse 电视屏幕演示 #SmartTV',
+  ['Usefulhouse'],
+  ['电视', '屏幕'],
+);
+assert.equal(referenceLeaks.length, 3);
+assert.doesNotMatch(stripStoryboardHashtags('字幕：#SmartTV\n画面：产品现场'), /#SmartTV/);
+const sanitizedReferenceLeaks = stripStoryboardReferenceLeaks(
+  '画面：Usefulhouse 电视屏幕 #SmartTV\n台词：查看 4K screen。',
+  ['Usefulhouse'],
+  ['电视', '屏幕', '4k', 'screen'],
+);
+assert.equal(storyboardReferenceLeakIssues(
+  sanitizedReferenceLeaks,
+  ['Usefulhouse'],
+  ['电视', '屏幕', '4k', 'screen'],
+).length, 0);
+assert.match(sanitizedReferenceLeaks, /设备|equipment/);
 
 assert.deepEqual(unsupportedNumericClaims('运镜：镜头向前推进1cm\n画面：滴管抬起0.5cm', '产品名称：测试精华'), []);
 assert.deepEqual(unsupportedNumericClaims('构图：产品占画面70%\n运镜：推进至80%\n字幕：提升70%\n画面：瓶身高度10cm', '产品名称：测试精华'), ['70%', '10cm']);
@@ -224,6 +283,49 @@ assert.equal((noAsrCloneScript.match(/^素材：素材\d$/gm) || []).length, 5);
 assert.equal((noAsrCloneScript.match(/^环境：测试桌面$/gm) || []).length, 5);
 assert.equal((noAsrCloneScript.match(/^景别：特写$/gm) || []).length, 5);
 assert.deepEqual(noAsrCloneScript.match(/^\[[^\]]+\]$/gm), visuallyNamedFiveSceneScript.match(/^\[[^\]]+\]$/gm));
+
+const industrialCloneScript = `[0-4s]
+环境：自动化产线
+景别：中景
+运镜：固定
+构图：工件居中
+镜头功能：钩子
+画面：工件进入视觉检测工位
+配乐：机械环境声
+台词：原始超长口播需要被替换
+字幕：原始超长口播需要被替换
+[4-8s]
+环境：检测工位
+景别：特写
+运镜：推进
+构图：相机与工件同框
+镜头功能：证据
+画面：相机采集工件图像
+配乐：轻节奏
+台词：原始超长口播需要被替换
+字幕：原始超长口播需要被替换
+[8-11s]
+环境：方案沟通桌面
+景别：中景
+运镜：拉远
+构图：资料与工件同框
+镜头功能：CTA
+画面：展示工件和节拍资料
+配乐：收束音
+台词：原始超长口播需要被替换
+字幕：原始超长口播需要被替换`;
+const safeIndustrialClone = applySafeStoryboardSpeechFallback(
+  industrialCloneScript,
+  '产品名称：工业视觉检测工作站\n所属类目：工厂自动化',
+  'buyer_pain',
+  diagnosticCta,
+  'zh',
+);
+assert.doesNotMatch(safeIndustrialClone, /包装/);
+assert.match(safeIndustrialClone, /^台词：采购，这个风险怎么判断？$/m);
+assert.match(safeIndustrialClone, /^台词：发工件和节拍，预约方案诊断。$/m);
+assert.equal(ctaSemanticallySatisfied(safeIndustrialClone, diagnosticCta), true);
+assert.equal(storyboardSpeechIssues(safeIndustrialClone).length, 0);
 
 const materialWithValidTimingButNoBuyer = visuallyNamedChineseScript
   .replace(/^台词：[^\n]+$/gm, '台词：看看包装。')

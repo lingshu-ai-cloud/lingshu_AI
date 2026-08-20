@@ -706,6 +706,7 @@ export default function EnterprisePage() {
   const [styleDistilling, setStyleDistilling] = useState(false);
   const [styleMessage, setStyleMessage] = useState('');
   const persistedProfileRef = useRef('');
+  const productStatusAbortRef = useRef<AbortController | null>(null);
   const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== profileSnapshot(profile);
 
   useEffect(() => {
@@ -725,13 +726,18 @@ export default function EnterprisePage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    const requestInit = { headers: authHeader(), signal: controller.signal };
     Promise.all([
-      fetch('/api/overseas/enterprise/profile', { headers: authHeader() }).then(r => r.ok ? r.json() : Promise.reject(new Error(`企业资料加载失败（${r.status}）`))),
-      fetch('/api/overseas/enterprise/product-api', { headers: authHeader() }).then(r => r.json()).catch(() => null),
-      fetch('/api/overseas/enterprise/product-api/status', { headers: authHeader() }).then(r => r.json()).catch(() => ({ count: 0 })),
-      fetch('/api/overseas/enterprise/faq/packs', { headers: authHeader() }).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' })),
+      fetch('/api/overseas/enterprise/profile', requestInit).then(r => r.ok ? r.json() : Promise.reject(new Error(`企业资料加载失败（${r.status}）`))),
+      fetch('/api/overseas/enterprise/product-api', requestInit).then(r => r.json()).catch(() => null),
+      fetch('/api/overseas/enterprise/product-api/status', requestInit).then(r => r.json()).catch(() => ({ count: 0 })),
+      fetch('/api/overseas/enterprise/faq/packs', requestInit).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' })),
     ])
       .then(([data, productApi, productApiStatus, packData]: [Partial<Profile>, ProductApiInfo | null, ProductApiStatus, { packs?: FaqPack[]; recommendedIndustry?: string }]) => {
+        if (!active) return;
         const rawNext: Profile = {
           ...DEFAULT,
           ...data,
@@ -809,21 +815,63 @@ export default function EnterprisePage() {
         setOpenPackId(packs.find(pack => pack.industry === packData.recommendedIndustry)?.id || packs[0]?.id || '');
       })
       .catch(error => {
+        if (!active) return;
         setProfileLoaded(false);
-        setSaveError(error instanceof Error ? error.message : '企业资料加载失败，请刷新后重试');
+        setSaveError(error instanceof Error && error.name === 'AbortError'
+          ? '企业资料加载超时，请刷新后重试'
+          : error instanceof Error ? error.message : '企业资料加载失败，请刷新后重试');
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      fetch('/api/overseas/enterprise/product-api/status', { headers: authHeader() })
-        .then(r => r.json())
-        .then(setApiStatus)
-        .catch(() => {});
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (!profileLoaded) return;
+    let disposed = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (disposed || inFlight || document.visibilityState !== 'visible') return;
+      inFlight = true;
+      const controller = new AbortController();
+      productStatusAbortRef.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 12_000);
+      try {
+        const response = await fetch('/api/overseas/enterprise/product-api/status', {
+          headers: authHeader(),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`产品接口状态查询失败（${response.status}）`);
+        const status = await response.json() as ProductApiStatus;
+        if (!disposed) setApiStatus(status);
+      } catch {
+        // Keep the last successful status; the next bounded poll can recover.
+      } finally {
+        window.clearTimeout(timeout);
+        if (productStatusAbortRef.current === controller) productStatusAbortRef.current = null;
+        inFlight = false;
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void poll();
+      else productStatusAbortRef.current?.abort();
+    };
+    const timer = window.setInterval(() => void poll(), 5000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      productStatusAbortRef.current?.abort();
+      productStatusAbortRef.current = null;
+    };
+  }, [profileLoaded]);
 
   useEffect(() => {
     if (loading) return;
