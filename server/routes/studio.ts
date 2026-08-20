@@ -5561,6 +5561,106 @@ async function rewriteVoiceoverToDuration(text: string, language: string, curren
   }
 }
 
+const LATIN_VOICEOVER_LANGUAGES = new Set([
+  'en', 'es', 'fr', 'de', 'pt', 'it', 'id', 'vi', 'tr', 'nl', 'pl', 'sv',
+  'fil', 'ms', 'cs', 'ro', 'hu',
+]);
+const HAN_SCRIPT_RE = /[\u3400-\u9fff]/;
+const KANA_SCRIPT_RE = /[\u3040-\u30ff]/;
+const HANGUL_SCRIPT_RE = /[\uac00-\ud7af]/;
+const ARABIC_SCRIPT_RE = /[\u0600-\u06ff]/;
+const DEVANAGARI_SCRIPT_RE = /[\u0900-\u097f]/;
+const THAI_SCRIPT_RE = /[\u0e00-\u0e7f]/;
+const CYRILLIC_SCRIPT_RE = /[\u0400-\u04ff]/;
+const NON_LATIN_VOICEOVER_SCRIPT_RE = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u0400-\u04ff]/;
+
+function latinWordCount(value: string): number {
+  return String(value || '').match(/[A-Za-zÀ-ž]+(?:[-'][A-Za-zÀ-ž]+)*/g)?.length || 0;
+}
+
+/**
+ * Detects script-family mismatches before TTS. Brand names and model numbers
+ * may stay in Latin characters, but a complete sentence in another writing
+ * system must never be read as if it belonged to the selected language.
+ */
+export function voiceoverLineNeedsLanguageRepair(value: string, targetLanguage: string): boolean {
+  const line = String(value || '').trim();
+  if (!line) return false;
+  const target = String(targetLanguage || 'en').toLowerCase();
+  if (LATIN_VOICEOVER_LANGUAGES.has(target)) return NON_LATIN_VOICEOVER_SCRIPT_RE.test(line);
+  if (target === 'zh') {
+    return !HAN_SCRIPT_RE.test(line)
+      && (latinWordCount(line) >= 3 || KANA_SCRIPT_RE.test(line) || HANGUL_SCRIPT_RE.test(line)
+        || ARABIC_SCRIPT_RE.test(line) || DEVANAGARI_SCRIPT_RE.test(line)
+        || THAI_SCRIPT_RE.test(line) || CYRILLIC_SCRIPT_RE.test(line));
+  }
+  if (target === 'ja') return HANGUL_SCRIPT_RE.test(line) || ARABIC_SCRIPT_RE.test(line)
+    || DEVANAGARI_SCRIPT_RE.test(line) || THAI_SCRIPT_RE.test(line) || CYRILLIC_SCRIPT_RE.test(line);
+  if (target === 'ko') return KANA_SCRIPT_RE.test(line) || ARABIC_SCRIPT_RE.test(line)
+    || DEVANAGARI_SCRIPT_RE.test(line) || THAI_SCRIPT_RE.test(line) || CYRILLIC_SCRIPT_RE.test(line);
+  if (target === 'ar') return HAN_SCRIPT_RE.test(line) || KANA_SCRIPT_RE.test(line)
+    || HANGUL_SCRIPT_RE.test(line) || DEVANAGARI_SCRIPT_RE.test(line)
+    || THAI_SCRIPT_RE.test(line) || CYRILLIC_SCRIPT_RE.test(line)
+    || (!ARABIC_SCRIPT_RE.test(line) && latinWordCount(line) >= 3);
+  if (target === 'ru' || target === 'uk') return HAN_SCRIPT_RE.test(line) || KANA_SCRIPT_RE.test(line)
+    || HANGUL_SCRIPT_RE.test(line) || ARABIC_SCRIPT_RE.test(line)
+    || DEVANAGARI_SCRIPT_RE.test(line) || THAI_SCRIPT_RE.test(line)
+    || (!CYRILLIC_SCRIPT_RE.test(line) && latinWordCount(line) >= 3);
+  if (target === 'hi') return HAN_SCRIPT_RE.test(line) || KANA_SCRIPT_RE.test(line)
+    || HANGUL_SCRIPT_RE.test(line) || ARABIC_SCRIPT_RE.test(line)
+    || THAI_SCRIPT_RE.test(line) || CYRILLIC_SCRIPT_RE.test(line)
+    || (!DEVANAGARI_SCRIPT_RE.test(line) && latinWordCount(line) >= 3);
+  if (target === 'th') return HAN_SCRIPT_RE.test(line) || KANA_SCRIPT_RE.test(line)
+    || HANGUL_SCRIPT_RE.test(line) || ARABIC_SCRIPT_RE.test(line)
+    || DEVANAGARI_SCRIPT_RE.test(line) || CYRILLIC_SCRIPT_RE.test(line)
+    || (!THAI_SCRIPT_RE.test(line) && latinWordCount(line) >= 3);
+  return false;
+}
+
+export function splitVoiceoverLanguageLines(value: string): string[] {
+  return String(value || '')
+    .split(/\n+/)
+    .flatMap(line => line.match(/[^。！？!?；;]+[。！？!?；;]?/g) || [line])
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+async function repairVoiceoverTargetLanguage(spoken: string, language: string): Promise<string> {
+  const lines = splitVoiceoverLanguageLines(spoken);
+  const repairIndexes = lines
+    .map((line, index) => voiceoverLineNeedsLanguageRepair(line, language) ? index : -1)
+    .filter(index => index >= 0);
+  if (!repairIndexes.length) return spoken;
+
+  const target = String(language || 'en').toLowerCase();
+  const prompt = `You are a strict multilingual voiceover editor.
+
+Translate every numbered line below into ${langName(target)}.
+Return ONLY valid JSON: {"lines":["translation 1","translation 2"]}.
+The lines array must contain exactly ${repairIndexes.length} non-empty strings in the same order.
+Preserve verified brand names, product models, numbers, units and the CTA action meaning.
+Do not add claims, explanations, markdown, timestamps or quotation marks.
+Every returned line must be fully in ${langName(target)} except for proper nouns and product identifiers.
+
+${repairIndexes.map((lineIndex, index) => `${index + 1}. ${lines[lineIndex]}`).join('\n')}`;
+  const raw = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus' });
+  const parsed = extractJSON<{ lines?: unknown[] } | unknown[]>(raw);
+  const repairedLines = Array.isArray(parsed) ? parsed : parsed?.lines;
+  if (!Array.isArray(repairedLines) || repairedLines.length !== repairIndexes.length) {
+    throw new Error(`千问未返回完整的${langName(target)}逐句译文，已停止生成配音`);
+  }
+
+  const next = [...lines];
+  for (let index = 0; index < repairIndexes.length; index += 1) {
+    const repaired = String(repairedLines[index] || '').trim();
+    if (!repaired || voiceoverLineNeedsLanguageRepair(repaired, target)) {
+      throw new Error(`千问返回的第 ${index + 1} 句仍不符合${langName(target)}，已停止生成配音`);
+    }
+    next[repairIndexes[index]!] = repaired;
+  }
+  return next.join('\n');
+}
+
 async function generateFittedTts(spoken: string, voice: string, language: string, styleInput: unknown) {
   const style = normalizeTtsStyle(styleInput);
   let finalText = spoken;
@@ -5605,7 +5705,8 @@ studioRouter.post('/tts', async (req, res) => {
   if (!spoken) { res.status(400).json({ ok: false, error: 'no spoken text' }); return; }
 
   try {
-    const output = await persistTtsResult(await generateFittedTts(spoken, voice, language, style), tenantId);
+    const languageSafeSpoken = await repairVoiceoverTargetLanguage(spoken, language);
+    const output = await persistTtsResult(await generateFittedTts(languageSafeSpoken, voice, language, style), tenantId);
     const payload = JSON.stringify(output);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -5693,7 +5794,16 @@ studioRouter.post('/tts/batch', async (req, res) => {
       audios[code] = { ok: false, source: 'empty', error: 'no spoken text' };
       continue;
     }
-    audios[code] = await persistTtsResult(await generateFittedTts(spoken.slice(0, 1500), voice, language, style), tenantId);
+    try {
+      const languageSafeSpoken = await repairVoiceoverTargetLanguage(spoken.slice(0, 1500), language);
+      audios[code] = await persistTtsResult(await generateFittedTts(languageSafeSpoken, voice, language, style), tenantId);
+    } catch (error) {
+      audios[code] = {
+        ok: false,
+        source: 'language_repair_failed',
+        error: String(error instanceof Error ? error.message : error).slice(0, 240),
+      };
+    }
   }
   res.json({ ok: Object.values(audios).some(item => item.ok && item.url), audios });
 });

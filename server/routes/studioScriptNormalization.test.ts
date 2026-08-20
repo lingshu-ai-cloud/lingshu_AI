@@ -23,6 +23,8 @@ import {
   unsupportedNumericClaims,
   storyboardSpeechIssues,
   syncStoryboardSubtitles,
+  splitVoiceoverLanguageLines,
+  voiceoverLineNeedsLanguageRepair,
 } from './studio.js';
 
 const compact = '[0-3s] 素材：瓶身 环境：桌面 景别：特写 运镜：推进 构图：居中 镜头功能：钩子 画面：旋出膏体 配乐：轻快 台词：买家先看膏体。 字幕：旧字幕';
@@ -374,6 +376,16 @@ assert.equal(
   ),
   '',
   'distinct source cues must not collapse into one repeated sentence',
+);
+
+assert.equal(voiceoverLineNeedsLanguageRepair('Buyers, how do you judge this risk?', 'en'), false);
+assert.equal(voiceoverLineNeedsLanguageRepair('发送工件、节拍或缺陷样本，预约一次英文方案诊断。', 'en'), true);
+assert.equal(voiceoverLineNeedsLanguageRepair('Send the sample and book a 30-minute review.', 'zh'), true);
+assert.equal(voiceoverLineNeedsLanguageRepair('发送 LX-Vision 工件样本。', 'zh'), false);
+assert.deepEqual(
+  splitVoiceoverLanguageLines('Buyers, how do you judge this risk?\n发送工件、节拍或缺陷样本；预约英文方案诊断。'),
+  ['Buyers, how do you judge this risk?', '发送工件、节拍或缺陷样本；', '预约英文方案诊断。'],
+  'language repair must keep sentence order and translate every mismatched sentence independently',
 );
 
 console.log('studio script normalization tests passed');
