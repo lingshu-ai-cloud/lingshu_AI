@@ -510,7 +510,7 @@ export default function App() {
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               initialView="materials"
               showModeTabs={false}
-              pageTitle="灵感大屏"
+              pageTitle="灵感中心"
             />
           )}
           {page === 'smartAssets' && (
@@ -525,7 +525,7 @@ export default function App() {
               initialView="create"
               showModeTabs
               visibleModes={['create', 'publish']}
-              pageTitle="智能素材"
+              pageTitle="内容创作"
             />
           )}
           {page === 'accountManagement' && (

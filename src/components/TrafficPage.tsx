@@ -30,7 +30,7 @@ import {
   type TrafficViewMode,
 } from './trafficViewMode';
 
-// 每个工作区都很重，按当前视图拆包，避免进入“智能素材”时同时解析灵感大屏、
+// 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
 const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
 const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
@@ -121,6 +121,19 @@ const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; for
   instagram: { label: 'Instagram', color: '#c13584', format: 'Reels' },
   facebook: { label: 'Facebook', color: '#1877f2', format: 'Reels / Page Video' },
 };
+
+const TRAFFIC_MODE_META: Record<ViewMode, {
+  icon: typeof Film;
+  label: string;
+  guide: string;
+}> = {
+  materials: { icon: Film, label: '灵感', guide: 'social-inspiration' },
+  create: { icon: Wand2, label: '创作', guide: 'ai-create' },
+  publish: { icon: Send, label: '发布', guide: 'publishing-workbench' },
+  accounts: { icon: BarChart3, label: '账号', guide: 'social-performance' },
+};
+
+const TRAFFIC_MODE_ORDER: ViewMode[] = ['materials', 'create', 'publish', 'accounts'];
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers ?? {}) } });
@@ -287,6 +300,11 @@ export default function TrafficPage({
     return 'materials';
   });
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
+  const modeItems = TRAFFIC_MODE_ORDER
+    .filter(mode => !visibleModes || visibleModes.includes(mode))
+    .map(mode => ({ mode, ...TRAFFIC_MODE_META[mode] }));
+  const currentModeLabel = TRAFFIC_MODE_META[viewMode].label;
+  const showCreateShortcut = initialView === 'materials' && showModeTabs === false && Boolean(onNavigate);
 
   useEffect(() => {
     try { localStorage.setItem('lingshu:traffic:view-mode', viewMode); } catch { /* ignore */ }
@@ -312,32 +330,32 @@ export default function TrafficPage({
   }, []);
 
   useEffect(() => {
-    const contextByMode: Record<ViewMode, { label: string; summary: string; suggestions: string[] }> = {
+    const contextByMode: Record<ViewMode, { summary: string; suggestions: string[] }> = {
       materials: {
-        label: '我的社媒',
-        summary: '当前在社媒灵感大屏，适合拆解爆款内容、筛选素材方向、规划发布节奏。',
+        summary: '当前在灵感中心，适合拆解爆款内容、筛选素材方向、规划发布节奏。',
         suggestions: ['拆解当前素材方向', '规划本周发布节奏', '找出适合目标市场的内容角度', '把素材转成创作任务'],
       },
       create: {
-        label: 'AI智能素材',
-        summary: '当前在 AI 智能素材页，适合生成图文海报、短视频脚本、标题、口播钩子和发布文案。',
+        summary: '当前在内容创作的创作阶段，适合生成图文海报、短视频脚本、标题、口播钩子和发布文案。',
         suggestions: ['生成一套主推品素材', '把卖点改成外语口播', '设计 Facebook 图文文案', '优化视频开头 3 秒钩子'],
       },
       publish: {
-        label: '账号一键发布',
-        summary: '当前在账号一键发布页，适合检查授权账号、生成分平台文案包、确认首评和 WhatsApp 追踪链接。',
+        summary: '当前在内容创作的发布阶段，适合检查授权账号、生成分平台文案包、确认首评和 WhatsApp 追踪链接。',
         suggestions: ['生成四个平台的差异化文案', '检查首评内容', '确认追踪链接', '排到建议时段发布'],
       },
       accounts: {
-        label: '账号动态',
-        summary: '当前在账号动态，适合查看账号表现，以及识别评论中的高意向商机。',
+        summary: '当前在账号管理，适合查看账号表现，以及识别评论中的高意向商机。',
         suggestions: ['查看待回复高意向评论', '判断评论采购意图', '生成真人化回复', '复盘账号表现'],
       },
     };
     window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
-      detail: { agent: 'traffic', ...contextByMode[viewMode] },
+      detail: {
+        agent: 'traffic',
+        label: showModeTabs ? `${pageTitle} · ${TRAFFIC_MODE_META[viewMode].label}阶段` : pageTitle,
+        ...contextByMode[viewMode],
+      },
     }));
-  }, [viewMode]);
+  }, [pageTitle, showModeTabs, viewMode]);
 
   const handleEnterWorkflow = (payload: unknown) => {
     try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
@@ -367,38 +385,57 @@ export default function TrafficPage({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border px-5">
-        <div className="flex items-center gap-2.5">
+      <header className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
             <Zap size={13} />
           </div>
-          <span className="text-sm font-semibold text-text-primary">{pageTitle}</span>
+          <h1 className="truncate text-sm font-semibold text-text-primary">{pageTitle}</h1>
+          {showModeTabs && (
+            <>
+              <ChevronLeft aria-hidden="true" size={13} className="hidden rotate-180 text-text-muted sm:block" />
+              <span className="hidden truncate text-xs font-medium text-text-secondary sm:block">{currentModeLabel}阶段</span>
+            </>
+          )}
         </div>
+        {showCreateShortcut && (
+          <button
+            type="button"
+            onClick={() => onNavigate?.('smartAssets')}
+            aria-label="从灵感中心进入内容创作"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-bold text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+          >
+            <Wand2 aria-hidden="true" size={14} />
+            开始创作
+          </button>
+        )}
       </header>
 
-      {showModeTabs && <div className="flex-shrink-0 border-b border-border bg-surface px-6 py-3">
+      {showModeTabs && <div className="flex-shrink-0 border-b border-border bg-surface px-3 py-2 sm:px-6">
         <div
-          className="grid w-full gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm"
-          style={{ gridTemplateColumns: `repeat(${visibleModes?.length || 4}, minmax(0, 1fr))` }}
+          role="tablist"
+          aria-label={`${pageTitle}流程`}
+          className="mx-auto grid w-full max-w-2xl gap-1 rounded-xl border border-border bg-surface-2 p-1"
+          style={{ gridTemplateColumns: `repeat(${modeItems.length}, minmax(0, 1fr))` }}
         >
-          {[
-            { mode: 'materials' as ViewMode, icon: <Film size={18} />, label: '灵感大屏', guide: 'social-inspiration' },
-            { mode: 'create' as ViewMode, icon: <Wand2 size={18} />, label: 'AI智能素材', guide: 'ai-create' },
-            { mode: 'publish' as ViewMode, icon: <Send size={18} />, label: '一键发布', guide: 'publishing-workbench' },
-            { mode: 'accounts' as ViewMode, icon: <BarChart3 size={18} />, label: '账号动态', guide: 'social-performance' },
-          ].filter(item => !visibleModes || visibleModes.includes(item.mode)).map(({ mode, icon, label, guide }) => {
+          {modeItems.map(({ mode, icon: Icon, label, guide }) => {
             const active = viewMode === mode;
             return (
               <button
                 key={mode}
                 type="button"
+                role="tab"
+                id={`traffic-tab-${mode}`}
+                aria-selected={active}
+                aria-controls={`traffic-panel-${mode}`}
+                aria-current={active ? 'step' : undefined}
                 data-lingshu-guide={guide}
                 onClick={() => setViewMode(mode)}
-                className={`flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-black transition-all ${
-                  active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60 hover:text-text-secondary'
+                className={`flex h-9 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 ${
+                  active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/70 hover:text-text-secondary'
                 }`}
               >
-                <span className={active ? 'text-accent' : 'text-text-muted'}>{icon}</span>
+                <Icon aria-hidden="true" size={16} className={active ? 'text-accent' : 'text-text-muted'} />
                 <span className="min-w-0 truncate">{label}</span>
               </button>
             );
@@ -409,7 +446,7 @@ export default function TrafficPage({
       <main className="min-h-0 flex-1 overflow-hidden">
         <AnimatePresence mode="wait">
           {viewMode === 'materials' ? (
-            <motion.div key="materials" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+            <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
               <InspirationDashboard
                 onScriptPanelOpen={onScriptPanelOpen}
                 onScriptPanelClose={onScriptPanelClose}
@@ -418,15 +455,15 @@ export default function TrafficPage({
               />
             </motion.div>
           ) : viewMode === 'create' ? (
-            <motion.div key="create" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+            <motion.div key="create" id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
               <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} />
             </motion.div>
           ) : viewMode === 'publish' ? (
-            <motion.div key="publish" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+            <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
               <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} />
             </motion.div>
           ) : (
-            <motion.div key="accounts" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+            <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
               <AccountActivity />
             </motion.div>
           )}
@@ -827,7 +864,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
         const video = imported.get(item.videoPath.trim());
         if (!video) return item;
         if (video.videoPath) return { ...item, videoPath: video.videoPath, previewUrl: video.previewUrl, selected: true, error: undefined };
-        return { ...item, videoPath: '', previewUrl: undefined, selected: false, error: '原成片文件已失效，请返回 AI 智能素材重新生成此版本。' };
+        return { ...item, videoPath: '', previewUrl: undefined, selected: false, error: '原成片文件已失效，请返回内容创作重新生成此版本。' };
       }));
     }).catch(importError => {
       pendingPaths.forEach(videoPath => materializedVideoPathsRef.current.delete(videoPath));
@@ -1159,20 +1196,22 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     <div className="px-6 pb-5 pt-3">
       <div className="mx-auto max-w-[1600px] space-y-4">
         <div className="flex justify-center">
-          <div className="grid w-full max-w-xl grid-cols-2 gap-1 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
+          <div role="group" aria-label="发布工作区" className="grid w-full max-w-xl grid-cols-2 gap-1 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
             <button
               type="button"
               onClick={() => setWorkspaceTab('schedule')}
-              className={`h-10 rounded-xl px-4 text-sm font-black transition-all ${workspaceTab === 'schedule' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
+              aria-pressed={workspaceTab === 'schedule'}
+              className={`h-10 rounded-xl px-4 text-sm font-black transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'schedule' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
             >
-              内容排产工作台
+              内容日历
             </button>
             <button
               type="button"
               onClick={() => setWorkspaceTab('publish')}
-              className={`h-10 rounded-xl px-4 text-sm font-black transition-all ${workspaceTab === 'publish' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
+              aria-pressed={workspaceTab === 'publish'}
+              className={`h-10 rounded-xl px-4 text-sm font-black transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'publish' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
             >
-              一键发布内容
+              发布设置
             </button>
           </div>
         </div>
@@ -1252,7 +1291,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                         <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${hasVideo ? status.className : 'bg-amber-50 text-amber-700'}`}>{hasVideo ? status.label : '未生成成片'}</span>
                       </div>
                       <p className="mt-1 truncate text-[11px] text-text-muted">
-                        {item.videoPath || '请返回 AI 智能素材生成该版本成片'} · {targetCount} 个账号 · {item.deliveryMode === 'now' ? '立即发布' : item.deliveryMode === 'flexible' ? '时间待定' : item.scheduledAt ? `定点 ${new Date(item.scheduledAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '待选定点时间'}
+                        {item.videoPath || '请返回内容创作生成该版本成片'} · {targetCount} 个账号 · {item.deliveryMode === 'now' ? '立即发布' : item.deliveryMode === 'flexible' ? '时间待定' : item.scheduledAt ? `定点 ${new Date(item.scheduledAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '待选定点时间'}
                       </p>
                       {item.error && <p className="mt-1 truncate text-[11px] font-semibold text-red-600" title={item.error}>{item.error}</p>}
                     </button>

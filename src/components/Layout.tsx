@@ -23,8 +23,8 @@ const HOME_NAV_ITEM = { id: 'strategy' as Page, label: '首页', icon: <Home siz
 const SOCIAL_NAV: NavSection = {
   label: '社媒运营',
   items: [
-    { id: 'socialInspiration', label: '灵感大屏', icon: <Clapperboard size={16} /> },
-    { id: 'smartAssets', label: '智能素材', icon: <WandSparkles size={16} /> },
+    { id: 'socialInspiration', label: '灵感中心', icon: <Clapperboard size={16} /> },
+    { id: 'smartAssets', label: '内容创作', icon: <WandSparkles size={16} /> },
     { id: 'scriptLibrary', label: '脚本库', icon: <FileText size={16} /> },
     { id: 'accountManagement', label: '账号管理', icon: <RadioTower size={16} /> },
   ],
@@ -117,9 +117,12 @@ function NavItem({
 }) {
   return (
     <motion.button
+      type="button"
       whileTap={{ scale: 0.97 }}
       onClick={onClick}
       title={collapsed ? item.label : undefined}
+      aria-label={collapsed ? item.label : undefined}
+      aria-current={active ? 'page' : undefined}
       data-demo-target={item.id}
       className={`w-full flex items-center rounded-xl py-2 text-sm font-medium transition-colors cursor-pointer relative ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
       style={
@@ -136,7 +139,7 @@ function NavItem({
           transition={{ type: 'spring', damping: 30, stiffness: 350 }}
         />
       )}
-      <span className="relative flex-shrink-0" style={{ color: active ? 'var(--color-accent)' : undefined }}>
+      <span aria-hidden="true" className="relative flex-shrink-0" style={{ color: active ? 'var(--color-accent)' : undefined }}>
         {item.icon}
       </span>
       {!collapsed && <span className="relative flex-1 text-left">{item.label}</span>}
@@ -332,7 +335,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         )}
 
         {/* Home nav */}
-        <nav className="px-3 pb-2">
+        <nav aria-label="主导航" className="px-3 pb-2">
           <NavItem
             item={HOME_NAV_ITEM}
             active={page === HOME_NAV_ITEM.id}
@@ -345,7 +348,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           {navSections.map((section, index) => (
             <div key={section.label}>
               {index > 0 && <div className="mx-4 my-2 border-t border-border" />}
-              <nav className="px-3 space-y-0.5">
+              <nav aria-label={section.label} className="px-3 space-y-0.5">
                 {!sidebarCollapsed && <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
                 {section.items.map(item => (
                   <NavItem

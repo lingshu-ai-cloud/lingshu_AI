@@ -6,6 +6,7 @@ import {
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
   Lightbulb, Flame, BarChart2, ChevronRight, Film, Download, Plus,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2,
+  SlidersHorizontal, Eye,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
@@ -27,6 +28,7 @@ type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturi
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import';
+type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 
 const MATERIAL_INDUSTRY_LABELS: Record<string, string> = {
   all: '全部行业', beauty_skincare: '美妆护肤', universal_manufacturing: '通用制造',
@@ -2127,7 +2129,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
           const payload = await response.json().catch(() => ({})) as { error?: string };
           if (!response.ok) throw new Error(payload.error || '精修视频同步失败');
         } catch (error) {
-          console.warn('精修视频同步失败，已继续进入智能素材。', error);
+          console.warn('精修视频同步失败，已继续进入内容创作。', error);
         }
       })();
     }
@@ -2425,6 +2427,7 @@ interface VideoCardProps {
   index: number;
   isSelected: boolean;
   onSelect: () => void;
+  onCreate: () => void;
   onWatch: () => void;
   onAnalyzeVideo?: () => void;
   onFavoriteMaterial?: () => void;
@@ -2432,7 +2435,7 @@ interface VideoCardProps {
   favoritingMaterial?: boolean;
 }
 
-function VideoCard({ video, index, isSelected, onSelect, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: VideoCardProps) {
+function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const isImagePost = video.contentFormat === 'image';
@@ -2478,28 +2481,10 @@ function VideoCard({ video, index, isSelected, onSelect, onWatch, onAnalyzeVideo
             onError={() => setMediaReady(false)}
           />
         ) : null}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-neutral-900">
-            {isImagePost ? <Images size={11} /> : <Play size={11} fill="currentColor" />}{isImagePost ? '查看' : video.videoUrl || sourceEmbedUrl(video) ? '观看' : '原站'}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <span className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900 shadow-sm">
+            {isImagePost ? <Images size={12} /> : <Play size={12} fill="currentColor" />}预览内容
           </span>
-          {isImagePost && <button onClick={e => { e.stopPropagation(); onSelect(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-            style={{ background: meta.bg, color: meta.color }}>
-            <Sparkles size={11} />拆解图文
-          </button>}
-          {!isImagePost && <button onClick={e => { e.stopPropagation(); if (onAnalyzeVideo) onAnalyzeVideo(); else onSelect(); }}
-            disabled={analyzingVideo}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-            style={{ background: meta.bg, color: meta.color }}>
-            {analyzingVideo ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}分析脚本
-          </button>}
-          {video.sourceUrl && !isImagePost && (
-            <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }}
-              disabled={favoritingMaterial}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/90 text-neutral-900 disabled:opacity-70">
-              {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />}收藏
-            </button>
-          )}
         </div>
         <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold text-white bg-black/50 backdrop-blur-sm">
           {isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}
@@ -2529,16 +2514,43 @@ function VideoCard({ video, index, isSelected, onSelect, onWatch, onAnalyzeVideo
         <div className="flex flex-wrap gap-1">
           {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3">
+          <button type="button" onClick={onSelect}
+            className="inline-flex min-h-9 items-center justify-center gap-1 rounded-lg border border-border bg-surface text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
+            <Eye size={12} />查看详情
+          </button>
+          <button type="button" onClick={onCreate}
+            className="inline-flex min-h-9 items-center justify-center gap-1 rounded-lg bg-accent px-2 text-[11px] font-bold text-white transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
+            <Sparkles size={12} />用此灵感创作
+          </button>
+        </div>
+        <details className="group/actions mt-1.5">
+          <summary className="flex min-h-7 cursor-pointer list-none items-center justify-center gap-1 rounded-md text-[10px] font-semibold text-text-muted transition hover:bg-surface-2 hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
+            更多操作 <ChevronDown size={11} className="transition-transform group-open/actions:rotate-180" />
+          </summary>
+          <div className="mt-1 grid grid-cols-2 gap-1 rounded-lg bg-surface-2 p-1.5">
+            <button type="button" onClick={onWatch} className="rounded-md px-2 py-1.5 text-[10px] font-semibold text-text-secondary hover:bg-surface">预览内容</button>
+            <button type="button" onClick={() => onAnalyzeVideo?.()} disabled={analyzingVideo}
+              className="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-semibold text-text-secondary hover:bg-surface disabled:opacity-60">
+              {analyzingVideo ? <Loader2 size={10} className="animate-spin" /> : <BarChart2 size={10} />}{isImagePost ? '查看图文拆解' : '分析脚本'}
+            </button>
+            {video.sourceUrl && !isImagePost && <button type="button" onClick={() => onFavoriteMaterial?.()} disabled={favoritingMaterial}
+              className="col-span-2 inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-semibold text-text-secondary hover:bg-surface disabled:opacity-60">
+              {favoritingMaterial ? <Loader2 size={10} className="animate-spin" /> : <Bookmark size={10} />}收藏到素材库
+            </button>}
+          </div>
+        </details>
       </div>
     </motion.div>
   );
 }
 
 // ── Video List Item ───────────────────────────────────────────────────────────
-function VideoListItem({ video, isSelected, onSelect, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: {
+function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: {
   video: TrendVideo;
   isSelected: boolean;
   onSelect: () => void;
+  onCreate: () => void;
   onWatch: () => void;
   onAnalyzeVideo?: () => void;
   onFavoriteMaterial?: () => void;
@@ -2551,7 +2563,7 @@ function VideoListItem({ video, isSelected, onSelect, onWatch, onAnalyzeVideo, o
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const isImagePost = video.contentFormat === 'image';
   return (
-    <div className={`flex items-center gap-4 px-4 py-3 cursor-pointer transition-all group ${isSelected ? 'bg-accent-glow' : 'hover:bg-surface-2'}`} onClick={onSelect}>
+    <div className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-all group sm:flex-nowrap ${isSelected ? 'bg-accent-glow' : 'hover:bg-surface-2'}`}>
       <button type="button" onClick={e => { e.stopPropagation(); onWatch(); }}
         className="w-16 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-border bg-surface-2 relative group/thumb">
         <VideoThumbnail platform={video.platform} title={video.title} />
@@ -2578,17 +2590,20 @@ function VideoListItem({ video, isSelected, onSelect, onWatch, onAnalyzeVideo, o
         <p className="text-xs font-mono text-text-secondary">{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
         <p className="text-[10px] text-text-muted">{video.views}</p>
       </div>
-      {isImagePost && <button onClick={e => { e.stopPropagation(); onSelect(); }}
-        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all opacity-0 group-hover:opacity-100"
-        style={{ color: 'var(--color-accent)', borderColor: 'rgba(22,163,74,0.25)', background: 'var(--color-accent-glow)' }}>
-        <Sparkles size={11} /><span>拆解图文</span>
-      </button>}
-      {!isImagePost && <button onClick={e => { e.stopPropagation(); if (onAnalyzeVideo) onAnalyzeVideo(); else onSelect(); }}
-        disabled={analyzingVideo}
-        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all opacity-0 group-hover:opacity-100"
-        style={{ color: 'var(--color-accent)', borderColor: 'rgba(22,163,74,0.25)', background: 'var(--color-accent-glow)' }}>
-        {analyzingVideo ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}<span>分析脚本</span>
-      </button>}
+      <div className="ml-auto flex w-full items-center justify-end gap-1.5 sm:ml-0 sm:w-auto">
+        <button type="button" onClick={onSelect}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-accent hover:text-accent">
+          <Eye size={12} />查看详情
+        </button>
+        <button type="button" onClick={onCreate}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-95">
+          <Sparkles size={12} />用此灵感创作
+        </button>
+        <button type="button" onClick={() => onAnalyzeVideo?.()} disabled={analyzingVideo} aria-label={isImagePost ? '查看图文拆解' : '分析脚本'} title={isImagePost ? '查看图文拆解' : '分析脚本'}
+          className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent disabled:opacity-60">
+          {analyzingVideo ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
+        </button>
+      </div>
       {video.sourceUrl && !isImagePost && (
         <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }} disabled={favoritingMaterial}
           className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-60">
@@ -2887,6 +2902,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
   const [contentFormat, setContentFormat] = useState<ContentFormat>('video');
   const [crawlTimeRange, setCrawlTimeRange] = useState<CrawlTimeRange>('all');
+  const [inspirationFiltersOpen, setInspirationFiltersOpen] = useState(false);
   const [crawledVideos, setCrawledVideos] = useState<TrendVideo[]>([]);
   const [videoPage, setVideoPage] = useState(1);
   const [videoTotalPages, setVideoTotalPages] = useState(1);
@@ -2908,6 +2924,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
   const [materialOrientation, setMaterialOrientation] = useState<MaterialOrientationFilter>('all');
   const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>('all');
+  const [materialType, setMaterialType] = useState<MaterialTypeFilter>('all');
+  const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [generatingNeedId, setGeneratingNeedId] = useState('');
@@ -3226,6 +3244,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         || (materialOrientation === 'vertical' && /竖屏|vertical/i.test(String(material.tags || '')))
         || (materialOrientation === 'horizontal' && /横屏|horizontal/i.test(String(material.tags || '')));
       return (!q || searchable.includes(q))
+        && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
         && (materialFunction === 'all' || functions.includes(materialFunction))
         && (materialApplicability === 'all' || material.applicability === materialApplicability)
@@ -3237,7 +3256,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const sourcePriority = Number(materialSourceOf(b) === 'local_upload') - Number(materialSourceOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialSearch, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource]);
+  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -3635,72 +3654,113 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
+  const clearInspirationFilters = () => {
+    setLastCrawlVideoIds([]);
+    setSearch('');
+    setPlatform('all');
+    setContentFormat('video');
+    setCrawlTimeRange('all');
+    setSortMode('crawlTime');
+    setViewMode('grid');
+  };
+
+  const clearMaterialFilters = () => {
+    setMaterialSearch('');
+    setMaterialSource('all');
+    setMaterialType('all');
+    setMaterialIndustry('all');
+    setMaterialFunction('all');
+    setMaterialApplicability('all');
+    setMaterialOrientation('all');
+  };
+
+  const inspirationFilterCount = Number(search.trim().length > 0)
+    + Number(platform !== 'all')
+    + Number(contentFormat !== 'video')
+    + Number(crawlTimeRange !== 'all')
+    + Number(sortMode !== 'crawlTime')
+    + Number(viewMode !== 'grid');
+  const materialFilterCount = Number(materialSearch.trim().length > 0)
+    + Number(materialSource !== 'all')
+    + Number(materialType !== 'all')
+    + Number(materialIndustry !== 'all')
+    + Number(materialFunction !== 'all')
+    + Number(materialApplicability !== 'all')
+    + Number(materialOrientation !== 'all');
 
   return (
     <div className="relative">
       <div className="transition-all duration-300">
-        <div className="pointer-events-none absolute left-0 top-48 z-30 flex flex-col gap-2">
-          {([
-            { id: 'inspiration' as const, label: '爆款灵感', short: '爆款', count: visibleVideos.length, icon: <Flame size={18} /> },
-            { id: 'library' as const, label: '社媒素材库', short: '素材', count: localMaterials.length, icon: <Film size={18} /> },
-            { id: 'shooting' as const, label: '待拍摄素材', short: '待拍', count: shootingNeeds.length, icon: <Lightbulb size={18} /> },
-          ]).map(item => {
-            const active = innerView === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                title={`${item.label} · ${item.count}`}
-                onClick={() => setInnerView(item.id)}
-                className={`pointer-events-auto flex h-28 w-14 flex-col items-center justify-center gap-1.5 rounded-r-2xl border border-l-0 text-[14px] font-black shadow-md transition-all ${
-                  active
-                    ? 'border-accent/30 bg-accent text-white'
-                    : 'border-border bg-white/95 text-slate-500 hover:bg-accent-glow hover:text-accent'
-                }`}
-              >
-                {item.icon}
-                <span className="[writing-mode:vertical-rl] tracking-[0.16em] leading-none">{item.short}</span>
-              </button>
-            );
-          })}
-        </div>
+        <div className="px-4 py-5 sm:px-6">
+          <div className="mb-4 border-b border-border">
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-black text-text-primary">灵感中心</h2>
+                <p className="mt-0.5 text-xs text-text-muted">找灵感、管素材、补缺口，在一处完成创作前准备。</p>
+              </div>
+              {innerView === 'inspiration' && (
+                <button
+                  type="button"
+                  onClick={() => { setSelectedVideo(null); setShowAccountsModal(true); }}
+                  aria-haspopup="dialog"
+                  className="inline-flex h-10 items-center gap-2 rounded-xl border border-accent/30 bg-accent-glow px-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
+                  title="添加并抓取对标账号内容"
+                >
+                  <Users size={15} />
+                  添加内容来源
+                </button>
+              )}
+            </div>
+            <nav className="-mb-px flex gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
+              {([
+                { id: 'inspiration' as const, label: '爆款灵感', count: tenantVideoTotalItems || visibleVideos.length, icon: <Flame size={16} /> },
+                { id: 'library' as const, label: '我的素材', count: localMaterials.length, icon: <Film size={16} /> },
+                { id: 'shooting' as const, label: '拍摄任务', count: shootingNeeds.length + scriptGapTasks.length, icon: <Lightbulb size={16} /> },
+              ]).map(item => {
+                const active = innerView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setInnerView(item.id)}
+                    className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30 ${
+                      active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'
+                    }`}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${active ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted'}`}>{item.count}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
 
-        <div className="px-6 py-5 pl-[74px]">
             {materialMessage && (
               <div role="status" aria-live="polite" className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-4 py-2.5 text-sm font-semibold text-accent">
                 {materialMessage}
               </div>
             )}
-            {innerView === 'inspiration' && <div className="mb-4 space-y-2.5">
-              <div className="flex items-center gap-2.5">
-                <div className="relative min-w-0 flex-1">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  <input type="text" value={search} onChange={e => { setLastCrawlVideoIds([]); setSearch(e.target.value); }}
-                    placeholder="搜索视频标题或标签..."
-                    className="h-11 w-full pl-9 pr-4 rounded-xl border border-border bg-surface text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors" />
+            {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-2xl border border-border bg-surface p-3 shadow-sm sm:p-4">
+              <div className="flex flex-col gap-2.5 xl:flex-row">
+                <div className="relative min-w-[220px] flex-1">
+                  <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  <input type="search" value={search} onChange={e => { setLastCrawlVideoIds([]); setSearch(e.target.value); }}
+                    aria-label="搜索爆款灵感"
+                    placeholder="搜索标题或标签..."
+                    className="h-12 w-full rounded-xl border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent" />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setSelectedVideo(null); setShowAccountsModal(true); }}
-                  aria-haspopup="dialog"
-                  className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-accent/30 bg-accent-glow px-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent hover:text-white"
-                  title="爬取对标账号主页最新视频"
-                >
-                  <Users size={15} />
-                  <span className="hidden sm:inline">对标账号</span>
-                </button>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
+                <div className="relative h-12 min-w-[164px] rounded-xl border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
                 {platform === 'all'
-                  ? <Globe size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <SocialPlatformIcon platform={platform} size={17} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">社媒平台</span>
+                  ? <Globe size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  : <SocialPlatformIcon platform={platform} size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2" />}
                 <select
                   value={platform}
                   onChange={e => handlePlatformFilter(e.target.value as Platform)}
                   aria-label="社媒平台"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
+                  className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none"
                 >
                   {PLATFORM_FILTERS.map(f => (
                     <option key={f.id} value={f.id}>
@@ -3708,92 +3768,102 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </option>
                   ))}
                 </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                 <span className="sr-only">{platformLabel}</span>
               </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
+              <div className="relative h-12 min-w-[152px] rounded-xl border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
                 {contentFormat === 'video'
-                  ? <Film size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <Images size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">内容形式</span>
+                  ? <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  : <Images size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
                 <select
                   value={contentFormat}
                   onChange={e => handleContentFormatFilter(e.target.value as ContentFormat)}
                   aria-label="内容形式"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
+                  className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none"
                 >
                   <option value="video">视频</option>
                   <option value="image">图文</option>
                 </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                 <span className="sr-only">{contentFormatLabel}</span>
               </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
-                <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">入库时间</span>
+              <button type="button" onClick={() => setInspirationFiltersOpen(value => !value)} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters"
+                className={`inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl border px-3.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${inspirationFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
+                <SlidersHorizontal size={15} />更多筛选
+                {inspirationFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black text-white">{inspirationFilterCount}</span>}
+                <ChevronDown size={14} className={`transition-transform ${inspirationFiltersOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+
+            <AnimatePresence initial={false}>
+              {inspirationFiltersOpen && <motion.div id="inspiration-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                <div className="grid gap-3 border-t border-border pt-3 md:grid-cols-3">
+                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
+                    <Clock size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">入库时间</span>
                 <select
                   value={crawlTimeRange}
                   onChange={event => { setLastCrawlVideoIds([]); setCrawlTimeRange(event.target.value as CrawlTimeRange); }}
                   aria-label="视频抓取入库时间"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none"
                 >
                   <option value="all">全部时间</option>
                   <option value="today">今天入库</option>
                   <option value="7d">近 7 天</option>
                   <option value="30d">近 30 天</option>
                 </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
                 {sortMode === 'heat'
-                  ? <Flame size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">排序方法</span>
+                      ? <Flame size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                      : <Clock size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
+                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">排序方法</span>
                 <select
                   value={sortMode}
                   onChange={e => { setLastCrawlVideoIds([]); setSortMode(e.target.value as SortMode); }}
                   aria-label="排序方法"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none"
                 >
                   <option value="crawlTime">按爬取时间</option>
                   <option value="heat">按热度</option>
                 </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                 <span className="sr-only">{sortLabel}</span>
-              </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
+                  </label>
+                  <label className="relative block h-14 rounded-xl border border-border bg-surface-2 focus-within:border-accent">
                 {viewMode === 'grid'
-                  ? <LayoutGrid size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <List size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">大屏视图</span>
+                      ? <LayoutGrid size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                      : <List size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
+                    <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">展示方式</span>
                 <select
                   value={viewMode}
                   onChange={e => setViewMode(e.target.value as 'grid' | 'list')}
                   aria-label="大屏视图"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none"
                 >
                   <option value="grid">卡片视图</option>
                   <option value="list">列表视图</option>
                 </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              </div>
-            </div>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                </div>
+                <div className="mt-2 flex justify-end">
+                  <button type="button" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0}
+                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-text-muted transition hover:bg-surface-2 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40">
+                    <X size={13} />清除全部筛选
+                  </button>
+                </div>
+              </motion.div>}
+            </AnimatePresence>
           </div>}
 
-        {innerView === 'inspiration' && <div className="mb-4 grid grid-cols-3 gap-3 max-w-xl">
-          {[
-            { icon: <Zap size={13} />,       label: contentFormat === 'image' ? '全部图文' : '全部视频', value: `${tenantVideoTotalItems}`,    color: 'text-accent' },
-            { icon: <TrendingUp size={13} />, label: contentFormat === 'image' ? '已完成拆解' : '上升趋势', value: `${contentFormat === 'image' ? visibleVideos.filter(video => video.aiAnalysis?.imageEvidence?.status === 'analyzed').length : recentThreeDayUploads}`, color: 'text-green' },
-            { icon: <Globe size={13} />,      label: '覆盖平台', value: `${new Set(visibleVideos.map(v => v.platform)).size}`,       color: 'text-accent' },
-          ].map(stat => (
-            <div key={stat.label} className="card p-3 flex items-center gap-2.5">
-              <span className={stat.color}>{stat.icon}</span>
-              <div>
-                <p className="text-base font-bold text-text-primary font-display leading-none">{stat.value}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">{stat.label}</p>
-              </div>
-            </div>
-          ))}
+        {innerView === 'inspiration' && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-border bg-surface-2/60 px-3.5 py-2 text-xs text-text-muted">
+          <span><strong className="text-sm text-text-primary">{tenantVideoTotalItems || visibleVideos.length}</strong> 条{contentFormat === 'image' ? '图文' : '视频'}灵感</span>
+          <span>当前显示 <strong className="text-text-primary">{filtered.length}</strong> 条</span>
+          <span>近 3 日新入库 <strong className="text-text-primary">{recentThreeDayUploads}</strong> 条</span>
+          <span>覆盖 <strong className="text-text-primary">{new Set(visibleVideos.map(v => v.platform)).size}</strong> 个平台</span>
+          {videosLoading && <span className="ml-auto inline-flex items-center gap-1.5 font-semibold text-accent"><Loader2 size={12} className="animate-spin" />更新中…</span>}
         </div>}
 
         <div>
@@ -3825,6 +3895,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <div key={video.id} className="relative">
                       <VideoCard video={video} index={i} isSelected={selectedVideo?.id === video.id}
                         onSelect={() => toggleScriptPanel(video)}
+                        onCreate={() => openScriptAnalysis(video)}
                         onWatch={() => handleWatch(video)}
                         onAnalyzeVideo={() => openScriptAnalysis(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
@@ -3845,6 +3916,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   {filtered.map(video => (
                     <VideoListItem key={video.id} video={video} isSelected={selectedVideo?.id === video.id}
                       onSelect={() => toggleScriptPanel(video)}
+                      onCreate={() => openScriptAnalysis(video)}
                       onWatch={() => handleWatch(video)}
                       onAnalyzeVideo={() => openScriptAnalysis(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
@@ -3878,12 +3950,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
-              <div className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-surface p-5">
+              <div className="flex flex-col justify-between gap-4 rounded-2xl border border-border bg-surface p-4 sm:p-5 lg:flex-row lg:items-center">
                 <div>
                   <h3 className="text-base font-bold text-text-primary">社媒素材库</h3>
                   <p className="mt-1 text-sm text-text-muted">本地拍摄、Seedance 2.0 生成、Gemini 生成、官方爆款导入的素材统一保存在这里。</p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => uploadInputRef.current?.click()}
@@ -3905,45 +3977,75 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
               </div>
 
-              <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-sm">
-                <div className="flex items-center gap-2.5">
-                  <div className="relative min-w-0 flex-1">
+              <div className="space-y-3 rounded-2xl border border-border bg-surface p-3 shadow-sm sm:p-4">
+                <div className="flex flex-col gap-2.5 xl:flex-row">
+                  <div className="relative min-w-[220px] flex-1">
                     <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <input
-                      type="text"
+                      type="search"
                       value={materialSearch}
                       onChange={e => setMaterialSearch(e.target.value)}
+                      aria-label="搜索我的素材"
                       placeholder="搜索素材名称、行业、场景或标签..."
-                      className="h-11 w-full rounded-xl border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
+                      className="h-12 w-full rounded-xl border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
                     />
                   </div>
-                  <span className="shrink-0 text-xs font-semibold text-text-muted">{filteredMaterials.length}/{localMaterials.length} 条素材</span>
-                  {(materialSearch || materialIndustry !== 'all' || materialFunction !== 'all' || materialApplicability !== 'all' || materialOrientation !== 'all' || materialSource !== 'all') && (
-                    <button type="button" onClick={() => { setMaterialSearch(''); setMaterialIndustry('all'); setMaterialFunction('all'); setMaterialApplicability('all'); setMaterialOrientation('all'); setMaterialSource('all'); }}
-                      className="h-11 shrink-0 rounded-xl border border-border px-3 text-xs font-bold text-text-secondary transition-colors hover:border-accent hover:text-accent">
-                      清空筛选
-                    </button>
-                  )}
+                  <label className="relative block h-12 min-w-[168px] rounded-xl border border-border bg-surface focus-within:border-accent">
+                    <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <select value={materialSource} onChange={event => setMaterialSource(event.target.value as MaterialSourceFilter)} aria-label="素材来源"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
+                      {Object.entries(MATERIAL_SOURCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                  <label className="relative block h-12 min-w-[152px] rounded-xl border border-border bg-surface focus-within:border-accent">
+                    <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <select value={materialType} onChange={event => setMaterialType(event.target.value as MaterialTypeFilter)} aria-label="素材类型"
+                      className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
+                      <option value="all">全部类型</option>
+                      <option value="video">视频</option>
+                      <option value="image">图片</option>
+                      <option value="audio">音频</option>
+                    </select>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
+                  <button type="button" onClick={() => setMaterialFiltersOpen(value => !value)} aria-expanded={materialFiltersOpen} aria-controls="material-more-filters"
+                    className={`inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl border px-3.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${materialFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
+                    <SlidersHorizontal size={15} />更多筛选
+                    {materialFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black text-white">{materialFilterCount}</span>}
+                    <ChevronDown size={14} className={`transition-transform ${materialFiltersOpen ? 'rotate-180' : ''}`} />
+                  </button>
                 </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                  {[
-                    { label: '素材来源', value: materialSource, onChange: (value: string) => setMaterialSource(value as MaterialSourceFilter), options: Object.entries(MATERIAL_SOURCE_LABELS) },
-                    { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
-                    { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
-                    { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
-                    { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
-                  ].map(filter => (
-                    <div key={filter.label} className="relative h-14 rounded-2xl border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
-                      <Film size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" />
-                      <span className="pointer-events-none absolute left-11 top-2 text-[11px] font-semibold text-text-muted">{filter.label}</span>
-                      <select value={filter.value} onChange={e => filter.onChange(e.target.value)} aria-label={filter.label}
-                        className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-9 pt-4 text-sm font-black text-text-primary outline-none">
-                        {filter.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                      <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                <AnimatePresence initial={false}>
+                  {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
+                        { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
+                        { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
+                        { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
+                      ].map(filter => (
+                        <label key={filter.label} className="relative block h-14 rounded-xl border border-border bg-surface-2 transition-colors focus-within:border-accent">
+                          <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                          <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">{filter.label}</span>
+                          <select value={filter.value} onChange={e => filter.onChange(e.target.value)} aria-label={filter.label}
+                            className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                            {filter.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                          <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                        </label>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-text-muted">当前显示 {filteredMaterials.length}/{localMaterials.length} 条素材</span>
+                      <button type="button" onClick={clearMaterialFilters} disabled={materialFilterCount === 0}
+                        className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-text-muted transition hover:bg-surface-2 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40">
+                        <X size={13} />清除全部筛选
+                      </button>
+                    </div>
+                  </motion.div>}
+                </AnimatePresence>
+                {!materialFiltersOpen && <p className="px-1 text-xs font-semibold text-text-muted">当前显示 {filteredMaterials.length}/{localMaterials.length} 条素材</p>}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -3961,7 +4063,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <div className="col-span-full rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Search size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">没有符合当前标签的素材</p>
-                    <button type="button" onClick={() => { setMaterialSearch(''); setMaterialIndustry('all'); setMaterialFunction('all'); setMaterialApplicability('all'); setMaterialOrientation('all'); setMaterialSource('all'); }} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
+                    <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
                 ) : filteredMaterials.map(material => (
                   <article key={material.id} className="group overflow-hidden rounded-2xl border border-border bg-surface">
