@@ -2274,6 +2274,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const openCustomer = (id: string) => {
     setSelectedId(id);
+    const customer = customers.find(item => item.id === id);
+    if (customer?.hasUnread) persistCustomerPatch(id, { hasUnread: false });
   };
 
   useEffect(() => {

@@ -13,6 +13,7 @@ assert.doesNotMatch(source, /title="翻译润色"|<Languages\b/, 'the non-respon
 assert.match(source, /aria-label="添加表情"/, 'the composer must expose an emoji picker button');
 assert.match(source, /aria-label=\{`插入 \$\{emoji\}`\}[\s\S]{0,200}insertEmoji\(emoji\)/, 'emoji choices must insert into the reply input');
 assert.match(source, /data-customer-reply-input[\s\S]{0,500}border-0[\s\S]{0,500}focus:shadow-none/, 'the reply textarea must not show the global green focus frame');
+assert.match(source, /const openCustomer = \(id: string\)[\s\S]{0,220}customer\?\.hasUnread[\s\S]{0,120}persistCustomerPatch\(id, \{ hasUnread: false \}\)/, 'opening a conversation must clear and persist its unread indicator');
 assert.match(
   source,
   /attempt\s*<\s*4/,
