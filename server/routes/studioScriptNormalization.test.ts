@@ -10,6 +10,8 @@ import {
   fitStoryboardSpeech,
   fitSpeechToShot,
   isPackagingOnlyProductInfo,
+  isNonBlockingScriptQualityIssue,
+  normalizeCompleteTimestampTranslation,
   normalizeStoryboardFieldLines,
   openingMatchesCooperationRoute,
   productVoicePlanSupportsTheme,
@@ -345,5 +347,33 @@ assert.equal(storyboardSpeechIssues(buyerPainFallback).length, 0);
 assert.deepEqual(buyerPainFallback.match(/^\[[^\]]+\]$/gm), materialWithValidTimingButNoBuyer.match(/^\[[^\]]+\]$/gm));
 assert.equal((buyerPainFallback.match(/^素材：中文素材\d$/gm) || []).length, 5);
 assert.equal((buyerPainFallback.match(/^画面：/gm) || []).length, 5);
+
+assert.equal(isNonBlockingScriptQualityIssue('未使用本条唯一主 CTA：联系管理员'), true);
+assert.equal(isNonBlockingScriptQualityIssue('首段没有执行“买家痛点”主题的钩子公式'), true);
+assert.equal(isNonBlockingScriptQualityIssue('出现产品资料未提供的数字：99%'), false);
+
+const translationSource = '[0-4s] 买家，你怎么判断这个风险？\n[4-8s] 检查可见细节。\n[12-15s] 私信了解详情。';
+assert.equal(
+  normalizeCompleteTimestampTranslation(translationSource, '[0-4s] Buyers, how do you judge this risk?', 'en'),
+  '',
+  'a one-line result must never be accepted for a three-line source',
+);
+assert.equal(
+  normalizeCompleteTimestampTranslation(
+    translationSource,
+    '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+    'en',
+  ),
+  '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+);
+assert.equal(
+  normalizeCompleteTimestampTranslation(
+    translationSource,
+    '[0-4s] Check this.\n[4-8s] Check this.\n[12-15s] Check this.',
+    'en',
+  ),
+  '',
+  'distinct source cues must not collapse into one repeated sentence',
+);
 
 console.log('studio script normalization tests passed');

@@ -8,7 +8,6 @@ import { execFile, spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import ffmpegStatic from 'ffmpeg-static';
-import { GoogleGenAI } from '@google/genai';
 import { callLLM } from '../agents/llm.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
 import { auth, store } from '../storage/index.js';
@@ -31,7 +30,12 @@ import {
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { fetchCloudMaterial, getCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
-import { analyzeVideoFramesWithQwen, classifyMaterialFramesWithQwen } from '../agents/qwen.js';
+import {
+  analyzeVideoFramesWithQwen,
+  classifyMaterialFramesWithQwen,
+  qualityCheckStoryboardFramesWithQwen,
+  transcribeAudioWithQwen,
+} from '../agents/qwen.js';
 import { extractQwenAnalysisFrames } from './videos.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
@@ -1613,6 +1617,11 @@ export function requiresMinimumVoiceoverLines(voiceoverMode: unknown, generation
 
 export const MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS = 1;
 
+/** Keep editorial preferences visible without discarding a safe storyboard. */
+export function isNonBlockingScriptQualityIssue(issue: string): boolean {
+  return /^(?:未使用本条唯一主 CTA|已选择 AI 口播，但有效台词不足两段|首段没有|分镜功能重复|美妆产品本体镜头不足|本次脚本与上一版本过于相似|爆款分镜包含不可执行的泛化镜头描述)/.test(String(issue || '').trim());
+}
+
 export function normalizeMaterialInfos(value: unknown, fallbackNames: unknown, totalDuration: number): ScriptMaterialInfo[] {
   const raw = Array.isArray(value) ? value : [];
   const selectedNames = new Set(Array.isArray(fallbackNames) ? fallbackNames.map(item => String(item).trim()).filter(Boolean) : []);
@@ -1976,11 +1985,6 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
     res.status(404).json({ ok: false, error: '找不到可质检的本地视频素材' });
     return;
   }
-  const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) {
-    res.status(423).json({ ok: false, error: 'GEMINI_API_KEY 未配置，无法执行视觉质检' });
-    return;
-  }
   fs.mkdirSync(GENERATED_MEDIA_DIR, { recursive: true });
   const cosTempPath = material.objectKey ? path.join(GENERATED_MEDIA_DIR, `quality-source-${material.id}${path.extname(material.file) || '.mp4'}`) : '';
   const filePath = cosTempPath || path.join(MEDIA_DIR, material.file);
@@ -2003,24 +2007,15 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
       .filter(name => /^frame-\d+\.jpg$/i.test(name))
       .sort()
       .slice(0, 5)
-      .map(name => ({ inlineData: { mimeType: 'image/jpeg', data: fs.readFileSync(path.join(tempDir, name)).toString('base64') } }));
+      .map((name, index) => ({ base64: fs.readFileSync(path.join(tempDir, name)).toString('base64'), mimeType: 'image/jpeg', timeLabel: `${index * 2}s` }));
     if (!frames.length) throw new Error('没有提取到可分析画面');
-    const prompt = `你是电商短视频质检员。根据连续抽帧检查这个分镜是否可用于发布。
-分镜要求：${String(storyboard).slice(0, 1800)}
-产品真实资料：${String(productInfo).slice(0, 1600)}
-是否关键真实性镜头：${critical ? '是' : '否'}
-
-重点检查：商品外观/颜色/包装一致性、错误文字或Logo、人物脸手异常、黑帧闪烁迹象、画面连续性、是否符合分镜动作、是否出现未经资料支持的证书参数或工厂声明。
-只返回JSON：{"score":0-100,"passed":boolean,"issues":["问题"],"strengths":["优点"],"recommendation":"通过/人工复核/重新生成","checks":{"productConsistency":0-100,"visualIntegrity":0-100,"storyboardMatch":0-100,"textSafety":0-100,"authenticity":0-100}}。关键镜头有真实性疑点时 passed 必须为 false。`;
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_QUALITY_MODEL || 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }, ...frames] }],
-      config: { responseMimeType: 'application/json', temperature: 0.1 },
-    } as any);
-    const raw = String((response as any).text || '').trim();
-    const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```$/i, '').trim());
-    const score = Math.max(0, Math.min(100, Number(parsed.score) || 0));
+    const parsed = await qualityCheckStoryboardFramesWithQwen({
+      frames,
+      storyboard: String(storyboard),
+      productInfo: String(productInfo),
+      critical: Boolean(critical),
+    });
+    const score = parsed.score;
     res.json({
       ok: true,
       quality: {
@@ -2833,22 +2828,6 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const incompleteProductStoryboard = generationMode === 'product' && !isStructuredLockedDraft
       && (productStoryboardBlocks.length < 3
         || productStoryboardBlocks.some(block => productStoryboardFields.some(field => !new RegExp(`^${field}[：:]`, 'm').test(block))));
-    const unsafeScript = missingProduct
-      || missingSelectedProduct
-      || /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script)
-      || /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script)
-      || unsupportedNumberClaims.length > 0
-      || incompleteCloneStoryboard
-      || incompleteProductStoryboard
-      || genericCloneStoryboard
-      || hasUnnaturalVoiceover(script)
-      || speechIssues.length > 0
-      || groundingIssues.length > 0
-      || timelineIssues.length > 0
-      || strictCommercialIssues.length > 0
-      || strategyIssues.length > 0
-      || duplicateStoryboardFields.length > 0
-      || subtitleVoiceIssues.length > 0;
     const invalidProductScript = generationMode === 'product'
       && (/人物说[：:][^\n]*(镜头|画面|字幕|参考节奏|展示卖点|制作)/.test(script)
         || /Scene N/.test(script));
@@ -2880,9 +2859,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script) ? '脚本泄漏了生成规则或占位说明' : '',
       /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script) ? '脚本包含绝对化或不可验证承诺' : '',
     ].filter(Boolean);
-    const materialStrictHardIssues = strictCommercialIssues.filter(issue => (
-      !/^已选择 AI 口播，但有效台词不足两段/.test(issue)
-    ));
+    const nonBlockingQualityIssues = Array.from(new Set(validationIssues.filter(isNonBlockingScriptQualityIssue)));
+    const materialStrictHardIssues = strictCommercialIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
     const materialHardIssues = Array.from(new Set([
       ...(materialQualityV2?.hardIssues || []),
       missingProduct ? '缺少产品信息' : '',
@@ -2900,16 +2878,17 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         ...speechIssues,
         ...duplicateStoryboardFields,
         ...subtitleVoiceIssues,
+        ...nonBlockingQualityIssues,
         hasUnnaturalVoiceover(script) ? '部分口播偏长或技术名词较密，建议成片前精简' : '',
         strictCommercialIssues.some(issue => /^已选择 AI 口播，但有效台词不足两段/.test(issue))
           ? '当前可用素材不足以承载两段有效口播，补充素材后可继续完善'
           : '',
       ].filter(Boolean)))
-      : [];
-    const hardValidationIssues = generationMode === 'material' ? materialHardIssues : validationIssues;
-    const shouldBlockScript = generationMode === 'material'
-      ? hardValidationIssues.length > 0
-      : validationIssues.length > 0 || unsafeScript;
+      : nonBlockingQualityIssues;
+    const hardValidationIssues = generationMode === 'material'
+      ? materialHardIssues
+      : validationIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
+    const shouldBlockScript = hardValidationIssues.length > 0;
     if (shouldBlockScript) {
       console.warn('[studio] script rejected:', hardValidationIssues.join(' | ') || 'unsafe_script');
       res.status(422).json({
@@ -2938,7 +2917,9 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         : validationWarnings.length
           ? 'warning'
           : 'passed'
-      : 'passed';
+      : validationWarnings.length
+        ? 'warning'
+        : 'passed';
     res.json({
       ok: true,
       source: 'ai',
@@ -2982,7 +2963,7 @@ studioRouter.post('/covers', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const { script = '', productInfo = '', language = 'en', provider, tone = '' } = req.body ?? {};
   const lang = langName(language);
-  const providerOpt = provider === 'qwen' || provider === 'gemini' ? provider : undefined;
+  const providerOpt: 'qwen' = 'qwen';
 
   const prompt = `Generate 3 punchy ${lang} video cover titles (max 6 words each) for an overseas e-commerce short video.
 Context — product: ${productInfo || '(see enterprise profile)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
@@ -3016,7 +2997,7 @@ studioRouter.post('/fb-poster', async (req, res) => {
     materials = [],
     referenceNotes = '',
   } = req.body ?? {};
-  const providerOpt = provider === 'qwen' || provider === 'gemini' ? provider : undefined;
+  const providerOpt: 'qwen' = 'qwen';
   const lang = langName(language);
   const materialLines = Array.isArray(materials)
     ? materials.slice(0, 8).map((item: any, index: number) => `${index + 1}. ${String(item?.name || item || '').slice(0, 120)}${item?.role ? ` (${item.role})` : ''}`).join('\n')
@@ -3084,9 +3065,7 @@ Schema:
   "imagePrompt": "detailed prompt for a no-extra-text B2B OEM poster image model; include layoutModules as composition guidance, include all poster text exactly as above, mention product replacement, background/style reuse, local material roles, sections, and layout"
 }`;
 
-  const backends = providerOpt
-    ? [providerOpt, providerOpt === 'qwen' ? 'gemini' : 'qwen'] as const
-    : ['qwen', 'gemini'] as const;
+  const backends = [providerOpt] as const;
   const failures: string[] = [];
   for (const backend of backends) {
     try {
@@ -3163,7 +3142,7 @@ Schema:
   "fieldsToConfirm":["string"]
 }`;
   const failures: string[] = [];
-  for (const backend of ['qwen', 'gemini'] as const) {
+  for (const backend of ['qwen'] as const) {
     try {
       const text = await callLLM(prompt, { backend, systemPrompt: enterprise || undefined });
       const parsed = extractJSON<any>(text);
@@ -3227,7 +3206,7 @@ studioRouter.post('/caption', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const { script = '', productInfo = '', platform = 'tiktok', language = 'en', provider, audience = '', sellingPoints = '', tone = '' } = req.body ?? {};
   const lang = langName(language);
-  const providerOpt = provider === 'qwen' || provider === 'gemini' ? provider : undefined;
+  const providerOpt: 'qwen' = 'qwen';
 
   const prompt = `Write a ${platform} post caption in ${lang} for this overseas e-commerce video.
 Product: ${productInfo || '(see enterprise profile)'} ; audience: ${audience || '(infer)'} ; selling points: ${sellingPoints || '(infer)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
@@ -3275,6 +3254,37 @@ function createTranslationDeadline(req: Request, res: Response, timeoutMs: numbe
   return deadline;
 }
 
+type TimestampedTranslationCue = { timestamp: string; text: string };
+const TRANSLATION_CUE_LINE_RE = /^\s*(\[[^\]]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*\])\s*(.+?)\s*$/i;
+
+export function timestampedTranslationCues(value: string): TimestampedTranslationCue[] {
+  return String(value || '')
+    .split(/\n+/)
+    .map(line => line.match(TRANSLATION_CUE_LINE_RE))
+    .filter((match): match is RegExpMatchArray => Boolean(match?.[1] && match?.[2]))
+    .map(match => ({ timestamp: match[1]!.trim(), text: match[2]!.trim() }))
+    .filter(cue => cue.text.length > 0);
+}
+
+/**
+ * A localized voiceover is complete only when every source cue has one target
+ * cue. Rebuild with the source timestamps so models cannot silently merge,
+ * omit or rewrite time ranges.
+ */
+export function normalizeCompleteTimestampTranslation(source: string, translated: string, targetCode: string): string {
+  const sourceCues = timestampedTranslationCues(source);
+  if (!sourceCues.length) return String(translated || '').trim();
+  const translatedCues = timestampedTranslationCues(translated);
+  if (translatedCues.length !== sourceCues.length) return '';
+  const targetTexts = translatedCues.map(cue => cue.text.replace(/^[-*•]\s*/, '').trim());
+  if (targetTexts.some(text => !text || /translation unavailable|无法翻译|不能翻译|作为AI|Here is|```/i.test(text))) return '';
+  if (targetCode !== 'zh' && targetTexts.some(text => /[\u4e00-\u9fff]/.test(text))) return '';
+  const distinctSource = new Set(sourceCues.map(cue => cue.text.replace(/\s+/g, '').toLowerCase())).size;
+  const distinctTarget = new Set(targetTexts.map(text => text.replace(/\s+/g, '').toLowerCase())).size;
+  if (sourceCues.length > 1 && distinctSource > 1 && distinctTarget === 1) return '';
+  return sourceCues.map((cue, index) => `${cue.timestamp} ${targetTexts[index]}`).join('\n');
+}
+
 // POST /studio/translate  Body: { text, target?, source? }
 studioRouter.post('/translate', async (req, res) => {
   const { text = '', target = 'zh' } = req.body ?? {};
@@ -3298,15 +3308,22 @@ Text: ${src}`;
   const deadline = createTranslationDeadline(req, res, translationTimeout(process.env.STUDIO_TRANSLATION_TOTAL_TIMEOUT_MS, 65_000, 15_000));
   const providerTimeoutMs = translationTimeout(process.env.STUDIO_TRANSLATION_PROVIDER_TIMEOUT_MS, 28_000, 5_000);
   try {
-    let out = '';
-    try {
-      out = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
-      if (!out.trim()) throw new Error('qwen returned an empty translation');
-    } catch (qwenError) {
-      if (deadline.signal.aborted) throw qwenError;
-      out = await callLLM(prompt, { backend: 'gemini', signal: deadline.signal, timeoutMs: providerTimeoutMs });
-      if (!out.trim()) throw new Error('gemini returned an empty translation');
+    const sourceCues = timestampedTranslationCues(src);
+    const first = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
+    let out = sourceCues.length
+      ? normalizeCompleteTimestampTranslation(src, first, String(target || 'zh'))
+      : first.trim();
+    if (!out && sourceCues.length) {
+      const indexedPrompt = `Translate every numbered spoken line into ${targetLang}. Return ONLY valid JSON {"lines":["translation 1","translation 2"]}. The lines array must contain exactly ${sourceCues.length} non-empty strings in the same order. Never merge, omit, summarize or repeat a line. Do not include timestamps inside the strings. Do not add claims or explanations.\n\n${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
+      const repaired = await callLLM(indexedPrompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
+      const parsed = extractJSON<{ lines?: unknown[] } | unknown[]>(repaired);
+      const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
+      if (Array.isArray(lines) && lines.length === sourceCues.length) {
+        const rebuilt = sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n');
+        out = normalizeCompleteTimestampTranslation(src, rebuilt, String(target || 'zh'));
+      }
     }
+    if (!out.trim()) throw new Error('qwen returned an incomplete line-by-line translation');
     if (!res.writableEnded && !res.destroyed) res.json({ ok: true, source: 'ai', text: out.trim() });
   } catch (error) {
     if (!res.writableEnded && !res.destroyed) {
@@ -3361,16 +3378,13 @@ ${src}`;
   const invalid = (value: string, code: string) => {
     const textValue = String(value || '').trim();
     if (!textValue) return true;
+    const sourceCues = timestampedTranslationCues(src);
+    if (sourceCues.length && !normalizeCompleteTimestampTranslation(src, textValue, code)) return true;
     const spokenValue = textValue
       .replace(/\[[^\]]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*\]/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
     if (!spokenValue) return true;
-    const timestampPattern = /\[[^\]]*?\d+(?:\.\d+)?\s*s?\s*-\s*\d+(?:\.\d+)?\s*s?[^\]]*\]/gi;
-    const sourceCueCount = (src.match(timestampPattern) || []).length;
-    const translatedCueCount = (textValue.match(timestampPattern) || []).length;
-    const minimumCueCount = sourceCueCount > 1 ? Math.max(2, Math.ceil(sourceCueCount * 0.6)) : sourceCueCount;
-    if (translatedCueCount < minimumCueCount) return true;
     const compactSpokenValue = spokenValue.replace(/\s+/g, '');
     if (compactSpokenValue.length < 6) return true;
     if (code !== 'zh' && /[\u4e00-\u9fff]/.test(textValue)) return true;
@@ -3378,10 +3392,10 @@ ${src}`;
     return false;
   };
 
-  const run = async (backend: 'qwen' | 'gemini') => {
+  const run = async (backend: 'qwen') => {
     const out = await callLLM(prompt, {
       backend,
-      model: backend === 'qwen' ? 'qwen-plus' : undefined,
+      model: 'qwen-plus',
       signal: deadline.signal,
       timeoutMs: providerTimeoutMs,
     });
@@ -3406,36 +3420,40 @@ ${src}`;
         const raw = parsed[code];
         value = Array.isArray(raw) ? raw.map(String).join('\n') : String(raw ?? '').trim();
       }
-      if (!invalid(value, code)) translations[code] = value;
+      const normalized = normalizeCompleteTimestampTranslation(src, value, code) || value;
+      if (!invalid(normalized, code)) translations[code] = normalized;
     }
     return translations;
   };
 
-  const runSingle = async (backend: 'qwen' | 'gemini', code: string) => {
+  const runSingle = async (backend: 'qwen', code: string) => {
+    const sourceCues = timestampedTranslationCues(src);
     const singlePrompt = `You are a native short-video voiceover localization editor for cross-border B2B commerce.
 
-Translate and lightly localize the timestamped ${langName(sourceCode)} spoken lines into ${langName(code)}.
-Preserve every timestamp label exactly. Translate only spoken text after each timestamp.
-Keep one output line per input line. Do not leave source-language text except product names or proper nouns. Use natural conversational wording.
-Omit short sound-effect lines or onomatopoeia such as “噗噗/砰砰/咚咚/咯吱”; they are audio SFX, not voiceover subtitles.
-Repair Chinese short-video slang into idiomatic buyer-facing wording based on product context. For non-cosmetic products, avoid literal phrases like “on the skin”.
-Return ONLY the translated timestamped lines, no markdown and no explanations.
+Translate every numbered ${langName(sourceCode)} spoken line into ${langName(code)}.
+Return ONLY valid JSON: {"lines":["translation 1","translation 2"]}.
+The lines array must contain exactly ${sourceCues.length} non-empty strings in the original order. Never merge, omit, summarize or repeat a line. Do not include timestamps inside the strings. Keep verified product names and numbers accurate. Do not add claims, CTAs, markdown or explanations.
 
-Source:
-${src}`;
+Source lines:
+${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
     const out = await callLLM(singlePrompt, {
       backend,
-      model: backend === 'qwen' ? 'qwen-plus' : undefined,
+      model: 'qwen-plus',
       signal: deadline.signal,
       timeoutMs: providerTimeoutMs,
     });
-    const value = out.trim();
-    return invalid(value, code) ? '' : value;
+    const parsed = extractJSON<{ lines?: unknown[] } | unknown[]>(out);
+    const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
+    const value = Array.isArray(lines) && lines.length === sourceCues.length
+      ? sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n')
+      : out.trim();
+    const normalized = normalizeCompleteTimestampTranslation(src, value, code) || value;
+    return invalid(normalized, code) ? '' : normalized;
   };
 
   const errors: string[] = [];
   const translations: Record<string, string> = {};
-  for (const backend of ['qwen', 'gemini'] as const) {
+  for (const backend of ['qwen'] as const) {
     if (deadline.signal.aborted) break;
     try {
       const result = await run(backend);
@@ -3455,7 +3473,7 @@ ${src}`;
     while (!deadline.signal.aborted) {
       const code = missing[missingIndex++];
       if (!code) break;
-      for (const backend of ['qwen', 'gemini'] as const) {
+      for (const backend of ['qwen'] as const) {
         if (deadline.signal.aborted) break;
         try {
           const value = await runSingle(backend, code);
@@ -3493,7 +3511,7 @@ studioRouter.post('/insight', async (req, res) => {
 数据：${JSON.stringify(metrics)}
 只返回 JSON：{ "summary": string（一句话核心结论，≤40 字）, "actions": string[]（2-3 条，每条≤18 字，动词开头，具体到内容方向/平台/语言/投流） }`;
   try {
-    const text = await callLLM(prompt, { systemPrompt: await enterpriseCtx() || undefined });
+    const text = await callLLM(prompt, { backend: 'qwen', systemPrompt: await enterpriseCtx() || undefined });
     const obj = extractJSON<{ summary: string; actions: string[] }>(text);
     if (obj?.summary) {
       res.json({ ok: true, source: 'ai', summary: obj.summary, actions: (obj.actions ?? []).slice(0, 3) });
@@ -3518,7 +3536,7 @@ Clips: ${JSON.stringify(list)}
 Return ONLY JSON: { "selectedIds": string[] (ordered), "reason": string (one short sentence) }`;
 
   try {
-    const text = await callLLM(prompt, { systemPrompt: await enterpriseCtx() || undefined });
+    const text = await callLLM(prompt, { backend: 'qwen', systemPrompt: await enterpriseCtx() || undefined });
     const obj = extractJSON<{ selectedIds: string[]; reason: string }>(text);
     const valid = obj?.selectedIds?.filter(id => list.some(c => c.id === id));
     if (valid && valid.length) {
@@ -4658,22 +4676,6 @@ function normalizeTtsStyle(input: unknown): TtsStyleOptions {
   };
 }
 
-function ttsPerformancePrompt(text: string, style: TtsStyleOptions): string {
-  const guide = TTS_PRESET_GUIDE[style.preset || 'authentic_review'];
-  const durationGuide = style.targetDuration ? ` Aim for about ${style.targetDuration} seconds by adjusting natural pauses only; never add words.` : '';
-  const pronunciationGuide = (style.pronunciations || []).length
-    ? `\nPronunciation rules: ${style.pronunciations!.map(item => `"${item.word}" must be pronounced as "${item.pronunciation}"`).join('; ')}. Follow these rules exactly for brand names, abbreviations and product terms; never read this instruction aloud.`
-    : '';
-  return `${guide}\nEmotion: ${style.emotion || 'natural and credible'}; intensity ${Math.round(style.emotionIntensity || 65)}/100; speaking rate ${Number(style.speed || 1).toFixed(2)}x.${durationGuide} Use meaningful pauses at punctuation and emphasize concrete product benefits.${pronunciationGuide} Speak only the script below; never read these directions aloud.\n\nSCRIPT:\n${text}`;
-}
-
-// 工作台 4 个音色 → Gemini 预置嗓音
-const TTS_VOICE_MAP: Record<string, string> = {
-  v1: 'Kore',    // 女声 · 亲和
-  v2: 'Charon',  // 男声 · 沉稳
-  v3: 'Aoede',   // 女声 · 温暖
-};
-
 // 工作台音色 → Qwen3-TTS 系统人声。三种音色均支持中、英等主要语种。
 const QWEN_TTS_VOICE_MAP: Record<string, string> = {
   v1: 'Cherry',
@@ -5411,47 +5413,21 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
         : '已录入真人音色，但后端未配置 MiniMax（MINIMAX_API_KEY）或 XTTS/Coqui 音色克隆引擎，无法用该音色合成。',
     };
   }
-  const voiceName = TTS_VOICE_MAP[voice] || 'Kore';
-  const apiKey = process.env.GEMINI_API_KEY;
   let aiError = '';
+
+  try {
+    const qwen = await generateQwenTts(spoken, voice, language);
+    if (qwen) return { ok: true, ...qwen };
+  } catch (e: any) {
+    aiError = `Qwen: ${String(e?.message ?? e).slice(0, 200)}`;
+  }
 
   try {
     const minimaxVoiceId = minimaxVoiceFor(voice, language);
     const minimax = await generateMinimaxTts(spoken, minimaxVoiceId, language, style);
     if (minimax) return { ok: true, ...minimax };
   } catch (e: any) {
-    aiError = `MiniMax: ${String(e?.message ?? e).slice(0, 200)}`;
-  }
-
-  try {
-    const qwen = await generateQwenTts(spoken, voice, language);
-    if (qwen) return { ok: true, ...qwen };
-  } catch (e: any) {
-    aiError = [aiError, `Qwen: ${String(e?.message ?? e).slice(0, 200)}`].filter(Boolean).join('；');
-  }
-
-  if (apiKey) {
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      const r = await ai.models.generateContent({
-        model: process.env.GEMINI_TTS_MODEL ?? 'gemini-2.5-flash-preview-tts',
-        contents: ttsPerformancePrompt(spoken, style),
-        config: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } } },
-      } as any);
-      const b64 = (r as any).candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!b64) throw new Error('no audio in response');
-
-      const pcm = Buffer.from(b64, 'base64');
-      const sampleRate = 24000;
-      try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
-      const file = `${randomUUID()}.wav`;
-      fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), wavFromPcm(pcm, sampleRate));
-      return { ok: true, source: 'ai', url: scopedStudioAssetUrl('tts', file), duration: Number((pcm.length / (sampleRate * 2)).toFixed(3)) };
-    } catch (e: any) {
-      aiError = [aiError, `Gemini: ${String(e?.message ?? e).slice(0, 200)}`].filter(Boolean).join('；');
-    }
-  } else {
-    aiError = [aiError, 'GEMINI_API_KEY not set'].filter(Boolean).join('；');
+    aiError = [aiError, `MiniMax: ${String(e?.message ?? e).slice(0, 200)}`].filter(Boolean).join('；');
   }
 
   const piper = await generatePiperTts(spoken, language);
@@ -5463,7 +5439,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
   return {
     ok: false,
     source: 'tts_unavailable',
-    error: aiError || '没有可用的真人语音合成服务，请检查 DashScope、MiniMax 或 Gemini TTS 配置。',
+    error: aiError || '没有可用的真人语音合成服务，请检查 DashScope、MiniMax 或本地 TTS 配置。',
   };
 }
 
@@ -5511,7 +5487,7 @@ function localTtsFile(url?: string): { bytes: Buffer; mimeType: string } | null 
 function studioAudioCapabilities() {
   const minimax = Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim());
   const xtts = Boolean((process.env.XTTS_BIN || process.env.COQUI_TTS_BIN || '').trim());
-  const gemini = Boolean(process.env.GEMINI_API_KEY?.trim());
+  const qwen = Boolean(process.env.DASHSCOPE_API_KEY?.trim());
   return {
     customVoice: {
       upload: true,
@@ -5529,8 +5505,8 @@ function studioAudioCapabilities() {
     },
     subtitles: {
       automatic: true,
-      audioTranscription: gemini,
-      wordAlignment: gemini,
+      audioTranscription: qwen,
+      wordAlignment: false,
       fallback: 'proportional',
     },
   };
@@ -5569,55 +5545,16 @@ studioRouter.post('/tts/minimax/diagnose', async (_req, res) => {
   }
 });
 
-function normalizeAlignedCues(raw: unknown, transcript: string, duration: number): AlignedCue[] {
-  const source = Array.isArray(raw) ? raw : [];
-  let previousEnd = 0;
-  const cues = source.map(item => {
-    const row = item && typeof item === 'object' ? item as Record<string, unknown> : {};
-    const text = String(row.text || '').trim();
-    const start = Math.max(previousEnd, Math.min(duration, Number(row.start) || 0));
-    const end = Math.max(start + 0.12, Math.min(duration, Number(row.end) || start + 0.5));
-    previousEnd = end;
-    const words = Array.isArray(row.words) ? row.words.map(word => {
-      const value = word && typeof word === 'object' ? word as Record<string, unknown> : {};
-      return {
-        text: String(value.text || '').trim(),
-        start: Math.max(start, Math.min(end, Number(value.start) || start)),
-        end: Math.max(start, Math.min(end, Number(value.end) || end)),
-      };
-    }).filter(word => word.text) : undefined;
-    return text ? { text, start: +start.toFixed(2), end: +end.toFixed(2), ...(words?.length ? { words } : {}) } : null;
-  }).filter((item): item is AlignedCue => Boolean(item));
-  return cues.length ? cues : proportionalCues(transcript, duration);
-}
-
 async function alignTtsAudio(transcript: string, url: string | undefined, duration: number): Promise<{ cues: AlignedCue[]; source: 'audio_ai' | 'proportional' }> {
-  const media = localTtsFile(url);
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!media || !apiKey) return { cues: proportionalCues(transcript, duration), source: 'proportional' };
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const prompt = `Align this exact transcript to the supplied speech audio. Return sentence-level subtitle cues and word-level timestamps. Do not paraphrase, translate, add or remove words. Times are seconds from audio start and must be monotonic within 0-${duration.toFixed(2)}. Split Chinese subtitles to about 8-16 characters and other languages to about 4-9 words. Return JSON only: {"cues":[{"text":"...","start":0.0,"end":1.2,"words":[{"text":"...","start":0.0,"end":0.3}]}]}.\n\nExact transcript:\n${transcript.slice(0, 6000)}`;
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_ALIGNMENT_MODEL || 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: media.mimeType, data: media.bytes.toString('base64') } }] }],
-      config: { responseMimeType: 'application/json', temperature: 0 },
-    } as any);
-    const parsed = extractJSON<{ cues?: unknown[] } | unknown[]>(String((response as any).text || ''));
-    const rawCues = Array.isArray(parsed) ? parsed : parsed?.cues;
-    const cues = normalizeAlignedCues(rawCues, transcript, duration);
-    return { cues, source: rawCues?.length ? 'audio_ai' : 'proportional' };
-  } catch (error) {
-    console.warn('[studio] TTS alignment fallback:', error instanceof Error ? error.message : error);
-    return { cues: proportionalCues(transcript, duration), source: 'proportional' };
-  }
+  void url;
+  return { cues: proportionalCues(transcript, duration), source: 'proportional' };
 }
 
 async function rewriteVoiceoverToDuration(text: string, language: string, currentDuration: number, targetDuration: number): Promise<string> {
   const targetChars = Math.max(8, Math.round(text.replace(/\s/g, '').length * targetDuration / Math.max(1, currentDuration)));
   const prompt = `Rewrite this spoken short-video voiceover to fit about ${targetDuration} seconds and approximately ${targetChars} non-space characters at normal speech speed. Language: ${langName(language)}. Preserve every verified product fact, brand name, number and CTA. Do not invent claims. Keep the same emotional arc. Output only the revised spoken copy, without labels, timestamps, quotation marks or explanation.\n\n${text}`;
   try {
-    const rewritten = (await callLLM(prompt, { backend: 'gemini' })).trim();
+    const rewritten = (await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus' })).trim();
     return rewritten || text;
   } catch {
     return text;
@@ -5715,28 +5652,21 @@ studioRouter.post('/tts/transcribe', async (req, res) => {
     res.status(400).json({ ok: false, error: 'local audio url and duration required', text: '', cues: [] });
     return;
   }
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
+  const qwenConfigured = Boolean(process.env.DASHSCOPE_API_KEY?.trim());
+  if (!qwenConfigured) {
     if (transcriptHint) {
       res.json({ ok: true, text: transcriptHint, cues: proportionalCues(transcriptHint, duration), source: 'proportional' });
     } else {
-      res.status(503).json({ ok: false, error: 'GEMINI_API_KEY not set; uploaded audio cannot be transcribed', text: '', cues: [] });
+      res.status(503).json({ ok: false, error: 'DASHSCOPE_API_KEY not set; uploaded audio cannot be transcribed', text: '', cues: [] });
     }
     return;
   }
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const prompt = `Transcribe the supplied spoken audio and create subtitle timestamps. Language hint: ${language}. Return only JSON: {"text":"exact transcript","cues":[{"text":"subtitle","start":0.0,"end":1.2,"words":[{"text":"word","start":0.0,"end":0.3}]}]}. Do not translate, paraphrase, add sales claims, infer inaudible words, or include music and sound effects. Times must be monotonic within 0-${duration.toFixed(2)} seconds. Split Chinese subtitles to about 8-16 characters and other languages to about 4-9 words.${transcriptHint ? `\nThe current editor script is only a spelling/context hint; follow the actual audio when they differ:\n${transcriptHint}` : ''}`;
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_ALIGNMENT_MODEL || 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: media.mimeType, data: media.bytes.toString('base64') } }] }],
-      config: { responseMimeType: 'application/json', temperature: 0 },
-    } as any);
-    const parsed = extractJSON<{ text?: string; cues?: unknown[] }>(String((response as any).text || ''));
-    const text = String(parsed?.text || transcriptHint || '').trim();
+    void language;
+    const parsed = await transcribeAudioWithQwen({ audio: media.bytes, fileName: `voice${media.mimeType === 'audio/mpeg' ? '.mp3' : '.wav'}` });
+    const text = String(parsed.text || transcriptHint || '').trim();
     if (!text) throw new Error('audio transcription returned no text');
-    const cues = normalizeAlignedCues(parsed?.cues, text, duration);
-    res.json({ ok: true, text, cues, source: parsed?.cues?.length ? 'audio_ai' : 'proportional' });
+    res.json({ ok: true, text, cues: proportionalCues(text, duration), source: 'qwen_asr' });
   } catch (error) {
     if (transcriptHint) {
       res.json({ ok: true, text: transcriptHint, cues: proportionalCues(transcriptHint, duration), source: 'proportional', error: String(error instanceof Error ? error.message : error).slice(0, 240) });

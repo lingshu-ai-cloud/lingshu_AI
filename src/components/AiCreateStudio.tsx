@@ -2708,20 +2708,6 @@ function isNonSpeechSfx(text: string): boolean {
   return false;
 }
 
-function fallbackTranslatedLine(source: string, target: string): string {
-  const text = source.replace(/\s+/g, ' ').trim();
-  const isSpanish = target === 'es';
-  const isEnglish = target === 'en';
-  if (isNonSpeechSfx(text)) return '';
-  if (/拒绝照骗|所见即所得/.test(text)) return isSpanish ? 'Sin engaños: lo que ves es lo que recibes.' : 'No fake visuals. What you see is what you get.';
-  if (/真实效果/.test(text)) return isSpanish ? 'Mira primero el resultado real.' : 'Check the real result first.';
-  if (/打样|样品/.test(text)) return isSpanish ? 'Confirm it with a sample first.' : 'Confirm it with a sample first.';
-  if (/报价|数量|包装/.test(text)) return isSpanish ? 'Send the quantity and packaging needs for a quote.' : 'Send the quantity and packaging needs for a quote.';
-  if (isEnglish) return 'Check this detail before bulk order.';
-  if (isSpanish) return 'Revisa este detalle antes del pedido grande.';
-  return '';
-}
-
 function normalizeTranslatedVoiceover(base: string, translated: string, target: string): string {
   const source = parseTimestampedVoiceover(base).filter(item => !isNonSpeechSfx(item.text));
   const parsed = parseTimestampedVoiceover(translated);
@@ -2735,22 +2721,18 @@ function normalizeTranslatedVoiceover(base: string, translated: string, target: 
   const candidates = rawCandidates
     .map(item => item.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
-  if (!candidates.length) return '';
+  if (candidates.length !== source.length) return '';
   const uniqueTranslatedLines = new Set(candidates.map(item => item.toLowerCase()));
   const looksRepeated = candidates.length >= 4 && uniqueTranslatedLines.size === 1;
   const used = new Set<string>();
   const lines: string[] = [];
   for (let index = 0; index < source.length; index += 1) {
     const item = source[index]!;
-    let candidate = candidates[index] || candidates[Math.min(index, candidates.length - 1)] || fallbackTranslatedLine(item.text, target);
-    if (isBadTranslatedLine(candidate, target)) candidate = fallbackTranslatedLine(item.text, target);
+    const candidate = candidates[index] || '';
     const key = candidate.replace(/\s+/g, ' ').trim().toLowerCase();
     const duplicate = Boolean(key && used.has(key));
     if (key) used.add(key);
-    if (looksRepeated || duplicate || isBadTranslatedLine(candidate, target)) {
-      candidate = fallbackTranslatedLine(item.text, target);
-    }
-    if (!candidate || isBadTranslatedLine(candidate, target)) return '';
+    if (looksRepeated || duplicate || isBadTranslatedLine(candidate, target)) return '';
     lines.push(`${item.time} ${candidate}`);
   }
   return lines.join('\n');
@@ -2771,7 +2753,7 @@ function resolveTranslatedVoiceover(base: string, translated: string, target: st
   if (target !== 'zh' && /[\u4e00-\u9fff]/.test(spoken)) return '';
   const sourceCueCount = parseTimestampedVoiceover(base).filter(item => !isNonSpeechSfx(item.text)).length;
   const translatedCueCount = parseTimestampedVoiceover(raw).filter(item => !isNonSpeechSfx(item.text)).length;
-  if (sourceCueCount > 1 && translatedCueCount < Math.max(1, Math.ceil(sourceCueCount * 0.5))) return '';
+  if (sourceCueCount > 0 && translatedCueCount !== sourceCueCount) return '';
   return raw;
 }
 
@@ -3234,7 +3216,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [ratio, setRatio] = useState('9:16');
   const [duration, setDuration] = useState(20);
   const [lang, setLang] = useState('zh');
-  const [provider, setProvider] = useState<'gemini' | 'qwen'>('gemini');
+  const [provider, setProvider] = useState<'gemini' | 'qwen'>('qwen');
   const [productInfo, setProductInfo] = useState('');
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
@@ -3961,6 +3943,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const hasTimestampScript = Boolean(script.trim());
   const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url));
+  const hasAnyVoiceover = Object.values(voiceoverAudios).some(audio => Boolean(audio?.url));
   const activeScriptQualityStatus = modeScripts.find(item => item.id === activeModeScriptId)?.qualityStatus;
   const activeScriptQualityBlocked = activeScriptQualityStatus === 'rejected' || activeScriptQualityStatus === 'failed';
   const canNext = contentMode === 'video' && step === 'script'
@@ -3971,7 +3954,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         : !activeScriptQualityBlocked && (
           voiceoverMode === 'none'
           || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
-          || (voiceoverMode === 'ai' && hasRequestedVoiceovers)
+          || (voiceoverMode === 'ai' && hasAnyVoiceover)
         )
     : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length
@@ -4090,7 +4073,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       if (kickoff.language) setLang(kickoff.language);
       if (kickoff.productInfo) setProductInfo(kickoff.productInfo);
       if (kickoff.video?.platform) setPlatform(kickoff.video.platform);
-      setProvider('gemini');
+      setProvider('qwen');
       const kickoffMode: ModeCard['id'] = fromInspiration ? 'clone' : 'material';
       setMode(kickoffMode);
       setActiveFolder(kickoff.generatedVideo ? 'upload' : 'hot');
@@ -4597,6 +4580,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover') {
       setScriptStageTab('audio');
       return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai') {
+      const availableLanguage = voiceLangs.find(code => Boolean(voiceoverAudios[code]?.url))
+        || Object.keys(voiceoverAudios).find(code => Boolean(voiceoverAudios[code]?.url));
+      if (availableLanguage && !voiceoverAudios[activeVoiceLang]?.url) {
+        setActiveVoiceLang(availableLanguage);
+        setLang(availableLanguage);
+        setTtsNotice(`${langZh(activeVoiceLang)}尚未生成配音，已使用${langZh(availableLanguage)}继续；其他语种可稍后补充。`);
+      }
     }
     if (contentMode === 'video' && step === 'material') {
       const qualityBlockers = storyboardSlots.flatMap(slot => {
@@ -6682,7 +6674,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (s.ratio) setRatio(s.ratio as string);
     if (typeof s.duration === 'number') setDuration(s.duration);
     // 语言由企业中心统一提供；旧草稿中的历史语言配置不得覆盖企业设置。
-    if (s.provider === 'gemini' || s.provider === 'qwen') setProvider(s.provider);
+    setProvider('qwen');
     if (typeof s.productInfo === 'string') setProductInfo(s.productInfo);
     if (s.productSelectMode === 'single' || s.productSelectMode === 'multi') setProductSelectMode('multi');
     if (Array.isArray(s.selectedProductIds)) setSelectedProductIds(s.selectedProductIds as string[]);
@@ -6901,7 +6893,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       mode: 'clone', contentMode: 'video', platform: nextPlatform, ratio: nextRatio, duration: nextDuration,
       productInfo: batch.plan?.productInfo || '', productSelectMode: batch.plan?.productSelectMode || 'single',
       audience: batch.plan?.audience || '', sellingPoints: batch.plan?.sellingPoints || '', tone: batch.plan?.tone || '高转化 · 口语化',
-      lang: batch.plan?.language || 'zh', provider: batch.plan?.provider || 'gemini',
+      lang: batch.plan?.language || 'zh', provider: 'qwen',
       variationStrategy: nextStrategy,
       variationPeople: (dimensions.person || ['原人物']).join('，'),
       variationScenes: (dimensions.scene || ['原场景']).join('，'),
@@ -7330,8 +7322,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     <label className="block">
                       <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">生成引擎</span>
                       <select value={provider} onChange={event => setProvider(event.target.value as 'gemini' | 'qwen')} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent">
-                        <option value="gemini">Gemini</option>
-                        <option value="qwen">Qwen</option>
+                        <option value="qwen">千问（默认）</option>
                       </select>
                     </label>
                   </div>
@@ -8614,7 +8605,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             {([
               { id: 'theme' as const, number: 1, title: '选择主题/分镜', desc: `${activeVideoTheme.title} · 选择主题并确认可执行分镜`, done: Boolean(videoThemeId) && hasTimestampScript },
               { id: 'voiceover' as const, number: 2, title: '提取口播/翻译', desc: '确认脚本口播，并生成需要的语言版本', done: hasRequestedVoiceDrafts },
-              { id: 'audio' as const, number: 3, title: '选择并确认声音', desc: voiceoverMode === 'unselected' ? '请选择不配音、AI 配音或上传真人音频' : voiceoverMode === 'none' ? '不配音，仅保留画面与字幕' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
+              { id: 'audio' as const, number: 3, title: '选择并确认声音', desc: voiceoverMode === 'unselected' ? '请选择不配音、AI 配音或上传真人音频' : voiceoverMode === 'none' ? '不配音，仅保留画面与字幕' : hasAnyVoiceover && !hasRequestedVoiceovers ? '已有可用语种，其他语种可稍后补充' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasAnyVoiceover || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
             ]).filter(item => scriptStageTab !== 'theme' || item.id === 'theme').map(item => (
                 <button type="button" key={item.number} onClick={() => setScriptStageTab(item.id)}
                   className={`rounded-xl border px-3 py-3 text-left transition ${scriptStageTab === item.id ? 'border-accent bg-accent/5 shadow-sm' : item.done ? 'border-accent/20 bg-surface hover:border-accent/40' : 'border-border bg-surface-2 hover:border-border-bright'}`}>

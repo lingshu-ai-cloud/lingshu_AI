@@ -107,6 +107,47 @@ export async function classifyMaterialFramesWithQwen(opts: {
   };
 }
 
+export async function qualityCheckStoryboardFramesWithQwen(opts: {
+  frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
+  storyboard: string;
+  productInfo: string;
+  critical?: boolean;
+}): Promise<{
+  score: number;
+  passed: boolean;
+  issues: string[];
+  strengths: string[];
+  recommendation: string;
+  checks: Record<string, number>;
+}> {
+  if (!opts.frames.length) throw new Error('Qwen storyboard quality check requires frames');
+  const completion = await client().chat.completions.create({
+    model: QWEN_VL_MODEL(),
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: `你是电商短视频质检员。根据按时间排列的连续抽帧检查这个分镜是否可用于发布。
+分镜要求：${opts.storyboard.slice(0, 1800)}
+产品真实资料：${opts.productInfo.slice(0, 1600)}
+是否关键真实性镜头：${opts.critical ? '是' : '否'}
+帧时间：${opts.frames.map(frame => frame.timeLabel).join('、')}
+重点检查商品外观/颜色/包装一致性、错误文字或Logo、人物脸手异常、黑帧闪烁迹象、画面连续性、是否符合分镜动作、是否出现未经资料支持的证书参数或工厂声明。只输出JSON：{"score":0,"passed":false,"issues":[],"strengths":[],"recommendation":"通过/人工复核/重新生成","checks":{"productConsistency":0,"visualIntegrity":0,"storyboardMatch":0,"textSafety":0,"authenticity":0}}。关键镜头有真实性疑点时 passed 必须为 false。` },
+      ...opts.frames.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+    ] as any }],
+    response_format: { type: 'json_object' },
+    max_tokens: 1200,
+  } as any);
+  const parsed = parseJson<Record<string, unknown>>(String(completion.choices[0]?.message?.content || ''), {});
+  const rawChecks = parsed.checks && typeof parsed.checks === 'object' ? parsed.checks as Record<string, unknown> : {};
+  const checks = Object.fromEntries(Object.entries(rawChecks).map(([key, value]) => [key, Math.max(0, Math.min(100, Number(value) || 0))]));
+  return {
+    score: Math.max(0, Math.min(100, Number(parsed.score) || 0)),
+    passed: Boolean(parsed.passed),
+    issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 8).map(String) : [],
+    strengths: Array.isArray(parsed.strengths) ? parsed.strengths.slice(0, 6).map(String) : [],
+    recommendation: String(parsed.recommendation || ''),
+    checks,
+  };
+}
+
 export async function analyzeVideoFramesWithQwen(opts: {
   frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
   title?: string;
