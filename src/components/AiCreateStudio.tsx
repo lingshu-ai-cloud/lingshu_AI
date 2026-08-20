@@ -29,6 +29,47 @@ const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
+const VOICE_DRAFT_TIMEOUT_MS = 30_000;
+
+export class StudioRequestTimeoutError extends Error {
+  constructor(message = '请求超时') {
+    super(message);
+    this.name = 'StudioRequestTimeoutError';
+  }
+}
+
+export async function withStudioTimeout<T>(promise: Promise<T>, timeoutMs = VOICE_DRAFT_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new StudioRequestTimeoutError(`请求超过 ${Math.ceil(timeoutMs / 1000)} 秒，已停止等待`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export function enterpriseBuyerText(roles?: string[]): string {
+  return (roles || []).map(item => item.trim()).filter(Boolean).join('、');
+}
+
+type TimelineValidationItem = { type: string; url?: string; trimStart: number; trimEnd: number; speed: number; targetDuration: number };
+export function validateStudioTimeline(items: TimelineValidationItem[]): string[] {
+  const issues: string[] = [];
+  if (!items.length) return ['没有可用素材，无法继续生成。'];
+  items.forEach((item, index) => {
+    if (!item.url || item.type === 'audio') issues.push(`分镜 ${index + 1} 缺少可播放画面素材。`);
+    const sourceDuration = Math.max(0, item.trimEnd - item.trimStart);
+    const playableDuration = sourceDuration / Math.max(0.01, item.speed || 1);
+    if (sourceDuration <= 0) issues.push(`分镜 ${index + 1} 的素材入点/出点无效。`);
+    if (item.targetDuration > playableDuration + 0.05) issues.push(`分镜 ${index + 1} 需要 ${item.targetDuration.toFixed(1)}s，但实际素材仅可覆盖 ${playableDuration.toFixed(1)}s。`);
+  });
+  return issues;
+}
+
 function pendingClaimLocations(script: string, productInfo: string): string[] {
   const source = productInfo.toLowerCase();
   return script.split('\n').map(line => line.trim()).filter(line => {
@@ -184,7 +225,13 @@ const probeAudioDuration = (f: File) => new Promise<number>(res => {
   if (!f.type.startsWith('audio')) { res(0); return; }
   const a = document.createElement('audio');
   a.preload = 'metadata';
-  a.onloadedmetadata = () => { URL.revokeObjectURL(a.src); res(Math.round(a.duration) || 0); };
+  // Keep sub-second precision. Rounding 13.44s down to 13s makes the renderer
+  // stop before the final spoken word has finished.
+  a.onloadedmetadata = () => {
+    const measured = Number.isFinite(a.duration) ? Number(a.duration.toFixed(3)) : 0;
+    URL.revokeObjectURL(a.src);
+    res(measured);
+  };
   a.onerror = () => res(0);
   a.src = URL.createObjectURL(f);
 });
@@ -845,6 +892,51 @@ function parseStoryboardSlots(value: string, totalDuration: number): StoryboardS
   if (slots.length) return slots.slice(0, 12);
   // 没有真实时间戳脚本时不伪造等分分镜，选材页明确显示“暂无分镜”。
   return [];
+}
+
+/** Keep every storyboard shot, but make each language version end with its real voiceover. */
+export function fitTimelineToVoiceover<T extends {
+  trimStart?: number;
+  trimEnd?: number;
+  speed?: number;
+  targetStart?: number;
+  targetEnd?: number;
+  targetDuration: number;
+}>(timeline: T[], voiceoverDuration: number): T[] {
+  const sourceDuration = timeline.reduce((sum, item) => sum + Math.max(0, Number(item.targetDuration) || 0), 0);
+  if (!timeline.length || !Number.isFinite(voiceoverDuration) || voiceoverDuration <= 0 || sourceDuration <= 0) return timeline;
+  const minimumShotDuration = Math.min(0.5, voiceoverDuration / timeline.length);
+  const scale = voiceoverDuration / sourceDuration;
+  let cursor = 0;
+  return timeline.map((item, index) => {
+    const isLast = index === timeline.length - 1;
+    const remainingShots = timeline.length - index - 1;
+    const remainingRoom = Math.max(minimumShotDuration, voiceoverDuration - cursor - remainingShots * minimumShotDuration);
+    const targetDuration = isLast
+      ? Math.max(minimumShotDuration, voiceoverDuration - cursor)
+      : Math.min(remainingRoom, Math.max(minimumShotDuration, item.targetDuration * scale));
+    const targetStart = cursor;
+    cursor += targetDuration;
+    const sourceClipDuration = Math.max(0, (Number(item.trimEnd) || 0) - (Number(item.trimStart) || 0));
+    return {
+      ...item,
+      targetStart: +targetStart.toFixed(3),
+      targetEnd: +(isLast ? voiceoverDuration : cursor).toFixed(3),
+      targetDuration: +targetDuration.toFixed(3),
+      speed: sourceClipDuration > 0 ? Math.max(0.25, Math.min(4, sourceClipDuration / targetDuration)) : item.speed,
+    };
+  });
+}
+
+export function fitStoryboardSlotsToDuration(slots: StoryboardSlot[], duration: number): StoryboardSlot[] {
+  const sourceDuration = slots.reduce((max, slot) => Math.max(max, slot.end), 0);
+  if (!slots.length || !Number.isFinite(duration) || duration <= 0 || sourceDuration <= 0) return slots;
+  const scale = duration / sourceDuration;
+  return slots.map((slot, index) => {
+    const start = index === 0 ? 0 : slot.start * scale;
+    const end = index === slots.length - 1 ? duration : slot.end * scale;
+    return { ...slot, start: +start.toFixed(3), end: +end.toFixed(3), time: `${start.toFixed(1)}s-${end.toFixed(1)}s` };
+  });
 }
 
 function storyboardSlotScript(detail: string) {
@@ -2542,6 +2634,36 @@ function resolveTranslatedVoiceover(base: string, translated: string, target: st
   return raw;
 }
 
+const VOICE_TRANSLATION_BATCH_TIMEOUT_MS = 30_000;
+const VOICE_TRANSLATION_SINGLE_TIMEOUT_MS = 20_000;
+
+async function runVoiceTranslationWithTimeout<T>(
+  request: (signal: AbortSignal) => Promise<T>,
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromParent = () => controller.abort();
+  if (parentSignal.aborted) controller.abort();
+  else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    return await request(controller.signal);
+  } catch (error) {
+    if (timedOut && !parentSignal.aborted) {
+      throw new Error(`翻译请求超过 ${Math.round(timeoutMs / 1000)} 秒，已自动停止等待`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    parentSignal.removeEventListener('abort', abortFromParent);
+  }
+}
+
 const SAMPLE_SCRIPT = `[开场 · 0-3s]
 先别划走，这就是最近客户一直在问的那款产品。
 
@@ -2985,6 +3107,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [cooperationRoute, setCooperationRoute] = useState('');
   const [availableCooperationRoutes, setAvailableCooperationRoutes] = useState<string[]>([]);
   const [enterpriseRouteStrategies, setEnterpriseRouteStrategies] = useState<Record<string, { targetBuyerRoles?: string[]; primaryCta?: string }>>({});
+  const [enterprisePrimaryCta, setEnterprisePrimaryCta] = useState('');
   const [sellingPoints, setSellingPoints] = useState('');
   const [tone, setTone] = useState('高转化 · 口语化');
   const [videoThemeId, setVideoThemeId] = useState<VideoThemeId>('buyer_pain');
@@ -3003,6 +3126,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   useDismissibleLayer(productSelectorOpen, productSelectorRef, () => setProductSelectorOpen(false));
   const splitVariations = (value: string) => value.split(/[，,\n]/).map(item => item.trim()).filter(Boolean);
   const activeVideoTheme = VIDEO_THEMES.find(item => item.id === videoThemeId) || VIDEO_THEMES[0]!;
+  const effectivePrimaryCta = enterprisePrimaryCta.trim() || primaryCta.trim();
   const applyInferredMaterialTheme = (material: Pick<Material, 'name' | 'folder' | 'shotFunction' | 'tags' | 'segments'>) => {
     const inferredId = inferVideoThemeFromMaterial(material);
     const inferred = VIDEO_THEMES.find(item => item.id === inferredId) || VIDEO_THEMES[0]!;
@@ -3014,8 +3138,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     id: activeVideoTheme.id,
     title: activeVideoTheme.title,
     painPoint: audience.trim() || activeVideoTheme.painPoint,
-    conversionGoal: primaryCta.trim() || DEFAULT_VIDEO_CONVERSION_GOAL,
-    primaryCta: primaryCta.trim() || DEFAULT_VIDEO_CONVERSION_GOAL,
+    conversionGoal: effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL,
+    primaryCta: effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL,
     cooperationRoute,
   };
   const variationDimensionConfig = variationStrategy === 'remix' ? [
@@ -3124,13 +3248,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const enterpriseScriptLanguage = voiceLangs[0] || enterpriseVoiceLangs[0] || '';
   const [voiceDrafts, setVoiceDrafts] = useState<Record<string, string>>({});
   const [voiceDraftStaleLangs, setVoiceDraftStaleLangs] = useState<string[]>([]);
+  const [voiceDraftPendingLangs, setVoiceDraftPendingLangs] = useState<string[]>([]);
+  const [voiceDraftFailedLangs, setVoiceDraftFailedLangs] = useState<string[]>([]);
   const [voiceDraftLoading, setVoiceDraftLoading] = useState(false);
   const [voiceDraftNotice, setVoiceDraftNotice] = useState('');
+  const voiceDraftAbortRef = useRef<AbortController | null>(null);
   const [voicePreviewIdx, setVoicePreviewIdx] = useState<number | null>(null);
   const [scriptView, setScriptView] = useState<'timestamp' | 'voiceover'>('timestamp');
   const [scriptPreviewTab, setScriptPreviewTab] = useState('script');
   const [scriptStageTab, setScriptStageTab] = useState<'theme' | 'script' | 'voiceover' | 'audio'>('theme');
   const autoGen = useRef(false); // 标记是否已由入口生成脚本，避免覆盖用户编辑
+
+  useEffect(() => () => voiceDraftAbortRef.current?.abort(), []);
 
   // 配音 TTS
   const [voiceoverUrl, setVoiceoverUrl] = useState<string | null>(null);
@@ -3162,7 +3291,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [audioCapabilities, setAudioCapabilities] = useState<StudioAudioCapabilities | null>(null);
   const [minimaxDiagnostic, setMinimaxDiagnostic] = useState('');
   const [minimaxDiagnosing, setMinimaxDiagnosing] = useState(false);
-  const [voiceoverMode, setVoiceoverMode] = useState<'none' | 'ai' | 'upload'>('ai');
+  const [voiceoverMode, setVoiceoverMode] = useState<'unselected' | 'none' | 'ai' | 'upload'>('unselected');
   const [uploadedVoiceName, setUploadedVoiceName] = useState('');
   const [customVoiceId, setCustomVoiceId] = useState('');
   const [customVoiceName, setCustomVoiceName] = useState('');
@@ -3288,21 +3417,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           profile.products?.moq,
         ].filter(Boolean).join('；'));
         const inheritedRoute = profile.socialStrategy?.enabledRoutes?.[0] || '';
-        const fallbackBuyerByRoute: Record<string, string> = {
-          oem_odm: '品牌创始人、产品经理或采购',
-          wholesale_distribution: '进口商、经销商或渠道采购',
-          consumer_retail: '终端消费者',
-        };
-        setAudience(prev => prev || [
-          profile.socialStrategy?.routeStrategies?.[inheritedRoute]?.targetBuyerRoles?.[0],
-          profile.customers?.targetProfiles,
-          fallbackBuyerByRoute[inheritedRoute || 'oem_odm'],
-        ].filter(Boolean).join('；'));
+        const inheritedStrategy = profile.socialStrategy?.routeStrategies?.[inheritedRoute];
+        setAudience(enterpriseBuyerText(inheritedStrategy?.targetBuyerRoles));
         const inheritedCta = profile.socialStrategy?.routeStrategies?.[inheritedRoute]?.primaryCta;
         setCooperationRoute(current => current || inheritedRoute);
         setAvailableCooperationRoutes(profile.socialStrategy?.enabledRoutes || []);
         setEnterpriseRouteStrategies(profile.socialStrategy?.routeStrategies || {});
-        setPrimaryCta(current => current === DEFAULT_VIDEO_CONVERSION_GOAL ? inheritedCta || current : current);
+        setEnterprisePrimaryCta(inheritedCta || '');
+        setPrimaryCta(inheritedCta || '');
         setSellingPoints(prev => prev || [
           profile.brand?.usp,
           profile.products?.highlights,
@@ -3387,7 +3509,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const selectedClips = useMemo(() => selected.map(id => materialById.get(id)).filter(Boolean) as Clip[], [selected, materialById]);
   const totalDur = selectedClips.reduce((s, c) => s + (c.type === 'image' ? 3 : c.duration), 0);
   const matNames = selectedClips.map(c => c.name);
-  const storyboardSlots = useMemo(() => parseStoryboardSlots(script, duration), [script, duration]);
+  const storyboardSlots = useMemo(() => {
+    const parsed = parseStoryboardSlots(script, duration);
+    const activeAudioDuration = voiceoverMode === 'ai'
+      ? voiceoverAudios[activeVoiceLang]?.duration || 0
+      : voiceoverMode === 'upload' ? voiceoverDur : 0;
+    return fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
+  }, [activeVoiceLang, duration, script, voiceoverAudios, voiceoverDur, voiceoverMode]);
   const storyboardTimelineEnd = useMemo(() => storyboardSlots.reduce((max, slot) => Math.max(max, slot.end), 0), [storyboardSlots]);
   const recommendedSourceMode = (slot: StoryboardSlot): StoryboardSourceMode => {
     const text = `${slot.title} ${slot.detail}`.toLowerCase();
@@ -3687,10 +3815,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const hasTimestampScript = Boolean(script.trim());
   const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url));
-  const canNext = contentMode === 'video' && step === 'material'
-    ? (mode === 'clone'
+  const canNext = contentMode === 'video' && step === 'script'
+    ? scriptStageTab === 'theme'
+      ? hasTimestampScript
+      : scriptStageTab === 'voiceover'
+        ? hasTimestampScript
+        : voiceoverMode === 'none'
+          || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
+          || (voiceoverMode === 'ai' && hasRequestedVoiceovers)
+    : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length
-      : (storyboardSlots.length > 0 ? assignedCount === storyboardSlots.length : selected.length > 0))
     : true;
   useEffect(() => {
     if (!assignedOrderedIds.length) return;
@@ -4060,6 +4194,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       if (!validStoryboard) return [];
       return languages.map((code, languageIndex) => {
         const bgmId = materialVersionBgms[materialVersionKey(plan.id, code)] ?? assemblyBgms[plan.id] ?? bgm;
+        const audioDuration = voiceoverMode === 'ai'
+          ? voiceoverAudios[code]?.duration || 0
+          : voiceoverMode === 'upload' && code === activeVoiceLang ? voiceoverDur : 0;
         return {
           key: renderCombinationKey(plan.id, code, bgmId),
           plan,
@@ -4068,7 +4205,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           languageIndex,
           bgmId,
           script: scriptForRenderLanguage(code),
-          timeline,
+          timeline: fitTimelineToVoiceover<(typeof timeline)[number]>(timeline, audioDuration),
         };
       });
     });
@@ -4185,7 +4322,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     const outputVoiceoverUrl = renderOverride?.voiceoverUrl ?? voiceoverUrl;
     const outputVoiceoverDur = renderOverride?.voiceoverDur ?? voiceoverDur;
     const outputScript = scriptOverride ?? (voiceDrafts[outputLanguage] || activeSpokenScript);
-    const outputTimeline = renderOverride?.timeline ?? renderTimeline;
+    const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
+    const outputTimeline = voiceoverMode === 'none'
+      ? requestedTimeline
+      : fitTimelineToVoiceover<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur);
     const validOutputStoryboard = storyboardSlots.length > 0
       && outputTimeline.length === storyboardSlots.length
       && outputTimeline.every(item => Boolean(item.url && item.type !== 'audio' && item.targetDuration > 0));
@@ -4287,8 +4427,40 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 
   const next = () => {
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'theme') {
-      setScriptStageTab('theme');
+      const unsupportedClaims = pendingClaimLocations(script, activeProductInfo);
+      const missingThemeEvidence = activeVideoTheme.requires.some(requirement => (
+        (requirement === 'material' && !materials.some(item => item.type !== 'audio'))
+        || (requirement === 'factory' && !materials.some(item => item.folder === 'factory') && !/工厂|产线|质检|产能|factory|production line|quality control/i.test(activeProductInfo))
+        || (requirement === 'case' && !/客户案例|合作案例|案例结果|customer case|case study/i.test(activeProductInfo))
+      ));
+      if (unsupportedClaims.length || missingThemeEvidence) {
+        alert([
+          '分镜质量校验未通过，请修改后重试。',
+          ...unsupportedClaims.map(item => `未获企业资料支持：${item}`),
+          ...(missingThemeEvidence ? [`“${activeVideoTheme.title}”缺少必需的真实素材或企业证据。`] : []),
+        ].join('\n'));
+        return;
+      }
+      if (hasTimestampScript) setScriptStageTab('voiceover');
       return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover') {
+      setScriptStageTab('audio');
+      return;
+    }
+    if (contentMode === 'video' && step === 'material') {
+      const qualityBlockers = storyboardSlots.flatMap(slot => {
+        const plan = storyboardSourcePlans[slot.id];
+        if (storyboardQualityChecking[slot.id]) return [`分镜“${slot.title}”仍在质检中`];
+        if (plan?.qualityError) return [`分镜“${slot.title}”质检失败：${plan.qualityError}`];
+        if (plan?.quality && !plan.quality.passed) return [`分镜“${slot.title}”未通过质检：${plan.quality.issues.join('、') || plan.quality.recommendation}`];
+        return [];
+      });
+      const blockers = [...qualityBlockers, ...validateStudioTimeline(renderTimeline)];
+      if (blockers.length) {
+        alert(`无法进入配乐：\n${blockers.join('\n')}`);
+        return;
+      }
     }
     const nextStep = activeSteps[stepIdx + 1]?.id;
     if (contentMode === 'video' && nextStep === 'material') setActiveFolder('all');
@@ -4315,7 +4487,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             voiceoverDur: audio.duration,
             cues: alignedCuesByLang[code] || audio.cues,
             outputOnly: true,
-            timeline: combination.timeline,
+            timeline: combination.timeline as typeof renderTimeline,
             bgmId,
           });
           const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
@@ -4529,7 +4701,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             scriptType: 'storyboard',
             generationMode: 'material',
             cooperationRoute,
-            voiceoverMode,
+            voiceoverMode: voiceoverMode === 'unselected' ? 'ai' : voiceoverMode,
             provider,
             audience,
             sellingPoints,
@@ -4615,7 +4787,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             scriptType: 'storyboard',
             generationMode: 'product',
             cooperationRoute,
-            voiceoverMode,
+            voiceoverMode: voiceoverMode === 'unselected' ? 'ai' : voiceoverMode,
             provider: 'qwen',
             audience,
             sellingPoints,
@@ -4755,7 +4927,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
               audience,
               sellingPoints,
               tone: `${tone} · 迁移方式：${migrationMode === 'fidelity' ? '高保真复刻' : migrationMode === 'structure' ? '结构迁移' : '机制借鉴'} · 第 ${variantSeed + 1} 版 · 保留原片 hook、证明顺序、切镜节奏和音画形态 · ${migrationMode === 'fidelity' ? '仅替换竞品事实' : '按所选产品重建场景、动作和证明内容'} · ${voiceoverMode === 'none' ? '原片无口播时保持台词为无，不新增口播' : '仅可在原片已有口播位重建短台词，不得增加新的口播镜头'} · 禁止新增原片不存在的字幕或 CTA`,
-              voiceoverMode,
+              voiceoverMode: voiceoverMode === 'unselected' ? 'ai' : voiceoverMode,
               videoTheme: videoThemePayload,
               referenceTitle: cloneReference.video?.title || '',
               referenceAnalysis: cloneReferenceAnalysisText(cloneReference),
@@ -4886,11 +5058,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     return formatVoiceoverWithTimestamps(value);
   };
 
+  const cancelVoiceDraftGeneration = () => {
+    const controller = voiceDraftAbortRef.current;
+    if (!controller) return;
+    controller.abort();
+    setVoiceDraftFailedLangs(current => [...new Set([...current, ...voiceDraftPendingLangs])]);
+    setVoiceDraftStaleLangs(current => [...new Set([...current, ...voiceDraftPendingLangs])]);
+    setVoiceDraftPendingLangs([]);
+    setVoiceDraftLoading(false);
+    setVoiceDraftNotice('已取消翻译；已完成的语种已保留，未完成语种可重新翻译。');
+  };
+
   const generateVoiceDrafts = async () => {
+    voiceDraftAbortRef.current?.abort();
+    const controller = new AbortController();
+    voiceDraftAbortRef.current = controller;
+    const isCurrentRequest = () => voiceDraftAbortRef.current === controller;
     const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
     const base = extractVoiceoverText(sourceText);
     setVoiceoverLines(base);
     setVoiceDraftLoading(true);
+    setVoiceDraftFailedLangs([]);
+    setVoiceDraftPendingLangs([]);
     setVoiceDraftNotice(`正在提取口播，并生成 ${voiceLangs.length || 1} 个语种字幕...`);
     try {
       if (!base.trim()) {
@@ -4907,43 +5096,97 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       setActiveVoiceLang(sourceLanguage);
       setLang(sourceLanguage);
       setScriptView('voiceover');
-      setVoiceDraftNotice(`已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在批量翻译 ${langs.filter(code => code !== sourceLanguage).length} 个语种...`);
 
       const improved: Record<string, string> = { ...immediate };
       const targets = langs.filter(code => code !== sourceLanguage);
-      const failedLangs: string[] = [];
+      setVoiceDraftPendingLangs(targets);
+      setVoiceDraftNotice(targets.length
+        ? `已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在批量翻译 ${targets.length} 个语种（最长等待 30 秒）...`
+        : `已提取${langZh(sourceLanguage) || sourceLanguage}口播。`);
+      const failedLangs = new Set<string>();
+      const failureReasons = new Map<string, string>();
       let translateError = '';
       if (targets.length) {
-        const translated = await studioApi.translateBatch({ text: normalizeScriptTimestamps(base), targets, source: sourceLanguage })
-          .catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
+        const translated = await runVoiceTranslationWithTimeout(
+          signal => studioApi.translateBatch(
+            { text: normalizeScriptTimestamps(base), targets, source: sourceLanguage },
+            { signal },
+          ),
+          controller.signal,
+          VOICE_TRANSLATION_BATCH_TIMEOUT_MS,
+        ).catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
+        if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
         translateError = translated.error || '';
+        const unresolved: string[] = [];
         for (const code of targets) {
-          let raw = translated.translations?.[code] || '';
-          let normalized = raw.trim()
+          const raw = translated.translations?.[code] || '';
+          const normalized = raw.trim()
             ? resolveTranslatedVoiceover(base, raw, code)
             : '';
-          if (!normalized.trim()) {
-            const single = await studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage })
-              .catch(() => ({ ok: false, text: '' }));
-            raw = single.ok ? single.text : '';
-            normalized = raw.trim() ? resolveTranslatedVoiceover(base, raw, code) : '';
-          }
           if (normalized.trim()) {
             improved[code] = normalized;
+            setVoiceDrafts(current => ({ ...current, [code]: normalized }));
           } else {
-            failedLangs.push(code);
+            unresolved.push(code);
           }
         }
-        setVoiceDrafts(improved);
+        setVoiceDraftPendingLangs(unresolved);
+        if (unresolved.length) {
+          setVoiceDraftNotice(`批量翻译已返回 ${targets.length - unresolved.length}/${targets.length} 个语种，正在并行重试其余 ${unresolved.length} 个...`);
+          await Promise.all(unresolved.map(async code => {
+            let normalized = '';
+            let failureReason = translateError || '模型未返回有效译文';
+            try {
+              const single = await runVoiceTranslationWithTimeout(
+                signal => studioApi.translate(
+                  { text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage },
+                  { signal },
+                ),
+                controller.signal,
+                VOICE_TRANSLATION_SINGLE_TIMEOUT_MS,
+              );
+              const raw = single.ok ? single.text : '';
+              normalized = raw.trim() ? resolveTranslatedVoiceover(base, raw, code) : '';
+              failureReason = single.error || failureReason;
+            } catch (err: any) {
+              failureReason = err?.message || failureReason;
+            }
+            if (controller.signal.aborted || !isCurrentRequest()) return;
+            if (normalized.trim()) {
+              improved[code] = normalized;
+              setVoiceDrafts(current => ({ ...current, [code]: normalized }));
+            } else {
+              failedLangs.add(code);
+              failureReasons.set(code, failureReason);
+              setVoiceDraftFailedLangs(current => [...new Set([...current, code])]);
+            }
+            setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
+          }));
+        }
       }
-      setVoiceDraftNotice(failedLangs.length
-        ? `已提取${langZh(sourceLanguage) || sourceLanguage}口播；${failedLangs.map(code => LANGS.find(item => item.code === code)?.label || code).join('、')} 翻译失败：${translateError || '模型未返回有效译文'}。`
+      if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
+      if (!isCurrentRequest()) return;
+      const failed = [...failedLangs];
+      const firstFailureReason = failed.map(code => failureReasons.get(code)).find(Boolean) || translateError;
+      setVoiceDrafts(improved);
+      setVoiceDraftPendingLangs([]);
+      setVoiceDraftFailedLangs(failed);
+      setVoiceDraftNotice(failed.length
+        ? `已生成 ${langs.length - failed.length}/${langs.length} 个语种；${failed.map(code => LANGS.find(item => item.code === code)?.label || code).join('、')} 翻译失败：${firstFailureReason || '模型未返回有效译文'}。可再次点击重试。`
         : `已生成 ${langs.length || 1} 个语种字幕。`);
-      setVoiceDraftStaleLangs([]);
+      setVoiceDraftStaleLangs(failed);
     } catch (err: any) {
-      setVoiceDraftNotice(err?.message || '多语种字幕生成失败，请稍后重试。');
+      if (isCurrentRequest()) {
+        setVoiceDraftPendingLangs([]);
+        setVoiceDraftNotice(controller.signal.aborted
+          ? '已取消翻译；已完成的语种已保留，未完成语种可重新翻译。'
+          : (err?.message || '多语种字幕生成失败，请稍后重试。'));
+      }
     } finally {
-      setVoiceDraftLoading(false);
+      if (isCurrentRequest()) {
+        voiceDraftAbortRef.current = null;
+        setVoiceDraftLoading(false);
+      }
     }
   };
 
@@ -6314,7 +6557,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (typeof s.activeModeScriptId === 'string') setActiveModeScriptId(s.activeModeScriptId);
     if (s.voice) setVoice(s.voice as string);
     if (Array.isArray(s.voiceCandidates)) setVoiceCandidates(s.voiceCandidates as string[]);
-    if (s.voiceoverMode === 'none' || s.voiceoverMode === 'ai' || s.voiceoverMode === 'upload') setVoiceoverMode(s.voiceoverMode);
+    if (s.voiceoverMode === 'unselected' || s.voiceoverMode === 'none' || s.voiceoverMode === 'ai' || s.voiceoverMode === 'upload') setVoiceoverMode(s.voiceoverMode);
     if (typeof s.uploadedVoiceName === 'string') setUploadedVoiceName(s.uploadedVoiceName);
     if (typeof s.customVoiceId === 'string') setCustomVoiceId(s.customVoiceId);
     if (typeof s.customVoiceName === 'string') setCustomVoiceName(s.customVoiceName);
@@ -6405,6 +6648,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   ) => {
     const silent = options.silent === true;
     if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return;
+    if (silent && (
+      modeActionLoading || scriptLoading || materialSelectLoading || coverLoading
+      || rendering || batchRenderingLangs || posterLoading || captionLoading
+    )) return;
     if (voiceDraftLoading || ttsLoading) {
       if (!silent) alert('多语字幕或配音仍在生成，请等待完成后再保存草稿。');
       return;
@@ -6637,10 +6884,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     key={value}
                     type="button"
                     onClick={() => {
+                      if (value !== contentMode) {
+                        setScriptStageTab('theme');
+                        setVoiceoverMode('unselected');
+                        setScript('');
+                        setVoiceoverLines('');
+                        setVoiceDrafts({});
+                        setVoiceoverAudios({});
+                        setAlignedCuesByLang({});
+                        setVoiceoverUrl(null);
+                        setVoiceoverDur(0);
+                        setModeNotice('');
+                      }
                       setContentMode(value);
                       if (value === 'poster') {
                         setPlatform('facebook');
                         setRatio(ratio === '9:16' ? '1:1' : ratio);
+                      } else if (contentMode === 'poster') {
+                        setPlatform('tiktok');
+                        setRatio('9:16');
                       }
                     }}
                     className={`rounded-lg px-4 py-2 text-sm font-bold transition ${contentMode === value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
@@ -6655,6 +6917,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 const on = mode === m.id;
                 return (
                   <button key={m.id} onClick={() => {
+                    if (m.id !== mode) {
+                      setScriptStageTab('theme');
+                      setVoiceoverMode('unselected');
+                      setScript('');
+                      setVoiceoverLines('');
+                      setVoiceDrafts({});
+                      setVoiceoverAudios({});
+                      setAlignedCuesByLang({});
+                      setVoiceoverUrl(null);
+                      setVoiceoverDur(0);
+                      setModeNotice('');
+                    }
                     setMode(m.id);
                     const sourceTitle = videoKickoff?.video?.title || videoKickoff?.generatedVideo?.title || '';
                     setProjectTitle(contentMode === 'video' ? draftTitleForMode(m.id, sourceTitle) : m.title);
@@ -7995,8 +8269,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="mb-4 grid gap-2 md:grid-cols-3">
             {([
               { id: 'theme' as const, number: 1, title: '选择主题/分镜', desc: `${activeVideoTheme.title} · 选择主题并确认可执行分镜`, done: Boolean(videoThemeId) && hasTimestampScript },
-              { id: 'voiceover' as const, number: 2, title: '选择声音策略', desc: '保留无口播，或提取台词做多语适配', done: voiceoverMode === 'none' || hasRequestedVoiceDrafts },
-              { id: 'audio' as const, number: 3, title: '生成/确认声音', desc: voiceoverMode === 'none' ? '原片无口播，保留低信息噪声节奏' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
+              { id: 'voiceover' as const, number: 2, title: '提取口播/翻译', desc: '确认脚本口播，并生成需要的语言版本', done: hasRequestedVoiceDrafts },
+              { id: 'audio' as const, number: 3, title: '选择并确认声音', desc: voiceoverMode === 'unselected' ? '请选择不配音、AI 配音或上传真人音频' : voiceoverMode === 'none' ? '不配音，仅保留画面与字幕' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
             ]).map(item => (
                 <button type="button" key={item.number} onClick={() => setScriptStageTab(item.id)}
                   className={`rounded-xl border px-3 py-3 text-left transition ${scriptStageTab === item.id ? 'border-accent bg-accent/5 shadow-sm' : item.done ? 'border-accent/20 bg-surface hover:border-accent/40' : 'border-border bg-surface-2 hover:border-border-bright'}`}>
@@ -8063,8 +8337,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       const route = event.target.value;
                       const defaults = enterpriseRouteStrategies[route];
                       setCooperationRoute(route);
-                      if (defaults?.targetBuyerRoles?.[0]) setAudience(defaults.targetBuyerRoles[0]);
-                      if (defaults?.primaryCta) setPrimaryCta(defaults.primaryCta);
+                      setAudience(enterpriseBuyerText(defaults?.targetBuyerRoles));
+                      setEnterprisePrimaryCta(defaults?.primaryCta || '');
+                      setPrimaryCta(defaults?.primaryCta || '');
                     }} className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-text-primary outline-none focus:border-accent">
                       {availableCooperationRoutes.map(route => <option key={route} value={route}>{route === 'oem_odm' ? 'OEM / ODM' : route === 'wholesale_distribution' ? '现货批发 / 经销' : 'C 端零售'}</option>)}
                     </select>
@@ -8076,8 +8351,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </label>
                   <label className="block">
                     <span className="mb-1.5 block text-[10px] font-black text-text-secondary">主 CTA</span>
-                    <textarea value={primaryCta} onChange={event => setPrimaryCta(event.target.value)} rows={3}
-                      className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none focus:border-accent" />
+                    <textarea value={enterprisePrimaryCta || primaryCta} readOnly rows={3} title="主 CTA 由企业社媒策略统一管理"
+                      className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none" />
+                    <span className="mt-1 block text-[10px] text-text-muted">仅使用企业社媒策略中的唯一主 CTA，如需修改请前往企业中心。</span>
                   </label>
                 </div>
               </div>
@@ -8170,15 +8446,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   <p className="text-sm font-black text-text-primary">提取口播与多语种字幕</p>
                   <p className="mt-1 text-xs text-text-muted">从时间戳脚本里提取口播台词，保留时间段，再生成不同语种版本。</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void generateVoiceDrafts()}
-                  disabled={voiceDraftLoading || !hasTimestampScript || !voiceLangs.length}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
-                >
-                  {voiceDraftLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  {voiceDraftLoading ? '生成中…' : '提取口播并翻译'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void generateVoiceDrafts()}
+                    disabled={voiceDraftLoading || !hasTimestampScript || !voiceLangs.length}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                  >
+                    {voiceDraftLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {voiceDraftLoading ? `翻译中 ${voiceLangs.length - voiceDraftPendingLangs.length}/${voiceLangs.length}` : '提取口播并翻译'}
+                  </button>
+                  {voiceDraftLoading && (
+                    <button
+                      type="button"
+                      onClick={cancelVoiceDraftGeneration}
+                      className="inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:border-red-200 hover:text-red-600"
+                    >
+                      <X size={12} /> 取消
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2">
                 <span className="text-[10px] font-black text-accent">企业中心语种</span>
@@ -8203,6 +8490,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold ${
                   voiceDraftNotice.includes('失败') || voiceDraftNotice.includes('没有可提取')
                     ? 'border-red-100 bg-red-50 text-red-600'
+                    : voiceDraftNotice.includes('取消') || voiceDraftNotice.includes('超时')
+                      ? 'border-amber-200 bg-amber-50 text-amber-700'
                     : 'border-accent/20 bg-accent-glow text-accent'
                 }`}>
                   {voiceDraftNotice}
@@ -8220,14 +8509,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       >
                         {LANGS.find(l => l.code === code)?.label || code}
                         {voiceoverAudios[code] && <span className="ml-1 opacity-80">已配音</span>}
-                        {voiceDraftStaleLangs.includes(code) && <span className="ml-1 text-amber-600">待同步</span>}
+                        {voiceDraftPendingLangs.includes(code)
+                          ? <span className="ml-1 text-emerald-600">翻译中</span>
+                          : voiceDraftFailedLangs.includes(code)
+                            ? <span className="ml-1 text-red-600">翻译失败</span>
+                            : voiceDraftStaleLangs.includes(code) && <span className="ml-1 text-amber-600">待同步</span>}
                       </button>
                     ))}
                   </div>
                   <textarea
-                    value={voiceDrafts[activeVoiceLang] || (activeVoiceLang === 'zh' ? '' : '翻译生成中或失败，请点击“提取口播并翻译”重试。')}
+                    value={voiceDrafts[activeVoiceLang] || ''}
+                    placeholder={voiceDraftPendingLangs.includes(activeVoiceLang)
+                      ? '正在翻译该语种，请稍候…'
+                      : voiceDraftFailedLangs.includes(activeVoiceLang)
+                        ? '该语种翻译失败，可点击“提取口播并翻译”重试。'
+                        : '请输入该语种口播内容。'}
                     onChange={e => {
-                      setVoiceDrafts(drafts => ({ ...drafts, [activeVoiceLang]: e.target.value }));
+                      const nextValue = e.target.value;
+                      setVoiceDrafts(drafts => ({ ...drafts, [activeVoiceLang]: nextValue }));
+                      if (nextValue.trim()) {
+                        setVoiceDraftFailedLangs(current => current.filter(code => code !== activeVoiceLang));
+                        setVoiceDraftStaleLangs(current => current.filter(code => code !== activeVoiceLang));
+                      }
                       setVoiceoverAudios(current => { const next = { ...current }; delete next[activeVoiceLang]; return next; });
                       setAlignedCuesByLang(current => { const next = { ...current }; delete next[activeVoiceLang]; return next; });
                       if (activeVoiceLang === 'zh') setVoiceDraftStaleLangs(current => [...new Set([...current, ...voiceLangs.filter(code => code !== 'zh')])]);
@@ -8561,7 +8864,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </div>
                   <div className="min-w-0">
                     <div className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2 text-xs leading-5 text-accent">
-                      下方是<strong>口播音轨的句级时间</strong>，用于校准配音与字幕，不是分镜切换时间。分镜画面时长仍由素材匹配步骤控制；修改这里只会调整字幕和口播在成片中的出现位置。
+                      下方是<strong>口播音轨的句级时间</strong>，用于校准配音与字幕，不是分镜切换时间。系统会先按当前语种的真实配音总时长自动校准分镜；进入素材匹配后仍可逐镜微调目标时长、素材入点、出点和速度。
                     </div>
                     <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
                       {cues.map((cue, i) => (
@@ -9765,7 +10068,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
               className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-40"
               style={{ background: TRAFFIC_GREEN }}>
               {step === 'script'
-                ? scriptStageTab === 'theme' ? '确认主题并进入分镜生成' : voiceoverMode === 'none' ? '确认字幕并进入素材匹配' : '试听确认并进入素材匹配'
+                ? scriptStageTab === 'theme'
+                  ? '确认分镜并处理口播'
+                  : scriptStageTab === 'voiceover'
+                    ? '确认口播并选择声音'
+                    : voiceoverMode === 'unselected'
+                      ? '请先选择声音策略'
+                      : voiceoverMode === 'none'
+                        ? '确认字幕并进入素材匹配'
+                        : '试听确认并进入素材匹配'
                 : step === 'material' && contentMode === 'video'
                   ? canNext
                     ? '完成选材并进入配乐'

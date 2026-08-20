@@ -1,24 +1,29 @@
-import { Component, Suspense, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { BookOpen, Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
 import { authApi, type AuthSession } from './lib/auth';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
-import BusinessDiagnosisModal from './components/BusinessDiagnosisModal';
-import GlobalAssistant from './components/GlobalAssistant';
-import StrategyPage from './components/StrategyPage';
-import TrafficPage from './components/TrafficPage';
-import ConversionPage from './components/ConversionPage';
-import OrderManagementPage from './components/OrderManagementPage';
-import EnterprisePage from './components/EnterprisePage';
-import IntegrationsPage from './components/IntegrationsPage';
-import ScheduledPage from './components/ScheduledPage';
-import AdminDashboard from './components/AdminDashboard';
-import AdminDeliveryPage from './components/AdminDeliveryPage';
 import AssistLinkPage from './components/AssistLinkPage';
 import LegalPages from './components/LegalPages';
-import { AgentMemoryPage, OrganizationPermissionsPage, ScriptLibraryPage } from './components/WorkspaceManagementPages';
+
+// 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
+// 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
+const StrategyPage = lazy(() => import('./components/StrategyPage'));
+const TrafficPage = lazy(() => import('./components/TrafficPage'));
+const ConversionPage = lazy(() => import('./components/ConversionPage'));
+const OrderManagementPage = lazy(() => import('./components/OrderManagementPage'));
+const EnterprisePage = lazy(() => import('./components/EnterprisePage'));
+const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
+const ScheduledPage = lazy(() => import('./components/ScheduledPage'));
+const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
+const AdminDeliveryPage = lazy(() => import('./components/AdminDeliveryPage'));
+const BusinessDiagnosisModal = lazy(() => import('./components/BusinessDiagnosisModal'));
+const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
+const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
+const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
+const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.ScriptLibraryPage })));
 
 export type Page =
   | 'strategy'
@@ -447,22 +452,24 @@ export default function App() {
           </motion.button>
         )}
       </AnimatePresence>
-      <BusinessDiagnosisModal
-        open={businessDiagnosisOpen}
-        session={session}
-        onClose={closeBusinessDiagnosis}
-        onDismissToday={dismissBusinessDiagnosisToday}
-        onNavigate={handleNavigate}
-      />
-      <GlobalAssistant
-        page={page}
-        restore={restore}
-        kickoff={kickoff}
-        suppressForRightSidebar={scriptPanelOpen || conversation !== null}
-        onKickoffConsumed={() => setKickoff(null)}
-        onAction={startAgentTask}
-        onSessionRefresh={() => void refreshSession()}
-      />
+      <Suspense fallback={null}>
+        <BusinessDiagnosisModal
+          open={businessDiagnosisOpen}
+          session={session}
+          onClose={closeBusinessDiagnosis}
+          onDismissToday={dismissBusinessDiagnosisToday}
+          onNavigate={handleNavigate}
+        />
+        <GlobalAssistant
+          page={page}
+          restore={restore}
+          kickoff={kickoff}
+          suppressForRightSidebar={scriptPanelOpen || conversation !== null}
+          onKickoffConsumed={() => setKickoff(null)}
+          onAction={startAgentTask}
+          onSessionRefresh={() => void refreshSession()}
+        />
+      </Suspense>
       <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
         <Suspense fallback={<PageLoading />}>
           {page === 'strategy' && (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -17,10 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import InspirationDashboard from './InspirationDashboard';
-import AiCreateStudio from './AiCreateStudio';
-import AccountActivity from './AccountActivity';
-import { CalendarPlanner, type CalendarPost } from './publishing/CalendarPlanner';
+import type { CalendarPost } from './publishing/CalendarPlanner';
 import type { PublishDeliveryMode } from './publishing/schedulePolicy';
 import type { ConversationContext, Page, RestoreSignal, KickoffSignal, AgentAction } from '../App';
 import { authHeader } from '../lib/auth';
@@ -32,6 +29,13 @@ import {
   resolveWorkflowNavigationPage,
   type TrafficViewMode,
 } from './trafficViewMode';
+
+// 每个工作区都很重，按当前视图拆包，避免进入“智能素材”时同时解析灵感大屏、
+// 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
+const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
+const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
+const AccountActivity = lazy(() => import('./AccountActivity'));
+const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(module => ({ default: module.CalendarPlanner })));
 
 type ViewMode = TrafficViewMode;
 type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';

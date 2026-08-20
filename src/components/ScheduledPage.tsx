@@ -305,6 +305,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [businessDynamicsLoading, setBusinessDynamicsLoading] = useState(true);
   const [businessDynamicsError, setBusinessDynamicsError] = useState('');
   const didAutoOpenDemoTask = useRef(false);
+  const tasksRequestRef = useRef<AbortController | null>(null);
+  const videoStatsRequestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const prefill = consumeSessionPrefill<ScheduleActionPrefill>(CONTENT_ACTION_STORAGE.schedule);
@@ -339,10 +341,15 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     void fetchVideoStats();
     void fetchBusinessDynamics();
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       void fetchTasks(false);
       void fetchVideoStats();
     }, 5000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      tasksRequestRef.current?.abort();
+      videoStatsRequestRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -369,24 +376,41 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   }, [resultTaskId]);
 
   async function fetchTasks(showLoading = true) {
+    if (tasksRequestRef.current) return;
+    const controller = new AbortController();
+    tasksRequestRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     if (showLoading) setLoading(true);
     try {
-      const r = await fetch('/api/overseas/scheduler', { headers: authHeader() });
+      const r = await fetch('/api/overseas/scheduler', { headers: authHeader(), signal: controller.signal });
       if (!r.ok) {
         setTasks([]);
         return;
       }
       setTasks(await r.json());
-    } finally { if (showLoading) setLoading(false); }
+    } catch {
+      // 保留最近一次成功结果；超时后下一轮仍可恢复。
+    } finally {
+      window.clearTimeout(timeout);
+      if (tasksRequestRef.current === controller) tasksRequestRef.current = null;
+      if (showLoading) setLoading(false);
+    }
   }
 
   async function fetchVideoStats() {
+    if (videoStatsRequestRef.current) return;
+    const controller = new AbortController();
+    videoStatsRequestRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     try {
-      const r = await fetch('/api/overseas/scheduler/video-stats', { headers: authHeader() });
+      const r = await fetch('/api/overseas/scheduler/video-stats', { headers: authHeader(), signal: controller.signal });
       if (!r.ok) return;
       setVideoStats(await r.json());
     } catch {
       // Keep the previous snapshot visible during backend hot reloads.
+    } finally {
+      window.clearTimeout(timeout);
+      if (videoStatsRequestRef.current === controller) videoStatsRequestRef.current = null;
     }
   }
 

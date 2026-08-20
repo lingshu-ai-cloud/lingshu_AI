@@ -527,10 +527,10 @@ export const studioApi = {
     post<{ ok: boolean; url?: string }>('cover', b, { ok: false }),
 
   // 文本翻译（默认译成简体中文，供用户确认外语文案）
-  translate: (b: { text: string; target?: string; source?: string }) =>
-    post<{ ok: boolean; text: string }>('translate', b, { ok: false, text: '' }),
-  translateBatch: (b: { text: string; targets: string[]; source?: string }) =>
-    post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }),
+  translate: (b: { text: string; target?: string; source?: string }, options?: { signal?: AbortSignal }) =>
+    post<{ ok: boolean; text: string; error?: string }>('translate', b, { ok: false, text: '' }, options?.signal),
+  translateBatch: (b: { text: string; targets: string[]; source?: string }, options?: { signal?: AbortSignal }) =>
+    post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }, options?.signal),
 
   // Seedance 视频生成
   seedanceVideo: (b: {
