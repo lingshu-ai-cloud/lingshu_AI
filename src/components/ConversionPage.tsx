@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bot,
   BrainCircuit,
   Check,
   ChevronDown,
-  Eye,
   Filter,
+  Languages,
   MessageSquare,
   Power,
   RefreshCw,
@@ -16,6 +16,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
+import type { EmojiClickData, PickerProps } from 'emoji-picker-react';
 import { authHeader } from '../lib/auth';
 import type { AgentAction, ConversationContext, KickoffSignal, RestoreSignal } from '../App';
 import { BasicInfoWidget } from './customers/widgets/BasicInfoWidget';
@@ -29,6 +30,12 @@ import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
 import { getCustomerServiceStatus, updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
+
+const EmojiPicker = lazy(async () => {
+  const picker = await import('emoji-picker-react');
+  const NativeEmojiPicker = (props: PickerProps) => <picker.default {...props} emojiStyle={picker.EmojiStyle.NATIVE} />;
+  return { default: NativeEmojiPicker };
+});
 
 type CustomerView = 'inbox' | 'leads' | 'won' | 'silent';
 type DraftIntent = 'reply' | 'opener' | 'followup' | 'reactivate' | 'post_call' | 'polish' | 'handoff_summary';
@@ -137,8 +144,6 @@ const HANDLING_COLOR: Record<HandlingMode, string> = {
   ai_draft: '#d97706',
   human_needed: '#dc2626',
 };
-
-const REPLY_EMOJIS = ['😊', '👍', '🙏', '🤝', '✅', '🎉', '📌', '📦', '🚚', '💬', '❤️', '✨'];
 
 function filterCustomers(view: CustomerView, customers: CustomerProfile[]) {
   if (view === 'inbox') return sortCustomersByLatestMessage(customers.filter(customer => customer.inboxReason));
@@ -281,10 +286,6 @@ function buildTemplatePlan(customer: CustomerProfile, templates: MessageTemplate
   return { template, variables, rendered: renderTemplateBody(template, variables) };
 }
 
-function normalizeDraftForChineseEditing(draft: string, customer: CustomerProfile): string {
-  return draft.trim() || fallbackCustomerReplyZh(customer);
-}
-
 function translateChineseReplyForCustomer(customer: CustomerProfile, text: string): string {
   const body = text.trim();
   if (!isPredominantlyChineseText(body)) return body;
@@ -309,9 +310,22 @@ function translateChineseReplyForCustomer(customer: CustomerProfile, text: strin
   return `Thanks for your message. Could you share the target quantity, specifications, and packaging requirements for ${product}?`;
 }
 
-function translatedReplyPreview(customer: CustomerProfile, text: string): string {
-  const translated = translateChineseReplyForCustomer(customer, text);
-  return translated.trim() === text.trim() ? '' : translated;
+async function translateReplyToCustomerLanguage(customer: CustomerProfile, text: string): Promise<string> {
+  const body = text.trim();
+  if (!body || !isPredominantlyChineseText(body)) return body;
+  try {
+    const response = await fetch('/api/overseas/plugins/translate/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ text: body, source: '简体中文', target: replyLanguage(customer) }),
+    });
+    const data = await response.json().catch(() => ({}));
+    const translated = response.ok && typeof data?.translatedText === 'string' ? data.translatedText.trim() : '';
+    if (translated && translated !== body) return translated;
+  } catch {
+    // Keep the composer usable in local preview when the translation provider is unavailable.
+  }
+  return translateChineseReplyForCustomer(customer, body);
 }
 
 function latestBuyerText(customer: CustomerProfile): string {
@@ -372,10 +386,13 @@ async function requestDraft(
     if (resp.ok) {
       if (data?.handoffRequired) {
         const bridgeDraft = typeof data?.draft === 'string' ? data.draft.trim() : '';
+        const chineseBridgeDraft = typeof data?.translatedDraft === 'string' && data.translatedDraft.trim()
+          ? data.translatedDraft.trim()
+          : isPredominantlyChineseText(bridgeDraft) ? bridgeDraft : fallbackCustomerReplyZh(customer);
         return {
-          draft: bridgeDraft ? normalizeDraftForChineseEditing(bridgeDraft, customer) : '',
+          draft: bridgeDraft ? chineseBridgeDraft : '',
           originalDraft: bridgeDraft,
-          translatedDraft: typeof data.translatedDraft === 'string' ? data.translatedDraft.trim() : undefined,
+          translatedDraft: chineseBridgeDraft || undefined,
           handoffRequired: true,
           fallbackCount: Number(data.fallbackCount || customer.fallbackCount || 0),
           safeToSendBeforeHandoff: Boolean(data.safeToSendBeforeHandoff),
@@ -395,11 +412,14 @@ async function requestDraft(
         };
       }
       if (typeof data?.draft === 'string' && data.draft.trim()) {
-        const draft = normalizeDraftForChineseEditing(data.draft.trim(), customer);
+        const originalDraft = data.draft.trim();
+        const draft = typeof data?.translatedDraft === 'string' && data.translatedDraft.trim()
+          ? data.translatedDraft.trim()
+          : isPredominantlyChineseText(originalDraft) ? originalDraft : fallbackCustomerReplyZh(customer);
         return {
           draft,
-          originalDraft: draft,
-          translatedDraft: typeof data.translatedDraft === 'string' ? data.translatedDraft.trim() : undefined,
+          originalDraft,
+          translatedDraft: draft,
           fallbackCount: Number(data.fallbackCount || customer.fallbackCount || 0),
           knowledgeMiss: Boolean(data.knowledgeMiss),
           missReason: typeof data.missReason === 'string' ? data.missReason : '',
@@ -428,8 +448,9 @@ async function requestDraft(
   } catch {
     // Use local fallback when the API is unavailable in local preview.
   }
-  const draft = fallbackCustomerReply(customer);
-  return { draft, originalDraft: draft, buyerMessage: latestBuyerText(customer), category: intent };
+  const originalDraft = fallbackCustomerReply(customer);
+  const draft = fallbackCustomerReplyZh(customer);
+  return { draft, originalDraft, translatedDraft: draft, buyerMessage: latestBuyerText(customer), category: intent };
 }
 
 function fallbackHandoffSummary(customer: CustomerProfile): string {
@@ -669,13 +690,11 @@ function CompactCustomerList({
 function DraftSuggestionBar({
   customer,
   draft,
-  translatedDraft: _translatedDraft,
   isTemplate,
   templatePlan,
   priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
-  knownChineseDraft,
   onSend,
   onEdit,
   onChangeDraft,
@@ -684,13 +703,11 @@ function DraftSuggestionBar({
 }: {
   customer: CustomerProfile;
   draft: string;
-  translatedDraft: string;
   isTemplate: boolean;
   templatePlan: TemplatePlan | null;
   priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
-  knownChineseDraft?: string;
   onSend: () => void;
   onEdit: () => void;
   onChangeDraft: (value: string) => void;
@@ -707,25 +724,6 @@ function DraftSuggestionBar({
   const deleteMessage = (index: number) => {
     onChangeDraft(draftMessages.filter((_, itemIndex) => itemIndex !== index).join('\n\n'));
   };
-  const fallbackChinese = () => chineseMessageTranslation(draft, customer) || fallbackCustomerReplyZh(customer);
-  const [chineseDraft, setChineseDraft] = useState(knownChineseDraft || (isPredominantlyChineseText(draft) ? draft : fallbackChinese()));
-
-  useEffect(() => {
-    if (knownChineseDraft) { setChineseDraft(knownChineseDraft); return; }
-    if (isPredominantlyChineseText(draft)) { setChineseDraft(draft); return; }
-    let cancelled = false;
-    setChineseDraft('翻译中…');
-    void fetch('/api/overseas/plugins/translate/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ text: draft, target: '简体中文' }),
-    }).then(async response => {
-      const data = await response.json().catch(() => ({}));
-      if (!cancelled) setChineseDraft(response.ok && data.translatedText ? String(data.translatedText).trim() : fallbackChinese());
-    }).catch(() => { if (!cancelled) setChineseDraft(fallbackChinese()); });
-    return () => { cancelled = true; };
-  }, [draft, customer.id, customer.product, knownChineseDraft]);
-
   return (
     <div data-draft-suggestion className="relative ml-auto max-w-[74%] rounded-2xl rounded-tr-sm border border-dashed border-[#0891b2]/35 bg-[#0891b2]/[0.08] px-4 py-3 shadow-sm">
       <button type="button" onClick={onDismiss} aria-label="关闭 AI 建议" className="absolute right-2 top-2 rounded-full p-1 text-text-muted hover:bg-white/70">
@@ -771,9 +769,6 @@ function DraftSuggestionBar({
             <p className="mt-1 whitespace-pre-line">{'\u6700\u7ec8\u53d1\u9001\u6548\u679c\uff1a'}{templatePlan.rendered}</p>
           </div>
         )}
-        <div className="mt-2 rounded-xl border border-[#0891b2]/15 bg-white/70 px-3 py-2 text-xs leading-relaxed text-text-secondary">
-          <span className="font-bold text-text-primary">中文翻译：</span>{chineseDraft}
-        </div>
         {!priceRulesReady && (
           <button
             type="button"
@@ -870,7 +865,6 @@ function ChatThread({
   priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
-  bridgeTranslation,
   onMockBuyerMessage,
 }: {
   customer: CustomerProfile | null;
@@ -886,18 +880,18 @@ function ChatThread({
   onDismissDraft: () => void;
   onRegenerateDraft: () => void;
   onSceneDraft: (intent: DraftIntent) => void;
-  onPreviewTranslate: () => void;
+  onPreviewTranslate: () => Promise<void>;
   templates: MessageTemplate[];
   onManualActive: () => void;
   priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
-  bridgeTranslation?: string;
   onMockBuyerMessage: (text: string) => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const emojiMenuRef = useRef<HTMLDivElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [translationLoading, setTranslationLoading] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [mockInput, setMockInput] = useState('');
   const composerState = draftSuggestion ? 'draft' : input.trim() ? 'typing' : 'idle';
@@ -906,6 +900,16 @@ function ChatThread({
   const typedTemplatePlan = customer && input.trim() ? buildTemplatePlan(customer, templates, input) : null;
   const chips = customer && composerState === 'idle' ? sceneChips(customer) : [];
   useDismissibleLayer(emojiOpen, emojiMenuRef, () => setEmojiOpen(false));
+
+  const refreshTranslationPreview = useCallback(async () => {
+    if (!input.trim()) return;
+    setTranslationLoading(true);
+    try {
+      await onPreviewTranslate();
+    } finally {
+      setTranslationLoading(false);
+    }
+  }, [input, onPreviewTranslate]);
 
   const insertEmoji = (emoji: string) => {
     const start = inputRef.current?.selectionStart ?? input.length;
@@ -923,9 +927,9 @@ function ChatThread({
 
   useEffect(() => {
     if (!previewOpen || !input.trim()) return;
-    const timer = window.setTimeout(() => onPreviewTranslate(), 800);
+    const timer = window.setTimeout(() => void refreshTranslationPreview(), 500);
     return () => window.clearTimeout(timer);
-  }, [previewOpen, input, onPreviewTranslate]);
+  }, [previewOpen, input, refreshTranslationPreview]);
 
   useEffect(() => {
     if (!draftSuggestion) return;
@@ -1036,7 +1040,7 @@ function ChatThread({
             );
           })}
           {draftSuggestion && (
-            <DraftSuggestionBar customer={customer} draft={draftSuggestion} translatedDraft={isOutsideWindow && templatePlan ? templatePlan.rendered : translateChineseReplyForCustomer(customer, draftSuggestion)} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} knownChineseDraft={bridgeTranslation} onSend={onSendDraft} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+            <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
           )}
         </div>
       </div>
@@ -1049,29 +1053,51 @@ function ChatThread({
             </div>
           )}
           <div data-testid="conversation-composer" className="relative rounded-xl border border-border bg-surface-2 px-3 py-2.5">
-            {previewOpen && translatedInput && <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary"><span className="font-black text-text-primary">{'\u8bd1\u6587\u9884\u89c8\uff1a'}</span>{translatedInput}</div>}
+            {previewOpen && (
+              <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
+                <span className="font-black text-text-primary">目标语言译文（{customer.language}）：</span>
+                {translationLoading ? '翻译中…' : translatedInput || '请输入中文内容后查看译文'}
+              </div>
+            )}
             {isOutsideWindow && typedTemplatePlan && input.trim() && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
                 <span className="font-black">{'\u5c06\u4f7f\u7528\u6a21\u677f\uff1a'}</span>{typedTemplatePlan.template.label}
                 <div className="mt-1">{typedTemplatePlan.template.status === 'approved' ? '\u6a21\u677f\u5df2\u901a\u8fc7\uff0c\u53ef\u53d1\u9001' : '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d\uff0c\u6682\u4e0d\u80fd\u53d1\u9001'}</div>
               </div>
             )}
-            <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder={`输入回复（中文或${replyLanguage(customer)}）…`} className="max-h-24 w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-text-primary outline-none shadow-none placeholder:text-text-muted focus:border-0 focus:shadow-none" />
+            <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder="输入中文回复…" className="max-h-24 w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-text-primary outline-none shadow-none placeholder:text-text-muted focus:border-0 focus:shadow-none" />
             <div className="mt-2 flex items-center justify-between gap-2">
               <div ref={emojiMenuRef} className="relative flex items-center gap-1.5">
                 <button type="button" aria-expanded={emojiOpen} aria-label="添加表情" onClick={() => setEmojiOpen(open => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary" title="添加表情"><Smile size={15} /></button>
                 {emojiOpen && (
-                  <div role="menu" aria-label="选择表情" className="absolute bottom-10 left-0 z-30 grid w-48 grid-cols-6 gap-1 rounded-xl border border-border bg-white p-2 shadow-xl">
-                    {REPLY_EMOJIS.map(emoji => (
-                      <button key={emoji} type="button" role="menuitem" aria-label={`插入 ${emoji}`} onClick={() => insertEmoji(emoji)} className="flex h-7 w-7 items-center justify-center rounded-lg text-base hover:bg-surface-2">
-                        {emoji}
-                      </button>
-                    ))}
+                  <div role="dialog" aria-label="选择表情" className="absolute bottom-10 left-0 z-30 overflow-hidden rounded-xl border border-border bg-white shadow-xl">
+                    <Suspense fallback={<div className="flex h-[360px] w-80 items-center justify-center text-xs font-bold text-text-muted">正在加载表情…</div>}>
+                      <EmojiPicker
+                        width={320}
+                        height={360}
+                        lazyLoadEmojis
+                        searchPlaceHolder="搜索表情"
+                        previewConfig={{ showPreview: false }}
+                        onEmojiClick={(emojiData: EmojiClickData) => insertEmoji(emojiData.emoji)}
+                      />
+                    </Suspense>
                   </div>
                 )}
-                {composerState === 'typing' && (
-                  <button type="button" onClick={() => { setPreviewOpen(open => !open); if (!previewOpen) onPreviewTranslate(); }} disabled={!input.trim()} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40" title="译文预览"><Eye size={15} /></button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const shouldOpen = !previewOpen;
+                    setPreviewOpen(shouldOpen);
+                    if (shouldOpen) void refreshTranslationPreview();
+                  }}
+                  disabled={!input.trim()}
+                  aria-label={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
+                  className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  title={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
+                >
+                  <Languages size={15} />
+                  {previewOpen ? '隐藏译文' : '显示译文'}
+                </button>
               </div>
                <button type="button" onClick={onSend} disabled={!input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
             </div>
@@ -1643,6 +1669,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [learnDialogOpen, setLearnDialogOpen] = useState(false);
   const [input, setInput] = useState('');
   const [translatedInput, setTranslatedInput] = useState('');
+  const translationRequestRef = useRef(0);
   const [toast, setToast] = useState<string | null>(null);
   const [undoSend, setUndoSend] = useState<null | { customerId: string; eventId: string; restoreText: string; timer: number }>(null);
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -1807,6 +1834,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, []);
 
   useEffect(() => {
+    translationRequestRef.current += 1;
     setDraftSuggestion(null);
     setDraftMeta(null);
     setLastDraftKey('');
@@ -2145,6 +2173,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       sendStatus: 'queued',
       sendMode: templatePlan ? 'template' : 'free_text',
       confirmedByHuman: true,
+      translatedBody: restoreText.trim() && restoreText.trim() !== eventBody.trim() ? restoreText.trim() : undefined,
       audit: meta?.knowledgeMiss ? { knowledgeMiss: true, buyerMessage: meta.buyerMessage, evidence: meta.evidence } : undefined,
     });
     appendTimelineEvent(customer.id, event);
@@ -2179,7 +2208,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     removeTimelineEvent(undoSend.customerId, undoSend.eventId);
     if (selected?.id === undoSend.customerId) {
       setInput(undoSend.restoreText);
-      setTranslatedInput(selected ? translatedReplyPreview(selected, undoSend.restoreText) : '');
+      setTranslatedInput('');
       savePendingDraft(selected, undoSend.restoreText);
     }
     setUndoSend(null);
@@ -2188,7 +2217,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const sendReply = async () => {
     if (!selected) return;
     const templatePlan = isOutsideWhatsAppWindow(selected) ? buildTemplatePlan(selected, templates, input) : null;
-    const body = templatePlan?.rendered || (translatedInput.trim() || (isPredominantlyChineseText(input) ? translateChineseReplyForCustomer(selected, input) : input.trim()));
+    const body = templatePlan?.rendered || translatedInput.trim() || await translateReplyToCustomerLanguage(selected, input);
     if (!body) return;
     if (isOutsideWhatsAppWindow(selected) && templatePlan?.template.status !== 'approved') {
       showToast('消息模板审核中，暂时不能发送超窗触达。');
@@ -2204,7 +2233,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       showToast('消息模板审核中，暂时不能发送超窗触达。');
       return;
     }
-    const body = templatePlan?.rendered || translateChineseReplyForCustomer(selected, draftSuggestion);
+    const body = templatePlan?.rendered || await translateReplyToCustomerLanguage(selected, draftSuggestion);
     queueSend(selected, body, draftSuggestion, templatePlan, draftMeta);
   };
 
@@ -2258,10 +2287,12 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     savePendingDraft(selected, result.draft);
   };
 
-  const previewTranslate = () => {
+  const previewTranslate = useCallback(async () => {
     if (!selected || !input.trim()) return;
-    setTranslatedInput(translateChineseReplyForCustomer(selected, input));
-  };
+    const requestId = ++translationRequestRef.current;
+    const translation = await translateReplyToCustomerLanguage(selected, input);
+    if (translationRequestRef.current === requestId) setTranslatedInput(translation.trim() === input.trim() ? '' : translation);
+  }, [input, selected]);
 
   const reportManualActive = () => {
     if (!selected) return;
@@ -2290,7 +2321,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const editDraft = () => {
     if (!selected || !draftSuggestion) return;
     setInput(draftSuggestion);
-    setTranslatedInput(translatedReplyPreview(selected, draftSuggestion));
+    translationRequestRef.current += 1;
+    setTranslatedInput('');
     setDraftSuggestion(null);
     updateCustomer(selected.id, { pendingDraft: draftSuggestion });
     window.setTimeout(() => {
@@ -2365,7 +2397,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           draftSuggestion={draftSuggestion}
           input={input}
           translatedInput={translatedInput}
-          onInputChange={(value) => { setInput(value); setTranslatedInput(''); if (selected?.pendingDraft !== undefined) updateCustomer(selected.id, { pendingDraft: value || undefined }); }}
+          onInputChange={(value) => { translationRequestRef.current += 1; setInput(value); setTranslatedInput(''); if (selected?.pendingDraft !== undefined) updateCustomer(selected.id, { pendingDraft: value || undefined }); }}
           onDraftChange={value => { setDraftSuggestion(value || null); if (selected) updateCustomer(selected.id, { pendingDraft: value || undefined }); if (!value) setDraftMeta(null); }}
           onTranslatedInputChange={setTranslatedInput}
           onSend={sendReply}
@@ -2380,7 +2412,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           priceRulesReady={priceRulesReady}
           knowledgeMiss={Boolean(draftMeta?.knowledgeMiss)}
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
-          bridgeTranslation={draftMeta?.translatedDraft}
           onMockBuyerMessage={pushMockBuyerMessage}
         />
         <CustomerInfoRail

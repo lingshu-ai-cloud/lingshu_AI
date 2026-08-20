@@ -9,9 +9,10 @@ assert.doesNotMatch(
   /disabled=\{!customerServiceStatus\s*\|\|\s*customerServiceSaving\}/,
   'a transient status-loading failure must not permanently disable the customer-service switch',
 );
-assert.doesNotMatch(source, /title="翻译润色"|<Languages\b/, 'the non-responsive composer action must stay removed');
+assert.match(source, /aria-label=\{previewOpen \? '隐藏目标语言译文' : '显示目标语言译文'\}/, 'the composer must expose the target-language translation toggle');
 assert.match(source, /aria-label="添加表情"/, 'the composer must expose an emoji picker button');
-assert.match(source, /aria-label=\{`插入 \$\{emoji\}`\}[\s\S]{0,200}insertEmoji\(emoji\)/, 'emoji choices must insert into the reply input');
+assert.match(source, /<EmojiPicker[\s\S]{0,500}onEmojiClick=\{\(emojiData: EmojiClickData\) => insertEmoji\(emojiData\.emoji\)\}/, 'the full emoji picker must insert into the reply input');
+assert.doesNotMatch(source, /const REPLY_EMOJIS\s*=/, 'the emoji picker must not be limited to a short hard-coded list');
 assert.match(source, /data-customer-reply-input[\s\S]{0,500}border-0[\s\S]{0,500}focus:shadow-none/, 'the reply textarea must not show the global green focus frame');
 assert.match(source, /const openCustomer = \(id: string\)[\s\S]{0,220}customer\?\.hasUnread[\s\S]{0,120}persistCustomerPatch\(id, \{ hasUnread: false \}\)/, 'opening a conversation must clear and persist its unread indicator');
 assert.match(
@@ -24,20 +25,25 @@ assert.doesNotMatch(
   /if \(selected\.isMock\)\s*\{\s*setDraftSuggestion\(null\);\s*setDraftMeta\(null\);/,
   'a mock customer timeline update must not erase the draft that was just generated',
 );
-assert.doesNotMatch(
+assert.match(
   source,
-  /placeholder=["{]?[`'"]输入中文回复/,
-  'the composer placeholder must not imply that foreign-language replies should be written in Chinese only',
+  /placeholder="输入中文回复…"/,
+  'the composer should make Chinese the default editing language',
 );
 assert.match(
   source,
-  /placeholder=\{`输入回复（中文或\$\{replyLanguage\(customer\)\}）…`\}/,
-  'the composer should show the actual customer reply language',
+  /source: '简体中文', target: replyLanguage\(customer\)/,
+  'translation preview and sending must translate Chinese into the customer target language',
 );
 assert.match(
   source,
-  /translated\.trim\(\) === text\.trim\(\) \? '' : translated/,
-  'editing an already foreign-language draft must not show the same text again as a translation preview',
+  /const body = templatePlan\?\.rendered \|\| translatedInput\.trim\(\) \|\| await translateReplyToCustomerLanguage\(selected, input\)/,
+  'sending a Chinese manual reply must use the same target-language translation path',
+);
+assert.match(
+  source,
+  /translatedBody: restoreText\.trim\(\) && restoreText\.trim\(\) !== eventBody\.trim\(\) \? restoreText\.trim\(\) : undefined/,
+  'a sent target-language reply must retain the Chinese text that the operator edited',
 );
 assert.match(
   source,
@@ -67,10 +73,10 @@ assert.match(
   'the blank simulation customer must expose an editable procurement stage',
 );
 
-const translatedDraftMappings = source.match(/translatedDraft:\s*typeof data\.translatedDraft/g) ?? [];
+const translatedDraftMappings = source.match(/typeof data\?\.translatedDraft === 'string'/g) ?? [];
 assert.ok(
   translatedDraftMappings.length >= 2,
-  'handoff and normal AI replies must both reuse the translation returned for that exact draft',
+  'handoff and normal AI replies must both use the Chinese translation returned for editing',
 );
 assert.doesNotMatch(
   source,
