@@ -24,6 +24,10 @@ import { generatePosterImage, imageExt, type ReferenceImage } from '../lib/image
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
 import { createLinkedAbort } from '../lib/abort.js';
+import {
+  assessScriptQualityV2,
+  isBusinessRoleEntity,
+} from '../lib/studioScriptQualityV2.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { fetchCloudMaterial, getCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
@@ -1016,13 +1020,16 @@ function duplicateStoryboardFieldIssues(script: string): string[] {
   });
 }
 
-function subtitleVoiceMismatchIssues(script: string): string[] {
-  return String(script || '').split(/(?=^[ \t]*\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*\][ \t]*$)/m).flatMap(block => {
+function subtitleVoiceMismatchIssues(script: string, allowedFinalCtaCaption = ''): string[] {
+  const blocks = String(script || '').split(/(?=^[ \t]*\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*\][ \t]*$)/m);
+  const lastSceneIndex = blocks.map((block, index) => /^\s*\[\s*\d/.test(block) ? index : -1).filter(index => index >= 0).pop();
+  return blocks.flatMap((block, index) => {
     if (!/^\s*\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?/.test(block)) return [];
     const range = block.match(/^\s*(\[[^\]]+\])/)?.[1] || '分镜';
     const voice = block.match(/^台词[：:]\s*(.+)$/m)?.[1]?.trim() || '';
     const caption = block.match(/^字幕[：:]\s*(.+)$/m)?.[1]?.trim() || '';
     if (!voice || /^(无|none)$/i.test(voice)) return [];
+    if (allowedFinalCtaCaption && index === lastSceneIndex && caption.includes(allowedFinalCtaCaption)) return [];
     const normalize = (value: string) => value.replace(/[\s，。！？、；：,.!?;:“”"'（）()—–-]/g, '').toLowerCase();
     return normalize(voice) === normalize(caption) ? [] : [`${range} 字幕必须逐字反映口播`];
   });
@@ -1223,6 +1230,66 @@ export function ensureStoryboardPrimaryCta(
   else block = `${block.replace(/\s+$/, '')}\n台词：${spokenLine}\n`;
   if (/^[ \t]*字幕[：:]/m.test(block)) block = block.replace(/^[ \t]*字幕[：:].*$/m, `字幕：${voice}`);
   else block = block.replace(/^(台词[：:].*)$/m, `$1\n字幕：${voice}`);
+  blocks[lastSceneIndex] = block;
+  return blocks.join('');
+}
+
+export function canonicalMaterialPrimaryCta(primaryCta: string, language: string): string {
+  const cta = String(primaryCta || '').replace(/\s+/g, ' ').trim();
+  if (!cta) return '';
+  if (/whatsapp|\bwa\b/i.test(cta)) return language === 'zh' ? '通过 WhatsApp 联系我们。' : 'Message us on WhatsApp.';
+  // Enterprise settings sometimes store workflow language rather than public
+  // copy. Normalize those cases, while preserving an already publishable CTA
+  // verbatim so every configured action, qualifier and duration remains visible.
+  if (/引导跳转|以触达|触达客户/.test(cta)) {
+    if (/目录|资料/.test(cta)) return language === 'zh' ? '联系我们获取已核实的产品资料。' : 'Message us for verified product details.';
+    return language === 'zh' ? '联系我们了解已核实的产品信息。' : 'Message us for verified product details.';
+  }
+  return cta;
+}
+
+function compactMaterialCtaVoice(primaryCta: string, language: string): string {
+  const cta = canonicalMaterialPrimaryCta(primaryCta, language);
+  if (!cta) return '无';
+  if (language === 'zh') {
+    if (/发送|提交|发来|分享/.test(cta) && /预约/.test(cta) && /30\s*分钟/.test(cta) && /英文/.test(cta) && /诊断|评估|方案|咨询/.test(cta)) {
+      const item = /工件/.test(cta) ? '工件' : /节拍/.test(cta) ? '节拍' : /缺陷/.test(cta) ? '缺陷样本' : /布局/.test(cta) ? '现场布局' : '关键资料';
+      return `发${item}，预约30分钟英文方案诊断。`;
+    }
+    return safeStoryboardCta(cta, language);
+  }
+  if (/send|share|submit/i.test(cta) && /book|schedule|预约/i.test(cta) && /30\s*(?:minutes?|mins?)/i.test(cta)) {
+    return 'Share one key input and book a 30-minute solution review.';
+  }
+  return safeStoryboardCta(cta, language);
+}
+
+/**
+ * Material scripts must carry the complete enterprise CTA deterministically.
+ * A short spoken CTA may differ from the full on-screen CTA; the final caption
+ * remains the canonical source of truth and is exempt from voice/caption parity.
+ */
+export function ensureMaterialCanonicalCta(
+  script: string,
+  primaryCta: string,
+  language: string,
+  includeVoice = true,
+): string {
+  const canonical = canonicalMaterialPrimaryCta(primaryCta, language);
+  if (!canonical) return script;
+  const blocks = String(script || '').split(/(?=^[ \t]*\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*\][ \t]*$)/m);
+  const lastSceneIndex = blocks.map((block, index) => /^\s*\[\s*\d/.test(block) ? index : -1).filter(index => index >= 0).pop();
+  if (lastSceneIndex == null) return script;
+  let block = blocks[lastSceneIndex]!;
+  const voice = includeVoice ? compactMaterialCtaVoice(primaryCta, language) : '无';
+  const setField = (field: string, value: string) => {
+    const pattern = new RegExp(`^[ \\t]*${field}[：:].*$`, 'm');
+    if (pattern.test(block)) block = block.replace(pattern, `${field}：${value}`);
+    else block = `${block.replace(/\s+$/, '')}\n${field}：${value}\n`;
+  };
+  setField('镜头功能', 'CTA');
+  setField('台词', voice);
+  setField('字幕', canonical);
   blocks[lastSceneIndex] = block;
   return blocks.join('');
 }
@@ -1466,7 +1533,7 @@ export function repairMaterialScript(script: string, productInfo: string, materi
   return fitStoryboardSpeech(repaired);
 }
 
-export function materialGroundingIssues(script: string, productInfo: string, materialsText: string): string[] {
+export function materialGroundingIssues(script: string, productInfo: string, materialsText: string, targetBuyerText = ''): string[] {
   const evidence = `${productInfo}\n${materialsText}`.toLowerCase();
   const claimGroups = [
     ['迅速吸收', '快速吸收', '瞬时渗透', '即时渗透', '一触即融', '吸收', '渗透'],
@@ -1500,11 +1567,12 @@ export function materialGroundingIssues(script: string, productInfo: string, mat
   }
   const outputEntities = Array.from(script.matchAll(/\b[A-Z][A-Za-z0-9]*(?:[- ][A-Z][A-Za-z0-9]*)+\b/g))
     .map(match => match[0]!.trim())
-    .filter(term => !/^(CTA|AI|OEM|ODM|B2B|VO)$/i.test(term));
+    .filter(term => !/^(CTA|AI|OEM|ODM|B2B|VO)$/i.test(term))
+    .filter(term => !isBusinessRoleEntity(term, targetBuyerText));
   for (const entity of outputEntities) {
     if (!evidence.includes(entity.toLowerCase())) issues.push(`已选素材/产品资料未支持的品牌或设备名：${entity}`);
   }
-  return issues;
+  return Array.from(new Set(issues));
 }
 
 export function materialTimelineIssues(script: string, infos: ScriptMaterialInfo[]): string[] {
@@ -2707,6 +2775,24 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       script = stripStoryboardReferenceLeaks(script, forbiddenTerms, forbiddenIndustryTerms);
       script = ensureStoryboardPrimaryCta(script, primaryCta, language, voiceoverMode !== 'none');
     }
+    let materialQualityV2: ReturnType<typeof assessScriptQualityV2> | null = null;
+    if (generationMode === 'material') {
+      // First make the configured CTA deterministic, then neutralize any scene
+      // whose visual facts are not present in the selected-material evidence.
+      // Restore product identity and the full CTA after neutralization because
+      // either may have lived inside a replaced scene.
+      script = ensureMaterialCanonicalCta(script, primaryCta, language, voiceoverMode !== 'none');
+      materialQualityV2 = assessScriptQualityV2({
+        script,
+        productInfo,
+        materialsText: structuredMaterials,
+        materialInfos: normalizedMaterialInfos,
+        primaryCta,
+        targetBuyerText: audience,
+      });
+      script = ensureSelectedProductNamesInScript(materialQualityV2.script, productInfo);
+      script = ensureMaterialCanonicalCta(script, primaryCta, language, voiceoverMode !== 'none');
+    }
     const selectedNames = selectedProductNames(productInfo);
     // “秒”及时间戳是视频制作参数，不是产品主张，不能触发“资料外数字”风险。
     const unsupportedNumberClaims = unsupportedNumericClaims(script, productInfo);
@@ -2719,7 +2805,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       });
     const speechIssues = isStructuredLockedDraft ? [] : storyboardSpeechIssues(script);
     const groundingIssues = generationMode === 'material'
-      ? materialGroundingIssues(script, productInfo, structuredMaterials)
+      ? materialGroundingIssues(script, productInfo, structuredMaterials, audience)
       : [];
     const timelineIssues = generationMode === 'material'
       ? materialTimelineIssues(script, normalizedMaterialInfos)
@@ -2736,7 +2822,12 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const strictCommercialIssues = strictCommercialPolicyIssues(script);
     const strategyIssues = strategyExecutionIssues(script);
     const duplicateStoryboardFields = isStructuredLockedDraft ? [] : duplicateStoryboardFieldIssues(script);
-    const subtitleVoiceIssues = isStructuredLockedDraft ? [] : subtitleVoiceMismatchIssues(script);
+    const subtitleVoiceIssues = isStructuredLockedDraft
+      ? []
+      : subtitleVoiceMismatchIssues(
+        script,
+        generationMode === 'material' ? canonicalMaterialPrimaryCta(primaryCta, language) : '',
+      );
     const productStoryboardFields = ['环境', '景别', '运镜', '构图', '镜头功能', '画面', '配乐', '台词', '字幕'];
     const productStoryboardBlocks = script.split(/(?=^\[[^\]\r\n]+\][ \t]*$)/m).filter(block => /^\[[^\]]+\]/.test(block.trim()));
     const incompleteProductStoryboard = generationMode === 'product' && !isStructuredLockedDraft
@@ -2789,14 +2880,44 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script) ? '脚本泄漏了生成规则或占位说明' : '',
       /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script) ? '脚本包含绝对化或不可验证承诺' : '',
     ].filter(Boolean);
-    const shouldBlockScript = validationIssues.length > 0 || unsafeScript;
+    const materialStrictHardIssues = strictCommercialIssues.filter(issue => (
+      !/^已选择 AI 口播，但有效台词不足两段/.test(issue)
+    ));
+    const materialHardIssues = Array.from(new Set([
+      ...(materialQualityV2?.hardIssues || []),
+      missingProduct ? '缺少产品信息' : '',
+      missingSelectedProduct ? `脚本未完整覆盖选定产品名称：${selectedNames.join('、')}` : '',
+      unsupportedNumberClaims.length ? `出现产品资料未提供的数字：${unsupportedNumberClaims.join('、')}` : '',
+      ...groundingIssues,
+      ...materialStrictHardIssues,
+      /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script) ? '脚本泄漏了生成规则或占位说明' : '',
+      /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script) ? '脚本包含绝对化或不可验证承诺' : '',
+    ].filter(Boolean)));
+    const validationWarnings = generationMode === 'material'
+      ? Array.from(new Set([
+        ...(materialQualityV2?.warnings || []),
+        ...strategyIssues,
+        ...speechIssues,
+        ...duplicateStoryboardFields,
+        ...subtitleVoiceIssues,
+        hasUnnaturalVoiceover(script) ? '部分口播偏长或技术名词较密，建议成片前精简' : '',
+        strictCommercialIssues.some(issue => /^已选择 AI 口播，但有效台词不足两段/.test(issue))
+          ? '当前可用素材不足以承载两段有效口播，补充素材后可继续完善'
+          : '',
+      ].filter(Boolean)))
+      : [];
+    const hardValidationIssues = generationMode === 'material' ? materialHardIssues : validationIssues;
+    const shouldBlockScript = generationMode === 'material'
+      ? hardValidationIssues.length > 0
+      : validationIssues.length > 0 || unsafeScript;
     if (shouldBlockScript) {
-      console.warn('[studio] script rejected:', validationIssues.join(' | ') || 'unsafe_script');
+      console.warn('[studio] script rejected:', hardValidationIssues.join(' | ') || 'unsafe_script');
       res.status(422).json({
         ok: false,
         source: 'ai_rejected',
         code: 'SCRIPT_QUALITY_BLOCKED',
-        error: validationIssues[0] || '脚本未通过安全与可执行性检查，请补充产品资料或重新生成。',
+        error: hardValidationIssues[0] || '脚本未通过安全与可执行性检查，请补充产品资料或重新生成。',
+        script,
         qualityStatus: 'rejected',
         qualityChecks: {
           materialGrounded: groundingIssues.length === 0,
@@ -2804,24 +2925,35 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
           productGrounded: !missingProduct && !missingSelectedProduct && unsupportedNumberClaims.length === 0,
           dialogueFits: speechIssues.length === 0,
           structurallyComplete: !incompleteCloneStoryboard && !incompleteProductStoryboard,
+          ...(materialQualityV2 ? { materialCoverage: materialQualityV2.materialCoverage } : {}),
         },
-        validationIssues,
+        validationIssues: hardValidationIssues,
+        validationWarnings,
       });
       return;
     }
+    const qualityStatus = generationMode === 'material'
+      ? materialQualityV2?.qualityStatus === 'needs_material'
+        ? 'needs_material'
+        : validationWarnings.length
+          ? 'warning'
+          : 'passed'
+      : 'passed';
     res.json({
       ok: true,
       source: 'ai',
       script,
-      qualityStatus: 'passed',
+      qualityStatus,
       qualityChecks: {
         materialGrounded: groundingIssues.length === 0,
         timelineGrounded: timelineIssues.length === 0,
         productGrounded: !missingProduct && !missingSelectedProduct && unsupportedNumberClaims.length === 0,
         dialogueFits: speechIssues.length === 0,
         structurallyComplete: !incompleteCloneStoryboard && !incompleteProductStoryboard,
+        ...(materialQualityV2 ? { materialCoverage: materialQualityV2.materialCoverage } : {}),
       },
       validationIssues: [],
+      validationWarnings,
     });
   } catch (error) {
     const rawError = String(error instanceof Error ? error.message : error);

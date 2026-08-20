@@ -18,7 +18,13 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         throw new Error(formatDemoQuotaError(j));
       }
       if (!r.ok) {
-        const payload = await r.json().catch(() => ({})) as { error?: string };
+        const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string };
+        // Script quality rejections are a valid, structured product response.
+        // Preserve their diagnostics so the studio can explain the block instead
+        // of degrading it into an apparently unresponsive empty result.
+        if (path === 'script' && r.status === 422) {
+          return { ...fallback, ...payload, source: payload.source || 'ai_rejected' } as T & { source?: string };
+        }
         const message = payload.error || `HTTP ${r.status}`;
         if ([502, 503, 504].includes(r.status) && attempt < maxAttempts) {
           await new Promise(resolve => window.setTimeout(resolve, [0, 2000, 5000, 10000][attempt] || 10000));
@@ -41,6 +47,59 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
     }
   }
   return { ...fallback, source: 'local', error: lastError };
+}
+
+export type StudioScriptQualityStatus =
+  | 'passed'
+  | 'passed_with_warnings'
+  | 'warning'
+  | 'needs_material'
+  | 'rejected'
+  // Legacy statuses remain readable while old drafts/backends are in flight.
+  | 'repaired'
+  | 'recovered'
+  | 'fallback'
+  | 'failed';
+
+export interface StudioScriptQualityChecks {
+  materialGrounded?: boolean;
+  timelineGrounded?: boolean;
+  productGrounded?: boolean;
+  dialogueFits?: boolean;
+  structurallyComplete?: boolean;
+  ctaComplete?: boolean;
+  materialCoverage?: number | StudioScriptMaterialCoverage;
+  materialCoveragePercent?: number;
+  [key: string]: boolean | number | string | StudioScriptMaterialCoverage | undefined;
+}
+
+export interface StudioScriptMaterialCoverage {
+  covered?: number;
+  total?: number;
+  selectedMaterials?: number;
+  storyboardScenes?: number;
+  boundScenes?: number;
+  pendingScenes?: number;
+  coverageRatio?: number;
+  ratio?: number;
+  percent?: number;
+  percentage?: number;
+  missing?: string[];
+  missingShots?: string[];
+}
+
+export interface StudioScriptResult {
+  script: string;
+  source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected' | string;
+  qualityStatus?: StudioScriptQualityStatus;
+  qualityChecks?: StudioScriptQualityChecks;
+  validationWarnings?: string[];
+  validationIssues?: string[];
+  materialCoverage?: number | StudioScriptMaterialCoverage;
+  missingMaterials?: string[];
+  fallbackReason?: string;
+  error?: string;
+  code?: string;
 }
 
 function formatDemoQuotaError(j: any): string {
@@ -432,15 +491,7 @@ export const studioApi = {
     existingScripts?: string[];
     variantSeed?: number;
   }, fb: string, options?: { signal?: AbortSignal }) =>
-    post<{
-      script: string;
-      source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected';
-      qualityStatus?: 'passed' | 'repaired' | 'recovered' | 'fallback' | 'failed' | 'rejected';
-      qualityChecks?: { materialGrounded?: boolean; productGrounded?: boolean; dialogueFits?: boolean; structurallyComplete?: boolean };
-      fallbackReason?: string;
-      validationIssues?: string[];
-      error?: string;
-    }>('script', b, { script: '' }, options?.signal),
+    post<StudioScriptResult>('script', b, { script: '' }, options?.signal),
 
   covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, fb: string[]) =>
     post<{ covers: string[] }>('covers', b, { covers: fb }),

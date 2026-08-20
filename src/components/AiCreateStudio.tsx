@@ -6,7 +6,7 @@ import {
   Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock,
   Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
 } from 'lucide-react';
-import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion } from '../lib/studioApi';
+import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks } from '../lib/studioApi';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
@@ -1521,7 +1521,21 @@ function referenceVoiceProfile(kickoff: VideoKickoff | null) {
 }
 
 interface ProductOption { id: string; label: string; info: string; imageUrls?: string[] }
-interface ModeScriptOutput { id: string; title: string; script: string; mode: 'material' | 'product' | 'clone'; contentTheme?: VideoThemeId; buyerLabel?: string }
+interface ModeScriptOutput {
+  id: string;
+  title: string;
+  script: string;
+  mode: 'material' | 'product' | 'clone';
+  contentTheme?: VideoThemeId;
+  buyerLabel?: string;
+  qualityStatus?: StudioScriptQualityStatus;
+  qualityChecks?: StudioScriptQualityChecks;
+  validationWarnings?: string[];
+  validationIssues?: string[];
+  materialCoveragePercent?: number;
+  pendingMaterialScenes?: number;
+  missingMaterials?: string[];
+}
 type EnterpriseProductItem = NonNullable<NonNullable<EnterpriseProfileLite['products']>['items']>[number];
 
 const compact = (value?: string) => String(value || '').trim();
@@ -1530,6 +1544,113 @@ const modeScriptNumber = (item: ModeScriptOutput, fallbackIndex = 0): number => 
   const match = item.title.match(/脚本\s*(\d+)/);
   return match ? Number(match[1]) || fallbackIndex + 1 : fallbackIndex + 1;
 };
+
+function normalizedCoveragePercent(response: StudioScriptResult): number | undefined {
+  const coverage = response.materialCoverage;
+  let value: number | undefined;
+  if (typeof coverage === 'number') value = coverage;
+  else if (coverage && typeof coverage === 'object') {
+    value = coverage.coverageRatio ?? coverage.percent ?? coverage.percentage ?? coverage.ratio;
+    if (value === undefined && Number(coverage.total) > 0 && Number.isFinite(Number(coverage.covered))) {
+      value = Number(coverage.covered) / Number(coverage.total);
+    }
+  }
+  if (value === undefined) {
+    const checkCoverage = response.qualityChecks?.materialCoverage;
+    value = typeof checkCoverage === 'number'
+      ? checkCoverage
+      : checkCoverage?.coverageRatio ?? checkCoverage?.percent ?? checkCoverage?.percentage ?? checkCoverage?.ratio;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(0, Math.min(100, value <= 1 ? value * 100 : value));
+}
+
+function pendingMaterialSceneCount(response: StudioScriptResult): number | undefined {
+  const coverage = response.qualityChecks?.materialCoverage;
+  const pending = typeof coverage === 'object' ? coverage.pendingScenes : undefined;
+  return typeof pending === 'number' && Number.isFinite(pending) ? Math.max(0, Math.round(pending)) : undefined;
+}
+
+function missingMaterialLabels(response: StudioScriptResult): string[] {
+  const coverage = response.materialCoverage;
+  const nested = coverage && typeof coverage === 'object'
+    ? [...(coverage.missing || []), ...(coverage.missingShots || [])]
+    : [];
+  return Array.from(new Set([...(response.missingMaterials || []), ...nested].map(item => String(item).trim()).filter(Boolean)));
+}
+
+function normalizedScriptQualityStatus(response: StudioScriptResult): StudioScriptQualityStatus | undefined {
+  if (response.qualityStatus) return response.qualityStatus;
+  if (response.source === 'ai_rejected') return 'rejected';
+  if (response.source === 'ai_failed') return 'failed';
+  // Old successful responses did not include V2 quality fields.
+  return response.script?.trim() ? 'passed' : undefined;
+}
+
+function scriptQualityWarnings(response: StudioScriptResult): string[] {
+  const status = normalizedScriptQualityStatus(response);
+  const warnings = response.validationWarnings?.length
+    ? response.validationWarnings
+    : status !== 'rejected' && status !== 'failed'
+      ? response.validationIssues || []
+      : [];
+  return Array.from(new Set(warnings.map(item => String(item).trim()).filter(Boolean)));
+}
+
+function scriptQualityFailure(response: StudioScriptResult, fallback: string, retainRejectedDraft = false): string | null {
+  const status = normalizedScriptQualityStatus(response);
+  const scriptAvailable = Boolean(response.script?.trim());
+  if (scriptAvailable && status !== 'rejected' && status !== 'failed') return null;
+  if (scriptAvailable && status === 'rejected' && retainRejectedDraft) return null;
+  const reasons = response.validationIssues?.length
+    ? response.validationIssues
+    : response.validationWarnings?.length
+      ? response.validationWarnings
+      : [];
+  const reason = reasons.map(item => String(item).trim()).filter(Boolean).slice(0, 4).join('；')
+    || response.error
+    || response.fallbackReason
+    || fallback;
+  return status === 'rejected'
+    ? `生成已停止（质量校验未通过）：${reason}`
+    : reason;
+}
+
+function qualityFields(response: StudioScriptResult): Pick<ModeScriptOutput, 'qualityStatus' | 'qualityChecks' | 'validationWarnings' | 'validationIssues' | 'materialCoveragePercent' | 'pendingMaterialScenes' | 'missingMaterials'> {
+  return {
+    qualityStatus: normalizedScriptQualityStatus(response),
+    qualityChecks: response.qualityChecks,
+    validationWarnings: scriptQualityWarnings(response),
+    validationIssues: response.validationIssues || [],
+    materialCoveragePercent: normalizedCoveragePercent(response),
+    pendingMaterialScenes: pendingMaterialSceneCount(response),
+    missingMaterials: missingMaterialLabels(response),
+  };
+}
+
+function qualitySuccessNotice(response: StudioScriptResult, defaultMessage: string): string {
+  const status = normalizedScriptQualityStatus(response);
+  const coverage = normalizedCoveragePercent(response);
+  const warnings = scriptQualityWarnings(response);
+  const missing = missingMaterialLabels(response);
+  const pendingScenes = pendingMaterialSceneCount(response);
+  if (status === 'rejected') {
+    const issueCount = response.validationIssues?.length || 1;
+    return `生成草稿已保留，但存在 ${issueCount} 项合规问题，修正并重新校验前不能进入后续制作。`;
+  }
+  if (status === 'needs_material') {
+    const missingLabel = pendingScenes !== undefined
+      ? `${pendingScenes} 个镜头`
+      : missing.length
+        ? `${missing.length} 个镜头`
+        : '未覆盖镜头';
+    return `脚本已生成并写入结果区${coverage === undefined ? '' : `，素材覆盖率 ${Math.round(coverage)}%`}；${missingLabel}已标记为待匹配素材，可继续编辑，补齐后再进入成片。`;
+  }
+  if (status === 'passed_with_warnings' || status === 'warning' || warnings.length) {
+    return `脚本已生成并写入结果区；保留 ${warnings.length || 1} 项质量提示，请确认后继续。`;
+  }
+  return defaultMessage;
+}
 const uniqueLangs = (primary: string, count: number) => {
   const base = [primary, 'en', 'es', 'ar', 'pt', 'id', 'fr', 'de'].filter(Boolean);
   return Array.from(new Set(base)).slice(0, Math.max(1, count));
@@ -2217,7 +2338,7 @@ function buildMaterialInfosForScript(clips: Clip[], totalDuration: number, hookM
     );
     const targetStart = +cursor.toFixed(1);
     const targetEnd = +Math.min(totalDuration, cursor + effectiveDuration).toFixed(1);
-    const observations = (clip.segments || []).slice(0, 4).map(segment => [
+    const observations = (clip.segments || []).slice(0, 6).map(segment => [
       `${segment.start}-${segment.end}s`,
       segment.action,
       segment.shot,
@@ -3815,14 +3936,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const hasTimestampScript = Boolean(script.trim());
   const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url));
+  const activeScriptQualityStatus = modeScripts.find(item => item.id === activeModeScriptId)?.qualityStatus;
+  const activeScriptQualityBlocked = activeScriptQualityStatus === 'rejected' || activeScriptQualityStatus === 'failed';
   const canNext = contentMode === 'video' && step === 'script'
     ? scriptStageTab === 'theme'
-      ? hasTimestampScript
+      ? hasTimestampScript && !activeScriptQualityBlocked
       : scriptStageTab === 'voiceover'
-        ? hasTimestampScript
-        : voiceoverMode === 'none'
+        ? hasTimestampScript && !activeScriptQualityBlocked
+        : !activeScriptQualityBlocked && (
+          voiceoverMode === 'none'
           || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
           || (voiceoverMode === 'ai' && hasRequestedVoiceovers)
+        )
     : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length
     : true;
@@ -4544,10 +4669,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       const response = await studioApi.script(
         { materials: matNames, productInfo: activeProductInfo, language: lang, platform, duration, scriptType: type, generationMode: mode, cooperationRoute, provider, audience, sellingPoints, tone, videoTheme: videoThemePayload }, script,
       );
-      if (response.source && response.source !== 'ai') throw new Error(response.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。');
+      const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
+      if (qualityFailure) throw new Error(qualityFailure);
       const s = response.script || '';
-      if (!s.trim()) throw new Error(response.error || '模型没有返回可用脚本。');
-      setScript(sanitizeStoryboardScript(s, activeProductInfo, activeProductLabel));
+      if (!s.trim()) throw new Error('模型没有返回可用脚本。');
+      const nextScript = sanitizeStoryboardScript(s, activeProductInfo, activeProductLabel);
+      setScript(nextScript);
+      setModeScripts(current => current.map(item => item.id === activeModeScriptId
+        ? { ...item, script: nextScript, ...qualityFields(response) }
+        : item));
+      setModeNotice(qualitySuccessNotice(response, '脚本已重新生成并写入结果区。'));
     } catch (err: any) {
       alert(err?.message || '脚本生成失败，请稍后重试。');
     } finally {
@@ -4684,6 +4815,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       }
       const coveredDuration = materialInfos.at(-1)?.targetEnd || 0;
       const outputs: ModeScriptOutput[] = [];
+      const qualityResponses: StudioScriptResult[] = [];
       const count = Math.max(1, Math.min(5, cloneCount));
       for (let i = 0; i < count; i += 1) {
         setModeActionStatus(hookOnly
@@ -4710,11 +4842,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           },
           '',
         ), 120_000, '后端模型生成超过 120 秒。');
-        if (response.source && response.source !== 'ai') throw new Error(response.error || response.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。');
+        const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
+        if (qualityFailure) throw new Error(qualityFailure);
         nextScript = sanitizeStoryboardScript(response.script || '', activeProductInfo, activeProductLabel).trim();
-        if (!nextScript) throw new Error(response.error
-          ? `脚本服务连接失败：${response.error}`
-          : '后端脚本生成接口未返回结果。');
+        if (!nextScript) throw new Error('后端脚本生成接口未返回结果。');
+        qualityResponses.push(response);
         outputs.push({
           id: `material-${Date.now()}-${i}`,
           title: `${activeVideoTheme.title} · ${audience.trim() || '默认买家'}（${modeScripts.filter(item => item.contentTheme === activeVideoTheme.id && item.buyerLabel === (audience.trim() || '默认买家')).length + i + 1}）`,
@@ -4722,6 +4854,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           mode: 'material',
           contentTheme: activeVideoTheme.id,
           buyerLabel: audience.trim() || '默认买家',
+          ...qualityFields(response),
         });
       }
       const sceneCount = outputs[0] ? parseStoryboardSlots(outputs[0].script, duration).length : finalSelected.length;
@@ -4741,11 +4874,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       }
       setModeScripts(current => [...current, ...outputs]);
       setProjectTitle(projectTitle === '未命名草稿' ? `素材库智能素材 · ${langZh(enterpriseScriptLanguage) || enterpriseScriptLanguage}口播脚本` : projectTitle);
-      setModeNotice(hookOnly
-          ? `已仅根据钩子素材生成分镜规划；本步骤未补充其他素材，下一步将从第二个分镜开始匹配。`
+      const defaultSuccessNotice = hookOnly
+        ? `已仅根据钩子素材生成分镜规划；本步骤未补充其他素材，下一步将从第二个分镜开始匹配。`
         : coveredDuration + 0.1 < duration
           ? `当前素材有效动作约 ${coveredDuration.toFixed(1)} 秒，短于目标 ${duration} 秒；已按真实可用时长生成分镜，请补充素材后再完成成片。`
-          : `已生成${langZh(enterpriseScriptLanguage) || enterpriseScriptLanguage}口播脚本，并按 ${Math.max(1, sceneCount)} 个分镜准备了 ${recommendedIds.length || finalSelected.length} 个素材候选，下一步可确认。`);
+          : `已生成${langZh(enterpriseScriptLanguage) || enterpriseScriptLanguage}口播脚本，并按 ${Math.max(1, sceneCount)} 个分镜准备了 ${recommendedIds.length || finalSelected.length} 个素材候选，下一步可确认。`;
+      setModeNotice(qualitySuccessNotice(qualityResponses[0] || { script: outputs[0]?.script || '' }, defaultSuccessNotice));
       autoGen.current = true;
     } catch (err: any) {
       setModeNotice(err?.message || '素材库生成失败，请稍后重试。');
@@ -4774,6 +4908,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         return;
       }
       const outputs: ModeScriptOutput[] = [];
+      const qualityResponses: StudioScriptResult[] = [];
       const count = Math.max(1, Math.min(5, cloneCount));
       for (let i = 0; i < count; i += 1) {
         let nextScript = '';
@@ -4797,11 +4932,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           '',
           { signal: controller.signal },
         );
-        if (response.source && response.source !== 'ai') throw new Error(response.error || response.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。');
+        const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
+        if (qualityFailure) throw new Error(qualityFailure);
         nextScript = sanitizeStoryboardScript(response.script || '', product, activeProductLabel).trim();
-        if (!nextScript) throw new Error(response.error
-          ? `脚本服务连接失败：${response.error}`
-          : '后端脚本生成接口未返回结果。');
+        if (!nextScript) throw new Error('后端脚本生成接口未返回结果。');
+        qualityResponses.push(response);
         outputs.push({
           id: `product-${Date.now()}-${i}`,
           title: `${activeVideoTheme.title} · ${audience.trim() || '默认买家'}（${modeScripts.filter(item => item.contentTheme === activeVideoTheme.id && item.buyerLabel === (audience.trim() || '默认买家')).length + i + 1}）`,
@@ -4809,6 +4944,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           mode: 'product',
           contentTheme: activeVideoTheme.id,
           buyerLabel: audience.trim() || '默认买家',
+          ...qualityFields(response),
         });
       }
       const firstScript = outputs[0]?.script || script;
@@ -4823,7 +4959,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       if (outputs[0]) setActiveModeScriptId(outputs[0].id);
       setModeScripts(current => [...current, ...outputs]);
       setProjectTitle(projectTitle === '未命名草稿' ? '产品生成 · AI智能素材' : projectTitle);
-      setModeNotice('产品脚本已生成。确认脚本后，可继续选择配音和素材；不会自动生成视频。');
+      setModeNotice(qualitySuccessNotice(
+        qualityResponses[0] || { script: firstScript },
+        '产品脚本已生成。确认脚本后，可继续选择配音和素材；不会自动生成视频。',
+      ));
       autoGen.current = true;
     } catch (err: any) {
       setModeNotice(err?.message || '产品生成失败，请稍后重试。');
@@ -4903,6 +5042,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         ? enterpriseVoiceLangs.slice(0, Math.max(1, cloneCount))
         : Array.from({ length: cloneCount }, () => enterpriseScriptLanguage);
       const outputs: ModeScriptOutput[] = [];
+      const qualityResponses: StudioScriptResult[] = [];
       for (let index = 0; index < targetCodes.length; index += 1) {
         const code = targetCodes[index] || 'zh';
         const existingCloneScripts = [
@@ -4937,7 +5077,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             },
             '',
         ), 300_000, '后端模型生成超过 300 秒，请稍后重试。');
-        if (response.source && response.source !== 'ai') throw new Error(response.error || response.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。');
+        const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
+        if (qualityFailure) throw new Error(qualityFailure);
         const normalized = ensureDistinctCloneStoryboard({
           script: response.script || '',
           kickoff: cloneReference,
@@ -4953,11 +5094,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         if (!generatedScript) {
           throw new Error('模型没有返回可用脚本。');
         }
+        qualityResponses.push(response);
         outputs.push({
           id: `clone-${Date.now()}-${index}`,
           title: `爆款复刻时间戳脚本 ${existingCloneCount + index + 1}`,
           script: generatedScript,
           mode: 'clone',
+          ...qualityFields(response),
         });
       }
       const firstNewScript = outputs[0];
@@ -4966,7 +5109,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         setActiveModeScriptId(firstNewScript.id);
         applyTimestampScript(firstNewScript.script);
       }
-      setModeNotice('已真实调用后端，按爆款结构和产品卖点生成标准分镜脚本。');
+      setModeNotice(qualitySuccessNotice(
+        qualityResponses[0] || { script: firstNewScript?.script || '' },
+        '已真实调用后端，按爆款结构和产品卖点生成标准分镜脚本。',
+      ));
       autoGen.current = true;
     } catch (err: any) {
       setModeNotice(err?.message || 'AI 复刻生成失败，请稍后重试。');
@@ -5022,7 +5168,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         },
         currentScript,
       );
-      if (response.source && response.source !== 'ai') throw new Error(response.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。');
+      const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。');
+      if (qualityFailure) throw new Error(qualityFailure);
       const optimized = response.script || '';
       const cloneOptimized = mode === 'clone'
         ? ensureDistinctCloneStoryboard({
@@ -5042,11 +5189,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         : sanitizeStoryboardScript(optimized, activeProductInfo, activeProductLabel);
       if (!sanitizedOptimized.trim()) throw new Error('模型没有返回可用脚本。');
       applyTimestampScript(sanitizedOptimized);
-      setModeNotice(mode === 'clone'
+      setModeNotice(qualitySuccessNotice(response, mode === 'clone'
         ? '已按当前产品信息和标准分镜字段优化脚本。'
-        : '已按当前产品信息和口播约束优化脚本。');
+        : '已按当前产品信息和口播约束优化脚本。'));
       if (modeScripts[0]) setActiveModeScriptId(modeScripts[0].id);
-      setModeScripts(prev => prev.map((item, index) => index === 0 ? { ...item, script: sanitizedOptimized, title: `${item.title}（已优化）` } : item));
+      setModeScripts(prev => prev.map((item, index) => index === 0 ? { ...item, script: sanitizedOptimized, title: `${item.title}（已优化）`, ...qualityFields(response) } : item));
     } catch (err: any) {
       setModeNotice(err?.message || '脚本优化失败，请稍后重试。');
     } finally {
@@ -5804,9 +5951,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         { materials: matNamesForDemo, productInfo: activeProductInfo, language: lang, platform, duration, scriptType, generationMode: mode, provider, audience, sellingPoints, tone, videoTheme: videoThemePayload },
         script,
       );
-      if (scriptResp.source && scriptResp.source !== 'ai') throw new Error(scriptResp.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。');
-      if (!String(scriptResp.script || '').trim()) throw new Error(scriptResp.error || '模型没有返回可用脚本。');
+      const qualityFailure = scriptQualityFailure(scriptResp, 'AI脚本未通过检查，未返回可编辑结果。');
+      if (qualityFailure) throw new Error(qualityFailure);
+      if (!String(scriptResp.script || '').trim()) throw new Error('模型没有返回可用脚本。');
       setScript(scriptResp.script);
+      setModeNotice(qualitySuccessNotice(scriptResp, '脚本与发布内容已生成。'));
       const coversResp = await studioApi.covers({ script: scriptResp.script, productInfo: activeProductInfo, language: lang, provider, tone }, [coverTitle]);
       if (coversResp.covers[0]) setCoverTitle(coversResp.covers[0]);
       const cap = await studioApi.caption(
@@ -8184,6 +8333,23 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             if (aActive !== bActive) return aActive ? -1 : 1;
             return a.number - b.number;
           });
+        const activeQualityScript = modeScripts.find(item => item.id === activeModeScriptId && item.mode === mode);
+        const activeQualityWarnings = activeQualityScript?.validationWarnings || [];
+        const activeQualityIssues = activeQualityScript?.validationIssues || [];
+        const activeQualityStatus = activeQualityScript?.qualityStatus;
+        const activeCoveragePercent = activeQualityScript?.materialCoveragePercent;
+        const activePendingMaterialScenes = activeQualityScript?.pendingMaterialScenes;
+        const activeMissingMaterials = activeQualityScript?.missingMaterials || [];
+        const qualityCheckLabels: Record<string, string> = {
+          materialGrounded: '画面事实',
+          timelineGrounded: '时间线',
+          productGrounded: '产品事实',
+          dialogueFits: '口播自然度',
+          structurallyComplete: '分镜结构',
+          ctaComplete: '主 CTA',
+        };
+        const activeBooleanQualityChecks = Object.entries(activeQualityScript?.qualityChecks || {})
+          .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
         const referenceAnalysisIncomplete = mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff);
         const languageConfigurationRequired = !enterpriseScriptLanguage
           && modeNotice.includes('企业中心尚未配置首选输出语言或主要业务语言');
@@ -8194,7 +8360,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           setScript(value);
           setVoiceoverLines(spoken);
           setScriptView('timestamp');
-          setModeScripts(current => current.map(item => item.id === activeModeScriptId ? { ...item, script: value } : item));
+          setModeScripts(current => current.map(item => {
+            if (item.id !== activeModeScriptId) return item;
+            const blockedDraft = item.qualityStatus === 'rejected' || item.qualityStatus === 'failed';
+            return {
+              ...item,
+              script: value,
+              qualityStatus: blockedDraft ? item.qualityStatus : undefined,
+              qualityChecks: blockedDraft ? item.qualityChecks : undefined,
+              validationWarnings: blockedDraft ? item.validationWarnings : [],
+              validationIssues: blockedDraft ? ['草稿已修改，请重新生成并通过合规校验后继续。'] : [],
+              materialCoveragePercent: blockedDraft ? item.materialCoveragePercent : undefined,
+              pendingMaterialScenes: blockedDraft ? item.pendingMaterialScenes : undefined,
+              missingMaterials: blockedDraft ? item.missingMaterials : [],
+            };
+          }));
           if (spoken.trim()) {
             setVoiceDrafts(current => ({ ...current, [sourceLanguage]: spoken }));
             setVoiceDraftStaleLangs(current => [...new Set([
@@ -8421,6 +8601,68 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   )}
                 </div>
               )}
+              {activeQualityScript && (activeQualityStatus || activeQualityWarnings.length > 0 || activeCoveragePercent !== undefined) && (
+                <div className={`mt-3 rounded-xl border px-3 py-3 ${
+                  activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
+                    ? 'border-rose-200 bg-rose-50'
+                    : activeQualityStatus === 'needs_material'
+                    ? 'border-amber-200 bg-amber-50'
+                    : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length
+                      ? 'border-sky-200 bg-sky-50'
+                      : 'border-emerald-200 bg-emerald-50'
+                }`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className={`text-xs font-black ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'text-rose-900' : activeQualityStatus === 'needs_material' ? 'text-amber-900' : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length ? 'text-sky-900' : 'text-emerald-900'}`}>
+                      {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
+                        ? '草稿已保留 · 合规校验未通过'
+                        : activeQualityStatus === 'needs_material'
+                        ? '脚本可用 · 需要补充素材'
+                        : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length
+                          ? '脚本可用 · 请确认质量提示'
+                          : '脚本质量检查通过'}
+                    </p>
+                    {activeCoveragePercent !== undefined && (
+                      <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-black text-amber-800 shadow-sm">
+                        素材覆盖 {Math.round(activeCoveragePercent)}%
+                      </span>
+                    )}
+                  </div>
+                  {activeQualityStatus === 'needs_material' && (
+                    <p className="mt-2 text-[11px] leading-5 text-amber-800">
+                      {activePendingMaterialScenes !== undefined ? `还有 ${activePendingMaterialScenes} 个分镜待匹配。` : '未覆盖分镜已保留为“待匹配素材”。'}不会丢失脚本；补齐素材后再进入最终成片。
+                    </p>
+                  )}
+                  {(activeQualityStatus === 'rejected' || activeQualityStatus === 'failed') && (
+                    <div className="mt-2 text-[11px] leading-5 text-rose-800">
+                      <p>当前草稿不能进入配音、选材或成片；修改后请重新生成并通过校验。</p>
+                      {activeQualityIssues.length > 0 && (
+                        <ul className="mt-1 space-y-1">
+                          {activeQualityIssues.slice(0, 4).map((issue, index) => <li key={`${issue}-${index}`}>• {issue}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  {activeMissingMaterials.length > 0 && (
+                    <p className="mt-1 text-[11px] leading-5 text-amber-800">
+                      待补：{activeMissingMaterials.slice(0, 4).join('、')}{activeMissingMaterials.length > 4 ? ` 等 ${activeMissingMaterials.length} 项` : ''}
+                    </p>
+                  )}
+                  {activeQualityWarnings.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-[11px] leading-5 text-sky-800">
+                      {activeQualityWarnings.slice(0, 4).map((warning, index) => <li key={`${warning}-${index}`}>• {warning}</li>)}
+                    </ul>
+                  )}
+                  {activeBooleanQualityChecks.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {activeBooleanQualityChecks.map(([key, passed]) => (
+                        <span key={key} className={`rounded-md border px-2 py-1 text-[9px] font-bold ${passed ? 'border-emerald-200 bg-white text-emerald-700' : 'border-amber-200 bg-white text-amber-700'}`}>
+                          {passed ? '✓' : '待确认'} {qualityCheckLabels[key] || key}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {currentModeScripts.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {currentModeScripts.map(({ item, number }) => (
@@ -8430,7 +8672,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       onClick={() => openModeScript(item)}
                       className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${activeModeScriptId === item.id ? 'border-accent bg-accent-glow text-accent' : 'border-border bg-white text-text-muted hover:text-text-secondary'}`}
                     >
-                      {item.title}{activeModeScriptId === item.id ? ' · 当前' : ''}
+                      {item.title}
+                      {item.qualityStatus === 'rejected' || item.qualityStatus === 'failed' ? ' · 已拦截' : item.qualityStatus === 'needs_material' ? ' · 待补素材' : item.qualityStatus === 'passed_with_warnings' || item.qualityStatus === 'warning' || item.validationWarnings?.length ? ' · 有提示' : ''}
+                      {activeModeScriptId === item.id ? ' · 当前' : ''}
                     </button>
                   ))}
                 </div>
