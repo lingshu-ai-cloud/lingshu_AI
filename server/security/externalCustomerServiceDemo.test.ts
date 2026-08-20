@@ -71,8 +71,22 @@ assert.match(draftRoute, /evaluateHandoff\([\s\S]*?bantTotal:[\s\S]*?highValueHa
 const customerUi = fs.readFileSync(path.join(root, 'src/components/ConversionPage.tsx'), 'utf8');
 assert.match(customerUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
 assert.match(customerUi, /data-testid="large-order-warning-tag"/, 'the large-order warning must remain a compact right-rail tag');
-const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'), customerUi.indexOf('function SortableWidget'));
+const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'), customerUi.indexOf('function CustomerIntentActionPanel'));
 assert.doesNotMatch(chatThreadUi, /simulation\?\.warning|大单预警/, 'the large-order warning must not occupy the conversation transcript');
+assert.match(customerUi, /data-testid="conversation-list"[^>]*w-52[^>]*xl:w-56/, 'the conversation list must stay compact so the transcript remains prominent on laptops');
+assert.match(customerUi, /data-testid="conversation-chat-thread"/, 'the main conversation transcript needs a stable layout target');
+assert.doesNotMatch(customerUi, /今日处理/, 'per-customer action guidance must be merged into the AI intent panel');
+const customerRailUi = customerUi.slice(customerUi.indexOf('function CustomerInfoRail'), customerUi.indexOf('function createMessageEvent'));
+for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'BasicInfoWidget', 'TagsWidget', 'RulesDisclosure']) {
+  assert.match(customerRailUi, new RegExp(marker), `the customer rail must include ${marker}`);
+}
+const railMarkers = ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'BasicInfoWidget', 'TagsWidget', 'RulesDisclosure'];
+assert.deepEqual(
+  railMarkers.map(marker => customerRailUi.indexOf(marker)),
+  [...railMarkers.map(marker => customerRailUi.indexOf(marker))].sort((a, b) => a - b),
+  'the customer rail must keep warning, AI intent, profile, tags and assignment rules in the requested order',
+);
+assert.doesNotMatch(customerRailUi, /OrderHistoryWidget|SortableWidget/, 'the compact customer rail must not contain extra or draggable panels');
 assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
 assert.match(customerUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
 assert.match(customerUi, /客服演示沙盘/, 'the dedicated account must clearly label the simulation workspace');

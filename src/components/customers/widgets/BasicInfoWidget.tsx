@@ -99,6 +99,7 @@ export function BasicInfoWidget({
   return (
     <Card>
       <CardContent className="pt-4">
+        <p className="mb-3 text-xs font-bold text-text-primary">客户资料</p>
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2 text-sm font-black">
             {customer.avatar}
