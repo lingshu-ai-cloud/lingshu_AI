@@ -46,6 +46,7 @@ try {
     customerId: 'wa_tenant_a_971500000001',
     patch: {
       language: '西语', languageLocked: true, handlingMode: 'human_needed', hasUnread: false,
+      pendingDraft: 'Let me confirm the exact lead time for you.',
       orders: [{ id: 'QA-001', total: 'US $120.00', status: 'paid', createdAt: '2026-07-30' }],
     },
   });
@@ -55,7 +56,11 @@ try {
   assert.equal(after.languageLocked, true);
   assert.equal(after.handlingMode, 'human_needed');
   assert.equal(after.hasUnread, false);
+  assert.equal(after.pendingDraft, 'Let me confirm the exact lead time for you.');
   assert.deepEqual(after.orders.map((item: any) => item.id), ['QA-001']);
+
+  patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_a_971500000001', patch: { pendingDraft: null } });
+  assert.equal(getWhatsAppCustomers('tenant_a').find(item => item.id === 'wa_tenant_a_971500000001')?.pendingDraft, undefined);
 
   assert.equal(patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_b_971500000002', patch: { language: '法语' } }), null);
   assert.equal(getWhatsAppCustomers('tenant_b')[0]?.language, '英语');

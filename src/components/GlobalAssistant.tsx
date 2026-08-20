@@ -435,6 +435,7 @@ export default function GlobalAssistant({
   const panelTitle = assistantTool === 'knowledge-intake' ? '灵小枢 · 快速采集' : isCustomerTodoView ? '今日待办' : activeAgentLabel;
   const panelSubtitle = assistantTool === 'knowledge-intake' ? '当前：智能客服规范' : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const radius = 110;
+  const dockOnLeft = page === 'conversion' || page === 'enterprise' || page === 'agentMemory';
 
   const persistThread = useCallback((agentId: OrbitAgentId) => {
     const thread = useAssistantStore.getState().threads[agentId];
@@ -821,7 +822,7 @@ export default function GlobalAssistant({
   if (suppressForRightSidebar) return null;
 
   return (
-    <div ref={assistantRootRef} data-global-assistant="root" className="fixed bottom-5 right-5 z-[75]">
+    <div ref={assistantRootRef} data-global-assistant="root" className={`fixed bottom-5 z-[75] ${dockOnLeft ? 'left-4 lg:left-[292px]' : 'right-5'}`}>
       {mode === 'expanded' && (
         <button
           type="button"
@@ -838,7 +839,7 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
-            className="absolute bottom-1 right-[72px] z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-100 bg-white p-3 shadow-[0_16px_42px_rgba(15,23,42,0.16)]"
+            className={`absolute bottom-1 z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-100 bg-white p-3 shadow-[0_16px_42px_rgba(15,23,42,0.16)] ${dockOnLeft ? 'left-[72px]' : 'right-[72px]'}`}
           >
             <button type="button" onClick={() => setFeatureGuide(null)} className="absolute right-2.5 top-2.5 rounded-lg p-1 text-text-muted hover:bg-surface-2" aria-label="关闭用法提示">
               <X size={13} />
@@ -858,7 +859,7 @@ export default function GlobalAssistant({
             >
               问问灵小枢 →
             </button>
-            <span className="absolute -right-2 bottom-6 h-4 w-4 rotate-45 border-r border-t border-emerald-100 bg-white" />
+            <span className={`absolute bottom-6 h-4 w-4 rotate-45 border-emerald-100 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -871,7 +872,7 @@ export default function GlobalAssistant({
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 4 }}
             onClick={openCurrentPageAgent}
-            className="absolute bottom-5 right-[68px] z-10 whitespace-nowrap rounded-full border border-emerald-100 bg-white/95 px-3 py-1.5 text-[11px] font-black text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50"
+            className={`absolute bottom-5 z-10 whitespace-nowrap rounded-full border border-emerald-100 bg-white/95 px-3 py-1.5 text-[11px] font-black text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50 ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'}`}
           >
             要补资料？点我
           </motion.button>
@@ -881,17 +882,17 @@ export default function GlobalAssistant({
       <AnimatePresence>
         {mode === 'expanded' && (
           <motion.div
-            className="pointer-events-none absolute bottom-0 right-0 z-10 h-52 w-52"
+            className={`pointer-events-none absolute bottom-0 z-10 h-52 w-52 ${dockOnLeft ? 'left-0' : 'right-0'}`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className="absolute bottom-6 right-6 h-36 w-36 rounded-full border border-dashed border-text-muted/40" />
-            <div className="absolute bottom-6 right-6 h-24 w-24 rounded-full border border-dashed border-text-muted/30" />
+            <div className={`absolute bottom-6 h-36 w-36 rounded-full border border-dashed border-text-muted/40 ${dockOnLeft ? 'left-6' : 'right-6'}`} />
+            <div className={`absolute bottom-6 h-24 w-24 rounded-full border border-dashed border-text-muted/30 ${dockOnLeft ? 'left-6' : 'right-6'}`} />
             {SKILL_AGENTS.map((agent, index) => {
               const Icon = agent.Icon;
               const unread = threads[agent.id].unreadCount;
-              const x = agent.position.x * radius;
+              const x = (dockOnLeft ? -agent.position.x : agent.position.x) * radius;
               const y = agent.position.y * radius;
               return (
                 <motion.button
@@ -899,7 +900,7 @@ export default function GlobalAssistant({
                   type="button"
                   title={AGENT_DISPLAY_NAME[agent.id]}
                   onClick={() => openAgent(agent.id)}
-                  className="group pointer-events-auto absolute bottom-2 right-2 flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.14)]"
+                  className={`group pointer-events-auto absolute bottom-2 flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.14)] ${dockOnLeft ? 'left-2' : 'right-2'}`}
                   style={{ borderColor: agent.color, color: agent.color, backgroundColor: agent.bg }}
                   initial={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
                   animate={{ x, y, opacity: 1, scale: 1 }}
@@ -927,7 +928,7 @@ export default function GlobalAssistant({
             animate={mode === 'chat' ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: 18, scale: 0.96 }}
             exit={{ opacity: 0, y: 18, scale: 0.96 }}
             transition={reduceMotion ? { duration: 0.16 } : { type: 'spring', stiffness: 240, damping: 24 }}
-            className={`absolute bottom-14 right-0 z-10 flex h-[min(720px,calc(100vh-112px))] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            className={`absolute bottom-14 z-10 flex h-[min(720px,calc(100vh-112px))] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl ${dockOnLeft ? 'left-0' : 'right-0'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
           >
             <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
               <div className="flex min-w-0 items-center gap-2">

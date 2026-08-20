@@ -2,12 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, Lock, Pencil, X } from 'lucide-react';
 import { Card, CardContent } from '../../ui/card';
 import { SourceIcon, sourceLabel } from '../SourceIcon';
-import type { CustomerProfile } from '../../../types/customer';
+import type { CustomerProfile, CustomerStage } from '../../../types/customer';
 import { authHeader } from '../../../lib/auth';
 import { LiveLocalTime } from '../LiveLocalTime';
 import { useDismissibleLayer } from '../../../hooks/useDismissibleLayer';
 
 const LANGUAGE_OPTIONS = ['中文', '英语', '西语', '阿语', '葡语', '法语', '俄语', '印尼语', '越南语', '泰语', '其他'];
+const STAGE_OPTIONS: Array<{ value: CustomerStage; label: string }> = [
+  { value: 'lead', label: '新线索' },
+  { value: 'inquiry', label: '需求确认' },
+  { value: 'quoted', label: '已报价' },
+  { value: 'won', label: '已成交' },
+  { value: 'silent30', label: '沉默 30 天' },
+  { value: 'silent60', label: '沉默 60 天' },
+];
 
 export function BasicInfoWidget({
   customer,
@@ -18,7 +26,9 @@ export function BasicInfoWidget({
 }) {
   const [languageOpen, setLanguageOpen] = useState(false);
   const [sandboxEditing, setSandboxEditing] = useState(false);
-  const [sandboxDraft, setSandboxDraft] = useState({ name: '', countryName: '', language: '', product: '', estimatedValue: '' });
+  const [sandboxDraft, setSandboxDraft] = useState<{ name: string; countryName: string; language: string; product: string; estimatedValue: string; stage: CustomerStage }>({
+    name: '', countryName: '', language: '', product: '', estimatedValue: '', stage: 'lead',
+  });
   const languageMenuRef = useRef<HTMLDivElement>(null);
   useDismissibleLayer(languageOpen, languageMenuRef, () => setLanguageOpen(false));
 
@@ -29,6 +39,7 @@ export function BasicInfoWidget({
       language: customer.language,
       product: customer.outboundProduct || customer.product,
       estimatedValue: customer.estimatedValue,
+      stage: customer.stage,
     });
     setSandboxEditing(false);
   }, [customer.id]);
@@ -45,6 +56,7 @@ export function BasicInfoWidget({
       product,
       outboundProduct: product,
       estimatedValue: sandboxDraft.estimatedValue.trim() || '待评估',
+      stage: sandboxDraft.stage,
       summary: `自由模拟客户；当前需求：${product}；地区：${sandboxDraft.countryName.trim() || '未知'}。`,
       handlingReason: '模拟资料已更新，等待客户消息后生成建议',
     });
@@ -122,6 +134,9 @@ export function BasicInfoWidget({
                 {LANGUAGE_OPTIONS.map(language => <option key={language} value={language}>{language}</option>)}
               </select>
               <input aria-label="模拟客户预估金额" value={sandboxDraft.estimatedValue} onChange={event => setSandboxDraft(current => ({ ...current, estimatedValue: event.target.value }))} placeholder="预估金额" className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500" />
+              <select aria-label="模拟客户采购阶段" value={sandboxDraft.stage} onChange={event => setSandboxDraft(current => ({ ...current, stage: event.target.value as CustomerStage }))} className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500">
+                {STAGE_OPTIONS.map(stage => <option key={stage.value} value={stage.value}>{stage.label}</option>)}
+              </select>
               <input aria-label="模拟客户需求" value={sandboxDraft.product} onChange={event => setSandboxDraft(current => ({ ...current, product: event.target.value }))} placeholder="客户需求/产品" className="col-span-2 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-cyan-500" />
             </div>
             <p className="mt-2 text-[10px] leading-4 text-cyan-700">保存后，从中间“模拟客户输入”发送第一句话。</p>

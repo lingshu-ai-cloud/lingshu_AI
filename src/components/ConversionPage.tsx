@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import {
   closestCenter,
   DndContext,
@@ -375,6 +375,11 @@ function translateChineseReplyForCustomer(customer: CustomerProfile, text: strin
   return `Thanks for your message. Could you share the target quantity, specifications, and packaging requirements for ${product}?`;
 }
 
+function translatedReplyPreview(customer: CustomerProfile, text: string): string {
+  const translated = translateChineseReplyForCustomer(customer, text);
+  return translated.trim() === text.trim() ? '' : translated;
+}
+
 function latestBuyerText(customer: CustomerProfile): string {
   return [...customer.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer')?.body || '';
 }
@@ -649,11 +654,13 @@ function CompactCustomerList({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-1.5">
-                <p className="truncate text-sm font-bold text-text-primary">{customer.name}</p>
-                {customer.isMock && <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">模拟</span>}
-                {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">大单预警</span>}
-                <SourceIcon source={customer.source} size={11} />
+              <div className="min-w-0">
+                <p className="line-clamp-2 text-sm font-bold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {customer.isMock && <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">模拟</span>}
+                  {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">大单预警</span>}
+                  <SourceIcon source={customer.source} size={11} />
+                </div>
               </div>
               <span className="shrink-0 text-[11px] font-medium text-text-muted">{lastMessage?.time || customer.lastActive}</span>
             </div>
@@ -664,7 +671,7 @@ function CompactCustomerList({
     );
   };
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col overflow-hidden border-r border-border bg-white">
+    <aside className="flex h-full w-72 shrink-0 flex-col overflow-hidden border-r border-border bg-white 2xl:w-80">
       <div className="border-b border-border px-4 py-3">
         <div ref={filterMenuRef} className="relative flex items-center justify-between gap-3">
           <p className="text-[11px] text-text-muted">{list.length} 个待处理 · 按最近动态排序</p>
@@ -1124,7 +1131,7 @@ function ChatThread({
           )}
         </div>
       </div>
-      <div className="shrink-0 space-y-2 border-t border-border bg-white p-4">
+      <div className="shrink-0 space-y-2 border-t border-border bg-white p-3">
         <div className="mx-auto max-w-3xl space-y-2">
           {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{'\u8ddd\u5ba2\u6237\u4e0a\u6b21\u6d88\u606f\u5df2\u8d85\u8fc724\u5c0f\u65f6\uff0cWhatsApp \u8981\u6c42\u4ee5\u6a21\u677f\u6d88\u606f\u53d1\u9001'}</div>}
           {composerState === 'idle' && chips.length > 0 && (
@@ -1132,7 +1139,7 @@ function ChatThread({
               {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-primary/30 hover:bg-primary/5 hover:text-primary"><Sparkles size={13} /> {chip.label}</button>)}
             </div>
           )}
-          <div className="rounded-xl border border-border bg-surface-2 p-3">
+          <div className="rounded-xl border border-border bg-surface-2 px-3 py-2.5">
             {previewOpen && translatedInput && <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary"><span className="font-black text-text-primary">{'\u8bd1\u6587\u9884\u89c8\uff1a'}</span>{translatedInput}</div>}
             {isOutsideWindow && typedTemplatePlan && input.trim() && (
               <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
@@ -1140,7 +1147,7 @@ function ChatThread({
                 <div className="mt-1">{typedTemplatePlan.template.status === 'approved' ? '\u6a21\u677f\u5df2\u901a\u8fc7\uff0c\u53ef\u53d1\u9001' : '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d\uff0c\u6682\u4e0d\u80fd\u53d1\u9001'}</div>
               </div>
             )}
-            <textarea ref={inputRef} data-customer-reply-input rows={3} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder="输入中文回复..." className="w-full resize-none bg-transparent text-sm leading-relaxed text-text-primary outline-none placeholder:text-text-muted" />
+            <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder={`输入回复（中文或${replyLanguage(customer)}）…`} className="max-h-24 w-full resize-none bg-transparent text-sm leading-relaxed text-text-primary outline-none placeholder:text-text-muted" />
             <div className="mt-2 flex items-center justify-between gap-2">
               {composerState === 'typing' ? (
                 <div className="flex items-center gap-1.5">
@@ -1223,6 +1230,7 @@ function PrimaryActionCard({
   onCompleteTodo,
   customerServiceEnabled,
   autoReplyReady,
+  hasReplyReady,
 }: {
   customer: CustomerProfile;
   notificationReady: boolean;
@@ -1234,13 +1242,17 @@ function PrimaryActionCard({
   onCompleteTodo: () => void;
   customerServiceEnabled: boolean;
   autoReplyReady: boolean;
+  hasReplyReady: boolean;
 }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
   const [handoffSummary, setHandoffSummary] = useState('');
   const [isPrimaryLoading, setIsPrimaryLoading] = useState(false);
   const rawSuggestion = buildPrioritySuggestion(customer);
-  const dismissed = rawSuggestion.suggestionType !== 'none' && isSuggestionDismissed(customer.id, rawSuggestion.suggestionType);
+  const actionableSuggestion: PrioritySuggestion = ['draft_review', 'blocked_auto'].includes(rawSuggestion.suggestionType) && !hasReplyReady
+    ? { ...rawSuggestion, headline: '生成回复建议', reason: '已开启建议模式，点击后会根据客户最新消息生成草稿' }
+    : rawSuggestion;
+  const dismissed = actionableSuggestion.suggestionType !== 'none' && isSuggestionDismissed(customer.id, actionableSuggestion.suggestionType);
   const suggestion: PrioritySuggestion = dismissed
     ? {
       customerId: customer.id,
@@ -1251,7 +1263,7 @@ function PrimaryActionCard({
       priorityScore: 0,
       tone: 'green',
     }
-    : rawSuggestion;
+    : actionableSuggestion;
 
   const switchMode = (mode: HandlingMode, message: string) => {
     onModeChange(mode);
@@ -1300,7 +1312,8 @@ function PrimaryActionCard({
       return;
     }
     if (suggestion.suggestionType === 'draft_review' || suggestion.suggestionType === 'blocked_auto') {
-      onViewDraft();
+      if (hasReplyReady) onViewDraft();
+      else await onGenerateDraft('', 'reply');
       return;
     }
     if (suggestion.suggestionType === 'touch') {
@@ -1340,9 +1353,9 @@ function PrimaryActionCard({
   const primaryLabel: Record<PrioritySuggestion['suggestionType'], string> = {
     call: '生成触达草稿',
     handoff: '打开回复',
-    draft_review: '查看草稿',
+    draft_review: hasReplyReady ? '查看草稿' : '生成建议',
     touch: '生成触达草稿',
-    blocked_auto: '查看草稿',
+    blocked_auto: hasReplyReady ? '查看草稿' : '生成建议',
     none: '知道了',
   };
   const secondaryLabel: Record<PrioritySuggestion['suggestionType'], string> = {
@@ -1478,6 +1491,7 @@ function CustomerInfoRail({
   onCompleteTodo,
   customerServiceEnabled,
   autoReplyReady,
+  hasReplyReady,
 }: {
   customer: CustomerProfile | null;
   autonomyLevel: AutonomyLevel;
@@ -1491,6 +1505,7 @@ function CustomerInfoRail({
   onCompleteTodo: () => void;
   customerServiceEnabled: boolean;
   autoReplyReady: boolean;
+  hasReplyReady: boolean;
 }) {
   const [widgetOrder, setWidgetOrder] = useState<CustomerWidgetId[]>(() => readWidgetOrder());
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -1542,20 +1557,20 @@ function CustomerInfoRail({
 
   if (!customer) {
     return (
-      <aside className="flex h-full w-[340px] shrink-0 items-center justify-center border-l border-border bg-surface px-6 text-center">
+      <aside className="flex h-full w-72 shrink-0 items-center justify-center border-l border-border bg-surface px-6 text-center 2xl:w-[320px]">
         <p className="text-xs font-bold text-text-muted">未选择客户</p>
       </aside>
     );
   }
 
   return (
-    <aside className="h-full w-[340px] shrink-0 overflow-y-auto border-l border-border bg-surface px-4 py-4">
+    <aside className="h-full w-72 shrink-0 overflow-y-auto border-l border-border bg-surface px-4 py-4 2xl:w-[320px]">
       <SimulationContextCard customer={customer} />
       <div className="mb-2 px-1">
         <p className="text-xs font-black text-text-primary">今日处理</p>
       </div>
       <div className="grid gap-3">
-        <PrimaryActionCard customer={customer} notificationReady={notificationReady} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} />
+        <PrimaryActionCard customer={customer} notificationReady={notificationReady} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} hasReplyReady={hasReplyReady} />
       </div>
 
       <div className="mt-3">
@@ -1744,6 +1759,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const selected = useMemo(() => (
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
+  const selectedLatestBuyerId = useMemo(() => (
+    selected ? [...selected.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer')?.id ?? '' : ''
+  ), [selected?.id, selected?.timeline]);
   const customersInActiveView = useMemo(() => filterCustomers(view, customers), [view, customers]);
   const activeView = VIEW_META[view];
   const partialAutoReplyActive = Boolean(customerServiceStatus?.autoReplyReady && autonomyLevel === 'auto');
@@ -1765,6 +1783,19 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       };
     })
   ), [customers]);
+
+  const savePendingDraft = useCallback((customer: CustomerProfile, draft?: string) => {
+    const pendingDraft = draft?.trim() || undefined;
+    updateCustomer(customer.id, { pendingDraft });
+    if (customer.isMock) return;
+    void fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ pendingDraft: pendingDraft ?? null }),
+    }).catch(() => {
+      // 本地状态仍保留，下次后端同步时再以服务端为准。
+    });
+  }, [updateCustomer]);
 
   useEffect(() => {
     if (deepLinkConsumedRef.current || !customers.length) return;
@@ -1927,11 +1958,21 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const key = `${selected.id}:${lastBuyer.id}`;
     if (key === lastDraftKey) return;
     setLastDraftKey(key);
+    if (selected.pendingDraft?.trim()) {
+      setDraftSuggestion(selected.pendingDraft.trim());
+      return;
+    }
+    let cancelled = false;
     void requestDraft(selected).then(result => {
+      if (cancelled) return;
       setDraftSuggestion(result.draft);
       setDraftMeta(result);
+      savePendingDraft(selected, result.draft);
     });
-  }, [selected, lastDraftKey, customerServiceStatus?.enabled]);
+    return () => { cancelled = true; };
+    // lastDraftKey is intentionally a guard, not a dependency: adding it here
+    // would cancel the request immediately after the key is recorded.
+  }, [selected?.id, selectedLatestBuyerId, selected?.pendingDraft, selected?.handlingReason, customerServiceStatus?.enabled, savePendingDraft]);
 
   useEffect(() => {
     const viewLabel = selected ? `客户详情 / ${selected.name}` : activeView.label;
@@ -2119,7 +2160,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const buyerEvent = createMessageEvent(selected.id, text.trim(), 'buyer');
     const customerWithMessage = { ...selected, timeline: [...selected.timeline, buyerEvent] };
     appendTimelineEvent(selected.id, buyerEvent);
-    updateCustomer(selected.id, { hasUnread: true, lastActive: '刚刚', lastActiveAt: buyerEvent.timestamp, inboxReason: 'reply' });
+    updateCustomer(selected.id, { hasUnread: true, lastActive: '刚刚', lastActiveAt: buyerEvent.timestamp, inboxReason: 'reply', pendingDraft: undefined });
     if (!customerServiceStatus?.enabled) {
       updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: '智能客服未开启，等待人工回复' });
       showToast('智能客服未开启，这条消息只进入收件箱');
@@ -2138,6 +2179,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         handlingMode: 'human_needed',
         handlingReason: result.handlingReason || '该消息需要人工接待',
         fallbackCount: result.fallbackCount ?? selected.fallbackCount,
+        pendingDraft: undefined,
       });
       setDraftMeta(result);
       showToast(result.safeToSendBeforeHandoff && result.draft.trim()
@@ -2153,6 +2195,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         handlingReason: 'AI 已生成建议，等待你确认后发送',
         hasUnread: true,
         fallbackCount: result.fallbackCount ?? selected.fallbackCount,
+        pendingDraft: result.draft,
       });
       showToast('已生成建议回复，确认后再发送');
       return;
@@ -2169,6 +2212,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       hasUnread: false,
       aiAutoCount: (selected.aiAutoCount ?? 0) + 1,
       fallbackCount: result.fallbackCount ?? selected.fallbackCount,
+      pendingDraft: undefined,
     });
   };
 
@@ -2214,7 +2258,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       audit: meta?.knowledgeMiss ? { knowledgeMiss: true, buyerMessage: meta.buyerMessage, evidence: meta.evidence } : undefined,
     });
     appendTimelineEvent(customer.id, event);
-    persistCustomerPatch(customer.id, { lastActive: '刚刚', hasUnread: false, todoCompletedAt: new Date().toISOString() });
+    persistCustomerPatch(customer.id, { lastActive: '刚刚', hasUnread: false, todoCompletedAt: new Date().toISOString(), pendingDraft: undefined });
     setDraftSuggestion(null);
     setDraftMeta(null);
     setInput('');
@@ -2245,7 +2289,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     removeTimelineEvent(undoSend.customerId, undoSend.eventId);
     if (selected?.id === undoSend.customerId) {
       setInput(undoSend.restoreText);
-      setTranslatedInput(selected ? translateChineseReplyForCustomer(selected, undoSend.restoreText) : '');
+      setTranslatedInput(selected ? translatedReplyPreview(selected, undoSend.restoreText) : '');
+      savePendingDraft(selected, undoSend.restoreText);
     }
     setUndoSend(null);
   };
@@ -2288,6 +2333,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       if (result.safeToSendBeforeHandoff && result.draft.trim()) {
         setDraftSuggestion(result.draft);
         setDraftMeta(result);
+        savePendingDraft(selected, result.draft);
       }
       showToast(result.safeToSendBeforeHandoff && result.draft.trim()
         ? '已生成安全承接话术，并标记人工接管'
@@ -2296,6 +2342,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     }
     setDraftSuggestion(result.draft);
     setDraftMeta(result);
+    savePendingDraft(selected, result.draft);
   };
 
   const regenerateDraft = async () => {
@@ -2311,6 +2358,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       if (result.safeToSendBeforeHandoff && result.draft.trim()) {
         setDraftSuggestion(result.draft);
         setDraftMeta(result);
+        savePendingDraft(selected, result.draft);
       }
       showToast(result.safeToSendBeforeHandoff && result.draft.trim()
         ? '已换一条安全承接话术，并标记人工接管'
@@ -2319,6 +2367,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     }
     setDraftSuggestion(result.draft);
     setDraftMeta(result);
+    savePendingDraft(selected, result.draft);
   };
 
   const polishInput = async () => {
@@ -2364,8 +2413,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const editDraft = () => {
     if (!selected || !draftSuggestion) return;
     setInput(draftSuggestion);
-    setTranslatedInput(translateChineseReplyForCustomer(selected, draftSuggestion));
+    setTranslatedInput(translatedReplyPreview(selected, draftSuggestion));
     setDraftSuggestion(null);
+    updateCustomer(selected.id, { pendingDraft: draftSuggestion });
     window.setTimeout(() => {
       const inputEl = document.querySelector<HTMLTextAreaElement>('[data-customer-reply-input]');
       inputEl?.focus();
@@ -2386,6 +2436,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const draftEl = document.querySelector<HTMLElement>('[data-draft-suggestion]');
     if (draftEl) {
       draftEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (selected?.pendingDraft?.trim() && !input.trim()) {
+      setDraftSuggestion(selected.pendingDraft.trim());
+      window.setTimeout(() => document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
       return;
     }
     focusReplyInput();
@@ -2479,13 +2534,13 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           draftSuggestion={draftSuggestion}
           input={input}
           translatedInput={translatedInput}
-          onInputChange={(value) => { setInput(value); setTranslatedInput(''); }}
-          onDraftChange={value => { setDraftSuggestion(value || null); if (!value) setDraftMeta(null); }}
+          onInputChange={(value) => { setInput(value); setTranslatedInput(''); if (selected?.pendingDraft !== undefined) updateCustomer(selected.id, { pendingDraft: value || undefined }); }}
+          onDraftChange={value => { setDraftSuggestion(value || null); if (selected) updateCustomer(selected.id, { pendingDraft: value || undefined }); if (!value) setDraftMeta(null); }}
           onTranslatedInputChange={setTranslatedInput}
           onSend={sendReply}
           onEditDraft={editDraft}
           onSendDraft={sendDraftDirectly}
-          onDismissDraft={() => { setDraftSuggestion(null); setDraftMeta(null); }}
+          onDismissDraft={() => { setDraftSuggestion(null); setDraftMeta(null); if (selected) savePendingDraft(selected); }}
           onPolishInput={polishInput}
           onRegenerateDraft={regenerateDraft}
           onSceneDraft={(intent) => void generateManualDraft('', intent)}
@@ -2514,6 +2569,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onCompleteTodo={markSelectedTodoCompleted}
           customerServiceEnabled={Boolean(customerServiceStatus?.enabled)}
           autoReplyReady={partialAutoReplyActive}
+          hasReplyReady={Boolean(draftSuggestion?.trim() || input.trim() || selected?.pendingDraft?.trim())}
         />
       </div>
       {customerServiceStatus?.shouldAskPartialAutoReply && (

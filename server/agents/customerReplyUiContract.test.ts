@@ -19,6 +19,43 @@ assert.doesNotMatch(
   /if \(selected\.isMock\)\s*\{\s*setDraftSuggestion\(null\);\s*setDraftMeta\(null\);/,
   'a mock customer timeline update must not erase the draft that was just generated',
 );
+assert.doesNotMatch(
+  source,
+  /placeholder=["{]?[`'"]输入中文回复/,
+  'the composer placeholder must not imply that foreign-language replies should be written in Chinese only',
+);
+assert.match(
+  source,
+  /placeholder=\{`输入回复（中文或\$\{replyLanguage\(customer\)\}）…`\}/,
+  'the composer should show the actual customer reply language',
+);
+assert.match(
+  source,
+  /translated\.trim\(\) === text\.trim\(\) \? '' : translated/,
+  'editing an already foreign-language draft must not show the same text again as a translation preview',
+);
+assert.match(
+  source,
+  /if \(selected\.pendingDraft\?\.trim\(\)\)[\s\S]{0,180}setDraftSuggestion\(selected\.pendingDraft\.trim\(\)\)/,
+  'a pending AI draft must be restored when the customer is revisited',
+);
+assert.match(
+  source,
+  /body: JSON\.stringify\(\{ pendingDraft: pendingDraft \?\? null \}\)/,
+  'AI drafts must be persisted so a page refresh does not lose them',
+);
+assert.match(
+  source,
+  /blocked_auto: hasReplyReady \? '查看草稿' : '生成建议'/,
+  'a blocked-auto card must not claim that an absent draft can be viewed',
+);
+
+const basicInfoSource = fs.readFileSync('src/components/customers/widgets/BasicInfoWidget.tsx', 'utf8');
+assert.match(
+  basicInfoSource,
+  /aria-label="模拟客户采购阶段"/,
+  'the blank simulation customer must expose an editable procurement stage',
+);
 
 const translatedDraftMappings = source.match(/translatedDraft:\s*typeof data\.translatedDraft/g) ?? [];
 assert.ok(

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   fallbackReplyPlan,
+  latestQuestionFocus,
   parseReplyCandidates,
   parseReplyPlan,
   rankReplyCandidates,
@@ -85,6 +86,18 @@ assert.equal(ranked[0].style, 'direct');
 assert.ok(ranked[0].score > ranked[1].score);
 assert.ok(ranked.at(-1)?.reasons.some(reason => reason === 'repeated_greeting' || reason.startsWith('reasks_')));
 assert.ok(semanticTextSimilarity('Which market are you selling in?', 'What country do you sell in?') > 0.2);
+
+const acceptanceQuestion = 'What pilot acceptance data do you normally review?';
+const unrelatedQualification = '55 minutes per changeover adds up fast. How many changeovers do you run per shift?';
+const groundedBridge = 'For the pilot acceptance data, I need to confirm the exact checklist we use before I quote it as our standard.';
+assert.equal(latestQuestionFocus(unrelatedQualification, acceptanceQuestion).addressed, false);
+assert.equal(latestQuestionFocus(groundedBridge, acceptanceQuestion).addressed, true);
+const questionFirstRanking = rankReplyCandidates([
+  { style: 'warm', text: unrelatedQualification },
+  { style: 'direct', text: groundedBridge },
+], { latestMessage: acceptanceQuestion, timeline: [], plan: ongoingPlan });
+assert.equal(questionFirstRanking[0].style, 'direct', 'answering the latest direct question must outrank a BANT/SPIN follow-up');
+assert.ok(questionFirstRanking.at(-1)?.reasons.includes('misses_latest_question'));
 
 const now = Date.parse('2026-08-03T00:00:00Z');
 const relevant: StyleMemoryRecord = {

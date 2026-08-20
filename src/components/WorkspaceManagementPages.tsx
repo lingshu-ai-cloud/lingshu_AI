@@ -473,6 +473,12 @@ export function ScriptLibraryPage() {
 
 export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScope = 'admin' }: { includeMockCustomers?: boolean; mockCustomerScope?: string } = {}) {
   type MemoryTab = 'content' | 'style' | 'customer' | 'strategy';
+  type MemoryEditor =
+    | { kind: 'customer-add'; customerId: string; customerName: string; key: string; value: string; expiresAt: string; existingKeys: string[] }
+    | { kind: 'customer-edit'; id: string; key: string; value: string; expiresAt: string }
+    | { kind: 'style-edit'; id: string; finalSent: string }
+    | { kind: 'strategy-edit'; id: string; adjustment: string };
+  type MemoryConfirm = { title: string; description: string; confirmLabel: string; danger?: boolean; action: () => Promise<unknown> | void };
   type ContentMemory = {
     id: string; kind: 'analysis' | 'draft'; title: string; source: string; updated?: string;
     description: string; tags: string[]; poster?: string; evidence: string[]; usage: string;
@@ -486,8 +492,12 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
   const [customerMemories, setCustomerMemories] = useState<Array<Record<string, unknown>>>([]);
   const [memoryAudit, setMemoryAudit] = useState<Array<Record<string, unknown>>>([]);
   const [memoryOverview, setMemoryOverview] = useState<Record<string, any> | null>(null);
+  const [memoryLoading, setMemoryLoading] = useState(true);
+  const [memoryLoadError, setMemoryLoadError] = useState('');
   const [memoryBusy, setMemoryBusy] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
+  const [memoryEditor, setMemoryEditor] = useState<MemoryEditor | null>(null);
+  const [memoryConfirm, setMemoryConfirm] = useState<MemoryConfirm | null>(null);
   const [opsOverview, setOpsOverview] = useState<ContentOpsOverview | null>(null);
   const [executionIntent, setExecutionIntent] = useState<ContentOpsExecutionIntent | null>(null);
   const [opsLoading, setOpsLoading] = useState(true);
@@ -501,30 +511,41 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
     { id: 'strategy', label: '响应策略', icon: Workflow },
   ];
 
-  const loadMemoryGovernance = async () => {
-    const headers = authHeader();
-    const [overviewResponse, evidenceResponse, customerMemoryResponse, strategyResponse, auditResponse] = await Promise.all([
-      fetch('/api/overseas/agent-memory/overview', { headers }),
-      fetch('/api/overseas/agent-memory/style-evidence', { headers }),
-      fetch('/api/overseas/agent-memory/customer-memories', { headers }),
-      fetch('/api/overseas/agent-memory/strategies', { headers }),
-      fetch('/api/overseas/agent-memory/audit', { headers }),
-    ]);
-    const [overview, evidence, customerMemory, strategies, audit] = await Promise.all([
-      overviewResponse.ok ? overviewResponse.json() : {},
-      evidenceResponse.ok ? evidenceResponse.json() : { items: [] },
-      customerMemoryResponse.ok ? customerMemoryResponse.json() : { items: [] },
-      strategyResponse.ok ? strategyResponse.json() : { items: [] },
-      auditResponse.ok ? auditResponse.json() : { items: [] },
-    ]);
-    setMemoryOverview(overview && typeof overview === 'object' ? overview : null);
-    setStyleEvidence(Array.isArray(evidence.items) ? evidence.items : []);
-    setCustomerMemories(Array.isArray(customerMemory.items) ? customerMemory.items : []);
-    setResponseStrategies(Array.isArray(strategies.items) ? strategies.items : []);
-    setMemoryAudit(Array.isArray(audit.items) ? audit.items : []);
+  const loadMemoryGovernance = async (silent = false) => {
+    if (!silent) setMemoryLoading(true);
+    setMemoryLoadError('');
+    try {
+      const headers = authHeader();
+      const [overviewResponse, evidenceResponse, customerMemoryResponse, strategyResponse, auditResponse] = await Promise.all([
+        fetch('/api/overseas/agent-memory/overview', { headers }),
+        fetch('/api/overseas/agent-memory/style-evidence', { headers }),
+        fetch('/api/overseas/agent-memory/customer-memories', { headers }),
+        fetch('/api/overseas/agent-memory/strategies', { headers }),
+        fetch('/api/overseas/agent-memory/audit', { headers }),
+      ]);
+      if (!overviewResponse.ok) throw new Error('智能体记忆暂时加载失败，请重试。');
+      const [overview, evidence, customerMemory, strategies, audit] = await Promise.all([
+        overviewResponse.json(),
+        evidenceResponse.ok ? evidenceResponse.json() : { items: [] },
+        customerMemoryResponse.ok ? customerMemoryResponse.json() : { items: [] },
+        strategyResponse.ok ? strategyResponse.json() : { items: [] },
+        auditResponse.ok ? auditResponse.json() : { items: [] },
+      ]);
+      setMemoryOverview(overview && typeof overview === 'object' ? overview : null);
+      setStyleEvidence(Array.isArray(evidence.items) ? evidence.items : []);
+      setCustomerMemories(Array.isArray(customerMemory.items) ? customerMemory.items : []);
+      setResponseStrategies(Array.isArray(strategies.items) ? strategies.items : []);
+      setMemoryAudit(Array.isArray(audit.items) ? audit.items : []);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '智能体记忆暂时加载失败，请重试。';
+      setMemoryLoadError(message);
+      throw error;
+    } finally {
+      if (!silent) setMemoryLoading(false);
+    }
   };
 
-  const memoryMutation = async (busyKey: string, url: string, method: string, body?: Record<string, unknown>) => {
+  const memoryMutation = async (busyKey: string, url: string, method: string, body?: Record<string, unknown>, successMessage?: string) => {
     setMemoryBusy(busyKey);
     setMemoryNotice('');
     try {
@@ -535,8 +556,11 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(String(payload.message || payload.error || '操作失败'));
-      setMemoryNotice('操作已保存，并写入审计记录。');
-      await loadMemoryGovernance();
+      const latency = Number(payload.latencyMs || payload.latency || 0);
+      setMemoryNotice(successMessage || (busyKey === 'model-check'
+        ? `模型连接正常${latency > 0 ? `，耗时 ${latency} ms` : ''}。`
+        : '操作已保存，并写入审计记录。'));
+      await loadMemoryGovernance(true);
       return payload;
     } catch (error) {
       setMemoryNotice(error instanceof Error ? error.message : '操作失败');
@@ -546,38 +570,50 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
     }
   };
 
-  const addCustomerMemory = async (customer: Record<string, unknown>) => {
+  const addCustomerMemory = (customer: Record<string, unknown>, existingKeys: string[] = []) => {
     const customerId = String(customer.id || '');
     if (!customerId) return;
-    const key = window.prompt('记忆类型：preferred_language / preferred_tone / communication_preference / product_preference / buying_context / schedule_preference / other', 'product_preference');
+    const key = memoryKeyOptions.find(([value]) => !existingKeys.includes(value))?.[0];
     if (!key) return;
-    const value = window.prompt('请输入只适用于该客户的偏好或采购背景（不要填写电话、邮箱）：', String(customer.product || ''));
-    if (!value) return;
-    const expiresAt = window.prompt('有效期（可选，ISO 日期，例如 2026-12-31；留空表示长期有效）：', '');
-    if (expiresAt === null) return;
-    await memoryMutation(`customer-add-${customerId}`, '/api/overseas/agent-memory/customer-memories', 'POST', {
-      customerId, key, value, evidence: '管理员根据客户上下文人工确认', sourceKind: 'human', status: 'confirmed', expiresAt,
-    });
+    setMemoryNotice('');
+    setMemoryEditor({ kind: 'customer-add', customerId, customerName: String(customer.name || '该客户'), key, value: key === 'product_preference' ? String(customer.product || '') : '', expiresAt: '', existingKeys });
   };
 
-  const editCustomerMemory = async (memory: Record<string, unknown>) => {
-    const value = window.prompt('编辑客户私有记忆：', String(memory.value || ''));
-    if (!value) return;
-    const expiresAt = window.prompt('有效期（ISO 日期；留空可清除有效期）：', String(memory.expiresAt || ''));
-    if (expiresAt === null || (value === String(memory.value || '') && expiresAt === String(memory.expiresAt || ''))) return;
-    await memoryMutation(`customer-edit-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'PATCH', { value, expiresAt });
+  const editCustomerMemory = (memory: Record<string, unknown>) => {
+    setMemoryNotice('');
+    setMemoryEditor({ kind: 'customer-edit', id: String(memory.id), key: String(memory.key || 'other'), value: String(memory.value || ''), expiresAt: String(memory.expiresAt || '').slice(0, 10) });
   };
 
-  const editStyleEvidence = async (evidence: Record<string, unknown>) => {
-    const finalSent = window.prompt('编辑员工最终回复证据（隐私字段会在服务端再次脱敏）：', String(evidence.finalSent || ''));
-    if (!finalSent || finalSent === String(evidence.finalSent || '')) return;
-    await memoryMutation(`style-edit-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'PATCH', { finalSent });
+  const editStyleEvidence = (evidence: Record<string, unknown>) => {
+    setMemoryNotice('');
+    setMemoryEditor({ kind: 'style-edit', id: String(evidence.id), finalSent: String(evidence.finalSent || '') });
   };
 
-  const editStrategy = async (strategy: Record<string, unknown>) => {
-    const adjustment = window.prompt('编辑策略调整说明（只能写对话方法，不能写价格、MOQ、证书等企业事实）：', String(strategy.adjustment || ''));
-    if (adjustment === null || adjustment === String(strategy.adjustment || '')) return;
-    await memoryMutation(`strategy-edit-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'PATCH', { adjustment });
+  const editStrategy = (strategy: Record<string, unknown>) => {
+    setMemoryNotice('');
+    setMemoryEditor({ kind: 'strategy-edit', id: String(strategy.id), adjustment: String(strategy.adjustment || '') });
+  };
+
+  const submitMemoryEditor = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!memoryEditor) return;
+    let payload: unknown = null;
+    if (memoryEditor.kind === 'customer-add' && memoryEditor.value.trim()) {
+      if (memoryEditor.existingKeys.includes(memoryEditor.key)) {
+        setMemoryNotice('这类客户记忆已经存在，请直接编辑原记录。');
+        return;
+      }
+      payload = await memoryMutation(`customer-add-${memoryEditor.customerId}`, '/api/overseas/agent-memory/customer-memories', 'POST', {
+        customerId: memoryEditor.customerId, key: memoryEditor.key, value: memoryEditor.value.trim(), evidence: '管理员根据客户上下文人工确认', sourceKind: 'human', status: 'confirmed', expiresAt: memoryEditor.expiresAt,
+      });
+    } else if (memoryEditor.kind === 'customer-edit' && memoryEditor.value.trim()) {
+      payload = await memoryMutation(`customer-edit-${memoryEditor.id}`, `/api/overseas/agent-memory/customer-memories/${memoryEditor.id}`, 'PATCH', { value: memoryEditor.value.trim(), expiresAt: memoryEditor.expiresAt });
+    } else if (memoryEditor.kind === 'style-edit' && memoryEditor.finalSent.trim()) {
+      payload = await memoryMutation(`style-edit-${memoryEditor.id}`, `/api/overseas/agent-memory/style-evidence/${memoryEditor.id}`, 'PATCH', { finalSent: memoryEditor.finalSent.trim() });
+    } else if (memoryEditor.kind === 'strategy-edit') {
+      payload = await memoryMutation(`strategy-edit-${memoryEditor.id}`, `/api/overseas/agent-memory/strategies/${memoryEditor.id}`, 'PATCH', { adjustment: memoryEditor.adjustment.trim() });
+    }
+    if (payload) setMemoryEditor(null);
   };
 
   const exportMemoryBackup = async () => {
@@ -601,8 +637,7 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
     }
   };
 
-  const restoreMemoryBackup = async (file: File) => {
-    if (!window.confirm('恢复只接受当前企业导出的备份；同 ID 数据会更新，不会读取其他企业数据。确认继续？')) return;
+  const performRestoreMemoryBackup = async (file: File) => {
     setMemoryBusy('restore');
     setMemoryNotice('');
     try {
@@ -613,7 +648,7 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(String(payload.message || payload.error || '备份恢复失败'));
       setMemoryNotice(`备份恢复完成，共处理 ${Number(payload.restored || 0)} 条租户隔离记录。`);
-      await loadMemoryGovernance();
+      await loadMemoryGovernance(true);
     } catch (error) {
       setMemoryNotice(error instanceof Error ? error.message : '备份文件无效');
     } finally {
@@ -621,9 +656,29 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
     }
   };
 
+  const restoreMemoryBackup = (file: File) => {
+    setMemoryConfirm({
+      title: '恢复智能体记忆备份',
+      description: '只接受当前企业导出的备份。同 ID 数据会更新，其他企业的数据不会被读取。',
+      confirmLabel: '确认恢复',
+      action: () => performRestoreMemoryBackup(file),
+    });
+  };
+
   useEffect(() => {
-    void loadMemoryGovernance().catch(() => setMemoryNotice('记忆治理接口暂时不可用。'));
+    void loadMemoryGovernance().catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!memoryEditor && !memoryConfirm) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || memoryBusy) return;
+      setMemoryEditor(null);
+      setMemoryConfirm(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [memoryBusy, memoryConfirm, memoryEditor]);
 
   useEffect(() => {
     let active = true;
@@ -718,32 +773,27 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
     return contentMemories.filter(item => `${item.title} ${item.source} ${item.description} ${item.tags.join(' ')}`.toLowerCase().includes(keyword));
   }, [contentMemories, query]);
 
-  const pendingTabs: Record<Exclude<MemoryTab, 'content'>, { title: string; description: string; sources: string[]; boundary: string; icon: typeof Sparkles }> = {
-    style: {
-      title: '尚无可治理的沟通风格记忆', icon: MessageCircle,
-      description: '接入员工最终发送内容与 AI 原始草稿的差异后，这里将展示可追溯、可确认的表达偏好。',
-      sources: ['员工最终发送的客户回复', 'AI 原始回复与人工修改差异', '管理员人工确认的表达规则'],
-      boundary: '只学习称呼、语气、回复长度和行动引导；价格、MOQ、交期、库存及资质必须使用企业知识库中的当前事实。',
-    },
-    customer: {
-      title: '尚无可治理的客户记忆', icon: Users,
-      description: '客户会话、客户资料和订单需要建立统一记忆接口后，才能在这里安全展示和管理。',
-      sources: ['客户会话中的明确需求', '客户资料中的市场与语言', '订单记录中的真实采购阶段', '员工人工确认的客户备注'],
-      boundary: '单个客户的偏好不得自动套用到其他客户；邮箱、电话和地址等隐私信息不进入企业共享记忆。',
-    },
-    strategy: {
-      title: '尚无可治理的响应策略记忆', icon: Workflow,
-      description: '响应策略需要保留触发场景、建议动作、转人工条件和来源证据，接入后才能启用。',
-      sources: ['客户会话中的真实处理流程', '员工确认后的回复策略', '订单阶段变化与人工复核结果'],
-      boundary: '没有可验证归因时不展示成功率；涉及报价、承诺和合规风险的策略必须保留人工确认。',
-    },
+  const customerStageLabels: Record<string, string> = { lead: '新线索', inquiry: '需求确认', quoted: '已报价', won: '已成交', silent30: '沉默 30 天', silent60: '沉默 60 天' };
+  const strategySourceLabels: Record<string, string> = { learned_custom: 'AI 学习 · 人工确认', human: '人工设置', system: '系统策略', mock_seed: '演示策略' };
+  const customerMemoryStatusLabels: Record<string, string> = { confirmed: '已确认', pending: '待确认', conflict: '有冲突', paused: '已停用', expired: '已过期' };
+  const memoryKeyOptions = [
+    ['preferred_language', '常用语言'], ['preferred_tone', '沟通语气'], ['communication_preference', '沟通偏好'],
+    ['product_preference', '产品偏好'], ['buying_context', '采购背景'], ['schedule_preference', '时间偏好'], ['other', '其他'],
+  ];
+  const memoryKeyLabels = Object.fromEntries(memoryKeyOptions) as Record<string, string>;
+  const confirmMemoryAction = async () => {
+    if (!memoryConfirm) return;
+    const action = memoryConfirm.action;
+    setMemoryConfirm(null);
+    await action();
   };
   return (
     <PageShell icon={<BrainCircuit size={14} />} title="智能体记忆" description="查看智能体从真实业务中沉淀的经验，并明确每条记忆的来源、用途与使用边界。">
       <div className="mb-4 grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm lg:grid-cols-4">
         {tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setTab(id); setQuery(''); }} className={`flex h-11 items-center justify-center gap-2 rounded-xl text-xs font-black transition ${tab === id ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:text-text-secondary'}`}><Icon size={15} className={tab === id ? 'text-emerald-600' : ''} />{label}</button>)}
       </div>
-      {tab === 'content' ? <>
+      {tab !== 'content' && memoryLoadError && memoryOverview && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800" role="alert"><span>{memoryLoadError} 当前仍显示上次成功加载的数据。</span><button type="button" onClick={() => void loadMemoryGovernance().catch(() => undefined)} className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 font-black">重试</button></div>}
+      {tab !== 'content' && memoryLoading ? <section className="rounded-2xl border border-border bg-white p-8 text-center shadow-sm" aria-live="polite"><Loader2 size={22} className="mx-auto animate-spin text-emerald-600" /><p className="mt-3 text-xs font-semibold text-text-muted">正在加载该企业的记忆记录…</p></section> : tab !== 'content' && memoryLoadError && !memoryOverview ? <section className="rounded-2xl border border-rose-100 bg-rose-50/60 p-6 text-center shadow-sm" role="alert"><CircleAlert size={22} className="mx-auto text-rose-600" /><h2 className="mt-3 text-sm font-black text-rose-900">记忆记录没有加载成功</h2><p className="mt-1 text-xs leading-5 text-rose-700">{memoryLoadError}</p><button type="button" onClick={() => void loadMemoryGovernance().catch(() => undefined)} className="mt-4 rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white">重新加载</button></section> : tab === 'content' ? <>
         <section className="mb-4 overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4"><div><div className="flex items-center gap-2"><BarChart3 size={17} className="text-emerald-600" /><h2 className="text-sm font-black text-text-primary">内容运营监控</h2></div><p className="mt-1 text-xs leading-5 text-text-muted">只根据已授权平台实际返回并已同步的指标生成结论；没有时间序列时不推算趋势。</p></div>{opsOverview?.generatedAt && <span className="text-[10px] font-semibold text-text-muted">更新于 {formatDate(opsOverview.generatedAt)}</span>}</div>
           {opsLoading ? <div className="p-10 text-center text-xs text-text-muted"><Loader2 size={18} className="mx-auto mb-2 animate-spin text-emerald-600" />正在读取运营指标…</div> : opsOverview && (opsOverview.kpis.length || opsOverview.trends.length || opsOverview.conclusions.length || opsOverview.topContents.length) ? <div className="p-5">
@@ -765,33 +815,76 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
         </section> : null}
       </> : tab === 'style' ? <>
         <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><ShieldCheck size={17} className="text-emerald-600" /><h2 className="text-sm font-black text-text-primary">沟通风格治理</h2></div><p className="mt-1 text-xs leading-5 text-text-muted">员工修改先进入证据池；管理员确认后才参与画像或候选策略。历史业务事实永远不能从风格样本中复用。</p></div><div className="flex flex-wrap gap-2">{memoryOverview?.canManage && <><button type="button" disabled={Boolean(memoryBusy)} onClick={() => void memoryMutation('model-check', '/api/overseas/agent-memory/model-check', 'POST')} className="flex items-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-2 text-[11px] font-black text-emerald-700 disabled:opacity-50">{memoryBusy === 'model-check' ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}模型连通检查</button><button type="button" disabled={Boolean(memoryBusy)} onClick={() => void memoryMutation('relearn', '/api/overseas/agent-memory/style/relearn', 'POST')} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50">{memoryBusy === 'relearn' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}重新学习</button><button type="button" disabled={Boolean(memoryBusy)} onClick={() => void exportMemoryBackup()} className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary"><Download size={13} />导出备份</button></>}</div></div>
-          {memoryOverview?.canManage && <div className="mt-3 flex justify-end"><label className={`flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary ${memoryBusy ? 'pointer-events-none opacity-50' : ''}`}><Upload size={13} />恢复当前企业备份<input type="file" accept="application/json,.json" className="hidden" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) void restoreMemoryBackup(file); }} /></label></div>}
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-bold text-text-muted">待确认证据</p><strong className="mt-1 block text-lg text-text-primary">{Number(memoryOverview?.readiness?.pending || 0)}</strong></div><div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-bold text-text-muted">已确认人工修改</p><strong className="mt-1 block text-lg text-text-primary">{Number(memoryOverview?.readiness?.editedConfirmed || 0)}</strong></div><div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-bold text-text-muted">覆盖客户</p><strong className="mt-1 block text-lg text-text-primary">{Number(memoryOverview?.readiness?.customerCount || 0)} / 3</strong></div><div className={`rounded-xl p-3 ${memoryOverview?.model?.configured ? 'bg-emerald-50' : 'bg-amber-50'}`}><p className="text-[10px] font-bold text-text-muted">生产学习模型</p><strong className={`mt-1 block text-xs ${memoryOverview?.model?.configured ? 'text-emerald-700' : 'text-amber-800'}`}>{memoryOverview?.model?.configured ? `${String(memoryOverview.model.backend)} · ${String(memoryOverview.model.styleModel)}` : '密钥未配置，禁止触发学习'}</strong></div></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><ShieldCheck size={17} className="text-emerald-600" /><h2 className="text-sm font-black text-text-primary">沟通风格治理</h2></div><p className="mt-1 text-xs leading-5 text-text-muted">员工修改先进入证据池；管理员确认后才参与画像或候选策略。历史业务事实永远不能从风格样本中复用。</p></div>{memoryOverview?.canManage && <div className="flex max-w-full flex-wrap gap-2"><button type="button" disabled={Boolean(memoryBusy)} onClick={() => void memoryMutation('model-check', '/api/overseas/agent-memory/model-check', 'POST')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-2 text-[11px] font-black text-emerald-700 disabled:opacity-50">{memoryBusy === 'model-check' ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}模型连通检查</button><button type="button" disabled={Boolean(memoryBusy)} onClick={() => void memoryMutation('relearn', '/api/overseas/agent-memory/style/relearn', 'POST')} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50">{memoryBusy === 'relearn' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}重新学习</button><button type="button" disabled={Boolean(memoryBusy)} onClick={() => void exportMemoryBackup()} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary disabled:opacity-50"><Download size={13} />导出备份</button><label className={`flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary ${memoryBusy ? 'pointer-events-none opacity-50' : ''}`}><Upload size={13} />恢复备份<input type="file" accept="application/json,.json" className="hidden" onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) restoreMemoryBackup(file); }} /></label></div>}</div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-bold text-text-muted">待确认证据</p><strong className="mt-1 block text-lg text-text-primary">{Number(memoryOverview?.readiness?.pending || 0)}</strong></div><div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-bold text-text-muted">已确认人工修改</p><strong className="mt-1 block text-lg text-text-primary">{Number(memoryOverview?.readiness?.editedConfirmed || 0)}</strong></div><div className="rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-bold text-text-muted">覆盖客户</p><strong className="mt-1 block text-lg text-text-primary">已覆盖 {Number(memoryOverview?.readiness?.customerCount || 0)} 位客户</strong><p className="mt-1 text-[10px] text-text-muted">启用候选策略至少需要 3 位</p></div><div className={`rounded-xl p-3 ${memoryOverview?.model?.configured ? 'bg-emerald-50' : 'bg-amber-50'}`}><p className="text-[10px] font-bold text-text-muted">生产学习模型</p><strong className={`mt-1 block text-xs ${memoryOverview?.model?.configured ? 'text-emerald-700' : 'text-amber-800'}`}>{memoryOverview?.model?.configured ? `${String(memoryOverview.model.backend)} · ${String(memoryOverview.model.styleModel)}` : '密钥未配置，禁止触发学习'}</strong></div></div>
           {memoryNotice && <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs font-semibold text-text-secondary">{memoryNotice}</p>}
         </section>
         {styleProfile && ['greeting_style', 'quoting_stance', 'followup_rhythm', 'taboo_phrases'].some(key => Boolean(styleProfile[key])) && <><section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><h2 className="text-sm font-black text-text-primary">当前只读风格画像</h2><p className="mt-1 text-xs text-text-muted">已确认样本聚合后的表达偏好；不作为价格、MOQ、认证、交期或其他企业事实来源。</p></section><div className="mb-4 grid gap-4 md:grid-cols-2">{([['greeting_style', '称呼与开场'], ['quoting_stance', '报价表达'], ['followup_rhythm', '跟进节奏'], ['taboo_phrases', '避免使用的措辞']] as const).map(([key, label]) => { const memory = styleProfile[key] as { value?: string | string[]; evidence?: string; manual?: boolean } | undefined; if (!memory) return null; return <section key={key} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black text-text-primary">{label}</h3><span className={`rounded-full px-2 py-1 text-[10px] font-black ${memory.manual ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>{memory.manual ? '人工设置' : '自动提炼'}</span></div><p className="mt-3 text-sm leading-6 text-text-secondary">{Array.isArray(memory.value) ? memory.value.join('、') : memory.value || '尚未形成稳定画像'}</p><p className="mt-3 rounded-xl bg-surface-2 p-3 text-xs leading-5 text-text-muted"><b>聚合佐证：</b>{memory.evidence || '未提供'}</p></section>; })}</div></>}
-        <section className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-black text-text-primary">原始干预证据</h2><p className="mt-1 text-xs leading-5 text-text-muted">保留 AI 草稿、员工最终回复、客户/节点、结果窗口与来源；展示内容已经脱敏。</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-black text-text-muted">{styleEvidence.length} 条</span></div>{styleEvidence.length ? <div className="mt-4 space-y-3">{styleEvidence.slice(0, 80).map(evidence => { const status = String(evidence.status || 'pending'); const busy = memoryBusy.endsWith(String(evidence.id)); return <article key={String(evidence.id)} className="rounded-xl border border-border p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}>{status === 'confirmed' ? '已确认' : status === 'paused' ? '已停用' : '待确认'}</span>{Boolean(evidence.nodeId) && <span className="text-[10px] font-bold text-text-muted">节点 {String(evidence.nodeId)}</span>}{Boolean(evidence.customerId) && <span className="text-[10px] font-bold text-text-muted">客户 {String(evidence.customerId).slice(0, 10)}</span>}</div><p className="mt-2 text-xs leading-5 text-text-secondary"><b>客户触发：</b>{String(evidence.triggerMessage || '未记录')}</p></div><span className="text-[10px] text-text-muted">{formatDate(String(evidence.created || ''))}</span></div><div className="mt-3 grid gap-3 lg:grid-cols-2"><div className="rounded-lg bg-rose-50/60 p-3"><p className="text-[10px] font-black text-rose-700">AI 原始草稿</p><p className="mt-1 text-xs leading-5 text-text-secondary">{String(evidence.draftOriginal || '未记录')}</p></div><div className="rounded-lg bg-emerald-50/60 p-3"><p className="text-[10px] font-black text-emerald-700">员工最终发送</p><p className="mt-1 text-xs leading-5 text-text-secondary">{String(evidence.finalSent || '未记录')}</p></div></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] leading-4 text-text-muted">来源：{String(evidence.evidenceSource || '历史员工回复')} · 删除仅影响学习证据，不删除原始会话</p>{memoryOverview?.canManage && <div className="flex flex-wrap gap-1.5"><button type="button" disabled={busy} onClick={() => void editStyleEvidence(evidence)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black text-text-secondary"><Pencil size={11} className="mr-1 inline" />编辑</button>{status !== 'confirmed' && <button type="button" disabled={busy} onClick={() => void memoryMutation(`style-confirm-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'PATCH', { status: 'confirmed' })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white"><CheckCircle2 size={11} className="mr-1 inline" />确认</button>}{status !== 'paused' && <button type="button" disabled={busy} onClick={() => void memoryMutation(`style-pause-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'PATCH', { status: 'paused' })} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700"><PauseCircle size={11} className="mr-1 inline" />停用</button>}<button type="button" disabled={busy} onClick={() => { if (window.confirm('只删除这条学习证据，不删除原始会话。确认继续？')) void memoryMutation(`style-delete-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'DELETE'); }} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[10px] font-black text-rose-600"><Trash2 size={11} className="mr-1 inline" />删除证据</button></div>}</div></article>; })}</div> : <p className="mt-5 text-xs text-text-muted">尚无原始证据。新的 AI 草稿与员工最终回复会先以“待确认”状态进入这里。</p>}</section>
+        <section className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-black text-text-primary">原始干预证据</h2><p className="mt-1 text-xs leading-5 text-text-muted">保留 AI 草稿、员工最终回复、客户/节点、结果窗口与来源；展示内容已经脱敏。</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-black text-text-muted">{styleEvidence.length} 条</span></div>{styleEvidence.length ? <div className="mt-4 space-y-3">{styleEvidence.slice(0, 80).map(evidence => { const status = String(evidence.status || 'pending'); const busy = memoryBusy.endsWith(String(evidence.id)); return <article key={String(evidence.id)} className="rounded-xl border border-border p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2 py-1 text-[9px] font-black ${status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}>{status === 'confirmed' ? '已确认' : status === 'paused' ? '已停用' : '待确认'}</span>{Boolean(evidence.nodeId) && <span className="text-[10px] font-bold text-text-muted">节点 {String(evidence.nodeId)}</span>}{Boolean(evidence.customerId) && <span className="text-[10px] font-bold text-text-muted">客户 {String(evidence.customerId).slice(0, 10)}</span>}</div><p className="mt-2 text-xs leading-5 text-text-secondary"><b>客户触发：</b>{String(evidence.triggerMessage || '未记录')}</p></div><span className="text-[10px] text-text-muted">{formatDate(String(evidence.created || ''))}</span></div><div className="mt-3 grid gap-3 lg:grid-cols-2"><div className="rounded-lg bg-rose-50/60 p-3"><p className="text-[10px] font-black text-rose-700">AI 原始草稿</p><p className="mt-1 text-xs leading-5 text-text-secondary">{String(evidence.draftOriginal || '未记录')}</p></div><div className="rounded-lg bg-emerald-50/60 p-3"><p className="text-[10px] font-black text-emerald-700">员工最终发送</p><p className="mt-1 text-xs leading-5 text-text-secondary">{String(evidence.finalSent || '未记录')}</p></div></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><p className="text-[10px] leading-4 text-text-muted">来源：{String(evidence.evidenceSource || '历史员工回复')} · 删除仅影响学习证据，不删除原始会话</p>{memoryOverview?.canManage && <div className="flex flex-wrap gap-1.5"><button type="button" disabled={busy} onClick={() => void editStyleEvidence(evidence)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black text-text-secondary"><Pencil size={11} className="mr-1 inline" />编辑</button>{status !== 'confirmed' && <button type="button" disabled={busy} onClick={() => void memoryMutation(`style-confirm-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'PATCH', { status: 'confirmed' })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white"><CheckCircle2 size={11} className="mr-1 inline" />确认</button>}{status !== 'paused' && <button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '停用这条学习证据？', description: '停用后它不会继续影响风格学习，原始会话仍会保留。', confirmLabel: '确认停用', action: () => memoryMutation(`style-pause-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'PATCH', { status: 'paused' }) })} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700"><PauseCircle size={11} className="mr-1 inline" />停用</button>}<button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '删除这条学习证据？', description: '只删除学习证据，不会删除原始会话。', confirmLabel: '删除证据', danger: true, action: () => memoryMutation(`style-delete-${evidence.id}`, `/api/overseas/agent-memory/style-evidence/${evidence.id}`, 'DELETE') })} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[10px] font-black text-rose-600"><Trash2 size={11} className="mr-1 inline" />删除证据</button></div>}</div></article>; })}</div> : <p className="mt-5 text-xs text-text-muted">尚无原始证据。新的 AI 草稿与员工最终回复会先以“待确认”状态进入这里。</p>}</section>
       </> : tab === 'customer' ? <>
         <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><h2 className="text-sm font-black text-text-primary">已记录的客户上下文</h2><p className="mt-1 text-xs leading-5 text-text-muted">这仍是客户资料与会话上下文，不宣传为成熟的自动客户记忆；邮箱、电话和 WhatsApp 号码不会展示。管理员可将稳定偏好另行确认为客户私有记忆。</p></section>
-        {customerContexts.length ? <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{customerContexts.map(customer => { const name = String(customer.name || '未命名客户'); const signals = Array.isArray(customer.intentSignals) ? customer.intentSignals.map(String) : []; const tags = Array.isArray(customer.tags) ? customer.tags.map(String) : []; return <section key={String(customer.id || name)} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-2"><h3 className="text-sm font-black text-text-primary">{name}</h3>{Boolean(customer.stage) && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">{String(customer.stage)}</span>}</div><div className="mt-3 space-y-2 text-xs text-text-secondary">{Boolean(customer.product) && <p><b>关注产品：</b>{String(customer.product)}</p>}{Boolean(customer.countryName) && <p><b>市场：</b>{String(customer.countryName)}</p>}{Boolean(customer.language) && <p><b>语言：</b>{String(customer.language)}</p>}{Boolean(customer.summary) && <p className="line-clamp-3 leading-5"><b>客户摘要：</b>{String(customer.summary)}</p>}{Boolean(customer.nextStep) && <p className="line-clamp-2 leading-5"><b>下一步：</b>{String(customer.nextStep)}</p>}</div>{[...signals, ...tags].length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{[...signals, ...tags].slice(0, 5).map(value => <span key={value} className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-muted">{value}</span>)}</div>}{memoryOverview?.canManage && <button type="button" disabled={Boolean(memoryBusy)} onClick={() => void addCustomerMemory(customer)} className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-2 text-[10px] font-black text-emerald-700"><Plus size={12} />确认为客户私有记忆</button>}</section>; })}</div> : <p className="mb-4 rounded-xl bg-surface-2 p-4 text-xs text-text-muted">尚无客户上下文。</p>}
-        <section className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><div><h2 className="text-sm font-black text-text-primary">客户私有记忆治理</h2><p className="mt-1 text-xs leading-5 text-text-muted">仅在同一企业、同一 customer_id 的后续回复中使用；人工确认且较新的记录优先，过期记录自动退出检索。</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-black text-text-muted">{customerMemories.length} 条</span></div>{customerMemories.length ? <div className="mt-4 grid gap-3 md:grid-cols-2">{customerMemories.map(memory => { const status = String(memory.status || 'pending'); return <article key={String(memory.id)} className="rounded-xl border border-border p-4"><div className="flex items-start justify-between gap-2"><div><p className="text-[10px] font-black text-emerald-700">{String(memory.keyLabel || memory.key || '客户偏好')}</p><h3 className="mt-1 text-sm font-black text-text-primary">{String(memory.value || '')}</h3></div><span className={`rounded-full px-2 py-1 text-[9px] font-black ${status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : status === 'conflict' ? 'bg-rose-50 text-rose-700' : status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-surface-2 text-text-muted'}`}>{status}</span></div><p className="mt-2 text-[10px] leading-4 text-text-muted">客户 {String(memory.customerId || '').slice(0, 12)} · {memory.sourceKind === 'ai_inferred' ? 'AI 推断' : '人工记录'}{memory.expiresAt ? ` · 过期 ${formatDate(String(memory.expiresAt))}` : ''}</p>{Boolean(memory.evidence) && <p className="mt-2 rounded-lg bg-surface-2 p-2 text-xs leading-5 text-text-secondary"><b>证据：</b>{String(memory.evidence)}</p>}{memoryOverview?.canManage && <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" onClick={() => void editCustomerMemory(memory)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black text-text-secondary"><Pencil size={11} className="mr-1 inline" />编辑</button>{status !== 'confirmed' && <button type="button" onClick={() => void memoryMutation(`customer-confirm-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'PATCH', { status: 'confirmed' })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white">确认</button>}{status !== 'paused' && <button type="button" onClick={() => void memoryMutation(`customer-pause-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'PATCH', { status: 'paused' })} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700">停用</button>}<button type="button" onClick={() => { if (window.confirm('删除该客户私有记忆？原始聊天不会被删除。')) void memoryMutation(`customer-delete-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'DELETE'); }} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[10px] font-black text-rose-600">删除</button></div>}</article>; })}</div> : <p className="mt-5 text-xs text-text-muted">尚无独立客户私有记忆。客户上下文字段不会自动变成长期记忆。</p>}</section>
+        {memoryNotice && <p className="mb-4 rounded-lg bg-surface-2 px-3 py-2 text-xs font-semibold text-text-secondary" role="status">{memoryNotice}</p>}
+        {customerContexts.length ? <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{customerContexts.map(customer => { const name = String(customer.name || '未命名客户'); const signals = Array.isArray(customer.intentSignals) ? customer.intentSignals.map(String) : []; const tags = Array.isArray(customer.tags) ? customer.tags.map(String) : []; const existingMemoryKeys = customerMemories.filter(memory => String(memory.customerId || '') === String(customer.id || '')).map(memory => String(memory.key || '')).filter(Boolean); const privateMemoryCount = existingMemoryKeys.length; const canAddMemoryType = memoryKeyOptions.some(([key]) => !existingMemoryKeys.includes(key)); return <section key={String(customer.id || name)} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-2"><h3 className="text-sm font-black text-text-primary">{name}</h3>{Boolean(customer.stage) && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">{customerStageLabels[String(customer.stage)] || String(customer.stage)}</span>}</div><div className="mt-3 space-y-2 text-xs text-text-secondary">{Boolean(customer.product) && <p><b>关注产品：</b>{String(customer.product)}</p>}{Boolean(customer.countryName) && <p><b>市场：</b>{String(customer.countryName)}</p>}{Boolean(customer.language) && <p><b>语言：</b>{String(customer.language)}</p>}{Boolean(customer.summary) && <p className="line-clamp-3 leading-5"><b>客户摘要：</b>{String(customer.summary)}</p>}{Boolean(customer.nextStep) && <p className="line-clamp-2 leading-5"><b>下一步：</b>{String(customer.nextStep)}</p>}</div>{[...signals, ...tags].length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{[...signals, ...tags].slice(0, 5).map(value => <span key={value} className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-muted">{value}</span>)}</div>}{memoryOverview?.canManage && <div className="mt-4 space-y-2">{privateMemoryCount > 0 && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-center text-[10px] font-black text-emerald-700">已记录 {privateMemoryCount} 类私有记忆，可在下方编辑</p>}{canAddMemoryType && <button type="button" disabled={Boolean(memoryBusy)} onClick={() => addCustomerMemory(customer, existingMemoryKeys)} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-2 text-[10px] font-black text-emerald-700 disabled:opacity-50"><Plus size={12} />{privateMemoryCount > 0 ? '添加另一类记忆' : '确认为客户私有记忆'}</button>}</div>}</section>; })}</div> : <p className="mb-4 rounded-xl bg-surface-2 p-4 text-xs text-text-muted">尚无客户上下文。</p>}
+        <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-2"><div><h2 className="text-sm font-black text-text-primary">客户私有记忆治理</h2><p className="mt-1 text-xs leading-5 text-text-muted">仅在同一企业、同一客户的后续回复中使用；人工确认且较新的记录优先，过期记录自动退出检索。</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-black text-text-muted">{customerMemories.length} 条</span></div>
+          {customerMemories.length ? <div className="mt-4 grid gap-3 md:grid-cols-2">{customerMemories.map(memory => {
+            const status = String(memory.status || 'pending');
+            const busy = Boolean(memoryBusy);
+            return <article key={String(memory.id)} className="rounded-xl border border-border p-4">
+              <div className="flex items-start justify-between gap-2"><div><p className="text-[10px] font-black text-emerald-700">{String(memory.keyLabel || memoryKeyLabels[String(memory.key || '')] || '客户偏好')}</p><h3 className="mt-1 text-sm font-black text-text-primary">{String(memory.value || '')}</h3></div><span className={`rounded-full px-2 py-1 text-[9px] font-black ${status === 'confirmed' ? 'bg-emerald-50 text-emerald-700' : status === 'conflict' ? 'bg-rose-50 text-rose-700' : status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-surface-2 text-text-muted'}`}>{customerMemoryStatusLabels[status] || '待确认'}</span></div>
+              <p className="mt-2 text-[10px] leading-4 text-text-muted">客户 {String(memory.customerId || '').slice(0, 12)} · {memory.sourceKind === 'ai_inferred' ? 'AI 推断' : '人工记录'}{memory.expiresAt ? ` · 过期 ${formatDate(String(memory.expiresAt))}` : ''}</p>
+              {Boolean(memory.evidence) && <p className="mt-2 rounded-lg bg-surface-2 p-2 text-xs leading-5 text-text-secondary"><b>证据：</b>{String(memory.evidence)}</p>}
+              {memoryOverview?.canManage && <div className="mt-3 flex flex-wrap gap-1.5"><button type="button" disabled={busy} onClick={() => editCustomerMemory(memory)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black text-text-secondary disabled:opacity-50"><Pencil size={11} className="mr-1 inline" />编辑</button>{status !== 'confirmed' && <button type="button" disabled={busy} onClick={() => void memoryMutation(`customer-confirm-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'PATCH', { status: 'confirmed' })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50">确认</button>}{status !== 'paused' && <button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '停用这条客户记忆？', description: '停用后 AI 不再引用它，原始聊天不会被删除。', confirmLabel: '确认停用', action: () => memoryMutation(`customer-pause-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'PATCH', { status: 'paused' }) })} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700 disabled:opacity-50">停用</button>}<button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '删除这条客户记忆？', description: '删除后 AI 不再引用它，原始聊天不会被删除。', confirmLabel: '删除记忆', danger: true, action: () => memoryMutation(`customer-delete-${memory.id}`, `/api/overseas/agent-memory/customer-memories/${memory.id}`, 'DELETE') })} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[10px] font-black text-rose-600 disabled:opacity-50">删除</button></div>}
+            </article>;
+          })}</div> : <p className="mt-5 text-xs text-text-muted">尚无独立客户私有记忆。客户上下文字段不会自动变成长期记忆。</p>}
+        </section>
       </> : tab === 'strategy' ? <>
-        <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-black text-text-primary">响应策略观察与治理</h2><p className="mt-1 text-xs leading-5 text-text-muted">候选策略至少需要 5 条证据、3 个客户和 2 个时间段；启用后默认 10% 稳定分流。证据关联不等于成功率或因果贡献。</p></div><span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-black text-amber-800">成功率暂不展示</span></div>{memoryNotice && <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs font-semibold text-text-secondary">{memoryNotice}</p>}</section>
-        {responseStrategies.length ? <div className="grid gap-4 md:grid-cols-2">{responseStrategies.map((strategy, index) => { const steps = Array.isArray(strategy.strategySteps) ? strategy.strategySteps.map(String) : []; const signals = Array.isArray(strategy.signals) ? strategy.signals.map(String) : []; const evidence = Array.isArray(strategy.evidence) ? strategy.evidence as Array<Record<string, unknown>> : []; const status = String(strategy.status || 'candidate'); return <section key={String(strategy.id || strategy.strategyId || index)} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black text-emerald-700">{String(strategy.source || '策略记忆')} · v{Number(strategy.version || 1)}</p><h3 className="mt-1 text-sm font-black text-text-primary">{String(strategy.scenario || strategy.intent || strategy.strategyId || '未命名响应策略')}</h3></div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${status === 'active' ? 'bg-emerald-50 text-emerald-700' : status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}>{status === 'active' ? `已启用 ${Number(strategy.rolloutPercent || 100)}%` : status === 'paused' ? '已暂停' : '候选策略'}</span></div>{Boolean(strategy.adjustment) && <p className="mt-3 text-xs leading-6 text-text-secondary">{String(strategy.adjustment)}</p>}{signals.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{signals.slice(0, 5).map(signal => <span key={signal} className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{signal}</span>)}</div>}{steps.length > 0 && <div className="mt-4 rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-black text-text-muted">唯一推进目标下的建议动作</p><ol className="mt-2 space-y-1.5">{steps.map((step, stepIndex) => <li key={`${step}-${stepIndex}`} className="flex gap-2 text-xs leading-5 text-text-secondary"><span className="font-black text-emerald-600">{stepIndex + 1}.</span>{step}</li>)}</ol></div>}{Boolean(strategy.riskBoundary || strategy.escalate) && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800"><b>风险边界：</b>{String(strategy.riskBoundary || strategy.escalate)}</p>}<details className="mt-3 rounded-xl border border-border px-3 py-2"><summary className="cursor-pointer text-[11px] font-black text-text-secondary">查看证据样本（{evidence.length} / 关联 {Number(strategy.evidenceCount || 0)} 条，覆盖 {Number(strategy.evidenceCustomerCount || 0)} 客户）</summary><div className="mt-3 space-y-2">{evidence.length ? evidence.map(item => <div key={String(item.id)} className="rounded-lg bg-surface-2 p-3 text-xs leading-5 text-text-secondary"><p><b>客户：</b>{String(item.buyer || '')}</p><p className="mt-1"><b>AI：</b>{String(item.aiDraft || '')}</p><p className="mt-1"><b>员工：</b>{String(item.humanFinal || '')}</p></div>) : <p className="text-xs text-text-muted">暂无可展示的脱敏证据。</p>}</div></details>{memoryOverview?.canManage && <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border pt-3"><button type="button" onClick={() => void editStrategy(strategy)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black text-text-secondary"><Pencil size={11} className="mr-1 inline" />编辑</button>{status !== 'active' && <button type="button" onClick={() => void memoryMutation(`strategy-active-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'PATCH', { status: 'active', rolloutPercent: 10 })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white"><Play size={11} className="mr-1 inline" />10% 启用</button>}{status === 'active' && <button type="button" onClick={() => void memoryMutation(`strategy-pause-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'PATCH', { status: 'paused' })} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700"><PauseCircle size={11} className="mr-1 inline" />暂停</button>}<button type="button" onClick={() => void memoryMutation(`strategy-rollback-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}/rollback`, 'POST')} className="rounded-lg border border-blue-200 px-2.5 py-1.5 text-[10px] font-black text-blue-700"><RotateCcw size={11} className="mr-1 inline" />回滚</button><button type="button" onClick={() => { if (window.confirm('删除策略本身？关联证据和原始会话都会保留。')) void memoryMutation(`strategy-delete-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'DELETE'); }} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[10px] font-black text-rose-600"><Trash2 size={11} className="mr-1 inline" />删除策略</button></div>}</section>; })}</div> : <p className="rounded-xl bg-surface-2 p-4 text-xs text-text-muted">尚无响应策略记忆。确认足够证据并主动触发重新学习后，候选策略会出现在这里。</p>}
+        <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-black text-text-primary">响应策略观察与治理</h2><p className="mt-1 text-xs leading-5 text-text-muted">候选策略至少需要 5 条证据、3 个客户和 2 个时间段；新启用从 10% 开始，当前比例以策略卡片为准。证据关联不等于成功率或因果贡献。</p></div><span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-black text-amber-800">成功率暂不展示</span></div>{memoryNotice && <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs font-semibold text-text-secondary">{memoryNotice}</p>}</section>
+        {responseStrategies.length ? <div className="grid gap-4 md:grid-cols-2">{responseStrategies.map((strategy, index) => {
+          const steps = Array.isArray(strategy.strategySteps) ? strategy.strategySteps.map(String) : [];
+          const signals = Array.isArray(strategy.signals) ? strategy.signals.map(String) : [];
+          const evidence = Array.isArray(strategy.evidence) ? strategy.evidence as Array<Record<string, unknown>> : [];
+          const status = String(strategy.status || 'candidate');
+          const busy = Boolean(memoryBusy);
+          const rolloutPercent = Number(strategy.rolloutPercent ?? 10);
+          return <section key={String(strategy.id || strategy.strategyId || index)} className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black text-emerald-700">{strategySourceLabels[String(strategy.source || '')] || '策略记忆'} · v{Number(strategy.version || 1)}</p><h3 className="mt-1 text-sm font-black text-text-primary">{String(strategy.scenario || strategy.intent || strategy.strategyId || '未命名响应策略')}</h3></div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${status === 'active' ? 'bg-emerald-50 text-emerald-700' : status === 'paused' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}>{status === 'active' ? `已启用 ${rolloutPercent}%` : status === 'paused' ? '已暂停' : '候选策略'}</span></div>
+            {Boolean(strategy.adjustment) && <p className="mt-3 text-xs leading-6 text-text-secondary">{String(strategy.adjustment)}</p>}
+            {signals.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{signals.slice(0, 5).map(signal => <span key={signal} className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{signal}</span>)}</div>}
+            {steps.length > 0 && <div className="mt-4 rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-black text-text-muted">唯一推进目标下的建议动作</p><ol className="mt-2 space-y-1.5">{steps.map((step, stepIndex) => <li key={`${step}-${stepIndex}`} className="flex gap-2 text-xs leading-5 text-text-secondary"><span className="font-black text-emerald-600">{stepIndex + 1}.</span>{step}</li>)}</ol></div>}
+            {Boolean(strategy.riskBoundary || strategy.escalate) && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800"><b>风险边界：</b>{String(strategy.riskBoundary || strategy.escalate)}</p>}
+            <details className="mt-3 rounded-xl border border-border px-3 py-2"><summary className="cursor-pointer text-[11px] font-black text-text-secondary">查看证据样本（展示 {evidence.length} 条 · 共关联 {Number(strategy.evidenceCount || 0)} 条 · 覆盖 {Number(strategy.evidenceCustomerCount || 0)} 位客户）</summary><div className="mt-3 space-y-2">{evidence.length ? evidence.map(item => <div key={String(item.id)} className="rounded-lg bg-surface-2 p-3 text-xs leading-5 text-text-secondary"><p><b>客户：</b>{String(item.buyer || '')}</p><p className="mt-1"><b>AI：</b>{String(item.aiDraft || '')}</p><p className="mt-1"><b>员工：</b>{String(item.humanFinal || '')}</p></div>) : <p className="text-xs text-text-muted">暂无可展示的脱敏证据。</p>}</div></details>
+            {memoryOverview?.canManage && <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border pt-3"><button type="button" disabled={busy} onClick={() => editStrategy(strategy)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-black text-text-secondary disabled:opacity-50"><Pencil size={11} className="mr-1 inline" />编辑</button>{status !== 'active' && <button type="button" disabled={busy} onClick={() => void memoryMutation(`strategy-active-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'PATCH', { status: 'active', rolloutPercent: 10 })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50"><Play size={11} className="mr-1 inline" />10% 启用</button>}{status === 'active' && <button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '暂停这条响应策略？', description: '暂停后新回复不再分流到该策略，历史证据和审计记录会保留。', confirmLabel: '确认暂停', action: () => memoryMutation(`strategy-pause-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'PATCH', { status: 'paused' }) })} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-[10px] font-black text-amber-700 disabled:opacity-50"><PauseCircle size={11} className="mr-1 inline" />暂停</button>}<button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '回滚这条响应策略？', description: '系统会恢复上一版本，并保留本次操作的审计记录。', confirmLabel: '确认回滚', action: () => memoryMutation(`strategy-rollback-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}/rollback`, 'POST') })} className="rounded-lg border border-blue-200 px-2.5 py-1.5 text-[10px] font-black text-blue-700 disabled:opacity-50"><RotateCcw size={11} className="mr-1 inline" />回滚</button><button type="button" disabled={busy} onClick={() => setMemoryConfirm({ title: '删除这条响应策略？', description: '策略会被删除，关联证据和原始会话仍会保留。', confirmLabel: '删除策略', danger: true, action: () => memoryMutation(`strategy-delete-${strategy.id}`, `/api/overseas/agent-memory/strategies/${strategy.id}`, 'DELETE') })} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-[10px] font-black text-rose-600 disabled:opacity-50"><Trash2 size={11} className="mr-1 inline" />删除策略</button></div>}
+          </section>;
+        })}</div> : <p className="rounded-xl bg-surface-2 p-4 text-xs text-text-muted">尚无响应策略记忆。确认足够证据并主动触发重新学习后，候选策略会出现在这里。</p>}
         <section className="mt-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><History size={16} className="text-emerald-600" /><div><h2 className="text-sm font-black text-text-primary">最近使用与治理审计</h2><p className="mt-1 text-xs text-text-muted">记录哪条记忆、策略在何时影响了哪次回复，以及谁执行了确认、停用、删除或回滚。</p></div></div>{memoryAudit.length ? <div className="mt-4 divide-y divide-border">{memoryAudit.slice(0, 20).map(item => <div key={String(item.id)} className="flex flex-wrap items-start justify-between gap-2 py-3"><div><p className="text-xs font-black text-text-primary">{String(item.action || '审计事件')}</p><p className="mt-1 text-[10px] text-text-muted">{item.customerId ? `客户 ${String(item.customerId).slice(0, 12)} · ` : ''}{item.nodeId ? `节点 ${String(item.nodeId)} · ` : ''}记忆 {Array.isArray(item.memoryIds) ? item.memoryIds.length : 0} 条 · 策略 {Array.isArray(item.strategyIds) ? item.strategyIds.length : 0} 条</p></div><span className="text-[10px] text-text-muted">{formatDate(String(item.createdAt || ''))}</span></div>)}</div> : <p className="mt-4 text-xs text-text-muted">尚无审计记录。</p>}</section>
-      </> : tab === 'style' && styleProfile && ['greeting_style', 'quoting_stance', 'followup_rhythm', 'taboo_phrases'].some(key => Boolean(styleProfile[key])) ? <>
-        <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-black text-text-primary">从真实回复中提炼的沟通风格</h2><p className="mt-1 text-xs text-text-muted">生成客户回复时作为表达参考，不作为业务事实来源。</p></div><div className="text-right text-[11px] font-semibold text-text-muted">{Number(styleProfile.learnedFromCount || 0) > 0 && <p>学习样本 {Number(styleProfile.learnedFromCount)} 次真实回复</p>}{Boolean(styleProfile.lastDistilledAt) && <p>更新于 {formatDate(String(styleProfile.lastDistilledAt))}</p>}</div></div></section>
-        <div className="grid gap-4 md:grid-cols-2">{([
-          ['greeting_style', '称呼与开场'], ['quoting_stance', '报价表达'], ['followup_rhythm', '跟进节奏'], ['taboo_phrases', '避免使用的措辞'],
-        ] as const).map(([key, label]) => { const memory = styleProfile[key] as { value?: string | string[]; evidence?: string; manual?: boolean } | undefined; if (!memory) return null; const value = Array.isArray(memory.value) ? memory.value.join('、') : memory.value; return <section key={key} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-black text-text-primary">{label}</h3><span className={`rounded-full px-2 py-1 text-[10px] font-black ${memory.manual ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>{memory.manual ? '人工设置' : '自动提炼'}</span></div><p className="mt-3 text-sm leading-6 text-text-secondary">{value || '尚未形成明确偏好'}</p><div className="mt-4 rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-black text-text-muted">来源佐证</p><p className="mt-1 text-xs leading-5 text-text-muted">{memory.evidence || '当前记录未提供文字佐证'}</p></div></section>; })}</div>
-      </> : tab === 'customer' && customerContexts.length > 0 ? <>
-        <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><h2 className="text-sm font-black text-text-primary">已记录的客户上下文</h2><p className="mt-1 text-xs leading-5 text-text-muted">只展示客户资料中已有的业务上下文，不展示邮箱、电话或 WhatsApp 号码；这些记录尚未等同于已确认的长期记忆。</p></section>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{customerContexts.map(customer => { const name = String(customer.name || '未命名客户'); const signals = Array.isArray(customer.intentSignals) ? customer.intentSignals.map(String) : []; const tags = Array.isArray(customer.tags) ? customer.tags.map(String) : []; return <section key={String(customer.id || name)} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-2"><h3 className="text-sm font-black text-text-primary">{name}</h3>{Boolean(customer.stage) && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">{String(customer.stage)}</span>}</div><div className="mt-3 space-y-2 text-xs text-text-secondary">{Boolean(customer.product) && <p><b>关注产品：</b>{String(customer.product)}</p>}{Boolean(customer.countryName) && <p><b>市场：</b>{String(customer.countryName)}</p>}{Boolean(customer.language) && <p><b>语言：</b>{String(customer.language)}</p>}{Boolean(customer.summary) && <p className="line-clamp-3 leading-5"><b>客户摘要：</b>{String(customer.summary)}</p>}{Boolean(customer.nextStep) && <p className="line-clamp-2 leading-5"><b>下一步：</b>{String(customer.nextStep)}</p>}</div>{[...signals, ...tags].length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{[...signals, ...tags].slice(0, 5).map(value => <span key={value} className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-muted">{value}</span>)}</div>}<p className="mt-4 border-t border-border pt-3 text-[10px] font-semibold text-text-muted">来源：客户会话与客户资料中的现有字段</p></section>; })}</div>
-      </> : tab === 'strategy' && responseStrategies.length > 0 ? <>
-        <section className="mb-4 rounded-2xl border border-border bg-white p-5 shadow-sm"><h2 className="text-sm font-black text-text-primary">已沉淀的响应策略</h2><p className="mt-1 text-xs leading-5 text-text-muted">以下策略来自现有策略记忆接口。证据数量仅表示关联记录数量，不代表策略成功率。</p></section>
-        <div className="grid gap-4 md:grid-cols-2">{responseStrategies.map((strategy, index) => { const steps = Array.isArray(strategy.strategySteps) ? strategy.strategySteps.map(String) : []; const signals = Array.isArray(strategy.signals) ? strategy.signals.map(String) : []; return <section key={String(strategy.id || strategy.strategyId || index)} className="rounded-2xl border border-border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-black text-emerald-700">{String(strategy.source || '策略记忆')}</p><h3 className="mt-1 text-sm font-black text-text-primary">{String(strategy.scenario || strategy.intent || strategy.strategyId || '未命名响应策略')}</h3></div>{Boolean(strategy.status) && <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-black text-text-muted">{String(strategy.status)}</span>}</div>{Boolean(strategy.adjustment) && <p className="mt-3 text-xs leading-6 text-text-secondary">{String(strategy.adjustment)}</p>}{signals.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{signals.slice(0, 5).map(signal => <span key={signal} className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{signal}</span>)}</div>}{steps.length > 0 && <div className="mt-4 rounded-xl bg-surface-2 p-3"><p className="text-[10px] font-black text-text-muted">建议动作</p><ol className="mt-2 space-y-1.5">{steps.map((step, stepIndex) => <li key={`${step}-${stepIndex}`} className="flex gap-2 text-xs leading-5 text-text-secondary"><span className="font-black text-emerald-600">{stepIndex + 1}.</span>{step}</li>)}</ol></div>}{Boolean(strategy.escalate) && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800"><b>转人工条件：</b>{String(strategy.escalate)}</p>}<div className="mt-4 flex items-center justify-between border-t border-border pt-3 text-[10px] font-semibold text-text-muted"><span>关联证据 {Number(strategy.evidenceCount || 0)} 条</span><span>{formatDate(String(strategy.updated || strategy.created || ''))}</span></div></section>; })}</div>
-      </> : (() => { const item = pendingTabs[tab as Exclude<MemoryTab, 'content'>]; const Icon = item.icon; return <section className="rounded-2xl border border-border bg-white p-6 shadow-sm"><div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><Icon size={21} /></div><h2 className="mt-4 text-base font-black text-text-primary">{item.title}</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-text-muted">{item.description}</p><div className="mt-6 grid gap-4 lg:grid-cols-2"><div className="rounded-xl bg-surface-2 p-4"><h3 className="text-xs font-black text-text-primary">计划接入的数据来源</h3><ul className="mt-3 space-y-2">{item.sources.map(source => <li key={source} className="flex gap-2 text-xs leading-5 text-text-secondary"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />{source}</li>)}</ul></div><div className="rounded-xl border border-amber-100 bg-amber-50/60 p-4"><h3 className="text-xs font-black text-amber-800">使用边界</h3><p className="mt-3 text-xs leading-6 text-amber-800">{item.boundary}</p></div></div><p className="mt-5 text-[11px] font-semibold text-text-muted">接口接入后，每条记忆将提供来源证据、适用范围、最近使用记录，以及编辑、停用和删除控制。</p></section>; })()}
+      </> : null}
+      {memoryEditor && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 p-4" role="presentation" onMouseDown={event => { if (!memoryBusy && event.currentTarget === event.target) setMemoryEditor(null); }}>
+          <form onSubmit={submitMemoryEditor} role="dialog" aria-modal="true" aria-label="编辑智能体记忆" className="w-full max-w-lg rounded-2xl border border-border bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 className="text-base font-black text-text-primary">{memoryEditor.kind === 'customer-add' ? `记录 ${memoryEditor.customerName} 的偏好` : memoryEditor.kind === 'customer-edit' ? '编辑客户私有记忆' : memoryEditor.kind === 'style-edit' ? '编辑员工最终回复' : '编辑响应策略'}</h2><p className="mt-1 text-xs leading-5 text-text-muted">{memoryEditor.kind === 'strategy-edit' ? '只记录对话方法，不在这里填写价格、MOQ、证书等企业事实。' : '内容会在服务端再次脱敏，并保留审计记录。'}</p></div>
+              <button type="button" disabled={Boolean(memoryBusy)} onClick={() => setMemoryEditor(null)} aria-label="关闭编辑窗口" className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2 disabled:opacity-50"><X size={16} /></button>
+            </div>
+            <div className="mt-5 space-y-4">
+              {memoryEditor.kind === 'customer-add' && <label className="block text-xs font-bold text-text-secondary">记忆类型<select value={memoryEditor.key} onChange={event => setMemoryEditor({ ...memoryEditor, key: event.target.value })} className="mt-2 h-11 w-full rounded-xl border border-border bg-white px-3 text-sm outline-none focus:border-emerald-400">{memoryKeyOptions.filter(([value]) => !memoryEditor.existingKeys.includes(value)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+              {(memoryEditor.kind === 'customer-add' || memoryEditor.kind === 'customer-edit') && <><label className="block text-xs font-bold text-text-secondary">记忆内容<textarea required rows={4} value={memoryEditor.value} onChange={event => setMemoryEditor({ ...memoryEditor, value: event.target.value })} placeholder="只写这位客户稳定的偏好或采购背景" className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-sm leading-6 outline-none focus:border-emerald-400" /></label><label className="block text-xs font-bold text-text-secondary">有效期（可选）<input type="date" value={memoryEditor.expiresAt} onChange={event => setMemoryEditor({ ...memoryEditor, expiresAt: event.target.value })} className="mt-2 h-11 w-full rounded-xl border border-border px-3 text-sm outline-none focus:border-emerald-400" /></label></>}
+              {memoryEditor.kind === 'style-edit' && <label className="block text-xs font-bold text-text-secondary">员工最终发送内容<textarea required rows={5} value={memoryEditor.finalSent} onChange={event => setMemoryEditor({ ...memoryEditor, finalSent: event.target.value })} className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-sm leading-6 outline-none focus:border-emerald-400" /></label>}
+              {memoryEditor.kind === 'strategy-edit' && <label className="block text-xs font-bold text-text-secondary">策略调整说明<textarea rows={5} value={memoryEditor.adjustment} onChange={event => setMemoryEditor({ ...memoryEditor, adjustment: event.target.value })} className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-sm leading-6 outline-none focus:border-emerald-400" /></label>}
+            </div>
+            {memoryNotice && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700" role="alert">{memoryNotice}</p>}
+            <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={Boolean(memoryBusy)} onClick={() => setMemoryEditor(null)} className="rounded-xl border border-border px-4 py-2 text-xs font-black text-text-secondary disabled:opacity-50">取消</button><button type="submit" disabled={Boolean(memoryBusy)} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white disabled:opacity-60">{memoryBusy && <Loader2 size={13} className="animate-spin" />}保存</button></div>
+          </form>
+        </div>
+      )}
+      {memoryConfirm && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/35 p-4" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) setMemoryConfirm(null); }}>
+          <section role="alertdialog" aria-modal="true" aria-label={memoryConfirm.title} className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
+            <h2 className="text-base font-black text-text-primary">{memoryConfirm.title}</h2><p className="mt-2 text-sm leading-6 text-text-secondary">{memoryConfirm.description}</p>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setMemoryConfirm(null)} className="rounded-xl border border-border px-4 py-2 text-xs font-black text-text-secondary">取消</button><button type="button" onClick={() => void confirmMemoryAction()} className={`rounded-xl px-4 py-2 text-xs font-black text-white ${memoryConfirm.danger ? 'bg-rose-600' : 'bg-slate-950'}`}>{memoryConfirm.confirmLabel}</button></div>
+          </section>
+        </div>
+      )}
       <ContentOpsExecutionDialog intent={executionIntent} onClose={() => setExecutionIntent(null)} />
     </PageShell>
   );

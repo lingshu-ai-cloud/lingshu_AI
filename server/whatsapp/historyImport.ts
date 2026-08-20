@@ -1523,6 +1523,8 @@ export function patchWhatsAppCustomer(input: {
   if (typeof patch.needCall === 'boolean') next.needCall = patch.needCall;
   if (typeof patch.aiAutoCount === 'number' && Number.isFinite(patch.aiAutoCount)) next.aiAutoCount = Math.max(0, Math.floor(patch.aiAutoCount));
   if (typeof patch.hasUnread === 'boolean') next.hasUnread = patch.hasUnread;
+  if (patch.pendingDraft === null || patch.pendingDraft === '') delete next.pendingDraft;
+  else if (typeof patch.pendingDraft === 'string') next.pendingDraft = patch.pendingDraft.trim().slice(0, 8_000);
   if (patch.todoCompletedAt === null || patch.todoCompletedAt === '') delete next.todoCompletedAt;
   else if (typeof patch.todoCompletedAt === 'string') next.todoCompletedAt = patch.todoCompletedAt.slice(0, 80);
   if (Array.isArray(patch.tags)) next.tags = patch.tags.map(item => String(item || '').trim()).filter(Boolean).slice(0, 20);

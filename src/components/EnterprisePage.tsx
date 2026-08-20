@@ -191,8 +191,8 @@ const AUTONOMY_OPTIONS: Array<{ value: AutonomyLevel; title: string; desc: strin
 const AUTO_REPLY_SCOPE = ['当前问题与已审批 FAQ 语义一致', '语境判定置信度不低于 90%', '回答原文通过价格与承诺红线检查'];
 const MARKET_OPTIONS = ['中东', '东南亚', '中亚', '南亚', '东亚', '欧洲', '北美', '拉美', '非洲', '大洋洲', '俄罗斯及独联体'];
 const LANGUAGE_OPTIONS = ['英语', '阿拉伯语', '西班牙语', '法语', '俄语', '葡萄牙语', '德语', '日语', '韩语', '土耳其语', '印地语', '印尼语', '泰语', '越南语'];
-const CATEGORY_OPTIONS = ['服装', '家居', '饰品', '五金', '美妆个护', '玩具', '消费电子', '汽摩配件', '机械设备', '包装印刷', '食品饮料', '宠物用品'];
-const COMPANY_TYPE_OPTIONS = ['工厂', '工贸一体', '贸易商', '品牌商', '跨境电商'];
+const CATEGORY_OPTIONS = ['服装', '家居', '饰品', '五金', '美妆个护', '玩具', '消费电子', '汽摩配件', '机械设备', '工业自动化与智能装备', '包装印刷', '食品饮料', '宠物用品'];
+const COMPANY_TYPE_OPTIONS = ['工厂', '工贸一体', '贸易商', '出口型企业', '品牌商', '跨境电商'];
 const COOPERATION_ROUTE_OPTIONS: Array<{ value: CooperationRoute; label: string; buyers: string[] }> = [
   { value: 'oem_odm', label: 'OEM / ODM（品牌定制与开发）', buyers: ['品牌创始人', '产品经理', '采购'] },
   { value: 'wholesale_distribution', label: '现货批发 / 经销', buyers: ['进口商', '经销商', '渠道采购'] },
@@ -254,28 +254,168 @@ const CHANNEL_OPTIONS: Array<{ value: NotificationChannel; label: string }> = [
 type SectionKey = 'products' | 'materials' | 'bizRules' | 'faq' | 'market' | 'company';
 
 function splitTokens(value?: string): string[] {
-  return String(value ?? '').split(/[、,，\s]+/).map(item => item.trim()).filter(Boolean);
+  return String(value ?? '').split(/[、,，;；\n]+/).map(item => item.trim()).filter(Boolean);
 }
 
 function joinTokens(items: string[]): string {
-  return Array.from(new Set(items.filter(Boolean))).join('、');
+  return Array.from(new Set(items.map(item => item.trim()).filter(Boolean))).join('、');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function includesKnownValue(raw: string, candidate: string): boolean {
+  const source = raw.toLocaleLowerCase();
+  const target = candidate.trim().toLocaleLowerCase();
+  if (!target) return false;
+  // 英文缩写必须是完整词，避免把 service 之类的描述文字误判成 CE 认证。
+  if (/^[a-z0-9][a-z0-9 ._\-/]*$/i.test(target)) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegExp(target)}([^a-z0-9]|$)`, 'i').test(source);
+  }
+  return source.includes(target);
+}
+
+function isConciseLegacyOption(value: string): boolean {
+  const token = value.trim();
+  if (!token || token === '/' || token.length > 20) return false;
+  if (/[\u3002！？!?]/.test(token)) return false;
+  if (/[a-z]/.test(token) && /\s/.test(token) && token !== token.toLocaleUpperCase()) return false;
+  return !/(我们|本公司|主要|主营|专注|面向|覆盖|客户|业务|产品|平台|经验|市场为|销售至|出口到)/.test(token);
+}
+
+function normalizeKnownMulti(value: string | undefined, options: string[], aliases: Record<string, string> = {}, preserveCustom = false): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const canonical: string[] = [];
+  for (const option of options) {
+    if (includesKnownValue(raw, option)) canonical.push(option);
+  }
+  for (const [legacy, replacement] of Object.entries(aliases)) {
+    if (includesKnownValue(raw, legacy)) canonical.push(replacement);
+  }
+  const custom = preserveCustom
+    ? splitTokens(raw).filter(token => {
+      const hasKnownValue = options.some(option => includesKnownValue(token, option))
+        || Object.keys(aliases).some(alias => includesKnownValue(token, alias));
+      return !hasKnownValue && isConciseLegacyOption(token);
+    })
+    : [];
+  return joinTokens([...canonical, ...custom]);
+}
+
+function normalizeKnownSingle(value: string | undefined, options: string[], aliases: Record<string, string> = {}, preserveCustom = false): string {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '/') return '';
+  const alias = Object.entries(aliases).find(([legacy]) => includesKnownValue(raw, legacy));
+  if (alias) return alias[1];
+  const option = options.find(item => includesKnownValue(raw, item));
+  if (option) return option;
+  return preserveCustom && isConciseLegacyOption(raw) ? raw : '';
+}
+
+function normalizeSocialExperience(value?: string): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (/没做过|未做过|没有|no experience/i.test(raw)) return '没做过';
+  if (/准备|筹备|planning/i.test(raw)) return '正在准备';
+  if (/做过|youtube|tiktok|facebook|instagram|whatsapp|linkedin/i.test(raw)) return '做过';
+  return '';
+}
+
+export function normalizeEnterpriseProfile(profile: Profile): Profile {
+  const items = normalizeProductItems(profile.products).map(item => ({
+    ...item,
+    category: normalizeKnownSingle(item.category, CATEGORY_OPTIONS, {
+      工业自动化: '工业自动化与智能装备',
+      自动化设备: '工业自动化与智能装备',
+      工业设备: '机械设备',
+      'industrial automation': '工业自动化与智能装备',
+      machinery: '机械设备',
+    }, true),
+    certifications: normalizeKnownMulti(item.certifications, CERTIFICATION_OPTIONS, { 'iso 9001': 'ISO', iso9001: 'ISO' }, true),
+  }));
+  return {
+    ...profile,
+    company: {
+      ...profile.company,
+      industry: normalizeKnownMulti(profile.company.industry, CATEGORY_OPTIONS, {
+        工业自动化: '工业自动化与智能装备',
+        自动化设备: '工业自动化与智能装备',
+        工业设备: '机械设备',
+        'industrial automation': '工业自动化与智能装备',
+        machinery: '机械设备',
+      }, true),
+      companyType: normalizeKnownSingle(profile.company.companyType, COMPANY_TYPE_OPTIONS, { 出口型: '出口型企业' }, true),
+      mainMarkets: normalizeKnownMulti(profile.company.mainMarkets, MARKET_OPTIONS, {
+        拉丁美洲: '拉美',
+        'latin america': '拉美',
+        'north america': '北美',
+        'middle east': '中东',
+        europe: '欧洲',
+        africa: '非洲',
+      }, true),
+      primaryLanguages: normalizeKnownMulti(profile.company.primaryLanguages, LANGUAGE_OPTIONS, {
+        english: '英语',
+        spanish: '西班牙语',
+        arabic: '阿拉伯语',
+        french: '法语',
+        russian: '俄语',
+        portuguese: '葡萄牙语',
+        german: '德语',
+      }, true),
+      socialPlatformExperience: normalizeSocialExperience(profile.company.socialPlatformExperience),
+    },
+    products: {
+      ...profile.products,
+      categories: normalizeKnownMulti(profile.products.categories, CATEGORY_OPTIONS, {
+        工业自动化: '工业自动化与智能装备',
+        自动化设备: '工业自动化与智能装备',
+        工业设备: '机械设备',
+        'industrial automation': '工业自动化与智能装备',
+        machinery: '机械设备',
+      }, true),
+      certifications: normalizeKnownMulti(profile.products.certifications, CERTIFICATION_OPTIONS, { 'iso 9001': 'ISO', iso9001: 'ISO' }, true),
+      items,
+    },
+  };
+}
+
+export function profileSnapshot(profile: Profile): string {
+  const stable = JSON.parse(JSON.stringify(profile)) as Profile;
+  const enabledRoutes = Array.from(new Set(stable.socialStrategy?.enabledRoutes ?? [])).sort() as CooperationRoute[];
+  const routeStrategies = Object.fromEntries(
+    enabledRoutes
+      .filter(route => Boolean(stable.socialStrategy?.routeStrategies?.[route]))
+      .map(route => [route, stable.socialStrategy!.routeStrategies[route]]),
+  ) as SocialStrategy['routeStrategies'];
+  stable.socialStrategy = { ...(stable.socialStrategy ?? DEFAULT.socialStrategy!), enabledRoutes, routeStrategies };
+  return JSON.stringify(stable);
+}
+
+function productImageCount(product: ProductItem): number {
+  const images = product.images ?? [];
+  const legacyImageCount = product.imageUrl && !images.some(image => image.url === product.imageUrl) ? 1 : 0;
+  return images.length + legacyImageCount;
 }
 
 function productAssetStats(items: ProductItem[]) {
   return items.reduce((acc, product) => {
-    acc.images += (product.images?.length ?? 0) + (product.imageUrl ? 1 : 0);
+    const imageCount = productImageCount(product);
+    acc.images += imageCount;
     acc.videos += product.videos?.length ?? 0;
     acc.documents += product.documents?.length ?? 0;
-    if ((product.images?.length ?? 0) + (product.imageUrl ? 1 : 0) > 0) acc.withImage += 1;
+    if (imageCount > 0) acc.withImage += 1;
     return acc;
   }, { images: 0, videos: 0, documents: 0, withImage: 0 });
 }
 
-function sectionCompletion(profile: Profile): Record<SectionKey, boolean> {
+export function sectionCompletion(profile: Profile): Record<SectionKey, boolean> {
   const items = normalizeProductItems(profile.products);
   const stats = productAssetStats(items);
+  const namedProducts = items.filter((item, index) => Boolean(item.name.trim() && item.name.trim() !== `产品${index + 1}`));
   return {
-    products: items.some((item, index) => Boolean(item.name.trim() && item.name.trim() !== `产品${index + 1}`)),
+    products: namedProducts.length > 0 && namedProducts.some(item => productImageCount(item) > 0),
     materials: stats.videos >= 1 || stats.images + stats.videos + stats.documents >= 5,
     bizRules: Boolean(profile.bizRules?.quoteMode && profile.bizRules?.samplePolicy?.trim() && profile.bizRules?.paymentTerms?.trim()),
     faq: (profile.faq ?? []).length >= 5,
@@ -558,6 +698,7 @@ export default function EnterprisePage() {
   const [enterpriseArea, setEnterpriseArea] = useState<EnterpriseArea>(() => enterpriseAreaForView(advisorInitialEnterpriseView()));
   const [languageSettingsHighlight, setLanguageSettingsHighlight] = useState(false);
   const [productPage, setProductPage] = useState(1);
+  const [expandedProductIndexes, setExpandedProductIndexes] = useState<Set<number>>(() => new Set([0]));
   const [faqPage, setFaqPage] = useState(1);
   const [notificationsHighlight, setNotificationsHighlight] = useState(false);
   const [bizRulesHighlight, setBizRulesHighlight] = useState(false);
@@ -565,7 +706,7 @@ export default function EnterprisePage() {
   const [styleDistilling, setStyleDistilling] = useState(false);
   const [styleMessage, setStyleMessage] = useState('');
   const persistedProfileRef = useRef('');
-  const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== JSON.stringify(profile);
+  const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== profileSnapshot(profile);
 
   useEffect(() => {
     if (window.sessionStorage.getItem('lingshu:enterprise-focus') !== 'language-settings') return;
@@ -591,7 +732,7 @@ export default function EnterprisePage() {
       fetch('/api/overseas/enterprise/faq/packs', { headers: authHeader() }).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' })),
     ])
       .then(([data, productApi, productApiStatus, packData]: [Partial<Profile>, ProductApiInfo | null, ProductApiStatus, { packs?: FaqPack[]; recommendedIndustry?: string }]) => {
-        const next: Profile = {
+        const rawNext: Profile = {
           ...DEFAULT,
           ...data,
           company: { ...DEFAULT.company, ...data.company },
@@ -655,7 +796,8 @@ export default function EnterprisePage() {
           },
           knowledge: data.knowledge ?? '',
         };
-        persistedProfileRef.current = JSON.stringify(next);
+        const next = normalizeEnterpriseProfile(rawNext);
+        persistedProfileRef.current = profileSnapshot(next);
         setProfile(next);
         setProfileLoaded(true);
         setSaveError('');
@@ -728,6 +870,7 @@ export default function EnterprisePage() {
   const completions = sectionCompletion(profile);
   const notificationCompleted = Boolean((profile.notifications?.receivers ?? []).length >= 1 && profile.notifications?.lastTestAt);
   const missingImageRatio = products.length ? (products.length - assetStats.withImage) / products.length : 0;
+  const missingImageCount = Math.max(0, products.length - assetStats.withImage);
   const approvedFaqCount = (profile.faq ?? []).filter(item => item.approvedForAuto && item.question.trim() && item.answer.trim()).length;
   const customerServiceEnabled = profile.customerService?.enabled === true;
   const customerServiceEnabledAt = Date.parse(profile.customerService?.enabledAt || '');
@@ -1110,10 +1253,11 @@ export default function EnterprisePage() {
     setSaved(false);
     setSaveError('');
     try {
+      const profileToSave = normalizeEnterpriseProfile(profile);
       const response = await fetch('/api/overseas/enterprise/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-enterprise-save-source': 'enterprise_center', ...authHeader() },
-        body: JSON.stringify(profile),
+        body: JSON.stringify(profileToSave),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || result.error || `保存失败（${response.status}）`);
@@ -1121,13 +1265,14 @@ export default function EnterprisePage() {
       const verifyResponse = await fetch('/api/overseas/enterprise/profile', { headers: authHeader() });
       const verified = await verifyResponse.json().catch(() => ({})) as Partial<Profile> & { message?: string; error?: string };
       if (!verifyResponse.ok) throw new Error(verified.message || verified.error || '保存后校验失败');
-      const expectedProducts = normalizeProductItems(profile.products);
+      const expectedProducts = normalizeProductItems(profileToSave.products);
       const verifiedProducts = normalizeProductItems({ ...DEFAULT.products, ...verified.products });
       const verifiedProductNames = new Set(verifiedProducts.map(item => item.name.trim()));
       if (expectedProducts.length !== verifiedProducts.length || expectedProducts.some(item => !verifiedProductNames.has(item.name.trim()))) {
         throw new Error('产品资料保存后校验失败，请重试');
       }
-      persistedProfileRef.current = JSON.stringify(profile);
+      persistedProfileRef.current = profileSnapshot(profileToSave);
+      setProfile(profileToSave);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (error) {
@@ -1232,7 +1377,9 @@ export default function EnterprisePage() {
   };
 
   const addProduct = () => {
-    setProductPage(Math.max(1, Math.ceil((products.length + 1) / PAGE_SIZE)));
+    const nextIndex = products.length;
+    setProductPage(Math.max(1, Math.ceil((nextIndex + 1) / PAGE_SIZE)));
+    setExpandedProductIndexes(previous => new Set(previous).add(nextIndex));
     setProfile(prev => {
       const items = normalizeProductItems(prev.products);
       return { ...prev, products: { ...prev.products, items: [...items, emptyProduct(items.length)] } };
@@ -1240,6 +1387,11 @@ export default function EnterprisePage() {
   };
 
   const removeProduct = (index: number) => {
+    setExpandedProductIndexes(previous => new Set(
+      Array.from(previous)
+        .filter(itemIndex => itemIndex !== index)
+        .map(itemIndex => itemIndex > index ? itemIndex - 1 : itemIndex),
+    ));
     setProfile(prev => {
       const items = normalizeProductItems(prev.products)
         .filter((_, i) => i !== index)
@@ -1451,7 +1603,7 @@ export default function EnterprisePage() {
   );
 
   const companySection = (
-    <KnowledgeCard icon={Building2} title="公司介绍" purpose="AI 开场白和自我介绍的素材" completed={completions.company} stat={`${profile.company.description.trim().length}/50 字`}>
+    <KnowledgeCard icon={Building2} title="公司介绍" purpose="AI 开场白和自我介绍的素材" completed={completions.company} stat={`已填写 ${profile.company.description.trim().length} 字 · 建议至少 50 字`}>
       <div className="grid grid-cols-2 gap-4">
         <Field label="公司名称">
           <input className={inputCls} value={profile.company.name} onChange={e => set('company')('name', e.target.value)} placeholder="示例贸易有限公司" />
@@ -1679,7 +1831,7 @@ export default function EnterprisePage() {
             stat={`${products.length} 个产品 · ${assetStats.images} 张图 · ${assetStats.videos} 个视频 · ${assetStats.documents} 份文书`}
           >
             {missingImageRatio > 0.5 && (
-              <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">缺少图片的产品无法生成视频</p>
+              <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{missingImageCount} 个产品还缺产品图，补齐后才能用于视频生成</p>
             )}
             <div className="mb-4 grid grid-cols-2 gap-4">
               <Field label="主营品类">
@@ -1707,11 +1859,30 @@ export default function EnterprisePage() {
               {visibleProducts.map((product, pageIndex) => {
                 const index = (productPage - 1) * PAGE_SIZE + pageIndex;
                 return (
-                <div key={index} className="rounded-lg border border-border bg-surface-2/50 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-xs font-black text-text-primary">产品 {index + 1}</p>
-                    <button type="button" onClick={() => removeProduct(index)} className="rounded-md p-1 text-text-muted hover:bg-white hover:text-red" title="删除产品"><X size={13} /></button>
-                  </div>
+                <details
+                  key={index}
+                  className="group relative rounded-lg border border-border bg-surface-2/50 p-4"
+                  open={expandedProductIndexes.has(index)}
+                  onToggle={event => {
+                    const isOpen = event.currentTarget.open;
+                    setExpandedProductIndexes(previous => {
+                      if (previous.has(index) === isOpen) return previous;
+                      const next = new Set(previous);
+                      if (isOpen) next.add(index);
+                      else next.delete(index);
+                      return next;
+                    });
+                  }}
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 pr-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-black text-text-primary">{product.name.trim() || `产品 ${index + 1}`}</p>
+                      <p className="mt-1 text-[10px] text-text-muted">产品图 {productImageCount(product)} · 视频 {product.videos?.length ?? 0} · 文档 {product.documents?.length ?? 0}</p>
+                    </div>
+                    <ChevronDown size={14} className="shrink-0 text-text-muted transition-transform group-open:rotate-180" />
+                  </summary>
+                  <button type="button" onClick={() => removeProduct(index)} aria-label={`删除产品 ${product.name || index + 1}`} className="absolute right-3 top-3 rounded-md p-1 text-text-muted hover:bg-white hover:text-red" title="删除产品"><X size={13} /></button>
+                  <div className="mt-4 border-t border-border pt-4">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="产品名称">
                       <input className={inputCls} value={product.name} onChange={e => updateProduct(index, { name: e.target.value })} placeholder={`产品${index + 1}`} />
@@ -1759,7 +1930,8 @@ export default function EnterprisePage() {
                       ))}
                     </div>
                   </div>
-                </div>
+                  </div>
+                </details>
                 );
               })}
               {!products.length && <p className="rounded-lg bg-surface-2 px-3 py-3 text-xs text-text-muted">还没有产品，先添加一个产品或导入产品表。</p>}
@@ -1966,7 +2138,7 @@ export default function EnterprisePage() {
                   <div key={key} className="rounded-lg border border-border bg-surface-2/50 p-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <p className="text-xs font-black text-text-primary">{label}</p>
-                      <button type="button" onClick={() => deleteSalesStyleField(key)} className="text-[11px] font-bold text-text-muted hover:text-red">删除</button>
+                      <button type="button" onClick={() => deleteSalesStyleField(key)} aria-label={`删除${label}销售风格`} className="text-[11px] font-bold text-text-muted hover:text-red">删除</button>
                     </div>
                     <textarea
                       className={textareaCls}
@@ -1984,7 +2156,7 @@ export default function EnterprisePage() {
             <div className="mt-3 rounded-lg border border-border bg-surface-2/50 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-xs font-black text-text-primary">禁用表达</p>
-                <button type="button" onClick={deleteTabooPhrases} className="text-[11px] font-bold text-text-muted hover:text-red">删除</button>
+                <button type="button" onClick={deleteTabooPhrases} aria-label="删除禁用表达" className="text-[11px] font-bold text-text-muted hover:text-red">删除</button>
               </div>
               <input
                 className={inputCls}

@@ -24,6 +24,7 @@ import {
   buildReplyCandidatesPrompt,
   buildReplyPlanPrompt,
   fallbackReplyPlan,
+  latestQuestionFocus,
   parseReplyCandidates,
   parseReplyPlan,
   rankReplyCandidates,
@@ -435,7 +436,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const enterpriseKnowledge = buildKnowledgePromptBlock(context);
   const dialogueStrategy = [buildStrategyPromptBlock(strategies), followUpGuidance].filter(Boolean).join('\n');
   const sellerStyle = [buildCustomerMemoryPromptBlock(customerMemories), buildSalesStyleProfilePromptBlock(salesStyleProfile), buildStyleMemoryPromptBlock(styleMemories)].filter(Boolean).join('\n');
-  const preferredGoal = followUpGuidance
+  const latestMessageIsQuestion = /[?？]|\b(?:what|which|why|how|can|could|do|does|did|is|are|will|would|when|where)\b|什么|哪些|怎么|为什么|是否|能否|吗(?:\s|$)/i.test(latestMessage);
+  const preferredGoal = latestMessageIsQuestion
+    ? `先正面回应客户刚问的“${latestMessage.slice(0, 220)}”。能根据已核实资料回答就直接回答；资料不足就自然说明需要核实哪一点。只有完成这一步后，才可顺带推进一个最自然的下一步。`
+    : followUpGuidance
     || strategies[0]?.strategy.goal
     || strategies[0]?.strategy.intent
     || (knowledgeGapActive ? gapPlan.handlingReason : '直接回应客户并推进一个最自然的下一步');
@@ -491,6 +495,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       language,
       intentInstruction: [
         intentInstruction(intent),
+        latestMessageIsQuestion ? '客户本轮提出了明确问题：第一句必须正面承接这个问题。SPIN、BANT 和策略推进只能放在回答之后，不能用另一个资格问题替代答案。' : '',
         conversationToneGuidance(timeline, latestMessage),
         publicInfoOnly ? '只使用已验证的公开企业事实，不透露价格、产能、地址或其他客户信息。' : '',
         suppressPrice ? '不要给出或承诺任何价格。' : '',
@@ -514,6 +519,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const candidateIssues: string[] = [...actionIssues];
     for (const ranked of rankedCandidates.slice(0, 4)) {
       const candidateDraft = normalizeMobileChatFormatting(ranked.text);
+      if (latestMessageIsQuestion && !latestQuestionFocus(candidateDraft, latestMessage).addressed) {
+        candidateIssues.push('候选回复没有正面承接客户本轮问题');
+        continue;
+      }
       const deliveryPlan = planMobileChatMessages(candidateDraft);
       const deterministicIssues = unsupportedHighRiskClaims(candidateDraft, enterpriseEvidenceSource);
       if (deliveryPlan.truncated || deterministicIssues.length || hasInternalPromptLeak(candidateDraft)) {
@@ -540,6 +549,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
         continue;
       }
       const safeDraft = sanitizeDraft(normalizeMobileChatFormatting(verification.draft), body, intent, suppressPrice, hardNoPriceDigits);
+      if (latestMessageIsQuestion && !latestQuestionFocus(safeDraft, latestMessage).addressed) {
+        candidateIssues.push('事实校验后的回复偏离客户本轮问题');
+        continue;
+      }
       const verifiedBlockingIssues = unsupportedHighRiskClaims(safeDraft, enterpriseEvidenceSource);
       if (verifiedBlockingIssues.length || hasInternalPromptLeak(safeDraft) || planMobileChatMessages(safeDraft).truncated) {
         candidateIssues.push(
