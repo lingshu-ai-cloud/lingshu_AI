@@ -279,15 +279,15 @@ type StudioStage = {
 };
 
 const VIDEO_STAGES: StudioStage[] = [
-  { id: 'setup', label: '创作设置', icon: LayoutGrid, hint: '确定内容目标与参考来源', steps: ['mode'] },
-  { id: 'storyboard', label: '分镜与素材', icon: Film, hint: 'AI 自动生成，只处理异常', steps: ['script', 'material'] },
-  { id: 'deliver', label: '预览与发布', icon: Play, hint: '可选优化、下载并发布', steps: ['bgm', 'cover', 'preview'] },
+  { id: 'setup', label: '设置', icon: LayoutGrid, hint: '模式与内容', steps: ['mode'] },
+  { id: 'storyboard', label: '制作', icon: Film, hint: '分镜与素材', steps: ['script', 'material'] },
+  { id: 'deliver', label: '完成', icon: Play, hint: '预览与发布', steps: ['bgm', 'cover', 'preview'] },
 ];
 
 const POSTER_STAGES: StudioStage[] = [
-  { id: 'setup', label: '创作设置', icon: LayoutGrid, hint: '确定内容目标与参考来源', steps: ['mode'] },
-  { id: 'storyboard', label: '分镜与素材', icon: ImageIcon, hint: '选择画面证据与产品素材', steps: ['material'] },
-  { id: 'deliver', label: '预览与发布', icon: Sparkles, hint: '生成图文并准备发布', steps: ['poster'] },
+  { id: 'setup', label: '设置', icon: LayoutGrid, hint: '模式与内容', steps: ['mode'] },
+  { id: 'storyboard', label: '制作', icon: ImageIcon, hint: '选择图文素材', steps: ['material'] },
+  { id: 'deliver', label: '完成', icon: Sparkles, hint: '预览与发布', steps: ['poster'] },
 ];
 
 type VideoThemeId = 'buyer_pain' | 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'comparison' | 'customer_case' | 'trend' | 'talking_head';
@@ -1033,14 +1033,14 @@ const ACCOUNTS: SocialAccount[] = [
 
 type ModeCard = { id: 'material' | 'clone' | 'product'; icon: typeof Film; title: string; desc: string };
 const MODES: ModeCard[] = [
-  { id: 'material', icon: Film,    title: '使用我的素材', desc: '从素材库选择真实画面，AI 自动编排成片' },
-  { id: 'clone',    icon: Wand2,   title: '参考爆款创作', desc: '沿用参考内容的有效结构，用企业产品与素材重建' },
-  { id: 'product',  icon: Sparkles,title: '只根据产品生成', desc: '从企业产品信息出发，生成脚本和画面建议' },
+  { id: 'material', icon: Film,    title: '自有素材编辑', desc: '剪辑素材库中的真实画面' },
+  { id: 'clone',    icon: Wand2,   title: '参考内容创作', desc: '参考结构，用企业内容重制' },
+  { id: 'product',  icon: Sparkles,title: '产品内容生成', desc: '从产品资料自动开始创作' },
 ] as const;
 const POSTER_MODES: ModeCard[] = [
-  { id: 'clone',    icon: Wand2,   title: '参考爆款创作', desc: '保留参考图文的信息层级，用企业资料替换竞品内容' },
-  { id: 'material', icon: Film,    title: '使用我的素材', desc: '选择产品、工厂和证书图片，生成 B2B 图文' },
-  { id: 'product',  icon: Sparkles,title: '只根据产品生成', desc: '从企业产品信息出发，生成文案和配图建议' },
+  { id: 'material', icon: Film,    title: '自有素材编辑', desc: '编辑素材库中的图片内容' },
+  { id: 'clone',    icon: Wand2,   title: '参考内容创作', desc: '参考版式，用企业内容重制' },
+  { id: 'product',  icon: Sparkles,title: '产品内容生成', desc: '从产品资料自动开始创作' },
 ] as const;
 const POSTER_STYLES = [
   { id: 'oem-factory', label: 'OEM 工厂风' },
@@ -7053,9 +7053,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       case 'mode':
         const visibleModes = contentMode === 'poster' ? POSTER_MODES : MODES;
         return (
-          <div className="w-full min-w-0 max-w-6xl overflow-x-hidden">
-            <SectionTitle title="创作设置" desc="先选择内容形态和参考来源，系统会补齐其余推荐参数" />
-            <Field label="内容形态">
+          <div className="w-full min-w-0 max-w-5xl overflow-x-hidden">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <SectionTitle title="开始创作" noMargin />
               <div className="inline-flex rounded-xl border border-border bg-surface-2 p-1">
                 {([
                   ['video', '视频模式'],
@@ -7092,9 +7092,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </button>
                 ))}
               </div>
-            </Field>
-            <p className="mt-4 text-xs font-semibold text-text-secondary">参考来源</p>
-            <div className="mb-7 mt-2 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
+            </div>
+            <p className="text-xs font-semibold text-text-secondary">创作方式</p>
+            <div className="mb-6 mt-2 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
               {visibleModes.map(m => {
                 const on = mode === m.id;
                 return (
@@ -7115,22 +7115,24 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     const sourceTitle = videoKickoff?.video?.title || videoKickoff?.generatedVideo?.title || '';
                     setProjectTitle(contentMode === 'video' ? draftTitleForMode(m.id, sourceTitle) : m.title);
                   }}
-                    className="card min-w-0 overflow-hidden p-4 text-left transition-all"
+                    className="card min-h-[72px] min-w-0 overflow-hidden px-4 py-3 text-left transition-all"
                     style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
-                    <div className="mb-2 flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{ background: on ? TRAFFIC_GREEN : 'var(--color-surface-2)', color: on ? '#fff' : 'var(--color-text-muted)' }}>
                         <m.icon size={14} />
                       </div>
-                      <p className="text-sm font-bold text-text-primary">{m.title}</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-text-primary">{m.title}</p>
+                        <p className="mt-0.5 truncate text-[11px] text-text-muted">{m.desc}</p>
+                      </div>
                     </div>
-                    <p className="text-xs text-text-muted leading-relaxed">{m.desc}</p>
                   </button>
                 );
               })}
             </div>
-            <SectionTitle title="完善创作信息" desc="默认只确认产品与创作目标，其余参数由系统按场景推荐" />
-            <div className="space-y-4">
+            <SectionTitle title="内容信息" />
+            <div className="space-y-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[260px] max-w-[560px] flex-1">
                   <span className="mb-1.5 block text-xs font-semibold text-text-secondary">产品信息（多选）</span>
@@ -7239,7 +7241,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 </div>
               </div>
               {contentMode === 'video' && (
-                <div className="grid gap-3 rounded-2xl border border-border bg-surface p-4 md:grid-cols-[minmax(180px,0.8fr)_minmax(260px,1.2fr)]">
+                <div className="grid gap-3 rounded-2xl border border-border bg-surface p-4 lg:grid-cols-3">
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold text-text-secondary">创作主题</span>
                     <span className="relative block">
@@ -7258,34 +7260,58 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       </select>
                       <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
                     </span>
-                    <span className="mt-1.5 block text-[10px] leading-4 text-text-muted">{activeVideoTheme.description}</span>
                   </label>
-                  <label className="block">
-                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">目标买家 / 本条内容要解决的问题</span>
+                  {availableCooperationRoutes.length > 1 && (
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-semibold text-text-secondary">合作路线</span>
+                      <span className="relative block">
+                        <select
+                          value={cooperationRoute}
+                          onChange={event => {
+                            const route = event.target.value;
+                            const defaults = enterpriseRouteStrategies[route];
+                            setCooperationRoute(route);
+                            setAudience(enterpriseBuyerText(defaults?.targetBuyerRoles));
+                            setEnterprisePrimaryCta(defaults?.primaryCta || '');
+                            setPrimaryCta(defaults?.primaryCta || '');
+                          }}
+                          className="h-10 w-full appearance-none rounded-xl border border-border bg-surface-2 px-3 pr-9 text-sm font-semibold text-text-primary outline-none transition focus:border-accent"
+                        >
+                          {availableCooperationRoutes.map(route => <option key={route} value={route}>{route === 'oem_odm' ? 'OEM / ODM' : route === 'wholesale_distribution' ? '现货批发 / 经销' : 'C 端零售'}</option>)}
+                        </select>
+                        <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                      </span>
+                    </label>
+                  )}
+                  <label className={`block ${availableCooperationRoutes.length > 1 ? '' : 'lg:col-span-2'}`}>
+                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">目标买家</span>
                     <input
                       value={audience}
                       onChange={event => setAudience(event.target.value)}
                       placeholder={activeVideoTheme.painPoint}
                       className="h-10 w-full rounded-xl border border-border bg-surface-2 px-3 text-sm text-text-primary outline-none transition focus:border-accent"
                     />
-                    <span className="mt-1.5 block truncate text-[10px] text-text-muted">转化目标：{effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}</span>
                   </label>
+                  <div className="flex min-w-0 items-center gap-2 rounded-xl bg-surface-2 px-3 py-2 lg:col-span-3">
+                    <span className="shrink-0 text-[11px] font-bold text-text-secondary">转化动作</span>
+                    <span className="truncate text-[11px] text-text-muted" title={effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}>{effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}</span>
+                  </div>
                 </div>
               )}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface-2 px-4 py-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-accent shadow-sm"><FolderOpen size={16} /></span>
                   <div className="min-w-0">
-                    <p className="text-xs font-black text-text-primary">参考素材</p>
+                    <p className="text-xs font-black text-text-primary">素材</p>
                     <p className="mt-0.5 truncate text-[11px] text-text-muted">
                       {mode === 'clone'
-                        ? videoKickoff ? '已带入参考内容，AI 将提取结构并替换为企业事实' : '尚未带入参考内容，可继续使用产品与素材库创作'
-                        : selected.length ? `已选择 ${selected.length} 个素材，进入分镜阶段后自动匹配` : '进入分镜阶段后，AI 将从素材库自动推荐并标记缺口'}
+                        ? videoKickoff ? '参考内容已带入' : '未带入参考内容'
+                        : selected.length ? `已选 ${selected.length} 个素材` : '下一步选择素材'}
                     </p>
                   </div>
                 </div>
                 <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-text-secondary">
-                  {mode === 'clone' && videoKickoff ? '参考已就绪' : selected.length ? `${selected.length} 项` : '稍后自动匹配'}
+                  {mode === 'clone' && videoKickoff ? '已就绪' : selected.length ? `${selected.length} 项` : '待选择'}
                 </span>
               </div>
               <div className="overflow-hidden rounded-2xl border border-border bg-surface">
@@ -7390,72 +7416,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </div>
                 </Field>
               )}
-              {contentMode === 'poster' && (
-                <div className="rounded-2xl border border-border bg-surface p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-bold text-text-primary">{videoKickoff?.video?.contentFormat === 'image' ? '企业获客图文内容包' : '海报文案 JSON'}</p>
-                      <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                        {videoKickoff?.video?.contentFormat === 'image'
-                          ? '用完整轮播的可见证据保留布局与信息层级，再以企业中心资料生成三组连续内容；缺失的商业承诺不会自动补写。'
-                          : '先生成可编辑 JSON，再进入图片生成；MOQ、认证、交期等商业承诺字段需要确认后使用。'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void generatePosterBrief()}
-                      disabled={posterLoading}
-                      className="btn-primary shrink-0 !px-4 !py-2 !text-xs"
-                    >
-                      {posterLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                      {videoKickoff?.video?.contentFormat === 'image' ? '生成获客内容包' : '一次生成图文'}
-                    </button>
-                  </div>
-                  {modeNotice && (
-                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-                      {modeNotice}
-                    </div>
-                  )}
-                  <textarea
-                    value={posterJsonText}
-                    onChange={event => setPosterJsonText(event.target.value)}
-                    rows={posterJsonText ? 12 : 5}
-                    placeholder={videoKickoff?.video?.contentFormat === 'image'
-                      ? '生成后这里会出现三组内容 JSON：买家注意、合作能力、供应商信任，以及每组轮播结构、配文、CTA 和私信开场。'
-                      : '生成后这里会出现海报文案 JSON：标题、副标题、认证徽章、流程六步、产品分类卡、底部卖点和 CTA。'}
-                    className="mt-3 w-full rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs leading-relaxed text-text-secondary outline-none focus:border-accent"
-                  />
-                  {leadContentPackage && <LeadContentPackagePreview value={leadContentPackage} imageUrl={posterImageUrl} />}
-                  {posterDraft && !leadContentPackage && (
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      {posterImageUrl && (
-                        <div className="md:col-span-2 overflow-hidden rounded-xl border border-border bg-surface-2">
-                          <img src={posterImageUrl} alt="AI 图文海报" className="max-h-[520px] w-full object-contain bg-white" />
-                        </div>
-                      )}
-                      <div className="rounded-xl border border-border bg-surface-2 p-3">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <p className="text-xs font-bold text-text-primary">发布配文</p>
-                          <button type="button" onClick={() => navigator.clipboard?.writeText(caption)} className="text-xs font-bold text-accent">复制</button>
-                        </div>
-                        <p className="whitespace-pre-line text-xs leading-relaxed text-text-secondary">{caption}</p>
-                      </div>
-                      <div className="rounded-xl border border-border bg-surface-2 p-3">
-                        <p className="text-xs font-bold text-text-primary">承接话术</p>
-                        <p className="mt-2 text-xs leading-relaxed text-text-secondary">评论 CTA：{posterDraft.commentCta || '待生成'}</p>
-                        <p className="mt-2 text-xs leading-relaxed text-text-secondary">私信开场：{posterDraft.dmOpening || '待生成'}</p>
-                      </div>
-                      <div className="md:col-span-2 rounded-xl border border-border bg-surface-2 p-3">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <p className="text-xs font-bold text-text-primary">图片模型 Prompt</p>
-                          <button type="button" onClick={() => navigator.clipboard?.writeText(posterDraft.imagePrompt || '')} className="text-xs font-bold text-accent">复制</button>
-                        </div>
-                        <p className="text-xs leading-relaxed text-text-muted">{posterDraft.imagePrompt || '待生成'}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         );
@@ -7463,29 +7423,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       case 'poster':
         return (
           <div className="max-w-4xl">
-            <SectionTitle title="图文生成" desc={videoKickoff?.video?.contentFormat === 'image' ? '依据竞品完整轮播证据与企业中心资料，生成三组连续获客内容' : '一次生成新的海报，并按 Facebook 或 Instagram 自动适配配文和承接话术'} />
+            <SectionTitle title="生成图文" />
             <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
               <div className="rounded-2xl border border-border bg-surface p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-bold text-text-primary">{videoKickoff?.video?.contentFormat === 'image' ? '生成三组获客图文内容包' : '一键生成新海报'}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                      {videoKickoff?.video?.contentFormat === 'image'
-                        ? `系统会依据对标图文中可观察的布局、轮播功能和文案证据，分别生成“吸引买家—解释能力—建立信任”三组 ${platform === 'instagram' ? 'Instagram' : 'Facebook'} 内容；竞品品牌、产品和商业承诺不会进入成稿。`
-                        : mode === 'clone'
-                        ? `系统会先拆解对标图文的模块结构和画面表达，再用本地产品/工厂/证书/场景素材逐模块替换，并生成 ${platform === 'instagram' ? 'Instagram' : 'Facebook'} 配文。`
-                        : `系统会基于已选产品和素材生成新海报，并同步生成 ${platform === 'instagram' ? 'Instagram' : 'Facebook'} 配文、评论 CTA 和私信开场。`}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void generatePosterBrief()}
-                    disabled={posterLoading}
-                    className="btn-primary shrink-0 !px-4 !py-2 !text-xs"
-                  >
-                    {posterLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                    {videoKickoff?.video?.contentFormat === 'image' ? '生成获客内容包' : '一次生成图文'}
-                  </button>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-bold text-text-primary">图文内容</p>
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${posterLoading ? 'bg-amber-50 text-amber-700' : posterJsonText ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
+                    {posterLoading ? '生成中' : posterJsonText ? '已生成' : '待生成'}
+                  </span>
                 </div>
                 {modeNotice && (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
@@ -8586,7 +8531,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           <div className="grid w-full items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(360px,2fr)]">
           <div className="min-w-0">
             <div className="flex items-center justify-between mb-4">
-              <SectionTitle title="分镜与素材" desc="AI 已自动完成脚本拆解、素材建议与质量检查；优先处理下方异常即可" noMargin />
+              <SectionTitle title="生成内容" noMargin />
             </div>
 
             <div className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'border-red-200 bg-red-50' : activeQualityWarnings.length || activeQualityIssues.length ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
@@ -8604,7 +8549,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                         ? `发现 ${activeQualityWarnings.length + activeQualityIssues.length} 项需要确认`
                         : script.trim() ? '分镜检查已完成' : 'AI 将自动生成并检查分镜'}
                   </p>
-                  <p className="mt-0.5 text-[10px] text-text-muted">配音、字幕和多语言是可选增强，确认分镜后再按需展开。</p>
                 </div>
               </div>
               {typeof activeCoveragePercent === 'number' && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">素材覆盖 {Math.round(activeCoveragePercent)}%</span>}
@@ -8612,9 +8556,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 
             <div className="mb-4 grid gap-2 md:grid-cols-3">
             {([
-              { id: 'theme' as const, number: 1, title: '选择主题/分镜', desc: `${activeVideoTheme.title} · 选择主题并确认可执行分镜`, done: Boolean(videoThemeId) && hasTimestampScript },
-              { id: 'voiceover' as const, number: 2, title: '提取口播/翻译', desc: '确认脚本口播，并生成需要的语言版本', done: hasRequestedVoiceDrafts },
-              { id: 'audio' as const, number: 3, title: '选择并确认声音', desc: voiceoverMode === 'unselected' ? '请选择不配音、AI 配音或上传真人音频' : voiceoverMode === 'none' ? '不配音，仅保留画面与字幕' : '按真实音频校准时间轴', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
+              { id: 'theme' as const, number: 1, title: '分镜', done: Boolean(videoThemeId) && hasTimestampScript },
+              { id: 'voiceover' as const, number: 2, title: '口播与翻译', done: hasRequestedVoiceDrafts },
+              { id: 'audio' as const, number: 3, title: '声音', done: voiceoverMode === 'none' || hasRequestedVoiceovers || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
             ]).filter(item => scriptStageTab !== 'theme' || item.id === 'theme').map(item => (
                 <button type="button" key={item.number} onClick={() => setScriptStageTab(item.id)}
                   className={`rounded-xl border px-3 py-3 text-left transition ${scriptStageTab === item.id ? 'border-accent bg-accent/5 shadow-sm' : item.done ? 'border-accent/20 bg-surface hover:border-accent/40' : 'border-border bg-surface-2 hover:border-border-bright'}`}>
@@ -8624,45 +8568,32 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     </span>
                     <p className="text-xs font-black text-text-primary">{item.title}</p>
                   </div>
-                  <p className="mt-1 pl-8 text-[10px] leading-4 text-text-muted">{item.desc}</p>
                 </button>
               ))}
             </div>
             {scriptStageTab === 'theme' && (
-              <div className="mb-4 flex items-center gap-2 rounded-xl border border-dashed border-border bg-surface-2 px-3 py-2 text-[11px] text-text-muted">
-                <Volume2 size={13} /> 口播、字幕和多语言将在分镜确认后按需处理，不影响先生成首版方案。
-              </div>
-            )}
-
-            {scriptStageTab === 'theme' && (
               <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-text-primary">{mode === 'material' ? '当前钩子素材的内容类型' : '选择本条视频的核心主题'}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-text-muted">{mode === 'material' ? '系统根据钩子素材的分类、人物和镜头内容自动判定类型，并调用对应脚本策略。' : '系统会结合当前生成模式、企业事实和可用素材静默调用对应脚本策略；这里不需要手动选择 Skill。'}</p>
-                  </div>
-                  <span className="rounded-lg bg-accent/10 px-2.5 py-1.5 text-[10px] font-black text-accent">{mode === 'material' ? '已按素材自动判定' : 'AI策略已自动匹配'}</span>
-                </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {VIDEO_THEMES.map(theme => {
-                    const selectedTheme = videoThemeId === theme.id;
-                    return (
-                      <button key={theme.id} type="button" title={theme.description}
-                        onClick={() => {
-                          setVideoThemeId(theme.id);
-                          setThemePainPoint(theme.painPoint);
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <label className="min-w-[220px] flex-1">
+                    <span className="mb-1.5 block text-xs font-black text-text-primary">创作方案</span>
+                    <span className="relative block">
+                      <select
+                        value={videoThemeId}
+                        onChange={event => {
+                          const nextTheme = VIDEO_THEMES.find(item => item.id === event.target.value as VideoThemeId) || VIDEO_THEMES[0]!;
+                          setVideoThemeId(nextTheme.id);
+                          setThemePainPoint(nextTheme.painPoint);
                           setThemeConversionGoal(DEFAULT_VIDEO_CONVERSION_GOAL);
-                          if (script.trim()) setModeNotice(`视频主题已切换为“${theme.title}”，请重新生成可执行分镜。`);
+                          if (script.trim()) setModeNotice(`主题已切换为“${nextTheme.title}”，请重新生成分镜。`);
                         }}
-                        className={`rounded-xl border p-3 text-left transition ${selectedTheme ? 'border-accent bg-accent/5 shadow-sm' : 'border-border bg-white hover:border-accent/40'}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-black text-text-primary">{theme.title}</p>
-                          {selectedTheme && <Check size={13} className="text-accent" />}
-                        </div>
-                        <p className="mt-1 text-[10px] leading-4 text-text-muted">{theme.description}</p>
-                      </button>
-                    );
-                  })}
+                        className="h-10 w-full appearance-none rounded-xl border border-border bg-surface-2 px-3 pr-9 text-sm font-semibold text-text-primary outline-none focus:border-accent"
+                      >
+                        {VIDEO_THEMES.map(theme => <option key={theme.id} value={theme.id}>{theme.title}</option>)}
+                      </select>
+                      <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                    </span>
+                  </label>
+                  <span className="rounded-full bg-accent/10 px-2.5 py-1.5 text-[10px] font-black text-accent">AI 策略已匹配</span>
                 </div>
                 {themeUnavailableReason(activeVideoTheme) && (
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
@@ -8679,32 +8610,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     </div>
                   </div>
                 )}
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {availableCooperationRoutes.length > 1 && <label className="block">
-                    <span className="mb-1.5 block text-[10px] font-black text-text-secondary">本条视频合作路线</span>
-                    <select value={cooperationRoute} onChange={event => {
-                      const route = event.target.value;
-                      const defaults = enterpriseRouteStrategies[route];
-                      setCooperationRoute(route);
-                      setAudience(enterpriseBuyerText(defaults?.targetBuyerRoles));
-                      setEnterprisePrimaryCta(defaults?.primaryCta || '');
-                      setPrimaryCta(defaults?.primaryCta || '');
-                    }} className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-text-primary outline-none focus:border-accent">
-                      {availableCooperationRoutes.map(route => <option key={route} value={route}>{route === 'oem_odm' ? 'OEM / ODM' : route === 'wholesale_distribution' ? '现货批发 / 经销' : 'C 端零售'}</option>)}
-                    </select>
-                  </label>}
-                  <label className="block">
-                    <span className="mb-1.5 block text-[10px] font-black text-text-secondary">目标买家</span>
-                    <textarea value={audience} onChange={event => setAudience(event.target.value)} rows={3}
-                      className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none focus:border-accent" />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1.5 block text-[10px] font-black text-text-secondary">主 CTA</span>
-                    <textarea value={enterprisePrimaryCta || primaryCta} readOnly rows={3} title="主 CTA 由企业社媒策略统一管理"
-                      className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none" />
-                    <span className="mt-1 block text-[10px] text-text-muted">仅使用企业社媒策略中的唯一主 CTA，如需修改请前往企业中心。</span>
-                  </label>
-                </div>
               </div>
             )}
 
@@ -8713,27 +8618,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-text-primary">
-                    {mode === 'material' ? '素材库分镜生成' : mode === 'product' ? '产品分镜生成' : '爆款裂变分镜生成'}
-                  </p>
-                  <p className="mt-1 text-xs text-text-muted">
-                    {mode === 'clone' ? (referenceAnalysisIncomplete ? '正在分析镜头…' : '镜头分析完成，可生成裂变脚本') : mode === 'product' ? '先生成带预估时间戳的可执行分镜；配音后再按真实音频校准时间轴。' : '按已选素材生成可执行分镜，再选择是否需要口播与配音。'}
-                  </p>
+                  <p className="text-sm font-black text-text-primary">分镜内容</p>
+                  <p className="mt-1 text-xs text-text-muted">{script.trim() ? '已生成，可直接检查和修改' : '确认后由 AI 生成首版分镜'}</p>
                 </div>
-	                <button
-	                  type="button"
-	                  onClick={event => {
-	                    event.preventDefault();
-	                    event.stopPropagation();
-	                    void generateTimestampScriptsForMode();
-	                  }}
-                  disabled={modeActionLoading || (mode === 'clone' && referenceAnalysisIncomplete)}
-	                  title={referenceAnalysisIncomplete ? '对标逐镜分析不完整，点击查看处理提示' : undefined}
-	                  className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60"
-	                >
-                  {modeActionLoading ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
-                  {modeActionLoading ? (modeActionStatus || '脚本生成中…') : mode === 'clone' && script.trim() ? 'AI重新生成分镜' : '生成可执行分镜'}
-                </button>
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${modeActionLoading ? 'bg-amber-50 text-amber-700' : script.trim() ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
+                  {modeActionLoading ? (modeActionStatus || '生成中') : script.trim() ? '已生成' : '待生成'}
+                </span>
               </div>
               {mode === 'clone' && !videoKickoff?.referenceAnalysis?.details?.length && (
                 <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700">
@@ -10390,6 +10280,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     }
   };
 
+  const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
+  const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster';
+  const storyboardGenerationBlocked = modeActionLoading || (mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff));
+  const runPrimaryAction = () => {
+    if (primaryGeneratesPoster) {
+      void generatePosterBrief();
+      return;
+    }
+    if (primaryGeneratesStoryboard) {
+      void generateTimestampScriptsForMode();
+      return;
+    }
+    next();
+  };
+
   return (
     <div className="flex flex-col h-full relative">
       {/* BGM 试听用的隐藏音频元素 */}
@@ -10429,12 +10334,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 
       <div className="flex flex-1 min-h-0">
       {/* ── ① 步骤导航 ─────────────────────────────── */}
-      <aside className="w-32 flex-shrink-0 border-r border-border flex flex-col bg-surface-2/40">
-        <div className="px-3 pt-4 pb-3">
-          <p className="text-[9px] font-mono text-text-muted uppercase tracking-wider mb-1">AI 创作</p>
-          <p className="text-xs font-bold text-text-primary font-display">内容创作工作台</p>
+      <aside className="flex w-44 flex-shrink-0 flex-col border-r border-border bg-surface">
+        <div className="px-4 pb-3 pt-5">
+          <p className="text-sm font-bold text-text-primary font-display">创作流程</p>
         </div>
-        <div className="flex-1 px-2 space-y-0.5 overflow-y-auto">
+        <div className="flex-1 space-y-1 overflow-y-auto px-3">
           {activeStages.map((stage, i) => {
             const done = i < stageIdx;
             const active = i === stageIdx;
@@ -10443,19 +10347,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             return (
               <button key={stage.id} onClick={() => i <= stageIdx && stageAnchor >= 0 && setStepIdx(stageAnchor)}
                 disabled={i > stageIdx}
-                className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors ${
-                  active ? 'bg-surface shadow-sm' : i > stageIdx ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface'}`}>
-                <span className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
+                className={`w-full flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
+                  active ? 'border-accent/20 bg-accent/5' : i > stageIdx ? 'cursor-not-allowed border-transparent opacity-40' : 'border-transparent hover:bg-surface-2'}`}>
+                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
                   style={
                     active ? { background: TRAFFIC_GREEN, color: '#fff' }
                     : done ? { background: 'var(--color-accent-glow)', color: 'var(--color-accent)' }
                     : { background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }
                   }>
-                  {done ? <Check size={11} /> : i + 1}
+                  {done ? <Check size={13} /> : i + 1}
                 </span>
                 <div className="min-w-0">
-                  <p className={`text-[11px] font-semibold leading-tight whitespace-nowrap ${active ? 'text-text-primary' : 'text-text-secondary'}`}>{stage.label}</p>
-                  <p className="text-[8px] text-text-muted truncate whitespace-nowrap mt-0.5">{activeSubstep || stage.hint}</p>
+                  <p className={`whitespace-nowrap text-xs font-bold leading-tight ${active ? 'text-text-primary' : 'text-text-secondary'}`}>{stage.label}</p>
+                  <p className="mt-1 truncate whitespace-nowrap text-[10px] text-text-muted">{activeSubstep || stage.hint}</p>
                 </div>
               </button>
             );
@@ -10475,46 +10379,56 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         </div>
 
         {/* 底部导航条 */}
-        <div data-lingshu-assistant-clearance="bottom-navigation" className="h-14 flex items-center justify-between px-6 border-t border-border flex-shrink-0">
+        <div data-lingshu-assistant-clearance="bottom-navigation" className="flex h-16 flex-shrink-0 items-center border-t border-border bg-surface px-6">
           <button onClick={prev} disabled={stepIdx === 0}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-text-secondary hover:bg-surface-2 disabled:opacity-30 disabled:hover:bg-transparent transition-colors">
             <ChevronLeft size={15} /> 上一步
           </button>
-          <div className="flex items-center gap-1.5">
-            {activeStages.map((_, i) => (
-              <span key={i} className="h-1 rounded-full transition-all"
-                style={{ width: i === stageIdx ? 18 : 6, background: i <= stageIdx ? TRAFFIC_GREEN : 'var(--color-border)' }} />
-            ))}
-          </div>
-          {!isLast ? (
-            <button onClick={next} disabled={!canNext}
+          <div className="ml-auto flex items-center gap-2">
+          {contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && hasTimestampScript && (
+            <button
+              type="button"
+              onClick={() => void generateTimestampScriptsForMode()}
+              disabled={storyboardGenerationBlocked}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-4 py-2 text-sm font-semibold text-text-secondary transition hover:bg-surface-2 disabled:opacity-40"
+            >
+              {modeActionLoading ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} 重新生成
+            </button>
+          )}
+          {(!isLast || primaryGeneratesPoster) ? (
+            <button onClick={runPrimaryAction} disabled={primaryGeneratesPoster ? posterLoading : primaryGeneratesStoryboard ? storyboardGenerationBlocked : !canNext}
               className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-40"
               style={{ background: TRAFFIC_GREEN }}>
-              {step === 'script'
+              {primaryGeneratesPoster
+                ? posterLoading ? '正在生成' : posterJsonText ? '重新生成图文' : '生成图文'
+                : primaryGeneratesStoryboard
+                ? modeActionLoading ? (modeActionStatus || '正在生成') : '生成分镜'
+                : step === 'script'
                 ? scriptStageTab === 'theme'
-                  ? '确认分镜并处理口播'
+                  ? '确认分镜'
                   : scriptStageTab === 'voiceover'
-                    ? '确认口播并选择声音'
+                    ? '确认口播'
                     : voiceoverMode === 'unselected'
                       ? '请先选择声音策略'
                       : voiceoverMode === 'none'
-                        ? '确认字幕并进入素材匹配'
-                        : '试听确认并进入素材匹配'
+                        ? '进入素材匹配'
+                        : '确认声音'
                 : step === 'material' && contentMode === 'video'
                   ? canNext
-                    ? '确认素材，进入可选优化'
+                    ? '确认素材'
                     : `还需放入 ${Math.max(0, storyboardSlots.length - assignedCount)} 个分镜视频`
                   : step === 'mode'
-                    ? contentMode === 'video' ? '进入分镜生成' : '选择图文素材'
+                    ? '下一步'
                   : step === 'bgm'
-                    ? '确认或跳过配乐'
+                    ? '确认配乐'
                   : step === 'cover'
-                    ? '预览并生成成片'
+                    ? '预览成片'
                   : '继续下一步'} <ChevronRight size={15} />
             </button>
           ) : (
-            <span className="w-[88px]" />
+            <span />
           )}
+          </div>
         </div>
       </div>
 
