@@ -5820,6 +5820,8 @@ interface BgmTrack {
   uploadedBy?: string;
   createdAt: string;
   objectKey?: string;
+  sourceUrl?: string;
+  license?: string;
 }
 
 const BUILTIN_BGM_TRACKS: BgmTrack[] = [
@@ -5861,6 +5863,36 @@ const BUILTIN_BGM_TRACKS: BgmTrack[] = [
     scope: 'shared',
     uploadedBy: '灵枢官方曲库',
     createdAt: '2026-08-21T00:00:02.000Z',
+  },
+  {
+    id: 'builtin-mixkit-close-up',
+    name: '灵枢推荐配乐04',
+    mood: '科技产业 · 律动推进',
+    duration: 95.14,
+    file: 'mixkit-close-up.mp3',
+    url: '/bgm/shared/mixkit-close-up.mp3',
+    recommended: true,
+    builtin: true,
+    scope: 'shared',
+    uploadedBy: 'Mixkit 免版税曲库',
+    createdAt: '2026-08-21T00:00:03.000Z',
+    sourceUrl: 'https://mixkit.co/free-stock-music/corporate-music/',
+    license: 'Mixkit Free License',
+  },
+  {
+    id: 'builtin-mixkit-its-love',
+    name: '灵枢推荐配乐05',
+    mood: '品牌叙事 · 轻盈积极',
+    duration: 96.63,
+    file: 'mixkit-its-love.mp3',
+    url: '/bgm/shared/mixkit-its-love.mp3',
+    recommended: true,
+    builtin: true,
+    scope: 'shared',
+    uploadedBy: 'Mixkit 免版税曲库',
+    createdAt: '2026-08-21T00:00:04.000Z',
+    sourceUrl: 'https://mixkit.co/free-stock-music/corporate-music/',
+    license: 'Mixkit Free License',
   },
 ];
 
