@@ -141,15 +141,51 @@ export function neutralizeUnsupportedMaterialVisuals(
   script: string,
   productInfo: string,
   materialsText: string,
+  materialInfos: StudioScriptMaterialInfo[] = [],
 ): { script: string; warnings: string[]; neutralizedTerms: string[] } {
   const evidence = `${productInfo}\n${materialsText}`.toLowerCase();
   const unsupportedGroups = MATERIAL_VISUAL_FACT_GROUPS.filter(group => (
     !group.some(term => evidenceSupportsTerm(evidence, term))
   ));
+  const unsupportedTerms = unsupportedGroups.flat();
+  const materialSlots = materialInfos.flatMap(info => {
+    const observations = info.observations?.filter(Boolean) || [];
+    return (observations.length ? observations : ['']).map(observation => ({
+      name: String(info.name || '已选素材').trim() || '已选素材',
+      observation: String(observation || '').trim(),
+    }));
+  });
+  const safeObservation = (observation: string): string => {
+    const positiveClauses = String(observation || '')
+      .split(/[；;。\n]+/)
+      .map(clause => clause.trim().replace(/^素材[：:]\s*/, ''))
+      .filter(Boolean)
+      .filter(clause => !/(?:未(?:观察到|发现|显示|出现)|没有|不存在|不含|无|not\s+(?:observed|visible|shown|present)|without|no\b)/i.test(clause))
+      .filter(clause => !unsupportedTerms.some(term => clause.toLowerCase().includes(term.toLowerCase())));
+    return positiveClauses.join('；') || '已选素材中的实际可见画面';
+  };
+  const safeShot = (value: string): string => (
+    value.match(/中近景|特写|近景|中景|全景|远景/)?.[0] || '中景'
+  );
+  const safeCamera = (value: string): string => (
+    value.match(/俯拍固定|固定微推进|缓慢推进|缓慢拉远|平移|跟拍|固定/)?.[0] || '固定'
+  );
+  const readField = (block: string, field: string): string => {
+    const match = block.match(new RegExp(`^[ \\t]*${field}[：:]\\s*(.*)$`, 'm'));
+    return String(match?.[1] || '').trim();
+  };
+  const containsUnsupportedTerm = (value: string): boolean => unsupportedTerms.some(term => (
+    value.toLowerCase().includes(term.toLowerCase())
+  ));
   const neutralizedTerms = new Set<string>();
+  let sceneIndex = 0;
+  let repairedTrustedScenes = 0;
+  let pendingScenes = 0;
   const blocks = String(script || '').split(/(?=^[ \t]*\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*\][ \t]*$)/m);
   const repaired = blocks.map(block => {
     if (!/^\s*\[\s*\d/.test(block)) return block;
+    const slot = materialSlots[sceneIndex];
+    sceneIndex += 1;
     const terms = unsupportedGroups.flatMap(group => group.filter(term => block.toLowerCase().includes(term.toLowerCase())));
     if (!terms.length) return block;
     terms.forEach(term => neutralizedTerms.add(term));
@@ -159,22 +195,59 @@ export function neutralizeUnsupportedMaterialVisuals(
       if (pattern.test(next)) next = next.replace(pattern, `${field}：${value}`);
       else next = `${next.replace(/\s+$/, '')}\n${field}：${value}\n`;
     };
-    replaceField('素材', '待匹配素材');
-    replaceField('环境', '按后续补充素材的实际环境');
-    replaceField('构图', '仅使用后续补充素材中的实际可见内容');
-    replaceField('镜头功能', '待补素材');
-    replaceField('画面', '待匹配素材；需补充能够证明本段信息的实际画面');
-    // Unsupported visual facts must not survive in spoken or on-screen copy.
-    // The CTA is deterministically restored after this pass by the caller.
-    replaceField('台词', '无');
-    replaceField('字幕', '无');
+    const alreadyPending = /^\s*素材[：:]\s*待匹配素材\s*$/m.test(block);
+    if (!slot || alreadyPending) {
+      pendingScenes += 1;
+      replaceField('素材', '待匹配素材');
+      replaceField('环境', '按后续补充素材的实际环境');
+      replaceField('景别', '中景');
+      replaceField('运镜', '固定');
+      replaceField('构图', '仅使用后续补充素材中的实际可见内容');
+      replaceField('镜头功能', '待补素材');
+      replaceField('画面', '待匹配素材；需补充能够证明本段信息的实际画面');
+      replaceField('配乐', '轻节奏铺底');
+      // Unsupported visual facts must not survive in spoken or on-screen copy.
+      // The CTA is deterministically restored after this pass by the caller.
+      replaceField('台词', '无');
+      replaceField('字幕', '无');
+      return next;
+    }
+
+    repairedTrustedScenes += 1;
+    const originalDialogue = readField(block, '台词');
+    const originalSubtitle = readField(block, '字幕');
+    const originalMusic = readField(block, '配乐');
+    replaceField('素材', slot.name);
+    replaceField('环境', '以已选素材实际环境为准');
+    replaceField('景别', safeShot(readField(block, '景别')));
+    replaceField('运镜', safeCamera(readField(block, '运镜')));
+    replaceField('构图', '仅呈现已选素材中实际可见的主体');
+    replaceField('镜头功能', '素材事实展示');
+    replaceField('画面', `按已选素材观察呈现：${safeObservation(slot.observation)}`);
+    if (containsUnsupportedTerm(originalMusic)) replaceField('配乐', '轻节奏铺底');
+    if (containsUnsupportedTerm(originalDialogue)) {
+      replaceField('台词', '先看画面中的实际证据，再判断是否值得进一步沟通。');
+    }
+    if (containsUnsupportedTerm(originalSubtitle)) {
+      replaceField('字幕', '先看画面中的实际证据，再判断是否值得进一步沟通。');
+    }
     return next;
   }).join('');
   const terms = Array.from(neutralizedTerms);
+  const warnings: string[] = [];
+  if (repairedTrustedScenes > 0) {
+    warnings.push(`已按已选素材的真实可见内容修复${repairedTrustedScenes}个分镜：${terms.join('、')}`);
+  }
+  if (pendingScenes > 0) {
+    warnings.push(`素材未支持的画面已标记为待匹配素材：${terms.join('、')}`);
+  }
+  if (terms.length && !warnings.length) {
+    warnings.push(`已将素材未支持的画面替换为待匹配素材：${terms.join('、')}`);
+  }
   return {
     script: repaired,
     neutralizedTerms: terms,
-    warnings: terms.length ? [`已将素材未支持的画面替换为待匹配素材：${terms.join('、')}`] : [],
+    warnings,
   };
 }
 
@@ -237,7 +310,12 @@ export function assessScriptQualityV2(input: {
   warnings?: string[];
 }): StudioScriptQualityV2Result {
   const coverageMarkedScript = markUncoveredMaterialScenes(input.script, input.materialInfos);
-  const neutralized = neutralizeUnsupportedMaterialVisuals(coverageMarkedScript, input.productInfo, input.materialsText);
+  const neutralized = neutralizeUnsupportedMaterialVisuals(
+    coverageMarkedScript,
+    input.productInfo,
+    input.materialsText,
+    input.materialInfos,
+  );
   const materialCoverage = materialCoverageForScript(neutralized.script, input.materialInfos);
   const warnings = Array.from(new Set([
     ...neutralized.warnings,

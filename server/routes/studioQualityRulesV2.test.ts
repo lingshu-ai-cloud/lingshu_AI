@@ -139,6 +139,57 @@ const hallucinationAssessment = assessScriptQualityV2({
 assert.equal(hallucinationAssessment.qualityStatus, 'needs_material');
 assert.deepEqual(hallucinationAssessment.hardIssues, []);
 assert.doesNotMatch(hallucinationAssessment.script, /展板|logo|屏幕|检测结果/i);
+assert.match(hallucinationAssessment.script, /^素材：气动输送带$/m);
+assert.match(hallucinationAssessment.script, /^画面：按已选素材观察呈现：已选素材中的实际可见画面$/m);
+
+// Model output may hide unsupported visual nouns in shot/camera/music fields.
+// These fields must be repaired too; otherwise the route's grounding pass
+// rejects an otherwise usable script and leaves the user stuck at 0%.
+const hiddenUnsupportedVisualStoryboard = `[0-4s]
+素材：气动输送带
+环境：工厂
+景别：特写（设备操作界面局部）
+运镜：从 logo 缓慢推进到屏幕
+构图：工件居中
+镜头功能：产品证据
+画面：工件沿气动输送带移动
+配乐：轻提示音模拟 interface chime
+台词：Check the visible evidence.
+字幕：Check the visible evidence.
+[4-8s]
+素材：气动输送带
+环境：工厂
+景别：中景
+运镜：固定
+构图：工件居中
+镜头功能：CTA
+画面：工件沿气动输送带移动
+配乐：机械环境声
+台词：${primaryCta}
+字幕：${primaryCta}`;
+const repairedHiddenVisuals = assessScriptQualityV2({
+  script: hiddenUnsupportedVisualStoryboard,
+  productInfo,
+  materialsText: materialObservation,
+  materialInfos: [{
+    name: '气动输送带',
+    targetStart: 0,
+    targetEnd: 4,
+    observations: ['工件沿气动输送带移动'],
+  }],
+  primaryCta,
+  targetBuyerText: targetBuyers,
+});
+assert.equal(repairedHiddenVisuals.qualityStatus, 'needs_material');
+assert.deepEqual(repairedHiddenVisuals.hardIssues, []);
+assert.equal(repairedHiddenVisuals.materialCoverage.coverageRatio, 0.5);
+assert.doesNotMatch(repairedHiddenVisuals.script, /logo|界面|屏幕|interface/i);
+const repairedHiddenBlocks = repairedHiddenVisuals.script.split(/(?=^\[\d)/m).filter(block => /^\[\d/.test(block));
+assert.match(repairedHiddenBlocks[0] || '', /^素材：气动输送带$/m);
+assert.match(repairedHiddenBlocks[0] || '', /^景别：特写$/m);
+assert.match(repairedHiddenBlocks[0] || '', /^运镜：缓慢推进$/m);
+assert.match(repairedHiddenBlocks[0] || '', /^画面：按已选素材观察呈现：工件沿气动输送带移动$/m);
+assert.match(repairedHiddenBlocks[1] || '', /^素材：待匹配素材$/m);
 
 // The complete enterprise CTA is deterministic on-screen copy. It must be
 // restored verbatim in the final scene even when the spoken line is compacted

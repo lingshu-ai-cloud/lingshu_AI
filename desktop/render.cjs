@@ -7,7 +7,8 @@
  * manifest 字段缺失时优雅退化：
  *   - 没有素材片段 → 用纯色背景兜底，仍出片
  *   - 没有 BGM     → 用静音轨
- * 等 cover.url / voiceover.url 接入后，再把封面图叠层、把配音混进音轨即可，签名不变。
+ * voiceover.url 与 bgm.url 均会下载并混入最终音轨；声明了音轨却下载失败时必须终止，
+ * 避免用户拿到“字幕正常但没有声音”的静默成片。
  */
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -150,19 +151,17 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     let bgmFile = null;
     const bgmUrl = manifest && manifest.bgm && manifest.bgm.url;
     if (bgmUrl) {
-      try {
-        bgmFile = path.join(tmp, `bgm${path.extname(bgmUrl.split('?')[0]) || '.wav'}`);
-        await downloadTo(bgmUrl, bgmFile, downloadOptions);
-      } catch { bgmFile = null; }
+      bgmFile = path.join(tmp, `bgm${path.extname(bgmUrl.split('?')[0]) || '.wav'}`);
+      try { await downloadTo(bgmUrl, bgmFile, downloadOptions); }
+      catch (error) { throw new Error(`背景音乐读取失败：${error && error.message || error}`); }
     }
 
     let voFile = null;
     const voUrl = manifest && manifest.voiceover && manifest.voiceover.url;
     if (voUrl) {
-      try {
-        voFile = path.join(tmp, `vo${path.extname(voUrl.split('?')[0]) || '.wav'}`);
-        await downloadTo(voUrl, voFile, downloadOptions);
-      } catch { voFile = null; }
+      voFile = path.join(tmp, `vo${path.extname(voUrl.split('?')[0]) || '.wav'}`);
+      try { await downloadTo(voUrl, voFile, downloadOptions); }
+      catch (error) { throw new Error(`口播配音读取失败：${error && error.message || error}`); }
     }
 
     if (process.env.RENDER_DEBUG) console.error(`[render] downloaded clips=${localClips.length} bgm=${bgmFile ? 'yes' : 'no'} voiceover=${voFile ? 'yes' : 'no'}`);

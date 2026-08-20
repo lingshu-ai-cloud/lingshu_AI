@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send,
-  Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Globe,
+  Check, ChevronLeft, ChevronRight, Folder, Search, Volume2,
   Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock,
   Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
 } from 'lucide-react';
@@ -565,11 +565,11 @@ function pickMaterialClipsLocally(pool: Clip[], targetDuration: number, preferre
   };
 }
 
-function matchMaterialsToStoryboardLocally(
+export function matchMaterialsToStoryboardLocally(
   pool: Clip[],
   slots: StoryboardSlot[],
   preferredIds: string[] = [],
-  options: { variantIndex?: number; previousAssignments?: Array<Record<string, string>> } = {},
+  options: { variantIndex?: number; previousAssignments?: Array<Record<string, string>>; targetRatio?: string } = {},
 ) {
   const preferred = new Set(preferredIds);
   const unused = new Set(pool.map(clip => clip.id));
@@ -624,6 +624,7 @@ function matchMaterialsToStoryboardLocally(
       if (unused.has(clip.id)) score += 18;
       if (preferred.has(clip.id)) score += 7;
       if (clip.type === 'video') score += 5;
+      if (options.targetRatio) score += isClipCompatibleWithRatio(clip, options.targetRatio) ? 36 : -8;
       if (folderKeywords[clip.folder]?.test(slotText)) score += 28;
       const slotTerms = slotText.match(/[\u4e00-\u9fff]{2,4}|[a-z]{3,}/gi) || [];
       score += Math.min(24, slotTerms.filter(term => clipText.includes(term.toLowerCase())).length * 6);
@@ -3940,9 +3941,34 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   // 成片预览可播放的真实视频片段（mock 占位素材没有 url）
   const previewable = useMemo(() => selectedClips.filter(c => c.url && c.type === 'video'), [selectedClips]);
   const activeSpokenScript = voiceDrafts[activeVoiceLang] || voiceoverLines || script;
-  const activeVoiceDuration = voiceoverMode === 'ai'
-    ? voiceoverAudios[activeVoiceLang]?.duration || 0
-    : voiceoverDur;
+  const activeVoiceoverAudio = voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang] : undefined;
+  const activeVoiceoverUrl = voiceoverMode === 'none'
+    ? ''
+    : voiceoverMode === 'ai'
+      ? activeVoiceoverAudio?.url || ''
+      : voiceoverUrl || '';
+  const activeVoiceDuration = voiceoverMode === 'none'
+    ? 0
+    : voiceoverMode === 'ai'
+      ? activeVoiceoverAudio?.duration || 0
+      : voiceoverDur;
+  const voiceoverForLanguage = (code: string) => {
+    if (voiceoverMode === 'none') return { url: '', duration: 0, cues: alignedCuesByLang[code] || [] };
+    if (voiceoverMode === 'ai') {
+      const audio = voiceoverAudios[code];
+      return {
+        url: audio?.url || '',
+        duration: audio?.duration || 0,
+        cues: alignedCuesByLang[code] || audio?.cues || [],
+      };
+    }
+    const isActiveUpload = code === activeVoiceLang;
+    return {
+      url: isActiveUpload ? voiceoverUrl || '' : '',
+      duration: isActiveUpload ? voiceoverDur : 0,
+      cues: alignedCuesByLang[code] || [],
+    };
+  };
   const masterScriptSnapshot = useRef(script);
   useEffect(() => {
     if (masterScriptSnapshot.current !== script && Object.keys(voiceDrafts).length) {
@@ -4351,9 +4377,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       if (!validStoryboard) return [];
       return languages.map((code, languageIndex) => {
         const bgmId = materialVersionBgms[materialVersionKey(plan.id, code)] ?? assemblyBgms[plan.id] ?? bgm;
-        const audioDuration = voiceoverMode === 'ai'
-          ? voiceoverAudios[code]?.duration || 0
-          : voiceoverMode === 'upload' && code === activeVoiceLang ? voiceoverDur : 0;
+        const audioDuration = voiceoverForLanguage(code).duration;
         return {
           key: renderCombinationKey(plan.id, code, bgmId),
           plan,
@@ -4476,8 +4500,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setCoverUrl(cUrl);
 
     const outputLanguage = renderOverride?.language || lang;
-    const outputVoiceoverUrl = renderOverride?.voiceoverUrl ?? voiceoverUrl;
-    const outputVoiceoverDur = renderOverride?.voiceoverDur ?? voiceoverDur;
+    const defaultVoiceover = voiceoverForLanguage(outputLanguage);
+    const outputVoiceoverUrl = renderOverride?.voiceoverUrl ?? defaultVoiceover.url;
+    const outputVoiceoverDur = renderOverride?.voiceoverDur ?? defaultVoiceover.duration;
     const outputScript = scriptOverride ?? (voiceDrafts[outputLanguage] || activeSpokenScript);
     const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
     const outputTimeline = voiceoverMode === 'none'
@@ -4492,8 +4517,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     const timelineDuration = outputTimeline.reduce((sum, item) => sum + (item.targetDuration || 0), 0);
     const rawOutputCues = renderOverride?.cues?.length
       ? renderOverride.cues
-      : alignedCuesByLang[outputLanguage]?.length
-        ? alignedCuesByLang[outputLanguage]
+      : defaultVoiceover.cues.length
+        ? defaultVoiceover.cues
         : buildCues(outputScript, outputVoiceoverDur || timelineDuration || totalDur);
     const outputCues = renderSafeCues(rawOutputCues, Math.min(
       timelineDuration || duration,
@@ -4632,53 +4657,58 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (contentMode === 'video' && nextStep === 'material') setActiveFolder('all');
     setStepIdx(i => Math.min(i + 1, activeSteps.length - 1));
   };
-  const renderLanguageVersions = async () => {
+  const renderSelectedLanguageVersion = async (selectedKey?: string) => {
     const combinations = buildRenderableVideoVersions();
     if (!combinations.length) {
       alert('暂无可生成的视频版本。请先完成有效脚本，并为全部分镜匹配有效素材。');
       return;
     }
+    const fallbackKey = renderCombinationKey(
+      activeAssemblyId,
+      activeVoiceLang,
+      materialVersionBgms[materialVersionKey(activeAssemblyId, activeVoiceLang)] ?? assemblyBgms[activeAssemblyId] ?? bgm,
+    );
+    const combination = combinations.find(item => item.key === selectedKey)
+      || combinations.find(item => item.key === activeRenderCombinationKey)
+      || combinations.find(item => item.key === fallbackKey)
+      || combinations[0];
+    if (!combination) return;
     setBatchRenderingLangs(true);
-    setLanguageRenderOutputs(prev => ({ ...prev, ...Object.fromEntries(combinations.map(item => [item.key, { status: 'pending' as const }])) }));
+    setActiveRenderCombinationKey(combination.key);
+    setLanguageRenderOutputs(prev => ({ ...prev, [combination.key]: { status: 'rendering' } }));
     try {
-      for (const combination of combinations) {
-        const { key, plan, code, bgmId } = combination;
-        const audio = (voiceoverMode === 'ai' ? voiceoverAudios[code] : null)
-          || { url: voiceoverMode === 'none' ? '' : voiceoverUrl || '', duration: voiceoverMode === 'none' ? 0 : voiceoverDur, cues: alignedCuesByLang[code] };
-        setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'rendering' } }));
-        try {
-          const outputPath = await goPreview(combination.script, {
-            language: code,
-            voiceoverUrl: audio.url,
-            voiceoverDur: audio.duration,
-            cues: alignedCuesByLang[code] || audio.cues,
-            outputOnly: true,
-            timeline: combination.timeline as typeof renderTimeline,
-            bgmId,
-          });
-          const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
-          setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'done', path: outputPath || undefined, previewUrl } }));
-          setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'done', path: outputPath || undefined, previewUrl, createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
-        } catch (err: any) {
-          setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'failed', error: err?.message || '生成失败' } }));
-          setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'failed', error: err?.message || '生成失败', createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
-        }
-      }
+      const { key, code, bgmId } = combination;
+      const audio = voiceoverForLanguage(code);
+      const outputPath = await goPreview(combination.script, {
+        language: code,
+        voiceoverUrl: audio.url,
+        voiceoverDur: audio.duration,
+        cues: audio.cues,
+        outputOnly: true,
+        timeline: combination.timeline as typeof renderTimeline,
+        bgmId,
+      });
+      const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
+      setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'done', path: outputPath || undefined, previewUrl } }));
+      setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'done', path: outputPath || undefined, previewUrl, createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
+    } catch (err: any) {
+      const key = combination.key;
+      setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'failed', error: err?.message || '生成失败' } }));
+      setLanguageRenderVersions(prev => ({ ...prev, [key]: [{ id: `${key}-${Date.now()}`, versionNumber: (prev[key]?.[0]?.versionNumber || 0) + 1, status: 'failed', error: err?.message || '生成失败', createdAt: new Date().toISOString() }, ...(prev[key] || [])] }));
     } finally {
       setBatchRenderingLangs(false);
     }
   };
   const retryLanguageRender = async (combination: { key: string; code: string; plan: StoryboardAssembly; bgmId: string }) => {
     const { key, code, plan, bgmId } = combination;
-    const audio = (voiceoverMode === 'ai' ? voiceoverAudios[code] : null)
-      || { url: voiceoverMode === 'none' ? '' : voiceoverUrl || '', duration: voiceoverMode === 'none' ? 0 : voiceoverDur, cues: alignedCuesByLang[code] };
+    const audio = voiceoverForLanguage(code);
     setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'rendering' } }));
     try {
       const outputPath = await goPreview(scriptForRenderLanguage(code), {
         language: code,
         voiceoverUrl: audio.url,
         voiceoverDur: audio.duration,
-        cues: alignedCuesByLang[code] || audio.cues,
+        cues: audio.cues,
         outputOnly: true,
         timeline: timelineForAssembly(plan),
         bgmId,
@@ -4734,15 +4764,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     try {
       await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
       const allVisuals = materials.filter(item => item.type !== 'audio');
-      const pool = allVisuals.filter(item => isClipCompatibleWithRatio(item, ratio));
-      if (!pool.length) {
-        setModeNotice(allVisuals.length
-          ? `素材库里没有与 ${ratio} 同方向的素材，请上传同画幅素材或调整成片比例。`
-          : '素材库暂无可匹配的视频或图片，请先上传素材。');
+      const compatiblePool = allVisuals.filter(item => isClipCompatibleWithRatio(item, ratio));
+      if (!allVisuals.length) {
+        setModeNotice('素材库暂无可匹配的视频或图片，请先上传素材。');
         return;
       }
       if (!storyboardSlots.length) {
-        const picked = pickMaterialClipsLocally(pool, duration, selected).selectedIds;
+        const picked = pickMaterialClipsLocally(compatiblePool.length ? compatiblePool : allVisuals, duration, selected).selectedIds;
         setSelected(picked);
         setScriptRecommendedMaterialIds(picked);
         setActiveFolder('recommend');
@@ -4763,12 +4791,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         .filter(item => item.id !== activeAssemblyId)
         .map(item => item.assignments)
         .filter(item => Object.keys(item).length > 0);
+      const targetUniqueCount = Math.min(storyboardSlots.length, allVisuals.length);
+      // 同画幅素材不足时，优先引入可安全裁切的其他素材，避免五个分镜只反复使用两条视频。
+      const pool = compatiblePool.length >= targetUniqueCount ? compatiblePool : allVisuals;
+      const usesCropFallback = pool === allVisuals && compatiblePool.length < targetUniqueCount;
       const hookClip = hookMaterialId ? materialById.get(hookMaterialId) : undefined;
       const slotsToMatch = hookClip ? storyboardSlots.slice(1) : storyboardSlots;
       const matchPool = hookClip ? pool.filter(item => item.id !== hookClip.id) : pool;
       const matchedAssignments = matchMaterialsToStoryboardLocally(matchPool, slotsToMatch, selected.filter(id => id !== hookMaterialId), {
         variantIndex,
         previousAssignments,
+        targetRatio: ratio,
       });
       const assignments = hookClip && storyboardSlots[0]
         ? { ...matchedAssignments, [storyboardSlots[0].id]: hookClip.id }
@@ -4805,8 +4838,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         ? `；其中 ${freshCount}/${orderedIds.length} 条为新素材（差异率 ${freshRatio}%），开场和素材顺序已按流量测试策略变化`
         : '';
       setModeNotice(hookClip
-        ? `已固定“${hookClip.name}”为第一个钩子分镜（完整素材、不按时间戳裁切），并为后续 ${Math.max(0, orderedIds.length - 1)} 个分镜完成素材匹配${diversityMessage}。`
-        : `已按“脚本语义 + 镜头角色 + 有效时长 + 版本差异”完成 ${orderedIds.length}/${storyboardSlots.length} 个分镜匹配${diversityMessage}。可逐镜替换后继续。`);
+        ? `已固定“${hookClip.name}”为第一个钩子分镜（完整素材、不按时间戳裁切），并为后续 ${Math.max(0, orderedIds.length - 1)} 个分镜完成素材匹配${diversityMessage}${usesCropFallback ? '；同画幅素材不足的镜头将自动居中裁切' : ''}。`
+        : `已按“脚本语义 + 镜头角色 + 有效时长 + 版本差异”完成 ${orderedIds.length}/${storyboardSlots.length} 个分镜匹配${diversityMessage}${usesCropFallback ? '；同画幅素材不足的镜头将自动居中裁切，以减少重复素材' : ''}。可逐镜替换后继续。`);
     } catch (error) {
       setModeNotice(error instanceof Error ? `智能选材失败：${error.message}` : '智能选材失败，请重试。');
     } finally {
@@ -5656,7 +5689,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     const bgmEl = previewBgmAudioRef.current;
     const voiceEl = previewVoiceAudioRef.current;
     const bgmUrl = selectedBgmTrack?.url || '';
-    const currentVoiceUrl = voiceoverMode === 'none' || !previewVoiceOn ? '' : voiceoverUrl || '';
+    const currentVoiceUrl = previewVoiceOn ? activeVoiceoverUrl : '';
     const bgmGain = previewBgmOn ? Math.max(0, Math.min(1, (bgmVol || 0) / 100)) * (currentVoiceUrl ? 0.5 : 1) : 0;
     const voiceGain = previewVoiceOn ? Math.max(0, Math.min(1, (voiceVol || 0) / 100)) : 0;
 
@@ -5679,7 +5712,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       voiceEl.currentTime = Math.max(0, previewTime);
       void voiceEl.play().catch(() => {});
     }
-  }, [bgmVol, previewBgmOn, previewPlaying, previewVoiceOn, selectedBgmTrack, voiceVol, voiceoverMode, voiceoverUrl]);
+  }, [activeVoiceoverUrl, bgmVol, previewBgmOn, previewPlaying, previewVoiceOn, selectedBgmTrack, voiceVol]);
   // 离开预览步时停止播放
   useEffect(() => {
     if (step !== 'preview' && step !== 'bgm') {
@@ -6468,8 +6501,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   };
 	  const toggleTts = () => {
 	    const el = ttsAudioRef.current;
-    const activeAudio = voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang] : undefined;
-    const currentVoiceUrl = activeAudio?.url || voiceoverUrl || '';
+	    const currentVoiceUrl = activeVoiceoverUrl;
 	    if (!el || !currentVoiceUrl) {
       setTtsNotice('暂时无法试听：当前语种还没有可用配音，请先生成或上传音频。');
       return;
@@ -6490,9 +6522,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     });
   };
   const startVoiceAssemblyPreview = () => {
-    const activeAudio = voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang] : undefined;
-    const currentVoiceUrl = activeAudio?.url || voiceoverUrl || '';
-    const currentVoiceDuration = activeAudio?.duration || voiceoverDur;
+    const currentVoiceUrl = activeVoiceoverUrl;
+    const currentVoiceDuration = activeVoiceDuration;
     if (!currentVoiceUrl || currentVoiceDuration <= 0) {
       setTtsNotice('暂时无法预览：当前音频时长为 0 秒，请重新上传或重新生成配音。');
       return;
@@ -7837,6 +7868,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           }
           const detectedSource = clipSourceMode(clip);
           setStoryboardAssignments(prev => ({ ...prev, [slotId]: clipId }));
+          setSelected(prev => prev.includes(clipId) ? prev : [...prev, clipId]);
           setClipEdits(prev => ({ ...prev, [slotClipEditKey(slot.id, clipId)]: defaultEditForSlot(clip, slot) }));
           setStoryboardSourcePlans(prev => ({
             ...prev,
@@ -7852,6 +7884,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           const currentIndex = storyboardSlots.findIndex(item => item.id === slotId);
           const nextSlot = storyboardSlots.slice(currentIndex + 1).find(item => !storyboardAssignments[item.id]);
           if (nextSlot) setActiveStoryboardSlotId(nextSlot.id);
+          setModeNotice(`已将“${clip.name}”应用到第 ${currentIndex + 1} 段${nextSlot ? `，请继续确认第 ${storyboardSlots.findIndex(item => item.id === nextSlot.id) + 1} 段` : '，当前分镜素材已全部确认'}。`);
         };
         const removeSlotClip = (slotId: string) => {
           setStoryboardAssignments(prev => {
@@ -9262,7 +9295,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     )}
                   </div>
                 </div>
-                <div className="grid gap-4 lg:grid-cols-[190px_minmax(0,1fr)]">
+                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] 2xl:grid-cols-[260px_minmax(0,1fr)]">
                   <div className="relative overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: '9 / 16' }}>
                     {voicePreviewIdx !== null && previewable[voicePreviewIdx] ? (
                       <video
@@ -9298,7 +9331,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       {cues.map((cue, i) => (
                         <div key={`${cue.start}-${i}`} onClick={() => setSubPreviewIdx(i)}
                           className={`rounded-lg border px-2.5 py-2 text-xs transition ${i === subPreviewIdx ? 'border-accent/30 bg-accent-glow' : 'border-transparent hover:bg-surface-2'}`}>
-                          <div className="mb-1 flex items-center gap-1.5">
+                          <div className="mb-1 flex flex-wrap items-center gap-1.5">
                             <input type="number" min={0} step={0.05} value={cue.start}
                               onChange={e => patchAlignedCue(i, { start: Math.max(0, +e.target.value) })}
                               className="w-16 rounded border border-border bg-white px-1.5 py-1 font-mono text-[10px] text-text-muted" />
@@ -9306,7 +9339,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                             <input type="number" min={0} step={0.05} value={cue.end}
                               onChange={e => patchAlignedCue(i, { end: Math.max(cue.start + 0.1, +e.target.value) })}
                               className="w-16 rounded border border-border bg-white px-1.5 py-1 font-mono text-[10px] text-text-muted" />
-                            <span className="ml-auto text-[9px] font-bold text-text-muted">{cue.words?.length ? `口播音轨 · ${cue.words.length} 词已对齐` : '口播音轨 · 句级时间'}</span>
+                            <span className="basis-full whitespace-nowrap text-[9px] font-bold text-text-muted sm:ml-auto sm:basis-auto">{cue.words?.length ? `口播音轨 · ${cue.words.length} 词已对齐` : '口播音轨 · 句级时间'}</span>
                           </div>
                           <textarea value={cue.text} rows={2} onChange={e => patchAlignedCue(i, { text: e.target.value })}
                             className="w-full resize-none rounded border border-border bg-white px-2 py-1.5 text-xs leading-5 text-text-secondary outline-none focus:border-accent" />
@@ -9759,7 +9792,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </div>
                 </div>
                 <audio ref={previewBgmAudioRef} src={selectedBgmTrack?.url || undefined} preload="auto" />
-                <audio ref={previewVoiceAudioRef} src={voiceoverMode === 'none' ? undefined : voiceoverUrl || undefined} preload="auto" />
+                <audio ref={previewVoiceAudioRef} src={activeVoiceoverUrl || undefined} preload="auto" />
               </div>
             </div>
 
@@ -9791,7 +9824,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="mt-4 grid grid-cols-3 gap-2">
               {[
                 { label: '原声', on: previewOriginalOn, toggle: () => setPreviewOriginalOn(value => !value) },
-                { label: '口播', on: previewVoiceOn && voiceoverMode !== 'none' && Boolean(voiceoverUrl), toggle: () => setPreviewVoiceOn(value => !value), disabled: voiceoverMode === 'none' || !voiceoverUrl },
+                { label: '口播', on: previewVoiceOn && Boolean(activeVoiceoverUrl), toggle: () => setPreviewVoiceOn(value => !value), disabled: !activeVoiceoverUrl },
                 { label: '配乐', on: previewBgmOn && Boolean(selectedBgmTrack?.url), toggle: () => setPreviewBgmOn(value => !value), disabled: !selectedBgmTrack?.url },
               ].map(item => (
                 <button
@@ -9810,7 +9843,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             <div className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5">
               <p className="truncate text-xs font-bold text-text-primary">{selectedBgmTrack?.name || '当前未选择配乐'}</p>
               <p className="mt-1 text-[10px] text-text-muted">
-                {previewVoiceOn && voiceoverUrl && bgm ? '口播出现时，配乐按当前设置自动降低' : bgm ? `配乐音量 ${bgmVol}%` : '选择一首音乐即可试听混剪效果'}
+                {previewVoiceOn && activeVoiceoverUrl && bgm ? '口播出现时，配乐按当前设置自动降低' : bgm ? `配乐音量 ${bgmVol}%` : '选择一首音乐即可试听混剪效果'}
               </p>
             </div>
             {previewNote && <p className="mt-2 text-[11px] leading-relaxed text-amber-600">素材缺少可播放源文件，请返回上一步更换或上传素材。</p>}
@@ -10249,7 +10282,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </div>
                 )}
                 <audio ref={previewBgmAudioRef} src={selectedBgmTrack?.url || undefined} preload="auto" />
-                <audio ref={previewVoiceAudioRef} src={voiceoverMode === 'none' ? undefined : voiceoverUrl || undefined} preload="auto" />
+                <audio ref={previewVoiceAudioRef} src={activeVoiceoverUrl || undefined} preload="auto" />
                 {previewIdx !== null && (
                   <button onClick={stopPreview} className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-black/55 flex items-center justify-center text-white">
                     <X size={14} />
@@ -10275,12 +10308,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     </div>
                     <button
                       type="button"
-                      onClick={() => void renderLanguageVersions()}
-                      disabled={batchRenderingLangs || outputVersions.length === 0}
+                      onClick={() => void renderSelectedLanguageVersion(activeOutputVersion?.key)}
+                      disabled={batchRenderingLangs || !activeOutputVersion}
                       className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                     >
                       {batchRenderingLangs ? <Loader2 size={13} className="animate-spin" /> : <Languages size={13} />}
-                      {batchRenderingLangs ? '生成中...' : '生成全部视频'}
+                      {batchRenderingLangs ? '生成中...' : '生成选中的视频'}
                     </button>
                   </div>
                   <div className="mt-3 grid max-h-[360px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
@@ -10351,15 +10384,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       </div>
                     </div>
                   )}
-                </div>
-                <div className="mt-4 rounded-2xl border border-accent/20 bg-accent/5 p-4">
-                  <div className="flex items-start gap-3"><Globe size={16} className="mt-0.5 shrink-0 text-accent" /><div><p className="text-xs font-black text-text-primary">平台发布建议</p>
-                    <p className="mt-1 text-xs leading-relaxed text-text-secondary">{platform === 'youtube'
-                      ? '相同画面的多语言版本建议合并为 1 个 YouTube 视频，不同语言作为多语言音轨；只有素材、开场或叙事明显不同时才建议独立发布。'
-                      : platform === 'tiktok'
-                        ? '建议每套内容只选择 1 个最佳音色与配乐版本发布；仅更换音色、配乐或字幕的候选不建议在同一账号集中发布。'
-                        : '建议每套内容只发布 1 个采用版本；仅更换配乐、音色、字幕或封面不视为独立内容。'}</p>
-                  </div></div>
                 </div>
                 <button
                   onClick={() => void downloadMp4()}

@@ -5804,6 +5804,7 @@ studioRouter.post('/voiceover', async (req, res) => {
 
 const BGM_ROOT = path.join(__dirname, '../../data/bgm');
 const BGM_FILE = path.join(__dirname, '../../data/bgm.json');
+const BUILTIN_BGM_ROOT = path.join(__dirname, '../assets/bgm');
 
 interface BgmTrack {
   id: string;
@@ -5821,19 +5822,84 @@ interface BgmTrack {
   objectKey?: string;
 }
 
+const BUILTIN_BGM_TRACKS: BgmTrack[] = [
+  {
+    id: 'builtin-tech-pulse',
+    name: '灵枢推荐配乐01',
+    mood: '科技感 · 稳定推进',
+    duration: 24,
+    file: 'tech-pulse.mp3',
+    url: '/bgm/shared/tech-pulse.mp3',
+    recommended: true,
+    builtin: true,
+    scope: 'shared',
+    uploadedBy: '灵枢官方曲库',
+    createdAt: '2026-08-21T00:00:00.000Z',
+  },
+  {
+    id: 'builtin-clean-corporate',
+    name: '灵枢推荐配乐02',
+    mood: '企业感 · 清爽克制',
+    duration: 24,
+    file: 'clean-corporate.mp3',
+    url: '/bgm/shared/clean-corporate.mp3',
+    recommended: true,
+    builtin: true,
+    scope: 'shared',
+    uploadedBy: '灵枢官方曲库',
+    createdAt: '2026-08-21T00:00:01.000Z',
+  },
+  {
+    id: 'builtin-product-energy',
+    name: '灵枢推荐配乐03',
+    mood: '产品展示 · 轻快有力',
+    duration: 24,
+    file: 'product-energy.mp3',
+    url: '/bgm/shared/product-energy.mp3',
+    recommended: true,
+    builtin: true,
+    scope: 'shared',
+    uploadedBy: '灵枢官方曲库',
+    createdAt: '2026-08-21T00:00:02.000Z',
+  },
+];
+
+function ensureBuiltinBgmFiles(): BgmTrack[] {
+  const sharedDir = path.join(BGM_ROOT, 'shared');
+  try { fs.mkdirSync(sharedDir, { recursive: true }); } catch { return []; }
+  return BUILTIN_BGM_TRACKS.filter(track => {
+    const source = path.join(BUILTIN_BGM_ROOT, track.file);
+    const target = path.join(sharedDir, track.file);
+    if (!fs.existsSync(source)) return false;
+    try {
+      if (!fs.existsSync(target) || fs.statSync(target).size !== fs.statSync(source).size) fs.copyFileSync(source, target);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function loadBgm(): BgmTrack[] {
-  try { return JSON.parse(fs.readFileSync(BGM_FILE, 'utf8')) as BgmTrack[]; } catch { return []; }
+  let uploaded: BgmTrack[] = [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(BGM_FILE, 'utf8')) as BgmTrack[];
+    uploaded = Array.isArray(parsed) ? parsed.filter(track => !track.builtin) : [];
+  } catch { /* first run */ }
+  const builtins = ensureBuiltinBgmFiles();
+  const builtinIds = new Set(builtins.map(track => track.id));
+  return [...builtins, ...uploaded.filter(track => !builtinIds.has(track.id))];
 }
 function persistBgm(list: BgmTrack[]): void {
   try { fs.mkdirSync(path.dirname(BGM_FILE), { recursive: true }); } catch { /* ignore */ }
-  fs.writeFileSync(BGM_FILE, JSON.stringify(list, null, 2), 'utf8');
+  fs.writeFileSync(BGM_FILE, JSON.stringify(list.filter(track => !track.builtin), null, 2), 'utf8');
 }
 
 function userBgms(tenantId: string): BgmTrack[] {
   // Pre-isolation uploads have no tenantId and live at data/bgm/<file>.
   // Keep those legacy tracks visible as the authenticated shared library;
   // new uploads remain strictly scoped to their owning tenant.
-  return loadBgm().filter(track => !track.builtin && (track.scope === 'shared' || !track.tenantId || track.tenantId === tenantId));
+  return loadBgm().filter(track => track.builtin || track.scope === 'shared' || !track.tenantId || track.tenantId === tenantId);
 }
 
 function sortBgmTracks(list: BgmTrack[]): BgmTrack[] {
@@ -5903,6 +5969,10 @@ studioRouter.delete('/bgm/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const list = loadBgm();
   const candidate = list.find(x => x.id === req.params.id);
+  if (candidate?.builtin) {
+    res.status(403).json({ ok: false, error: '官方配乐不可删除' });
+    return;
+  }
   const shared = Boolean(candidate && (candidate.scope === 'shared' || !candidate.tenantId));
   const admin = shared ? await requireAdminUser(req) : null;
   const t = candidate && (candidate.tenantId === tenantId || (shared && admin)) ? candidate : undefined;

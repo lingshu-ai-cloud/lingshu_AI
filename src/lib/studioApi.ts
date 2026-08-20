@@ -197,6 +197,9 @@ export interface RenderSpec {
   materials: string[];
   timeline?: {
     name: string;
+    url?: string;
+    type?: 'video' | 'image' | 'audio';
+    poster?: string;
     trimStart?: number;
     trimEnd?: number;
     speed?: number;
@@ -278,9 +281,12 @@ function localManifest(spec: RenderSpec): RenderManifest {
     },
     script: spec.script ?? '',
     timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name })))
-      .map((item, index) => ({ index, ...item, url: null })),
-    voiceover: { voice: spec.voice ?? null, url: null },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: null },
+      .map((item, index) => {
+        const candidateUrl = Reflect.get(item, 'url');
+        return { index, ...item, url: typeof candidateUrl === 'string' ? candidateUrl : null };
+      }),
+    voiceover: { voice: spec.voice ?? null, url: spec.voiceoverUrl ?? null },
+    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: spec.coverUrl ?? null },
     bgm: { id: spec.bgm ?? null, url: null },
     subtitles: spec.subtitles,
   };
