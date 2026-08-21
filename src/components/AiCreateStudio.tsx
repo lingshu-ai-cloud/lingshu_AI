@@ -70,16 +70,35 @@ export function validateStudioTimeline(items: TimelineValidationItem[]): string[
   return issues;
 }
 
-function pendingClaimLocations(script: string, productInfo: string): string[] {
-  const source = productInfo.toLowerCase();
+export function pendingClaimLocations(script: string, productInfo: string): string[] {
+  const source = String(productInfo || '');
+  const sourceLower = source.toLowerCase();
+  const sourceComparable = sourceLower.replace(/\s+/g, ' ');
+  const spokenField = /^(?:台词|字幕|口播|人物说|旁白|voiceover|vo|subtitle|caption|dialogue)\s*[：:]\s*(.+)$/i;
+  const supportedByCategory = [
+    { claim: /\bCE\b/i, evidence: /\bCE\b/i },
+    { claim: /\bFDA\b/i, evidence: /\bFDA\b/i },
+    { claim: /\bSGS\b/i, evidence: /\bSGS\b/i },
+    { claim: /(?:起订|\bMOQ\b)/i, evidence: /(?:起订|最小订单|\bMOQ\b)/i },
+    { claim: /(?:交期|delivery\s*(?:time|lead)|lead\s*time)/i, evidence: /(?:交期|delivery\s*(?:time|lead)|lead\s*time)/i },
+    { claim: /(?:认证|certif(?:y|ied|ication))/i, evidence: /(?:认证|certif(?:y|ied|ication))/i },
+    { claim: /(?:客户案例|合作案例|case\s*study)/i, evidence: /(?:客户案例|合作案例|case\s*study)/i },
+    { claim: /(?:销量|sales\s*volume)/i, evidence: /(?:销量|sales\s*volume)/i },
+    { claim: /(?:保证|guarantee)/i, evidence: /(?:保证|guarantee)/i },
+  ];
+
   return script.split('\n').map(line => line.trim()).filter(line => {
-    // English certification abbreviations must be whole tokens. Substring
-    // matching `CE` used to flag harmless prose such as "Selected ..." as an
-    // unsupported certification claim.
-    const hasRiskTerm = /(?:起订|交期|\d+\s*天|认证|价格|\$|客户|案例|销量|保证)|\b(?:MOQ|CE|FDA|SGS|guarantee)\b/i.test(line);
-    if (!line || !hasRiskTerm) return false;
-    const facts = line.match(/(?:(?:起订|交期|认证|价格|\$|客户案例|销量|保证)|\b(?:MOQ|CE|FDA|SGS|guarantee)\b)[^，。；\n]*/ig) || [];
-    return facts.some(fact => !source.includes(fact.toLowerCase()));
+    const speech = line.match(spokenField)?.[1]?.trim();
+    // 环境、构图、画面、运镜等是制作指令，不是对外商业声明，不参与企业事实硬校验。
+    if (!speech) return false;
+    if (supportedByCategory.some(({ claim, evidence }) => claim.test(speech) && !evidence.test(source))) return true;
+
+    // 数字交期和明确价格必须在企业资料中出现同一个值，避免凭空承诺。
+    const exactClaims = [
+      ...(speech.match(/\b\d+\s*(?:天|days?)\b/gi) || []),
+      ...(speech.match(/(?:[$€£¥￥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|CNY|RMB))/gi) || []),
+    ];
+    return exactClaims.some(claim => !sourceComparable.includes(claim.toLowerCase().replace(/\s+/g, ' ')));
   }).slice(0, 4);
 }
 
@@ -1640,6 +1659,16 @@ function scriptQualityFailure(response: StudioScriptResult, fallback: string, re
   return status === 'rejected'
     ? `生成已停止（质量校验未通过）：${reason}`
     : reason;
+}
+
+const REJECTED_STORYBOARD_ASSISTANT_MESSAGE = '当前测试账号素材太少啦，换个创作模式再试试！';
+
+function announceRejectedStoryboard(response: StudioScriptResult): void {
+  const status = normalizedScriptQualityStatus(response);
+  if (status !== 'rejected' && status !== 'failed') return;
+  window.dispatchEvent(new CustomEvent('lingshu-assistant-say', {
+    detail: { message: REJECTED_STORYBOARD_ASSISTANT_MESSAGE, durationMs: 7_000 },
+  }));
 }
 
 function qualityFields(response: StudioScriptResult): Pick<ModeScriptOutput, 'qualityStatus' | 'qualityChecks' | 'validationWarnings' | 'validationIssues' | 'materialCoveragePercent' | 'pendingMaterialScenes' | 'missingMaterials'> {
@@ -4747,6 +4776,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       const response = await studioApi.script(
         { materials: matNames, productInfo: activeProductInfo, language: lang, platform, duration, scriptType: type, generationMode: mode, cooperationRoute, provider, audience, sellingPoints, tone, videoTheme: videoThemePayload }, script,
       );
+      if (type === 'storyboard') announceRejectedStoryboard(response);
       const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
       if (qualityFailure) throw new Error(qualityFailure);
       const s = response.script || '';
@@ -4923,6 +4953,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           },
           '',
         ), 120_000, '后端模型生成超过 120 秒。');
+        announceRejectedStoryboard(response);
         const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
         if (qualityFailure) throw new Error(qualityFailure);
         nextScript = sanitizeStoryboardScript(response.script || '', activeProductInfo, activeProductLabel).trim();
@@ -5013,6 +5044,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           '',
           { signal: controller.signal },
         );
+        announceRejectedStoryboard(response);
         const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
         if (qualityFailure) throw new Error(qualityFailure);
         nextScript = sanitizeStoryboardScript(response.script || '', product, activeProductLabel).trim();
@@ -5158,6 +5190,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             },
             '',
         ), 300_000, '后端模型生成超过 300 秒，请稍后重试。');
+        announceRejectedStoryboard(response);
         const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
         if (qualityFailure) throw new Error(qualityFailure);
         const normalized = ensureDistinctCloneStoryboard({
@@ -5249,6 +5282,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         },
         currentScript,
       );
+      announceRejectedStoryboard(response);
       const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。');
       if (qualityFailure) throw new Error(qualityFailure);
       const optimized = response.script || '';
@@ -6032,6 +6066,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         { materials: matNamesForDemo, productInfo: activeProductInfo, language: lang, platform, duration, scriptType, generationMode: mode, provider, audience, sellingPoints, tone, videoTheme: videoThemePayload },
         script,
       );
+      if (scriptType === 'storyboard') announceRejectedStoryboard(scriptResp);
       const qualityFailure = scriptQualityFailure(scriptResp, 'AI脚本未通过检查，未返回可编辑结果。');
       if (qualityFailure) throw new Error(qualityFailure);
       if (!String(scriptResp.script || '').trim()) throw new Error('模型没有返回可用脚本。');

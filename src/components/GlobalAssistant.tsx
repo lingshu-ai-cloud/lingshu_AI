@@ -49,6 +49,7 @@ const ASSISTANT_AUTO_RETRACT_MS = 5_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 
 type AssistantPerformance = { phase: string; message?: string };
+type AssistantSpeech = { id: number; message: string };
 
 const PERFORMANCE_LINES: Record<string, string[]> = {
   script: ['我正在把卖点排成能拍的镜头，马上就好。', '好内容值得多想几秒，我先帮你把逻辑捋顺。', '别急，我正在检查每个镜头能不能真正执行。'],
@@ -414,11 +415,13 @@ export default function GlobalAssistant({
   const [enterpriseContext, setEnterpriseContext] = useState('');
   const [performance, setPerformance] = useState<AssistantPerformance | null>(null);
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
+  const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
   const longPressRef = useRef<number | null>(null);
   const longPressedRef = useRef(false);
   const featureGuideTimerRef = useRef<number | null>(null);
   const featureGuideHoverTimerRef = useRef<number | null>(null);
+  const speechTimerRef = useRef<number | null>(null);
   const seenGuideIdsRef = useRef(new Set<string>());
   const lastGuideShownAtRef = useRef(0);
   const lastGuideTargetRef = useRef<HTMLElement | null>(null);
@@ -754,6 +757,25 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string; durationMs?: number }>).detail;
+      const message = detail?.message?.trim();
+      if (!message) return;
+      if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
+      setSpeechBubble({ id: Date.now(), message });
+      setLauncherRetracted(false);
+      setMode('breathing');
+      const durationMs = Math.max(2_500, Math.min(15_000, Number(detail.durationMs || 7_000)));
+      speechTimerRef.current = window.setTimeout(() => setSpeechBubble(null), durationMs);
+    };
+    window.addEventListener('lingshu-assistant-say', handler);
+    return () => {
+      window.removeEventListener('lingshu-assistant-say', handler);
+      if (speechTimerRef.current) window.clearTimeout(speechTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ text?: string; assistantText?: string; context?: Partial<AssistantContext>; tool?: AssistantTool }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
@@ -904,7 +926,24 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && !performance && featureGuide && (
+        {mode === 'breathing' && !launcherAtEdge && !performance && speechBubble && (
+          <motion.div
+            key={`speech-${speechBubble.id}`}
+            data-lingshu-assistant-speech="true"
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.97 }}
+            className="absolute bottom-1 right-[72px] z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢</p>
+            <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{speechBubble.message}</p>
+            <span className="absolute -right-2 bottom-6 h-4 w-4 rotate-45 border-r border-t border-emerald-200 bg-white" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mode === 'breathing' && !launcherAtEdge && !performance && !speechBubble && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-lingshu-guide-bubble={featureGuide.id}
@@ -937,7 +976,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && (
+        {page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && !speechBubble && (
           <motion.button
             type="button"
             initial={{ opacity: 0, x: 6 }}
