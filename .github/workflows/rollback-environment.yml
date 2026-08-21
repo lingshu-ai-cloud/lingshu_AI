@@ -1,0 +1,83 @@
+name: Roll back environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - internal
+          - trial
+          - production
+      production_confirmation:
+        description: For production only, enter ROLLBACK production
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate rollback request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the protected rollback workflow from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Rollbacks must be started from the main branch." >&2
+          exit 1
+
+      - name: Validate production confirmation
+        if: inputs.environment == 'production' && inputs.production_confirmation != 'ROLLBACK production'
+        run: |
+          echo "Production rollback requires the exact confirmation: ROLLBACK production" >&2
+          exit 1
+
+  rollback:
+    name: Roll back ${{ inputs.environment }}
+    needs: validate
+    runs-on:
+      - self-hosted
+      - linux
+      - lingshu
+      - ${{ inputs.environment }}
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      packages: read
+      deployments: write
+    steps:
+      - name: Check out trusted rollback scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore the previous immutable release
+        env:
+          DEPLOY_ACTOR: ${{ github.actor }}
+          DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash deploy/release.sh rollback "${{ inputs.environment }}"
+
+      - name: Record rollback in job summary
+        run: |
+          echo "### Rollback complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Environment: ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Runner: ${{ runner.name }}" >> "$GITHUB_STEP_SUMMARY"
