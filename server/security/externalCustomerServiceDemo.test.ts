@@ -74,6 +74,8 @@ assert.match(customerUi, /data-testid="large-order-warning-tag"/, 'the large-ord
 const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'), customerUi.indexOf('function CustomerIntentActionPanel'));
 assert.doesNotMatch(chatThreadUi, /simulation\?\.warning|大单预警/, 'the large-order warning must not occupy the conversation transcript');
 assert.match(customerUi, /data-testid="conversation-list"[^>]*w-52[^>]*xl:w-56/, 'the conversation list must stay compact so the transcript remains prominent on laptops');
+const customerListItemUi = customerUi.slice(customerUi.indexOf('const renderCustomer'), customerUi.indexOf('return (\n    <aside data-testid="conversation-list"'));
+assert.doesNotMatch(customerListItemUi, /lifecycleLabel|engagementLabel/, 'customer list rows must not repeat lifecycle or reply-state badges from the conversation header');
 assert.match(customerUi, /data-testid="conversation-chat-thread"/, 'the main conversation transcript needs a stable layout target');
 assert.match(customerUi, /data-testid="conversation-workspace-main"/, 'the three-column workspace must start directly without stacked page banners');
 assert.doesNotMatch(customerUi, /mockCustomerCount/, 'the simulation workspace must not reserve a full-width banner above conversations');

@@ -6,8 +6,10 @@ import { getWhatsAppCustomers, patchWhatsAppCustomer } from './historyImport.js'
 const dataDir = path.join(process.cwd(), 'data');
 const customersFile = path.join(dataDir, 'whatsapp-customers.json');
 const interactionsFile = path.join(dataDir, 'whatsapp-interactions.json');
+const pilotEventsFile = path.join(dataDir, 'sales-pilot-events.json');
 const originalCustomers = fs.existsSync(customersFile) ? fs.readFileSync(customersFile) : null;
 const originalInteractions = fs.existsSync(interactionsFile) ? fs.readFileSync(interactionsFile) : null;
+const originalPilotEvents = fs.existsSync(pilotEventsFile) ? fs.readFileSync(pilotEventsFile) : null;
 
 const restore = (file: string, value: Buffer | null) => {
   if (value) fs.writeFileSync(file, value);
@@ -58,6 +60,9 @@ try {
   assert.equal(after.hasUnread, false);
   assert.equal(after.pendingDraft, 'Let me confirm the exact lead time for you.');
   assert.deepEqual(after.orders.map((item: any) => item.id), ['QA-001']);
+  assert.equal(after.stage, 'won');
+  assert.equal(after.salesState.lifecycle.stage, 'closed');
+  assert.equal(after.salesState.lifecycle.outcome, 'won');
 
   patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_a_971500000001', patch: { pendingDraft: null } });
   assert.equal(getWhatsAppCustomers('tenant_a').find(item => item.id === 'wa_tenant_a_971500000001')?.pendingDraft, undefined);
@@ -68,4 +73,5 @@ try {
 } finally {
   restore(customersFile, originalCustomers);
   restore(interactionsFile, originalInteractions);
+  restore(pilotEventsFile, originalPilotEvents);
 }

@@ -12,6 +12,14 @@ import { assessBant, selectProgressionGoal, type BantAssessment, type Progressio
 import { automationFailureHandoff, evaluateHandoff, notifyCustomerHandoff, shouldRestrictToPublicInfo } from '../sales/handoff.js';
 import { advanceSpinStage, selectSpinGuidance, type SpinState, type SpinGuidance } from '../sales/spin.js';
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
+import { projectSalesConversationEvent } from '../sales/conversationProjector.js';
+import { legacyStageFromSalesState, salesStateFromLegacyCustomer } from '../sales/legacyStateAdapter.js';
+import type { SalesConversationEvent } from '../sales/conversationEvents.js';
+import type { ExecutionMode, SalesConversationStateV1 } from '../sales/conversationState.js';
+import { buyerSignalEvents, qualificationEvidenceEvents } from '../sales/salesSignalExtractor.js';
+import { decideNextBestAction } from '../sales/nextBestAction.js';
+import { whatsappWindowState } from '../sales/whatsappWindow.js';
+import { recordPilotEvent } from '../sales/pilotMetrics.js';
 import { r2Upload } from '../storage/r2.js';
 import { store } from '../storage/index.js';
 import { sendTenantWhatsAppText } from './send.js';
@@ -98,6 +106,7 @@ interface StoredCustomer {
   orders?: StoredCustomerOrder[];
   todoCompletedAt?: string;
   hasUnread?: boolean;
+  salesState?: SalesConversationStateV1;
 }
 
 interface NightModeEvent {
@@ -495,28 +504,96 @@ function normalizedCustomerSource(source?: string): string {
     : 'whatsapp';
 }
 
-function stageByTimestamp(lastActiveAt: number): CustomerStage {
-  const days = Math.floor((Date.now() - lastActiveAt) / 86_400_000);
-  if (days <= 30) return 'inquiry';
-  if (days <= 60) return 'silent30';
-  return 'silent60';
+function hasPaidOrder(customer: Pick<StoredCustomer, 'orders'>): boolean {
+  return (customer.orders ?? []).some(order => order.status === 'paid');
+}
+
+function executionModeFromHandling(mode: HandlingMode): ExecutionMode {
+  if (mode === 'ai_auto') return 'ai_auto';
+  if (mode === 'human_needed') return 'mandatory_handoff';
+  return 'ai_draft';
+}
+
+function normalizedSalesState(customer: StoredCustomer, now = Date.now()): SalesConversationStateV1 {
+  return salesStateFromLegacyCustomer({
+    stage: customer.stage,
+    lastActiveAt: customer.lastActiveAt,
+    createdAt: customer.createdAt,
+    updatedAt: customer.updatedAt,
+    handlingMode: customer.handlingMode,
+    hasPaidOrder: hasPaidOrder(customer),
+    salesState: customer.salesState,
+  }, now);
+}
+
+function salesStateWithKnownMessageTimes(
+  state: SalesConversationStateV1,
+  tenantId: string,
+  customerIdValue: string,
+  sourceInteractions = interactions(),
+): SalesConversationStateV1 {
+  const messages = sourceInteractions.filter(item => item.tenantId === tenantId && item.customerId === customerIdValue && item.type !== 'system');
+  if (!messages.length) return state;
+  const lastBuyerMessageAt = messages.filter(item => item.type === 'msg_in').at(-1)?.timestamp;
+  const lastSellerMessageAt = messages.filter(item => item.type === 'msg_out_ai' || item.type === 'msg_out_human').at(-1)?.timestamp;
+  if (!lastBuyerMessageAt && !lastSellerMessageAt) return state;
+  return {
+    ...state,
+    engagement: {
+      ...state.engagement,
+      ...(lastBuyerMessageAt ? { lastBuyerMessageAt } : {}),
+      ...(lastSellerMessageAt ? { lastSellerMessageAt } : {}),
+    },
+  };
+}
+
+function stateWithHandlingMode(state: SalesConversationStateV1, mode: HandlingMode, updatedAt: string): SalesConversationStateV1 {
+  const humanNeeded = mode === 'human_needed';
+  const executionOrder: Record<ExecutionMode, number> = { ai_auto: 0, ai_draft: 1, human_approval: 2, mandatory_handoff: 3 };
+  const requestedExecution = executionModeFromHandling(mode);
+  const executionMode = executionOrder[state.authorityRisk.executionMode] >= executionOrder[requestedExecution]
+    ? state.authorityRisk.executionMode
+    : requestedExecution;
+  const preserveHumanOwnership = state.channelOwnership.handoffStatus === 'requested' || state.channelOwnership.handoffStatus === 'accepted';
+  return {
+    ...state,
+    authorityRisk: {
+      ...state.authorityRisk,
+      executionMode,
+      updatedAt,
+    },
+    channelOwnership: {
+      ...state.channelOwnership,
+      owner: humanNeeded ? (state.channelOwnership.handoffStatus === 'accepted' ? state.channelOwnership.owner : { type: 'unassigned' }) : preserveHumanOwnership ? state.channelOwnership.owner : { type: 'ai' },
+      handoffStatus: humanNeeded ? (state.channelOwnership.handoffStatus === 'accepted' ? 'accepted' : 'requested') : preserveHumanOwnership ? state.channelOwnership.handoffStatus : state.channelOwnership.handoffStatus,
+      updatedAt,
+    },
+  };
 }
 
 export function recomputeWhatsAppCustomerStages(now = Date.now()): number {
   const list = customers();
   let changed = 0;
   const next = list.map(customer => {
-    // Business milestones are explicit CRM states and must not be downgraded
-    // merely because the WhatsApp conversation has been quiet for a while.
-    if (customer.stage === 'quoted' || customer.stage === 'won') return customer;
-    const stage = stageByTimestamp(customer.lastActiveAt || now);
-    if (stage === customer.stage) return customer;
+    const before = normalizedSalesState(customer, now);
+    const salesState = projectSalesConversationEvent(before, {
+      id: `engagement:${customer.id}:${new Date(now).toISOString().slice(0, 10)}`,
+      type: 'engagement_recomputed',
+      source: 'system',
+      occurredAt: now,
+      asOf: now,
+    });
+    const stage = legacyStageFromSalesState(salesState);
+    const stateChanged = !customer.salesState || salesState.engagement.status !== before.engagement.status;
+    if (!stateChanged && stage === customer.stage) return customer;
     changed += 1;
+    const dormant = salesState.engagement.status === 'dormant_30d' || salesState.engagement.status === 'dormant_60d';
     return {
       ...customer,
       stage,
-      handlingMode: stage === 'silent30' || stage === 'silent60' ? 'ai_draft' as HandlingMode : customer.handlingMode,
-      handlingReason: stage === 'silent30' || stage === 'silent60'
+      salesState,
+      handlingMode: dormant && customer.handlingMode !== 'human_needed' ? 'ai_draft' as HandlingMode : customer.handlingMode,
+      handlingReason: dormant
         ? '\u5ba2\u6237\u5df2\u6c89\u9ed8\uff0cAI \u5df2\u51c6\u5907\u5524\u9192\u8ddf\u8fdb'
         : customer.handlingReason,
       updatedAt: new Date(now).toISOString(),
@@ -592,34 +669,56 @@ function customerId(tenantId: string, waNumber: string): string {
   return `wa_${tenantId}_${waNumber}`.replace(/[^\w-]/g, '_');
 }
 
-function upsertCustomer(input: { tenantId: string; waNumber: string; name?: string; body?: string; lastActiveAt?: number; patch?: Partial<StoredCustomer> }): StoredCustomer {
+function upsertCustomer(input: {
+  tenantId: string;
+  waNumber: string;
+  name?: string;
+  body?: string;
+  lastActiveAt?: number;
+  patch?: Partial<StoredCustomer>;
+  salesEvent?: SalesConversationEvent;
+  salesEvents?: SalesConversationEvent[];
+}): StoredCustomer {
   const list = customers();
   const id = customerId(input.tenantId, input.waNumber);
   const now = new Date().toISOString();
   const index = list.findIndex(item => item.id === id);
-  const lastActiveAt = input.lastActiveAt ?? Date.now();
+  const initialActivityAt = input.lastActiveAt ?? Date.now();
   const base: StoredCustomer = index >= 0 ? list[index] : {
     id,
     tenantId: input.tenantId,
     waNumber: input.waNumber,
     name: input.name || input.waNumber,
     language: detectLanguage(input.body || ''),
-    stage: stageByTimestamp(lastActiveAt),
+    stage: 'lead',
     handlingMode: 'ai_draft',
     handlingReason: 'WhatsApp 新询盘已进入待确认',
     intentScore: 45,
-    lastActiveAt,
+    lastActiveAt: initialActivityAt,
     createdAt: now,
     updatedAt: now,
     aiAutoCount: 0,
   };
+  const lastActiveAt = input.lastActiveAt === undefined
+    ? base.lastActiveAt
+    : Math.max(base.lastActiveAt, input.lastActiveAt);
+  const patchedBase: StoredCustomer = { ...base, ...input.patch, lastActiveAt };
+  const explicitLegacyStage = input.patch?.stage && input.patch.stage !== base.stage;
+  let salesState = input.patch?.salesState || normalizedSalesState(explicitLegacyStage
+    ? { ...patchedBase, salesState: undefined }
+    : patchedBase);
+  const salesEvents = [...(input.salesEvent ? [input.salesEvent] : []), ...(input.salesEvents || [])];
+  for (const event of salesEvents) salesState = projectSalesConversationEvent(salesState, event);
+  const handlingMode = input.patch?.handlingMode || base.handlingMode;
+  salesState = stateWithHandlingMode(salesState, handlingMode, now);
   const next: StoredCustomer = {
     ...base,
     ...input.patch,
     name: input.name || base.name,
     language: base.languageLocked ? base.language : (input.body ? detectLanguage(input.body) : base.language || detectLanguage('')),
-    stage: stageByTimestamp(lastActiveAt),
-    lastActiveAt: Math.max(base.lastActiveAt, lastActiveAt),
+    stage: legacyStageFromSalesState(salesState),
+    salesState,
+    lastActiveAt,
     updatedAt: now,
   };
   if (index >= 0) list[index] = next;
@@ -641,10 +740,42 @@ function addInteraction(item: StoredInteraction): boolean {
     ? list.some(existing => existing.tenantId === item.tenantId && existing.metaMessageId === item.metaMessageId)
     : list.some(existing => existing.id === item.id);
   if (exists) return false;
+  const previousBuyerBodies = item.type === 'msg_in'
+    ? list.filter(existing => existing.tenantId === item.tenantId && existing.customerId === item.customerId && existing.type === 'msg_in').map(existing => existing.body.normalize('NFKC').trim().toLowerCase())
+    : [];
   list.push(item);
   list.sort((a, b) => a.timestamp - b.timestamp);
   writeInteractions(list);
   void mirrorInteractionToPocketBase(item).catch(error => console.error('[whatsapp-pb-interaction]', error));
+  if (item.type !== 'system') {
+    const directionEvent: SalesConversationEvent = item.type === 'msg_in'
+      ? { id: `interaction:${item.id}`, type: 'buyer_message_received', source: 'whatsapp', occurredAt: item.timestamp }
+      : {
+          id: `interaction:${item.id}`,
+          type: 'seller_message_sent',
+          source: 'whatsapp',
+          occurredAt: item.timestamp,
+          actor: item.type === 'msg_out_ai' ? 'ai' : 'human',
+        };
+    const signalEvents = item.type === 'msg_in' ? buyerSignalEvents(item.body, item.id, item.timestamp) : [];
+    upsertCustomer({
+      tenantId: item.tenantId,
+      waNumber: item.waNumber,
+      lastActiveAt: item.timestamp,
+      salesEvents: [directionEvent, ...signalEvents],
+    });
+    if (item.type === 'msg_in' && item.audit?.historicalImport !== true) {
+      const buyerTurn = previousBuyerBodies.length + 1;
+      signalEvents.filter(event => event.type === 'evidence_observed').forEach(event => recordPilotEvent({
+        id: `pilot-evidence:${event.id}`, tenantId: item.tenantId, customerId: item.customerId, type: 'evidence_acquired', occurredAt: new Date(item.timestamp).toISOString(), turnIndex: buyerTurn, metadata: { key: event.key },
+      }));
+      const complaint = signalEvents.some(event => event.type === 'intents_detected' && event.intents.some(intent => intent.type === 'complaint_claim'));
+      if (complaint) recordPilotEvent({ id: `pilot-complaint:${item.id}`, tenantId: item.tenantId, customerId: item.customerId, type: 'complaint', occurredAt: new Date(item.timestamp).toISOString() });
+      if (previousBuyerBodies.includes(item.body.normalize('NFKC').trim().toLowerCase())) {
+        recordPilotEvent({ id: `pilot-repeat:${item.id}`, tenantId: item.tenantId, customerId: item.customerId, type: 'repeated_question', occurredAt: new Date(item.timestamp).toISOString() });
+      }
+    }
+  }
   return true;
 }
 
@@ -883,7 +1014,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     type: message.fromBusiness ? 'msg_out_human' : 'msg_in',
     body: message.body,
     timestamp: message.timestamp,
-    audit: {},
+    audit: { historicalImport: Boolean(options.skipAutonomy) },
   });
   const conversationForQualification = recentConversationForCustomer(tenantId, customer.id);
   const qualification = assessBant({
@@ -902,6 +1033,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
   customer = upsertCustomer({
     tenantId,
     waNumber: message.waNumber,
+    salesEvents: qualificationEvidenceEvents(qualification, message.id, message.timestamp),
     patch: {
       bant: qualification,
       progressionGoal,
@@ -993,6 +1125,25 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     language: customer.language,
     stage: customer.stage,
   }, message.body, { conversation: recentConversation });
+  customer = upsertCustomer({
+    tenantId,
+    waNumber: message.waNumber,
+    salesEvent: {
+      id: `knowledge:${message.id}`,
+      type: 'knowledge_evaluated',
+      source: 'system',
+      occurredAt: Date.now(),
+      state: !context.knowledgeReady || context.knowledgeMiss
+        ? 'missing'
+        : context.faqMatch?.ambiguous
+          ? 'ambiguous'
+          : 'grounded_static',
+      referenceIds: [
+        ...context.products.map(product => String(product.sku || product.name || '')).filter(Boolean),
+        ...context.evidence.map(item => String(item || '')).filter(Boolean),
+      ].slice(0, 50),
+    },
+  });
   const matchedSalesActions = matchSalesActions({
     message: message.body,
     firstTurn: recentConversation.filter(turn => turn.role === 'buyer').length <= 1,
@@ -1331,6 +1482,14 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     ? 'draft'
     : configuredAutonomy;
   const decision = decideAction(action, effectiveAutonomy);
+  recordPilotEvent({
+    id: `pilot-inbound-draft:${message.id}`,
+    tenantId,
+    customerId: customer.id,
+    type: 'draft_generated',
+    occurredAt: new Date().toISOString(),
+    metadata: { action, decision: decision.decision },
+  });
   if (night.active && decision.decision !== 'auto') {
     blockedAutoReplyReason = blockedAutoReplyReason || '夜班模式：非工作时间仅自动回复已审批常见问题和低风险动作';
   } else if (!night.active && configuredAutonomy === 'auto' && !approvedSafeIntent) {
@@ -1374,6 +1533,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
         return;
       }
       const sentAt = Date.now();
+      recordPilotEvent({ id: `pilot-auto-adopted:${message.id}`, tenantId, customerId: customer.id, type: 'draft_adopted', occurredAt: new Date(sentAt).toISOString(), metadata: { auto: true, action } });
       sentMessages.forEach((body, index) => addInteraction({
         id: `${customer.id}-ai-${sentAt}-${index}`,
         tenantId,
@@ -1488,12 +1648,16 @@ export function markWhatsAppHumanReply(input: { tenantId: string; customerId: st
       timestamp: baseTimestamp + index,
       audit: { clearsKnowledgeMissStreak: true, messageIndex: index, messageCount: sentMessages.length },
     }));
+  const stateAfterReply = normalizedSalesState(customer);
+  const humanOwnsConversation = customer.handlingMode === 'human_needed'
+    || stateAfterReply.channelOwnership.handoffStatus === 'requested'
+    || stateAfterReply.channelOwnership.handoffStatus === 'accepted';
   upsertCustomer({
     tenantId: input.tenantId,
     waNumber,
     patch: {
-      handlingMode: 'ai_draft',
-      handlingReason: '人工已回复，AI 继续辅助跟进',
+      handlingMode: humanOwnsConversation ? 'human_needed' : 'ai_draft',
+      handlingReason: humanOwnsConversation ? '人工已回复并继续接管；需要显式交还 AI 才会恢复 AI 接待' : '人工已回复，AI 继续提供建议',
       knowledgeMissStreak: 0,
       fallbackCount: 0,
       handoffDueAt: undefined,
@@ -1547,6 +1711,50 @@ export function patchWhatsAppCustomer(input: {
   }
 
   next.updatedAt = new Date().toISOString();
+  let salesState = normalizedSalesState(next);
+  const paidOrder = next.orders?.find(order => order.status === 'paid');
+  if (paidOrder) {
+    salesState = projectSalesConversationEvent(salesState, {
+      id: `paid-order:${paidOrder.id}`,
+      type: 'lifecycle_transitioned',
+      source: 'crm',
+      occurredAt: Date.now(),
+      stage: 'closed',
+      outcome: 'won',
+    });
+  }
+  next.salesState = stateWithHandlingMode(salesState, next.handlingMode, next.updatedAt);
+  next.stage = legacyStageFromSalesState(next.salesState);
+  list[index] = next;
+  writeCustomers(list);
+  if (paidOrder && !hasPaidOrder(current)) {
+    recordPilotEvent({ id: `pilot-order-won:${current.id}:${paidOrder.id}`, tenantId: current.tenantId, customerId: current.id, type: 'order_won', occurredAt: next.updatedAt, metadata: { orderId: paidOrder.id } });
+  }
+  void mirrorCustomerToPocketBase(next).catch(error => console.error('[whatsapp-pb-customer]', error));
+  return next;
+}
+
+export function getWhatsAppCustomerSalesState(tenantId: string, customerIdValue: string): SalesConversationStateV1 | null {
+  const customer = customers().find(item => item.tenantId === tenantId && item.id === customerIdValue && isRealWhatsAppNumber(item.waNumber));
+  return customer ? salesStateWithKnownMessageTimes(normalizedSalesState(customer), tenantId, customerIdValue) : null;
+}
+
+export function applySalesEventToWhatsAppCustomer(input: {
+  tenantId: string;
+  customerId: string;
+  event: SalesConversationEvent;
+}): StoredCustomer | null {
+  const list = customers();
+  const index = list.findIndex(item => item.tenantId === input.tenantId && item.id === input.customerId && isRealWhatsAppNumber(item.waNumber));
+  if (index < 0) return null;
+  const current = list[index];
+  const salesState = projectSalesConversationEvent(normalizedSalesState(current), input.event);
+  const next: StoredCustomer = {
+    ...current,
+    salesState,
+    updatedAt: new Date(input.event.occurredAt).toISOString(),
+  };
+  next.stage = legacyStageFromSalesState(next.salesState!);
   list[index] = next;
   writeCustomers(list);
   void mirrorCustomerToPocketBase(next).catch(error => console.error('[whatsapp-pb-customer]', error));
@@ -1558,6 +1766,9 @@ export function getWhatsAppCustomers(tenantId?: string): any[] {
     (!tenantId || customer.tenantId === tenantId) && isRealWhatsAppNumber(customer.waNumber));
   const allInteractions = interactions();
   return allCustomers.map(customer => {
+    const salesState = salesStateWithKnownMessageTimes(normalizedSalesState(customer), customer.tenantId, customer.id, allInteractions);
+    const nextBestAction = decideNextBestAction(salesState);
+    const whatsappWindow = whatsappWindowState(salesState.engagement.lastBuyerMessageAt);
     const timeline = allInteractions
       .filter(item => item.tenantId === customer.tenantId && item.customerId === customer.id)
       .sort((a, b) => a.timestamp - b.timestamp)
@@ -1598,7 +1809,10 @@ export function getWhatsAppCustomers(tenantId?: string): any[] {
       product: 'WhatsApp 询盘',
       outboundProduct: 'current WhatsApp inquiry',
       estimatedValue: '$0',
-      stage: customer.stage,
+      stage: legacyStageFromSalesState(salesState),
+      salesState,
+      nextBestAction,
+      whatsappWindow,
       intentScore: customer.intentScore,
       intentSignals: [
         '真实 WhatsApp 消息',
