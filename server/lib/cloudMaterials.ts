@@ -3,11 +3,20 @@ import { createFilePlaybackUrl } from '../storage/files.js';
 
 export interface CloudMaterialRecord extends Record<string, unknown> { id: string; videoFile?: string; posterFile?: string }
 
-export async function listCloudMaterials(): Promise<Array<Record<string, unknown>>> {
+function materialTenantId(item: Record<string, unknown>): string {
+  return String(item.tenantId || item.tenant_id || '').trim();
+}
+
+function canAccessCloudMaterial(item: Record<string, unknown>, tenantId: string): boolean {
+  const scope = String(item.scope || 'own');
+  return scope === 'shared' || Boolean(tenantId && materialTenantId(item) === tenantId);
+}
+
+export async function listCloudMaterials(tenantId: string): Promise<Array<Record<string, unknown>>> {
   const response = await adminFetch('/api/collections/materials/records?perPage=500');
   if (!response.ok) return [];
   const data = await response.json() as { items?: CloudMaterialRecord[] };
-  return (data.items || []).map(item => ({
+  return (data.items || []).filter(item => canAccessCloudMaterial(item, tenantId)).map(item => ({
     id: `pb-${item.id}`,
     name: String(item.title || item.sourceName || '云端素材'),
     folder: String(item.folder || 'upload'),
@@ -19,7 +28,8 @@ export async function listCloudMaterials(): Promise<Array<Record<string, unknown
     // `/cloud-files/.../signed/...`，表现为封面灰块且视频 0:00。
     url: `/studio-media/${item.id}/media.mp4`,
     poster: `/studio-media/${item.id}/poster.jpg`,
-    scope: String(item.scope || 'shared'),
+    scope: String(item.scope || 'own'),
+    tenantId: materialTenantId(item),
     usage: String(item.usage || 'editable'),
     sourceType: String(item.sourceType || 'licensed_upload'),
     sourceUrl: '',
@@ -37,10 +47,19 @@ export async function listCloudMaterials(): Promise<Array<Record<string, unknown
   }));
 }
 
-export async function getCloudMaterialRecord(id: string): Promise<Record<string, unknown> | null> {
+export async function getCloudMaterialRecord(id: string, tenantId?: string): Promise<Record<string, unknown> | null> {
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
   if (!response.ok) return null;
-  return await response.json() as Record<string, unknown>;
+  const record = await response.json() as Record<string, unknown>;
+  return tenantId && !canAccessCloudMaterial(record, tenantId) ? null : record;
+}
+
+/** 写操作只能落在当前租户自己的私有素材上；共享素材对普通租户只读。 */
+export async function getOwnedCloudMaterialRecord(id: string, tenantId: string): Promise<Record<string, unknown> | null> {
+  const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
+  if (!response.ok) return null;
+  const record = await response.json() as Record<string, unknown>;
+  return String(record.scope || 'own') !== 'shared' && materialTenantId(record) === tenantId ? record : null;
 }
 
 export async function updateCloudMaterial(id: string, fields: Record<string, unknown>): Promise<boolean> {
@@ -66,10 +85,11 @@ function parseSegments(value: unknown): unknown[] {
   return [];
 }
 
-export async function fetchCloudMaterial(id: string, field: 'videoFile' | 'posterFile', range?: string): Promise<Response | null> {
+export async function fetchCloudMaterial(id: string, field: 'videoFile' | 'posterFile', range?: string, tenantId?: string): Promise<Response | null> {
   const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
   if (!response.ok) return null;
   const record = await response.json() as CloudMaterialRecord;
+  if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
   const filename = String(record[field] || '');
   if (!filename) return null;
   const url = await createFilePlaybackUrl('materials', id, filename);

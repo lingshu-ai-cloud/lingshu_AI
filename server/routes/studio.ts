@@ -28,7 +28,7 @@ import {
   isBusinessRoleEntity,
 } from '../lib/studioScriptQualityV2.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
-import { fetchCloudMaterial, getCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
+import { fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
@@ -3994,7 +3994,7 @@ studioRouter.get('/materials', async (req, res) => {
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
   let list = [
-    ...await listCloudMaterials(),
+    ...await listCloudMaterials(tenantId),
     ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
   ] as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
@@ -4011,14 +4011,16 @@ studioRouter.get('/materials', async (req, res) => {
 });
 
 studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const field = req.params.kind === 'poster' ? 'posterFile' : req.params.kind === 'media' ? 'videoFile' : null;
   if (!field) { res.status(404).end(); return; }
-  let upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range);
+  if (!await getCloudMaterialRecord(req.params.id, tenantId)) { res.status(404).end(); return; }
+  let upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range, tenantId);
   if (!upstream && field === 'posterFile') {
     const cacheDir = path.join(MEDIA_DIR, 'cloud-poster-cache');
     const cachePath = path.join(cacheDir, `${req.params.id}.jpg`);
     if (!fs.existsSync(cachePath)) {
-      const video = await fetchCloudMaterial(req.params.id, 'videoFile');
+      const video = await fetchCloudMaterial(req.params.id, 'videoFile', undefined, tenantId);
       if (video?.ok) {
         fs.mkdirSync(cacheDir, { recursive: true });
         const tempPath = path.join(cacheDir, `${req.params.id}.${Date.now()}.mp4`);
@@ -4042,7 +4044,8 @@ studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
     const value = upstream.headers.get(header);
     if (value) res.setHeader(header, value);
   }
-  res.setHeader('Cache-Control', field === 'posterFile' ? 'public, max-age=86400' : 'private, max-age=3600');
+  res.setHeader('Cache-Control', field === 'posterFile' ? 'private, max-age=86400' : 'private, max-age=3600');
+  res.setHeader('Vary', 'Cookie, Authorization');
   res.status(upstream.status);
   Readable.fromWeb(upstream.body as any).pipe(res);
 });
@@ -4196,7 +4199,7 @@ async function analyzeMaterialVideo(videoPath: string, buffer: Buffer, duration:
  * 分析 → 片段和状态写回同一条记录，让云端素材也能进入分镜匹配池。
  */
 async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Promise<{ status: number; body: Record<string, unknown> }> {
-  const record = await getCloudMaterialRecord(pbId);
+  const record = await getOwnedCloudMaterialRecord(pbId, tenantId);
   if (!record) return { status: 404, body: { ok: false, error: 'Material not found' } };
   if (String(record.type || 'video') !== 'video') {
     return { status: 400, body: { ok: false, error: '仅视频素材支持片段分析' } };
@@ -4207,7 +4210,7 @@ async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Pro
   const tempPath = path.join(tempDir, `material-${pbId}.mp4`);
   try {
     fs.mkdirSync(tempDir, { recursive: true });
-    const media = await fetchCloudMaterial(pbId, 'videoFile');
+    const media = await fetchCloudMaterial(pbId, 'videoFile', undefined, tenantId);
     if (!media?.ok) throw new Error('云端素材文件不可读');
     const buffer = Buffer.from(await media.arrayBuffer());
     if (!buffer.length) throw new Error('云端素材文件为空');
@@ -4382,7 +4385,7 @@ studioRouter.patch('/materials/:id/pin', async (req, res) => {
   // 云端素材同样不在 data/materials.json 里，直接写回 PocketBase。
   if (req.params.id.startsWith('pb-')) {
     const pbId = req.params.id.slice(3);
-    if (!await getCloudMaterialRecord(pbId)) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
+    if (!await getOwnedCloudMaterialRecord(pbId, tenantId)) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
     const saved = await updateCloudMaterial(pbId, { pinned });
     if (!saved) { res.status(500).json({ ok: false, error: '置顶写回云端失败' }); return; }
     res.json({ ok: true, material: { id: req.params.id, pinned } });

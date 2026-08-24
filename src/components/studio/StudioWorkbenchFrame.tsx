@@ -462,6 +462,7 @@ export function StudioInputSummary({ items, title = '创作输入摘要', descri
         </article>
         ))}
       </div>
+      {emptyAction && <div className="mt-3 px-1">{emptyAction}</div>}
     </section>
   );
 }

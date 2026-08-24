@@ -2163,9 +2163,9 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
   let material: Material | null = null;
   let cloudRecord: Record<string, unknown> | null = null;
   if (materialId.startsWith('pb-')) {
-    cloudRecord = await getCloudMaterialRecord(rawMaterialId);
+    cloudRecord = await getCloudMaterialRecord(rawMaterialId, tenantId);
     const scope = String(cloudRecord?.scope || 'own');
-    if (!cloudRecord || (scope !== 'shared' && String(cloudRecord.tenantId || '') !== tenantId)) {
+    if (!cloudRecord) {
       res.status(404).json({ error: 'Material not found' });
       return;
     }
@@ -2180,7 +2180,7 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
       url: `/api/overseas/studio/materials/pb/${rawMaterialId}/media`,
       poster: `/api/overseas/studio/materials/pb/${rawMaterialId}/poster`,
       scope: scope === 'shared' ? 'shared' : 'own',
-      tenantId: String(cloudRecord.tenantId || ''),
+      tenantId: String(cloudRecord.tenantId || cloudRecord.tenant_id || ''),
       createdAt: String(cloudRecord.created || new Date().toISOString()),
     };
   } else {
@@ -2244,7 +2244,7 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
     const tempPath = path.join(ANALYSIS_DIR, `studio-material-${recordId}-${analysisRunId}.mp4`);
     try {
       if (materialId.startsWith('pb-')) {
-        const response = await fetchCloudMaterial(rawMaterialId, 'videoFile');
+        const response = await fetchCloudMaterial(rawMaterialId, 'videoFile', undefined, tenantId);
         if (!response?.ok) throw new Error('云端素材文件不可读');
         fs.writeFileSync(tempPath, Buffer.from(await response.arrayBuffer()));
       } else if (material!.objectKey) {
