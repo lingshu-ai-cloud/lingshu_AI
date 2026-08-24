@@ -3289,6 +3289,79 @@ export function normalizeCompleteTimestampTranslation(source: string, translated
   return sourceCues.map((cue, index) => `${cue.timestamp} ${targetTexts[index]}`).join('\n');
 }
 
+function translationLinesFromUnknown(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      if (typeof item === 'string' || typeof item === 'number') return String(item).trim();
+      if (item && typeof item === 'object') {
+        const row = item as Record<string, unknown>;
+        return String(row.text ?? row.translation ?? row.content ?? row.value ?? '').trim();
+      }
+      return '';
+    }).filter(Boolean);
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['lines', 'translations', 'translation', 'text', 'content', 'result', 'output']) {
+      if (record[key] !== undefined) {
+        const nested = translationLinesFromUnknown(record[key]);
+        if (nested.length) return nested;
+      }
+    }
+    return [];
+  }
+  const text = String(value ?? '').trim();
+  if (!text) return [];
+  const parsed = extractJSON<unknown>(text);
+  if (parsed && parsed !== value) {
+    const nested = translationLinesFromUnknown(parsed);
+    if (nested.length) return nested;
+  }
+  return text.split(/\n+/).map(line => line
+    .replace(/^\s*(?:[-*•]|\d+[.)．、])\s*/, '')
+    .trim()).filter(Boolean);
+}
+
+/**
+ * Accept the common response shapes returned by Qwen (timestamped text,
+ * {lines:[...]}, an array, or a newline list) and rebuild the exact source
+ * timeline before validating it. This keeps strict cue completeness without
+ * rejecting an otherwise valid translation solely because of JSON shape.
+ */
+export function normalizeTimestampTranslationValue(source: string, value: unknown, targetCode: string): string {
+  const sourceCues = timestampedTranslationCues(source);
+  if (!sourceCues.length) return translationLinesFromUnknown(value).join('\n').trim();
+  if (typeof value === 'string') {
+    const direct = normalizeCompleteTimestampTranslation(source, value, targetCode);
+    if (direct) return direct;
+  }
+  const lines = translationLinesFromUnknown(value);
+  if (lines.length !== sourceCues.length) return '';
+  const rebuilt = sourceCues.map((cue, index) => {
+    const line = String(lines[index] || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    return `${cue.timestamp} ${line}`;
+  }).join('\n');
+  return normalizeCompleteTimestampTranslation(source, rebuilt, targetCode);
+}
+
+function translationValueForLanguage(value: Record<string, unknown>, code: string): unknown {
+  const containers: Record<string, unknown>[] = [value];
+  if (value.translations && typeof value.translations === 'object' && !Array.isArray(value.translations)) {
+    containers.push(value.translations as Record<string, unknown>);
+  }
+  for (const container of containers) {
+    const languageKey = Object.keys(container).find(key => key.toLowerCase() === code.toLowerCase()
+      || key.toLowerCase() === langName(code).toLowerCase());
+    if (languageKey) return container[languageKey];
+  }
+  if (Array.isArray(value.translations)) {
+    const row = value.translations.find(item => item && typeof item === 'object'
+      && [code.toLowerCase(), langName(code).toLowerCase()].includes(String((item as Record<string, unknown>).language ?? (item as Record<string, unknown>).code ?? '').toLowerCase())) as Record<string, unknown> | undefined;
+    if (row) return row.lines ?? row.translation ?? row.text ?? row.content;
+  }
+  return undefined;
+}
+
 // POST /studio/translate  Body: { text, target?, source? }
 studioRouter.post('/translate', async (req, res) => {
   const { text = '', target = 'zh' } = req.body ?? {};
@@ -3315,7 +3388,7 @@ Text: ${src}`;
     const sourceCues = timestampedTranslationCues(src);
     const first = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
     let out = sourceCues.length
-      ? normalizeCompleteTimestampTranslation(src, first, String(target || 'zh'))
+      ? normalizeTimestampTranslationValue(src, first, String(target || 'zh'))
       : first.trim();
     if (!out && sourceCues.length) {
       const indexedPrompt = `Translate every numbered spoken line into ${targetLang}. Return ONLY valid JSON {"lines":["translation 1","translation 2"]}. The lines array must contain exactly ${sourceCues.length} non-empty strings in the same order. Never merge, omit, summarize or repeat a line. Do not include timestamps inside the strings. Do not add claims or explanations.\n\n${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
@@ -3324,7 +3397,7 @@ Text: ${src}`;
       const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
       if (Array.isArray(lines) && lines.length === sourceCues.length) {
         const rebuilt = sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n');
-        out = normalizeCompleteTimestampTranslation(src, rebuilt, String(target || 'zh'));
+        out = normalizeTimestampTranslationValue(src, rebuilt, String(target || 'zh'));
       }
     }
     if (!out.trim()) throw new Error('qwen returned an incomplete line-by-line translation');
@@ -3368,7 +3441,7 @@ Rules:
 - Preserve every timestamp label exactly, such as [0-3s].
 - Translate only the spoken text after each timestamp.
 - Keep one output line per input line for every language.
-- Omit short sound-effect lines or onomatopoeia such as “噗噗/砰砰/咚咚/咯吱”; they are audio SFX, not voiceover subtitles.
+- Keep every supplied source line. The caller has already removed non-spoken production notes, so never omit a remaining line.
 - Do not leave source-language text in translated outputs unless it is a product name or proper noun.
 - Use natural conversational wording, not stiff word-for-word translation.
 - Repair Chinese short-video slang into idiomatic buyer-facing wording based on product context. For example, for non-cosmetic products, “上脸质感” should become “feels good in hand” or “looks premium on camera”, not “on the skin”.
@@ -3419,16 +3492,16 @@ ${src}`;
         // object-of-strings was requested. Rebuild the expected timestamped
         // text instead of discarding an otherwise valid translation.
         value = parsed.map((row, index) => {
-          const line = String(row?.[code] ?? '').trim();
+          const line = String(row?.[code] ?? row?.[langName(code)] ?? row?.translation ?? row?.text ?? '').trim();
           if (!line) return '';
           const timestamp = sourceTimestamps[index] || '';
           return timestamp && !/^\s*\[[^\]]+\]/.test(line) ? `${timestamp} ${line}` : line;
         }).filter(Boolean).join('\n');
       } else {
-        const raw = parsed[code];
-        value = Array.isArray(raw) ? raw.map(String).join('\n') : String(raw ?? '').trim();
+        const raw = translationValueForLanguage(parsed, code);
+        value = normalizeTimestampTranslationValue(src, raw, code);
       }
-      const normalized = normalizeCompleteTimestampTranslation(src, value, code) || value;
+      const normalized = normalizeTimestampTranslationValue(src, value, code);
       if (!invalid(normalized, code)) translations[code] = normalized;
     }
     return translations;
@@ -3455,7 +3528,7 @@ ${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
     const value = Array.isArray(lines) && lines.length === sourceCues.length
       ? sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n')
       : out.trim();
-    const normalized = normalizeCompleteTimestampTranslation(src, value, code) || value;
+    const normalized = normalizeTimestampTranslationValue(src, value, code);
     return invalid(normalized, code) ? '' : normalized;
   };
 
