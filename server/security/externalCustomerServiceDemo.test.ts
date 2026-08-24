@@ -69,12 +69,13 @@ const draftRoute = fs.readFileSync(path.join(root, 'server/routes/draftReply.ts'
 assert.match(draftRoute, /evaluateHandoff\([\s\S]*?bantTotal:[\s\S]*?highValueHandoff/, 'high-value BANT opportunities must force a server-side human handoff');
 
 const customerUi = fs.readFileSync(path.join(root, 'src/components/ConversionPage.tsx'), 'utf8');
+const customerUiNormalized = customerUi.replace(/\r\n/g, '\n');
 assert.match(customerUi, /大单预警/, 'the customer list and conversation must expose the large-order warning');
 assert.match(customerUi, /data-testid="large-order-warning-tag"/, 'the large-order warning must remain a compact right-rail tag');
 const chatThreadUi = customerUi.slice(customerUi.indexOf('function ChatThread'), customerUi.indexOf('function CustomerIntentActionPanel'));
 assert.doesNotMatch(chatThreadUi, /simulation\?\.warning|大单预警/, 'the large-order warning must not occupy the conversation transcript');
 assert.match(customerUi, /data-testid="conversation-list"[^>]*w-52[^>]*xl:w-56/, 'the conversation list must stay compact so the transcript remains prominent on laptops');
-const customerListItemUi = customerUi.slice(customerUi.indexOf('const renderCustomer'), customerUi.indexOf('return (\n    <aside data-testid="conversation-list"'));
+const customerListItemUi = customerUiNormalized.slice(customerUiNormalized.indexOf('const renderCustomer'), customerUiNormalized.indexOf('return (\n    <aside data-testid="conversation-list"'));
 assert.doesNotMatch(customerListItemUi, /lifecycleLabel|engagementLabel/, 'customer list rows must not repeat lifecycle or reply-state badges from the conversation header');
 assert.match(customerUi, /data-testid="conversation-chat-thread"/, 'the main conversation transcript needs a stable layout target');
 assert.match(customerUi, /data-testid="conversation-workspace-main"/, 'the three-column workspace must start directly without stacked page banners');
