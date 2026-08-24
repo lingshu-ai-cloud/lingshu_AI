@@ -18,9 +18,6 @@ import {
   StudioStoryboardList,
   type StudioWorkbenchStep,
 } from './studio/StudioWorkbenchFrame';
-import StudioLanguageStatusPanel, {
-  type StudioLanguageStatusItem,
-} from './studio/StudioLanguageStatusPanel';
 
 /* ──────────────────────────────────────────────────────────────────────────
    AI 生成内容工作台 — 社媒（流量）页子模块
@@ -1245,6 +1242,9 @@ interface VideoKickoff {
     duration?: number;
     createdAt?: string;
     material?: Material;
+    width?: number;
+    height?: number;
+    aspectRatio?: number;
   };
   materialRole?: 'hook';
   video?: {
@@ -1254,6 +1254,9 @@ interface VideoKickoff {
     videoUrl?: string;
     thumbnail?: string;
     duration?: number;
+    width?: number;
+    height?: number;
+    aspectRatio?: number;
     sourceUrl?: string;
     aiAnalysis?: {
       materialUrl?: string;
@@ -1452,6 +1455,10 @@ function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: VideoKi
   const [playing, setPlaying] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
   const video = kickoff?.video;
+  const declaredAspectRatio = Number(video?.aspectRatio || kickoff?.generatedVideo?.aspectRatio)
+    || (video?.width && video?.height ? video.width / video.height : 0)
+    || (kickoff?.generatedVideo?.width && kickoff?.generatedVideo?.height ? kickoff.generatedVideo.width / kickoff.generatedVideo.height : 0);
+  const [mediaAspectRatio, setMediaAspectRatio] = useState(declaredAspectRatio || 9 / 16);
   const isImageReference = video?.contentFormat === 'image';
   const poster = video?.thumbnail || video?.aiAnalysis?.materialPoster || kickoff?.generatedVideo?.poster || '';
   const rawUrl = video?.videoUrl || video?.aiAnalysis?.materialUrl || kickoff?.generatedVideo?.url || '';
@@ -1469,6 +1476,7 @@ function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: VideoKi
     setPlaybackUrl('');
     setPlaying(false);
     setPlaybackError('');
+    setMediaAspectRatio(declaredAspectRatio || 9 / 16);
   }, [apiUrl]);
   const ensurePlaybackUrl = async () => {
     if (playbackUrl) return playbackUrl;
@@ -1541,13 +1549,15 @@ function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: VideoKi
               <span className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-[9px] font-bold text-white backdrop-blur">首图参考</span>
             </div>
           ) : (
-            <div className={`${embedded ? 'min-h-[280px] flex-1' : 'aspect-[9/16] max-h-[600px]'} group relative mx-auto w-full cursor-pointer overflow-hidden rounded-xl bg-black`} onClick={togglePlayback}>
-              <video ref={videoRef} poster={poster || undefined} muted playsInline loop preload="metadata" className="h-full w-full object-contain" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onError={() => { setPlaying(false); setPlaybackError('视频加载或解码失败，可点击右上角“原站”查看'); }} />
+            <div className={`${embedded ? 'min-h-0 flex-1' : 'max-h-[600px]'} flex items-center justify-center overflow-hidden`}>
+              <div className="group relative max-h-full max-w-full cursor-pointer overflow-hidden rounded-xl bg-black" style={{ aspectRatio: mediaAspectRatio, width: mediaAspectRatio >= 1 ? '100%' : 'auto', height: mediaAspectRatio < 1 ? '100%' : 'auto' }} onClick={togglePlayback}>
+              <video ref={videoRef} poster={poster || undefined} muted playsInline loop preload="metadata" className="h-full w-full object-contain" onLoadedMetadata={event => { const element = event.currentTarget; if (element.videoWidth > 0 && element.videoHeight > 0) setMediaAspectRatio(element.videoWidth / element.videoHeight); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onError={() => { setPlaying(false); setPlaybackError('视频加载或解码失败，可点击右上角“原站”查看'); }} />
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15 transition group-hover:bg-transparent">
                 {!playing && <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"><Play size={18} fill="currentColor" /></span>}
               </div>
               {loading && <span className="absolute right-2 top-2 rounded-md bg-black/55 px-2 py-1 text-[9px] text-white">加载中…</span>}
               {playbackError && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/70 px-2 py-1.5 text-center text-[9px] leading-4 text-white">{playbackError}</span>}
+              </div>
             </div>
           )}
           <p className="mt-3 line-clamp-2 text-xs font-bold leading-relaxed text-text-primary">{video.title || kickoff?.referenceAnalysis?.title || '未命名对标视频'}</p>
@@ -2740,7 +2750,9 @@ function stripVoiceoverTimestamps(value: string): string {
 function isBadTranslatedLine(text: string, target: string): boolean {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (!normalized) return true;
-  if (target !== 'zh' && /[\u4e00-\u9fa5]/.test(normalized)) return true;
+  const hanCount = (normalized.match(/[\u4e00-\u9fff]/g) || []).length;
+  const letterCount = (normalized.match(/\p{L}/gu) || []).length;
+  if (target !== 'zh' && hanCount >= 6 && hanCount / Math.max(1, letterCount) > 0.45) return true;
   if (/主推品|适合展示|产品替换|参考爆款|参考节奏|我方画面/.test(normalized)) return true;
   return looksLikeProductionInstruction(normalized);
 }
@@ -2800,15 +2812,14 @@ function resolveTranslatedVoiceover(base: string, translated: string, target: st
   // because the stricter index-based aligner could not rebuild every line.
   const spoken = stripVoiceoverTimestamps(raw).trim();
   if (!spoken || isBadTranslatedLine(spoken, target)) return '';
-  if (target !== 'zh' && /[\u4e00-\u9fff]/.test(spoken)) return '';
   const sourceCueCount = parseTimestampedVoiceover(base).filter(item => !isNonSpeechSfx(item.text)).length;
   const translatedCueCount = parseTimestampedVoiceover(raw).filter(item => !isNonSpeechSfx(item.text)).length;
   if (sourceCueCount > 0 && translatedCueCount !== sourceCueCount) return '';
   return raw;
 }
 
-const VOICE_TRANSLATION_BATCH_TIMEOUT_MS = 30_000;
-const VOICE_TRANSLATION_SINGLE_TIMEOUT_MS = 20_000;
+const VOICE_TRANSLATION_BATCH_TIMEOUT_MS = 100_000;
+const VOICE_TRANSLATION_SINGLE_TIMEOUT_MS = 70_000;
 
 async function runVoiceTranslationWithTimeout<T>(
   request: (signal: AbortSignal) => Promise<T>,
@@ -3252,7 +3263,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [stepIdx, setStepIdx] = useState(0);
   const [activeStoryboardSlotId, setActiveStoryboardSlotId] = useState('');
   const [canvasView, setCanvasView] = useState<'reference' | 'creation'>('creation');
-  const [showWorkbenchSubtitleEditor, setShowWorkbenchSubtitleEditor] = useState(false);
   const [showSetupMaterialPicker, setShowSetupMaterialPicker] = useState(false);
   const [showFullScriptEditor, setShowFullScriptEditor] = useState(false);
 
@@ -3437,7 +3447,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [voicePreviewIdx, setVoicePreviewIdx] = useState<number | null>(null);
   const [scriptView, setScriptView] = useState<'timestamp' | 'voiceover'>('timestamp');
   const [scriptPreviewTab, setScriptPreviewTab] = useState('script');
-  const [scriptStageTab, setScriptStageTab] = useState<'theme' | 'script' | 'voiceover' | 'audio'>('theme');
+  const [scriptStageTab, setScriptStageTab] = useState<'theme' | 'script' | 'voiceover' | 'audio' | 'subtitle'>('theme');
+  const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const [showVoiceAdvanced, setShowVoiceAdvanced] = useState(false);
+  const [showSubtitleAdvanced, setShowSubtitleAdvanced] = useState(false);
+  const [subtitleGenerating, setSubtitleGenerating] = useState(false);
+  const [subtitleNotice, setSubtitleNotice] = useState('');
+  const [lastGeneratedSetupSignature, setLastGeneratedSetupSignature] = useState('');
   const autoGen = useRef(false); // 标记是否已由入口生成脚本，避免覆盖用户编辑
 
   useEffect(() => () => voiceDraftAbortRef.current?.abort(), []);
@@ -3611,11 +3627,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           ? 'en'
           : configuredVoiceLanguages[0];
         setEnterpriseVoiceLangs(configuredVoiceLanguages);
-        setVoiceLangs(configuredVoiceLanguages);
-        setVoiceDrafts(current => filterRecordByLanguage(current, configuredVoiceLanguages));
-        setVoiceoverAudios(current => filterRecordByLanguage(current, configuredVoiceLanguages));
-        setAlignedCuesByLang(current => filterRecordByLanguage(current, configuredVoiceLanguages));
-        setVoiceDraftStaleLangs(current => current.filter(code => configuredVoiceLanguages.includes(code)));
+        setVoiceLangs(current => current.length ? current : [defaultVoiceLanguage || 'zh']);
         if (defaultVoiceLanguage) {
           setLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
           setActiveVoiceLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
@@ -4081,8 +4093,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     : 0;
   const storyboardReviewComplete = mode !== 'clone' || storyboardReviewPendingCount === 0;
   const hasTimestampScript = Boolean(script.trim());
-  const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()));
+  const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()) && !voiceDraftFailedLangs.includes(code) && !voiceDraftStaleLangs.includes(code) && !voiceDraftPendingLangs.includes(code));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url) && !voiceoverStaleLangs.includes(code));
+  const hasRequestedSubtitles = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(alignedCuesByLang[code]?.length));
+  const hasReadyVoiceStrategy = voiceoverMode === 'none'
+    || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
+    || (voiceoverMode === 'ai' && hasRequestedVoiceovers);
   const hasAnyVoiceover = Object.entries(voiceoverAudios).some(([code, audio]) => Boolean(audio?.url) && !voiceoverStaleLangs.includes(code));
   const activeScriptQualityStatus = modeScripts.find(item => item.id === activeModeScriptId)?.qualityStatus;
   const activeScriptQualityBlocked = activeScriptQualityStatus === 'rejected' || activeScriptQualityStatus === 'failed';
@@ -4090,12 +4106,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     ? scriptStageTab === 'theme'
       ? hasTimestampScript && !activeScriptQualityBlocked
       : scriptStageTab === 'voiceover'
-        ? hasTimestampScript && !activeScriptQualityBlocked
-        : hasTimestampScript && !activeScriptQualityBlocked && (
-          voiceoverMode === 'none'
-          || (voiceoverMode === 'upload' && Boolean(voiceoverUrl))
-          || (voiceoverMode === 'ai' && hasAnyVoiceover)
-        )
+        ? hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts
+        : scriptStageTab === 'audio'
+          ? hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts && hasReadyVoiceStrategy
+          : hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts && hasRequestedSubtitles
     : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length
     : true;
@@ -4731,14 +4745,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setScriptStageTab('audio');
       return;
     }
-    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai') {
-      const availableLanguage = voiceLangs.find(code => Boolean(voiceoverAudios[code]?.url) && !voiceoverStaleLangs.includes(code))
-        || Object.keys(voiceoverAudios).find(code => Boolean(voiceoverAudios[code]?.url) && !voiceoverStaleLangs.includes(code));
-      if (availableLanguage && !voiceoverAudios[activeVoiceLang]?.url) {
-        setActiveVoiceLang(availableLanguage);
-        setLang(availableLanguage);
-        setTtsNotice(`${langZh(activeVoiceLang)}尚未生成配音，已使用${langZh(availableLanguage)}继续；其他语种可稍后补充。`);
-      }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'audio') {
+      setScriptStageTab('subtitle');
+      return;
     }
     if (contentMode === 'video' && step === 'material') {
       const qualityBlockers = storyboardSlots.flatMap(slot => {
@@ -4823,7 +4832,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
   const prev = () => {
-    if (contentMode === 'video' && step === 'script' && scriptStageTab !== 'theme') {
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle') {
+      setScriptStageTab('audio');
+      return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'audio') {
+      setScriptStageTab('voiceover');
+      return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover') {
       setScriptStageTab('theme');
       return;
     }
@@ -5155,6 +5172,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const sourceLanguage = detectScriptLanguageCode(spoken);
     setScript(cleaned);
     setVoiceoverLines(spoken);
+    setVoiceLangs(current => [sourceLanguage, ...current.filter(code => code !== sourceLanguage)]);
+    setActiveVoiceLang(sourceLanguage);
+    setLang(sourceLanguage);
     setVoiceDrafts(drafts => ({ ...drafts, [sourceLanguage]: spoken }));
     setVoiceDraftStaleLangs(current => [...new Set([
       ...current.filter(code => code !== sourceLanguage),
@@ -5423,7 +5443,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setVoiceDraftLoading(true);
     setVoiceDraftFailedLangs([]);
     setVoiceDraftPendingLangs([]);
-    setVoiceDraftNotice(`正在提取口播，并生成 ${voiceLangs.length || 1} 个语种字幕...`);
+    setVoiceDraftNotice(`正在提取口播，并生成 ${voiceLangs.length || 1} 个语种文案...`);
     try {
       if (!base.trim()) {
         setVoiceDraftNotice('当前脚本里没有可提取的口播台词，请先生成时间戳脚本或手动填写口播台词。');
@@ -5433,10 +5453,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const langs = voiceLangs.length ? voiceLangs : [sourceLanguage];
       const existingAudioCodes = langs.filter(code => Boolean(voiceoverAudios[code]?.url));
       if (existingAudioCodes.length) setVoiceoverStaleLangs(current => [...new Set([...current, ...existingAudioCodes])]);
-      const immediate: Record<string, string> = {};
-      for (const code of langs) {
-        immediate[code] = code === sourceLanguage ? normalizeScriptTimestamps(base) : '';
-      }
+      const immediate: Record<string, string> = { ...voiceDrafts, [sourceLanguage]: normalizeScriptTimestamps(base) };
       setVoiceDrafts(immediate);
       setActiveVoiceLang(sourceLanguage);
       setLang(sourceLanguage);
@@ -5446,7 +5463,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const targets = langs.filter(code => code !== sourceLanguage);
       setVoiceDraftPendingLangs(targets);
       setVoiceDraftNotice(targets.length
-        ? `已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在批量翻译 ${targets.length} 个语种（最长等待 30 秒）...`
+          ? `已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在批量翻译 ${targets.length} 个语种；可切换到其他栏目，任务会继续在后台运行。`
         : `已提取${langZh(sourceLanguage) || sourceLanguage}口播。`);
       const failedLangs = new Set<string>();
       const failureReasons = new Map<string, string>();
@@ -5518,7 +5535,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setVoiceDraftFailedLangs(failed);
       setVoiceDraftNotice(failed.length
         ? `已生成 ${langs.length - failed.length}/${langs.length} 个语种；${failed.map(code => LANGS.find(item => item.code === code)?.label || code).join('、')} 翻译失败：${firstFailureReason || '模型未返回有效译文'}。可再次点击重试。`
-        : `已生成 ${langs.length || 1} 个语种字幕。`);
+        : `已生成 ${langs.length || 1} 个语种文案。`);
       setVoiceDraftStaleLangs(failed);
     } catch (err: any) {
       if (isCurrentRequest()) {
@@ -6494,9 +6511,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setTtsActiveLangs(requestedLangs);
     setTtsFailuresByLang(current => Object.fromEntries(Object.entries(current).filter(([code]) => !requestedLangs.includes(code))));
     setTtsNotice(`正在生成 ${requestedLangs.length} 个语种配音...`);
+    const existingRequestedAudioCodes = requestedLangs.filter(code => Boolean(voiceoverAudios[code]?.url));
+    if (existingRequestedAudioCodes.length) setVoiceoverStaleLangs(current => [...new Set([...current, ...existingRequestedAudioCodes])]);
     if (!onlyLanguage) {
       setVoiceoverUrl(null);
-      setVoiceoverAudios({});
       setAlignedCuesByLang({});
     }
     try {
@@ -6536,7 +6554,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setVoiceoverLines(base);
       setVoiceDrafts(drafts);
 
-      const audios: Record<string, { url: string; duration: number; cues?: SubCue[]; text?: string; alignmentSource?: string; customVoiceStatus?: 'activated' }> = onlyLanguage ? { ...voiceoverAudios } : {};
+      const audios: Record<string, { url: string; duration: number; cues?: SubCue[]; text?: string; alignmentSource?: string; customVoiceStatus?: 'activated' }> = { ...voiceoverAudios };
       const aligned: Record<string, SubCue[]> = onlyLanguage ? { ...alignedCuesByLang } : {};
       const generatedCodes = new Set<string>();
       const failures: string[] = [];
@@ -6588,13 +6606,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }));
       if (!isCurrentTtsRequest()) return;
       const activeCode = langs.includes(activeVoiceLang) ? activeVoiceLang : langs[0] || 'zh';
-      const activeAudio = audios[activeCode] || Object.values(audios)[0];
+      const activeAudio = generatedCodes.has(activeCode)
+        ? audios[activeCode]
+        : [...generatedCodes].map(code => audios[code]).find(Boolean);
       if (!activeAudio) {
         throw new Error(failures[0] || '没有生成可用配音，请检查 TTS Key 或试用额度。');
       }
       setVoiceoverMode('ai');
       setVoiceoverAudios(audios);
-      setAlignedCuesByLang(aligned);
       setRenderOutputPath(null);
       setRenderOutputPreviewUrl(null);
       setLanguageRenderOutputs({});
@@ -6626,8 +6645,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           return `${LANGS.find(langItem => langItem.code === code)?.label || code}：翻译失败，未生成配音（${reason || '未知原因'}）`;
         })].join('；')}`
         : voice.startsWith('custom:') && Object.values(audios).some(item => item.customVoiceStatus === 'activated')
-          ? `已生成 ${langs.length} 个语种配音，真人音色已通过正式 TTS 激活并保存，同时按真实音频对齐字幕。`
-          : `已生成 ${langs.length} 个语种配音，并按真实音频对齐字幕。`);
+          ? `已生成 ${langs.length} 个语种配音，真人音色已通过正式 TTS 激活并保存。下一步可一键生成字幕。`
+          : `已生成 ${langs.length} 个语种配音。下一步可一键生成字幕。`);
     } catch (err: any) {
       if (!isCurrentTtsRequest()) return;
       const reason = err?.message || '配音生成失败，请稍后重试。';
@@ -6642,6 +6661,34 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         setTtsLoadingScope(null);
         setTtsActiveLangs([]);
       }
+    }
+  };
+  const generateSubtitleDrafts = async () => {
+    setSubtitleGenerating(true);
+    setSubtitleNotice('正在按每个语言的真实口播时长生成字幕文案…');
+    try {
+      const next: Record<string, SubCue[]> = { ...alignedCuesByLang };
+      const failed: string[] = [];
+      for (const code of voiceLangs) {
+        const text = voiceDrafts[code]?.trim();
+        if (!text) {
+          failed.push(LANGS.find(item => item.code === code)?.label || code);
+          continue;
+        }
+        const audio = voiceoverAudios[code];
+        const generated = audio?.cues?.length
+          ? audio.cues
+          : buildCues(text, audio?.duration || voiceoverDur || totalDur || duration);
+        if (generated.length) next[code] = generated;
+        else failed.push(LANGS.find(item => item.code === code)?.label || code);
+      }
+      setAlignedCuesByLang(next);
+      setSubtitlesOn(true);
+      setSubtitleNotice(failed.length
+        ? `其余语言字幕已生成；${failed.join('、')}缺少可用文案，请先补全文案。`
+        : `已生成 ${voiceLangs.length} 个语言的字幕文案，可在高级设置中逐条调整。`);
+    } finally {
+      setSubtitleGenerating(false);
     }
   };
 	  useEffect(() => {
@@ -6841,7 +6888,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
     videoKickoff,
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, cooperationRoute, sellingPoints, tone,
-    videoThemeId, themePainPoint, themeConversionGoal,
+    videoThemeId, themePainPoint, themeConversionGoal, lastGeneratedSetupSignature,
     selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, assemblyName, hookMaterialId, materialSnapshots,
     storyboardAssemblies: assembliesForSave, activeAssemblyId, script, scriptType, modeScripts, activeModeScriptId, voice, voiceCandidates,
     bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, materialVersionCovers, account, caption,
@@ -6881,16 +6928,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       ...Object.keys(restoredVoiceoverAudios),
       ...Object.keys(restoredAlignedCues),
     ])];
-    const restoredVoiceLangs = enterpriseVoiceLangs.length ? enterpriseVoiceLangs : restoredLanguageCandidates;
-    const nextVoiceDrafts = enterpriseVoiceLangs.length
-      ? filterRecordByLanguage(restoredVoiceDrafts, enterpriseVoiceLangs)
-      : restoredVoiceDrafts;
-    const nextVoiceoverAudios = enterpriseVoiceLangs.length
-      ? filterRecordByLanguage(restoredVoiceoverAudios, enterpriseVoiceLangs)
-      : restoredVoiceoverAudios;
-    const nextAlignedCues = enterpriseVoiceLangs.length
-      ? filterRecordByLanguage(restoredAlignedCues, enterpriseVoiceLangs)
-      : restoredAlignedCues;
+    const restoredVoiceLangs = restoredLanguageCandidates.length
+      ? restoredLanguageCandidates
+      : [enterpriseVoiceLangs.includes('en') ? 'en' : enterpriseVoiceLangs[0] || 'zh'];
+    const nextVoiceDrafts = restoredVoiceDrafts;
+    const nextVoiceoverAudios = restoredVoiceoverAudios;
+    const nextAlignedCues = restoredAlignedCues;
     const savedActiveVoiceLang = typeof s.activeVoiceLang === 'string' ? s.activeVoiceLang : '';
     const restoredActiveVoiceLang = restoredVoiceLangs.includes(savedActiveVoiceLang)
       ? savedActiveVoiceLang
@@ -6905,18 +6948,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setVoiceoverAudios(nextVoiceoverAudios);
     setAlignedCuesByLang(nextAlignedCues);
     const restoredActiveAudio = restoredActiveVoiceLang ? nextVoiceoverAudios[restoredActiveVoiceLang] : undefined;
-    const restoredVoiceoverUrl = restoredActiveAudio?.url || (!enterpriseVoiceLangs.length && typeof s.voiceoverUrl === 'string' ? s.voiceoverUrl : null);
-    const restoredVoiceoverDur = restoredActiveAudio?.duration || (!enterpriseVoiceLangs.length && typeof s.voiceoverDur === 'number' ? s.voiceoverDur : 0);
+    const restoredVoiceoverUrl = restoredActiveAudio?.url || (typeof s.voiceoverUrl === 'string' ? s.voiceoverUrl : null);
+    const restoredVoiceoverDur = restoredActiveAudio?.duration || (typeof s.voiceoverDur === 'number' ? s.voiceoverDur : 0);
     setVoiceoverUrl(restoredVoiceoverUrl);
     setVoiceoverDur(restoredVoiceoverDur);
-    const droppedLanguageCount = enterpriseVoiceLangs.length
-      ? restoredLanguageCandidates.filter(code => !enterpriseVoiceLangs.includes(code)).length
-      : 0;
     setVoiceDraftNotice(Object.keys(nextVoiceDrafts).length
-      ? `已按企业中心语言恢复 ${Object.keys(nextVoiceDrafts).length} 个语种字幕${droppedLanguageCount ? `，已忽略 ${droppedLanguageCount} 个历史语言。` : '。'}`
+      ? `已恢复 ${Object.keys(nextVoiceDrafts).length} 个语种文案。`
       : '');
     setTtsNotice(Object.keys(nextVoiceoverAudios).length
-      ? `已按企业中心语言恢复 ${Object.keys(nextVoiceoverAudios).length} 个语种配音。`
+      ? `已恢复 ${Object.keys(nextVoiceoverAudios).length} 个语种配音。`
       : '');
     setVoiceDraftLoading(false);
     setTtsLoading(false);
@@ -6944,7 +6984,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setStepIdx(restoredStepIndex >= 0 ? restoredStepIndex : 0);
     setActiveStoryboardSlotId(typeof s.activeStoryboardSlotId === 'string' ? s.activeStoryboardSlotId : '');
     setCanvasView(s.canvasView === 'reference' ? 'reference' : 'creation');
-    setScriptStageTab(s.scriptStageTab === 'voiceover' || s.scriptStageTab === 'audio' ? s.scriptStageTab : 'theme');
+    setScriptStageTab(s.scriptStageTab === 'voiceover' || s.scriptStageTab === 'audio' || s.scriptStageTab === 'subtitle' ? s.scriptStageTab : 'theme');
+    setLastGeneratedSetupSignature(typeof s.lastGeneratedSetupSignature === 'string' ? s.lastGeneratedSetupSignature : '');
     if (typeof s.posterStyle === 'string' && POSTER_STYLES.some(item => item.id === s.posterStyle)) {
       setPosterStyle(s.posterStyle as typeof posterStyle);
     }
@@ -7581,10 +7622,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black text-text-primary">本次创作素材</p>
-                    <p className="mt-0.5 text-[10px] text-text-muted">先明确选择可用素材，再让脚本按真实画面规划分镜；系统不会自动拿素材库内容代替。</p>
+                    <p className="mt-0.5 text-[10px] text-text-muted">优先选择已有素材可让脚本更贴合真实画面；不要求上传新素材，参考爆款和产品模式也可稍后补充。</p>
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${selectedVisualClips.length ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
-                    {selectedVisualClips.length ? `${selectedVisualClips.length} 项已准备` : '尚未添加'}
+                    {selectedVisualClips.length ? `${selectedVisualClips.length} 项已准备` : (mode === 'material' ? '待选择' : '可稍后补充')}
                   </span>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-1.5">
@@ -7617,7 +7658,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <Upload size={13} /> 上传素材
                   </button>
                   <span className={`text-[10px] font-semibold ${materialCoverageReady ? 'text-emerald-700' : 'text-amber-700'}`}>
-                    {!selectedVisualClips.length ? '生成脚本前至少选择 1 项' : materialCoverageReady ? '已可覆盖预计分镜' : `建议再补充 ${Math.max(0, duration - totalDur).toFixed(1)}s 素材`}
+                    {!selectedVisualClips.length ? (mode === 'material' ? '素材库创作需选择至少 1 项已有素材' : '当前模式可先生成脚本，后续再匹配素材') : materialCoverageReady ? '已可覆盖预计分镜' : `建议再补充 ${Math.max(0, duration - totalDur).toFixed(1)}s 素材`}
                   </span>
                 </div>
                 {selectedVisualClips.length > 0 && (
@@ -7655,7 +7696,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         </div>
                       ) : <div className="py-16 text-center text-xs text-text-muted">暂无可用素材，请先上传视频或图片。</div>}
                     </div>
-                    <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4"><p className="text-xs font-bold text-text-secondary">已选择 {selectedVisualClips.length} 项 · 已即时保存</p><button type="button" onClick={() => setShowSetupMaterialPicker(false)} disabled={!selectedVisualClips.length} className="rounded-xl bg-accent px-5 py-2.5 text-xs font-black text-white disabled:opacity-40">完成选择</button></footer>
+                    <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4"><p className="text-xs font-bold text-text-secondary">已选择 {selectedVisualClips.length} 项 · 已即时保存</p><button type="button" onClick={() => setShowSetupMaterialPicker(false)} disabled={mode === 'material' && !selectedVisualClips.length} className="rounded-xl bg-accent px-5 py-2.5 text-xs font-black text-white disabled:opacity-40">{selectedVisualClips.length ? '完成选择' : '暂不选择'}</button></footer>
                   </div>
                 </div>
               )}
@@ -10638,10 +10679,36 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
 
-  const primaryGeneratesSetupScript = contentMode === 'video' && step === 'mode';
+  const setupSignature = useMemo(() => JSON.stringify({
+    mode,
+    contentMode,
+    platform,
+    ratio,
+    duration,
+    selectedProductIds: [...selectedProductIds].sort(),
+    productInfo: activeProductInfo.trim(),
+    audience: audience.trim(),
+    primaryCta: effectivePrimaryCta.trim(),
+    cooperationRoute,
+    sellingPoints: sellingPoints.trim(),
+    tone,
+    videoThemeId,
+    themePainPoint: themePainPoint.trim(),
+    themeConversionGoal: themeConversionGoal.trim(),
+    selectedMaterialIds: selectedVisualClips.map(item => item.id).sort(),
+    referenceId: videoKickoff?.generatedVideo?.id || videoKickoff?.video?.videoUrl || videoKickoff?.video?.sourceUrl || '',
+  }), [mode, contentMode, platform, ratio, duration, selectedProductIds, activeProductInfo, audience, effectivePrimaryCta, cooperationRoute, sellingPoints, tone, videoThemeId, themePainPoint, themeConversionGoal, selectedVisualClips, videoKickoff]);
+  useEffect(() => {
+    if (hasTimestampScript && !lastGeneratedSetupSignature) setLastGeneratedSetupSignature(setupSignature);
+  }, [hasTimestampScript, lastGeneratedSetupSignature, setupSignature]);
+  const setupChangedSinceGeneration = hasTimestampScript && Boolean(lastGeneratedSetupSignature) && lastGeneratedSetupSignature !== setupSignature;
+  const primaryGeneratesSetupScript = contentMode === 'video' && step === 'mode' && (!hasTimestampScript || setupChangedSinceGeneration);
+  const primaryReturnsToExistingScript = contentMode === 'video' && step === 'mode' && hasTimestampScript && !setupChangedSinceGeneration;
   const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
   const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster';
-  const primaryGeneratesVoice = contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai' && !hasAnyVoiceover;
+  const primaryGeneratesCopy = contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover' && !hasRequestedVoiceDrafts;
+  const primaryGeneratesVoice = contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai' && !hasRequestedVoiceovers;
+  const primaryGeneratesSubtitles = contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle' && !hasRequestedSubtitles;
   const storyboardGenerationBlocked = modeActionLoading || (mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff));
   const workbenchStageId = stageIdx === 0 ? 'settings' : stageIdx === 1 ? 'script' : 'production';
   const workbenchSteps: StudioWorkbenchStep[] = contentMode === 'poster'
@@ -10713,7 +10780,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ? { status: 'ready' as const, label: '脚本已生成' }
         : scriptStageTab === 'voiceover'
           ? copyReady ? { status: 'ready' as const, label: '口播已准备' } : { status: 'idle' as const, label: '待生成口播' }
-          : voiceReady ? { status: 'ready' as const, label: voiceoverMode === 'none' ? '无需口播' : '配音完成' } : { status: 'idle' as const, label: '待生成配音' }
+          : scriptStageTab === 'audio'
+            ? voiceReady ? { status: 'ready' as const, label: voiceoverMode === 'none' ? '无需口播' : '配音完成' } : { status: 'idle' as const, label: '待生成配音' }
+            : alignedCuesByLang[activeVoiceLang]?.length ? { status: 'ready' as const, label: '字幕完成' } : { status: 'idle' as const, label: '待生成字幕' }
       : material ? { status: 'ready' as const, label: '已匹配' } : { status: 'idle' as const, label: '待匹配' };
     return {
       id: slot.id,
@@ -10726,59 +10795,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       statusLabel: working ? '处理中' : warning ? '需检查' : stageStatus.label,
     };
   });
-  const workbenchLanguageItems: StudioLanguageStatusItem[] = [...new Set([
-    ...(voiceLangs.length ? voiceLangs : []),
-    activeVoiceLang || enterpriseScriptLanguage || 'zh',
-  ].filter(Boolean))].map(code => {
-    const copyFailed = voiceDraftFailedLangs.includes(code);
-    const copyPending = voiceDraftPendingLangs.includes(code);
-    const copyStale = voiceDraftStaleLangs.includes(code);
-    const audio = voiceoverAudios[code];
-    const voiceProcessing = ttsActiveLangs.includes(code);
-    const voiceFailure = ttsFailuresByLang[code];
-    const languageTtsSettings = ttsLanguageSettings[code] || DEFAULT_TTS_SETTINGS;
-    return {
-      id: code,
-      language: LANGS.find(item => item.code === code)?.label || langZh(code) || code,
-      locale: code,
-      isSourceLanguage: code === enterpriseScriptLanguage || (!enterpriseScriptLanguage && code === 'zh'),
-      copyStatus: copyPending ? 'processing' : copyFailed ? 'failed' : copyStale ? 'stale' : voiceDrafts[code]?.trim() ? 'completed' : 'pending',
-      copyError: copyFailed ? (voiceDraftNotice || '翻译未完成，可单独重试。') : undefined,
-      voiceStatus: voiceProcessing ? 'processing' : voiceFailure || copyFailed ? 'failed' : audio?.url && voiceoverStaleLangs.includes(code) ? 'stale' : audio?.url ? 'completed' : 'pending',
-      voiceError: voiceFailure || (copyFailed ? '文案尚未完成，暂不能生成配音。' : undefined),
-      durationSeconds: audio?.duration,
-      canPreview: Boolean(audio?.url),
-      voice: {
-        voiceId: languageTtsSettings.voiceId || voice,
-        voiceName: VOICES.find(item => item.id === (languageTtsSettings.voiceId || voice))?.name || languageTtsSettings.voiceId || voice,
-        availableVoices: voiceCandidates.map(item => ({ id: item, label: VOICES.find(option => option.id === item)?.name || item })),
-        style: TTS_PRESETS.find(item => item.id === languageTtsSettings.preset)?.label || languageTtsSettings.preset,
-        availableStyles: TTS_PRESETS.map(item => item.label),
-        speed: languageTtsSettings.speed,
-        volume: languageTtsSettings.volume ?? voiceVol / 100,
-        emotion: languageTtsSettings.emotion,
-        availableEmotions: [...new Set(TTS_PRESETS.map(item => item.emotion))],
-      },
-      subtitle: {
-        content: voiceDrafts[code] || '',
-        cueCount: alignedCuesByLang[code]?.length || 0,
-        styleSummary: '底部居中 · 关键词强调',
-        burnedIn: subtitlesOn,
-      },
-    };
-  });
   const workbenchHasFormalVideo = Boolean(
     renderOutputPath || Object.values(languageRenderOutputs).some(output => output.status === 'done' && output.path),
   );
   const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && !workbenchHasFormalVideo;
   const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
   const generateSetupScriptAndContinue = async () => {
-    if (!selectedVisualClips.length) {
+    if (mode === 'material' && !selectedVisualClips.length) {
       setModeNotice('请先选择本次创作要使用的素材。脚本会根据你明确选择的画面规划分镜。');
+      setShowSetupMaterialPicker(true);
       return;
     }
     const generated = await generateTimestampScriptsForMode();
     if (!generated) return;
+    setLastGeneratedSetupSignature(setupSignature);
     const scriptIndex = activeSteps.findIndex(item => item.id === 'script');
     if (scriptIndex >= 0) setStepIdx(scriptIndex);
     setScriptStageTab('theme');
@@ -10807,8 +10837,23 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       void generateSetupScriptAndContinue();
       return;
     }
+    if (primaryReturnsToExistingScript) {
+      const scriptIndex = activeSteps.findIndex(item => item.id === 'script');
+      if (scriptIndex >= 0) setStepIdx(scriptIndex);
+      setScriptStageTab('theme');
+      setCanvasView('creation');
+      return;
+    }
     if (primaryGeneratesVoice) {
-      void genTts(activeVoiceLang);
+      void genTts();
+      return;
+    }
+    if (primaryGeneratesCopy) {
+      void generateVoiceDrafts();
+      return;
+    }
+    if (primaryGeneratesSubtitles) {
+      void generateSubtitleDrafts();
       return;
     }
     if (primaryGeneratesVideo) {
@@ -10821,18 +10866,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const primaryActionLabel = primaryGeneratesPoster
     ? posterJsonText ? '重新生成图文' : '生成图文'
     : primaryGeneratesSetupScript
-      ? '生成脚本'
+      ? hasTimestampScript ? '更新脚本' : '生成脚本'
+    : primaryReturnsToExistingScript
+      ? '返回脚本与声音'
     : primaryGeneratesStoryboard
       ? '生成脚本'
+      : primaryGeneratesCopy
+        ? '一键生成文案'
       : primaryGeneratesVoice
-        ? '生成配音'
+        ? '一键生成口播语音'
+        : primaryGeneratesSubtitles
+          ? '一键生成字幕文案'
         : primaryGeneratesVideo
           ? '生成成片'
       : step === 'script'
         ? scriptStageTab === 'theme'
           ? '确认分镜'
           : scriptStageTab === 'voiceover'
-            ? '确认口播'
+            ? '进入口播语音'
+            : scriptStageTab === 'subtitle'
+              ? '进入成片制作'
             : voiceoverMode === 'unselected'
               ? '选择声音策略'
               : voiceoverMode === 'none'
@@ -10849,14 +10902,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               : step === 'preview' && workbenchHasFormalVideo
                 ? '进入内容发布'
                 : '下一步';
-  const primaryActionBlockedReason = primaryGeneratesSetupScript && !selectedVisualClips.length
+  const primaryActionBlockedReason = primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length
     ? '先选择本次创作素材，脚本才会按真实画面生成。'
     : (primaryGeneratesSetupScript || primaryGeneratesStoryboard) && mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff)
     ? '参考视频尚未完成分析，请稍后再生成脚本。'
     : step === 'script' && scriptStageTab !== 'theme' && !hasTimestampScript
       ? '请先生成并确认分镜脚本。'
-    : primaryGeneratesVoice && !hasTimestampScript
-      ? '请先保存脚本，再生成配音。'
+    : primaryGeneratesCopy && !hasTimestampScript
+      ? '请先保存脚本，再生成多语言文案。'
+    : primaryGeneratesVoice && !hasRequestedVoiceDrafts
+      ? '请先一键生成所选语言文案，再生成口播语音。'
+    : primaryGeneratesSubtitles && !hasRequestedVoiceDrafts
+      ? '请先完成所选语言文案。'
       : primaryGeneratesVideo && workbenchRenderableVersionCount === 0
         ? '请先完成一种语言的口播，并为所有分镜匹配素材。'
     : step === 'material' && !canNext
@@ -10864,13 +10921,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       : step === 'script' && !canNext && !primaryGeneratesStoryboard
         ? voiceoverMode === 'unselected' ? '请选择 AI 配音、上传口播或无口播。' : '至少完成一种语言的有效口播，或明确选择无口播。'
         : undefined;
-  const primaryActionLoading = primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : ttsLoading || rendering || batchRenderingLangs;
+  const primaryActionLoading = primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : primaryGeneratesCopy ? voiceDraftLoading : primaryGeneratesSubtitles ? subtitleGenerating : ttsLoading || rendering || batchRenderingLangs;
   const primaryActionDisabled = primaryGeneratesPoster
     ? posterLoading
     : primaryGeneratesSetupScript || primaryGeneratesStoryboard
-      ? storyboardGenerationBlocked || (primaryGeneratesSetupScript && !selectedVisualClips.length)
+      ? storyboardGenerationBlocked || (primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length)
+      : primaryGeneratesCopy
+        ? voiceDraftLoading || !hasTimestampScript
       : primaryGeneratesVoice
-        ? ttsLoading || !hasTimestampScript
+        ? ttsLoading || !hasTimestampScript || !hasRequestedVoiceDrafts
+      : primaryGeneratesSubtitles
+        ? subtitleGenerating || !hasRequestedVoiceDrafts
         : primaryGeneratesVideo
           ? rendering || batchRenderingLangs || workbenchRenderableVersionCount === 0
       : step === 'preview'
@@ -10883,7 +10944,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const workbenchPropertyTitle = step === 'mode' ? '创作设置'
     : step === 'script' && scriptStageTab === 'theme' ? '分镜脚本'
       : step === 'script' && scriptStageTab === 'voiceover' ? '口播与翻译'
-        : step === 'script' ? (showWorkbenchSubtitleEditor ? '字幕编辑' : '配音与字幕')
+        : step === 'script' && scriptStageTab === 'audio' ? '口播语音'
+          : step === 'script' ? '字幕文案'
           : step === 'material' && activeWorkbenchSlot ? `分镜 ${storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} · 素材匹配`
             : step === 'bgm' ? '配乐设置'
               : step === 'cover' ? '封面设置'
@@ -10892,9 +10954,50 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     : activeSteps.find(item => item.id === step)?.label || '当前设置';
   const workbenchPropertyDescription = step === 'mode' ? '确认内容、素材与输出参数'
     : step === 'script' && scriptStageTab === 'theme' ? (activeSlotTime || '确认分镜结构与内容')
-      : step === 'script' ? `${activeLanguageLabel} · 文案、配音与字幕`
+      : step === 'script' && scriptStageTab === 'voiceover' ? `${activeLanguageLabel} · 选择语言并生成文案`
+        : step === 'script' && scriptStageTab === 'audio' ? `${activeLanguageLabel} · 选择声音策略并生成语音`
+          : step === 'script' ? `${activeLanguageLabel} · 生成并调整字幕`
         : step === 'material' && activeWorkbenchSlot ? `${activeSlotTime || '当前分镜'} · ${storyboardAssignments[activeWorkbenchSlot.id] ? '已匹配' : '待匹配'}`
           : activeStages[stageIdx]?.hint;
+  const workflowSourceLanguage = voiceLangs[0] || detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script)) || 'zh';
+  const toggleTranslationLanguage = (code: string) => {
+    if (code === workflowSourceLanguage) return;
+    setVoiceLangs(current => {
+      const sourceFirst = [workflowSourceLanguage, ...current.filter(item => item !== workflowSourceLanguage)];
+      return sourceFirst.includes(code) ? sourceFirst.filter(item => item !== code) : [...sourceFirst, code];
+    });
+    if (activeVoiceLang === code) {
+      setActiveVoiceLang(workflowSourceLanguage);
+      setLang(workflowSourceLanguage);
+    }
+  };
+  const languageSwitcher = (
+    <section className="space-y-2" aria-label="创作语言">
+      <div className="flex flex-wrap gap-1.5">
+        {voiceLangs.map(code => {
+          const selectedLanguage = activeVoiceLang === code;
+          const failed = voiceDraftFailedLangs.includes(code) || Boolean(ttsFailuresByLang[code]);
+          return (
+            <button key={code} type="button" onClick={() => { setActiveVoiceLang(code); setLang(code); }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition ${selectedLanguage ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : failed ? 'border-red-200 bg-red-50 text-red-600' : 'border-border bg-white text-text-secondary hover:bg-surface-2'}`}>
+              {LANGS.find(item => item.code === code)?.label || code}{code === workflowSourceLanguage ? ' · 原文' : ''}
+            </button>
+          );
+        })}
+        <button type="button" onClick={() => setShowLanguagePicker(value => !value)} className="rounded-lg border border-dashed border-border px-2.5 py-1.5 text-[10px] font-bold text-text-muted hover:border-emerald-300 hover:text-emerald-700"><Plus size={11} className="mr-1 inline" />选择翻译语种</button>
+      </div>
+      {showLanguagePicker && (
+        <div className="max-h-48 overflow-y-auto rounded-xl border border-border bg-surface-2 p-2">
+          <p className="px-1 pb-2 text-[10px] leading-4 text-text-muted">可多选，也可以不选择；原文语言会始终保留。</p>
+          <div className="grid grid-cols-2 gap-1">
+            {LANGS.filter(item => item.code !== workflowSourceLanguage).map(item => {
+              const checked = voiceLangs.includes(item.code);
+              return <label key={item.code} className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[10px] font-bold ${checked ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:bg-white/70'}`}><input type="checkbox" checked={checked} onChange={() => toggleTranslationLanguage(item.code)} className="accent-emerald-600" />{item.label}</label>;
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 
   return (
     <div className="flex flex-col h-full relative">
@@ -10979,15 +11082,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               </section>
             )}
             {step === 'script' && (
-              <nav className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1" aria-label="脚本与声音阶段">
+              <nav className="grid grid-cols-4 gap-1 rounded-xl bg-surface-2 p-1" aria-label="脚本与声音阶段">
                 {([
                   { id: 'theme' as const, label: '分镜脚本' },
                   { id: 'voiceover' as const, label: '口播与翻译' },
-                  { id: 'audio' as const, label: '配音与字幕' },
+                  { id: 'audio' as const, label: '口播语音' },
+                  { id: 'subtitle' as const, label: '字幕文案' },
                 ]).map(item => {
-                  const unavailable = item.id !== 'theme' && !hasTimestampScript;
+                  const unavailable = item.id !== 'theme' && (!hasTimestampScript
+                    || (item.id === 'audio' && !hasRequestedVoiceDrafts)
+                    || (item.id === 'subtitle' && (!hasRequestedVoiceDrafts || !hasReadyVoiceStrategy)));
                   return (
-                  <button key={item.id} type="button" disabled={unavailable} title={unavailable ? '请先生成分镜脚本' : undefined} onClick={() => { setScriptStageTab(item.id); if (item.id !== 'audio') setShowWorkbenchSubtitleEditor(false); }} className={`rounded-lg px-2 py-2 text-[10px] font-black transition disabled:cursor-not-allowed disabled:opacity-35 ${scriptStageTab === item.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
+                  <button key={item.id} type="button" disabled={unavailable} title={unavailable ? '请先生成分镜脚本' : undefined} onClick={() => setScriptStageTab(item.id)} className={`rounded-lg px-1 py-2 text-[10px] font-black transition disabled:cursor-not-allowed disabled:opacity-35 ${scriptStageTab === item.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
                     {item.label}
                   </button>
                   );
@@ -11012,16 +11118,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             )}
             {step === 'script' && scriptStageTab !== 'theme' && (
               <div className="space-y-3">
-                {scriptStageTab === 'voiceover' && <section className="pt-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-black text-text-primary">当前语言文案</p>
-                      <p className="mt-0.5 text-[10px] text-text-muted">{LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang}</p>
-                    </div>
-                    <button type="button" onClick={() => void generateVoiceDrafts()} disabled={voiceDraftLoading || !hasTimestampScript} className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-40">
-                      {voiceDraftLoading ? <Loader2 size={11} className="animate-spin" /> : <Languages size={11} />}{voiceDraftLoading ? '生成中' : '生成多语言文案'}
-                    </button>
-                  </div>
+                {scriptStageTab === 'voiceover' && <section className="space-y-3 pt-1">
+                  {languageSwitcher}
+                  <div><p className="text-xs font-black text-text-primary">当前语言文案</p><p className="mt-0.5 text-[10px] text-text-muted">先选择需要的翻译语种，再用底部按钮一次生成全部文案。</p></div>
                   <textarea
                     value={voiceDrafts[activeVoiceLang] || ((activeVoiceLang === enterpriseScriptLanguage || (!enterpriseScriptLanguage && activeVoiceLang === detectScriptLanguageCode(script))) ? (voiceoverLines || extractVoiceoverText(script)) : '')}
                     onChange={event => {
@@ -11039,14 +11138,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     rows={5}
                     dir={activeVoiceLang === 'ar' ? 'rtl' : 'ltr'}
                     placeholder="输入该语言的口播文案"
-                    className="mt-3 w-full resize-y rounded-lg border border-border bg-surface-2 p-3 text-xs leading-6 text-text-secondary outline-none focus:border-accent"
+                    className="w-full resize-y rounded-lg border border-border bg-surface-2 p-3 text-xs leading-6 text-text-secondary outline-none focus:border-accent"
                   />
+                  {voiceDraftNotice && <div className={`rounded-lg border px-3 py-2 text-[10px] leading-4 ${voiceDraftFailedLangs.length ? 'border-red-200 bg-red-50 text-red-700' : 'border-border bg-surface-2 text-text-muted'}`}><p>{voiceDraftNotice}</p>{voiceDraftFailedLangs.includes(activeVoiceLang) && <button type="button" onClick={() => void retryVoiceDraft(activeVoiceLang)} className="mt-2 rounded-md border border-red-200 bg-white px-2 py-1 font-bold">重试当前语言</button>}</div>}
                 </section>}
 
-                {scriptStageTab === 'audio' && <section className="pt-1">
+                {scriptStageTab === 'audio' && <section className="space-y-3 pt-1">
+                  {languageSwitcher}
                   <input ref={voiceoverInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleVoiceoverUpload(event.target.files); event.target.value = ''; }} />
-                  <p className="text-xs font-black text-text-primary">声音策略</p>
-                  <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  <div><p className="text-xs font-black text-text-primary">声音策略</p><p className="mt-0.5 text-[10px] text-text-muted">先选策略，再用底部按钮一次生成所选语言口播。</p></div>
+                  <div className="grid grid-cols-3 gap-1.5">
                     {([
                       { id: 'ai' as const, label: 'AI 配音', icon: <Mic size={13} /> },
                       { id: 'upload' as const, label: '上传口播', icon: <Upload size={13} /> },
@@ -11067,129 +11168,36 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     ))}
                   </div>
                   {(uploadedVoiceName || ttsNotice) && <p className="mt-2 text-[10px] leading-4 text-text-muted">{uploadedVoiceName ? `已上传：${uploadedVoiceName}。` : ''}{ttsNotice}</p>}
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-                    <label className="inline-flex items-center gap-2 text-[10px] font-bold text-text-secondary">
-                      <input type="checkbox" checked={subtitlesOn} onChange={event => setSubtitlesOn(event.target.checked)} className="accent-[var(--color-accent)]" /> 烧录字幕
-                    </label>
-                    <select value={subMode} onChange={event => setSubMode(event.target.value as 'target' | 'bilingual')} className="h-8 rounded-lg border border-border bg-surface-2 px-2 text-[10px] font-bold text-text-secondary">
-                      <option value="target">单语字幕</option>
-                      <option value="bilingual">双语字幕</option>
-                    </select>
-                  </div>
+                  {voiceoverMode === 'ai' && <div className="border-t border-border pt-3">
+                    <button type="button" onClick={() => setShowVoiceAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-black text-text-secondary"><span>高级设置 · 当前语言</span><ChevronDown size={13} className={`transition ${showVoiceAdvanced ? 'rotate-180' : ''}`} /></button>
+                    {showVoiceAdvanced && <div className="mt-2 space-y-3 rounded-xl border border-border bg-surface-2 p-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[10px] font-bold text-text-secondary">音色<select value={activeTtsSettings.voiceId || voice} onChange={event => { patchActiveTtsSettings({ voiceId: event.target.value }); if (voiceoverAudios[activeVoiceLang]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{voiceCandidates.map(item => <option key={item} value={item}>{VOICES.find(option => option.id === item)?.name || item}</option>)}</select></label>
+                        <label className="text-[10px] font-bold text-text-secondary">风格<select value={ttsPreset} onChange={event => { setTtsPreset(event.target.value as TtsStyleOptions['preset']); if (voiceoverAudios[activeVoiceLang]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{TTS_PRESETS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+                        <label className="col-span-2 text-[10px] font-bold text-text-secondary">情绪<select value={ttsEmotion} onChange={event => { setTtsEmotion(event.target.value); if (voiceoverAudios[activeVoiceLang]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{[...new Set(TTS_PRESETS.map(item => item.emotion))].map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+                      </div>
+                      <label className="block text-[10px] font-bold text-text-secondary">语速 · {ttsSpeed.toFixed(1)}x<input type="range" min="0.7" max="1.3" step="0.05" value={ttsSpeed} onChange={event => { setTtsSpeed(Number(event.target.value)); if (voiceoverAudios[activeVoiceLang]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-2 w-full accent-emerald-600" /></label>
+                      <label className="block text-[10px] font-bold text-text-secondary">试听音量 · {Math.round((activeTtsSettings.volume ?? voiceVol / 100) * 100)}%<input type="range" min="0" max="1" step="0.05" value={activeTtsSettings.volume ?? voiceVol / 100} onChange={event => patchActiveTtsSettings({ volume: Number(event.target.value) })} className="mt-2 w-full accent-emerald-600" /></label>
+                      {voiceoverAudios[activeVoiceLang]?.url && <button type="button" onClick={() => playTtsForLang(activeVoiceLang)} className="rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">{ttsPlaying ? '暂停试听' : '试听当前语言'}</button>}
+                    </div>}
+                  </div>}
                 </section>
                 }
-              </div>
-            )}
-            {step === 'script' && scriptStageTab !== 'theme' && workbenchLanguageItems.length > 0 && (
-              <StudioLanguageStatusPanel
-                className="-mx-3 rounded-none border-x-0"
-                languages={workbenchLanguageItems}
-                selectedLanguageId={activeVoiceLang}
-                previewingLanguageId={ttsPlaying ? activeVoiceLang : null}
-                onSelectLanguage={code => { setActiveVoiceLang(code); setLang(code); }}
-                onEditCopy={code => { setActiveVoiceLang(code); setLang(code); setScriptStageTab('voiceover'); }}
-                onGenerateVoice={code => {
-                  if (ttsLoading) return;
-                  setActiveVoiceLang(code);
-                  setLang(code);
-                  void genTts(code);
-                }}
-                onRetry={(code, target) => {
-                  setActiveVoiceLang(code);
-                  setLang(code);
-                  if (target === 'voice') {
-                    if (!ttsLoading) void genTts(code);
-                  } else {
-                    void retryVoiceDraft(code);
-                  }
-                }}
-                onPreviewVoice={code => playTtsForLang(code)}
-                onRegenerateVoice={code => {
-                  if (ttsLoading) return;
-                  setActiveVoiceLang(code);
-                  setLang(code);
-                  void genTts(code);
-                }}
-                onVoiceSettingsChange={(code, patch) => {
-                  setActiveVoiceLang(code);
-                  setLang(code);
-                  setTtsLanguageSettings(current => {
-                    const base = current[code] || DEFAULT_TTS_SETTINGS;
-                    const preset = patch.style
-                      ? TTS_PRESETS.find(item => item.id === patch.style || item.label === patch.style)?.id || base.preset
-                      : base.preset;
-                    return {
-                      ...current,
-                      [code]: {
-                        ...base,
-                        voiceId: patch.voiceId ?? base.voiceId,
-                        volume: typeof patch.volume === 'number' ? patch.volume : base.volume,
-                        preset,
-                        emotion: patch.emotion ?? base.emotion,
-                        speed: typeof patch.speed === 'number' ? patch.speed : base.speed,
-                      },
-                    };
-                  });
-                  const affectsSynthesis = patch.voiceId !== undefined
-                    || patch.style !== undefined
-                    || patch.emotion !== undefined
-                    || patch.speed !== undefined;
-                  if (affectsSynthesis && voiceoverAudios[code]?.url) {
-                    setVoiceoverStaleLangs(current => [...new Set([...current, code])]);
-                  }
-                }}
-                onEditSubtitles={code => {
-                  setActiveVoiceLang(code);
-                  setLang(code);
-                  setScriptStageTab('audio');
-                  setShowWorkbenchSubtitleEditor(true);
-                }}
-              />
-            )}
-            {step === 'script' && scriptStageTab !== 'theme' && showWorkbenchSubtitleEditor && (
-              <section className="border-t border-border pt-4" aria-label="字幕编辑">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-black text-text-primary">字幕编辑</p>
-                    <p className="mt-0.5 text-[10px] text-text-muted">当前语言·{LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang}</p>
+                {scriptStageTab === 'subtitle' && <section className="space-y-3 pt-1">
+                  {languageSwitcher}
+                  <div className="flex items-start justify-between gap-2"><div><p className="text-xs font-black text-text-primary">字幕文案</p><p className="mt-0.5 text-[10px] text-text-muted">按已生成的文案和真实口播时长生成字幕。</p></div>{hasRequestedSubtitles && <button type="button" onClick={() => void generateSubtitleDrafts()} disabled={subtitleGenerating} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">重新生成</button>}</div>
+                  {subtitleNotice && <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[10px] leading-4 text-text-muted">{subtitleNotice}</p>}
+                  <div className="rounded-xl border border-border bg-surface-2 px-3 py-3"><p className="text-[10px] font-bold text-text-secondary">{activeLanguageLabel}</p><p className="mt-1 text-xs font-black text-text-primary">{alignedCuesByLang[activeVoiceLang]?.length || 0} 条字幕</p></div>
+                  <div className="border-t border-border pt-3">
+                    <button type="button" onClick={() => setShowSubtitleAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-black text-text-secondary"><span>高级设置 · 字幕样式与逐条编辑</span><ChevronDown size={13} className={`transition ${showSubtitleAdvanced ? 'rotate-180' : ''}`} /></button>
+                    {showSubtitleAdvanced && <div className="mt-2 space-y-3 rounded-xl border border-border bg-surface-2 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2"><label className="inline-flex items-center gap-2 text-[10px] font-bold text-text-secondary"><input type="checkbox" checked={subtitlesOn} onChange={event => setSubtitlesOn(event.target.checked)} className="accent-emerald-600" />烧录字幕</label><select value={subMode} onChange={event => setSubMode(event.target.value as 'target' | 'bilingual')} className="h-8 rounded-lg border border-border bg-white px-2 text-[10px] font-bold text-text-secondary"><option value="target">单语字幕</option><option value="bilingual">双语字幕</option></select></div>
+                      <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold text-text-secondary">字体<select value={coverStyle.font} onChange={event => setCoverStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{COVER_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><label className="text-[10px] font-bold text-text-secondary">字号<select value={coverStyle.size} onChange={event => setCoverStyle(current => ({ ...current, size: event.target.value as CoverStyle['size'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]"><option value="S">小</option><option value="M">中</option><option value="L">大</option></select></label></div>
+                      <div className="max-h-72 space-y-2 overflow-y-auto">{(alignedCuesByLang[activeVoiceLang] || []).length ? (alignedCuesByLang[activeVoiceLang] || []).map((cue, index) => <div key={`${cue.start}-${index}`} className="rounded-lg border border-border bg-white p-2"><p className="text-[9px] font-bold text-text-muted">{cue.start.toFixed(1)}s – {cue.end.toFixed(1)}s</p><textarea value={cue.text} rows={2} onChange={event => setAlignedCuesByLang(current => ({ ...current, [activeVoiceLang]: (current[activeVoiceLang] || []).map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item) }))} className="mt-1 w-full resize-y rounded-md border border-border px-2 py-1.5 text-[10px] leading-4 text-text-secondary outline-none focus:border-accent" /></div>) : <p className="py-4 text-center text-[10px] text-text-muted">请先一键生成字幕文案。</p>}</div>
+                    </div>}
                   </div>
-                  <button type="button" onClick={() => setShowWorkbenchSubtitleEditor(false)} className="rounded-lg px-2 py-1 text-[10px] font-bold text-text-muted hover:bg-surface-2">收起</button>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <label className="text-[10px] font-bold text-text-secondary">
-                    字体
-                    <select value={coverStyle.font} onChange={event => setCoverStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-surface-2 px-2 text-[10px]">
-                      {COVER_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-                    </select>
-                  </label>
-                  <label className="text-[10px] font-bold text-text-secondary">
-                    字号
-                    <select value={coverStyle.size} onChange={event => setCoverStyle(current => ({ ...current, size: event.target.value as CoverStyle['size'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-surface-2 px-2 text-[10px]">
-                      <option value="S">小</option><option value="M">中</option><option value="L">大</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {(alignedCuesByLang[activeVoiceLang] || []).length ? (alignedCuesByLang[activeVoiceLang] || []).map((cue, index) => (
-                    <div key={`${cue.start}-${index}`} className="rounded-lg border border-border bg-surface-2 p-2">
-                      <p className="text-[9px] font-bold text-text-muted">{cue.start.toFixed(1)}s – {cue.end.toFixed(1)}s</p>
-                      <textarea
-                        value={cue.text}
-                        rows={2}
-                        onChange={event => setAlignedCuesByLang(current => ({
-                          ...current,
-                          [activeVoiceLang]: (current[activeVoiceLang] || []).map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item),
-                        }))}
-                        className="mt-1 w-full resize-y rounded-md border border-border bg-white px-2 py-1.5 text-[10px] leading-4 text-text-secondary outline-none focus:border-accent"
-                      />
-                    </div>
-                  )) : (
-                    <div className="rounded-lg border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-[10px] leading-4 text-text-muted">
-                      生成或上传配音后，这里会显示可编辑的真实字幕时间轴。
-                    </div>
-                  )}
-                </div>
-              </section>
+                </section>}
+              </div>
             )}
             {step !== 'script' && (
               <AnimatePresence mode="wait">

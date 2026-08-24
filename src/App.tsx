@@ -200,9 +200,15 @@ export default function App() {
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(loadPage);
+  const [smartAssetsMounted, setSmartAssetsMounted] = useState(() => loadPage() === 'smartAssets');
   const [conversation, setConversation] = useState<ConversationContext | null>(null);
   const [scriptPanelOpen, setScriptPanelOpen] = useState(false);
   const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>('create');
+  const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
+
+  useEffect(() => {
+    if (page === 'smartAssets') setSmartAssetsMounted(true);
+  }, [page]);
   const [openProjectsSignal, setOpenProjectsSignal] = useState(0);
 
   // 会话历史（本地持久化，供全局助手恢复旧内容）
@@ -344,7 +350,14 @@ export default function App() {
   const handleNavigate = useCallback((p: Page) => {
     setConversation(null); setRestore(null); setKickoff(null);
     activeIdRef.current = null; setActiveConvId(null);
-    if (p === 'smartAssets') setSmartAssetsView('create');
+    if (p === 'smartAssets') {
+      setSmartAssetsView('create');
+      try {
+        if (localStorage.getItem('ow_video_kickoff') || localStorage.getItem('ow_seedance_kickoff')) {
+          setSmartAssetsInstanceKey(current => current + 1);
+        }
+      } catch { /* ignore */ }
+    }
     setPage(p === 'retention' ? 'conversion' : p);
     if (p === 'adminDelivery') window.history.replaceState(null, '', '/admin/delivery');
     else if (window.location.pathname === '/admin/delivery') window.history.replaceState(null, '', '/');
@@ -527,20 +540,22 @@ export default function App() {
               pageTitle="灵感中心"
             />
           )}
-          {page === 'smartAssets' && (
-            <TrafficPage
-              key="smart-assets"
-              onEnterConversation={enterConversation}
-              onLeaveConversation={leaveConversation}
-              isInConversation={false}
-              onNavigate={handleNavigate}
-              onScriptPanelOpen={() => setScriptPanelOpen(true)}
-              onScriptPanelClose={() => setScriptPanelOpen(false)}
-              initialView={smartAssetsView}
-              showModeTabs={false}
-              openProjectsSignal={openProjectsSignal}
-              pageTitle="内容创作"
-            />
+          {(page === 'smartAssets' || smartAssetsMounted) && (
+            <div className={page === 'smartAssets' ? 'h-full' : 'hidden'} aria-hidden={page !== 'smartAssets'}>
+              <TrafficPage
+                key={`smart-assets-${smartAssetsInstanceKey}`}
+                onEnterConversation={enterConversation}
+                onLeaveConversation={leaveConversation}
+                isInConversation={false}
+                onNavigate={handleNavigate}
+                onScriptPanelOpen={() => setScriptPanelOpen(true)}
+                onScriptPanelClose={() => setScriptPanelOpen(false)}
+                initialView={smartAssetsView}
+                showModeTabs={false}
+                openProjectsSignal={openProjectsSignal}
+                pageTitle="内容创作"
+              />
+            </div>
           )}
           {page === 'accountManagement' && (
             <TrafficPage

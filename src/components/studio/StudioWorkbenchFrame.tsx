@@ -492,34 +492,34 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, empt
     );
   }
   return (
-    <ol className="space-y-2" aria-label="分镜列表">
+    <ol className="space-y-1.5" aria-label="分镜列表">
       {items.map(item => {
         const selected = item.id === selectedId;
         return (
           <li key={item.id}>
             <article
               className={joinClassNames(
-                'group relative rounded-xl border bg-surface p-2 transition',
-                selected ? 'border-accent shadow-[0_0_0_2px_rgba(22,163,74,0.10)]' : 'border-border hover:border-accent/35',
+                'group relative rounded-lg border p-2 transition',
+                selected ? 'border-emerald-200 bg-emerald-50/80 shadow-sm' : 'border-transparent bg-white hover:border-emerald-100 hover:bg-emerald-50/35',
               )}
             >
               <button
                 type="button"
                 aria-pressed={selected}
                 onClick={() => onSelect?.(item.id)}
-                className="flex w-full items-start gap-2 text-left focus:outline-none"
+                className="flex w-full items-start gap-2.5 text-left focus:outline-none"
               >
-                <span className="relative h-14 w-16 shrink-0 overflow-hidden rounded-lg bg-surface-2">
-                  {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : <ImageIcon size={18} className="absolute inset-0 m-auto text-text-muted" />}
-                  <span className="absolute left-1 top-1 rounded bg-black/65 px-1.5 py-0.5 text-[8px] font-black text-white">{String(item.index).padStart(2, '0')}</span>
+                <span className="relative h-[72px] w-[86px] shrink-0 overflow-hidden rounded-lg bg-slate-950">
+                  {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" className="h-full w-full object-contain" /> : <ImageIcon size={19} className="absolute inset-0 m-auto text-white/55" />}
+                  <span className="absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 text-[8px] font-black text-white">{item.index}</span>
                 </span>
-                <span className="min-w-0 flex-1 pr-5">
+                <span className="min-w-0 flex-1 pr-1">
                   <span className="flex items-start justify-between gap-1">
-                    <span className="truncate text-[11px] font-black text-text-primary">{item.title || `分镜 ${String(item.index).padStart(2, '0')}`}</span>
+                    <span className="line-clamp-1 text-[11px] font-black text-text-primary">{item.title || `分镜 ${String(item.index).padStart(2, '0')}`}</span>
                     {item.duration && <span className="shrink-0 text-[9px] font-bold text-text-muted">{item.duration}</span>}
                   </span>
-                  <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-secondary">{item.voiceover || '尚未添加口播文案'}</span>
-                  <span className="mt-1.5 inline-flex"><StoryboardStatus status={item.status} label={item.statusLabel} /></span>
+                  <span className="mt-1 line-clamp-3 text-[10px] leading-[15px] text-text-secondary">{item.voiceover || '尚未添加口播文案'}</span>
+                  <span className="mt-1 inline-flex"><StoryboardStatus status={item.status} label={item.statusLabel} /></span>
                 </span>
               </button>
               {onMore && (

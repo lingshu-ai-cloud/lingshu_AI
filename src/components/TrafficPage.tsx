@@ -301,6 +301,7 @@ export default function TrafficPage({
     } catch { /* ignore */ }
     return 'materials';
   });
+  const [studioMounted, setStudioMounted] = useState(() => initialView === 'create');
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
   const studioRootRef = useRef<HTMLDivElement | null>(null);
   const modeItems = TRAFFIC_MODE_ORDER
@@ -311,6 +312,7 @@ export default function TrafficPage({
 
   useEffect(() => {
     try { localStorage.setItem('lingshu:traffic:view-mode', viewMode); } catch { /* ignore */ }
+    if (viewMode === 'create') setStudioMounted(true);
     if (initialView === 'create' || initialView === 'publish') {
       window.dispatchEvent(new CustomEvent('lingshu:content-view-changed', {
         detail: { entry: viewMode === 'publish' ? 'publish' : 'create' },
@@ -459,7 +461,12 @@ export default function TrafficPage({
         </div>
       </div>}
 
-      <main className="min-h-0 flex-1 overflow-hidden">
+      <main className="relative min-h-0 flex-1 overflow-hidden">
+        {(studioMounted || viewMode === 'create') && (
+          <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
+            <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} />
+          </div>
+        )}
         <AnimatePresence mode="wait">
           {viewMode === 'materials' ? (
             <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
@@ -470,11 +477,7 @@ export default function TrafficPage({
                 onEnterWorkflow={handleEnterWorkflow}
               />
             </motion.div>
-          ) : viewMode === 'create' ? (
-            <motion.div ref={studioRootRef} key="create" id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} />
-            </motion.div>
-          ) : viewMode === 'publish' ? (
+          ) : viewMode === 'create' ? null : viewMode === 'publish' ? (
             <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
               <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} />
             </motion.div>

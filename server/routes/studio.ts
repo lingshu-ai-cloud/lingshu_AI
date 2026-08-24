@@ -3278,7 +3278,11 @@ export function normalizeCompleteTimestampTranslation(source: string, translated
   if (translatedCues.length !== sourceCues.length) return '';
   const targetTexts = translatedCues.map(cue => cue.text.replace(/^[-*•]\s*/, '').trim());
   if (targetTexts.some(text => !text || /translation unavailable|无法翻译|不能翻译|作为AI|Here is|```/i.test(text))) return '';
-  if (targetCode !== 'zh' && targetTexts.some(text => /[\u4e00-\u9fff]/.test(text))) return '';
+  if (targetCode !== 'zh' && targetTexts.some(text => {
+    const hanCount = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+    const letterCount = (text.match(/\p{L}/gu) || []).length;
+    return hanCount >= 6 && hanCount / Math.max(1, letterCount) > 0.45;
+  })) return '';
   const distinctSource = new Set(sourceCues.map(cue => cue.text.replace(/\s+/g, '').toLowerCase())).size;
   const distinctTarget = new Set(targetTexts.map(text => text.replace(/\s+/g, '').toLowerCase())).size;
   if (sourceCues.length > 1 && distinctSource > 1 && distinctTarget === 1) return '';
@@ -3387,7 +3391,11 @@ ${src}`;
     if (!spokenValue) return true;
     const compactSpokenValue = spokenValue.replace(/\s+/g, '');
     if (compactSpokenValue.length < 6) return true;
-    if (code !== 'zh' && /[\u4e00-\u9fff]/.test(textValue)) return true;
+    if (code !== 'zh') {
+      const hanCount = (textValue.match(/[\u4e00-\u9fff]/g) || []).length;
+      const letterCount = (textValue.match(/\p{L}/gu) || []).length;
+      if (hanCount >= 6 && hanCount / Math.max(1, letterCount) > 0.45) return true;
+    }
     if (/translation unavailable|无法翻译|不能翻译|作为AI|Here is|```/i.test(textValue)) return true;
     return false;
   };
