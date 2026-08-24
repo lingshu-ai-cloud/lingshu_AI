@@ -3873,6 +3873,326 @@ function loadMaterials(): Material[] {
 function persistMaterials(list: Material[]): void {
   fs.writeFileSync(MATERIALS_FILE, JSON.stringify(list, null, 2), 'utf8');
 }
+
+type DigitalHumanJobStatus = 'queued' | 'submitting' | 'processing' | 'quality_check' | 'review' | 'completed' | 'failed' | 'cancelled';
+type DigitalHumanMode = 'fast' | 'quality';
+interface DigitalHumanQualityReport {
+  passed: boolean;
+  lipSyncScore?: number;
+  avOffsetFrames?: number;
+  identityScore?: number;
+  freezeSegments?: number;
+  notes?: string[];
+}
+interface DigitalHumanJob {
+  id: string;
+  tenantId: string;
+  projectId?: string;
+  avatarMaterialId: string;
+  avatarName: string;
+  voiceoverUrl: string;
+  scriptSnapshot: string;
+  language: string;
+  mode: DigitalHumanMode;
+  consentConfirmed: boolean;
+  commercialRightsStatus: 'cleared';
+  provider: string;
+  providerTaskId?: string;
+  status: DigitalHumanJobStatus;
+  stage: string;
+  progress: number;
+  outputMaterialId?: string;
+  outputUrl?: string;
+  qualityReport?: DigitalHumanQualityReport;
+  errorCode?: string;
+  errorMessage?: string;
+  versionNumber: number;
+  parentJobId?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+const DIGITAL_HUMAN_JOBS_FILE = path.join(__dirname, '../../data/digital-human-jobs.json');
+const DIGITAL_HUMAN_MAX_OUTPUT_BYTES = 110 * 1024 * 1024;
+const digitalHumanRefreshes = new Map<string, Promise<DigitalHumanJob>>();
+
+function loadDigitalHumanJobs(): DigitalHumanJob[] {
+  try { return JSON.parse(fs.readFileSync(DIGITAL_HUMAN_JOBS_FILE, 'utf8')) as DigitalHumanJob[]; }
+  catch { return []; }
+}
+
+function persistDigitalHumanJobs(list: DigitalHumanJob[]): void {
+  fs.mkdirSync(path.dirname(DIGITAL_HUMAN_JOBS_FILE), { recursive: true });
+  const temp = `${DIGITAL_HUMAN_JOBS_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(list, null, 2), 'utf8');
+  fs.renameSync(temp, DIGITAL_HUMAN_JOBS_FILE);
+}
+
+function updateDigitalHumanJob(id: string, patch: Partial<DigitalHumanJob>): DigitalHumanJob {
+  const list = loadDigitalHumanJobs();
+  const index = list.findIndex(item => item.id === id);
+  if (index < 0) throw new Error('digital human job not found');
+  const next = { ...list[index]!, ...patch, updatedAt: new Date().toISOString() };
+  list[index] = next;
+  persistDigitalHumanJobs(list);
+  return next;
+}
+
+function digitalHumanConfig() {
+  const baseUrl = String(process.env.DIGITAL_HUMAN_API_URL || '').trim().replace(/\/+$/, '');
+  const apiKey = String(process.env.DIGITAL_HUMAN_API_KEY || '').trim();
+  const provider = String(process.env.DIGITAL_HUMAN_PROVIDER || 'latentsync').trim() || 'latentsync';
+  const timeoutMs = Math.max(10_000, Number(process.env.DIGITAL_HUMAN_API_TIMEOUT_MS || 30_000));
+  return { baseUrl, apiKey, provider, timeoutMs };
+}
+
+function digitalHumanProviderHeaders(): Record<string, string> {
+  const { apiKey } = digitalHumanConfig();
+  return { 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) };
+}
+
+async function digitalHumanFetch(url: string, init?: RequestInit): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), digitalHumanConfig().timeoutMs);
+  try { return await fetch(url, { ...init, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+
+function safeProviderOutputUrl(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let output: URL;
+  let provider: URL;
+  try { output = new URL(raw); provider = new URL(digitalHumanConfig().baseUrl); }
+  catch { return ''; }
+  if (!['https:', 'http:'].includes(output.protocol)) return '';
+  const allowed = new Set([
+    provider.host,
+    ...String(process.env.DIGITAL_HUMAN_OUTPUT_HOSTS || '').split(',').map(item => item.trim()).filter(Boolean),
+  ]);
+  return allowed.has(output.host) ? output.toString() : '';
+}
+
+function publicDigitalHumanJob(job: DigitalHumanJob) {
+  const { tenantId: _tenantId, voiceoverUrl: _voiceoverUrl, ...safe } = job;
+  return safe;
+}
+
+function appAssetUrl(req: Request, value: string): string {
+  if (/^https?:\/\//i.test(value)) return value;
+  const base = `${req.protocol}://${req.get('host')}`;
+  return `${base}${value.startsWith('/') ? value : `/${value}`}`;
+}
+
+async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: string, providerQuality: DigitalHumanQualityReport): Promise<DigitalHumanJob> {
+  if (!providerQuality || providerQuality.passed !== true) {
+    return updateDigitalHumanJob(job.id, {
+      status: 'review', stage: 'quality_review', progress: 100,
+      qualityReport: { ...providerQuality, passed: false, notes: [...(providerQuality?.notes || []), '模型质量报告未通过，禁止自动进入成片。'] },
+    });
+  }
+  const response = await digitalHumanFetch(outputUrl, { headers: digitalHumanProviderHeaders() });
+  if (!response.ok) throw new Error(`数字人成片下载失败（${response.status}）`);
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType && !contentType.startsWith('video/') && contentType !== 'application/octet-stream') throw new Error('数字人服务返回的不是视频');
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片超过 110MB 限制');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片大小无效');
+
+  const outputDir = tenantAssetDir(MEDIA_DIR, job.tenantId);
+  fs.mkdirSync(outputDir, { recursive: true });
+  const filename = `${job.id}.mp4`;
+  fs.writeFileSync(path.join(outputDir, filename), bytes);
+  const material = await createGeneratedVideoMaterial({
+    title: `数字人口播 · ${job.avatarName}`,
+    filename,
+    duration: 0,
+    tenantId: job.tenantId,
+    sourceType: 'digital-human',
+  });
+  if (!material) throw new Error('数字人成片未能写入素材库');
+  material.folder = 'presenter';
+  persistMaterials(loadMaterials().map(item => item.id === material.id ? material : item));
+  return updateDigitalHumanJob(job.id, {
+    status: 'completed', stage: 'completed', progress: 100,
+    outputMaterialId: material.id, outputUrl: material.url || undefined,
+    qualityReport: providerQuality, completedAt: new Date().toISOString(),
+  });
+}
+
+async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<DigitalHumanJob> {
+  const existingRefresh = digitalHumanRefreshes.get(jobId);
+  if (existingRefresh) return existingRefresh;
+  const task = (async () => {
+    let job = loadDigitalHumanJobs().find(item => item.id === jobId);
+    if (!job) throw new Error('digital human job not found');
+    if (['completed', 'review', 'failed', 'cancelled'].includes(job.status)) return job;
+    const { baseUrl, provider } = digitalHumanConfig();
+    if (!baseUrl) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'configuration', errorCode: 'PROVIDER_NOT_CONFIGURED', errorMessage: '数字人推理服务尚未配置。' });
+
+    if (!job.providerTaskId) {
+      if (!req) return job;
+      const material = loadMaterials().find(item => item.id === job!.avatarMaterialId && item.tenantId === job!.tenantId && item.scope === 'own');
+      if (!material) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'input_validation', errorCode: 'AVATAR_NOT_FOUND', errorMessage: '人物素材不存在或不属于当前企业。' });
+      const avatar = await materialResponse(material, job.tenantId);
+      const response = await digitalHumanFetch(`${baseUrl}/v1/jobs`, {
+        method: 'POST', headers: digitalHumanProviderHeaders(), body: JSON.stringify({
+          externalJobId: job.id,
+          provider,
+          avatarVideoUrl: appAssetUrl(req, String(avatar.url || '')),
+          audioUrl: appAssetUrl(req, job.voiceoverUrl),
+          script: job.scriptSnapshot,
+          language: job.language,
+          mode: job.mode,
+          output: { ratio: '9:16', container: 'mp4' },
+        }),
+      });
+      const payload = await response.json().catch(() => ({})) as any;
+      if (!response.ok || !payload.id) throw new Error(String(payload.error || `数字人服务提交失败（${response.status}）`));
+      job = updateDigitalHumanJob(job.id, { providerTaskId: String(payload.id), status: 'processing', stage: String(payload.stage || 'inference'), progress: Math.max(1, Math.min(95, Number(payload.progress) || 5)) });
+    }
+
+    const response = await digitalHumanFetch(`${baseUrl}/v1/jobs/${encodeURIComponent(job.providerTaskId!)}`, { headers: digitalHumanProviderHeaders() });
+    const payload = await response.json().catch(() => ({})) as any;
+    if (!response.ok) throw new Error(String(payload.error || `数字人服务查询失败（${response.status}）`));
+    const providerStatus = String(payload.status || 'processing');
+    if (providerStatus === 'failed') return updateDigitalHumanJob(job.id, { status: 'failed', stage: String(payload.stage || 'inference'), progress: Math.max(0, Math.min(99, Number(payload.progress) || job.progress)), errorCode: String(payload.errorCode || 'PROVIDER_FAILED'), errorMessage: String(payload.error || '数字人生成失败') });
+    if (providerStatus === 'cancelled') return updateDigitalHumanJob(job.id, { status: 'cancelled', stage: 'cancelled', progress: job.progress });
+    if (providerStatus !== 'completed') return updateDigitalHumanJob(job.id, { status: providerStatus === 'quality_check' ? 'quality_check' : 'processing', stage: String(payload.stage || 'inference'), progress: Math.max(job.progress, Math.min(95, Number(payload.progress) || job.progress)) });
+
+    const outputUrl = safeProviderOutputUrl(payload.outputUrl);
+    if (!outputUrl) throw new Error('数字人服务返回了不受信任的输出地址');
+    return finalizeDigitalHumanOutput(job, outputUrl, payload.quality as DigitalHumanQualityReport);
+  })().catch(error => {
+    const message = error instanceof Error ? error.message : String(error);
+    return updateDigitalHumanJob(jobId, { status: 'failed', stage: 'provider', errorCode: 'PROVIDER_ERROR', errorMessage: message });
+  }).finally(() => digitalHumanRefreshes.delete(jobId));
+  digitalHumanRefreshes.set(jobId, task);
+  return task;
+}
+
+// Keep provider tasks moving even when the creator closes the page. Queued jobs
+// are submitted synchronously by their POST request; only already-submitted jobs
+// are safe to recover here because their signed inputs are no longer needed.
+const digitalHumanRecoveryTimer = setInterval(() => {
+  if (!digitalHumanConfig().baseUrl) return;
+  for (const job of loadDigitalHumanJobs().filter(item => item.providerTaskId && ['processing', 'quality_check'].includes(item.status)).slice(0, 20)) {
+    void refreshDigitalHumanJob(job.id);
+  }
+}, 15_000);
+digitalHumanRecoveryTimer.unref?.();
+
+function validDigitalHumanVoiceoverUrl(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 1200) return '';
+  if (raw.startsWith('/tts/') || /^\/api\/overseas\/studio\/private-assets\/tts\//.test(raw)) return raw;
+  return '';
+}
+
+function digitalHumanCapabilities() {
+  const config = digitalHumanConfig();
+  return {
+    available: Boolean(config.baseUrl),
+    provider: config.provider,
+    modes: [
+      { id: 'fast', label: '极速模式' },
+      { id: 'quality', label: '高质量模式' },
+    ],
+    output: { ratio: '9:16', container: 'mp4' },
+    qualityGateRequired: true,
+    maxConcurrentJobs: 2,
+    unavailableReason: config.baseUrl ? undefined : '数字人 GPU 推理服务尚未配置',
+  };
+}
+
+studioRouter.get('/digital-human/capabilities', (_req, res) => {
+  res.json(digitalHumanCapabilities());
+});
+
+studioRouter.get('/digital-human/jobs', (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const projectId = String(req.query.projectId || '').trim();
+  const jobs = loadDigitalHumanJobs()
+    .filter(item => item.tenantId === tenantId && (!projectId || item.projectId === projectId))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 50)
+    .map(publicDigitalHumanJob);
+  res.json(jobs);
+});
+
+studioRouter.post('/digital-human/jobs', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const capabilities = digitalHumanCapabilities();
+  if (!capabilities.available) { res.status(503).json({ ok: false, error: capabilities.unavailableReason, code: 'PROVIDER_NOT_CONFIGURED' }); return; }
+  const avatarMaterialId = String(req.body?.avatarMaterialId || '').trim();
+  const avatar = loadMaterials().find(item => item.id === avatarMaterialId && item.tenantId === tenantId && item.scope === 'own' && item.type === 'video');
+  if (!avatar) { res.status(400).json({ ok: false, error: '请选择当前企业拥有的人物视频素材', code: 'INVALID_AVATAR' }); return; }
+  const voiceoverUrl = validDigitalHumanVoiceoverUrl(req.body?.voiceoverUrl);
+  if (!voiceoverUrl) { res.status(400).json({ ok: false, error: '请先生成或上传有效的口播音频', code: 'INVALID_VOICEOVER' }); return; }
+  const scriptSnapshot = String(req.body?.script || '').trim();
+  if (!scriptSnapshot || scriptSnapshot.length > 8000) { res.status(400).json({ ok: false, error: '口播脚本为空或超过 8000 字', code: 'INVALID_SCRIPT' }); return; }
+  if (req.body?.consentConfirmed !== true) { res.status(400).json({ ok: false, error: '必须确认已取得出镜人物授权及商业使用权', code: 'CONSENT_REQUIRED' }); return; }
+  const active = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status));
+  if (active.length >= 2) { res.status(429).json({ ok: false, error: '当前已有 2 个数字人任务在运行，请稍后再试', code: 'CONCURRENCY_LIMIT' }); return; }
+  const mode: DigitalHumanMode = req.body?.mode === 'fast' ? 'fast' : 'quality';
+  const projectId = String(req.body?.projectId || '').trim().slice(0, 160) || undefined;
+  const language = String(req.body?.language || 'zh').trim().slice(0, 24) || 'zh';
+  const siblings = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && item.avatarMaterialId === avatarMaterialId && item.projectId === projectId);
+  const now = new Date().toISOString();
+  const job: DigitalHumanJob = {
+    id: randomUUID(), tenantId, projectId, avatarMaterialId, avatarName: avatar.name,
+    voiceoverUrl, scriptSnapshot, language, mode, consentConfirmed: true,
+    commercialRightsStatus: 'cleared', provider: digitalHumanConfig().provider,
+    status: 'queued', stage: 'queued', progress: 0, versionNumber: siblings.length + 1,
+    createdAt: now, updatedAt: now,
+  };
+  const jobs = loadDigitalHumanJobs(); jobs.push(job); persistDigitalHumanJobs(jobs);
+  void refreshDigitalHumanJob(job.id, req);
+  res.status(202).json({ ok: true, job: publicDigitalHumanJob(job) });
+});
+
+studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  let job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
+  if (['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
+  const outputMaterial = job.outputMaterialId ? loadMaterials().find(item => item.id === job!.outputMaterialId && item.tenantId === tenantId) : undefined;
+  res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
+});
+
+studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const source = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!source) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
+  if (!['failed', 'review', 'cancelled'].includes(source.status)) { res.status(409).json({ ok: false, error: '只有失败、待复核或已取消任务可以重试' }); return; }
+  if (!digitalHumanCapabilities().available) { res.status(503).json({ ok: false, error: '数字人 GPU 推理服务尚未配置' }); return; }
+  const active = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status));
+  if (active.length >= 2) { res.status(429).json({ ok: false, error: '当前已有 2 个数字人任务在运行，请稍后再试' }); return; }
+  const now = new Date().toISOString();
+  const retry: DigitalHumanJob = {
+    ...source, id: randomUUID(), parentJobId: source.id, providerTaskId: undefined,
+    status: 'queued', stage: 'queued', progress: 0, outputMaterialId: undefined, outputUrl: undefined,
+    qualityReport: undefined, errorCode: undefined, errorMessage: undefined, completedAt: undefined,
+    versionNumber: source.versionNumber + 1, createdAt: now, updatedAt: now,
+  };
+  const jobs = loadDigitalHumanJobs(); jobs.push(retry); persistDigitalHumanJobs(jobs);
+  void refreshDigitalHumanJob(retry.id, req);
+  res.status(202).json({ ok: true, job: publicDigitalHumanJob(retry) });
+});
+
+studioRouter.post('/digital-human/jobs/:id/cancel', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
+  if (['completed', 'failed', 'review', 'cancelled'].includes(job.status)) { res.status(409).json({ ok: false, error: '该任务当前不可取消' }); return; }
+  if (job.providerTaskId && digitalHumanConfig().baseUrl) {
+    void digitalHumanFetch(`${digitalHumanConfig().baseUrl}/v1/jobs/${encodeURIComponent(job.providerTaskId)}/cancel`, { method: 'POST', headers: digitalHumanProviderHeaders() }).catch(() => undefined);
+  }
+  const cancelled = updateDigitalHumanJob(job.id, { status: 'cancelled', stage: 'cancelled', errorCode: undefined, errorMessage: undefined });
+  res.json({ ok: true, job: publicDigitalHumanJob(cancelled) });
+});
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

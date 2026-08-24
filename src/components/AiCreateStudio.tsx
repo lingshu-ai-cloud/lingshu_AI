@@ -6,7 +6,7 @@ import {
   Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock,
   Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
 } from 'lucide-react';
-import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks } from '../lib/studioApi';
+import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
@@ -309,7 +309,8 @@ const POSTER_STAGES: StudioStage[] = [
   { id: 'deliver', label: '预览与发布', icon: Sparkles, hint: '生成图文并准备发布', steps: ['poster'] },
 ];
 
-type VideoThemeId = 'buyer_pain' | 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'comparison' | 'customer_case' | 'trend' | 'talking_head';
+type VideoThemeId = 'buyer_pain' | 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'comparison' | 'customer_case' | 'trend';
+type PresenterMode = 'real' | 'digital';
 type VideoTheme = {
   id: VideoThemeId;
   title: string;
@@ -331,7 +332,6 @@ const VIDEO_THEMES: VideoTheme[] = [
   { id: 'comparison', title: '选型对比', description: '按统一维度比较不同产品或方案，帮助买家选型。', painPoint: '相似产品看起来接近，买家难以判断适用差异', conversionGoal: '说明需求并获取选型建议', requires: ['comparison'] },
   { id: 'customer_case', title: '客户案例', description: '用已授权的客户问题、过程和结果建立信任。', painPoint: '买家缺少相似客户的合作与落地参考', conversionGoal: '索取相关案例资料', requires: ['case'] },
   { id: 'trend', title: '趋势热点', description: '用有来源的市场变化切入，再连接到企业产品证据。', painPoint: '买家需要判断当前趋势是否值得进入或备货', conversionGoal: '获取趋势对应的产品方案', requires: ['trend'] },
-  { id: 'talking_head', title: '真人口播', description: '以真人出镜讲解、演示或推荐为核心，围绕人物表达组织分镜。', painPoint: '买家需要更直接、可信的人物讲解来理解产品价值', conversionGoal: '通过真人讲解引导咨询产品方案', requires: ['material'] },
 ];
 
 function inferVideoThemeFromMaterial(material: Pick<Material, 'name' | 'folder' | 'shotFunction' | 'tags' | 'segments'>): VideoThemeId {
@@ -339,8 +339,6 @@ function inferVideoThemeFromMaterial(material: Pick<Material, 'name' | 'folder' 
     segment.action, segment.environment, segment.shot, ...segment.subject, ...segment.recommendedFunctions,
   ]).join(' ');
   const text = [material.name, material.folder, material.shotFunction, material.tags, segmentText].filter(Boolean).join(' ').toLowerCase();
-  const hasPerson = (material.segments || []).some(segment => segment.hasPerson);
-  if (hasPerson || /真人|人物|口播|主播|讲解|出镜|presenter|talking.?head|spokesperson|host/.test(text)) return 'talking_head';
   if (/对比|比较|选型|差异|before.?after|comparison|versus|\bvs\b/.test(text)) return 'comparison';
   if (/客户案例|合作案例|案例结果|反馈|testimonial|customer.?case|case.?study/.test(text)) return 'customer_case';
   if (/趋势|热点|热销|爆款|trend|viral|hot.?selling/.test(text)) return 'trend';
@@ -3274,6 +3272,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [sellingPoints, setSellingPoints] = useState('');
   const [tone, setTone] = useState('高转化 · 口语化');
   const [videoThemeId, setVideoThemeId] = useState<VideoThemeId>('buyer_pain');
+  const [presenterMode, setPresenterMode] = useState<PresenterMode>('real');
   const [themePainPoint, setThemePainPoint] = useState(VIDEO_THEMES[0]!.painPoint);
   const [themeConversionGoal, setThemeConversionGoal] = useState(DEFAULT_VIDEO_CONVERSION_GOAL);
   const [variationPeople, setVariationPeople] = useState('原人物');
@@ -3304,6 +3303,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     conversionGoal: effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL,
     primaryCta: effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL,
     cooperationRoute,
+    presenterMode,
   };
   const variationDimensionConfig = variationStrategy === 'remix' ? [
     { label: '素材组合规则', hint: '从真实素材库选择不同组合', value: variationPeople, setter: setVariationPeople, suggestions: ['自动优选素材组', '产品实拍优先', '工厂素材优先', '人物口播优先'] },
@@ -3397,6 +3397,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [uploading, setUploading] = useState(false);
   const [digitalHumanLoading, setDigitalHumanLoading] = useState(false);
   const [digitalHumanNotice, setDigitalHumanNotice] = useState('');
+  const [digitalHumanMode, setDigitalHumanMode] = useState<'fast' | 'quality'>('quality');
+  const [digitalHumanConsent, setDigitalHumanConsent] = useState(false);
+  const [digitalHumanCapabilities, setDigitalHumanCapabilities] = useState<DigitalHumanCapabilities | null>(null);
+  const [digitalHumanJob, setDigitalHumanJob] = useState<DigitalHumanJob | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [script, setScript] = useState('');
@@ -6162,38 +6166,83 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const generateDigitalHumanPresenter = async () => {
     const source = materials.find(c => c.folder === 'presenter' && selected.includes(c.id) && c.type === 'video')
       || materials.find(c => c.folder === 'presenter' && c.type === 'video');
-    if (!source?.url) {
+    if (!source?.id) {
       setDigitalHumanNotice('请先在「真人口播」文件夹上传或选择一条真人实拍视频。');
+      return;
+    }
+    if (!activeVoiceoverUrl) {
+      setDigitalHumanNotice('请先在「分镜与声音」生成或上传口播音频。');
+      return;
+    }
+    if (!activeSpokenScript.trim()) {
+      setDigitalHumanNotice('当前没有可用于数字人口播的脚本。');
+      return;
+    }
+    if (!digitalHumanConsent) {
+      setDigitalHumanNotice('请先确认已取得出镜人物授权及商业使用权。');
+      return;
+    }
+    if (digitalHumanCapabilities && !digitalHumanCapabilities.available) {
+      setDigitalHumanNotice(digitalHumanCapabilities.unavailableReason || '数字人推理服务尚未配置。');
       return;
     }
     setDigitalHumanLoading(true);
     setDigitalHumanNotice('');
     try {
-      const blob = await fetch(source.url).then(r => {
-        if (!r.ok) throw new Error('读取真人实拍视频失败');
-        return r.blob();
+      const result = await studioApi.createDigitalHumanJob({
+        projectId: projectId || undefined,
+        avatarMaterialId: source.id,
+        voiceoverUrl: activeVoiceoverUrl,
+        script: activeSpokenScript,
+        language: activeVoiceLang,
+        mode: digitalHumanMode,
+        consentConfirmed: digitalHumanConsent,
       });
-      const dataBase64 = await blobToDataUrl(blob);
-      const { material } = await studioApi.uploadMaterial({
-        name: `数字人口播 · ${source.name}`,
-        folder: 'presenter',
-        type: 'video',
-        duration: source.duration,
-        width: source.width,
-        height: source.height,
-        dataBase64,
-        mimeType: blob.type || 'video/mp4',
-      });
-      await refreshMaterials();
-      if (material?.id) setSelected(s => [...s.filter(id => id !== source.id), material.id]);
-      setActiveFolder('presenter');
-      setDigitalHumanNotice('已生成数字人口播素材，可直接选中进入后续快剪流程。');
+      if (!result.ok || !result.job) throw new Error(result.error || '数字人任务提交失败');
+      setDigitalHumanJob(result.job);
+      setDigitalHumanNotice('任务已提交。生成完成且质量检测通过后，会自动回流素材库。');
     } catch (err: any) {
       setDigitalHumanNotice(err?.message || '数字人口播生成失败，请稍后重试。');
-    } finally {
       setDigitalHumanLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (presenterMode !== 'digital') return;
+    let cancelled = false;
+    void studioApi.digitalHumanCapabilities().then(value => { if (!cancelled) setDigitalHumanCapabilities(value); });
+    void studioApi.listDigitalHumanJobs(projectId || undefined).then(jobs => {
+      if (cancelled || !jobs[0]) return;
+      setDigitalHumanJob(jobs[0]);
+      setDigitalHumanLoading(['queued', 'submitting', 'processing', 'quality_check'].includes(jobs[0].status));
+    });
+    return () => { cancelled = true; };
+  }, [presenterMode, projectId]);
+
+  useEffect(() => {
+    if (!digitalHumanJob || !['queued', 'submitting', 'processing', 'quality_check'].includes(digitalHumanJob.status)) return;
+    let cancelled = false;
+    const poll = async () => {
+      const result = await studioApi.getDigitalHumanJob(digitalHumanJob.id);
+      if (cancelled || !result.job) return;
+      setDigitalHumanJob(result.job);
+      if (result.job.status === 'completed') {
+        setDigitalHumanLoading(false);
+        await refreshMaterials();
+        if (result.outputMaterial?.id) setSelected(current => [...current.filter(id => id !== digitalHumanJob.avatarMaterialId), result.outputMaterial!.id]);
+        setDigitalHumanNotice('数字人口播已通过质量检测并回流素材库。');
+      } else if (result.job.status === 'review') {
+        setDigitalHumanLoading(false);
+        setDigitalHumanNotice('自动质量检测未通过，成片已拦截，请重试或人工复核。');
+      } else if (result.job.status === 'failed' || result.job.status === 'cancelled') {
+        setDigitalHumanLoading(false);
+        setDigitalHumanNotice(result.job.errorMessage || '数字人任务未完成。');
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 3000);
+    void poll();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [digitalHumanJob?.id, digitalHumanJob?.status]);
 
   /* ── BGM 曲库 ────────────────────────────────────────────────────────── */
   const refreshBgm = async () => {
@@ -6680,7 +6729,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     videoKickoff,
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, cooperationRoute, sellingPoints, tone,
-    videoThemeId, themePainPoint, themeConversionGoal,
+    videoThemeId, themePainPoint, themeConversionGoal, presenterMode,
     selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, assemblyName, hookMaterialId, materialSnapshots,
     storyboardAssemblies: assembliesForSave, activeAssemblyId, script, scriptType, modeScripts, activeModeScriptId, voice, voiceCandidates,
     bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, materialVersionCovers, account, caption,
@@ -6780,7 +6829,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (typeof s.cooperationRoute === 'string') setCooperationRoute(s.cooperationRoute);
     if (typeof s.sellingPoints === 'string') setSellingPoints(s.sellingPoints);
     if (typeof s.tone === 'string') setTone(s.tone);
-    if (typeof s.videoThemeId === 'string' && VIDEO_THEMES.some(item => item.id === s.videoThemeId)) setVideoThemeId(s.videoThemeId as VideoThemeId);
+    if (typeof s.videoThemeId === 'string' && VIDEO_THEMES.some(item => item.id === s.videoThemeId)) {
+      setVideoThemeId(s.videoThemeId as VideoThemeId);
+    } else if (s.videoThemeId === 'talking_head') {
+      // 兼容旧草稿：真人口播不再是内容主题，迁移为默认主题与真人出镜。
+      setVideoThemeId('buyer_pain');
+      setPresenterMode('real');
+    }
+    if (s.presenterMode === 'real' || s.presenterMode === 'digital') setPresenterMode(s.presenterMode);
     if (typeof s.themePainPoint === 'string') setThemePainPoint(s.themePainPoint);
     setThemeConversionGoal(typeof s.themeConversionGoal === 'string' && s.themeConversionGoal.trim()
       ? s.themeConversionGoal
@@ -7359,6 +7415,38 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     />
                     <span className="mt-1.5 block truncate text-[10px] text-text-muted">转化目标：{effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}</span>
                   </label>
+                  <fieldset className="md:col-span-2">
+                    <legend className="mb-1.5 block text-xs font-semibold text-text-secondary">出镜方式</legend>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        { id: 'real', label: '真人实拍', description: '使用真人拍摄素材完成口播与混剪' },
+                        { id: 'digital', label: '数字人口播', description: '确认脚本和配音后生成数字人素材' },
+                      ] as const).map(option => {
+                        const selectedMode = presenterMode === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={selectedMode}
+                            onClick={() => {
+                              setPresenterMode(option.id);
+                              if (script.trim()) setModeNotice(`出镜方式已切换为“${option.label}”，请重新确认分镜与人物素材。`);
+                            }}
+                            className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-accent/30 ${selectedMode ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-surface-2 hover:border-accent/50'}`}
+                          >
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${selectedMode ? 'border-accent' : 'border-border-bright'}`}>
+                              {selectedMode && <span className="h-2 w-2 rounded-full bg-accent" />}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-xs font-black text-text-primary">{option.label}</span>
+                              <span className="mt-0.5 block truncate text-[10px] text-text-muted">{option.description}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
                 </div>
               )}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface-2 px-4 py-3">
@@ -8124,19 +8212,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 		                <span className="text-sm font-semibold text-text-primary">{folderName(activeFolder)}</span>
 		                {activeFolder === 'recommend' && <span className="text-[11px] text-text-muted">查看当前视频版本全部分镜使用的素材</span>}
 		                {activeFolder === 'hot' && <span className="text-[11px] text-text-muted">官方实时更新</span>}
-	                {activeFolder === 'presenter' && <span className="text-[11px] text-text-muted">上传真人实拍视频，或生成数字人口播</span>}
+	                {activeFolder === 'presenter' && <span className="text-[11px] text-text-muted">上传并选择已授权的真人出镜视频</span>}
 	                <input ref={fileInputRef} type="file" multiple accept={activeFolder === 'presenter' ? 'video/*' : 'video/*,image/*,audio/*'} className="hidden"
 	                  onChange={e => { void handleUpload(e.target.files); e.target.value = ''; }} />
-		                {activeFolder === 'presenter' && (
-		                  <button
-		                    onClick={() => void generateDigitalHumanPresenter()}
-	                    disabled={digitalHumanLoading || !materials.some(c => c.folder === 'presenter' && c.type === 'video')}
-	                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
-	                  >
-	                    {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-		                    {digitalHumanLoading ? '生成中…' : '生成数字人口播'}
-		                  </button>
-		                )}
 		                <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
 		                  className="btn-ghost ml-auto !px-3 !py-1.5 !text-xs flex items-center gap-1.5 disabled:opacity-60">
 		                  {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {uploading ? '上传中…' : '上传'}
@@ -8150,22 +8228,54 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 	                    {digitalHumanNotice}
 	                  </div>
 	                )}
-	                {activeFolder === 'presenter' && visible.length > 0 && (
+	                {activeFolder === 'presenter' && presenterMode === 'digital' && visible.length > 0 && (
 	                  <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
-	                    <div className="flex flex-wrap items-center justify-between gap-3">
+	                    <div className="flex flex-wrap items-start justify-between gap-3">
 	                      <div className="min-w-0">
-	                        <p className="text-sm font-black text-text-primary">真人口播素材</p>
-	                        <p className="mt-1 text-xs text-text-muted">选择一条真人实拍视频，可生成数字人口播版本并保存回当前文件夹。</p>
+	                        <p className="text-sm font-black text-text-primary">数字人口播生成</p>
+	                        <p className="mt-1 text-xs text-text-muted">选择人物视频并使用当前口播音频生成；默认 9:16，质量不达标不会进入成片。</p>
+	                        <div className="mt-3 flex flex-wrap gap-2">
+	                          {(['fast', 'quality'] as const).map(item => (
+	                            <button key={item} type="button" onClick={() => setDigitalHumanMode(item)}
+	                              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${digitalHumanMode === item ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}>
+	                              {item === 'fast' ? '极速模式' : '高质量模式'}
+	                            </button>
+	                          ))}
+	                        </div>
 	                      </div>
 	                      <button
 	                        onClick={() => void generateDigitalHumanPresenter()}
-	                        disabled={digitalHumanLoading || !visible.some(c => c.type === 'video')}
+	                        disabled={digitalHumanLoading || !visible.some(c => c.type === 'video') || digitalHumanCapabilities?.available === false}
 	                        className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
 	                      >
 	                        {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-	                        基于选中视频生成数字人口播
+	                        {digitalHumanLoading ? '正在生成…' : '生成数字人口播'}
 	                      </button>
 	                    </div>
+	                    <label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] leading-5 text-text-secondary">
+	                      <input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} className="mt-1 accent-[var(--color-accent)]" />
+	                      <span>我确认已取得该出镜人物的肖像、声音及商业使用授权，并对上传与生成内容负责。</span>
+	                    </label>
+	                    {digitalHumanCapabilities?.available === false && (
+	                      <p className="mt-2 text-[11px] font-semibold text-amber-600">{digitalHumanCapabilities.unavailableReason}</p>
+	                    )}
+	                    {digitalHumanJob && (
+	                      <div className="mt-3 rounded-xl bg-surface-2 p-3">
+	                        <div className="flex items-center justify-between text-[11px] font-semibold"><span>{digitalHumanJob.stage}</span><span>{digitalHumanJob.progress}% · V{digitalHumanJob.versionNumber}</span></div>
+	                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${digitalHumanJob.progress}%` }} /></div>
+	                        {digitalHumanJob.qualityReport && <p className="mt-2 text-[10px] text-text-muted">口型 {digitalHumanJob.qualityReport.lipSyncScore ?? '—'} · 身份保持 {digitalHumanJob.qualityReport.identityScore ?? '—'} · 音画偏移 {digitalHumanJob.qualityReport.avOffsetFrames ?? '—'} 帧</p>}
+	                        <div className="mt-2 flex gap-2">
+	                          {['failed', 'review', 'cancelled'].includes(digitalHumanJob.status) && <button type="button" className="rounded-lg border border-border px-2 py-1 text-[10px] font-bold" onClick={async () => {
+	                            setDigitalHumanLoading(true); const result = await studioApi.retryDigitalHumanJob(digitalHumanJob.id);
+	                            if (result.job) { setDigitalHumanJob(result.job); setDigitalHumanNotice('已创建新的重试版本。'); } else { setDigitalHumanLoading(false); setDigitalHumanNotice(result.error || '重试失败'); }
+	                          }}>重试生成</button>}
+	                          {['queued', 'submitting', 'processing', 'quality_check'].includes(digitalHumanJob.status) && <button type="button" className="rounded-lg border border-border px-2 py-1 text-[10px] font-bold text-text-secondary" onClick={async () => {
+	                            const result = await studioApi.cancelDigitalHumanJob(digitalHumanJob.id);
+	                            if (result.job) { setDigitalHumanJob(result.job); setDigitalHumanLoading(false); setDigitalHumanNotice('任务已取消。'); }
+	                          }}>取消任务</button>}
+	                        </div>
+	                      </div>
+	                    )}
 	                  </div>
 	                )}
 	                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
