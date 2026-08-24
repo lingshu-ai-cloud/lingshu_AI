@@ -8,8 +8,8 @@ fi
 
 deploy_environment="${1:-}"
 case "$deploy_environment" in
-  internal|trial|production) ;;
-  *) echo "Environment must be internal, trial, or production." >&2; exit 2 ;;
+  internal|presales|production) ;;
+  *) echo "Environment must be internal, presales, or production." >&2; exit 2 ;;
 esac
 
 export DEBIAN_FRONTEND=noninteractive
@@ -44,5 +44,5 @@ docker volume create "lingshu_${deploy_environment}_caddy_data" >/dev/null
 docker volume create "lingshu_${deploy_environment}_caddy_config" >/dev/null
 
 echo "Host preparation complete for ${deploy_environment}."
-echo "Next: register the GitHub Actions runner with labels: lingshu,${deploy_environment}"
+echo "Next: register the GitHub Actions runner with the custom label: ${deploy_environment}"
 echo "Then create /opt/lingshu/${deploy_environment}/.env.runtime with owner actions-runner and mode 600."

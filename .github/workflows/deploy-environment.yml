@@ -9,7 +9,7 @@ on:
         type: choice
         options:
           - internal
-          - trial
+          - presales
           - production
       image_sha:
         description: Full 40-character commit SHA already published by Build release images
@@ -84,7 +84,7 @@ jobs:
     runs-on:
       - self-hosted
       - linux
-      - lingshu
+      - x64
       - ${{ inputs.environment }}
     timeout-minutes: 20
     environment:

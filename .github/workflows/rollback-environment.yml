@@ -9,7 +9,7 @@ on:
         type: choice
         options:
           - internal
-          - trial
+          - presales
           - production
       production_confirmation:
         description: For production only, enter ROLLBACK production
@@ -47,7 +47,7 @@ jobs:
     runs-on:
       - self-hosted
       - linux
-      - lingshu
+      - x64
       - ${{ inputs.environment }}
     timeout-minutes: 20
     environment:

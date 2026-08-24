@@ -4,8 +4,8 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  release.sh deploy <internal|trial|production> <40-character-commit-sha>
-  release.sh rollback <internal|trial|production>
+  release.sh deploy <internal|presales|production> <40-character-commit-sha>
+  release.sh rollback <internal|presales|production>
 EOF
 }
 
@@ -113,7 +113,7 @@ if [[ "$action" != "deploy" && "$action" != "rollback" ]]; then
 fi
 
 case "$deploy_environment" in
-  internal|trial|production) ;;
+  internal|presales|production) ;;
   *) usage; exit 2 ;;
 esac
 
