@@ -3,6 +3,18 @@ name: Roll back environment
 on:
   workflow_dispatch:
     inputs:
+      authorization_id:
+        description: One-time release-console authorization ID
+        required: true
+        type: string
+      authorization_token:
+        description: Short-lived one-time release-console token
+        required: true
+        type: string
+      release_request_id:
+        description: Release-console request ID
+        required: true
+        type: string
       environment:
         description: Target environment
         required: true
@@ -11,9 +23,17 @@ on:
           - internal
           - presales
           - production
-      production_confirmation:
-        description: For production only, enter ROLLBACK production
-        required: false
+      operation:
+        description: Must be rollback
+        required: true
+        type: string
+      version:
+        description: Version expected after rollback
+        required: true
+        type: string
+      rollback_of_request_id:
+        description: Original release-console request ID
+        required: true
         type: string
 
 permissions:
@@ -24,26 +44,62 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: Validate rollback request
+  authorize:
+    name: Consume one-time console authorization
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require the protected rollback workflow from main
+      - name: Require the trusted workflow from main
         if: github.ref != 'refs/heads/main'
         run: |
           echo "Rollbacks must be started from the main branch." >&2
           exit 1
 
-      - name: Validate production confirmation
-        if: inputs.environment == 'production' && inputs.production_confirmation != 'ROLLBACK production'
+      - name: Validate operation
+        if: inputs.operation != 'rollback' || inputs.rollback_of_request_id == ''
         run: |
-          echo "Production rollback requires the exact confirmation: ROLLBACK production" >&2
+          echo "This workflow accepts linked rollback requests only." >&2
           exit 1
+
+      - name: Consume release-console authorization
+        env:
+          CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.RELEASE_AUTHORIZATION_WEBHOOK_SECRET }}
+          AUTHORIZATION_ID: ${{ inputs.authorization_id }}
+          AUTHORIZATION_TOKEN: ${{ inputs.authorization_token }}
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          : "${CONSOLE_URL:?RELEASE_CONSOLE_URL secret is required}"
+          : "${WEBHOOK_SECRET:?RELEASE_AUTHORIZATION_WEBHOOK_SECRET secret is required}"
+          echo "::add-mask::$AUTHORIZATION_TOKEN"
+          request_file="$(mktemp)"
+          trap 'rm -f "$request_file"' EXIT
+          chmod 600 "$request_file"
+          node <<'NODE' > "$request_file"
+          const payload = {
+            authorizationId: process.env.AUTHORIZATION_ID,
+            token: process.env.AUTHORIZATION_TOKEN,
+            releaseRequestId: process.env.RELEASE_REQUEST_ID,
+            environment: process.env.TARGET_ENVIRONMENT,
+            operation: process.env.RELEASE_OPERATION,
+            version: process.env.RELEASE_VERSION,
+          };
+          process.stdout.write(JSON.stringify(payload));
+          NODE
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $WEBHOOK_SECRET" \
+            --header "Content-Type: application/json" \
+            --data-binary "@$request_file" \
+            "$CONSOLE_URL/api/execution/consume" >/dev/null
 
   rollback:
     name: Roll back ${{ inputs.environment }}
-    needs: validate
+    needs: authorize
     runs-on:
       - self-hosted
       - linux
@@ -79,5 +135,46 @@ jobs:
       - name: Record rollback in job summary
         run: |
           echo "### Rollback complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release request: ${{ inputs.release_request_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Original request: ${{ inputs.rollback_of_request_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Expected version: ${{ inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Environment: ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Runner: ${{ runner.name }}" >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    name: Report execution result
+    if: ${{ always() && needs.authorize.result == 'success' }}
+    needs:
+      - authorize
+      - rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report final state to release console
+        env:
+          CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          WEBHOOK_SECRET: ${{ secrets.RELEASE_RESULT_WEBHOOK_SECRET }}
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          ROLLBACK_RESULT: ${{ needs.rollback.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          : "${CONSOLE_URL:?RELEASE_CONSOLE_URL secret is required}"
+          : "${WEBHOOK_SECRET:?RELEASE_RESULT_WEBHOOK_SECRET secret is required}"
+          request_file="$(mktemp)"
+          trap 'rm -f "$request_file"' EXIT
+          chmod 600 "$request_file"
+          node <<'NODE' > "$request_file"
+          const succeeded = process.env.ROLLBACK_RESULT === 'success';
+          process.stdout.write(JSON.stringify({
+            status: succeeded ? 'SUCCEEDED' : 'FAILED',
+            summary: succeeded ? 'GitHub Actions rollback succeeded' : `Rollback job ended with ${process.env.ROLLBACK_RESULT}`,
+            workflowUrl: process.env.RUN_URL,
+          }));
+          NODE
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $WEBHOOK_SECRET" \
+            --header "Content-Type: application/json" \
+            --data-binary "@$request_file" \
+            "$CONSOLE_URL/api/releases/$RELEASE_REQUEST_ID/result" >/dev/null
