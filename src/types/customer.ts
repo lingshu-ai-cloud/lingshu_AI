@@ -14,6 +14,96 @@ export type HandlingMode = 'ai_auto' | 'ai_draft' | 'human_needed';
 export type TimelineType = 'whatsapp' | 'call' | 'note' | 'quote' | 'task' | 'system';
 export type AutonomyLevel = 'remind' | 'draft' | 'auto';
 
+export type SalesLifecycleStage =
+  | 'new_inquiry'
+  | 'discovery_qualification'
+  | 'technical_sample_validation'
+  | 'proposal_quote'
+  | 'negotiation_approval'
+  | 'closed'
+  | 'fulfillment_relationship';
+export type DealOutcome = 'won' | 'lost' | 'on_hold';
+export type EngagementStatus = 'active' | 'waiting_buyer' | 'waiting_seller' | 'dormant_30d' | 'dormant_60d';
+export type KnowledgeGroundingState = 'grounded_static' | 'grounded_dynamic' | 'missing' | 'ambiguous' | 'restricted' | 'expired';
+export type ExecutionMode = 'ai_auto' | 'ai_draft' | 'human_approval' | 'mandatory_handoff';
+
+export interface SalesConversationState {
+  schemaVersion: 1;
+  lifecycle: {
+    stage: SalesLifecycleStage;
+    outcome?: DealOutcome;
+    enteredAt: string;
+    lastProgressedAt: string;
+  };
+  engagement: {
+    status: EngagementStatus;
+    lastActivityAt: number;
+    lastBuyerMessageAt?: number;
+    lastSellerMessageAt?: number;
+    updatedAt: string;
+  };
+  intents: {
+    active: Array<{ type: string; confidence: number; sourceEventIds: string[]; updatedAt: string }>;
+    updatedAt: string;
+  };
+  dealEvidence: {
+    fields: Record<string, {
+      value?: string | number | boolean;
+      status: 'unknown' | 'claimed' | 'verified' | 'conflicting' | 'expired';
+      confidence?: number;
+      sourceEventIds: string[];
+      extractor?: string;
+      valueRole?: 'buyer_requirement' | 'buyer_statement' | 'seller_capability' | 'transaction_fact';
+      confirmedByHuman?: boolean;
+      history?: Array<{ value?: string | number | boolean; status: string; sourceEventId: string; actor: string; occurredAt: string }>;
+      updatedAt: string;
+    }>;
+    updatedAt: string;
+  };
+  knowledge: { state: KnowledgeGroundingState; referenceIds: string[]; updatedAt: string };
+  authorityRisk: { riskLevel: 'L1' | 'L2' | 'L3' | 'L4'; executionMode: ExecutionMode; reasons: string[]; updatedAt: string };
+  artifacts: {
+    items: Array<{
+      id: string;
+      type: 'catalog' | 'specification' | 'sample' | 'quotation' | 'pi' | 'purchase_order' | 'contract' | 'payment_proof' | 'logistics' | 'claim';
+      status: 'missing' | 'draft' | 'pending_approval' | 'sent' | 'accepted' | 'rejected' | 'expired';
+      version: number;
+      approvalStatus: 'not_required' | 'pending' | 'approved' | 'rejected';
+      title?: string;
+      externalRef?: string;
+      approvedBy?: string;
+      approvedAt?: string;
+      sentAt?: string;
+      expiresAt?: string;
+      supersedesId?: string;
+      sourceEventIds: string[];
+      updatedAt: string;
+    }>;
+    updatedAt: string;
+  };
+  channelOwnership: {
+    channel: string;
+    owner: { type: 'ai' | 'human' | 'team' | 'unassigned'; id?: string; name?: string };
+    handoffStatus: 'none' | 'requested' | 'accepted' | 'resolved';
+    responseDueAt?: string;
+    updatedAt: string;
+  };
+  revision: number;
+  appliedEventIds: string[];
+  updatedAt: string;
+}
+
+export interface NextBestActionDecision {
+  type: 'answer_and_clarify' | 'prepare_sample' | 'prepare_quote' | 'review_negotiation' | 'request_human_takeover' | 'follow_up_buyer' | 'confirm_order_evidence' | 'support_fulfillment' | 'none';
+  headline: string;
+  rationale: string;
+  primaryAction: string;
+  answerFirst: true;
+  missingConditions: string[];
+  sourceEventIds: string[];
+  executionMode: ExecutionMode;
+}
+
 export type AuthenticityBand = 'verified' | 'reduced' | 'suspected_scraping';
 export type QualificationBand = 'white' | 'blue' | 'yellow' | 'red' | 'black';
 
@@ -133,6 +223,9 @@ export interface CustomerProfile {
   outboundProduct: string;
   estimatedValue: string;
   stage: CustomerStage;
+  salesState?: SalesConversationState;
+  nextBestAction?: NextBestActionDecision;
+  whatsappWindow?: { status: 'open' | 'closed' | 'unknown'; closesAt?: string; templateRequired: boolean };
   intentScore: number;
   intentSignals: string[];
   bant?: BantAssessment;

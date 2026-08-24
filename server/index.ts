@@ -45,6 +45,7 @@ import { requireScopedAsset, syncAssetSession } from './lib/assetAccess.js';
 import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
+import { salesOperationsRouter } from './routes/salesOperations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -221,6 +222,7 @@ app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);
 app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
+app.use('/api/overseas/sales-operations', salesOperationsRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 

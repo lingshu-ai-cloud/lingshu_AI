@@ -1,0 +1,63 @@
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    environment:
+      NODE_ENV: production
+      PORT: 8788
+      PB_URL: http://pocketbase:8090
+      CRAWLER_OPS_WORKER_ENABLED: "0"
+      PB_VIDEO_BACKFILL_ENABLED: "false"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-18788}:8788"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  pocketbase:
+    image: ${POCKETBASE_IMAGE:?POCKETBASE_IMAGE is required}:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    volumes:
+      - pb_data:/pb/pb_data
+    ports:
+      - "127.0.0.1:8090:8090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    env_file:
+      - .env.runtime
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  pb_data:
+    name: ${PB_DATA_VOLUME_NAME:?PB_DATA_VOLUME_NAME is required}
+  caddy_data:
+    name: ${CADDY_DATA_VOLUME_NAME:?CADDY_DATA_VOLUME_NAME is required}
+  caddy_config:
+    name: ${CADDY_CONFIG_VOLUME_NAME:?CADDY_CONFIG_VOLUME_NAME is required}

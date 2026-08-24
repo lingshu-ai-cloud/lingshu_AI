@@ -49,6 +49,7 @@ import {
 } from '../knowledge/strategyRetrieve.js';
 import { customerServicePolicy, readTenantEnterpriseProfile, type BizRules, type SalesStyleProfile } from './enterprise.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { recordPilotEvent } from '../sales/pilotMetrics.js';
 
 export const draftReplyRouter = Router();
 draftReplyRouter.use(requireAuth);
@@ -212,6 +213,12 @@ function directConversationPayload(pair: { draft: string; draftZh: string }, cat
 draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const body = req.body ?? {};
+  const unifiedSalesState = body.salesState && typeof body.salesState === 'object' ? body.salesState : undefined;
+  const unifiedStage = String(unifiedSalesState?.lifecycle?.stage || body.stage || '');
+  const unifiedEvidence = unifiedSalesState?.dealEvidence?.fields && typeof unifiedSalesState.dealEvidence.fields === 'object'
+    ? Object.entries(unifiedSalesState.dealEvidence.fields).slice(0, 20).map(([key, field]: [string, any]) => ({ key, value: field?.value, status: field?.status, valueRole: field?.valueRole, sourceEventIds: field?.sourceEventIds }))
+    : [];
+  const nextBestAction = body.nextBestAction && typeof body.nextBestAction === 'object' ? body.nextBestAction : undefined;
   const timeline = Array.isArray(body.timeline) ? body.timeline.slice(-20) : [];
   const intent = normalizeIntent(body.intent || body.mode);
   const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
@@ -224,6 +231,16 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     });
     return;
   }
+  if (body.customerId && body.isMock !== true) {
+    recordPilotEvent({
+      id: `draft-generated:${String(body.customerId)}:${String(body.replyId || Date.now())}`,
+      tenantId,
+      customerId: String(body.customerId),
+      type: 'draft_generated',
+      occurredAt: new Date().toISOString(),
+      metadata: { intent: String(body.intent || body.mode || 'reply') },
+    });
+  }
   const language = String(body.language ?? '').trim() || 'English';
   const latestMessage = latestBuyerMessage(timeline) || String(body.message || body.instruction || body.product || '');
   const phase = conversationPhase(timeline);
@@ -232,7 +249,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       tenantId,
       customerId: String(body.customerId),
       timeline,
-      stage: String(body.stage || ''),
+      stage: unifiedStage,
     }).catch(error => console.warn('[style-memory:outcome-observation-failed]', error));
   }
   const processIntent = isGreetingOrProcessIntent(latestMessage);
@@ -317,7 +334,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     id: String(body.customerId ?? ''),
     name: String(body.customerName ?? ''),
     language,
-    stage: String(body.stage ?? ''),
+    stage: unifiedStage,
     product: String(body.product ?? ''),
     internalProduct: String(body.internalProduct ?? ''),
   }, latestMessage, { conversation });
@@ -333,7 +350,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const salesActionInput = {
     message: latestMessage,
     firstTurn: firstBuyerTurn,
-    stage: String(body.stage ?? ''),
+    stage: unifiedStage,
     knowledgeMiss: context.knowledgeMiss,
     productAvailable: context.products.length > 0,
     redFlagCount: Number(body.bant?.authenticity?.redFlags?.length ?? 0),
@@ -353,7 +370,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     salesActions: matchedSalesActions,
   });
   const highValueHandoff = opportunityHandoff.lines.includes('business_value');
-  const forceHandoff = forcedHandoffActions.length > 0 || highValueHandoff;
+  const forceHandoff = forcedHandoffActions.length > 0
+    || highValueHandoff
+    || nextBestAction?.executionMode === 'mandatory_handoff'
+    || unifiedSalesState?.authorityRisk?.executionMode === 'mandatory_handoff';
   const productDiscoveryNames = groundedProductNames(
     context.products.map(product => product.name).filter(Boolean),
     body.product,
@@ -402,7 +422,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const strategies = await retrieveResponseStrategies(tenantId, {
     latestMessage,
     conversation,
-    stage: String(body.stage ?? ''),
+    stage: unifiedStage,
     intent,
     firstTurn: salesActionInput.firstTurn,
     knowledgeMiss: context.knowledgeMiss,
@@ -425,6 +445,9 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     : body.progressionGoal?.label
     ? `本轮推进目标：${String(body.progressionGoal.label)}。原因：${String(body.progressionGoal.reason || '')}。可自然使用这个间接问题：${String(body.progressionGoal.question || '')}。每轮最多追问一个信息点，不得为了完成 BANT 打断当前问题。`
     : '';
+  const nextActionGuidance = nextBestAction?.primaryAction
+    ? `统一状态给出的下一最佳动作：${String(nextBestAction.primaryAction)}。原因：${String(nextBestAction.rationale || '')}。必须先回答客户当前问题；本轮最多执行这一个推进动作，不得再叠加其他追问。`
+    : '';
   const publicInfoOnly = Number(body.bant?.authenticity?.score ?? 1) <= 0.3;
   const trustedTimeline = timeline.map((event: any) => {
     const timestampMs = timelineTimestampMs(event);
@@ -436,12 +459,16 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     };
   });
   const enterpriseKnowledge = buildKnowledgePromptBlock(context);
-  const dialogueStrategy = [buildStrategyPromptBlock(strategies), followUpGuidance].filter(Boolean).join('\n');
+  const unifiedStateGuidance = unifiedEvidence.length
+    ? `统一交易状态（仅代表买家表述/交易记录，不代表卖家能力）：${JSON.stringify({ lifecycle: unifiedStage, evidence: unifiedEvidence, nextBestAction })}`
+    : '';
+  const dialogueStrategy = [buildStrategyPromptBlock(strategies), unifiedStateGuidance, followUpGuidance].filter(Boolean).join('\n');
   const sellerStyle = [buildCustomerMemoryPromptBlock(customerMemories), buildSalesStyleProfilePromptBlock(salesStyleProfile), buildStyleMemoryPromptBlock(styleMemories)].filter(Boolean).join('\n');
   const latestMessageIsQuestion = /[?？]|\b(?:what|which|why|how|can|could|do|does|did|is|are|will|would|when|where)\b|什么|哪些|怎么|为什么|是否|能否|吗(?:\s|$)/i.test(latestMessage);
   const preferredGoal = latestMessageIsQuestion
-    ? `先正面回应客户刚问的“${latestMessage.slice(0, 220)}”。能根据已核实资料回答就直接回答；资料不足就自然说明需要核实哪一点。只有完成这一步后，才可顺带推进一个最自然的下一步。`
-    : followUpGuidance
+    ? `先正面回应客户刚问的“${latestMessage.slice(0, 220)}”。能根据已核实资料回答就直接回答；资料不足就自然说明需要核实哪一点。只有完成这一步后，才可顺带执行一个推进动作。${nextActionGuidance}`
+    : nextActionGuidance
+    || followUpGuidance
     || strategies[0]?.strategy.goal
     || strategies[0]?.strategy.intent
     || (knowledgeGapActive ? gapPlan.handlingReason : '直接回应客户并推进一个最自然的下一步');
@@ -450,7 +477,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     latestMessage,
     language,
     intent,
-    stage: String(body.stage ?? ''),
+    stage: unifiedStage,
     sentiment: context.sentiment,
     knowledgeReady: context.knowledgeReady,
     knowledgeMiss: knowledgeGapActive || context.knowledgeMiss,
@@ -472,7 +499,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
         latestMessage,
         language,
         intent,
-        stage: String(body.stage ?? ''),
+        stage: unifiedStage,
         sentiment: context.sentiment,
         knowledgeReady: context.knowledgeReady,
         knowledgeMiss: knowledgeGapActive || context.knowledgeMiss,

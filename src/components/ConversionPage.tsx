@@ -23,11 +23,13 @@ import { BasicInfoWidget } from './customers/widgets/BasicInfoWidget';
 import { TagsWidget } from './customers/widgets/TagsWidget';
 import { SourceIcon, sourceLabel } from './customers/SourceIcon';
 import { LiveLocalTime } from './customers/LiveLocalTime';
+import { SalesStatePanel } from './customers/SalesStatePanel';
 import { DailyBriefing } from './customers/DailyBriefing';
 import { useCustomers } from '../hooks/useCustomers';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
+import { customerSalesDisplay, engagementBadgeClass, lifecycleBadgeClass } from '../lib/customerSalesState';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
 import { getCustomerServiceStatus, updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
 
@@ -367,6 +369,7 @@ async function requestDraft(
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({
         customerId: customer.id,
+        isMock: Boolean(customer.isMock),
         timeline: customer.timeline.slice(-20),
         product: customer.outboundProduct,
         internalProduct: customer.product,
@@ -375,6 +378,8 @@ async function requestDraft(
         bant: customer.bant,
         progressionGoal: customer.progressionGoal,
         spinGuidance: customer.spinGuidance,
+        salesState: customer.salesState,
+        nextBestAction: customer.nextBestAction,
         fallbackCount: customer.fallbackCount ?? 0,
         instruction,
         mode,
@@ -951,6 +956,8 @@ function ChatThread({
     );
   }
 
+  const salesDisplay = customerSalesDisplay(customer);
+
   return (
     <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 flex-col bg-white">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
@@ -964,8 +971,8 @@ function ChatThread({
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
-            <span>{STAGE_LABEL[customer.stage]}</span>
-            <span>·</span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${lifecycleBadgeClass(salesDisplay.lifecycleStage)}`}>{salesDisplay.lifecycleLabel}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${engagementBadgeClass(salesDisplay.engagementStatus)}`}>{salesDisplay.engagementLabel}</span>
             <SourceIcon source={customer.source} size={12} />
             <span>·</span>
             <span>{customer.lastActive}</span>
@@ -1179,12 +1186,14 @@ function CustomerIntentActionPanel({
   const communicationSummary = customer.spinGuidance?.statement
     || customer.progressionGoal?.reason
     || customer.summary;
-  const nextMove = customer.spinGuidance?.question
+  const nextMove = customer.nextBestAction?.primaryAction
+    || customer.spinGuidance?.question
     || customer.progressionGoal?.question
     || customer.nextStep;
   const evidenceItems = Array.from(new Set([
     ...suggestion.evidence,
     ...(customer.bant?.evidence || []),
+    ...Object.entries(customer.salesState?.dealEvidence.fields || {}).map(([key, field]) => `${key}：${String(field.value ?? '')}（${field.sourceEventIds.length} 条来源）`),
   ])).slice(0, 10);
 
   const switchMode = (mode: HandlingMode, message: string) => {
@@ -1294,7 +1303,7 @@ function CustomerIntentActionPanel({
       <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
         <div>
           <p className="text-xs font-bold text-text-primary">AI 意向信号</p>
-          <p className="mt-0.5 text-[10px] text-text-muted">沟通阶段与下一步推进建议</p>
+          <p className="mt-0.5 text-[10px] text-text-muted">统一状态与下一步推进建议</p>
         </div>
         <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">
           {intentLevelLabel(customer)} · {customer.intentScore}
@@ -1311,7 +1320,7 @@ function CustomerIntentActionPanel({
       <div className="pt-2.5">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">下一步推进建议</p>
-          <p className="text-[11px] font-bold text-text-primary">{suggestion.headline}</p>
+          <p className="text-[11px] font-bold text-text-primary">{customer.nextBestAction?.headline || suggestion.headline}</p>
         </div>
         <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">{nextMove || suggestion.reason}</p>
       </div>
@@ -1596,6 +1605,11 @@ function CustomerInfoRail({
           customerServiceEnabled={customerServiceEnabled}
           autoReplyReady={autoReplyReady}
           hasReplyReady={hasReplyReady}
+        />
+        <SalesStatePanel
+          customer={customer}
+          onStateChange={salesState => onCustomerPatch({ salesState })}
+          onToast={onToast}
         />
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
         <TagsWidget customer={customer} />
@@ -2064,6 +2078,27 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       if (!ensureCustomerServiceEnabled()) return;
       showToast('当前只给建议，满 3 天并授权后才可部分自动回复');
       mode = 'ai_draft';
+    }
+    const handoffAction = mode === 'human_needed'
+      ? 'request'
+      : selected.salesState?.channelOwnership.handoffStatus === 'requested' || selected.salesState?.channelOwnership.handoffStatus === 'accepted'
+        ? 'return_to_ai'
+        : '';
+    if (!selected.isMock && handoffAction) {
+      const requestedMode = mode;
+      updateCustomer(selected.id, { handlingMode: requestedMode });
+      void fetch(`/api/overseas/sales-operations/customers/${encodeURIComponent(selected.id)}/handoff`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ action: handoffAction }),
+      }).then(async response => {
+        const value = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(value.error || '分工状态更新失败');
+        updateCustomer(selected.id, { salesState: value.state, handlingMode: requestedMode });
+        if (requestedMode === 'ai_auto') persistCustomerPatch(selected.id, { handlingMode: 'ai_auto' });
+      }).catch(error => {
+        updateCustomer(selected.id, { handlingMode: selected.handlingMode });
+        showToast(error instanceof Error ? error.message : '分工状态更新失败');
+      });
+      return;
     }
     persistCustomerPatch(selected.id, {
       handlingMode: mode,

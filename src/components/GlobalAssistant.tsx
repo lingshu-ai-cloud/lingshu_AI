@@ -191,6 +191,8 @@ const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
   conversion: 'thinking',
   retention: 'happy',
   orders: 'wink',
+  salesQuality: 'thinking',
+  salesPilot: 'thinking',
   enterprise: 'thinking',
   agentMemory: 'thinking',
   plugins: 'excited',

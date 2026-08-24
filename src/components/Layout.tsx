@@ -35,6 +35,8 @@ const CUSTOMER_NAV: NavSection = {
   items: [
     { id: 'conversion', label: '我的会话', icon: <Users size={16} /> },
     { id: 'orders', label: '订单管理', icon: <LayoutGrid size={16} /> },
+    { id: 'salesQuality', label: '质量评测', icon: <ShieldCheck size={16} /> },
+    { id: 'salesPilot', label: '试点看板', icon: <Coins size={16} /> },
   ],
 };
 
@@ -66,10 +68,10 @@ const SYSTEM_NAV: NavSection = {
 const NAV_SECTIONS = [SOCIAL_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  super_admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
   social_operator: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
-  customer_service: new Set<Page>(['strategy', 'conversion', 'orders', 'scheduled']),
+  customer_service: new Set<Page>(['strategy', 'conversion', 'orders', 'salesQuality', 'salesPilot', 'scheduled']),
 };
 
 interface LayoutProps {

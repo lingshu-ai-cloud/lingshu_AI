@@ -6,9 +6,11 @@ import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
 import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence } from '../knowledge/strategyRetrieve.js';
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
-import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
+import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppCustomerSalesState, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppTemplate, sendTenantWhatsAppText } from '../whatsapp/send.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
+import { recordPilotEvent } from '../sales/pilotMetrics.js';
+import { whatsappWindowState } from '../sales/whatsappWindow.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
@@ -172,14 +174,24 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'whatsapp_recipient_required', message: 'WhatsApp recipient is missing.' });
     return;
   }
+  const salesState = getWhatsAppCustomerSalesState(tenantId, customerId);
+  const serverWindow = whatsappWindowState(salesState?.engagement.lastBuyerMessageAt);
   if (req.body?.auto === true) {
+    if (salesState && (
+      salesState.authorityRisk.executionMode === 'mandatory_handoff'
+      || salesState.channelOwnership.handoffStatus === 'requested'
+      || salesState.channelOwnership.handoffStatus === 'accepted'
+    )) {
+      res.status(409).json({ error: 'human_takeover_active', message: '人工已接管或正在接管，AI 自动发送已停止。' });
+      return;
+    }
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
     if (!status.autoReplyReady) {
       res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
       return;
     }
   }
-  if (mode === 'free_text' && req.body?.outsideWindow) {
+  if (mode === 'free_text' && (req.body?.outsideWindow || serverWindow.templateRequired)) {
     res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过24小时，请使用模板消息发送。' });
     return;
   }
@@ -208,6 +220,10 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     const renderedBody = renderTemplate(templateName, variables) || body;
     markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to });
     await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
+    const templatePilotAt = Date.now();
+    const templateEdited = Boolean(req.body?.styleMemory?.edited);
+    recordPilotEvent({ id: `pilot-send:${customerId}:${templatePilotAt}`, tenantId, customerId, type: templateEdited ? 'draft_edited' : 'draft_adopted', occurredAt: new Date(templatePilotAt).toISOString(), metadata: { mode: 'template' } });
+    if (templateEdited) recordPilotEvent({ id: `pilot-edit-reason:${customerId}:${templatePilotAt}`, tenantId, customerId, type: 'edit_reason_recorded', occurredAt: new Date(templatePilotAt).toISOString(), metadata: { reason: String(req.body?.styleMemory?.interventionType || 'human_edit') } });
     res.json({
       ok: true,
       outboxId: `tpl_${Date.now()}`,
@@ -236,6 +252,10 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   }
   markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to });
   await maybeRecordStyleMemory(req, tenantId, customerId, body);
+  const freeTextPilotAt = Date.now();
+  const freeTextEdited = Boolean(req.body?.styleMemory?.edited);
+  recordPilotEvent({ id: `pilot-send:${customerId}:${freeTextPilotAt}`, tenantId, customerId, type: freeTextEdited ? 'draft_edited' : 'draft_adopted', occurredAt: new Date(freeTextPilotAt).toISOString(), metadata: { mode: 'free_text' } });
+  if (freeTextEdited) recordPilotEvent({ id: `pilot-edit-reason:${customerId}:${freeTextPilotAt}`, tenantId, customerId, type: 'edit_reason_recorded', occurredAt: new Date(freeTextPilotAt).toISOString(), metadata: { reason: String(req.body?.styleMemory?.interventionType || 'human_edit') } });
   res.json({
     ok: true,
     outboxId: `out_${Date.now()}`,

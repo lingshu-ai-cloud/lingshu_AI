@@ -14,6 +14,8 @@ const StrategyPage = lazy(() => import('./components/StrategyPage'));
 const TrafficPage = lazy(() => import('./components/TrafficPage'));
 const ConversionPage = lazy(() => import('./components/ConversionPage'));
 const OrderManagementPage = lazy(() => import('./components/OrderManagementPage'));
+const SalesQualityPage = lazy(() => import('./components/SalesQualityPage'));
+const SalesPilotPage = lazy(() => import('./components/SalesPilotPage'));
 const EnterprisePage = lazy(() => import('./components/EnterprisePage'));
 const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
 const ScheduledPage = lazy(() => import('./components/ScheduledPage'));
@@ -35,6 +37,8 @@ export type Page =
   | 'conversion'
   | 'retention'
   | 'orders'
+  | 'salesQuality'
+  | 'salesPilot'
   | 'enterprise'
   | 'plugins'
   | 'scheduled'
@@ -72,14 +76,14 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  super_admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
   social_operator: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
-  customer_service: new Set(['strategy', 'conversion', 'retention', 'orders', 'scheduled']),
+  customer_service: new Set(['strategy', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'scheduled']),
 };
 const ALL_PAGES: Page[] = [
   'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
-  'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
+  'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins',
   'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
 ];
 const BUSINESS_DIAGNOSIS_SEEN_KEY = 'ow_business_diagnosis_seen_scope_v3';
@@ -558,6 +562,8 @@ export default function App() {
             />
           )}
           {page === 'orders' && <OrderManagementPage />}
+          {page === 'salesQuality' && <SalesQualityPage />}
+          {page === 'salesPilot' && <SalesPilotPage />}
           {page === 'enterprise' && <EnterprisePage />}
           {page === 'agentMemory' && (
             <AgentMemoryPage

@@ -1,0 +1,123 @@
+name: Deploy environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - internal
+          - trial
+          - production
+      image_sha:
+        description: Full 40-character commit SHA already published by Build release images
+        required: true
+        type: string
+      production_confirmation:
+        description: For production only, enter DEPLOY production
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image_sha: ${{ steps.validate.outputs.image_sha }}
+    steps:
+      - name: Require the protected deployment workflow from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Deployments must be started from the main branch." >&2
+          exit 1
+
+      - name: Check out complete main history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate commit and production confirmation
+        id: validate
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.production_confirmation }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "image_sha must be a full lowercase 40-character Git commit SHA." >&2
+            exit 1
+          fi
+
+          if ! git cat-file -e "${IMAGE_SHA}^{commit}"; then
+            echo "Commit $IMAGE_SHA does not exist in this repository." >&2
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$IMAGE_SHA" origin/main; then
+            echo "Commit $IMAGE_SHA is not contained in main." >&2
+            exit 1
+          fi
+
+          if [[ "$DEPLOY_ENVIRONMENT" == "production" && "$PRODUCTION_CONFIRMATION" != "DEPLOY production" ]]; then
+            echo "Production deployment requires the exact confirmation: DEPLOY production" >&2
+            exit 1
+          fi
+
+          echo "image_sha=$IMAGE_SHA" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy ${{ inputs.environment }}
+    needs: validate
+    runs-on:
+      - self-hosted
+      - linux
+      - lingshu
+      - ${{ inputs.environment }}
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      packages: read
+      deployments: write
+    steps:
+      - name: Check out trusted deployment scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy immutable release with automatic image rollback
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase
+          DEPLOY_ACTOR: ${{ github.actor }}
+          DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash deploy/release.sh deploy "${{ inputs.environment }}" "${{ needs.validate.outputs.image_sha }}"
+
+      - name: Record deployment in job summary
+        run: |
+          echo "### Deployment complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Environment: ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: ${{ needs.validate.outputs.image_sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Runner: ${{ runner.name }}" >> "$GITHUB_STEP_SUMMARY"
