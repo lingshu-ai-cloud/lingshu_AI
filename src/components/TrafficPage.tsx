@@ -113,6 +113,7 @@ interface Props {
   showModeTabs?: boolean;
   visibleModes?: ViewMode[];
   pageTitle?: string;
+  openProjectsSignal?: number;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -288,6 +289,7 @@ export default function TrafficPage({
   showModeTabs = true,
   visibleModes,
   pageTitle = '我的社媒',
+  openProjectsSignal = 0,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (initialView) return initialView;
@@ -300,6 +302,7 @@ export default function TrafficPage({
     return 'materials';
   });
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
+  const studioRootRef = useRef<HTMLDivElement | null>(null);
   const modeItems = TRAFFIC_MODE_ORDER
     .filter(mode => !visibleModes || visibleModes.includes(mode))
     .map(mode => ({ mode, ...TRAFFIC_MODE_META[mode] }));
@@ -308,6 +311,11 @@ export default function TrafficPage({
 
   useEffect(() => {
     try { localStorage.setItem('lingshu:traffic:view-mode', viewMode); } catch { /* ignore */ }
+    if (initialView === 'create' || initialView === 'publish') {
+      window.dispatchEvent(new CustomEvent('lingshu:content-view-changed', {
+        detail: { entry: viewMode === 'publish' ? 'publish' : 'create' },
+      }));
+    }
   }, [viewMode]);
 
   useEffect(() => {
@@ -320,9 +328,17 @@ export default function TrafficPage({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ page?: Page; view?: ViewMode }>).detail;
+      const detail = (event as CustomEvent<{ page?: Page; view?: ViewMode; studioPanel?: 'projects' }>).detail;
       if (detail?.page === 'traffic' && detail.view) {
         setViewMode(current => resolveNavigationEventViewMode(current, detail.view!));
+      }
+      if (detail?.page === 'smartAssets' && (detail.view === 'create' || detail.view === 'publish')) {
+        if (detail.studioPanel !== 'projects') {
+          studioRootRef.current
+            ?.querySelector<HTMLButtonElement>('button[aria-label="关闭我的创作"]')
+            ?.click();
+        }
+        setViewMode(detail.view);
       }
     };
     window.addEventListener('lingshu:navigate', handler);
@@ -455,8 +471,8 @@ export default function TrafficPage({
               />
             </motion.div>
           ) : viewMode === 'create' ? (
-            <motion.div key="create" id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} />
+            <motion.div ref={studioRootRef} key="create" id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
+              <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} />
             </motion.div>
           ) : viewMode === 'publish' ? (
             <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">

@@ -202,6 +202,8 @@ export default function App() {
   const [page, setPage] = useState<Page>(loadPage);
   const [conversation, setConversation] = useState<ConversationContext | null>(null);
   const [scriptPanelOpen, setScriptPanelOpen] = useState(false);
+  const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>('create');
+  const [openProjectsSignal, setOpenProjectsSignal] = useState(0);
 
   // 会话历史（本地持久化，供全局助手恢复旧内容）
   const [conversations, setConversations] = useState<Conversation[]>(loadConvs);
@@ -342,6 +344,7 @@ export default function App() {
   const handleNavigate = useCallback((p: Page) => {
     setConversation(null); setRestore(null); setKickoff(null);
     activeIdRef.current = null; setActiveConvId(null);
+    if (p === 'smartAssets') setSmartAssetsView('create');
     setPage(p === 'retention' ? 'conversion' : p);
     if (p === 'adminDelivery') window.history.replaceState(null, '', '/admin/delivery');
     else if (window.location.pathname === '/admin/delivery') window.history.replaceState(null, '', '/');
@@ -349,9 +352,18 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const nextPage = (event as CustomEvent<{ page?: Page }>).detail?.page;
+      const detail = (event as CustomEvent<{
+        page?: Page;
+        view?: 'create' | 'publish';
+        studioPanel?: 'projects';
+      }>).detail;
+      const nextPage = detail?.page;
       if (!nextPage || !ALL_PAGES.includes(nextPage)) return;
       handleNavigate(nextPage);
+      if (nextPage === 'smartAssets') {
+        setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
+        if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
+      }
     };
     window.addEventListener('lingshu:navigate', handler);
     return () => window.removeEventListener('lingshu:navigate', handler);
@@ -524,9 +536,9 @@ export default function App() {
               onNavigate={handleNavigate}
               onScriptPanelOpen={() => setScriptPanelOpen(true)}
               onScriptPanelClose={() => setScriptPanelOpen(false)}
-              initialView="create"
-              showModeTabs
-              visibleModes={['create', 'publish']}
+              initialView={smartAssetsView}
+              showModeTabs={false}
+              openProjectsSignal={openProjectsSignal}
               pageTitle="内容创作"
             />
           )}

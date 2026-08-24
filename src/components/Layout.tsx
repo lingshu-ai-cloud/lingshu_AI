@@ -4,7 +4,7 @@ import {
   Home, Users, LayoutGrid,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, BookOpen, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock,
+  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
@@ -19,6 +19,14 @@ interface NavSection {
 }
 
 const HOME_NAV_ITEM = { id: 'strategy' as Page, label: '首页', icon: <Home size={16} /> };
+
+type ContentNavigationEntry = 'create' | 'works' | 'publish';
+
+const CONTENT_NAV_ITEMS: Array<{ id: ContentNavigationEntry; label: string; icon: ReactNode }> = [
+  { id: 'create', label: 'AI 智能创作', icon: <WandSparkles size={16} /> },
+  { id: 'works', label: '我的创作', icon: <FolderOpen size={16} /> },
+  { id: 'publish', label: '内容发布', icon: <Send size={16} /> },
+];
 
 const SOCIAL_NAV: NavSection = {
   label: '社媒运营',
@@ -150,6 +158,64 @@ function NavItem({
   );
 }
 
+function ContentCreationNav({
+  active,
+  activeEntry,
+  collapsed,
+  onNavigate,
+}: {
+  active: boolean;
+  activeEntry: ContentNavigationEntry;
+  collapsed: boolean;
+  onNavigate: (entry: ContentNavigationEntry) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  if (collapsed) {
+    return (
+      <NavItem
+        item={{ id: 'smartAssets', label: '内容创作', icon: <WandSparkles size={16} /> }}
+        active={active}
+        onClick={() => onNavigate('create')}
+        collapsed
+      />
+    );
+  }
+
+  return (
+    <div className="rounded-xl">
+      <button
+        type="button"
+        onClick={() => setExpanded(value => !value)}
+        aria-expanded={expanded}
+        data-demo-target="smartAssets"
+        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${active ? 'text-text-primary' : 'text-text-secondary hover:bg-white/60'}`}
+      >
+        <span aria-hidden="true" className={active ? 'text-accent' : 'text-text-muted'}><WandSparkles size={16} /></span>
+        <span className="min-w-0 flex-1 text-left">内容创作</span>
+        <ChevronRight size={13} aria-hidden="true" className={`transition-transform ${expanded ? 'rotate-90' : ''} ${active ? 'text-accent' : 'text-text-muted'}`} />
+      </button>
+      {expanded && <div className="ml-5 border-l border-border pl-2" aria-label="内容创作入口">
+        {CONTENT_NAV_ITEMS.map(item => {
+          const itemActive = active && activeEntry === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onNavigate(item.id)}
+              aria-current={itemActive ? 'page' : undefined}
+              className={`relative mt-0.5 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors ${itemActive ? 'bg-white text-text-primary shadow-sm' : 'text-text-secondary hover:bg-white/60 hover:text-text-primary'}`}
+            >
+              <span aria-hidden="true" className={itemActive ? 'text-accent' : 'text-text-muted'}>{item.icon}</span>
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            </button>
+          );
+        })}
+      </div>}
+    </div>
+  );
+}
+
 const formatTokens = (value?: number | null) => {
   const n = Math.max(0, Math.floor(Number(value ?? 0)));
   return n.toLocaleString('en-US');
@@ -223,6 +289,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   const [liveSession, setLiveSession] = useState<AuthSession | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const [activeContentEntry, setActiveContentEntry] = useState<ContentNavigationEntry>('create');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches) return true;
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
@@ -249,6 +316,14 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   useEffect(() => {
     setLiveSession(null);
   }, [sessionIdentityScope]);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const entry = (event as CustomEvent<{ entry?: ContentNavigationEntry }>).detail?.entry;
+      if (entry === 'create' || entry === 'works' || entry === 'publish') setActiveContentEntry(entry);
+    };
+    window.addEventListener('lingshu:content-view-changed', handler);
+    return () => window.removeEventListener('lingshu:content-view-changed', handler);
+  }, []);
   useEffect(() => {
     try { localStorage.setItem('lingshu:sidebar-collapsed', String(sidebarCollapsed)); } catch { /* storage can be unavailable */ }
     if (sidebarCollapsed) { setQuotaOpen(false); setAccountMenuOpen(false); }
@@ -301,6 +376,16 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     setAccountMenuOpen(false);
     setQuotaOpen(true);
     void refreshQuota();
+  };
+  const navigateContent = (entry: ContentNavigationEntry) => {
+    setActiveContentEntry(entry);
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+      detail: {
+        page: 'smartAssets' as Page,
+        view: entry === 'publish' ? 'publish' : 'create',
+        studioPanel: entry === 'works' ? 'projects' : undefined,
+      },
+    }));
   };
 
   return (
@@ -355,7 +440,15 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
               {index > 0 && <div className="mx-4 my-2 border-t border-border" />}
               <nav aria-label={section.label} className="px-3 space-y-0.5">
                 {!sidebarCollapsed && <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
-                {section.items.map(item => (
+                {section.items.map(item => item.id === 'smartAssets' ? (
+                  <ContentCreationNav
+                    key={item.id}
+                    active={page === item.id}
+                    activeEntry={activeContentEntry}
+                    collapsed={sidebarCollapsed}
+                    onNavigate={navigateContent}
+                  />
+                ) : (
                   <NavItem
                     key={item.id}
                     item={item}

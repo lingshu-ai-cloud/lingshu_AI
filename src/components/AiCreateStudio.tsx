@@ -12,11 +12,18 @@ import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { createScriptGapTask } from '../lib/scriptGapQueue';
+import {
+  StudioWorkbenchFrame,
+  type StudioWorkbenchStep,
+} from './studio/StudioWorkbenchFrame';
+import StudioLanguageStatusPanel, {
+  type StudioLanguageStatusItem,
+} from './studio/StudioLanguageStatusPanel';
 
 /* ──────────────────────────────────────────────────────────────────────────
    AI 生成内容工作台 — 社媒（流量）页子模块
-   流程：选模式 → 分镜与声音 → 选素材 → 配乐 → 封面 → 成片预览
-   两栏布局：① 步骤导航  ② 操作区
+   流程：创作设置 → 脚本与声音 → 成片制作
+   稳定工作台：① 内容对象  ② 内容画布  ③ 步骤与属性  ④ 固定操作栏
 ─────────────────────────────────────────────────────────────────────────── */
 
 const TRAFFIC_GREEN = '#16a34a';
@@ -299,8 +306,8 @@ type StudioStage = {
 
 const VIDEO_STAGES: StudioStage[] = [
   { id: 'setup', label: '设置', icon: LayoutGrid, hint: '模式与内容', steps: ['mode'] },
-  { id: 'storyboard', label: '制作', icon: Film, hint: '分镜与素材', steps: ['script', 'material'] },
-  { id: 'deliver', label: '完成', icon: Play, hint: '预览与发布', steps: ['bgm', 'cover', 'preview'] },
+  { id: 'storyboard', label: '脚本与声音', icon: FileText, hint: '口播、翻译、配音与字幕', steps: ['script'] },
+  { id: 'deliver', label: '成片制作', icon: Play, hint: '素材匹配、配乐、封面与合成', steps: ['material', 'bgm', 'cover', 'preview'] },
 ];
 
 const POSTER_STAGES: StudioStage[] = [
@@ -1026,6 +1033,8 @@ const TTS_PRESETS: Array<{ id: TtsStyleOptions['preset']; label: string; emotion
 ];
 
 type LanguageTtsSettings = {
+  voiceId?: string;
+  volume?: number;
   preset: TtsStyleOptions['preset'];
   emotion: string;
   emotionIntensity: number;
@@ -1035,6 +1044,7 @@ type LanguageTtsSettings = {
 };
 
 const DEFAULT_TTS_SETTINGS: LanguageTtsSettings = {
+  volume: 1,
   preset: 'authentic_review',
   emotion: '自然可信',
   emotionIntensity: 68,
@@ -1058,14 +1068,14 @@ const ACCOUNTS: SocialAccount[] = [
 
 type ModeCard = { id: 'material' | 'clone' | 'product'; icon: typeof Film; title: string; desc: string };
 const MODES: ModeCard[] = [
-  { id: 'material', icon: Film,    title: '自有素材编辑', desc: '剪辑素材库中的真实画面' },
-  { id: 'clone',    icon: Wand2,   title: '参考内容创作', desc: '参考结构，用企业内容重制' },
-  { id: 'product',  icon: Sparkles,title: '产品内容生成', desc: '从产品资料自动开始创作' },
+  { id: 'material', icon: Film,    title: '使用素材', desc: '剪辑素材库中的真实画面' },
+  { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '参考结构，用企业内容重制' },
+  { id: 'product',  icon: Sparkles,title: '使用产品生成', desc: '从产品资料自动开始创作' },
 ] as const;
 const POSTER_MODES: ModeCard[] = [
-  { id: 'material', icon: Film,    title: '自有素材编辑', desc: '编辑素材库中的图片内容' },
-  { id: 'clone',    icon: Wand2,   title: '参考内容创作', desc: '参考版式，用企业内容重制' },
-  { id: 'product',  icon: Sparkles,title: '产品内容生成', desc: '从产品资料自动开始创作' },
+  { id: 'material', icon: Film,    title: '使用素材', desc: '编辑素材库中的图片内容' },
+  { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '参考版式，用企业内容重制' },
+  { id: 'product',  icon: Sparkles,title: '使用产品生成', desc: '从产品资料自动开始创作' },
 ] as const;
 const POSTER_STYLES = [
   { id: 'oem-factory', label: 'OEM 工厂风' },
@@ -3235,9 +3245,11 @@ function VariationChipEditor({
   );
 }
 
-export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void } = {}) {
+export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0 }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number } = {}) {
   const [stepIdx, setStepIdx] = useState(0);
   const [activeStoryboardSlotId, setActiveStoryboardSlotId] = useState('');
+  const [canvasView, setCanvasView] = useState<'reference' | 'creation'>('creation');
+  const [showWorkbenchSubtitleEditor, setShowWorkbenchSubtitleEditor] = useState(false);
 
   // 全局制作状态
   const [mode, setMode] = useState<'material' | 'clone' | 'product'>('material');
@@ -3416,6 +3428,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [voiceDraftLoading, setVoiceDraftLoading] = useState(false);
   const [voiceDraftNotice, setVoiceDraftNotice] = useState('');
   const voiceDraftAbortRef = useRef<AbortController | null>(null);
+  const studioSpecEpochRef = useRef(0);
   const [voicePreviewIdx, setVoicePreviewIdx] = useState<number | null>(null);
   const [scriptView, setScriptView] = useState<'timestamp' | 'voiceover'>('timestamp');
   const [scriptPreviewTab, setScriptPreviewTab] = useState('script');
@@ -3462,6 +3475,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [customVoices, setCustomVoices] = useState<Array<{ voiceId: string; name: string; url: string; duration: number; createdAt: string }>>([]);
   const [ttsLoading, setTtsLoading] = useState(false);
   const [ttsLoadingScope, setTtsLoadingScope] = useState<'all' | 'single' | 'upload' | null>(null);
+  const [ttsActiveLangs, setTtsActiveLangs] = useState<string[]>([]);
+  const [ttsFailuresByLang, setTtsFailuresByLang] = useState<Record<string, string>>({});
+  const ttsRequestRef = useRef(0);
   const batchTtsLoading = ttsLoading && ttsLoadingScope === 'all';
   const singleTtsLoading = ttsLoading && ttsLoadingScope === 'single';
   const [ttsNotice, setTtsNotice] = useState('');
@@ -3643,6 +3659,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [previewVoiceOn, setPreviewVoiceOn] = useState(true);
   const [previewBgmOn, setPreviewBgmOn] = useState(true);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const workbenchVideoRef = useRef<HTMLVideoElement | null>(null);
   const previewVideoCacheRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const previewAdvanceTimerRef = useRef<number | null>(null);
   const previewAdvanceLockRef = useRef(false);
@@ -3662,6 +3679,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
   const [showProjects, setShowProjects] = useState(false);
+  const projectsPanelWasOpenRef = useRef(false);
+  const handledOpenProjectsSignalRef = useRef(0);
   const [projects, setProjects] = useState<StudioProject[]>([]);
   const [savingProj, setSavingProj] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
@@ -3673,6 +3692,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [sourceDraftCheckPending, setSourceDraftCheckPending] = useState(true);
   const [existingSourceDraftPrompt, setExistingSourceDraftPrompt] = useState<ExistingSourceDraftPrompt | null>(null);
   const referenceVoice = useMemo(() => referenceVoiceProfile(videoKickoff), [videoKickoff]);
+
+  useEffect(() => {
+    if (showProjects) {
+      projectsPanelWasOpenRef.current = true;
+      return;
+    }
+    if (!projectsPanelWasOpenRef.current) return;
+    projectsPanelWasOpenRef.current = false;
+    window.dispatchEvent(new CustomEvent('lingshu:content-view-changed', { detail: { entry: 'create' } }));
+  }, [showProjects]);
 
   useEffect(() => {
     void studioApi.audioCapabilities().then(setAudioCapabilities);
@@ -3697,6 +3726,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const materialById = useMemo(() => new Map(materials.map(item => [item.id, item])), [materials]);
   const selectedClips = useMemo(() => selected.map(id => materialById.get(id)).filter(Boolean) as Clip[], [selected, materialById]);
   const totalDur = selectedClips.reduce((s, c) => s + (c.type === 'image' ? 3 : c.duration), 0);
+  const selectedVideoCount = selectedClips.filter(item => item.type === 'video').length;
+  const selectedImageCount = selectedClips.filter(item => item.type === 'image').length;
+  const unknownDurationCount = selectedClips.filter(item => item.type === 'video' && (!Number.isFinite(item.duration) || item.duration <= 0)).length;
+  const targetAspectRatio = ratioNumber(ratio);
+  const selectedVisualClips = selectedClips.filter(item => item.type === 'video' || item.type === 'image');
+  const ratioCompatibleCount = selectedVisualClips.filter(item => {
+    const itemRatio = clipAspectRatio(item);
+    return itemRatio > 0 && Math.abs(itemRatio - targetAspectRatio) / Math.max(targetAspectRatio, 0.01) <= 0.18;
+  }).length;
+  const materialCoverageReady = totalDur >= Math.max(1, duration * 0.85);
   const matNames = selectedClips.map(c => c.name);
   const storyboardSlots = useMemo(() => {
     const parsed = parseStoryboardSlots(script, duration);
@@ -3705,6 +3744,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       : voiceoverMode === 'upload' ? voiceoverDur : 0;
     return fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
   }, [activeVoiceLang, duration, script, voiceoverAudios, voiceoverDur, voiceoverMode]);
+  useEffect(() => {
+    if (!storyboardSlots.length) {
+      if (activeStoryboardSlotId) setActiveStoryboardSlotId('');
+      return;
+    }
+    if (!storyboardSlots.some(item => item.id === activeStoryboardSlotId)) {
+      setActiveStoryboardSlotId(storyboardSlots[0].id);
+    }
+  }, [activeStoryboardSlotId, storyboardSlots]);
   const storyboardTimelineEnd = useMemo(() => storyboardSlots.reduce((max, slot) => Math.max(max, slot.end), 0), [storyboardSlots]);
   const recommendedSourceMode = (slot: StoryboardSlot): StoryboardSourceMode => {
     const text = `${slot.title} ${slot.detail}`.toLowerCase();
@@ -3934,9 +3982,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     }
     if (!POSTER_RATIOS.includes(ratio)) setRatio('1:1');
   }, [contentMode, platform, ratio]);
-  useEffect(() => {
-    setStepIdx(0);
-  }, [contentMode]);
   // 选中的封面底图帧：取该素材的帧画面（视频抽帧 / 图片自身）
   const coverClip = useMemo(() => materials.find(m => m.id === cover), [cover, materials]);
   const coverFrameUrl = useMemo(() => {
@@ -5452,6 +5497,38 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     }
   };
 
+  const retryVoiceDraft = async (code: string) => {
+    const specEpoch = studioSpecEpochRef.current;
+    const isCurrentSpec = () => studioSpecEpochRef.current === specEpoch;
+    const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
+    const base = extractVoiceoverText(sourceText);
+    if (!base.trim()) {
+      setVoiceDraftNotice('当前脚本没有可翻译的口播文案。');
+      return;
+    }
+    const sourceLanguage = detectScriptLanguageCode(base);
+    setVoiceDraftPendingLangs(current => [...new Set([...current, code])]);
+    setVoiceDraftFailedLangs(current => current.filter(item => item !== code));
+    try {
+      const normalized = code === sourceLanguage
+        ? normalizeScriptTimestamps(base)
+        : await studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage })
+          .then(result => result.ok && result.text.trim() ? resolveTranslatedVoiceover(base, result.text, code) : Promise.reject(new Error(result.error || '模型未返回有效译文')));
+      if (!isCurrentSpec()) return;
+      if (!normalized.trim()) throw new Error('模型未返回有效译文');
+      setVoiceDrafts(current => ({ ...current, [code]: normalized }));
+      setVoiceDraftStaleLangs(current => current.filter(item => item !== code));
+      setVoiceDraftNotice(`${LANGS.find(item => item.code === code)?.label || code}文案已更新，其他已完成语言保持不变。`);
+    } catch (error: unknown) {
+      if (!isCurrentSpec()) return;
+      const reason = error instanceof Error ? error.message : '翻译失败';
+      setVoiceDraftFailedLangs(current => [...new Set([...current, code])]);
+      setVoiceDraftNotice(`${LANGS.find(item => item.code === code)?.label || code}翻译失败：${reason}`);
+    } finally {
+      if (isCurrentSpec()) setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
+    }
+  };
+
   // 脚本生成入口集中在「口播脚本」页按钮，避免进入步骤时自动覆盖用户已编辑内容。
 
   const switchScriptType = (type: 'voiceover' | 'storyboard') => {
@@ -6361,10 +6438,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   };
 
   const genTts = async (onlyLanguage?: string) => {
+    const requestId = ++ttsRequestRef.current;
+    const isCurrentTtsRequest = () => ttsRequestRef.current === requestId;
     setTtsLoading(true);
     setTtsLoadingScope(onlyLanguage ? 'single' : 'all');
     const detectedSourceLanguage = detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script));
     const requestedLangs = onlyLanguage ? [onlyLanguage] : (voiceLangs.length ? voiceLangs : [detectedSourceLanguage]);
+    const failureReasonsByLang: Record<string, string> = {};
+    setTtsActiveLangs(requestedLangs);
+    setTtsFailuresByLang(current => Object.fromEntries(Object.entries(current).filter(([code]) => !requestedLangs.includes(code))));
     setTtsNotice(`正在生成 ${requestedLangs.length} 个语种配音...`);
     if (!onlyLanguage) {
       setVoiceoverUrl(null);
@@ -6404,6 +6486,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           else missingTranslationLangs.push(`${code}:${translated.error || '模型未返回有效译文'}`);
         }
       }
+      if (!isCurrentTtsRequest()) return;
       setVoiceoverLines(base);
       setVoiceDrafts(drafts);
 
@@ -6426,16 +6509,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
             pauseStyle: inheritReferenceRhythm ? 'natural' : settings.pauseStyle,
             pronunciations: parsePronunciationRules(settings.pronunciationText),
           };
-          const r = await studioApi.tts({ text: stripVoiceoverTimestamps(text), voice, language: code, style });
+          const r = await studioApi.tts({ text: stripVoiceoverTimestamps(text), voice: settings.voiceId || voice, language: code, style });
           if (r.ok && r.url) {
             audios[code] = { url: r.url, duration: r.duration ?? 0, cues: r.cues, text: r.text, alignmentSource: r.alignmentSource, customVoiceStatus: r.customVoiceStatus };
             if (r.cues?.length) aligned[code] = r.cues;
             if (r.text?.trim()) drafts[code] = r.text;
           } else {
             const label = LANGS.find(item => item.code === code)?.label || code;
-            failures.push(`${label}：${r.error || (r.source === 'local' ? '后端连接失败或额度不可用' : '未返回音频')}`);
+            const reason = r.error || (r.source === 'local' ? '后端连接失败或额度不可用' : '未返回音频');
+            failureReasonsByLang[code] = reason;
+            failures.push(`${label}：${reason}`);
           }
       }));
+      if (!isCurrentTtsRequest()) return;
       await Promise.all(Object.entries(audios).filter(([code]) => availableLangs.includes(code)).map(async ([code, audio]) => {
         const text = audio.text || drafts[code] || '';
         if (audio.alignmentSource === 'minimax_native' && audio.cues?.length) {
@@ -6452,6 +6538,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           aligned[code] = audio.cues;
         }
       }));
+      if (!isCurrentTtsRequest()) return;
       const activeCode = langs.includes(activeVoiceLang) ? activeVoiceLang : langs[0] || 'zh';
       const activeAudio = audios[activeCode] || Object.values(audios)[0];
       if (!activeAudio) {
@@ -6469,6 +6556,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       setUploadedVoiceName('');
       setSubtitlesOn(true);
       setSubMode('target');
+      missingTranslationLangs.forEach(item => {
+        const separatorIndex = item.indexOf(':');
+        const code = separatorIndex >= 0 ? item.slice(0, separatorIndex) : item;
+        const reason = separatorIndex >= 0 ? item.slice(separatorIndex + 1) : '翻译失败';
+        failureReasonsByLang[code] = `翻译失败，未生成配音（${reason || '未知原因'}）`;
+      });
+      if (Object.keys(failureReasonsByLang).length) {
+        setTtsFailuresByLang(current => ({ ...current, ...failureReasonsByLang }));
+      }
       setTtsNotice(failures.length || missingTranslationLangs.length
         ? `本次已生成 ${availableLangs.length - failures.length}/${langs.length} 个语种配音；${[...failures, ...missingTranslationLangs.map(item => {
           const [code, reason] = item.split(':');
@@ -6478,10 +6574,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           ? `已生成 ${langs.length} 个语种配音，真人音色已通过正式 TTS 激活并保存，同时按真实音频对齐字幕。`
           : `已生成 ${langs.length} 个语种配音，并按真实音频对齐字幕。`);
     } catch (err: any) {
-      setTtsNotice(err?.message || '配音生成失败，请稍后重试。');
+      if (!isCurrentTtsRequest()) return;
+      const reason = err?.message || '配音生成失败，请稍后重试。';
+      setTtsFailuresByLang(current => ({
+        ...current,
+        ...Object.fromEntries(requestedLangs.map(code => [code, failureReasonsByLang[code] || reason])),
+      }));
+      setTtsNotice(reason);
     } finally {
-      setTtsLoading(false);
-      setTtsLoadingScope(null);
+      if (isCurrentTtsRequest()) {
+        setTtsLoading(false);
+        setTtsLoadingScope(null);
+        setTtsActiveLangs([]);
+      }
     }
   };
 	  useEffect(() => {
@@ -6512,7 +6617,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setVoiceoverDur(audio.duration);
     const el = ttsAudioRef.current;
     if (!el) return;
-    void playAudioWithAuthenticatedFallback(el, audio.url, voiceVol / 100)
+    void playAudioWithAuthenticatedFallback(el, audio.url, ttsLanguageSettings[code]?.volume ?? voiceVol / 100)
       .then(() => setTtsPlaying(true))
       .catch((error: unknown) => {
         setTtsPlaying(false);
@@ -6678,6 +6783,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   }));
   const collectSpec = () => ({
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
+    activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
     videoKickoff,
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, cooperationRoute, sellingPoints, tone,
     videoThemeId, themePainPoint, themeConversionGoal,
@@ -6693,6 +6799,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   });
 
   const applySpec = (s: Record<string, unknown>) => {
+    studioSpecEpochRef.current += 1;
+    voiceDraftAbortRef.current?.abort();
+    voiceDraftAbortRef.current = null;
+    ttsRequestRef.current += 1;
+    setVoiceDraftPendingLangs([]);
+    setVoiceDraftFailedLangs([]);
+    setTtsActiveLangs([]);
+    setTtsFailuresByLang({});
     const restoredVoiceDrafts = s.voiceDrafts && typeof s.voiceDrafts === 'object'
       ? s.voiceDrafts as Record<string, string>
       : {};
@@ -6761,9 +6875,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (restoredMaterialSnapshots.length) {
       setMaterials(current => mergeClipLists(current, restoredMaterialSnapshots));
     }
-    if (s.mode) setMode(s.mode as typeof mode);
+    const restoredMode = s.mode === 'material' || s.mode === 'clone' || s.mode === 'product'
+      ? s.mode
+      : restoredVideoKickoff ? 'clone' : 'material';
+    setMode(restoredMode);
     if (restoredVideoKickoff) setVideoKickoff(restoredVideoKickoff);
-    if (s.contentMode === 'video' || s.contentMode === 'poster') setContentMode(s.contentMode);
+    const restoredContentMode = s.contentMode === 'poster' ? 'poster' : 'video';
+    setContentMode(restoredContentMode);
+    const restoredSteps = restoredContentMode === 'poster' ? POSTER_STEPS : STEPS;
+    const restoredStepId = typeof s.activeStepId === 'string' ? s.activeStepId as StepId : null;
+    const restoredStepIndex = restoredStepId ? restoredSteps.findIndex(item => item.id === restoredStepId) : -1;
+    setStepIdx(restoredStepIndex >= 0 ? restoredStepIndex : 0);
+    setActiveStoryboardSlotId(typeof s.activeStoryboardSlotId === 'string' ? s.activeStoryboardSlotId : '');
+    setCanvasView(s.canvasView === 'reference' ? 'reference' : 'creation');
+    setScriptStageTab(s.scriptStageTab === 'script' || s.scriptStageTab === 'voiceover' || s.scriptStageTab === 'audio' ? s.scriptStageTab : 'theme');
     if (typeof s.posterStyle === 'string' && POSTER_STYLES.some(item => item.id === s.posterStyle)) {
       setPosterStyle(s.posterStyle as typeof posterStyle);
     }
@@ -6969,6 +7094,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     const [nextProjects, nextBatches] = await Promise.all([studioApi.listProjects(), studioApi.listVariationBatches()]);
     setProjects(nextProjects); setVariationBatches(nextBatches);
   };
+  useEffect(() => {
+    if (!openProjectsSignal || openProjectsSignal <= handledOpenProjectsSignalRef.current) return;
+    handledOpenProjectsSignalRef.current = openProjectsSignal;
+    window.dispatchEvent(new CustomEvent('lingshu:content-view-changed', { detail: { entry: 'works' } }));
+    void openProjects();
+  }, [openProjectsSignal]);
   const reviewVariationItem = async (batchId: string, itemId: string, status: 'approved' | 'rejected') => {
     await studioApi.updateVariationItem(batchId, itemId, { status });
     setVariationBatches(await studioApi.listVariationBatches());
@@ -7018,7 +7149,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setProjectId(p.status === 'template' ? null : p.id);
     setProjectTitle(p.status === 'template' ? `${p.title} · 副本` : p.title);
     autoGen.current = true; // 载入已有脚本，别再自动覆盖
-    setStepIdx(0);
     setShowProjects(false);
     setPublished(false);
   };
@@ -7044,7 +7174,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         setProjectId(project.id);
         setProjectTitle(project.title);
         autoGen.current = true;
-        setStepIdx(0);
         setShowProjects(false);
         setPublished(false);
         setModeNotice(`已恢复历史创作草稿“${project.title}”。`);
@@ -7142,10 +7271,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       case 'mode':
         const visibleModes = contentMode === 'poster' ? POSTER_MODES : MODES;
         return (
-          <div className="w-full min-w-0 max-w-5xl overflow-x-hidden">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-              <SectionTitle title="开始创作" noMargin />
-              <div className="inline-flex rounded-xl border border-border bg-surface-2 p-1">
+          <div className="w-full min-w-0 overflow-x-hidden">
+            <div className="mb-4">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容类型</p>
+              <div className="grid grid-cols-2 rounded-lg bg-surface-2 p-1">
                 {([
                   ['video', '视频模式'],
                   ['poster', '图文模式'],
@@ -7155,16 +7284,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     type="button"
                     onClick={() => {
                       if (value !== contentMode) {
-                        setScriptStageTab('theme');
-                        setVoiceoverMode('unselected');
-                        setScript('');
-                        setVoiceoverLines('');
-                        setVoiceDrafts({});
-                        setVoiceoverAudios({});
-                        setAlignedCuesByLang({});
-                        setVoiceoverUrl(null);
-                        setVoiceoverDur(0);
-                        setModeNotice('');
+                        setStepIdx(0);
+                        setModeNotice('已切换内容模式，产品、主题、目标客户和合作路线均已保留。');
                       }
                       setContentMode(value);
                       if (value === 'poster') {
@@ -7175,15 +7296,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                         setRatio('9:16');
                       }
                     }}
-                    className={`rounded-lg px-4 py-2 text-sm font-bold transition ${contentMode === value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+                    className={`rounded-md px-3 py-2 text-[11px] font-bold transition ${contentMode === value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
                   >
                     {label}
                   </button>
                 ))}
               </div>
             </div>
-            <p className="text-xs font-semibold text-text-secondary">创作方式</p>
-            <div className="mb-6 mt-2 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">创作方式</p>
+            <div className="mb-5 mt-2 divide-y divide-border/70 border-y border-border/70">
               {visibleModes.map(m => {
                 const on = mode === m.id;
                 return (
@@ -7204,32 +7325,31 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     const sourceTitle = videoKickoff?.video?.title || videoKickoff?.generatedVideo?.title || '';
                     setProjectTitle(contentMode === 'video' ? draftTitleForMode(m.id, sourceTitle) : m.title);
                   }}
-                    className="card min-h-[72px] min-w-0 overflow-hidden px-4 py-3 text-left transition-all"
-                    style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                    className={`min-h-[62px] w-full min-w-0 overflow-hidden px-1 py-2.5 text-left transition ${on ? 'bg-emerald-50/60' : 'hover:bg-surface-2/70'}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{ background: on ? TRAFFIC_GREEN : 'var(--color-surface-2)', color: on ? '#fff' : 'var(--color-text-muted)' }}>
                         <m.icon size={14} />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-text-primary">{m.title}</p>
-                        <p className="mt-0.5 truncate text-[11px] text-text-muted">{m.desc}</p>
+                        <p className="text-xs font-bold text-text-primary">{m.title}</p>
+                        <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-text-muted">{m.desc}</p>
                       </div>
                     </div>
                   </button>
                 );
               })}
             </div>
-            <SectionTitle title="内容信息" />
-            <div className="space-y-3">
+            <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容信息</p>
+            <div className="space-y-4">
               <div className="flex flex-wrap items-end gap-3">
-                <div className="min-w-[260px] max-w-[560px] flex-1">
+                <div className="min-w-0 flex-1">
                   <span className="mb-1.5 block text-xs font-semibold text-text-secondary">产品信息（多选）</span>
                   <div ref={productSelectorRef} className="relative">
                     <button
                       type="button"
                       onClick={() => setProductSelectorOpen(value => !value)}
-                      className="flex h-10 w-full items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 text-left text-sm font-semibold text-text-primary transition hover:border-accent/50"
+                      className="flex h-9 w-full items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 text-left text-xs font-semibold text-text-primary transition hover:border-accent/50"
                     >
                       <span className="truncate">
                         {productOptions.length === 0
@@ -7241,7 +7361,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       <ChevronDown size={15} className={`shrink-0 text-text-muted transition ${productSelectorOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {productSelectorOpen && (
-                    <div className="mt-2 w-full overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+                    <div className="mt-2 w-full overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
                       <div className="space-y-2 border-b border-border bg-surface p-2.5">
                         <div className="relative">
                           <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -7330,9 +7450,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 </div>
               </div>
               {contentMode === 'video' && (
-                <div className="grid gap-3 rounded-2xl border border-border bg-surface p-4 lg:grid-cols-3">
+                <section className="border-t border-border pt-4">
+                  <div className="mb-3">
+                    <p className="text-xs font-black text-text-primary">创作主题</p>
+                    <p className="mt-0.5 text-[10px] text-text-muted">项目基础设置只在这里编辑，后续分镜与成片步骤直接复用。</p>
+                  </div>
+                  <div className="grid gap-3">
                   <label className="block">
-                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">创作主题</span>
+                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">主题</span>
                     <span className="relative block">
                       <select
                         value={videoThemeId}
@@ -7343,19 +7468,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                           setThemeConversionGoal(DEFAULT_VIDEO_CONVERSION_GOAL);
                           if (script.trim()) setModeNotice(`视频主题已切换为“${nextTheme.title}”，请重新生成可执行分镜。`);
                         }}
-                        className="h-10 w-full appearance-none rounded-xl border border-border bg-surface-2 px-3 pr-9 text-sm font-semibold text-text-primary outline-none transition focus:border-accent"
+                        className="h-9 w-full appearance-none rounded-lg border border-border bg-surface-2 px-3 pr-9 text-xs font-semibold text-text-primary outline-none transition focus:border-accent"
                       >
                         {VIDEO_THEMES.map(theme => <option key={theme.id} value={theme.id}>{theme.title}</option>)}
                       </select>
                       <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
                     </span>
                   </label>
-                  {availableCooperationRoutes.length > 1 && (
-                    <label className="block">
+                  <label className="block">
                       <span className="mb-1.5 block text-xs font-semibold text-text-secondary">合作路线</span>
                       <span className="relative block">
                         <select
                           value={cooperationRoute}
+                          disabled={availableCooperationRoutes.length <= 1}
                           onChange={event => {
                             const route = event.target.value;
                             const defaults = enterpriseRouteStrategies[route];
@@ -7364,46 +7489,89 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                             setEnterprisePrimaryCta(defaults?.primaryCta || '');
                             setPrimaryCta(defaults?.primaryCta || '');
                           }}
-                          className="h-10 w-full appearance-none rounded-xl border border-border bg-surface-2 px-3 pr-9 text-sm font-semibold text-text-primary outline-none transition focus:border-accent"
+                          className="h-9 w-full appearance-none rounded-lg border border-border bg-surface-2 px-3 pr-9 text-xs font-semibold text-text-primary outline-none transition focus:border-accent disabled:cursor-default disabled:opacity-80"
                         >
                           {availableCooperationRoutes.map(route => <option key={route} value={route}>{route === 'oem_odm' ? 'OEM / ODM' : route === 'wholesale_distribution' ? '现货批发 / 经销' : 'C 端零售'}</option>)}
                         </select>
                         <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
                       </span>
-                    </label>
-                  )}
-                  <label className={`block ${availableCooperationRoutes.length > 1 ? '' : 'lg:col-span-2'}`}>
-                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">目标买家</span>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">目标客户</span>
                     <input
                       value={audience}
                       onChange={event => setAudience(event.target.value)}
                       placeholder={activeVideoTheme.painPoint}
-                      className="h-10 w-full rounded-xl border border-border bg-surface-2 px-3 text-sm text-text-primary outline-none transition focus:border-accent"
+                      className="h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-xs text-text-primary outline-none transition focus:border-accent"
                     />
                   </label>
-                  <div className="flex min-w-0 items-center gap-2 rounded-xl bg-surface-2 px-3 py-2 lg:col-span-3">
-                    <span className="shrink-0 text-[11px] font-bold text-text-secondary">转化动作</span>
-                    <span className="truncate text-[11px] text-text-muted" title={effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}>{effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}</span>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-semibold text-text-secondary">主 CTA</span>
+                    <input
+                      value={effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL}
+                      onChange={event => {
+                        setEnterprisePrimaryCta(event.target.value);
+                        setPrimaryCta(event.target.value);
+                      }}
+                      placeholder={DEFAULT_VIDEO_CONVERSION_GOAL}
+                      className="h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-xs text-text-primary outline-none transition focus:border-accent"
+                    />
+                  </label>
                   </div>
-                </div>
+                </section>
               )}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface-2 px-4 py-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-accent shadow-sm"><FolderOpen size={16} /></span>
-                  <div className="min-w-0">
-                    <p className="text-xs font-black text-text-primary">素材</p>
-                    <p className="mt-0.5 truncate text-[11px] text-text-muted">
-                      {mode === 'clone'
-                        ? videoKickoff ? '参考内容已带入' : '未带入参考内容'
-                        : selected.length ? `已选 ${selected.length} 个素材` : '下一步选择素材'}
-                    </p>
+              <section className="border-t border-border pt-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black text-text-primary">现有素材匹配</p>
+                    <p className="mt-0.5 text-[10px] text-text-muted">此处只准备素材，最终分镜匹配在“成片制作”中完成。</p>
                   </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${selectedVisualClips.length ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
+                    {selectedVisualClips.length ? `${selectedVisualClips.length} 项已准备` : '尚未添加'}
+                  </span>
                 </div>
-                <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-text-secondary">
-                  {mode === 'clone' && videoKickoff ? '已就绪' : selected.length ? `${selected.length} 项` : '待选择'}
-                </span>
-              </div>
-              <div className="overflow-hidden rounded-2xl border border-border bg-surface">
+                <div className="mt-3 grid grid-cols-2 gap-1.5">
+                  {[
+                    ['视频', `${selectedVideoCount} 个`],
+                    ['图片', `${selectedImageCount} 张`],
+                    ['可用时长', `${totalDur.toFixed(1)}s`],
+                    ['时长未知', `${unknownDurationCount} 项`],
+                    ['比例适配', `${ratioCompatibleCount}/${selectedVisualClips.length}`],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-lg bg-surface-2 px-2.5 py-2">
+                      <p className="text-[9px] font-bold text-text-muted">{label}</p>
+                      <p className="mt-0.5 text-xs font-black text-text-primary">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const materialIndex = activeSteps.findIndex(item => item.id === 'material');
+                      if (materialIndex >= 0) setStepIdx(materialIndex);
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary transition hover:border-accent/40 hover:bg-surface-2"
+                  >
+                    <FolderOpen size={13} /> 从素材库选择
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const materialIndex = activeSteps.findIndex(item => item.id === 'material');
+                      if (materialIndex >= 0) setStepIdx(materialIndex);
+                      window.setTimeout(() => fileInputRef.current?.click(), 0);
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary transition hover:border-accent/40 hover:bg-surface-2"
+                  >
+                    <Upload size={13} /> 上传素材
+                  </button>
+                  <span className={`text-[10px] font-semibold ${materialCoverageReady ? 'text-emerald-700' : 'text-amber-700'}`}>
+                    {materialCoverageReady ? '已可覆盖预计分镜' : `建议再补充 ${Math.max(0, duration - totalDur).toFixed(1)}s 素材`}
+                  </span>
+                </div>
+              </section>
+              <div className="overflow-hidden border-y border-border bg-surface">
                 <button
                   type="button"
                   onClick={() => setShowAdvancedSetup(open => !open)}
@@ -7416,7 +7584,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   <ChevronDown size={15} className={`text-text-muted transition ${showAdvancedSetup ? 'rotate-180' : ''}`} />
                 </button>
                 {showAdvancedSetup && (
-                  <div className="grid gap-3 border-t border-border bg-surface-2/40 p-4 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid grid-cols-1 gap-3 border-t border-border bg-surface-2/40 p-4">
                     <label className="block">
                       <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">发布平台</span>
                       <select value={platform} onChange={event => setPlatform(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent">
@@ -7485,7 +7653,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                         <button key={value} type="button" disabled={risky}
                           onClick={() => setMigrationMode(value)}
                           title={risky ? '当前对标视频与企业产品不兼容，禁止直接高保真替换' : undefined}
-                          className={`rounded-lg border px-3 py-1.5 text-[11px] font-bold transition ${migrationMode === value ? 'border-accent bg-accent text-white' : 'border-border bg-white text-text-secondary'} disabled:cursor-not-allowed disabled:opacity-40`}>
+                          className={`rounded-lg border px-3 py-1.5 text-[11px] font-bold transition ${migrationMode === value ? 'border-slate-400 bg-slate-100 text-text-primary' : 'border-border bg-white text-text-secondary'} disabled:cursor-not-allowed disabled:opacity-40`}>
                           {label}{recommended ? '（推荐）' : ''}
                         </button>
                       );
@@ -7512,7 +7680,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         return (
           <div className="max-w-4xl">
             <SectionTitle title="生成图文" />
-            <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+            <div className="grid gap-4">
               <div className="rounded-2xl border border-border bg-surface p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-bold text-text-primary">图文内容</p>
@@ -7666,7 +7834,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           };
 
           return (
-            <div className="flex h-full -m-6">
+            <div className="flex min-h-full flex-col gap-4">
               <div className="w-40 flex-shrink-0 border-r border-border p-2.5 overflow-y-auto">
                 <div className="relative mb-3">
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -7705,7 +7873,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     type="button"
                     onClick={smartSelectPosterMaterials}
                     disabled={posterMaterials.length === 0}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary transition hover:bg-surface-2 disabled:opacity-50"
                   >
                     <Sparkles size={12} />
                     智能推荐参考图
@@ -7729,7 +7897,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       参考爆款创作需要先从「灵感中心 - 拍摄任务 - 图文」选择已采集的图文素材。系统会把对标图文拆成标题区、产品主视觉、背景氛围、信息栏、认证徽章、流程图、CTA 等模块，再用本地素材逐模块替换。
                     </div>
                   )}
-                  <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 gap-3">
                     {visiblePoster.map(c => {
                       const on = selected.includes(c.id);
                       const idx = selected.indexOf(c.id);
@@ -7776,7 +7944,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 </div>
               </div>
 
-              <aside className="w-[380px] flex-shrink-0 border-l border-border bg-surface/40 flex flex-col">
+              <aside className="flex w-full flex-col rounded-2xl border border-border bg-surface/40">
                 <div className="border-b border-border bg-white px-4 py-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
@@ -8020,9 +8188,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           : -1;
         const remainingStoryboardCount = Math.max(0, storyboardSlots.length - assignedCount);
         return (
-          <div className="flex h-full -m-6">
+          <div className="flex min-h-full flex-col gap-4">
             {/* 文件夹栏（含内容搜索） */}
-            <div className="w-36 flex-shrink-0 border-r border-border p-2.5 overflow-y-auto">
+            <div className="w-full flex-shrink-0 rounded-2xl border border-border p-2.5">
               {/* 内容相关性搜索 */}
               <div className="relative mb-3">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -8076,7 +8244,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 		                  <button
 		                    onClick={() => void generateDigitalHumanPresenter()}
 	                    disabled={digitalHumanLoading || !materials.some(c => c.folder === 'presenter' && c.type === 'video')}
-	                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
+	                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary transition hover:bg-surface-2 disabled:opacity-50"
 	                  >
 	                    {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
 		                    {digitalHumanLoading ? '生成中…' : '生成数字人口播'}
@@ -8105,7 +8273,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 	                      <button
 	                        onClick={() => void generateDigitalHumanPresenter()}
 	                        disabled={digitalHumanLoading || !visible.some(c => c.type === 'video')}
-	                        className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+	                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50"
 	                      >
 	                        {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
 	                        基于选中视频生成数字人口播
@@ -8113,7 +8281,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 	                    </div>
 	                  </div>
 	                )}
-	                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+	                <div className="grid grid-cols-1 gap-3">
 	                  {visible.map(c => {
                     const displaySelection = activeFolder === 'recommend' ? recommendationSource : selected;
                     const on = displaySelection.includes(c.id);
@@ -8256,7 +8424,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
               </div>
             )}
 
-            <aside className="w-[400px] flex-shrink-0 border-l border-border bg-surface/40 flex flex-col">
+            <aside className="flex w-full flex-shrink-0 flex-col rounded-2xl border border-border bg-surface/40">
               <div className="border-b border-border bg-white px-4 py-3">
                 <div className={`mb-3 rounded-xl border px-3 py-2.5 ${remainingStoryboardCount || materialQualityIssueCount ? 'border-amber-200 bg-amber-50' : materialQualityCheckingCount ? 'border-blue-200 bg-blue-50' : 'border-emerald-200 bg-emerald-50'}`}>
                   <div className="flex items-start gap-2">
@@ -8629,7 +8797,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           return '';
         };
         return (
-          <div className="grid w-full items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(360px,2fr)]">
+          <div className="grid w-full min-w-0 grid-cols-1 items-start gap-5">
           <div className="min-w-0">
             <div className="flex items-center justify-between mb-4">
               <SectionTitle title="生成内容" noMargin />
@@ -9237,7 +9405,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     )}
                   </div>
                 </div>
-                <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] 2xl:grid-cols-[260px_minmax(0,1fr)]">
+                <div className="grid min-w-0 grid-cols-1 gap-4">
                   <div className="relative overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: '9 / 16' }}>
                     {voicePreviewIdx !== null && previewable[voicePreviewIdx] ? (
                       <video
@@ -9417,7 +9585,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           setModeNotice(`已按版本节奏为 ${materialVersions.length} 个“语言 × 分镜组合 × 脚本”素材版本批量匹配配乐。`);
         };
         return (
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(560px,1fr)_minmax(360px,460px)]">
+          <div className="grid min-w-0 grid-cols-1 items-start gap-6">
           <div className="xl:col-span-2">
             <SectionTitle title="可选优化 · 背景音乐" desc="系统已保留无配乐成片能力；可直接继续，也可展开乐库为不同版本匹配音乐" noMargin />
           </div>
@@ -9568,7 +9736,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{materialVersions.filter(item => materialVersionBgms[item.key]).length}/{materialVersions.length} 已配乐</span>
-                  <button type="button" onClick={batchAssignBgms} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[11px] font-black text-white">
+                  <button type="button" onClick={batchAssignBgms} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-black text-text-secondary hover:bg-surface-2">
                     <Sparkles size={12} />一键批量配乐
                   </button>
                 </div>
@@ -9880,7 +10048,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           setModeNotice(`已为 ${coverMaterialVersions.length} 个素材版本按各自首个素材设置封面底图。`);
         };
         return (
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(560px,1fr)_minmax(360px,460px)]">
+          <div className="grid min-w-0 grid-cols-1 items-start gap-6">
             <div className="xl:col-span-2">
               <SectionTitle title="可选优化 · 封面与标题" desc="封面不会阻塞成片生成；可沿用首帧，也可在此统一优化标题与视觉样式" noMargin />
             </div>
@@ -9897,8 +10065,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       {coverLoading ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} AI 重写
                     </button>
                     <button onClick={() => void openCanvaCoverEditor()} disabled={coverCanvaOpening}
-                      className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
-                      style={{ background: TRAFFIC_GREEN }}>
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold text-text-secondary hover:bg-surface-2 disabled:opacity-60">
                       {coverCanvaOpening ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
                       编辑当前封面
                     </button>
@@ -10001,7 +10168,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{Object.keys(materialVersionCovers).length}/{coverMaterialVersions.length} 已配置</span>
-                    <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[11px] font-black text-white">
+                    <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-black text-text-secondary hover:bg-surface-2">
                       <Sparkles size={12} />批量同步参数
                     </button>
                     <button type="button" onClick={batchUseFirstFrames} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary hover:border-accent hover:text-accent">
@@ -10162,7 +10329,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           }
         };
         return (
-          <div className="flex items-start gap-8">
+          <div className="flex min-w-0 flex-col items-stretch gap-5">
             {/* 播放器 */}
             <div className="flex-shrink-0">
               <div className="relative rounded-2xl overflow-hidden border border-border bg-black" style={{ width: 260 }}>
@@ -10272,17 +10439,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                       <p className="text-sm font-black text-text-primary">视频版本</p>
                       <p className="mt-0.5 text-xs text-text-muted">仅显示具备有效脚本和完整有效分镜的版本；配音、配乐为可选项。</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void renderSelectedLanguageVersion(activeOutputVersion?.key)}
-                      disabled={batchRenderingLangs || !activeOutputVersion}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-                    >
-                      {batchRenderingLangs ? <Loader2 size={13} className="animate-spin" /> : <Languages size={13} />}
-                      {batchRenderingLangs ? '生成中...' : '生成选中的视频'}
-                    </button>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-text-muted">
+                      {batchRenderingLangs ? '正在生成选中版本' : '选定版本后使用底部主按钮生成'}
+                    </span>
                   </div>
-                  <div className="mt-3 grid max-h-[360px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="mt-3 grid max-h-[360px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                     {outputVersions.map(version => {
                       const item = version.output;
                       const active = activeOutputVersion?.id === version.id;
@@ -10376,17 +10537,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                     ) : renderDownloadMessage}
                   </div>
                 )}
-                <button
-                  onClick={goPublishCurrentWork}
-                  disabled={!hasFormalVideo || rendering || batchRenderingLangs}
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-4 text-base font-black text-white shadow-sm transition hover:brightness-95 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-text-muted disabled:shadow-none"
-                >
-                  <Send size={18} />
-                  {hasFormalVideo ? '进入发布设置' : '请先生成成片'}
-                </button>
-                <p className="mt-3 text-xs leading-relaxed text-text-muted">
-                  下载本地成片用于留档；进入发布设置会带入当前作品标题、文案和成片信息。
-                </p>
+                <div className="mt-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-text-muted">
+                  {hasFormalVideo
+                    ? '成片已就绪。使用底部唯一主按钮进入内容发布，将自动带入作品标题、文案和成片信息。'
+                    : '选定视频版本后，使用底部唯一主按钮生成成片。'}
+                </div>
               </div>
             </div>
           </div>
@@ -10397,8 +10552,125 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 
   const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
   const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster';
+  const primaryGeneratesVoice = contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai' && !hasAnyVoiceover;
   const storyboardGenerationBlocked = modeActionLoading || (mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff));
+  const workbenchStageId = stageIdx === 0 ? 'settings' : stageIdx === 1 ? 'script' : 'production';
+  const workbenchSteps: StudioWorkbenchStep[] = contentMode === 'poster'
+    ? [
+      { id: 'settings', label: '创作设置', status: stageIdx > 0 ? 'complete' : 'active' },
+      { id: 'script', label: '素材准备', status: stageIdx > 1 ? 'complete' : stageIdx === 1 ? 'active' : 'upcoming' },
+      { id: 'production', label: '图文制作', status: stageIdx === 2 ? 'active' : 'upcoming' },
+    ]
+    : [
+      { id: 'settings', label: '创作设置', status: stageIdx > 0 ? 'complete' : 'active' },
+      { id: 'script', label: '脚本与声音', status: stageIdx > 1 ? 'complete' : stageIdx === 1 ? 'active' : 'upcoming' },
+      { id: 'production', label: '成片制作', status: stageIdx === 2 ? 'active' : 'upcoming' },
+    ];
+  const activeWorkbenchSlot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
+  const activeWorkbenchClip = activeWorkbenchSlot
+    ? materialById.get(storyboardAssignments[activeWorkbenchSlot.id] || '')
+    : previewClip || selectedClips[0];
+  const workbenchSeekTime = activeWorkbenchSlot && activeWorkbenchClip?.type === 'video'
+    ? editForSlot(activeWorkbenchClip, activeWorkbenchSlot).trimStart
+    : 0;
+  useEffect(() => {
+    const video = workbenchVideoRef.current;
+    if (!video || activeWorkbenchClip?.type !== 'video') return;
+    const seek = () => {
+      const maxTime = Number.isFinite(video.duration) && video.duration > 0
+        ? Math.max(0, video.duration - 0.05)
+        : workbenchSeekTime;
+      try {
+        video.pause();
+        video.currentTime = Math.min(Math.max(0, workbenchSeekTime), maxTime);
+      } catch { /* 等待媒体元数据后由 loadedmetadata 再定位 */ }
+    };
+    if (video.readyState >= 1) seek();
+    else video.addEventListener('loadedmetadata', seek, { once: true });
+    return () => video.removeEventListener('loadedmetadata', seek);
+  }, [activeWorkbenchClip?.id, activeWorkbenchClip?.type, activeWorkbenchSlot?.id, workbenchSeekTime]);
+  const focusWorkbenchStoryboardSlot = (slotId: string) => {
+    const nextSlot = storyboardSlots.find(item => item.id === slotId);
+    if (!nextSlot) return;
+    if (activeWorkbenchSlot?.id === slotId && activeWorkbenchClip?.type === 'video') {
+      const video = workbenchVideoRef.current;
+      const seekTo = editForSlot(activeWorkbenchClip, nextSlot).trimStart;
+      if (video && video.readyState >= 1) {
+        try {
+          video.pause();
+          video.currentTime = Math.min(Math.max(0, seekTo), Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.05) : seekTo);
+        } catch { /* ignore media seek edge cases */ }
+      }
+    }
+    setActiveStoryboardSlotId(slotId);
+    setCanvasView('creation');
+  };
+  const workbenchStoryboardItems = storyboardSlots.map((slot, index) => {
+    const material = materialById.get(storyboardAssignments[slot.id] || '');
+    const working = Boolean(storyboardGenerating[slot.id] || storyboardQualityChecking[slot.id]);
+    const warning = Boolean(sourcePlanFor(slot).qualityError || sourcePlanFor(slot).error);
+    return {
+      id: slot.id,
+      index: index + 1,
+      title: slot.title || `分镜 ${index + 1}`,
+      thumbnailUrl: material?.poster || (material?.type === 'image' ? material.url : undefined),
+      duration: `${Math.max(0.1, slot.end - slot.start).toFixed(1)}s`,
+      voiceover: slot.detail,
+      status: working ? 'working' as const : warning ? 'warning' as const : material ? 'ready' as const : 'idle' as const,
+      statusLabel: working ? '处理中' : warning ? '需检查' : material ? '已匹配' : '待匹配',
+    };
+  });
+  const workbenchLanguageItems: StudioLanguageStatusItem[] = [...new Set([
+    ...(voiceLangs.length ? voiceLangs : []),
+    activeVoiceLang || enterpriseScriptLanguage || 'zh',
+  ].filter(Boolean))].map(code => {
+    const copyFailed = voiceDraftFailedLangs.includes(code);
+    const copyPending = voiceDraftPendingLangs.includes(code);
+    const copyStale = voiceDraftStaleLangs.includes(code);
+    const audio = voiceoverAudios[code];
+    const voiceProcessing = ttsActiveLangs.includes(code);
+    const voiceFailure = ttsFailuresByLang[code];
+    const languageTtsSettings = ttsLanguageSettings[code] || DEFAULT_TTS_SETTINGS;
+    return {
+      id: code,
+      language: LANGS.find(item => item.code === code)?.label || langZh(code) || code,
+      locale: code,
+      isSourceLanguage: code === enterpriseScriptLanguage || (!enterpriseScriptLanguage && code === 'zh'),
+      copyStatus: copyPending || voiceDraftLoading ? 'processing' : copyFailed ? 'failed' : copyStale ? 'stale' : voiceDrafts[code]?.trim() ? 'completed' : 'pending',
+      copyError: copyFailed ? (voiceDraftNotice || '翻译未完成，可单独重试。') : undefined,
+      voiceStatus: voiceProcessing ? 'processing' : voiceFailure || copyFailed ? 'failed' : audio?.url ? 'completed' : 'pending',
+      voiceError: voiceFailure || (copyFailed ? '文案尚未完成，暂不能生成配音。' : undefined),
+      durationSeconds: audio?.duration,
+      canPreview: Boolean(audio?.url),
+      voice: {
+        voiceId: languageTtsSettings.voiceId || voice,
+        voiceName: VOICES.find(item => item.id === (languageTtsSettings.voiceId || voice))?.name || languageTtsSettings.voiceId || voice,
+        availableVoices: voiceCandidates.map(item => ({ id: item, label: VOICES.find(option => option.id === item)?.name || item })),
+        style: TTS_PRESETS.find(item => item.id === languageTtsSettings.preset)?.label || languageTtsSettings.preset,
+        availableStyles: TTS_PRESETS.map(item => item.label),
+        speed: languageTtsSettings.speed,
+        volume: languageTtsSettings.volume ?? voiceVol / 100,
+        emotion: languageTtsSettings.emotion,
+        availableEmotions: [...new Set(TTS_PRESETS.map(item => item.emotion))],
+      },
+      subtitle: {
+        content: voiceDrafts[code] || '',
+        cueCount: alignedCuesByLang[code]?.length || 0,
+        styleSummary: '底部居中 · 关键词强调',
+        burnedIn: subtitlesOn,
+      },
+    };
+  });
+  const workbenchHasFormalVideo = Boolean(
+    renderOutputPath || Object.values(languageRenderOutputs).some(output => output.status === 'done' && output.path),
+  );
+  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && !workbenchHasFormalVideo;
+  const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
   const runPrimaryAction = () => {
+    if (step === 'preview' && workbenchHasFormalVideo) {
+      goPublishCurrentWork();
+      return;
+    }
     if (primaryGeneratesPoster) {
       void generatePosterBrief();
       return;
@@ -10407,156 +10679,434 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       void generateTimestampScriptsForMode();
       return;
     }
+    if (primaryGeneratesVoice) {
+      void genTts(activeVoiceLang);
+      return;
+    }
+    if (primaryGeneratesVideo) {
+      void renderSelectedLanguageVersion();
+      return;
+    }
     next();
   };
+
+  const primaryActionLabel = primaryGeneratesPoster
+    ? posterJsonText ? '重新生成图文' : '生成图文'
+    : primaryGeneratesStoryboard
+      ? '生成脚本'
+      : primaryGeneratesVoice
+        ? '生成配音'
+        : primaryGeneratesVideo
+          ? '生成成片'
+      : step === 'script'
+        ? scriptStageTab === 'theme'
+          ? '确认分镜'
+          : scriptStageTab === 'voiceover'
+            ? '确认口播'
+            : voiceoverMode === 'unselected'
+              ? '选择声音策略'
+              : voiceoverMode === 'none'
+                ? '进入成片制作'
+                : voiceoverMode === 'upload'
+                  ? voiceoverUrl ? '进入成片制作' : '等待上传口播'
+                  : hasAnyVoiceover ? '进入成片制作' : '生成配音'
+        : step === 'material'
+          ? canNext ? '确认素材' : `还需匹配 ${Math.max(0, storyboardSlots.length - assignedCount)} 个分镜`
+          : step === 'bgm'
+            ? '确认配乐'
+            : step === 'cover'
+              ? '预览成片'
+              : step === 'preview' && workbenchHasFormalVideo
+                ? '进入内容发布'
+                : '下一步';
+  const primaryActionBlockedReason = primaryGeneratesStoryboard && mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff)
+    ? '参考视频尚未完成分析，请稍后再生成脚本。'
+    : primaryGeneratesVoice && !hasTimestampScript
+      ? '请先保存脚本，再生成配音。'
+      : primaryGeneratesVideo && workbenchRenderableVersionCount === 0
+        ? '请先完成一种语言的口播，并为所有分镜匹配素材。'
+    : step === 'material' && !canNext
+      ? `仍有 ${Math.max(0, storyboardSlots.length - assignedCount)} 个分镜缺少素材。`
+      : step === 'script' && !canNext && !primaryGeneratesStoryboard
+        ? voiceoverMode === 'unselected' ? '请选择 AI 配音、上传口播或无口播。' : '至少完成一种语言的有效口播，或明确选择无口播。'
+        : undefined;
+  const primaryActionLoading = primaryGeneratesPoster ? posterLoading : primaryGeneratesStoryboard ? modeActionLoading : ttsLoading || rendering || batchRenderingLangs;
+  const primaryActionDisabled = primaryGeneratesPoster
+    ? posterLoading
+    : primaryGeneratesStoryboard
+      ? storyboardGenerationBlocked
+      : primaryGeneratesVoice
+        ? ttsLoading || !hasTimestampScript
+        : primaryGeneratesVideo
+          ? rendering || batchRenderingLangs || workbenchRenderableVersionCount === 0
+      : step === 'preview'
+        ? !workbenchHasFormalVideo || rendering || batchRenderingLangs
+        : !canNext;
+  const workbenchUsesStoryboardContext = Boolean(
+    activeWorkbenchSlot && (step === 'script' || step === 'material'),
+  );
+  const workbenchPropertyTitle = workbenchUsesStoryboardContext
+    ? '当前分镜属性'
+    : step === 'bgm' ? '配乐设置'
+      : step === 'cover' ? '封面设置'
+        : step === 'preview' ? '合成输出'
+          : step === 'poster' ? '图文制作'
+            : activeSteps.find(item => item.id === step)?.label || '当前设置';
+  const workbenchPropertyDescription = workbenchUsesStoryboardContext
+    ? activeWorkbenchSlot?.time
+    : activeStages[stageIdx]?.hint;
 
   return (
     <div className="flex flex-col h-full relative">
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      {/* ── 顶部工作条：标题 + 保存草稿 + 我的作品 ─────────── */}
-      <div className="h-11 flex items-center gap-3 px-4 border-b border-border flex-shrink-0">
-        <FileText size={13} className="text-text-muted flex-shrink-0" />
-        <input
-          value={projectTitle}
-          onChange={e => setProjectTitle(e.target.value)}
-          placeholder="未命名草稿"
-          className="text-sm font-semibold text-text-primary bg-transparent outline-none min-w-0 flex-1 max-w-xs placeholder:text-text-muted"
-        />
-        <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${autosaveStatus === 'error' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`} title={lastAutosavedAt ? `最近自动保存：${lastAutosavedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '每 10 秒自动保存一次'}>
-          {autosaveStatus === 'saving' ? <Loader2 size={11} className="animate-spin" /> : autosaveStatus === 'error' ? <X size={11} /> : <Check size={11} />}
-          {autosaveStatus === 'saving' ? '正在自动保存' : autosaveStatus === 'error' ? '自动保存失败' : lastAutosavedAt ? `已自动保存 ${lastAutosavedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '自动保存已开启'}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          {mode === 'clone' && contentMode === 'video' && (
-            <button onClick={() => void saveProject('template')} disabled={savingProj || voiceDraftLoading || ttsLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-50 transition-colors">
-              <Copy size={13} /> 保存为母版
-            </button>
-          )}
-          <button onClick={() => void saveProject('draft')} disabled={savingProj || voiceDraftLoading || ttsLoading}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-text-secondary hover:bg-surface-2 disabled:opacity-50 transition-colors">
-            {savingProj ? <Loader2 size={13} className="animate-spin" /> : savedTick ? <Check size={13} className="text-accent" /> : <Save size={13} />}
-            {savedTick ? '已保存' : '保存草稿'}
-          </button>
-          <button onClick={() => void openProjects()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-primary transition-all hover:bg-surface-2 active:scale-95">
-            <FolderOpen size={13} /> 我的创作
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-1 min-h-0">
-      {/* ── ① 步骤导航 ─────────────────────────────── */}
-      <aside className="flex w-44 flex-shrink-0 flex-col border-r border-border bg-surface">
-        <div className="px-4 pb-3 pt-5">
-          <p className="text-sm font-bold text-text-primary font-display">创作流程</p>
-        </div>
-        <div className="flex-1 space-y-1 overflow-y-auto px-3">
-          {activeStages.map((stage, i) => {
-            const done = i < stageIdx;
-            const active = i === stageIdx;
-            const stageAnchor = activeSteps.findIndex(item => stage.steps.includes(item.id));
-            const activeSubstep = active ? activeSteps.find(item => item.id === step)?.label : '';
-            return (
-              <button key={stage.id} onClick={() => i <= stageIdx && stageAnchor >= 0 && setStepIdx(stageAnchor)}
-                disabled={i > stageIdx}
-                className={`w-full flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
-                  active ? 'border-accent/20 bg-accent/5' : i > stageIdx ? 'cursor-not-allowed border-transparent opacity-40' : 'border-transparent hover:bg-surface-2'}`}>
-                <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
-                  style={
-                    active ? { background: TRAFFIC_GREEN, color: '#fff' }
-                    : done ? { background: 'var(--color-accent-glow)', color: 'var(--color-accent)' }
-                    : { background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }
-                  }>
-                  {done ? <Check size={13} /> : i + 1}
-                </span>
-                <div className="min-w-0">
-                  <p className={`whitespace-nowrap text-xs font-bold leading-tight ${active ? 'text-text-primary' : 'text-text-secondary'}`}>{stage.label}</p>
-                  <p className="mt-1 truncate whitespace-nowrap text-[10px] text-text-muted">{activeSubstep || stage.hint}</p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </aside>
-
-      {/* ── ② 操作区 ───────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 overflow-y-auto p-6">
-          <AnimatePresence mode="wait">
-            <motion.div key={step} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.2 }} className="h-full">
-              {renderStep()}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-
-        {/* 底部导航条 */}
-        <div data-lingshu-assistant-clearance="bottom-navigation" className="flex h-16 flex-shrink-0 items-center border-t border-border bg-surface px-6">
-          <button onClick={prev} disabled={stepIdx === 0}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-text-secondary hover:bg-surface-2 disabled:opacity-30 disabled:hover:bg-transparent transition-colors">
-            <ChevronLeft size={15} /> 上一步
-          </button>
-          <div className="ml-auto flex items-center gap-2">
-          {contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && hasTimestampScript && (
-            <button
-              type="button"
-              onClick={() => void generateTimestampScriptsForMode()}
-              disabled={storyboardGenerationBlocked}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface px-4 py-2 text-sm font-semibold text-text-secondary transition hover:bg-surface-2 disabled:opacity-40"
-            >
-              {modeActionLoading ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />} 重新生成
-            </button>
-          )}
-          {(!isLast || primaryGeneratesPoster) ? (
-            <button onClick={runPrimaryAction} disabled={primaryGeneratesPoster ? posterLoading : primaryGeneratesStoryboard ? storyboardGenerationBlocked : !canNext}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-40"
-              style={{ background: TRAFFIC_GREEN }}>
-              {primaryGeneratesPoster
-                ? posterLoading ? '正在生成' : posterJsonText ? '重新生成图文' : '生成图文'
-                : primaryGeneratesStoryboard
-                ? modeActionLoading ? (modeActionStatus || '正在生成') : '生成分镜'
-                : step === 'script'
-                ? scriptStageTab === 'theme'
-                  ? '确认分镜'
-                  : scriptStageTab === 'voiceover'
-                    ? '确认口播'
-                    : voiceoverMode === 'unselected'
-                      ? '请先选择声音策略'
-                      : voiceoverMode === 'none'
-                        ? '进入素材匹配'
-                        : '确认声音'
-                : step === 'material' && contentMode === 'video'
-                  ? canNext
-                    ? '确认素材'
-                    : `还需放入 ${Math.max(0, storyboardSlots.length - assignedCount)} 个分镜视频`
-                  : step === 'mode'
-                    ? '下一步'
-                  : step === 'bgm'
-                    ? '确认配乐'
-                  : step === 'cover'
-                    ? '预览成片'
-                  : '继续下一步'} <ChevronRight size={15} />
-            </button>
+      <StudioWorkbenchFrame
+        className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
+        projectTitle={projectTitle}
+        projectSubtitle={`${contentMode === 'video' ? '视频' : '图文'} · ${platform} · ${ratio}`}
+        onProjectTitleChange={setProjectTitle}
+        saveStatus={{
+          state: autosaveStatus,
+          savedAt: lastAutosavedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+          onRetry: () => void saveProject('draft'),
+        }}
+        steps={workbenchSteps}
+        activeStepId={workbenchStageId}
+        onStepChange={targetId => {
+          const targetStageIndex = targetId === 'settings' ? 0 : targetId === 'script' ? 1 : 2;
+          if (targetStageIndex > stageIdx) return;
+          const anchor = activeSteps.findIndex(item => activeStages[targetStageIndex]?.steps.includes(item.id));
+          if (anchor >= 0) setStepIdx(anchor);
+        }}
+        objectTitle="分镜与脚本"
+        objectDescription={storyboardSlots.length ? `${storyboardSlots.length} 个分镜` : '生成脚本后显示分镜'}
+        objectPanel={(
+          storyboardSlots.length ? (
+            <ol className="divide-y divide-border/70">
+              {workbenchStoryboardItems.map((item, index) => {
+                const selected = item.id === activeWorkbenchSlot?.id;
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => focusWorkbenchStoryboardSlot(item.id)}
+                      className={`flex w-full items-start gap-3 px-1 py-3 text-left transition ${selected ? 'bg-accent/5' : 'hover:bg-surface-2'}`}
+                    >
+                      <span className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-900 text-white/60">
+                        {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : <Film size={18} />}
+                        <span className="absolute left-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-black text-white">{index + 1}</span>
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[11px] font-black text-text-primary">{item.title || `分镜 ${index + 1}`}</span>
+                        <span className="mt-1 line-clamp-3 block text-[10px] leading-4 text-text-secondary">{item.voiceover || '暂无脚本'}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
           ) : (
-            <span />
-          )}
+            <div className="flex min-h-40 flex-col items-center justify-center px-5 text-center">
+              <Film size={22} className="text-text-muted" />
+              <p className="mt-2 text-xs font-bold text-text-primary">暂无分镜</p>
+              <p className="mt-1 text-[10px] text-text-muted">生成脚本后会显示分镜图和对应脚本。</p>
+            </div>
+          )
+        )}
+        canvasTitle=""
+        canvasToolbar={mode === 'clone' && videoKickoff ? (
+          <div className="flex rounded-lg border border-border bg-surface-2 p-0.5">
+            <button type="button" onClick={() => setCanvasView('reference')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'reference' ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted'}`}>参考视频</button>
+            <button type="button" onClick={() => setCanvasView('creation')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'creation' ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted'}`}>创作预览</button>
           </div>
+        ) : undefined}
+        propertyTitle={workbenchPropertyTitle}
+        propertyDescription={workbenchPropertyDescription}
+        propertyPanel={(
+          <div className="space-y-4">
+            {contentMode === 'video' && stageIdx === 2 && (
+              <section className="border-b border-border pb-3" aria-label="成片制作任务">
+                <p className="px-1 pb-2 text-[10px] font-bold text-text-muted">成片制作任务</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {([
+                    { id: 'material', label: '素材匹配', done: storyboardSlots.length > 0 && assignedCount === storyboardSlots.length },
+                    { id: 'bgm', label: '配乐', done: Boolean(bgm) },
+                    { id: 'cover', label: '封面', done: Boolean(cover) },
+                    { id: 'preview', label: '合成输出', done: workbenchHasFormalVideo },
+                  ] as Array<{ id: StepId; label: string; done: boolean }>).map(task => {
+                    const taskIndex = activeSteps.findIndex(item => item.id === task.id);
+                    const active = step === task.id;
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        onClick={() => { if (taskIndex >= 0) setStepIdx(taskIndex); }}
+                        className={`flex min-w-0 items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] font-bold transition ${active ? 'border-slate-400 bg-white text-text-primary shadow-sm' : 'border-transparent text-text-secondary hover:border-border hover:bg-white'}`}
+                      >
+                        <span className="truncate">{task.label}</span>
+                        {task.done && <Check size={12} className="shrink-0 text-emerald-600" aria-label="已完成" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+            {step === 'script' && scriptStageTab !== 'theme' && (
+              <div className="space-y-3">
+                <section className="border-t border-border pt-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-black text-text-primary">当前语言文案</p>
+                      <p className="mt-0.5 text-[10px] text-text-muted">{LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang}</p>
+                    </div>
+                    {voiceDraftStaleLangs.includes(activeVoiceLang) && <span className="rounded-full bg-amber-50 px-2 py-1 text-[9px] font-bold text-amber-700">需更新</span>}
+                  </div>
+                  <textarea
+                    value={voiceDrafts[activeVoiceLang] || ((activeVoiceLang === enterpriseScriptLanguage || (!enterpriseScriptLanguage && activeVoiceLang === detectScriptLanguageCode(script))) ? (voiceoverLines || extractVoiceoverText(script)) : '')}
+                    onChange={event => {
+                      const nextValue = event.target.value;
+                      const sourceLanguage = enterpriseScriptLanguage || detectScriptLanguageCode(script);
+                      setVoiceDrafts(current => ({ ...current, [activeVoiceLang]: nextValue }));
+                      setVoiceDraftFailedLangs(current => current.filter(code => code !== activeVoiceLang));
+                      setVoiceDraftStaleLangs(current => activeVoiceLang === sourceLanguage
+                        ? [...new Set([...current.filter(code => code !== activeVoiceLang), ...voiceLangs.filter(code => code !== activeVoiceLang)])]
+                        : current.filter(code => code !== activeVoiceLang));
+                      setVoiceoverAudios(current => { const next = { ...current }; delete next[activeVoiceLang]; return next; });
+                      setAlignedCuesByLang(current => { const next = { ...current }; delete next[activeVoiceLang]; return next; });
+                      setTtsFailuresByLang(current => { const next = { ...current }; delete next[activeVoiceLang]; return next; });
+                      if (activeVoiceLang === sourceLanguage) setVoiceoverLines(nextValue);
+                    }}
+                    rows={5}
+                    dir={activeVoiceLang === 'ar' ? 'rtl' : 'ltr'}
+                    placeholder="输入该语言的口播文案"
+                    className="mt-3 w-full resize-y rounded-lg border border-border bg-surface-2 p-3 text-xs leading-6 text-text-secondary outline-none focus:border-accent"
+                  />
+                  {activeWorkbenchSlot && (
+                    <div className="mt-2 rounded-lg bg-surface-2 px-2.5 py-2 text-[10px] leading-4 text-text-muted">
+                      <span className="font-bold text-text-secondary">画面说明：</span>{activeWorkbenchSlot.detail}
+                    </div>
+                  )}
+                </section>
+
+                <section className="border-t border-border pt-4">
+                  <input ref={voiceoverInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleVoiceoverUpload(event.target.files); event.target.value = ''; }} />
+                  <p className="text-xs font-black text-text-primary">声音策略</p>
+                  <div className="mt-2 grid grid-cols-3 gap-1.5">
+                    {([
+                      { id: 'ai' as const, label: 'AI 配音', icon: <Mic size={13} /> },
+                      { id: 'upload' as const, label: '上传口播', icon: <Upload size={13} /> },
+                      { id: 'none' as const, label: '无口播', icon: <X size={13} /> },
+                    ]).map(option => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => {
+                          if (option.id === 'none') clearVoiceover();
+                          else if (option.id === 'ai') setVoiceoverMode('ai');
+                          else voiceoverInputRef.current?.click();
+                        }}
+                        className={`flex min-w-0 flex-col items-center gap-1 rounded-lg border px-2 py-2 text-[10px] font-bold transition ${voiceoverMode === option.id ? 'border-slate-400 bg-surface-2 text-text-primary' : 'border-border bg-white text-text-muted hover:bg-surface-2'}`}
+                      >
+                        {option.icon}<span className="truncate">{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {(uploadedVoiceName || ttsNotice) && <p className="mt-2 text-[10px] leading-4 text-text-muted">{uploadedVoiceName ? `已上传：${uploadedVoiceName}。` : ''}{ttsNotice}</p>}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                    <label className="inline-flex items-center gap-2 text-[10px] font-bold text-text-secondary">
+                      <input type="checkbox" checked={subtitlesOn} onChange={event => setSubtitlesOn(event.target.checked)} className="accent-[var(--color-accent)]" /> 烧录字幕
+                    </label>
+                    <select value={subMode} onChange={event => setSubMode(event.target.value as 'target' | 'bilingual')} className="h-8 rounded-lg border border-border bg-surface-2 px-2 text-[10px] font-bold text-text-secondary">
+                      <option value="target">单语字幕</option>
+                      <option value="bilingual">双语字幕</option>
+                    </select>
+                  </div>
+                </section>
+              </div>
+            )}
+            {step === 'script' && scriptStageTab !== 'theme' && workbenchLanguageItems.length > 0 && (
+              <StudioLanguageStatusPanel
+                className="-mx-3 rounded-none border-x-0"
+                languages={workbenchLanguageItems}
+                selectedLanguageId={activeVoiceLang}
+                previewingLanguageId={ttsPlaying ? activeVoiceLang : null}
+                onSelectLanguage={code => { setActiveVoiceLang(code); setLang(code); }}
+                onEditCopy={code => { setActiveVoiceLang(code); setLang(code); setScriptStageTab('voiceover'); }}
+                onGenerateVoice={code => {
+                  if (ttsLoading) return;
+                  setActiveVoiceLang(code);
+                  setLang(code);
+                  void genTts(code);
+                }}
+                onRetry={(code, target) => {
+                  setActiveVoiceLang(code);
+                  setLang(code);
+                  if (target === 'voice') {
+                    if (!ttsLoading) void genTts(code);
+                  } else {
+                    void retryVoiceDraft(code);
+                  }
+                }}
+                onPreviewVoice={code => playTtsForLang(code)}
+                onRegenerateVoice={code => {
+                  if (ttsLoading) return;
+                  setActiveVoiceLang(code);
+                  setLang(code);
+                  void genTts(code);
+                }}
+                onVoiceSettingsChange={(code, patch) => {
+                  setActiveVoiceLang(code);
+                  setLang(code);
+                  setTtsLanguageSettings(current => {
+                    const base = current[code] || DEFAULT_TTS_SETTINGS;
+                    const preset = patch.style
+                      ? TTS_PRESETS.find(item => item.id === patch.style || item.label === patch.style)?.id || base.preset
+                      : base.preset;
+                    return {
+                      ...current,
+                      [code]: {
+                        ...base,
+                        voiceId: patch.voiceId ?? base.voiceId,
+                        volume: typeof patch.volume === 'number' ? patch.volume : base.volume,
+                        preset,
+                        emotion: patch.emotion ?? base.emotion,
+                        speed: typeof patch.speed === 'number' ? patch.speed : base.speed,
+                      },
+                    };
+                  });
+                }}
+                onEditSubtitles={code => {
+                  setActiveVoiceLang(code);
+                  setLang(code);
+                  setScriptStageTab('audio');
+                  setShowWorkbenchSubtitleEditor(true);
+                }}
+              />
+            )}
+            {step === 'script' && scriptStageTab !== 'theme' && showWorkbenchSubtitleEditor && (
+              <section className="border-t border-border pt-4" aria-label="字幕编辑">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-black text-text-primary">字幕编辑</p>
+                    <p className="mt-0.5 text-[10px] text-text-muted">当前语言·{LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang}</p>
+                  </div>
+                  <button type="button" onClick={() => setShowWorkbenchSubtitleEditor(false)} className="rounded-lg px-2 py-1 text-[10px] font-bold text-text-muted hover:bg-surface-2">收起</button>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <label className="text-[10px] font-bold text-text-secondary">
+                    字体
+                    <select value={coverStyle.font} onChange={event => setCoverStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-surface-2 px-2 text-[10px]">
+                      {COVER_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-[10px] font-bold text-text-secondary">
+                    字号
+                    <select value={coverStyle.size} onChange={event => setCoverStyle(current => ({ ...current, size: event.target.value as CoverStyle['size'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-surface-2 px-2 text-[10px]">
+                      <option value="S">小</option><option value="M">中</option><option value="L">大</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {(alignedCuesByLang[activeVoiceLang] || []).length ? (alignedCuesByLang[activeVoiceLang] || []).map((cue, index) => (
+                    <div key={`${cue.start}-${index}`} className="rounded-lg border border-border bg-surface-2 p-2">
+                      <p className="text-[9px] font-bold text-text-muted">{cue.start.toFixed(1)}s – {cue.end.toFixed(1)}s</p>
+                      <textarea
+                        value={cue.text}
+                        rows={2}
+                        onChange={event => setAlignedCuesByLang(current => ({
+                          ...current,
+                          [activeVoiceLang]: (current[activeVoiceLang] || []).map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item),
+                        }))}
+                        className="mt-1 w-full resize-y rounded-md border border-border bg-white px-2 py-1.5 text-[10px] leading-4 text-text-secondary outline-none focus:border-accent"
+                      />
+                    </div>
+                  )) : (
+                    <div className="rounded-lg border border-dashed border-border bg-surface-2 px-3 py-4 text-center text-[10px] leading-4 text-text-muted">
+                      生成或上传配音后，这里会显示可编辑的真实字幕时间轴。
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+            {(step !== 'script' || scriptStageTab === 'theme') && (
+              <AnimatePresence mode="wait">
+                <motion.div key={`${step}-${scriptStageTab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.16 }}>
+                  {renderStep()}
+                </motion.div>
+              </AnimatePresence>
+            )}
+          </div>
+        )}
+        previousAction={{ label: '上一步', onClick: prev, disabled: stepIdx === 0 }}
+        previewAction={{
+          label: '预览',
+          onClick: () => {
+            const previewIndex = activeSteps.findIndex(item => item.id === (contentMode === 'poster' ? 'poster' : 'preview'));
+            if (previewIndex >= 0) setStepIdx(previewIndex);
+          },
+          disabled: contentMode === 'video' ? !storyboardSlots.length : !posterJsonText,
+        }}
+        primaryAction={{
+          label: primaryActionLabel,
+          onClick: runPrimaryAction,
+          disabled: primaryActionDisabled,
+          loading: primaryActionLoading,
+          loadingLabel: modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
+          blockReason: primaryActionBlockedReason,
+          icon: step === 'preview' && workbenchHasFormalVideo ? <Send size={15} /> : <ChevronRight size={15} />,
+        }}
+      >
+        <div className="relative flex h-full min-h-[360px] w-full items-center justify-center overflow-hidden rounded-lg border border-slate-300/70 bg-[#e7e9ec] p-3 shadow-inner">
+          {canvasView === 'reference' && mode === 'clone' && videoKickoff ? (
+            <div className="h-full w-full max-w-2xl overflow-y-auto rounded-lg bg-slate-950 p-2 shadow-xl"><BenchmarkVideoPreview kickoff={videoKickoff} /></div>
+          ) : activeWorkbenchClip?.type === 'video' && activeWorkbenchClip.url ? (
+            <div className="flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl">
+              <video
+                ref={workbenchVideoRef}
+                key={`${activeWorkbenchClip.id}:${activeWorkbenchSlot?.id || 'preview'}`}
+                src={activeWorkbenchClip.url}
+                poster={activeWorkbenchClip.poster}
+                controls
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={event => {
+                  const video = event.currentTarget;
+                  const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, video.duration - 0.05) : workbenchSeekTime;
+                  try { video.currentTime = Math.min(Math.max(0, workbenchSeekTime), maxTime); } catch { /* ignore media seek edge cases */ }
+                }}
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+          ) : activeWorkbenchClip && (activeWorkbenchClip.poster || activeWorkbenchClip.url) ? (
+            <div className="flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl"><img src={activeWorkbenchClip.poster || activeWorkbenchClip.url} alt={activeWorkbenchClip.name} className="max-h-full max-w-full object-contain" /></div>
+          ) : mode === 'product' && selectedProductOptions[0]?.imageUrls?.[0] ? (
+            <div className="flex h-full w-full items-center justify-center rounded-lg bg-white p-5 shadow-xl"><img src={selectedProductOptions[0].imageUrls[0]} alt={selectedProductOptions[0].label} className="max-h-full max-w-full object-contain" /></div>
+          ) : activeWorkbenchSlot ? (
+            <div className="flex max-w-sm flex-col items-center text-center text-text-muted">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white/70"><Film size={20} /></div>
+              <p className="mt-3 text-sm font-black text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} 暂无画面</p>
+              <p className="mt-1 max-w-xs truncate text-[11px]">{activeWorkbenchSlot.title}</p>
+              <button
+                type="button"
+                onClick={() => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }}
+                className="mt-4 rounded-md bg-slate-900 px-3 py-2 text-[11px] font-bold text-white hover:bg-slate-800"
+              >
+                匹配素材
+              </button>
+            </div>
+          ) : (
+            <div className="flex max-w-sm flex-col items-center text-center text-text-muted">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm"><Film size={20} /></div>
+              <p className="mt-3 text-sm font-black text-text-primary">暂无预览</p>
+              <div className="mt-4 flex justify-center gap-2">
+                <button type="button" onClick={() => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }} className="rounded-md border border-border bg-white px-3 py-2 text-[11px] font-bold text-text-secondary hover:bg-surface-2">选择素材</button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-md bg-slate-900 px-3 py-2 text-[11px] font-bold text-white hover:bg-slate-800">上传素材</button>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
-
-      {/* ── ③ 对标内容 / 产品信息右侧栏 ────────────────── */}
-      {step === 'mode' && (
-        <aside data-studio-context-rail="true" className="hidden w-[280px] flex-shrink-0 overflow-y-auto border-l border-border bg-surface-2/30 p-3 lg:block xl:w-[360px] xl:p-4 2xl:w-[400px]">
-          {mode === 'product'
-            ? <ProductInfoPreview products={selectedProductOptions} />
-            : <BenchmarkVideoPreview kickoff={videoKickoff} />}
-        </aside>
-      )}
-
-      </div>
+      </StudioWorkbenchFrame>
 
       {/* ── 我的作品 / 草稿 列表浮层 ─────────────────────── */}
       <AnimatePresence>
