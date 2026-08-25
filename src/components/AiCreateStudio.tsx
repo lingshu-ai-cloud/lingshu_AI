@@ -290,7 +290,6 @@ const STEPS: { id: StepId; label: string; icon: typeof LayoutGrid; hint: string 
   { id: 'mode',     label: '选模式',  icon: LayoutGrid, hint: '选择生成起点与全局参数' },
   { id: 'script',   label: '分镜与声音', icon: FileText, hint: '先确认可执行分镜，再选择口播、字幕与配音' },
   { id: 'material', label: '选素材',  icon: Film,       hint: '按脚本挑选并排序片段' },
-  { id: 'bgm',      label: '配乐',     icon: Music,      hint: 'AI 推荐背景乐与音量平衡' },
   { id: 'cover',    label: '封面',     icon: ImageIcon,  hint: '生成封面候选并选定标题' },
   { id: 'preview',  label: '素材成片预览', icon: Play,       hint: '确认成片并进入发布' },
 ];
@@ -305,8 +304,8 @@ type StudioStage = {
 
 const VIDEO_STAGES: StudioStage[] = [
   { id: 'setup', label: '设置', icon: LayoutGrid, hint: '模式与内容', steps: ['mode'] },
-  { id: 'storyboard', label: '脚本与声音', icon: FileText, hint: '口播、翻译、配音与字幕', steps: ['script'] },
-  { id: 'deliver', label: '成片制作', icon: Play, hint: '素材匹配、配乐、封面与合成', steps: ['material', 'bgm', 'cover', 'preview'] },
+  { id: 'storyboard', label: '脚本与声音', icon: FileText, hint: '口播、翻译、配音、字幕与配乐', steps: ['script'] },
+  { id: 'deliver', label: '成片制作', icon: Play, hint: '素材匹配、封面与合成', steps: ['material', 'cover', 'preview'] },
 ];
 
 const POSTER_STAGES: StudioStage[] = [
@@ -3579,7 +3578,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [voicePreviewIdx, setVoicePreviewIdx] = useState<number | null>(null);
   const [scriptView, setScriptView] = useState<'timestamp' | 'voiceover'>('timestamp');
   const [scriptPreviewTab, setScriptPreviewTab] = useState('script');
-  const [scriptStageTab, setScriptStageTab] = useState<'theme' | 'script' | 'voiceover' | 'audio' | 'subtitle'>('theme');
+  const [scriptStageTab, setScriptStageTab] = useState<'theme' | 'script' | 'voiceover' | 'audio' | 'subtitle' | 'bgm'>('theme');
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
   const [showVoiceAdvanced, setShowVoiceAdvanced] = useState(false);
   const [showSubtitleAdvanced, setShowSubtitleAdvanced] = useState(false);
@@ -3656,6 +3655,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [bgms, setBgms] = useState<Bgm[]>(BGMS);
   const [playingBgm, setPlayingBgm] = useState<string | null>(null);
   const [bgmUploading, setBgmUploading] = useState(false);
+  const [bgmNotice, setBgmNotice] = useState('');
   const [bgmTab, setBgmTab] = useState<'library' | 'favorites'>('library');
   const [favoriteBgms, setFavoriteBgms] = useState<string[]>(() => {
     try {
@@ -3676,6 +3676,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [coverLoading, setCoverLoading] = useState(false);
   const [coverCanvaOpening, setCoverCanvaOpening] = useState(false);
   const [coverUrl, setCoverUrl] = useState<string | null>(null); // 生成的封面 SVG 文件地址（发布缩略图）
+  const [capturedCoverFrameUrl, setCapturedCoverFrameUrl] = useState('');
+  const [coverCaptureNotice, setCoverCaptureNotice] = useState('');
+  const [coverTimelineCaptureMode, setCoverTimelineCaptureMode] = useState(false);
   const [materialVersionCovers, setMaterialVersionCovers] = useState<Record<string, CoverVersionConfig>>({});
   const canvaReturnInputRef = useRef<HTMLInputElement>(null);
   const [customFonts, setCustomFonts] = useState<{ family: string; label: string }[]>([]); // 官方导入的字体模版
@@ -3810,6 +3813,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [previewBgmOn, setPreviewBgmOn] = useState(true);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const workbenchVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [workbenchTimelineTime, setWorkbenchTimelineTime] = useState(0);
   const previewVideoCacheRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const previewAdvanceTimerRef = useRef<number | null>(null);
   const previewAdvanceLockRef = useRef(false);
@@ -4140,17 +4144,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   // 选中的封面底图帧：取该素材的帧画面（视频抽帧 / 图片自身）
   const coverClip = useMemo(() => materials.find(m => m.id === cover), [cover, materials]);
   const coverFrameUrl = useMemo(() => {
+    if (capturedCoverFrameUrl) return capturedCoverFrameUrl;
     if (!coverClip) return undefined;
     if (coverClip.poster) return coverClip.poster;
     if (coverClip.type === 'image' || coverClip.type === 'video') return coverClip.url;
     return undefined;
-  }, [coverClip]);
+  }, [capturedCoverFrameUrl, coverClip]);
   // 可作封面的候选：已选中的图片/视频；视频没有抽帧时直接展示首帧
   const frameCandidates = useMemo(() => selectedClips.filter(c => c.type !== 'audio' && (c.poster || c.url)), [selectedClips]);
   useEffect(() => {
     const firstFrameId = frameCandidates[0]?.id ?? '';
     if (!cover || cover === 'gradient' || !frameCandidates.some(c => c.id === cover)) {
       setCover(firstFrameId);
+      setCapturedCoverFrameUrl('');
     }
   }, [cover, frameCandidates]);
   useEffect(() => {
@@ -4252,6 +4258,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ? hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts
         : scriptStageTab === 'audio'
           ? hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts && hasReadyVoiceStrategy
+          : scriptStageTab === 'bgm'
+            ? hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts && hasRequestedSubtitles
           : hasTimestampScript && !activeScriptQualityBlocked && hasRequestedVoiceDrafts && hasRequestedSubtitles
     : contentMode === 'video' && step === 'material'
       ? storyboardSlots.length > 0 && assignedCount === storyboardSlots.length && storyboardMatchReviewPendingCount === 0
@@ -4740,7 +4748,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     try {
 
 	    // 生成发布封面 SVG：只在有真实图片帧时生成，避免退回纯色/渐变封面。
-	    const canGenerateCoverSvg = Boolean(coverFrameUrl && (coverClip?.poster || coverClip?.type === 'image'));
+	    const canGenerateCoverSvg = Boolean(coverFrameUrl && (capturedCoverFrameUrl || coverClip?.poster || coverClip?.type === 'image'));
 	    const cv = canGenerateCoverSvg
         ? await studioApi.cover({ title: coverTitle, ratio, accent: '#16a34a', bgImageUrl: coverFrameUrl, ...coverStyle })
         : { ok: false as const, url: null };
@@ -4883,6 +4891,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setScriptStageTab('subtitle');
       return;
     }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle') {
+      setScriptStageTab('bgm');
+      return;
+    }
     if (contentMode === 'video' && step === 'material') {
       const qualityBlockers = storyboardSlots.flatMap(slot => {
         const plan = storyboardSourcePlans[slot.id];
@@ -4966,6 +4978,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
   const prev = () => {
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'bgm') {
+      setScriptStageTab('subtitle');
+      return;
+    }
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle') {
       setScriptStageTab('audio');
       return;
@@ -5803,7 +5819,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     };
     try {
       let nextCoverUrl = coverUrl;
-      const canGenerateCoverSvg = Boolean(coverFrameUrl && (coverClip?.poster || coverClip?.type === 'image'));
+      const canGenerateCoverSvg = Boolean(coverFrameUrl && (capturedCoverFrameUrl || coverClip?.poster || coverClip?.type === 'image'));
       if (!nextCoverUrl && canGenerateCoverSvg) {
         const cv = await studioApi.cover({ title: coverTitle, ratio, accent: TRAFFIC_GREEN, bgImageUrl: coverFrameUrl, ...coverStyle });
         if (cv.url) {
@@ -6556,14 +6572,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const handleBgmUpload = async (files: FileList | null) => {
     if (!files?.length) return;
     setBgmUploading(true);
+    setBgmNotice('正在上传音乐…');
     const f = files[0];
     try {
       const dataBase64 = await fileToDataUrl(f);
       const { track } = await studioApi.uploadBgm({ name: f.name, dataBase64, mimeType: f.type });
       await refreshBgm();
-      if (track?.id) setBgm(track.id);
-    } catch { /* ignore */ }
-    setBgmUploading(false);
+      if (track?.id) {
+        setBgm(track.id);
+        setAssemblyBgms(current => ({ ...current, [activeAssemblyId]: track.id }));
+        setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: track.id }));
+        setPreviewBgmOn(true);
+        setBgmNotice(`已上传并选中「${track.name || f.name}」`);
+      } else {
+        setBgmNotice('音乐已上传，但未返回可用曲目，请刷新后重试。');
+      }
+    } catch (error: any) {
+      setBgmNotice(error?.message || '音乐上传失败，请检查文件格式后重试。');
+    } finally {
+      setBgmUploading(false);
+    }
   };
 
   /* ── 配音 TTS ────────────────────────────────────────────────────────── */
@@ -7097,7 +7125,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     videoThemeId, themePainPoint, themeConversionGoal, lastGeneratedSetupSignature,
     selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, assemblyName, hookMaterialId, materialSnapshots,
     storyboardAssemblies: assembliesForSave, activeAssemblyId, script, scriptType, modeScripts, activeModeScriptId, voice, voiceCandidates,
-    bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, materialVersionCovers, account, caption,
+    bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
     subtitlesOn, subMode, clipEdits, voiceoverMode, uploadedVoiceName, customVoiceId, customVoiceName, customVoiceUrl,
     ttsPreset, ttsEmotion, ttsEmotionIntensity, ttsSpeed, ttsPauseStyle, ttsPronunciationText, ttsLanguageSettings, voiceLangs, activeVoiceLang, voiceDrafts, voiceDraftStaleLangs, voiceoverStaleLangs,
     voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang,
@@ -7196,11 +7224,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setContentMode(restoredContentMode);
     const restoredSteps = restoredContentMode === 'poster' ? POSTER_STEPS : STEPS;
     const restoredStepId = typeof s.activeStepId === 'string' ? s.activeStepId as StepId : null;
-    const restoredStepIndex = restoredStepId ? restoredSteps.findIndex(item => item.id === restoredStepId) : -1;
+    const restoredLegacyBgmStep = restoredContentMode === 'video' && restoredStepId === 'bgm';
+    const restoredStepIndex = restoredLegacyBgmStep ? restoredSteps.findIndex(item => item.id === 'script') : restoredStepId ? restoredSteps.findIndex(item => item.id === restoredStepId) : -1;
     setStepIdx(restoredStepIndex >= 0 ? restoredStepIndex : 0);
     setActiveStoryboardSlotId(typeof s.activeStoryboardSlotId === 'string' ? s.activeStoryboardSlotId : '');
     setCanvasView(s.canvasView === 'reference' ? 'reference' : 'creation');
-    setScriptStageTab(s.scriptStageTab === 'voiceover' || s.scriptStageTab === 'audio' || s.scriptStageTab === 'subtitle' ? s.scriptStageTab : 'theme');
+    setScriptStageTab(restoredLegacyBgmStep || s.scriptStageTab === 'bgm' ? 'bgm' : s.scriptStageTab === 'voiceover' || s.scriptStageTab === 'audio' || s.scriptStageTab === 'subtitle' ? s.scriptStageTab : 'theme');
     setLastGeneratedSetupSignature(typeof s.lastGeneratedSetupSignature === 'string' ? s.lastGeneratedSetupSignature : '');
     if (typeof s.posterStyle === 'string' && POSTER_STYLES.some(item => item.id === s.posterStyle)) {
       setPosterStyle(s.posterStyle as typeof posterStyle);
@@ -7288,6 +7317,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (s.cover && s.cover !== 'gradient') setCover(s.cover as string);
     if (typeof s.coverTitle === 'string') setCoverTitle(s.coverTitle);
     if (s.coverStyle) setCoverStyle(s.coverStyle as CoverStyle);
+    setCapturedCoverFrameUrl(typeof s.capturedCoverFrameUrl === 'string' ? s.capturedCoverFrameUrl : '');
     if (s.materialVersionCovers && typeof s.materialVersionCovers === 'object') setMaterialVersionCovers(s.materialVersionCovers as Record<string, CoverVersionConfig>);
     if (s.account !== undefined) setAccount(s.account as string | null);
     if (typeof s.caption === 'string') setCaption(s.caption);
@@ -7451,7 +7481,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setScript(''); setVoiceoverLines(''); setVoiceDrafts({}); setModeScripts([]); setActiveModeScriptId('');
     setSelected([]); setScriptRecommendedMaterialIds([]); setStoryboardAssignments({}); setStoryboardSourcePlans({});
     setVoiceoverUrl(null); setVoiceoverAudios({}); setAlignedCuesByLang({}); setLanguageRenderOutputs({});
-    setBgm(''); setCover(''); setCoverUrl(null); setCaption(''); setClipEdits({}); setRendered(false); setPreviewIdx(null);
+    setBgm(''); setCover(''); setCoverUrl(null); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCaption(''); setClipEdits({}); setRendered(false); setPreviewIdx(null);
     setPosterDraft(null); setPosterJsonText(''); setPosterImageUrl('');
     setProjectId(saved.project.id); setProjectTitle(nextTitle); setProjects(current => [saved.project, ...current.filter(item => item.id !== saved.project.id)]);
     setStepIdx(0); setShowProjects(false); setSavedTick(true); window.setTimeout(() => setSavedTick(false), 1800);
@@ -11050,7 +11080,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setModeNotice(`已为分镜 ${currentIndex + 1} 选择“${clip.name}”，将从素材第一帧起按分镜时长自动裁切。`);
   };
   const workbenchSeekTime = activeWorkbenchSlot && activeWorkbenchClip?.type === 'video'
-    ? editForSlot(activeWorkbenchClip, activeWorkbenchSlot).trimStart
+    ? (() => {
+      const edit = editForSlot(activeWorkbenchClip, activeWorkbenchSlot);
+      const localOffset = workbenchTimelineTime >= activeWorkbenchSlot.start && workbenchTimelineTime <= activeWorkbenchSlot.end
+        ? workbenchTimelineTime - activeWorkbenchSlot.start
+        : 0;
+      return edit.trimStart + Math.max(0, localOffset) * Math.max(0.1, edit.speed || 1);
+    })()
     : 0;
   useEffect(() => {
     const video = workbenchVideoRef.current;
@@ -11082,8 +11118,71 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }
     }
     setActiveStoryboardSlotId(slotId);
+    setWorkbenchTimelineTime(nextSlot.start);
     setCanvasView('creation');
   };
+  const workbenchTimelineDuration = Math.max(0.1, ...storyboardSlots.map(slot => slot.end));
+  const seekWorkbenchTimeline = (nextTime: number) => {
+    const safeTime = Math.max(0, Math.min(workbenchTimelineDuration, nextTime));
+    const nextSlot = storyboardSlots.find(slot => safeTime >= slot.start && safeTime < slot.end)
+      || storyboardSlots[storyboardSlots.length - 1];
+    setWorkbenchTimelineTime(safeTime);
+    if (!nextSlot) return;
+    setActiveStoryboardSlotId(nextSlot.id);
+    setCanvasView('creation');
+    if (step === 'cover') setCoverTimelineCaptureMode(true);
+    window.requestAnimationFrame(() => {
+      const clip = materialById.get(storyboardAssignments[nextSlot.id] || '');
+      const video = workbenchVideoRef.current;
+      if (!video || clip?.type !== 'video') return;
+      const edit = editForSlot(clip, nextSlot);
+      const localOffset = Math.max(0, Math.min(nextSlot.end - nextSlot.start, safeTime - nextSlot.start));
+      const seekTo = edit.trimStart + localOffset * Math.max(0.1, edit.speed || 1);
+      const applySeek = () => {
+        const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, video.duration - 0.05) : seekTo;
+        try { video.currentTime = Math.min(seekTo, maxTime); } catch { /* wait for metadata */ }
+      };
+      if (video.readyState >= 1) applySeek();
+      else video.addEventListener('loadedmetadata', applySeek, { once: true });
+    });
+  };
+  const captureWorkbenchCoverFrame = () => {
+    if (activeWorkbenchClip?.type === 'image') {
+      setCapturedCoverFrameUrl(activeWorkbenchClip.url || activeWorkbenchClip.poster || '');
+      setCover(activeWorkbenchClip.id);
+      setCoverUrl(null);
+      setCoverTimelineCaptureMode(false);
+      setCoverCaptureNotice('已将当前图片设为封面底图。');
+      return;
+    }
+    const video = workbenchVideoRef.current;
+    if (!video || activeWorkbenchClip?.type !== 'video' || !video.videoWidth || !video.videoHeight) {
+      setCoverCaptureNotice('当前画面尚未加载完成，请稍等后再截取。');
+      return;
+    }
+    try {
+      const maxWidth = 1280;
+      const scale = Math.min(1, maxWidth / video.videoWidth);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('无法创建封面画布');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      setCapturedCoverFrameUrl(canvas.toDataURL('image/jpeg', 0.9));
+      setCover(activeWorkbenchClip.id);
+      setCoverUrl(null);
+      setCoverTimelineCaptureMode(false);
+      setCoverCaptureNotice(`已截取 ${workbenchTimelineTime.toFixed(1)}s 画面作为封面。`);
+    } catch {
+      setCoverCaptureNotice('该素材暂不允许浏览器直接截帧，请选择推荐封面或换一段本地素材。');
+    }
+  };
+  const coverRecommendationClips = useMemo(() => {
+    const pool = frameCandidates.length ? frameCandidates : materials.filter(item => item.type !== 'audio' && (item.poster || item.url));
+    if (pool.length <= 3) return pool;
+    return [pool[0], pool[Math.floor((pool.length - 1) / 2)], pool[pool.length - 1]].filter((item, index, rows) => item && rows.findIndex(row => row?.id === item.id) === index);
+  }, [frameCandidates, materials]);
   const updateWorkbenchStoryboardSlot = (slotId: string, detail: string) => {
     const rebuilt = storyboardSlots.map(slot => {
       const nextDetail = slot.id === slotId ? detail : slot.detail;
@@ -11213,6 +11312,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           : scriptStageTab === 'voiceover'
             ? '进入口播语音'
             : scriptStageTab === 'subtitle'
+              ? '进入配乐'
+            : scriptStageTab === 'bgm'
               ? '进入成片制作'
             : voiceoverMode === 'unselected'
               ? '选择声音策略'
@@ -11277,7 +11378,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     : step === 'script' && scriptStageTab === 'theme' ? '分镜脚本'
       : step === 'script' && scriptStageTab === 'voiceover' ? '口播与翻译'
         : step === 'script' && scriptStageTab === 'audio' ? '口播语音'
-          : step === 'script' ? '字幕文案'
+          : step === 'script' && scriptStageTab === 'subtitle' ? '字幕文案'
+            : step === 'script' && scriptStageTab === 'bgm' ? '配乐设置'
+          : step === 'script' ? '脚本与声音'
           : step === 'material' && activeWorkbenchSlot ? `分镜 ${storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} · 素材匹配`
             : step === 'bgm' ? '配乐设置'
               : step === 'cover' ? '封面设置'
@@ -11288,7 +11391,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     : step === 'script' && scriptStageTab === 'theme' ? (activeSlotTime || '确认分镜结构与内容')
       : step === 'script' && scriptStageTab === 'voiceover' ? `${activeLanguageLabel} · 选择语言并生成文案`
         : step === 'script' && scriptStageTab === 'audio' ? `${activeLanguageLabel} · 选择声音策略并生成语音`
-          : step === 'script' ? `${activeLanguageLabel} · 生成并调整字幕`
+          : step === 'script' && scriptStageTab === 'subtitle' ? `${activeLanguageLabel} · 生成并调整字幕`
+            : step === 'script' && scriptStageTab === 'bgm' ? '试听、上传并选择整片背景音乐'
+          : step === 'script' ? '完成脚本与声音设置'
         : step === 'material' && activeWorkbenchSlot ? `${activeSlotTime || '当前分镜'} · ${activeMaterialAssessment ? `匹配 ${activeMaterialAssessment.score} 分` : '待匹配'}`
           : activeStages[stageIdx]?.hint;
   const workflowSourceLanguage = detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script)) || voiceLangs[0] || 'zh';
@@ -11386,8 +11491,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     || renderOutputPreviewUrl
     || Object.values(languageRenderOutputs).find(output => output?.status === 'done' && output.previewUrl)?.previewUrl
     || '';
-  const workbenchProductionPanel = step === 'bgm' ? (
-    <section className="space-y-3">
+  const workbenchProductionPanel = (step === 'bgm' || (step === 'script' && scriptStageTab === 'bgm')) ? (
+    <section ref={bgmLibraryRef} className="space-y-3">
       <input ref={bgmInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleBgmUpload(event.target.files); event.target.value = ''; }} />
       <div className="rounded-xl border border-border bg-surface-2 p-3">
         <div className="flex items-start justify-between gap-3">
@@ -11416,12 +11521,24 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           <button type="button" onClick={() => setBgmLibraryOpen(false)} className="w-full rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">收起曲库</button>
         </div>
       )}
+      {bgmNotice && <p className={`rounded-lg border px-3 py-2 text-[10px] leading-4 ${/失败|错误|未返回/.test(bgmNotice) ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{bgmNotice}</p>}
       <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[10px] leading-4 text-text-muted">视频画面统一在中间预览；这里仅负责试听和调整配乐。</p>
     </section>
   ) : step === 'cover' ? (
     <section className="space-y-3">
       <div><p className="text-xs font-black text-text-primary">封面与标题</p><p className="mt-1 text-[10px] leading-4 text-text-muted">中间区域实时显示封面，这里只保留必要参数。</p></div>
-      <label className="block text-[10px] font-bold text-text-secondary">封面底图<select value={cover} onChange={event => { setCover(event.target.value); setCoverUrl(null); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{frameCandidates.length ? frameCandidates.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">暂无可用素材</option>}</select></label>
+      <label className="block text-[10px] font-bold text-text-secondary">封面底图<select value={cover} onChange={event => { setCover(event.target.value); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCoverUrl(null); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{frameCandidates.length ? frameCandidates.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">暂无可用素材</option>}</select></label>
+      <div className="rounded-xl border border-border bg-surface-2 p-3">
+        <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] font-black text-text-primary">从素材截取封面</p><p className="mt-0.5 text-[9px] text-text-muted">拖动底部整片时间轴定位画面，再截取当前帧。</p></div><button type="button" onClick={() => { setCoverTimelineCaptureMode(true); setCanvasView('creation'); }} className="shrink-0 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[9px] font-bold text-text-secondary">选择画面</button></div>
+        {coverTimelineCaptureMode && <button type="button" onClick={captureWorkbenchCoverFrame} className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-black text-white">截取当前帧</button>}
+        {coverCaptureNotice && <p className={`mt-2 text-[9px] leading-4 ${/不允许|无法|尚未/.test(coverCaptureNotice) ? 'text-red-600' : 'text-emerald-700'}`}>{coverCaptureNotice}</p>}
+      </div>
+      <div>
+        <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-black text-text-primary">推荐封面</p><span className="text-[9px] text-text-muted">从真实素材中推荐 3 张</span></div>
+        <div className="grid grid-cols-3 gap-2">
+          {coverRecommendationClips.map((item, index) => <button key={item.id} type="button" onClick={() => { setCover(item.id); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCoverUrl(null); setCoverCaptureNotice(`已选择推荐封面 ${index + 1}`); }} className={`overflow-hidden rounded-lg border text-left ${cover === item.id && !capturedCoverFrameUrl ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-border'}`}><div className="aspect-[4/3] bg-slate-950">{item.poster || item.type === 'image' ? <img src={item.poster || item.url} alt="" className="h-full w-full object-cover" /> : <video src={item.url} muted preload="metadata" className="h-full w-full object-cover" />}</div><p className="truncate bg-white px-1.5 py-1 text-[8px] font-bold text-text-secondary">推荐 {index + 1}</p></button>)}
+        </div>
+      </div>
       <label className="block text-[10px] font-bold text-text-secondary">封面标题<textarea value={coverTitle} rows={3} onChange={event => { setCoverTitle(event.target.value); setCoverUrl(null); }} className="mt-1 w-full resize-y rounded-lg border border-border bg-white p-2 text-xs leading-5 outline-none focus:border-accent" /></label>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={regenCovers} disabled={coverLoading} className="rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">{coverLoading ? '生成中…' : 'AI 重写标题'}</button>
@@ -11545,18 +11662,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               </section>
             )}
             {step === 'script' && (
-              <nav className="grid grid-cols-4 gap-1 rounded-xl bg-surface-2 p-1" aria-label="脚本与声音阶段">
+              <nav className="grid grid-cols-5 gap-1 rounded-xl bg-surface-2 p-1" aria-label="脚本与声音阶段">
                 {([
                   { id: 'theme' as const, label: '分镜脚本' },
                   { id: 'voiceover' as const, label: '口播与翻译' },
                   { id: 'audio' as const, label: '口播语音' },
                   { id: 'subtitle' as const, label: '字幕文案' },
+                  { id: 'bgm' as const, label: '配乐' },
                 ]).map(item => {
                   const unavailable = item.id !== 'theme' && (!hasTimestampScript
                     || (item.id === 'audio' && !hasRequestedVoiceDrafts)
-                    || (item.id === 'subtitle' && (!hasRequestedVoiceDrafts || !hasReadyVoiceStrategy)));
+                    || (item.id === 'subtitle' && (!hasRequestedVoiceDrafts || !hasReadyVoiceStrategy))
+                    || (item.id === 'bgm' && (!hasRequestedVoiceDrafts || !hasRequestedSubtitles)));
                   return (
-                  <button key={item.id} type="button" disabled={unavailable} title={unavailable ? '请先生成分镜脚本' : undefined} onClick={() => setScriptStageTab(item.id)} className={`rounded-lg px-1 py-2 text-[10px] font-black transition disabled:cursor-not-allowed disabled:opacity-35 ${scriptStageTab === item.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
+                  <button key={item.id} type="button" disabled={unavailable} title={unavailable ? '请按顺序完成前面的步骤' : undefined} onClick={() => setScriptStageTab(item.id)} className={`min-w-0 whitespace-nowrap rounded-lg px-0.5 py-2 text-[9px] font-black transition disabled:cursor-not-allowed disabled:opacity-35 ${scriptStageTab === item.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
                     {item.label}
                   </button>
                   );
@@ -11732,6 +11851,24 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             )}
           </div>
         )}
+        timelineTitle="整片时间轴"
+        timelineDescription={storyboardSlots.length ? `${storyboardSlots.length} 个分镜 · 可拖动定位画面` : undefined}
+        timelineToolbar={storyboardSlots.length ? <div className="flex items-center gap-2"><span className="text-[10px] font-black tabular-nums text-text-secondary">{workbenchTimelineTime.toFixed(1)}s / {workbenchTimelineDuration.toFixed(1)}s</span>{step === 'cover' && <button type="button" onClick={captureWorkbenchCoverFrame} className="rounded-md border border-border bg-white px-2 py-1 text-[9px] font-bold text-text-secondary">截取为封面</button>}</div> : undefined}
+        timelinePanel={storyboardSlots.length ? (
+          <div className="relative h-full min-w-[560px]">
+            <div className="flex h-11 overflow-hidden rounded-lg border border-border bg-surface-2">
+              {storyboardSlots.map((slot, index) => {
+                const clip = materialById.get(storyboardAssignments[slot.id] || '');
+                const width = Math.max(4, ((slot.end - slot.start) / workbenchTimelineDuration) * 100);
+                return <button key={slot.id} type="button" onClick={() => seekWorkbenchTimeline(slot.start)} style={{ width: `${width}%` }} className={`relative min-w-[42px] overflow-hidden border-r border-white/70 text-left last:border-r-0 ${activeWorkbenchSlot?.id === slot.id ? 'ring-2 ring-inset ring-emerald-500' : ''}`}>
+                  {clip?.poster || clip?.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" /> : <span className="absolute inset-0 bg-slate-700" />}
+                  <span className="relative z-10 flex h-full items-end bg-gradient-to-t from-slate-950/80 to-transparent px-1.5 pb-1 text-[8px] font-black text-white">{index + 1}</span>
+                </button>;
+              })}
+            </div>
+            <input aria-label="整片时间轴" type="range" min="0" max={workbenchTimelineDuration} step="0.05" value={Math.min(workbenchTimelineTime, workbenchTimelineDuration)} onChange={event => seekWorkbenchTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
+          </div>
+        ) : undefined}
         previousAction={{ label: '上一步', onClick: prev, disabled: stepIdx === 0 }}
         previewAction={{
           label: '预览',
@@ -11756,12 +11893,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         <div className={`relative flex h-full min-h-[360px] w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-slate-300/70 bg-[#e7e9ec] p-3 shadow-inner'}`}>
           {canvasView === 'reference' && mode === 'clone' && videoKickoff ? (
             <BenchmarkVideoPreview kickoff={videoKickoff} embedded />
-          ) : step === 'cover' ? (
+          ) : step === 'cover' && !coverTimelineCaptureMode ? (
             <div className={`relative max-h-full overflow-hidden bg-black shadow-xl ${ratio === '16:9' ? 'aspect-video' : ratio === '1:1' ? 'aspect-square' : ratio === '4:5' ? 'aspect-[4/5]' : 'aspect-[9/16]'}`}>
               <CoverFace
                 coverUrl={coverUrl}
                 frameUrl={coverFrameUrl}
-                frameType={coverClip?.poster ? 'image' : coverClip?.type}
+                frameType={capturedCoverFrameUrl || coverClip?.poster ? 'image' : coverClip?.type}
                 fallbackVideoUrl={coverClip?.type === 'video' ? coverClip.url : undefined}
                 title={coverTitle}
                 style={coverStyle}
@@ -11795,6 +11932,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   const video = event.currentTarget;
                   const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, video.duration - 0.05) : workbenchSeekTime;
                   try { video.currentTime = Math.min(Math.max(0, workbenchSeekTime), maxTime); } catch { /* ignore media seek edge cases */ }
+                }}
+                onTimeUpdate={event => {
+                  if (!activeWorkbenchSlot) return;
+                  const edit = editForSlot(activeWorkbenchClip, activeWorkbenchSlot);
+                  const elapsed = Math.max(0, (event.currentTarget.currentTime - edit.trimStart) / Math.max(0.1, edit.speed || 1));
+                  setWorkbenchTimelineTime(Math.min(activeWorkbenchSlot.end, activeWorkbenchSlot.start + elapsed));
                 }}
                 className="max-h-full max-w-full object-contain"
               />
