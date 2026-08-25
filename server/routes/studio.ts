@@ -5382,6 +5382,23 @@ function qwenTtsLanguageType(language: string): string | null {
   return map[normalizeTtsLanguage(language)] || null;
 }
 
+export function resolveDashscopeTtsEndpoint(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = String(env.DASHSCOPE_TTS_ENDPOINT || '').trim();
+  if (explicit) return explicit;
+  const configuredBase = String(env.DASHSCOPE_BASE_URL || '').trim();
+  if (configuredBase) {
+    try {
+      const url = new URL(configuredBase);
+      const isDashscopeHost = /(^|\.)dashscope(?:-intl|-us)?\.aliyuncs\.com$/i.test(url.hostname);
+      const isWorkspaceHost = /\.maas\.aliyuncs\.com$/i.test(url.hostname);
+      if (isDashscopeHost || isWorkspaceHost) {
+        return `${url.origin}/api/v1/services/aigc/multimodal-generation/generation`;
+      }
+    } catch { /* fall back to Beijing endpoint */ }
+  }
+  return 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+}
+
 function wavDurationFromBytes(bytes: Buffer): number {
   if (bytes.length < 44 || bytes.subarray(0, 4).toString('ascii') !== 'RIFF' || bytes.subarray(8, 12).toString('ascii') !== 'WAVE') return 0;
   const byteRate = bytes.readUInt32LE(28);
@@ -5407,8 +5424,7 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   // language, so skip Qwen and let the multilingual MiniMax/Piper chain handle it.
   const languageType = qwenTtsLanguageType(language);
   if (!languageType) return null;
-  const endpoint = process.env.DASHSCOPE_TTS_ENDPOINT
-    || 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+  const endpoint = resolveDashscopeTtsEndpoint();
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
