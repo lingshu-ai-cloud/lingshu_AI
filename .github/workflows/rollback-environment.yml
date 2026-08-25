@@ -44,8 +44,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pilot-scope:
+    name: Enforce internal-only pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse environments outside the internal pilot
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET_ENVIRONMENT" != "internal" ]]; then
+            echo "The current execution pilot is limited to internal." >&2
+            exit 1
+          fi
+
   authorize:
     name: Consume one-time console authorization
+    needs: pilot-scope
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -98,16 +114,16 @@ jobs:
             "$CONSOLE_URL/api/execution/consume" >/dev/null
 
   rollback:
-    name: Roll back ${{ inputs.environment }}
+    name: Roll back internal
     needs: authorize
     runs-on:
       - self-hosted
       - linux
       - x64
-      - ${{ inputs.environment }}
+      - internal
     timeout-minutes: 20
     environment:
-      name: ${{ inputs.environment }}
+      name: internal
     permissions:
       contents: read
       packages: read
@@ -130,7 +146,7 @@ jobs:
         env:
           DEPLOY_ACTOR: ${{ github.actor }}
           DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash deploy/release.sh rollback "${{ inputs.environment }}"
+        run: bash deploy/release.sh rollback internal
 
       - name: Record rollback in job summary
         run: |
