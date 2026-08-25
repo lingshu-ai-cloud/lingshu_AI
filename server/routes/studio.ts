@@ -112,6 +112,27 @@ function langName(code: string): string {
   return LANG_NAME[code] ?? 'English';
 }
 
+type TranslationBackend = 'qwen' | 'gemini';
+const TRANSLATION_BACKENDS: TranslationBackend[] = ['qwen', 'gemini'];
+
+function translationModel(backend: TranslationBackend): string | undefined {
+  return backend === 'qwen'
+    ? (process.env.STUDIO_TRANSLATION_QWEN_MODEL || 'qwen-plus')
+    : (process.env.STUDIO_TRANSLATION_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash');
+}
+
+async function callTranslationLLM(prompt: string, backend: TranslationBackend, signal: AbortSignal, timeoutMs: number): Promise<string> {
+  return callLLM(prompt, { backend, model: translationModel(backend), signal, timeoutMs });
+}
+
+export function normalizeTranslationTargetCodes(targets: unknown, source = 'zh'): string[] {
+  if (!Array.isArray(targets)) return [];
+  const sourceCode = String(source || 'zh').trim().toLowerCase();
+  return [...new Set(targets
+    .map(item => String(item || '').trim().toLowerCase())
+    .filter(code => code !== sourceCode && Boolean(LANG_NAME[code])))];
+}
+
 type ReferenceTimelineRange = { start: number; end: number };
 
 function referenceTimelineQuality(referenceAnalysis: unknown, requestedDuration: unknown): {
@@ -3305,35 +3326,41 @@ Rules:
 Return ONLY the translated lines.
 Text: ${src}`;
 
-  const deadline = createTranslationDeadline(req, res, translationTimeout(process.env.STUDIO_TRANSLATION_TOTAL_TIMEOUT_MS, 65_000, 15_000));
-  const providerTimeoutMs = translationTimeout(process.env.STUDIO_TRANSLATION_PROVIDER_TIMEOUT_MS, 28_000, 5_000);
-  try {
-    const sourceCues = timestampedTranslationCues(src);
-    const first = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
-    let out = sourceCues.length
-      ? normalizeCompleteTimestampTranslation(src, first, String(target || 'zh'))
-      : first.trim();
-    if (!out && sourceCues.length) {
-      const indexedPrompt = `Translate every numbered spoken line into ${targetLang}. Return ONLY valid JSON {"lines":["translation 1","translation 2"]}. The lines array must contain exactly ${sourceCues.length} non-empty strings in the same order. Never merge, omit, summarize or repeat a line. Do not include timestamps inside the strings. Do not add claims or explanations.\n\n${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
-      const repaired = await callLLM(indexedPrompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
-      const parsed = extractJSON<{ lines?: unknown[] } | unknown[]>(repaired);
-      const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
-      if (Array.isArray(lines) && lines.length === sourceCues.length) {
-        const rebuilt = sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n');
-        out = normalizeCompleteTimestampTranslation(src, rebuilt, String(target || 'zh'));
+  const deadline = createTranslationDeadline(req, res, translationTimeout(process.env.STUDIO_TRANSLATION_TOTAL_TIMEOUT_MS, 120_000, 20_000));
+  const providerTimeoutMs = translationTimeout(process.env.STUDIO_TRANSLATION_PROVIDER_TIMEOUT_MS, 35_000, 8_000);
+  const errors: string[] = [];
+  const sourceCues = timestampedTranslationCues(src);
+  for (const backend of TRANSLATION_BACKENDS) {
+    if (deadline.signal.aborted) break;
+    try {
+      const first = await callTranslationLLM(prompt, backend, deadline.signal, providerTimeoutMs);
+      let out = sourceCues.length
+        ? normalizeCompleteTimestampTranslation(src, first, String(target || 'zh'))
+        : first.trim();
+      if (!out && sourceCues.length) {
+        const indexedPrompt = `Translate every numbered spoken line into ${targetLang}. Return ONLY valid JSON {"lines":["translation 1","translation 2"]}. The lines array must contain exactly ${sourceCues.length} non-empty strings in the same order. Never merge, omit, summarize or repeat a line. Do not include timestamps inside the strings. Do not add claims or explanations.\n\n${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
+        const repaired = await callTranslationLLM(indexedPrompt, backend, deadline.signal, providerTimeoutMs);
+        const parsed = extractJSON<{ lines?: unknown[] } | unknown[]>(repaired);
+        const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
+        if (Array.isArray(lines) && lines.length === sourceCues.length) {
+          const rebuilt = sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n');
+          out = normalizeCompleteTimestampTranslation(src, rebuilt, String(target || 'zh'));
+        }
       }
+      if (!out.trim()) throw new Error(`${backend} returned an incomplete line-by-line translation`);
+      if (!res.writableEnded && !res.destroyed) res.json({ ok: true, source: backend, text: out.trim() });
+      return;
+    } catch (error) {
+      errors.push(`${backend}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (!out.trim()) throw new Error('qwen returned an incomplete line-by-line translation');
-    if (!res.writableEnded && !res.destroyed) res.json({ ok: true, source: 'ai', text: out.trim() });
-  } catch (error) {
-    if (!res.writableEnded && !res.destroyed) {
-      res.json({
-        ok: false,
-        source: 'fallback',
-        text: '',
-        error: deadline.timedOut ? 'translation request timed out' : (error instanceof Error ? error.message : String(error)),
-      });
-    }
+  }
+  if (!res.writableEnded && !res.destroyed) {
+    res.json({
+      ok: false,
+      source: 'fallback',
+      text: '',
+      error: deadline.timedOut ? 'translation request timed out' : (errors.join(' | ') || 'all translation providers failed'),
+    });
   }
 });
 
@@ -3342,13 +3369,11 @@ studioRouter.post('/translate/batch', async (req, res) => {
   const { text = '', targets = [], source = 'zh' } = req.body ?? {};
   const sourceCode = String(source || 'zh').trim();
   const src = String(text).trim();
-  const targetCodes = Array.isArray(targets)
-    ? targets.map(item => String(item || '').trim()).filter(Boolean).filter(code => code !== sourceCode).slice(0, 8)
-    : [];
+  const targetCodes = normalizeTranslationTargetCodes(targets, sourceCode);
   if (!src) { res.json({ ok: true, source: 'noop', translations: {} }); return; }
   if (targetCodes.length === 0) { res.json({ ok: true, source: 'noop', translations: {} }); return; }
-  const deadline = createTranslationDeadline(req, res, translationTimeout(process.env.STUDIO_TRANSLATION_BATCH_TOTAL_TIMEOUT_MS, 75_000, 20_000));
-  const providerTimeoutMs = translationTimeout(process.env.STUDIO_TRANSLATION_PROVIDER_TIMEOUT_MS, 24_000, 5_000);
+  const deadline = createTranslationDeadline(req, res, translationTimeout(process.env.STUDIO_TRANSLATION_BATCH_TOTAL_TIMEOUT_MS, 120_000, 20_000));
+  const providerTimeoutMs = translationTimeout(process.env.STUDIO_TRANSLATION_PROVIDER_TIMEOUT_MS, 35_000, 8_000);
 
   const prompt = `You are a native short-video voiceover localization editor for cross-border B2B commerce.
 
@@ -3392,13 +3417,8 @@ ${src}`;
     return false;
   };
 
-  const run = async (backend: 'qwen') => {
-    const out = await callLLM(prompt, {
-      backend,
-      model: 'qwen-plus',
-      signal: deadline.signal,
-      timeoutMs: providerTimeoutMs,
-    });
+  const run = async (backend: TranslationBackend) => {
+    const out = await callTranslationLLM(prompt, backend, deadline.signal, providerTimeoutMs);
     const parsed = extractJSON<Record<string, unknown> | Array<Record<string, unknown>>>(out) ?? {};
     const sourceTimestamps = src.split(/\n+/).map(line =>
       line.match(/^\s*(\[[^\]]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*\])/)?.[1] || '',
@@ -3426,7 +3446,7 @@ ${src}`;
     return translations;
   };
 
-  const runSingle = async (backend: 'qwen', code: string) => {
+  const runSingle = async (backend: TranslationBackend, code: string) => {
     const sourceCues = timestampedTranslationCues(src);
     const singlePrompt = `You are a native short-video voiceover localization editor for cross-border B2B commerce.
 
@@ -3436,12 +3456,7 @@ The lines array must contain exactly ${sourceCues.length} non-empty strings in t
 
 Source lines:
 ${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
-    const out = await callLLM(singlePrompt, {
-      backend,
-      model: 'qwen-plus',
-      signal: deadline.signal,
-      timeoutMs: providerTimeoutMs,
-    });
+    const out = await callTranslationLLM(singlePrompt, backend, deadline.signal, providerTimeoutMs);
     const parsed = extractJSON<{ lines?: unknown[] } | unknown[]>(out);
     const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
     const value = Array.isArray(lines) && lines.length === sourceCues.length
@@ -3453,7 +3468,7 @@ ${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
 
   const errors: string[] = [];
   const translations: Record<string, string> = {};
-  for (const backend of ['qwen'] as const) {
+  for (const backend of TRANSLATION_BACKENDS) {
     if (deadline.signal.aborted) break;
     try {
       const result = await run(backend);
@@ -3473,7 +3488,7 @@ ${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
     while (!deadline.signal.aborted) {
       const code = missing[missingIndex++];
       if (!code) break;
-      for (const backend of ['qwen'] as const) {
+      for (const backend of TRANSLATION_BACKENDS) {
         if (deadline.signal.aborted) break;
         try {
           const value = await runSingle(backend, code);
@@ -5316,13 +5331,13 @@ async function generateLocalSayTts(text: string, voice: string, language: string
   return { url: scopedStudioAssetUrl('tts', aiffFile), duration: durationFromText(text), source: 'local_say' };
 }
 
-function qwenTtsLanguageType(language: string): string {
+function qwenTtsLanguageType(language: string): string | null {
   const map: Record<string, string> = {
-    zh: 'Chinese', en: 'English', es: 'Spanish', ar: 'Arabic', pt: 'Portuguese',
-    id: 'Indonesian', fr: 'French', de: 'German', ja: 'Japanese', ko: 'Korean',
+    zh: 'Chinese', en: 'English', es: 'Spanish', pt: 'Portuguese',
+    fr: 'French', de: 'German', ja: 'Japanese', ko: 'Korean',
     ru: 'Russian', it: 'Italian',
   };
-  return map[normalizeTtsLanguage(language)] || 'Chinese';
+  return map[normalizeTtsLanguage(language)] || null;
 }
 
 function wavDurationFromBytes(bytes: Buffer): number {
@@ -5337,6 +5352,11 @@ function wavDurationFromBytes(bytes: Buffer): number {
 async function generateQwenTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
   const apiKey = String(process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) return null;
+  // Qwen3-TTS system voices only support the languages listed above. Sending an
+  // unsupported language as Chinese produces plausible audio in the wrong
+  // language, so skip Qwen and let the multilingual MiniMax/Piper chain handle it.
+  const languageType = qwenTtsLanguageType(language);
+  if (!languageType) return null;
   const endpoint = process.env.DASHSCOPE_TTS_ENDPOINT
     || 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
   const response = await fetch(endpoint, {
@@ -5347,7 +5367,7 @@ async function generateQwenTts(text: string, voice: string, language: string): P
       input: {
         text: text.slice(0, 5000),
         voice: process.env[`QWEN_TTS_VOICE_${String(voice || 'v1').toUpperCase()}`] || QWEN_TTS_VOICE_MAP[voice] || 'Cherry',
-        language_type: qwenTtsLanguageType(language),
+        language_type: languageType,
       },
     }),
     signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_TIMEOUT_MS || 90_000)),

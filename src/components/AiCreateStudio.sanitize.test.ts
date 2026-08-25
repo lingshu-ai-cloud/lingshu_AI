@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pendingClaimLocations, sanitizeStoryboardScript } from './AiCreateStudio.js';
+import { configuredEnterpriseLanguageCodes, pendingClaimLocations, sanitizeStoryboardScript } from './AiCreateStudio.js';
+
+assert.deepEqual(
+  configuredEnterpriseLanguageCodes({
+    brand: { preferredLanguages: '英语、西班牙语、阿拉伯语、中文' },
+    company: { primaryLanguages: '英语、俄语' },
+  }),
+  ['en', 'es', 'ar', 'zh', 'ru'],
+  '内容创作必须合并首选输出语言和主要业务语言，不能因首选语言已有值而丢掉俄语',
+);
 
 const fiveSilentScenes = Array.from({ length: 5 }, (_, index) => `[${index * 4}-${(index + 1) * 4}s]
 环境：测试环境${index + 1}
@@ -56,6 +65,8 @@ assert.doesNotMatch(studioSource, /当前草稿不能进入配音、选材或成
 assert.match(studioSource, /qualityStatus: 'warning',[\s\S]*内容已手动修改，等待人工审核/, '人工修改后必须转入待审核状态');
 assert.match(studioSource, /当前测试账号素材太少啦，换个创作模式再试试！/, '分镜校验失败时必须使用指定的灵小枢提示');
 assert.match(studioSource, /announceRejectedStoryboard\(response\)/, 'AI 分镜返回后必须检查是否需要触发灵小枢提示');
+assert.match(studioSource, /可任意添加或删除/, '口播语种必须支持用户自由增删');
+assert.match(studioSource, /lingshu:enterprise-profile-updated/, '内容创作必须实时接收企业中心语言更新');
 assert.match(assistantSource, /lingshu-assistant-say/, '全局灵小枢必须监听一次性说话事件');
 assert.match(assistantSource, /data-lingshu-assistant-speech="true"/, '灵小枢提示必须使用右侧统一气泡展示');
 

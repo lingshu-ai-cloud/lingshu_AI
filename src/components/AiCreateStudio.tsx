@@ -1129,6 +1129,9 @@ function detectScriptLanguageCode(value: string): string {
   if (/[\u3040-\u30ff]/.test(text)) return 'ja';
   if (/[\uac00-\ud7af]/.test(text)) return 'ko';
   if (/[\u0600-\u06ff]/.test(text)) return 'ar';
+  if (/[\u0900-\u097f]/.test(text)) return 'hi';
+  if (/[\u0e00-\u0e7f]/.test(text)) return 'th';
+  if (/[\u0400-\u04ff]/.test(text)) return 'ru';
   if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
   return 'en';
 }
@@ -1173,13 +1176,20 @@ function languageTextToCode(text = '') {
   return LANG_ALIASES[first] ?? LANG_ALIASES[normalized] ?? 'en';
 }
 
-function enterpriseLanguageCodes(text = ''): string[] {
+export function enterpriseLanguageCodes(text = ''): string[] {
   return [...new Set(text
     .split(/[、,，/|;；\n]+/)
     .map(item => item.trim())
     .filter(Boolean)
     .map(item => LANG_ALIASES[item] ?? LANG_ALIASES[item.toLowerCase()] ?? '')
     .filter(code => code && LANGS.some(language => language.code === code)))];
+}
+
+export function configuredEnterpriseLanguageCodes(profile: Pick<EnterpriseProfileLite, 'company' | 'brand'>): string[] {
+  return enterpriseLanguageCodes([
+    profile.brand?.preferredLanguages,
+    profile.company?.primaryLanguages,
+  ].filter(Boolean).join('、'));
 }
 
 interface EnterpriseProfileLite {
@@ -2794,8 +2804,12 @@ function resolveTranslatedVoiceover(base: string, translated: string, target: st
   return raw;
 }
 
-const VOICE_TRANSLATION_BATCH_TIMEOUT_MS = 30_000;
-const VOICE_TRANSLATION_SINGLE_TIMEOUT_MS = 20_000;
+// The server performs structured repair and provider failover. Keep the client
+// deadline longer than the server deadline so the browser never aborts a valid
+// translation while it is being repaired.
+const VOICE_TRANSLATION_BATCH_TIMEOUT_MS = 140_000;
+const VOICE_TRANSLATION_SINGLE_TIMEOUT_MS = 70_000;
+const VOICE_TRANSLATION_BATCH_SIZE = 6;
 
 async function runVoiceTranslationWithTimeout<T>(
   request: (signal: AbortSignal) => Promise<T>,
@@ -3406,6 +3420,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const [scriptLoading, setScriptLoading] = useState(false);
   const [voiceoverLines, setVoiceoverLines] = useState('');
   const [voiceLangs, setVoiceLangs] = useState<string[]>([]);
+  const voiceLangsRef = useRef<string[]>([]);
   const [enterpriseVoiceLangs, setEnterpriseVoiceLangs] = useState<string[]>([]);
   const [activeVoiceLang, setActiveVoiceLang] = useState('zh');
   const enterpriseScriptLanguage = voiceLangs[0] || enterpriseVoiceLangs[0] || '';
@@ -3423,6 +3438,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
   const autoGen = useRef(false); // 标记是否已由入口生成脚本，避免覆盖用户编辑
 
   useEffect(() => () => voiceDraftAbortRef.current?.abort(), []);
+  useEffect(() => { voiceLangsRef.current = voiceLangs; }, [voiceLangs]);
 
   // 配音 TTS
   const [voiceoverUrl, setVoiceoverUrl] = useState<string | null>(null);
@@ -3571,9 +3587,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/overseas/enterprise/profile', { headers: authHeader(), credentials: 'same-origin' })
-      .then(r => r.json())
-      .then((profile: EnterpriseProfileLite) => {
+    const applyEnterpriseProfile = (profile: EnterpriseProfileLite, replaceVoiceSelection = false) => {
         if (!alive) return;
         const options = buildAiProductOptions(profile);
         setProductOptions(current => {
@@ -3582,19 +3596,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           return [...preserved, ...options.filter(item => !seen.has(item.id))];
         });
         if (options[0]) setSelectedProductIds(current => current.length ? current : [options[0]!.id]);
-        const configuredVoiceLanguages = enterpriseLanguageCodes(
-          profile.brand?.preferredLanguages || profile.company?.primaryLanguages || '',
-        );
+        const configuredVoiceLanguages = configuredEnterpriseLanguageCodes(profile);
         const defaultVoiceLanguage = configuredVoiceLanguages.includes('en')
           ? 'en'
           : configuredVoiceLanguages[0];
         setEnterpriseVoiceLangs(configuredVoiceLanguages);
-        setVoiceLangs(configuredVoiceLanguages);
-        setVoiceDrafts(current => filterRecordByLanguage(current, configuredVoiceLanguages));
-        setVoiceoverAudios(current => filterRecordByLanguage(current, configuredVoiceLanguages));
-        setAlignedCuesByLang(current => filterRecordByLanguage(current, configuredVoiceLanguages));
-        setVoiceDraftStaleLangs(current => current.filter(code => configuredVoiceLanguages.includes(code)));
-        if (defaultVoiceLanguage) {
+        const shouldReplaceVoiceSelection = replaceVoiceSelection || voiceLangsRef.current.length === 0;
+        if (shouldReplaceVoiceSelection) {
+          setVoiceLangs(configuredVoiceLanguages);
+          setVoiceDrafts(current => filterRecordByLanguage(current, configuredVoiceLanguages));
+          setVoiceoverAudios(current => filterRecordByLanguage(current, configuredVoiceLanguages));
+          setAlignedCuesByLang(current => filterRecordByLanguage(current, configuredVoiceLanguages));
+          setVoiceDraftStaleLangs(current => current.filter(code => configuredVoiceLanguages.includes(code)));
+        }
+        if (shouldReplaceVoiceSelection && defaultVoiceLanguage) {
           setLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
           setActiveVoiceLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
         }
@@ -3617,9 +3632,22 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
           profile.products?.highlights,
         ].filter(Boolean).join('；'));
         setTone(prev => prev || profile.brand?.tone || '高转化 · 口语化');
-      })
+    };
+    const loadEnterpriseProfile = () => fetch('/api/overseas/enterprise/profile', { headers: authHeader(), credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`企业资料加载失败（${r.status}）`)))
+      .then((profile: EnterpriseProfileLite) => applyEnterpriseProfile(profile))
       .catch(() => {});
-    return () => { alive = false; };
+    const handleEnterpriseProfileUpdated = (event: Event) => {
+      const profile = (event as CustomEvent<{ profile?: EnterpriseProfileLite }>).detail?.profile;
+      if (profile) applyEnterpriseProfile(profile, true);
+      else void loadEnterpriseProfile();
+    };
+    void loadEnterpriseProfile();
+    window.addEventListener('lingshu:enterprise-profile-updated', handleEnterpriseProfileUpdated);
+    return () => {
+      alive = false;
+      window.removeEventListener('lingshu:enterprise-profile-updated', handleEnterpriseProfileUpdated);
+    };
   }, []);
 
   useEffect(() => {
@@ -5320,6 +5348,50 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     return formatVoiceoverWithTimestamps(value);
   };
 
+  const addVoiceLanguage = (code: string) => {
+    if (!LANGS.some(language => language.code === code)) return;
+    setVoiceLangs(current => current.includes(code) ? current : [...current, code]);
+    setVoiceDraftStaleLangs(current => voiceDrafts[code]?.trim() ? current : [...new Set([...current, code])]);
+    setActiveVoiceLang(code);
+    setLang(code);
+  };
+
+  const removeVoiceLanguage = (code: string) => {
+    const nextLanguages = voiceLangs.filter(item => item !== code);
+    setVoiceLangs(nextLanguages);
+    setVoiceDrafts(current => { const next = { ...current }; delete next[code]; return next; });
+    setVoiceoverAudios(current => { const next = { ...current }; delete next[code]; return next; });
+    setAlignedCuesByLang(current => { const next = { ...current }; delete next[code]; return next; });
+    setVoiceDraftStaleLangs(current => current.filter(item => item !== code));
+    setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
+    setVoiceDraftFailedLangs(current => current.filter(item => item !== code));
+    if (activeVoiceLang === code) {
+      const nextActive = nextLanguages[0] || '';
+      setActiveVoiceLang(nextActive);
+      if (nextActive) setLang(nextActive);
+      const nextAudio = nextActive ? voiceoverAudios[nextActive] : undefined;
+      setVoiceoverUrl(nextAudio?.url || null);
+      setVoiceoverDur(nextAudio?.duration || 0);
+    }
+  };
+
+  const syncVoiceLanguagesFromEnterprise = () => {
+    const nextLanguages = [...enterpriseVoiceLangs];
+    setVoiceLangs(nextLanguages);
+    setVoiceDrafts(current => filterRecordByLanguage(current, nextLanguages));
+    setVoiceoverAudios(current => filterRecordByLanguage(current, nextLanguages));
+    setAlignedCuesByLang(current => filterRecordByLanguage(current, nextLanguages));
+    setVoiceDraftStaleLangs(current => current.filter(code => nextLanguages.includes(code)));
+    setVoiceDraftPendingLangs(current => current.filter(code => nextLanguages.includes(code)));
+    setVoiceDraftFailedLangs(current => current.filter(code => nextLanguages.includes(code)));
+    const nextActive = nextLanguages.includes(activeVoiceLang) ? activeVoiceLang : nextLanguages[0] || '';
+    setActiveVoiceLang(nextActive);
+    if (nextActive) setLang(nextActive);
+    setVoiceDraftNotice(nextLanguages.length
+      ? `已同步企业中心的 ${nextLanguages.length} 个语种；仍可在本页自由增删。`
+      : '企业中心尚未配置语种，可在本页直接添加。');
+  };
+
   const cancelVoiceDraftGeneration = () => {
     const controller = voiceDraftAbortRef.current;
     if (!controller) return;
@@ -5355,33 +5427,44 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         immediate[code] = code === sourceLanguage ? normalizeScriptTimestamps(base) : '';
       }
       setVoiceDrafts(immediate);
-      setActiveVoiceLang(sourceLanguage);
-      setLang(sourceLanguage);
+      const initialActiveLanguage = langs.includes(sourceLanguage) ? sourceLanguage : langs[0] || sourceLanguage;
+      setActiveVoiceLang(initialActiveLanguage);
+      setLang(initialActiveLanguage);
       setScriptView('voiceover');
 
       const improved: Record<string, string> = { ...immediate };
       const targets = langs.filter(code => code !== sourceLanguage);
       setVoiceDraftPendingLangs(targets);
       setVoiceDraftNotice(targets.length
-        ? `已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在批量翻译 ${targets.length} 个语种（最长等待 30 秒）...`
+        ? `已识别${langZh(sourceLanguage) || sourceLanguage}口播，正在可靠翻译 ${targets.length} 个语种；可随时取消...`
         : `已提取${langZh(sourceLanguage) || sourceLanguage}口播。`);
       const failedLangs = new Set<string>();
       const failureReasons = new Map<string, string>();
       let translateError = '';
       if (targets.length) {
-        const translated = await runVoiceTranslationWithTimeout(
-          signal => studioApi.translateBatch(
-            { text: normalizeScriptTimestamps(base), targets, source: sourceLanguage },
-            { signal },
-          ),
-          controller.signal,
-          VOICE_TRANSLATION_BATCH_TIMEOUT_MS,
-        ).catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
+        // Large selections are split into bounded requests. This avoids JSON
+        // truncation while still allowing every supported language to be
+        // selected; the server handles provider failover within each group.
+        const targetGroups = Array.from(
+          { length: Math.ceil(targets.length / VOICE_TRANSLATION_BATCH_SIZE) },
+          (_, index) => targets.slice(index * VOICE_TRANSLATION_BATCH_SIZE, (index + 1) * VOICE_TRANSLATION_BATCH_SIZE),
+        );
+        const batchResponses = await Promise.all(targetGroups.map(group =>
+          runVoiceTranslationWithTimeout(
+            signal => studioApi.translateBatch(
+              { text: normalizeScriptTimestamps(base), targets: group, source: sourceLanguage },
+              { signal },
+            ),
+            controller.signal,
+            VOICE_TRANSLATION_BATCH_TIMEOUT_MS,
+          ).catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' })),
+        ));
         if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
-        translateError = translated.error || '';
+        const translatedValues = Object.assign({}, ...batchResponses.map(response => response.translations || {})) as Record<string, string>;
+        translateError = batchResponses.map(response => response.error).filter(Boolean).join('；');
         const unresolved: string[] = [];
         for (const code of targets) {
-          const raw = translated.translations?.[code] || '';
+          const raw = translatedValues[code] || '';
           const normalized = raw.trim()
             ? resolveTranslatedVoiceover(base, raw, code)
             : '';
@@ -5395,7 +5478,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
         setVoiceDraftPendingLangs(unresolved);
         if (unresolved.length) {
           setVoiceDraftNotice(`批量翻译已返回 ${targets.length - unresolved.length}/${targets.length} 个语种，正在并行重试其余 ${unresolved.length} 个...`);
-          await Promise.all(unresolved.map(async code => {
+          let retryIndex = 0;
+          const retryWorkers = Array.from({ length: Math.min(3, unresolved.length) }, async () => {
+            while (!controller.signal.aborted) {
+              const code = unresolved[retryIndex++];
+              if (!code) break;
             let normalized = '';
             let failureReason = translateError || '模型未返回有效译文';
             try {
@@ -5423,7 +5510,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
               setVoiceDraftFailedLangs(current => [...new Set([...current, code])]);
             }
             setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
-          }));
+            }
+          });
+          await Promise.all(retryWorkers);
         }
       }
       if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
@@ -6711,16 +6800,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
       ...Object.keys(restoredVoiceoverAudios),
       ...Object.keys(restoredAlignedCues),
     ])];
-    const restoredVoiceLangs = enterpriseVoiceLangs.length ? enterpriseVoiceLangs : restoredLanguageCandidates;
-    const nextVoiceDrafts = enterpriseVoiceLangs.length
-      ? filterRecordByLanguage(restoredVoiceDrafts, enterpriseVoiceLangs)
-      : restoredVoiceDrafts;
-    const nextVoiceoverAudios = enterpriseVoiceLangs.length
-      ? filterRecordByLanguage(restoredVoiceoverAudios, enterpriseVoiceLangs)
-      : restoredVoiceoverAudios;
-    const nextAlignedCues = enterpriseVoiceLangs.length
-      ? filterRecordByLanguage(restoredAlignedCues, enterpriseVoiceLangs)
-      : restoredAlignedCues;
+    // A saved project keeps the user's explicit language selection. Enterprise
+    // languages are the default/recommended set, not a lock that can silently
+    // re-add deleted languages or remove manually added ones.
+    const restoredVoiceLangs = [...new Set((savedVoiceLangs.length
+      ? savedVoiceLangs
+      : enterpriseVoiceLangs.length ? enterpriseVoiceLangs : restoredLanguageCandidates)
+      .filter(code => LANGS.some(language => language.code === code)))];
+    const nextVoiceDrafts = filterRecordByLanguage(restoredVoiceDrafts, restoredVoiceLangs);
+    const nextVoiceoverAudios = filterRecordByLanguage(restoredVoiceoverAudios, restoredVoiceLangs);
+    const nextAlignedCues = filterRecordByLanguage(restoredAlignedCues, restoredVoiceLangs);
     const savedActiveVoiceLang = typeof s.activeVoiceLang === 'string' ? s.activeVoiceLang : '';
     const restoredActiveVoiceLang = restoredVoiceLangs.includes(savedActiveVoiceLang)
       ? savedActiveVoiceLang
@@ -6735,18 +6824,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     setVoiceoverAudios(nextVoiceoverAudios);
     setAlignedCuesByLang(nextAlignedCues);
     const restoredActiveAudio = restoredActiveVoiceLang ? nextVoiceoverAudios[restoredActiveVoiceLang] : undefined;
-    const restoredVoiceoverUrl = restoredActiveAudio?.url || (!enterpriseVoiceLangs.length && typeof s.voiceoverUrl === 'string' ? s.voiceoverUrl : null);
-    const restoredVoiceoverDur = restoredActiveAudio?.duration || (!enterpriseVoiceLangs.length && typeof s.voiceoverDur === 'number' ? s.voiceoverDur : 0);
+    const restoredVoiceoverUrl = restoredActiveAudio?.url || (typeof s.voiceoverUrl === 'string' ? s.voiceoverUrl : null);
+    const restoredVoiceoverDur = restoredActiveAudio?.duration || (typeof s.voiceoverDur === 'number' ? s.voiceoverDur : 0);
     setVoiceoverUrl(restoredVoiceoverUrl);
     setVoiceoverDur(restoredVoiceoverDur);
-    const droppedLanguageCount = enterpriseVoiceLangs.length
-      ? restoredLanguageCandidates.filter(code => !enterpriseVoiceLangs.includes(code)).length
-      : 0;
+    const droppedLanguageCount = restoredLanguageCandidates.filter(code => !restoredVoiceLangs.includes(code)).length;
     setVoiceDraftNotice(Object.keys(nextVoiceDrafts).length
-      ? `已按企业中心语言恢复 ${Object.keys(nextVoiceDrafts).length} 个语种字幕${droppedLanguageCount ? `，已忽略 ${droppedLanguageCount} 个历史语言。` : '。'}`
+      ? `已恢复 ${Object.keys(nextVoiceDrafts).length} 个已选语种字幕${droppedLanguageCount ? `，已忽略 ${droppedLanguageCount} 个未选语言。` : '。'}`
       : '');
     setTtsNotice(Object.keys(nextVoiceoverAudios).length
-      ? `已按企业中心语言恢复 ${Object.keys(nextVoiceoverAudios).length} 个语种配音。`
+      ? `已恢复 ${Object.keys(nextVoiceoverAudios).length} 个已选语种配音。`
       : '');
     setVoiceDraftLoading(false);
     setTtsLoading(false);
@@ -6770,7 +6857,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
     if (s.platform) setPlatform(s.platform as string);
     if (s.ratio) setRatio(s.ratio as string);
     if (typeof s.duration === 'number') setDuration(s.duration);
-    // 语言由企业中心统一提供；旧草稿中的历史语言配置不得覆盖企业设置。
+    // 企业中心提供默认语种；项目内允许用户继续自由增删。
     setProvider('qwen');
     if (typeof s.productInfo === 'string') setProductInfo(s.productInfo);
     if (s.productSelectMode === 'single' || s.productSelectMode === 'multi') setProductSelectMode('multi');
@@ -8980,24 +9067,61 @@ export default function AiCreateStudio({ onNavigate, onGoPublish }: { onNavigate
                   )}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2">
-                <span className="text-[10px] font-black text-accent">企业中心语种</span>
-                {voiceLangs.length ? voiceLangs.map(code => (
+              <div className="rounded-xl border border-accent/20 bg-accent-glow px-3 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-black text-accent">制作语种</span>
+                    <span className="ml-2 text-[10px] font-semibold text-text-muted">已选 {voiceLangs.length} 个，可任意添加或删除</span>
+                  </div>
                   <button
-                    key={code}
                     type="button"
-                    onClick={() => { setActiveVoiceLang(code); setLang(code); }}
-                    className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
-                      activeVoiceLang === code
-                        ? 'border-accent bg-accent text-white'
-                        : 'border-accent/30 bg-white text-accent hover:border-accent'
-                    }`}
+                    onClick={syncVoiceLanguagesFromEnterprise}
+                    disabled={!enterpriseVoiceLangs.length || voiceDraftLoading}
+                    className="rounded-lg border border-accent/30 bg-white px-2.5 py-1 text-[10px] font-bold text-accent disabled:opacity-40"
                   >
-                    {langZh(code) || code}
+                    同步企业中心
                   </button>
-                )) : (
-                  <span className="text-xs font-semibold text-amber-700">企业中心尚未配置口播语言，请先到企业中心设置。</span>
-                )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {voiceLangs.map(code => (
+                    <div key={code} className={`inline-flex overflow-hidden rounded-lg border transition ${activeVoiceLang === code ? 'border-accent bg-accent text-white' : 'border-accent/30 bg-white text-accent'}`}>
+                      <button
+                        type="button"
+                        onClick={() => { setActiveVoiceLang(code); setLang(code); }}
+                        className="px-3 py-1.5 text-xs font-bold"
+                      >
+                        {langZh(code) || code}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeVoiceLanguage(code)}
+                        disabled={voiceDraftLoading}
+                        aria-label={`删除${langZh(code) || code}`}
+                        title={`不制作${langZh(code) || code}`}
+                        className={`border-l px-1.5 transition disabled:opacity-40 ${activeVoiceLang === code ? 'border-white/30 hover:bg-white/15' : 'border-accent/20 hover:bg-red-50 hover:text-red-600'}`}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  <label className="relative inline-flex">
+                    <select
+                      value=""
+                      onChange={event => { if (event.target.value) addVoiceLanguage(event.target.value); }}
+                      disabled={voiceDraftLoading || voiceLangs.length === LANGS.length}
+                      className="h-8 appearance-none rounded-lg border border-dashed border-accent/40 bg-white pl-3 pr-7 text-xs font-bold text-accent outline-none disabled:opacity-40"
+                    >
+                      <option value="">＋ 添加语种</option>
+                      {LANGS.filter(language => !voiceLangs.includes(language.code)).map(language => (
+                        <option key={language.code} value={language.code}>{language.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={11} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-accent" />
+                  </label>
+                </div>
+                <p className="mt-2 text-[10px] leading-4 text-text-muted">
+                  企业中心推荐：{enterpriseVoiceLangs.length ? enterpriseVoiceLangs.map(code => langZh(code) || code).join('、') : '尚未配置'}。本页选择只影响当前创作项目。
+                </p>
               </div>
               {voiceDraftNotice && (
                 <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold ${

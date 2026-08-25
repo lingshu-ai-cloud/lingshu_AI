@@ -1321,6 +1321,9 @@ export default function EnterprisePage() {
       }
       persistedProfileRef.current = profileSnapshot(profileToSave);
       setProfile(profileToSave);
+      window.dispatchEvent(new CustomEvent('lingshu:enterprise-profile-updated', {
+        detail: { profile: verified },
+      }));
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (error) {
