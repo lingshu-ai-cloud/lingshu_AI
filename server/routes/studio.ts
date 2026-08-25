@@ -5391,9 +5391,17 @@ function wavDurationFromBytes(bytes: Buffer): number {
   return Math.max(0, (bytes.length - dataStart) / byteRate);
 }
 
+let qwenTtsCooldownUntil = 0;
+
+function isTtsBillingOrQuotaFailure(error: unknown): boolean {
+  return /arrears|recharge|insufficient\s*(?:balance|funds|quota)|billing|out of quota|欠费|充值|余额不足|额度不足/i
+    .test(String(error instanceof Error ? error.message : error));
+}
+
 async function generateQwenTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
   const apiKey = String(process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) return null;
+  if (Date.now() < qwenTtsCooldownUntil) return null;
   // Qwen3-TTS system voices only support the languages listed above. Sending an
   // unsupported language as Chinese produces plausible audio in the wrong
   // language, so skip Qwen and let the multilingual MiniMax/Piper chain handle it.
@@ -5416,7 +5424,11 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   });
   const json = await response.json().catch(() => ({} as any)) as any;
   if (!response.ok || json?.code) {
-    throw new Error(`Qwen TTS ${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`);
+    const error = new Error(`Qwen TTS ${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`);
+    if (isTtsBillingOrQuotaFailure(error)) {
+      qwenTtsCooldownUntil = Date.now() + Math.max(60_000, Number(process.env.QWEN_TTS_BILLING_COOLDOWN_MS || 10 * 60_000));
+    }
+    throw error;
   }
   const remoteUrl = String(json?.output?.audio?.url || '').trim();
   if (!/^https?:\/\//i.test(remoteUrl)) throw new Error('Qwen TTS did not return an audio URL');

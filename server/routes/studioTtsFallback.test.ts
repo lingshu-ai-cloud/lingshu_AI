@@ -13,5 +13,6 @@ assert.match(dockerfile, /apt-get install[^\n]*espeak-ng/, '生产镜像必须�
 
 const studioSource = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
 assert.match(studioSource, /generateEspeakTts\(spoken, language, style\)/, '云端 TTS 失败后必须尝试本地配音');
+assert.match(studioSource, /qwenTtsCooldownUntil/, '欠费后必须熔断 Qwen TTS，避免同批语种重复请求失败接口');
 
 console.log('studio TTS fallback tests passed');
