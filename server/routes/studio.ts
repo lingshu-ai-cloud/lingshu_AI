@@ -5336,6 +5336,43 @@ async function generateLocalSayTts(text: string, voice: string, language: string
   return { url: scopedStudioAssetUrl('tts', aiffFile), duration: durationFromText(text), source: 'local_say' };
 }
 
+const ESPEAK_LANGUAGE_VOICE: Record<string, string> = {
+  zh: 'cmn', en: 'en-us', es: 'es', ar: 'ar', pt: 'pt', id: 'id', fr: 'fr-fr', de: 'de',
+  ja: 'ja', ko: 'ko', ru: 'ru', it: 'it', hi: 'hi', th: 'th', vi: 'vi', tr: 'tr', nl: 'nl',
+  pl: 'pl', sv: 'sv', fil: 'fil', ms: 'ms', uk: 'uk', el: 'el', cs: 'cs', ro: 'ro', hu: 'hu',
+};
+
+export function espeakVoiceForLanguage(language: string): string | null {
+  return ESPEAK_LANGUAGE_VOICE[normalizeTtsLanguage(language)] || null;
+}
+
+async function generateEspeakTts(text: string, language: string, style: TtsStyleOptions = {}): Promise<{ url: string; duration: number; source: string } | null> {
+  const voice = espeakVoiceForLanguage(language);
+  if (!voice) return null;
+  const binary = process.env.ESPEAK_BIN || '/usr/bin/espeak-ng';
+  if (!fs.existsSync(binary)) return null;
+  try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
+  const file = `${randomUUID()}.wav`;
+  const outPath = path.join(scopedStudioAssetDir(TTS_ROOT), file);
+  const speed = Math.max(90, Math.min(320, Math.round(175 * (Number(style.speed) || 1))));
+  const pitch = Math.max(20, Math.min(80, Math.round(46 + ((Number(style.emotionIntensity) || 55) - 50) * 0.2)));
+  const ok = await execFileOk(binary, [
+    '-v', voice,
+    '-s', String(speed),
+    '-p', String(pitch),
+    '-w', outPath,
+    text.slice(0, 3000),
+  ], 60_000);
+  if (!ok || !fs.existsSync(outPath)) return null;
+  const bytes = fs.readFileSync(outPath);
+  const measuredDuration = wavDurationFromBytes(bytes);
+  if (bytes.length < 1000 || measuredDuration < 0.3) {
+    try { fs.unlinkSync(outPath); } catch { /* ignore */ }
+    return null;
+  }
+  return { url: scopedStudioAssetUrl('tts', file), duration: Number(measuredDuration.toFixed(3)), source: 'espeak_local' };
+}
+
 function qwenTtsLanguageType(language: string): string | null {
   const map: Record<string, string> = {
     zh: 'Chinese', en: 'English', es: 'Spanish', pt: 'Portuguese',
@@ -5457,6 +5494,12 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
 
   const piper = await generatePiperTts(spoken, language);
   if (piper) return { ok: true, ...piper, error: aiError };
+
+  // Always-available production fallback installed in the application image.
+  // It keeps subtitle/voice generation usable when every metered cloud TTS
+  // provider is out of quota, suspended or temporarily unavailable.
+  const espeak = await generateEspeakTts(spoken, language, style);
+  if (espeak) return { ok: true, ...espeak, error: aiError };
 
   const local = await generateLocalSayTts(spoken, voice, language);
   if (local) return { ok: true, ...local, error: aiError };
