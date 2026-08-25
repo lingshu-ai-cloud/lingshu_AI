@@ -2471,6 +2471,14 @@ function publicScriptFailureReason(value: unknown): string {
   return message || '模型生成失败，未生成脚本。';
 }
 
+function publicVoiceFailureReason(value: unknown): string {
+  const message = String(value || '').trim();
+  if (/arrears|recharge|past due|overdue|欠费|充值/i.test(message)) return 'DashScope 语音服务账户欠费，暂时无法生成口播。请为该 API Key 所属阿里云账户充值，或改用“上传口播”。';
+  if (/quota|insufficient|balance|credit|resource_exhausted|额度|余额/i.test(message)) return '语音服务额度或余额不足，暂时无法生成口播。请补充额度，或改用“上传口播”。';
+  if (/401|403|unauthorized|forbidden|api.?key|permission|鉴权|权限/i.test(message)) return '语音服务鉴权失败，请检查 API Key 与模型权限，或改用“上传口播”。';
+  return message || '语音服务暂时不可用，请稍后重试或改用“上传口播”。';
+}
+
 function buildLocalMaterialScript(materialsList: Clip[], selectedIds: string[], productInfo: string, totalDuration = 20): string {
   const product = parseProductBrief(productInfo);
   const selectedMaterials = selectedIds.length
@@ -6759,7 +6767,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             if (r.text?.trim()) drafts[code] = r.text;
           } else {
             const label = LANGS.find(item => item.code === code)?.label || code;
-            const reason = r.error || (r.source === 'local' ? '后端连接失败或额度不可用' : '未返回音频');
+            const reason = publicVoiceFailureReason(r.error || (r.source === 'local' ? '后端连接失败或额度不可用' : '未返回音频'));
             failureReasonsByLang[code] = reason;
             failures.push(`${label}：${reason}`);
           }
@@ -11346,11 +11354,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             </div>
           );
         })}
-        <button type="button" onClick={() => setShowLanguagePicker(value => !value)} className="rounded-lg border border-dashed border-border px-2.5 py-1.5 text-[10px] font-bold text-text-muted hover:border-emerald-300 hover:text-emerald-700"><Plus size={11} className="mr-1 inline" />添加翻译语种（可选）</button>
+        <button type="button" onClick={() => setShowLanguagePicker(value => !value)} className="rounded-lg border border-dashed border-border px-2.5 py-1.5 text-[10px] font-bold text-text-muted hover:border-emerald-300 hover:text-emerald-700">
+          {showLanguagePicker ? <ChevronDown size={11} className="mr-1 inline rotate-180" /> : <Plus size={11} className="mr-1 inline" />}
+          {showLanguagePicker ? '收起语种库' : '添加翻译语种（可选）'}
+        </button>
       </div>
       {showLanguagePicker && (
         <div className="max-h-48 overflow-y-auto rounded-xl border border-border bg-surface-2 p-2">
-          <p className="px-1 pb-2 text-[10px] leading-4 text-text-muted">可多选，也可以不选择；原文语言会始终保留。</p>
+          <div className="flex items-start justify-between gap-2 px-1 pb-2">
+            <p className="text-[10px] leading-4 text-text-muted">可多选，也可以不选择；原文语言会始终保留。</p>
+            <button type="button" onClick={() => setShowLanguagePicker(false)} className="shrink-0 rounded-md px-2 py-1 text-[9px] font-bold text-text-secondary hover:bg-white">收起</button>
+          </div>
           <div className="grid grid-cols-2 gap-1">
             {LANGS.filter(item => item.code !== workflowSourceLanguage).map(item => {
               const checked = voiceLangs.includes(item.code);
@@ -11361,6 +11375,78 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       )}
     </section>
   );
+
+  const applyWorkbenchBgm = (trackId: string) => {
+    setBgm(trackId);
+    setAssemblyBgms(current => ({ ...current, [activeAssemblyId]: trackId }));
+    setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: trackId }));
+    setPreviewBgmOn(Boolean(trackId));
+  };
+  const workbenchFormalPreviewUrl = languageRenderOutputs[activeRenderCombinationKey]?.previewUrl
+    || renderOutputPreviewUrl
+    || Object.values(languageRenderOutputs).find(output => output?.status === 'done' && output.previewUrl)?.previewUrl
+    || '';
+  const workbenchProductionPanel = step === 'bgm' ? (
+    <section className="space-y-3">
+      <input ref={bgmInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleBgmUpload(event.target.files); event.target.value = ''; }} />
+      <div className="rounded-xl border border-border bg-surface-2 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0"><p className="text-xs font-black text-text-primary">当前配乐</p><p className="mt-1 truncate text-[10px] text-text-muted">{selectedBgmTrack?.name || '不配乐，仅保留素材原声和口播'}</p></div>
+          {selectedBgmTrack && <button type="button" onClick={() => togglePlay(selectedBgmTrack)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-text-secondary">{playingBgm === selectedBgmTrack.id ? <Pause size={13} /> : <Play size={13} />}</button>}
+        </div>
+        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配乐音量 · {bgmVol}%<input type="range" min="0" max="100" value={bgmVol} disabled={!bgm} onChange={event => setBgmVol(Number(event.target.value))} className="mt-2 w-full accent-emerald-600 disabled:opacity-35" /></label>
+      </div>
+      <button type="button" onClick={() => setBgmLibraryOpen(value => !value)} className="flex w-full items-center justify-between rounded-xl border border-border bg-white px-3 py-3 text-left">
+        <span><span className="block text-xs font-black text-text-primary">选择配乐</span><span className="mt-0.5 block text-[10px] text-text-muted">{bgms.length} 首音乐，可试听后选择</span></span>
+        <ChevronDown size={14} className={`text-text-muted transition ${bgmLibraryOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {bgmLibraryOpen && (
+        <div className="space-y-2 rounded-xl border border-border bg-surface-2 p-2">
+          <div className="flex items-center justify-between gap-2 px-1 pb-1"><p className="text-[10px] font-bold text-text-muted">曲库</p><button type="button" onClick={() => bgmInputRef.current?.click()} disabled={bgmUploading} className="rounded-md border border-border bg-white px-2 py-1 text-[9px] font-bold text-text-secondary">{bgmUploading ? '上传中…' : '上传音乐'}</button></div>
+          <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+            <button type="button" onClick={() => { applyWorkbenchBgm(''); audioRef.current?.pause(); setPlayingBgm(null); }} className={`flex w-full items-center gap-2 rounded-lg border p-2 text-left ${!bgm ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-white'}`}><span className="flex h-8 w-8 items-center justify-center rounded-md bg-surface-2"><X size={12} /></span><span className="min-w-0 flex-1 text-[10px] font-black text-text-primary">不配乐</span>{!bgm && <Check size={12} className="text-emerald-600" />}</button>
+            {bgms.map(track => (
+              <div key={track.id} className={`flex items-center gap-2 rounded-lg border p-2 ${bgm === track.id ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-white'}`}>
+                <button type="button" onClick={() => togglePlay(track)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-secondary">{playingBgm === track.id ? <Pause size={12} /> : <Play size={12} />}</button>
+                <button type="button" onClick={() => applyWorkbenchBgm(track.id)} className="min-w-0 flex-1 text-left"><span className="block truncate text-[10px] font-black text-text-primary">{track.name}</span><span className="mt-0.5 block truncate text-[9px] text-text-muted">{track.mood || '背景音乐'} · {fmtDur(track.duration)}</span></button>
+                <button type="button" onClick={() => toggleFavoriteBgm(track.id)} className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted"><Heart size={12} fill={favoriteBgms.includes(track.id) ? 'currentColor' : 'none'} /></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={() => setBgmLibraryOpen(false)} className="w-full rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">收起曲库</button>
+        </div>
+      )}
+      <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[10px] leading-4 text-text-muted">视频画面统一在中间预览；这里仅负责试听和调整配乐。</p>
+    </section>
+  ) : step === 'cover' ? (
+    <section className="space-y-3">
+      <div><p className="text-xs font-black text-text-primary">封面与标题</p><p className="mt-1 text-[10px] leading-4 text-text-muted">中间区域实时显示封面，这里只保留必要参数。</p></div>
+      <label className="block text-[10px] font-bold text-text-secondary">封面底图<select value={cover} onChange={event => { setCover(event.target.value); setCoverUrl(null); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{frameCandidates.length ? frameCandidates.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">暂无可用素材</option>}</select></label>
+      <label className="block text-[10px] font-bold text-text-secondary">封面标题<textarea value={coverTitle} rows={3} onChange={event => { setCoverTitle(event.target.value); setCoverUrl(null); }} className="mt-1 w-full resize-y rounded-lg border border-border bg-white p-2 text-xs leading-5 outline-none focus:border-accent" /></label>
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={regenCovers} disabled={coverLoading} className="rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">{coverLoading ? '生成中…' : 'AI 重写标题'}</button>
+        <button type="button" onClick={() => void openCanvaCoverEditor()} disabled={coverCanvaOpening} className="rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">{coverCanvaOpening ? '打开中…' : '精细编辑封面'}</button>
+      </div>
+      <div className="rounded-xl border border-border bg-surface-2 p-3">
+        <div className="grid grid-cols-2 gap-2">
+          <label className="text-[10px] font-bold text-text-secondary">字体<select value={coverStyle.font} onChange={event => setCoverStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{COVER_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <label className="text-[10px] font-bold text-text-secondary">字号<select value={coverStyle.size} onChange={event => setCoverStyle(current => ({ ...current, size: event.target.value as CoverStyle['size'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]"><option value="S">小</option><option value="M">中</option><option value="L">大</option></select></label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">{['#ffffff', '#111827', '#16a34a', '#14b8a6', '#ef4444', '#3b82f6'].map(color => <button key={color} type="button" onClick={() => setCoverStyle(current => ({ ...current, color }))} className="h-6 w-6 rounded-full border" style={{ background: color, borderColor: coverStyle.color === color ? TRAFFIC_GREEN : 'var(--color-border)', boxShadow: coverStyle.color === color ? `0 0 0 2px ${TRAFFIC_GREEN}` : undefined }} />)}</div>
+      </div>
+    </section>
+  ) : step === 'preview' ? (
+    <section className="space-y-3">
+      <div className={`rounded-xl border p-3 ${workbenchHasFormalVideo ? 'border-emerald-200 bg-emerald-50' : 'border-border bg-surface-2'}`}><p className="text-xs font-black text-text-primary">{workbenchHasFormalVideo ? '成片已生成' : '等待生成成片'}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workbenchHasFormalVideo ? '正式成片在中间播放器查看，确认后可进入发布。' : '确认素材、配乐和封面后，点击底部“生成成片”。'}</p></div>
+      <div className="space-y-2 rounded-xl border border-border bg-white p-3 text-[10px]">
+        <div className="flex justify-between gap-3"><span className="text-text-muted">内容版本</span><span className="truncate font-bold text-text-primary">{assemblyName}</span></div>
+        <div className="flex justify-between gap-3"><span className="text-text-muted">语言</span><span className="truncate font-bold text-text-primary">{activeLanguageLabel}</span></div>
+        <div className="flex justify-between gap-3"><span className="text-text-muted">配乐</span><span className="truncate font-bold text-text-primary">{selectedBgmTrack?.name || '不配乐'}</span></div>
+        <div className="flex justify-between gap-3"><span className="text-text-muted">封面</span><span className="truncate font-bold text-text-primary">{coverClip?.name || '沿用首帧'}</span></div>
+      </div>
+      <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[10px] leading-4 text-text-muted">此处不再重复放置播放器，所有预览统一在中间区域完成。</p>
+    </section>
+  ) : null;
 
   return (
     <div className="flex flex-col h-full relative">
@@ -11557,7 +11643,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       </button>
                     ))}
                   </div>
-                  {(uploadedVoiceName || ttsNotice) && <p className="mt-2 text-[10px] leading-4 text-text-muted">{uploadedVoiceName ? `已上传：${uploadedVoiceName}。` : ''}{ttsNotice}</p>}
+                  {(uploadedVoiceName || ttsNotice) && (
+                    <div className={`rounded-lg border px-3 py-2 text-[10px] leading-4 ${/欠费|额度|余额|鉴权|失败|不可用/.test(ttsNotice) ? 'border-red-200 bg-red-50 text-red-700' : 'border-border bg-surface-2 text-text-muted'}`}>
+                      <p>{uploadedVoiceName ? `已上传：${uploadedVoiceName}。` : ''}{ttsNotice ? publicVoiceFailureReason(ttsNotice) : ''}</p>
+                      {/欠费|额度|余额|鉴权|失败|不可用/.test(ttsNotice) && <button type="button" onClick={() => voiceoverInputRef.current?.click()} className="mt-2 rounded-md border border-red-200 bg-white px-2 py-1 font-bold">改用上传口播</button>}
+                    </div>
+                  )}
                   {voiceoverMode === 'ai' && <div className="border-t border-border pt-3">
                     <button type="button" onClick={() => setShowVoiceAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-black text-text-secondary"><span>高级设置 · 当前语言</span><ChevronDown size={13} className={`transition ${showVoiceAdvanced ? 'rotate-180' : ''}`} /></button>
                     {showVoiceAdvanced && <div className="mt-2 space-y-3 rounded-xl border border-border bg-surface-2 p-3">
@@ -11631,7 +11722,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 </div>
               </section>
             )}
-            {step !== 'script' && step !== 'material' && (
+            {workbenchProductionPanel}
+            {step !== 'script' && step !== 'material' && step !== 'bgm' && step !== 'cover' && step !== 'preview' && (
               <AnimatePresence mode="wait">
                 <motion.div key={`${step}-${scriptStageTab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.16 }}>
                   {renderStep()}
@@ -11664,6 +11756,31 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         <div className={`relative flex h-full min-h-[360px] w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-slate-300/70 bg-[#e7e9ec] p-3 shadow-inner'}`}>
           {canvasView === 'reference' && mode === 'clone' && videoKickoff ? (
             <BenchmarkVideoPreview kickoff={videoKickoff} embedded />
+          ) : step === 'cover' ? (
+            <div className={`relative max-h-full overflow-hidden bg-black shadow-xl ${ratio === '16:9' ? 'aspect-video' : ratio === '1:1' ? 'aspect-square' : ratio === '4:5' ? 'aspect-[4/5]' : 'aspect-[9/16]'}`}>
+              <CoverFace
+                coverUrl={coverUrl}
+                frameUrl={coverFrameUrl}
+                frameType={coverClip?.poster ? 'image' : coverClip?.type}
+                fallbackVideoUrl={coverClip?.type === 'video' ? coverClip.url : undefined}
+                title={coverTitle}
+                style={coverStyle}
+                editable
+                onTitleChange={setCoverTitle}
+                onStyleChange={setCoverStyle}
+              />
+            </div>
+          ) : step === 'preview' && workbenchFormalPreviewUrl ? (
+            <div className="flex h-full w-full items-center justify-center bg-black">
+              <video
+                key={workbenchFormalPreviewUrl}
+                src={workbenchFormalPreviewUrl}
+                controls
+                playsInline
+                preload="metadata"
+                className="h-full w-full object-contain"
+              />
+            </div>
           ) : activeWorkbenchClip?.type === 'video' && activeWorkbenchClip.url ? (
             <div className="flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl">
               <video

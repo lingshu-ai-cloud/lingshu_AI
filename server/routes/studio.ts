@@ -5418,6 +5418,20 @@ function wavDurationFromBytes(bytes: Buffer): number {
   return Math.max(0, (bytes.length - dataStart) / byteRate);
 }
 
+function friendlyTtsProviderError(value: unknown, provider = '语音服务'): string {
+  const message = String(value instanceof Error ? value.message : value || '').trim();
+  if (/arrears|recharge|past due|overdue|欠费|充值/i.test(message)) {
+    return `${provider}账户欠费，暂时无法生成口播。请为该 API Key 所属账户充值，或改用“上传口播”。`;
+  }
+  if (/quota|insufficient|balance|credit|resource_exhausted|额度|余额/i.test(message)) {
+    return `${provider}额度或余额不足，暂时无法生成口播。请补充额度，或改用“上传口播”。`;
+  }
+  if (/401|403|unauthorized|forbidden|api.?key|permission|鉴权|权限/i.test(message)) {
+    return `${provider}鉴权失败。请检查 API Key 与模型调用权限，或改用“上传口播”。`;
+  }
+  return message || `${provider}暂时不可用，请稍后重试或改用“上传口播”。`;
+}
+
 async function generateQwenTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
   const apiKey = String(process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) return null;
@@ -5438,7 +5452,7 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   });
   const json = await response.json().catch(() => ({} as any)) as any;
   if (!response.ok || json?.code) {
-    throw new Error(`Qwen TTS ${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`);
+    throw new Error(friendlyTtsProviderError(`${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`, 'DashScope 语音服务'));
   }
   const remoteUrl = String(json?.output?.audio?.url || '').trim();
   if (!/^https?:\/\//i.test(remoteUrl)) throw new Error('Qwen TTS did not return an audio URL');
@@ -5531,7 +5545,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
     const qwen = await generateQwenTts(spoken, voice, language);
     if (qwen) return { ok: true, ...qwen };
   } catch (e: any) {
-    aiError = `Qwen: ${String(e?.message ?? e).slice(0, 200)}`;
+    aiError = friendlyTtsProviderError(e, 'DashScope 语音服务').slice(0, 240);
   }
 
   try {
@@ -5539,7 +5553,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
     const minimax = await generateMinimaxTts(spoken, minimaxVoiceId, language, style);
     if (minimax) return { ok: true, ...minimax };
   } catch (e: any) {
-    aiError = [aiError, `MiniMax: ${String(e?.message ?? e).slice(0, 200)}`].filter(Boolean).join('；');
+    aiError = [aiError, friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240)].filter(Boolean).join('；');
   }
 
   const piper = await generatePiperTts(spoken, language);
