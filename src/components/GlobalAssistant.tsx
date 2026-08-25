@@ -414,6 +414,7 @@ export default function GlobalAssistant({
   const [enterpriseGuideSeen, setEnterpriseGuideSeen] = useState(false);
   const [enterpriseContext, setEnterpriseContext] = useState('');
   const [performance, setPerformance] = useState<AssistantPerformance | null>(null);
+  const [performanceHidden, setPerformanceHidden] = useState(false);
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
@@ -738,10 +739,12 @@ export default function GlobalAssistant({
       const detail = (event as CustomEvent<{ active?: boolean; phase?: string; message?: string }>).detail;
       if (!detail?.active) {
         setPerformance(null);
+        setPerformanceHidden(false);
         setPerformanceLineIndex(0);
         return;
       }
       setPerformance({ phase: detail.phase || 'default', message: detail.message?.trim() || undefined });
+      setPerformanceHidden(false);
       setPerformanceLineIndex(0);
       setLauncherRetracted(false);
     };
@@ -886,14 +889,14 @@ export default function GlobalAssistant({
   }, [page]);
 
   useEffect(() => {
-    if (mode !== 'breathing' || performance) {
+    if (mode !== 'breathing' || (performance && !performanceHidden)) {
       setLauncherRetracted(false);
       return;
     }
     if (launcherRetracted) return;
     const timer = window.setTimeout(() => setLauncherRetracted(true), ASSISTANT_AUTO_RETRACT_MS);
     return () => window.clearTimeout(timer);
-  }, [launcherRetracted, mode, page, performance]);
+  }, [launcherRetracted, mode, page, performance, performanceHidden]);
 
   if (suppressForRightSidebar) return null;
 
@@ -908,7 +911,7 @@ export default function GlobalAssistant({
         />
       )}
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && performance && (
+        {mode === 'breathing' && !launcherAtEdge && performance && !performanceHidden && (
           <motion.div
             key={`performance-${performance.phase}`}
             data-lingshu-assistant-performance={performance.phase}
@@ -917,7 +920,16 @@ export default function GlobalAssistant({
             exit={{ opacity: 0, y: 7, scale: 0.96 }}
             className="absolute bottom-1 right-[72px] z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
           >
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢陪你等</p>
+            <button
+              type="button"
+              onClick={() => setPerformanceHidden(true)}
+              className="absolute right-2 top-2 rounded-md p-1 text-text-muted transition hover:bg-surface-2 hover:text-text-primary"
+              aria-label="隐藏灵小枢等待提示"
+              title="先隐藏"
+            >
+              <X size={13} />
+            </button>
+            <p className="pr-6 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢陪你等</p>
             <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{performanceMessage}</p>
             <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-emerald-500"/><span className="h-1 w-3 animate-pulse rounded-full bg-emerald-300 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-emerald-200 [animation-delay:320ms]"/></div>
             <span className="absolute -right-2 bottom-6 h-4 w-4 rotate-45 border-r border-t border-emerald-200 bg-white" />
@@ -926,7 +938,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && !performance && speechBubble && (
+        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden) && speechBubble && (
           <motion.div
             key={`speech-${speechBubble.id}`}
             data-lingshu-assistant-speech="true"
@@ -943,7 +955,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && !launcherAtEdge && !performance && !speechBubble && featureGuide && (
+        {mode === 'breathing' && !launcherAtEdge && (!performance || performanceHidden) && !speechBubble && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-lingshu-guide-bubble={featureGuide.id}

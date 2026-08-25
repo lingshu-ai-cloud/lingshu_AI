@@ -5445,11 +5445,39 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   const audioResponse = await fetch(remoteUrl, { signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_DOWNLOAD_TIMEOUT_MS || 60_000)) });
   if (!audioResponse.ok) throw new Error(`Qwen TTS audio download HTTP ${audioResponse.status}`);
   const bytes = Buffer.from(await audioResponse.arrayBuffer());
-  const measuredDuration = wavDurationFromBytes(bytes);
-  if (bytes.length < 1000 || measuredDuration < 0.5) throw new Error('Qwen TTS returned invalid or empty WAV audio');
+  if (bytes.length < 1000) throw new Error('Qwen TTS returned empty audio');
   try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
-  const file = `${randomUUID()}.wav`;
-  fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), bytes);
+  const base = randomUUID();
+  const file = `${base}.wav`;
+  const wavPath = path.join(scopedStudioAssetDir(TTS_ROOT), file);
+  let measuredDuration = wavDurationFromBytes(bytes);
+  if (measuredDuration >= 0.5) {
+    fs.writeFileSync(wavPath, bytes);
+  } else {
+    const contentType = String(audioResponse.headers.get('content-type') || '').toLowerCase();
+    let sourceExt = '.bin';
+    if (/mpeg|mp3/.test(contentType)) sourceExt = '.mp3';
+    else if (/mp4|m4a/.test(contentType)) sourceExt = '.m4a';
+    else if (/ogg/.test(contentType)) sourceExt = '.ogg';
+    else if (/aac/.test(contentType)) sourceExt = '.aac';
+    else if (/webm/.test(contentType)) sourceExt = '.webm';
+    else {
+      try {
+        const remoteExt = path.extname(new URL(remoteUrl).pathname).toLowerCase();
+        if (/^\.(mp3|m4a|mp4|ogg|aac|webm|wav)$/.test(remoteExt)) sourceExt = remoteExt;
+      } catch { /* keep generic extension; ffmpeg probes the byte stream */ }
+    }
+    const sourcePath = path.join(scopedStudioAssetDir(TTS_ROOT), `${base}${sourceExt}`);
+    fs.writeFileSync(sourcePath, bytes);
+    const converted = await runFfmpeg(['-i', sourcePath, '-ar', '24000', '-ac', '1', '-y', wavPath]);
+    try { fs.unlinkSync(sourcePath); } catch { /* ignore */ }
+    if (!converted || !fs.existsSync(wavPath)) throw new Error('Qwen TTS returned an unsupported audio format');
+    measuredDuration = wavDurationFromBytes(fs.readFileSync(wavPath));
+  }
+  if (measuredDuration < 0.5) {
+    try { fs.unlinkSync(wavPath); } catch { /* ignore */ }
+    throw new Error('Qwen TTS returned invalid audio');
+  }
   return {
     url: scopedStudioAssetUrl('tts', file),
     duration: Math.max(1, Number(measuredDuration.toFixed(3))),
