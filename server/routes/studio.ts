@@ -112,17 +112,22 @@ function langName(code: string): string {
   return LANG_NAME[code] ?? 'English';
 }
 
-type TranslationBackend = 'qwen' | 'gemini';
-const TRANSLATION_BACKENDS: TranslationBackend[] = ['qwen', 'gemini'];
+type TranslationBackend = 'qwen' | 'qwen-turbo' | 'gemini';
+const TRANSLATION_BACKENDS: TranslationBackend[] = ['qwen', 'qwen-turbo', 'gemini'];
 
 function translationModel(backend: TranslationBackend): string | undefined {
-  return backend === 'qwen'
-    ? (process.env.STUDIO_TRANSLATION_QWEN_MODEL || 'qwen-plus')
-    : (process.env.STUDIO_TRANSLATION_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash');
+  if (backend === 'qwen') return process.env.STUDIO_TRANSLATION_QWEN_MODEL || 'qwen-plus';
+  if (backend === 'qwen-turbo') return process.env.STUDIO_TRANSLATION_QWEN_FALLBACK_MODEL || 'qwen-turbo';
+  return process.env.STUDIO_TRANSLATION_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 }
 
 async function callTranslationLLM(prompt: string, backend: TranslationBackend, signal: AbortSignal, timeoutMs: number): Promise<string> {
-  return callLLM(prompt, { backend, model: translationModel(backend), signal, timeoutMs });
+  return callLLM(prompt, {
+    backend: backend === 'gemini' ? 'gemini' : 'qwen',
+    model: translationModel(backend),
+    signal,
+    timeoutMs,
+  });
 }
 
 export function normalizeTranslationTargetCodes(targets: unknown, source = 'zh'): string[] {
