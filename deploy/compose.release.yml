@@ -11,7 +11,7 @@ services:
       CRAWLER_OPS_WORKER_ENABLED: "0"
       PB_VIDEO_BACKFILL_ENABLED: "false"
     volumes:
-      - ./data:/app/data
+      - ${APP_DATA_PATH:-./data}:/app/data
     depends_on:
       pocketbase:
         condition: service_healthy

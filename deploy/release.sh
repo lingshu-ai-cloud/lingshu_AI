@@ -22,9 +22,12 @@ read_release_value() {
 
 compose() {
   local release_file="$1"
+  local release_compose_project
   shift
+  release_compose_project="$(read_release_value COMPOSE_PROJECT_NAME "$release_file")"
+  [[ -n "$release_compose_project" ]] || release_compose_project="lingshu-${deploy_environment}"
   docker compose \
-    --project-name "$compose_project" \
+    --project-name "$release_compose_project" \
     --env-file "$release_file" \
     --file "$deploy_root/compose.release.yml" \
     "$@"
@@ -64,6 +67,8 @@ IMAGE_TAG=sha-${commit_sha}
 APP_IMAGE=${APP_IMAGE}
 POCKETBASE_IMAGE=${POCKETBASE_IMAGE}
 APP_HOST_PORT=${app_host_port}
+COMPOSE_PROJECT_NAME=${compose_project}
+APP_DATA_PATH=${app_data_path}
 PB_DATA_VOLUME_NAME=${pb_data_volume}
 CADDY_DATA_VOLUME_NAME=${caddy_data_volume}
 CADDY_CONFIG_VOLUME_NAME=${caddy_config_volume}
@@ -126,6 +131,7 @@ docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
 deploy_root="${DEPLOY_ROOT:-/opt/lingshu/${deploy_environment}}"
 compose_project="lingshu-${deploy_environment}"
 app_host_port="${APP_HOST_PORT:-18788}"
+app_data_path="$deploy_root/data"
 pb_data_volume="lingshu_${deploy_environment}_pb_data"
 caddy_data_volume="lingshu_${deploy_environment}_caddy_data"
 caddy_config_volume="lingshu_${deploy_environment}_caddy_config"
@@ -157,6 +163,17 @@ if [[ "$action" == "deploy" ]]; then
   [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || fail "A full lowercase 40-character commit SHA is required."
   : "${APP_IMAGE:?APP_IMAGE is required for deploy}"
   : "${POCKETBASE_IMAGE:?POCKETBASE_IMAGE is required for deploy}"
+  if [[ -f "$current_release" ]]; then
+    app_host_port="$(read_release_value APP_HOST_PORT "$current_release")"
+    compose_project="$(read_release_value COMPOSE_PROJECT_NAME "$current_release")"
+    app_data_path="$(read_release_value APP_DATA_PATH "$current_release")"
+    pb_data_volume="$(read_release_value PB_DATA_VOLUME_NAME "$current_release")"
+    caddy_data_volume="$(read_release_value CADDY_DATA_VOLUME_NAME "$current_release")"
+    caddy_config_volume="$(read_release_value CADDY_CONFIG_VOLUME_NAME "$current_release")"
+    [[ -n "$app_host_port" ]] || fail "Current release is missing APP_HOST_PORT."
+    [[ -n "$compose_project" ]] || fail "Current release is missing COMPOSE_PROJECT_NAME."
+    [[ -n "$app_data_path" ]] || fail "Current release is missing APP_DATA_PATH."
+  fi
   write_candidate_release "$commit_sha" "$candidate_release"
 else
   [[ -f "$previous_release" ]] || fail "No previous release is recorded for ${deploy_environment}."
@@ -166,9 +183,14 @@ else
 fi
 
 app_host_port="$(read_release_value APP_HOST_PORT "$candidate_release")"
+compose_project="$(read_release_value COMPOSE_PROJECT_NAME "$candidate_release")"
+app_data_path="$(read_release_value APP_DATA_PATH "$candidate_release")"
 pb_data_volume="$(read_release_value PB_DATA_VOLUME_NAME "$candidate_release")"
 caddy_data_volume="$(read_release_value CADDY_DATA_VOLUME_NAME "$candidate_release")"
 caddy_config_volume="$(read_release_value CADDY_CONFIG_VOLUME_NAME "$candidate_release")"
+
+[[ -n "$compose_project" ]] || fail "Candidate release is missing COMPOSE_PROJECT_NAME."
+[[ -n "$app_data_path" && "$app_data_path" == /* ]] || fail "APP_DATA_PATH must be an absolute path."
 
 echo "Pulling release $(read_release_value IMAGE_TAG "$candidate_release") for ${deploy_environment}"
 compose "$candidate_release" pull
