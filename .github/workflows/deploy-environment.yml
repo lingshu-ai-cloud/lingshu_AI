@@ -44,8 +44,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pilot-scope:
+    name: Enforce internal-only pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse environments outside the internal pilot
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET_ENVIRONMENT" != "internal" ]]; then
+            echo "The current execution pilot is limited to internal." >&2
+            exit 1
+          fi
+
   authorize:
     name: Consume one-time console authorization
+    needs: pilot-scope
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -136,16 +152,16 @@ jobs:
           echo "image_sha=$IMAGE_SHA" >> "$GITHUB_OUTPUT"
 
   deploy:
-    name: Deploy ${{ inputs.environment }}
+    name: Deploy internal
     needs: validate
     runs-on:
       - self-hosted
       - linux
       - x64
-      - ${{ inputs.environment }}
+      - internal
     timeout-minutes: 20
     environment:
-      name: ${{ inputs.environment }}
+      name: internal
     permissions:
       contents: read
       packages: read
@@ -170,7 +186,7 @@ jobs:
           POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase
           DEPLOY_ACTOR: ${{ github.actor }}
           DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash deploy/release.sh deploy "${{ inputs.environment }}" "${{ needs.validate.outputs.image_sha }}"
+        run: bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}"
 
       - name: Record deployment in job summary
         run: |
