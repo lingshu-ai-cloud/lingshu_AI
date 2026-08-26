@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   Check,
@@ -482,6 +482,10 @@ function StoryboardStatus({ status = 'idle', label }: { status?: StudioStoryboar
 }
 
 export function StudioStoryboardList({ items, selectedId, onSelect, onMore, emptyState }: StudioStoryboardListProps) {
+  const selectedItemRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    selectedItemRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [selectedId]);
   if (!items.length) {
     return emptyState || (
       <div className="rounded-xl border border-dashed border-border bg-surface-2 p-5 text-center">
@@ -498,6 +502,7 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, empt
         return (
           <li key={item.id}>
             <article
+              ref={selected ? selectedItemRef : undefined}
               className={joinClassNames(
                 'group relative rounded-lg border p-2 transition',
                 selected ? 'border-emerald-200 bg-emerald-50/80 shadow-sm' : 'border-transparent bg-white hover:border-emerald-100 hover:bg-emerald-50/35',

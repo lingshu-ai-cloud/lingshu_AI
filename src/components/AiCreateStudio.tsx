@@ -3815,6 +3815,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const workbenchVideoRef = useRef<HTMLVideoElement | null>(null);
   const [workbenchTimelineTime, setWorkbenchTimelineTime] = useState(0);
   const [workbenchTimelineHoverTime, setWorkbenchTimelineHoverTime] = useState<number | null>(null);
+  const workbenchTimelineScrubbingRef = useRef(false);
   const previewVideoCacheRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const previewAdvanceTimerRef = useRef<number | null>(null);
   const previewAdvanceLockRef = useRef(false);
@@ -11132,20 +11133,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setActiveStoryboardSlotId(nextSlot.id);
     setCanvasView('creation');
     if (step === 'cover') setCoverTimelineCaptureMode(true);
-    window.requestAnimationFrame(() => {
-      const clip = materialById.get(storyboardAssignments[nextSlot.id] || '');
-      const video = workbenchVideoRef.current;
-      if (!video || clip?.type !== 'video') return;
-      const edit = editForSlot(clip, nextSlot);
-      const localOffset = Math.max(0, Math.min(nextSlot.end - nextSlot.start, safeTime - nextSlot.start));
-      const seekTo = edit.trimStart + localOffset * Math.max(0.1, edit.speed || 1);
-      const applySeek = () => {
-        const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, video.duration - 0.05) : seekTo;
-        try { video.currentTime = Math.min(seekTo, maxTime); } catch { /* wait for metadata */ }
-      };
-      if (video.readyState >= 1) applySeek();
-      else video.addEventListener('loadedmetadata', applySeek, { once: true });
-    });
   };
   const timeFromWorkbenchTimelinePointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -11870,6 +11857,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               aria-valuemax={workbenchTimelineDuration}
               aria-valuenow={Math.min(workbenchTimelineTime, workbenchTimelineDuration)}
               onPointerDown={event => {
+                workbenchTimelineScrubbingRef.current = true;
                 event.currentTarget.setPointerCapture(event.pointerId);
                 const nextTime = timeFromWorkbenchTimelinePointer(event);
                 setWorkbenchTimelineHoverTime(nextTime);
@@ -11881,8 +11869,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) seekWorkbenchTimeline(nextTime);
               }}
               onPointerUp={event => {
+                const nextTime = timeFromWorkbenchTimelinePointer(event);
+                seekWorkbenchTimeline(nextTime);
+                workbenchTimelineScrubbingRef.current = false;
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
               }}
+              onPointerCancel={() => { workbenchTimelineScrubbingRef.current = false; }}
+              onLostPointerCapture={() => { workbenchTimelineScrubbingRef.current = false; }}
               onPointerLeave={() => setWorkbenchTimelineHoverTime(null)}
               onKeyDown={event => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -11981,7 +11974,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   try { video.currentTime = Math.min(Math.max(0, workbenchSeekTime), maxTime); } catch { /* ignore media seek edge cases */ }
                 }}
                 onTimeUpdate={event => {
-                  if (!activeWorkbenchSlot) return;
+                  if (!activeWorkbenchSlot || workbenchTimelineScrubbingRef.current) return;
                   const edit = editForSlot(activeWorkbenchClip, activeWorkbenchSlot);
                   const elapsed = Math.max(0, (event.currentTarget.currentTime - edit.trimStart) / Math.max(0.1, edit.speed || 1));
                   setWorkbenchTimelineTime(Math.min(activeWorkbenchSlot.end, activeWorkbenchSlot.start + elapsed));
