@@ -5,7 +5,8 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFile, spawn } from 'node:child_process';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import ffmpegStatic from 'ffmpeg-static';
 import { callLLM } from '../agents/llm.js';
@@ -41,6 +42,7 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
+import { groundedCaptionFallback, groundedCoverTitleFallbacks } from '../publishing/copyAdaptation.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import {
@@ -697,6 +699,15 @@ function selectedProductNames(productInfo: string): string[] {
     .filter(Boolean);
 }
 
+function productFactCandidates(productInfo: string): string[] {
+  const factLines = String(productInfo || '').split('\n').flatMap(line => {
+    const match = line.match(/^(?:产品卖点|核心优势|已核实事实|产品规格|规格参数)[：:]\s*(.+)$/i);
+    if (!match?.[1]) return [];
+    return match[1].split(/[；;。]\s*/);
+  });
+  return Array.from(new Set(factLines.map(item => item.trim()).filter(Boolean)));
+}
+
 function dedupeStoryboardProductNameSubtitles(script: string, productInfo: string): string {
   const names = selectedProductNames(productInfo);
   if (!names.length) return script;
@@ -1106,6 +1117,11 @@ export function isPackagingOnlyProductInfo(productInfo: string): boolean {
   return hasPackagingIdentity && !hasFinishedBeautyProduct;
 }
 
+export function isBeautyProductInfo(productInfo: string): boolean {
+  return /美妆|护肤|彩妆|口红|唇膏|润唇|精华|面霜|乳液|面膜|洁面|防晒|粉底|睫毛|眼影|beauty|cosmetic|skincare|lip(?:stick| balm)|serum|face cream|lotion|mascara|foundation/i
+    .test(String(productInfo || ''));
+}
+
 export function productVoicePlanSupportsTheme(lines: string[], theme: ContentTheme): boolean {
   const opening = String(lines[0] || '');
   const patterns: Record<ContentTheme, RegExp> = {
@@ -1149,24 +1165,56 @@ export function openingMatchesTargetBuyer(opening: string, audience: string): bo
   return expected.length === 0 || expected.some(group => group.some(term => opening.toLowerCase().includes(term.toLowerCase())));
 }
 
-function safeProductVoicePlan(theme: ContentTheme, productInfo: string, cta: string, language: string): string[] {
+function targetBuyerVoiceLabel(audience: string, language: string): string {
+  const text = String(audience || '').toLowerCase();
+  if (language === 'zh') {
+    if (/自动化|automation/.test(text)) return '自动化经理';
+    if (/工程|engineering|engineer/.test(text)) return '工程经理';
+    if (/质量|quality|\bqa\b/.test(text)) return '质量经理';
+    if (/工厂|厂长|plant|factory/.test(text)) return '工厂经理';
+    if (/采购|procurement|buyer|sourcing/.test(text)) return '采购经理';
+    if (/经销|distributor/.test(text)) return '经销商';
+    if (/进口|importer/.test(text)) return '进口商';
+    return '采购';
+  }
+  if (/自动化|automation/.test(text)) return 'Automation managers';
+  if (/工程|engineering|engineer/.test(text)) return 'Engineering managers';
+  if (/质量|quality|\bqa\b/.test(text)) return 'Quality managers';
+  if (/工厂|厂长|plant|factory/.test(text)) return 'Plant managers';
+  if (/经销|distributor/.test(text)) return 'Distributors';
+  if (/进口|importer/.test(text)) return 'Importers';
+  return 'Buyers';
+}
+
+export function safeProductVoicePlan(theme: ContentTheme, productInfo: string, cta: string, language: string, audience = ''): string[] {
   const names = selectedProductNames(productInfo);
   const first = names[0] || 'the selected product';
-  const second = names[1] || first;
+  const facts = productFactCandidates(productInfo);
+  const buyer = targetBuyerVoiceLabel(audience, language);
   if (language === 'zh') {
     const hooks: Record<ContentTheme, string> = {
-      buyer_pain: '采购，这个风险怎么判断？', product_proof: '采购，实物细节怎么核实？', use_case: '采购，现场是否适用？',
-      supplier_capability: '采购，交付能力怎么核实？', customization: '采购，哪些项目能定制？', comparison: '采购，两种方案怎么选？',
-      customer_case: '采购，这个案例可靠吗？', trend: '采购，这个趋势有依据吗？', talking_head: '采购，我来讲判断重点。',
+      buyer_pain: `${buyer}，这个风险怎么判断？`, product_proof: `${buyer}，如何核实产品实证？`, use_case: `${buyer}，现场是否适用？`,
+      supplier_capability: `${buyer}，交付能力怎么核实？`, customization: `${buyer}，哪些项目能定制？`, comparison: `${buyer}，两种方案怎么选？`,
+      customer_case: `${buyer}，这个案例可靠吗？`, trend: `${buyer}，这个趋势有依据吗？`, talking_head: `${buyer}，我来讲解判断重点。`,
     };
-    return [hooks[theme], `${first}是本次已选产品。`, `${second}是另一款已选产品。`, safeStoryboardCta(cta, language)];
+    return [
+      hooks[theme],
+      facts[0] ? `${facts[0]}。` : `核对${first}的真实细节。`,
+      facts[1] ? `${facts[1]}。` : '确认资料支持的第二项证据。',
+      safeStoryboardCta(cta, language),
+    ];
   }
   const hooks: Record<ContentTheme, string> = {
-    buyer_pain: 'Buyers, how do you judge this risk?', product_proof: 'Buyers, verify the visible product details.', use_case: 'Buyers, does this fit your site?',
-    supplier_capability: 'Buyers, verify the delivery capability.', customization: 'Buyers, which items can be customized?', comparison: 'Buyers, how do these options compare?',
-    customer_case: 'Buyers, is this case verifiable?', trend: 'Buyers, is this trend sourced?', talking_head: 'Buyers, let me explain the key checks.',
+    buyer_pain: `${buyer}, how do you judge this risk?`, product_proof: `${buyer}, how do you verify the proof?`, use_case: `${buyer}, does this fit your site?`,
+    supplier_capability: `${buyer}, how do you verify delivery?`, customization: `${buyer}, which items can be customized?`, comparison: `${buyer}, how do these options compare?`,
+    customer_case: `${buyer}, is this case verifiable?`, trend: `${buyer}, is this trend sourced?`, talking_head: `${buyer}, let me explain the key checks.`,
   };
-  return [hooks[theme], `${first} is the selected product.`, `${second} is another selected product.`, safeStoryboardCta(cta, language)];
+  return [
+    hooks[theme],
+    facts[0] || `Review the verified details of ${first}.`,
+    facts[1] || 'Confirm the second supported product fact.',
+    safeStoryboardCta(cta, language),
+  ];
 }
 
 export function applySafeStoryboardSpeechFallback(
@@ -1361,16 +1409,26 @@ export function clearStoryboardSpeech(script: string): string {
   }).join('');
 }
 
-function safeProductScenes(productInfo: string, count: number): LockedStoryboardScene[] {
+export function safeProductScenes(productInfo: string, count: number): LockedStoryboardScene[] {
   const names = selectedProductNames(productInfo);
+  const facts = productFactCandidates(productInfo);
   return Array.from({ length: count }, (_, index) => {
     const nameIndex = index <= 1 ? 0 : Math.min(1, Math.max(0, names.length - 1));
+    const productName = names[nameIndex] || '已选产品';
+    const last = index === count - 1;
+    const fact = facts[Math.max(0, index - 1)] || '';
     return ({
-    environment: 'Clean studio table with neutral background', shot: index === 0 ? '中近景' : index === count - 1 ? '全景' : '特写',
-    camera: index % 2 ? '固定镜头' : '缓慢推进', composition: 'Selected empty packaging centered with an unobstructed silhouette',
-    purpose: index === 0 ? '主题钩子' : index === count - 1 ? 'CTA' : '产品证据',
-    visual: `Display empty ${names[nameIndex] || 'selected product'} packaging only; no contents, results, or unverified overlays`,
-    music: index === count - 1 ? 'Soft message chime' : 'Light neutral rhythm',
+    environment: '待匹配真实产品或现场素材', shot: index === 0 ? '中近景' : index === count - 1 ? '全景' : '特写',
+    camera: index % 2 ? '固定镜头' : '缓慢推进', composition: '产品主体与资料可验证的细节清晰可见',
+    purpose: index === 0 ? '主题钩子' : last ? 'CTA' : '产品证据',
+    visual: index === 0
+      ? `待匹配${productName}的真实整机或现场全貌；外观、颜色与环境完全以素材为准`
+      : last
+        ? `待匹配${productName}的真实产品画面并叠加唯一行动提示`
+        : fact
+          ? `待匹配能够证明“${fact}”的真实操作、结构或数据界面；素材无法证明时标记待补`
+          : `待匹配${productName}的真实产品细节；仅展示资料与素材共同支持的内容`,
+    music: last ? '轻提示音' : '轻量中性节奏',
     });
   });
 }
@@ -1387,15 +1445,26 @@ function parseLockedStoryboardScenes(raw: string, expectedCount: number): Locked
     }).filter(scene => Object.values(scene).every(Boolean));
   } catch { return []; }
 }
-function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines: string[]): string {
-  let cursor = 0;
-  return scenes.map((scene, index) => {
-    const voice = lines[index] || '';
+export function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines: string[], targetDuration = 0): string {
+  const naturalDurations = lines.map(voice => {
     const chars = Array.from(voice.replace(/[\s，。！？、；：,.!?;:“”"'（）()]/g, '')).length;
     const words = voice.split(/\s+/).filter(Boolean).length;
     const spoken = /[\u3400-\u9fff]/.test(voice) ? chars / 4.5 : words / 2.5;
-    const duration = Math.max(2.4, +(spoken + 0.95).toFixed(1));
-    const end = +(cursor + duration).toFixed(1);
+    return Math.max(2.4, +(spoken + 0.95).toFixed(1));
+  });
+  const naturalTotal = naturalDurations.reduce((sum, duration) => sum + duration, 0);
+  const requestedTotal = Number(targetDuration) || 0;
+  const scaleToRequestedTotal = requestedTotal >= scenes.length * 2.4 && requestedTotal >= naturalTotal;
+  const durations = scaleToRequestedTotal
+    ? naturalDurations.map(duration => duration * requestedTotal / naturalTotal)
+    : naturalDurations;
+  let cursor = 0;
+  return scenes.map((scene, index) => {
+    const voice = lines[index] || '';
+    const duration = durations[index] || 2.4;
+    const end = scaleToRequestedTotal && index === scenes.length - 1
+      ? requestedTotal
+      : +(cursor + duration).toFixed(1);
     const block = `[${cursor}-${end}s]\n环境：${scene.environment}\n景别：${scene.shot}\n运镜：${scene.camera}\n构图：${scene.composition}\n镜头功能：${scene.purpose}\n画面：${scene.visual}\n配乐：${scene.music}\n台词：${voice}\n字幕：${voice}`;
     cursor = end;
     return block;
@@ -2385,19 +2454,22 @@ ${normalizedMaterialInfos.map((info, index) => {
   // Stage 1 owns words only. It cannot invent timestamps, subtitles or shots.
   // Those are locked by the server before the visual director sees them.
   const generatedVoiceLines = generationMode === 'product' && voiceoverMode === 'ai' && !/润唇膏|lip balm/i.test(product)
-    ? parseLockedVoicePlan(await callLLM(`你是外贸美妆短视频口播编导。只输出 JSON：{"lines":["...", "...", "...", "..."]}。
-为${strategyRoute === 'oem_odm' ? 'OEM品牌创始人' : strategyRoute === 'wholesale_distribution' ? '进口商/经销商' : '终端消费者'}用${lang}写${productSceneCount}句完整自然口播。
-主题：${videoThemeTitle}。每句只说一个意思：买家角色+主题问题、产品A证据、产品B证据、唯一CTA依次完成。英语每句最多12词，中文每句最多18字；不得用逗号拼接多个主张。第一句必须明确说出${strategyRoute === 'oem_odm' ? 'brand founder、product manager 或 procurement' : strategyRoute === 'wholesale_distribution' ? 'importer 或 distributor' : 'consumer'}中的一个角色。字幕将逐字复制口播，所以不要写标题式短语。
+    ? parseLockedVoicePlan(await callLLM(`你是外贸 B2B 产品短视频口播编导。只输出 JSON：{"lines":["...", "...", "...", "..."]}。
+为以下目标受众用${lang}写${productSceneCount}句完整自然口播。
+目标受众：${audience || (strategyRoute === 'oem_odm' ? 'OEM 品牌方的产品与采购负责人' : strategyRoute === 'wholesale_distribution' ? '进口商与经销商' : '终端买家')}
+主题：${videoThemeTitle}。每句只说一个意思：目标受众的决策问题、已核实证据1、已核实证据2、唯一CTA依次完成。英语每句最多12词，中文每句最多18字；不得用逗号拼接多个主张。第一句必须直接点名或描述目标受众中的一个决策角色。字幕将逐字复制口播，所以不要写标题式短语。
+第一句必须从目标受众的真实决策问题切入，可以直接称呼目标受众；禁止替目标受众虚构第一人称身份。目标受众已明确时，不得改写成品牌创始人、进口商、经销商或消费者等其他角色。
 至少两句必须围绕产品资料明确提供的产品身份、结构、规格、包装或定制触点；不得补写资料没有提供的内装物、使用动作、功效、测试结果或客户体验。
 唯一可用事实：${product}
 唯一CTA：${primaryCta || '私信了解产品资料'}
 禁止功效、认证、价格、MOQ、交期、销量、趋势和包装外的臆测。`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined }), productSceneCount)
     : [];
   const safeProductVoiceLines = generationMode === 'product' && hasNarrationDraft
-    ? safeProductVoicePlan(videoThemeId as ContentTheme, product, primaryCta, language).slice(0, productSceneCount)
+    ? safeProductVoicePlan(videoThemeId as ContentTheme, product, primaryCta, language, audience).slice(0, productSceneCount)
     : [];
   const generatedVoiceLinesMatchTheme = generatedVoiceLines.length === productSceneCount
-    && productVoicePlanSupportsTheme(generatedVoiceLines, videoThemeId as ContentTheme);
+    && productVoicePlanSupportsTheme(generatedVoiceLines, videoThemeId as ContentTheme)
+    && openingMatchesTargetBuyer(generatedVoiceLines[0] || '', audience);
   const lockedVoiceLines = generatedVoiceLinesMatchTheme
     ? generatedVoiceLines
     : generationMode === 'product' && voiceoverMode === 'ai' && /润唇膏|lip balm/i.test(product)
@@ -2410,7 +2482,8 @@ ${normalizedMaterialInfos.map((info, index) => {
   const lockedNarrationRules = lockedVoiceLines.length
     ? `\n已锁定口播（不得改写、不得截断、不得新增；每段字幕必须逐字复制同一行）：\n${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}\n时间戳由后端按这些完整口播自动计算；只为每段补画面、环境、景别、运镜、构图、镜头功能和配乐。`
     : '';
-  const generatedVisualScenes = voiceoverMode === 'ai' && lockedVoiceLines.length && !/润唇膏|lip balm/i.test(product)
+  const hasProductVisualEvidence = /^(?:产品主图素材|工厂实拍素材|包装定制素材|使用场景素材|品牌视觉素材)[：:]\s*\S+/m.test(product);
+  const generatedVisualScenes = voiceoverMode === 'ai' && lockedVoiceLines.length && hasProductVisualEvidence && !/润唇膏|lip balm/i.test(product)
     ? parseLockedStoryboardScenes(await callLLM(`只输出JSON：{"scenes":[{"environment":"","shot":"","camera":"","composition":"","purpose":"","visual":"","music":""}]}。
 为以下已锁定口播各写一个可拍产品短视频镜头。不得输出台词、字幕、时间戳或产品资料外的新事实。若资料只提供容器或包装信息，画面只能展示空容器、标签、外盒、颜色或结构，不得自行添加内装物和使用效果。
 产品资料：${product}
@@ -2567,7 +2640,7 @@ Requirements:
       : await callLLM(prompt, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
     const isStructuredLockedDraft = hasLockedDraft && (generationMode === 'product' || generationMode === 'material');
     let script = isStructuredLockedDraft
-      ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(lockedVisualScenes, lockedVoiceLines), productInfo)
+      ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(lockedVisualScenes, lockedVoiceLines, generationMode === 'product' ? productDuration : 0), productInfo)
       : normalizeScriptTimestamps(enforceProductNameInScript(stripScriptAnalysisSummary(text), productInfo));
     if (generationMode === 'material') script = repairMaterialScript(script, productInfo, structuredMaterials);
 
@@ -2580,7 +2653,10 @@ Requirements:
       let normalized = normalizeStoryboardFieldLines(normalizeScriptTimestamps(ensureSelectedProductNamesInScript(enforceProductNameInScript(stripScriptAnalysisSummary(value), productInfo), productInfo)));
       if (generationMode === 'product') {
         if (hasNarrationDraft && !lockedVisualScenes.length) normalized = applyLockedVoicePlan(normalized, lockedVoiceLines);
-        normalized = restoreProductStoryboardBoundaries(normalized);
+        // The deterministic locked draft already owns a valid, target-sized
+        // timeline. Rebuilding its ranges from speech would collapse planned
+        // visual breathing room (for example 20 seconds back to 12 seconds).
+        if (!isStructuredLockedDraft) normalized = restoreProductStoryboardBoundaries(normalized);
       }
       if (generationMode === 'material') normalized = repairMaterialScript(normalized, productInfo, structuredMaterials);
       if (hasNarrationDraft) normalized = syncStoryboardSubtitles(normalized);
@@ -2638,7 +2714,7 @@ Requirements:
       if (generationMode !== 'clone' && expected && !expected.test(opening)) {
         issues.push(`首段没有执行“${videoThemeTitle}”主题的钩子公式`);
       }
-      if (generationMode !== 'clone' && !openingMatchesCooperationRoute(opening, strategyRoute)) {
+      if (generationMode !== 'clone' && !String(audience || '').trim() && !openingMatchesCooperationRoute(opening, strategyRoute)) {
         issues.push('首段没有点名当前合作路线对应的目标买家');
       }
       if (generationMode !== 'clone' && !openingMatchesTargetBuyer(opening, audience)) {
@@ -2648,7 +2724,7 @@ Requirements:
       if (functions.length > 2 && new Set(functions).size < Math.min(3, functions.length)) {
         issues.push('分镜功能重复，未形成钩子、问题、证据、决策和 CTA 的推进');
       }
-      if (!isPackagingOnlyProductInfo(productInfo) && (['product_proof', 'use_case'].includes(videoThemeId) || strategyRoute === 'consumer_retail')) {
+      if (isBeautyProductInfo(productInfo) && !isPackagingOnlyProductInfo(productInfo) && (['product_proof', 'use_case'].includes(videoThemeId) || strategyRoute === 'consumer_retail')) {
         const scenes = String(candidate || '').split(/(?=^\[[^\]\r\n]+\][ \t]*$)/m).filter(block => /^\[[^\]]+\]/.test(block));
         const productScenes = scenes.filter(scene => /膏体|旋出|旋回|唇部|手背|化妆包|涂抹/.test(scene)).length;
         const packagingScenes = scenes.filter(scene => /标签|外盒|包装|牛皮纸|白管/.test(scene)).length;
@@ -2967,6 +3043,7 @@ studioRouter.post('/covers', async (req, res) => {
 
   const prompt = `Generate 3 punchy ${lang} video cover titles (max 6 words each) for an overseas e-commerce short video.
 Context — product: ${productInfo || '(see enterprise profile)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
+Use only product categories, facts, specifications and claims explicitly present in the context. If context is sparse, use a neutral product-demo title instead of guessing.
 Return ONLY a JSON array of 3 strings. No other text.`;
 
   try {
@@ -2978,7 +3055,7 @@ Return ONLY a JSON array of 3 strings. No other text.`;
     }
     throw new Error('parse');
   } catch {
-    res.json({ ok: true, source: 'fallback', covers: FALLBACK_COVERS });
+    res.json({ ok: true, source: 'fallback', covers: groundedCoverTitleFallbacks(script, productInfo, language) });
   }
 });
 
@@ -3210,6 +3287,7 @@ studioRouter.post('/caption', async (req, res) => {
 
   const prompt = `Write a ${platform} post caption in ${lang} for this overseas e-commerce video.
 Product: ${productInfo || '(see enterprise profile)'} ; audience: ${audience || '(infer)'} ; selling points: ${sellingPoints || '(infer)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
+Use only facts and product terms explicitly present above. Never invent a product category, certification, price, MOQ, shipping promise, lead time, geography or performance claim.
 Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "hashtags": string[] (5-8 trending tags, no # prefix) }`;
 
   try {
@@ -3221,7 +3299,7 @@ Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "
     }
     throw new Error('parse');
   } catch {
-    res.json({ ok: true, source: 'fallback', caption: FALLBACK_CAPTION, hashtags: FALLBACK_TAGS });
+    res.json({ ok: true, source: 'fallback', ...groundedCaptionFallback(script, productInfo) });
   }
 });
 
@@ -4138,6 +4216,160 @@ function isMockMaterial(m: Material): boolean {
     || m.folder === 'sample';
 }
 
+const MAX_MATERIAL_UPLOAD_BYTES = 110 * 1024 * 1024;
+
+// POST /studio/materials/file
+// Streams a browser-selected file to disk instead of expanding it into a base64
+// string and then duplicating that string again inside JSON.stringify(). A
+// 100 MB video previously needed several hundred MB in the renderer process and
+// could crash Chromium before the request reached the API.
+studioRouter.post('/materials/file', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const name = String(req.query.name || '').trim();
+  const folder = String(req.query.folder || 'upload').trim() || 'upload';
+  const type = String(req.query.type || '');
+  const duration = Number(req.query.duration || 0);
+  const width = Number(req.query.width || 0);
+  const height = Number(req.query.height || 0);
+  const mimeType = String(req.query.mimeType || req.headers['x-material-mime-type'] || '');
+  const usage = String(req.query.usage || '');
+  const sourceType = String(req.query.sourceType || '');
+  const sourceUrl = String(req.query.sourceUrl || '');
+  if (!['video', 'image', 'audio'].includes(type)) {
+    res.status(400).json({ ok: false, error: 'invalid type' });
+    return;
+  }
+
+  const declaredLength = Number(req.headers['content-length'] || 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MATERIAL_UPLOAD_BYTES) {
+    res.status(413).json({ ok: false, error: '单个素材不能超过 110 MB' });
+    return;
+  }
+
+  const uploadDir = tenantAssetDir(MEDIA_DIR, tenantId);
+  fs.mkdirSync(uploadDir, { recursive: true });
+  const id = randomUUID();
+  const extFromMime = mimeType.split('/')[1]?.replace('quicktime', 'mov').replace(/[^a-z0-9]/gi, '');
+  const ext = extFromMime || (type === 'image' ? 'jpg' : type === 'audio' ? 'mp3' : 'mp4');
+  const file = `${id}.${ext}`;
+  const relativeFile = tenantAssetRelativePath(tenantId, file);
+  const contentType = materialAssetContentType(file, mimeType);
+  if (!materialAssetTypeAllowed(contentType)) {
+    res.status(415).json({ ok: false, error: 'unsupported material type' });
+    return;
+  }
+
+  const useObjectStorage = objectStorageEnabled();
+  const objectKey = useObjectStorage ? materialAssetObjectKey(tenantId, file) : undefined;
+  const tempDir = path.join(MEDIA_DIR, '../material-upload-temp');
+  const storedPath = useObjectStorage ? path.join(tempDir, file) : path.join(MEDIA_DIR, relativeFile);
+  fs.mkdirSync(path.dirname(storedPath), { recursive: true });
+
+  let bytes = 0;
+  const sizeLimiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > MAX_MATERIAL_UPLOAD_BYTES) {
+        const error = Object.assign(new Error('material upload too large'), { code: 'MATERIAL_TOO_LARGE' });
+        callback(error);
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+  try {
+    await pipeline(req, sizeLimiter, fs.createWriteStream(storedPath, { flags: 'wx' }));
+  } catch (error) {
+    fs.rmSync(storedPath, { force: true });
+    const tooLarge = (error as NodeJS.ErrnoException)?.code === 'MATERIAL_TOO_LARGE';
+    res.status(tooLarge ? 413 : 400).json({
+      ok: false,
+      error: tooLarge ? '单个素材不能超过 110 MB' : '素材上传中断，请重试',
+    });
+    return;
+  }
+  if (!bytes) {
+    fs.rmSync(storedPath, { force: true });
+    res.status(400).json({ ok: false, error: '素材文件为空' });
+    return;
+  }
+
+  let poster: string | undefined;
+  let posterObjectKey: string | undefined;
+  let posterBuffer: Buffer | undefined;
+  if (type === 'image') {
+    poster = useObjectStorage ? undefined : `/media/${relativeFile}`;
+    posterObjectKey = objectKey;
+  } else if (type === 'video') {
+    const posterFile = `${id}.poster.jpg`;
+    const relativePoster = tenantAssetRelativePath(tenantId, posterFile);
+    const posterPath = useObjectStorage ? path.join(tempDir, posterFile) : path.join(MEDIA_DIR, relativePoster);
+    const at = duration > 1 ? 1 : 0;
+    const ok = await extractPoster(storedPath, posterPath, at);
+    if (ok) {
+      if (useObjectStorage) {
+        posterObjectKey = materialAssetObjectKey(tenantId, posterFile);
+        posterBuffer = fs.readFileSync(posterPath);
+        fs.rmSync(posterPath, { force: true });
+      } else {
+        poster = `/media/${relativePoster}`;
+      }
+    }
+  }
+
+  try {
+    if (objectKey) {
+      // The browser-to-server leg is streamed, which is the renderer OOM fix.
+      // Keep the existing R2 helper compatible by materializing only on the
+      // server when object storage is enabled.
+      await r2Upload({ key: objectKey, body: fs.readFileSync(storedPath), contentType });
+    }
+    if (posterObjectKey && posterObjectKey !== objectKey && posterBuffer) {
+      await r2Upload({ key: posterObjectKey, body: posterBuffer, contentType: 'image/jpeg' });
+      if (!await r2Head(posterObjectKey)) throw new Error('material poster upload verification failed');
+    }
+  } catch (error) {
+    if (posterObjectKey && posterObjectKey !== objectKey) await r2Delete(posterObjectKey).catch(() => undefined);
+    if (objectKey) await r2Delete(objectKey).catch(() => undefined);
+    fs.rmSync(storedPath, { force: true });
+    console.error('[materials] streamed object upload failed', error instanceof Error ? error.message : error);
+    res.status(503).json({ ok: false, error: 'material storage unavailable' });
+    return;
+  } finally {
+    if (useObjectStorage) fs.rmSync(storedPath, { force: true });
+  }
+
+  const requestedUsage: MaterialUsage = usage === 'reference_only' || sourceType === 'youtube' || /youtube\.com|youtu\.be/i.test(sourceUrl)
+    ? 'reference_only'
+    : 'editable';
+  const material: Material = {
+    id,
+    name: name || file,
+    folder,
+    type: type as Material['type'],
+    duration: Number.isFinite(duration) ? Math.max(0, duration) : 0,
+    width: width > 0 ? Math.round(width) : undefined,
+    height: height > 0 ? Math.round(height) : undefined,
+    aspectRatio: width > 0 && height > 0 ? +(width / height).toFixed(4) : undefined,
+    size: humanSize(bytes),
+    file: relativeFile,
+    url: useObjectStorage ? '' : `/media/${relativeFile}`,
+    poster,
+    objectKey,
+    posterObjectKey,
+    scope: 'own',
+    tenantId,
+    usage: requestedUsage,
+    sourceType: sourceType || undefined,
+    sourceUrl: sourceUrl || undefined,
+    createdAt: new Date().toISOString(),
+  };
+  const list = loadMaterials();
+  list.push(material);
+  persistMaterials(list);
+  res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
+});
+
 // POST /studio/materials  Body: { name, folder?, type, duration?, dataBase64, mimeType?, scope? } → 上传单个文件
 studioRouter.post('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -4156,7 +4388,7 @@ studioRouter.post('/materials', async (req, res) => {
   const relativeFile = tenantAssetRelativePath(tenantId, file);
   const contentType = materialAssetContentType(file, String(mimeType || ''));
   if (!materialAssetTypeAllowed(contentType)) { res.status(415).json({ ok: false, error: 'unsupported material type' }); return; }
-  if (!buf.length || buf.length > 110 * 1024 * 1024) { res.status(413).json({ ok: false, error: 'material must be between 1 byte and 110 MB' }); return; }
+  if (!buf.length || buf.length > MAX_MATERIAL_UPLOAD_BYTES) { res.status(413).json({ ok: false, error: 'material must be between 1 byte and 110 MB' }); return; }
   const useObjectStorage = objectStorageEnabled();
   const objectKey = useObjectStorage ? materialAssetObjectKey(tenantId, file) : undefined;
   const tempDir = path.join(MEDIA_DIR, '../material-upload-temp');
@@ -6740,10 +6972,6 @@ function fallbackMaterialStoryboard(infos: ScriptMaterialInfo[], duration: numbe
 字幕：${salesSubtitle}`;
   }).join('\n\n');
 }
-
-const FALLBACK_COVERS = ['You NEED this in 2026', 'Factory price, 24h ship', 'Why everyone is obsessed'];
-const FALLBACK_CAPTION = 'Factory-direct home essentials shipped worldwide in 24h 🏠✨';
-const FALLBACK_TAGS = ['tiktokmademebuyit', 'homefinds', 'amazonfinds', 'smallbusiness', 'viral', 'musthave'];
 
 function normalizePosterBrief(raw: any) {
   const categories = Array.isArray(raw?.categories) ? raw.categories : [];

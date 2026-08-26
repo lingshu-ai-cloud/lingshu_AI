@@ -123,6 +123,8 @@ const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; for
   facebook: { label: 'Facebook', color: '#1877f2', format: 'Reels / Page Video' },
 };
 
+const ALL_PUBLISH_PLATFORMS = Object.keys(PLATFORM_META) as PublishPlatform[];
+
 const TRAFFIC_MODE_META: Record<ViewMode, {
   icon: typeof Film;
   label: string;
@@ -161,6 +163,107 @@ function publishItemId() {
     : `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+const PUBLISH_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
+const PUBLISH_ITEM_STATUSES = new Set<PublishItemStatus>(['draft', 'ready', 'publishing', 'scheduled', 'published', 'partial', 'failed']);
+const PUBLISH_DELIVERY_MODES = new Set<DeliveryMode>(['now', 'flexible', 'schedule']);
+
+function storedString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function storedOptionalString(value: unknown): string | undefined {
+  const normalized = storedString(value);
+  return normalized || undefined;
+}
+
+function storedStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+    : [];
+}
+
+function storedPlatform(value: unknown): PublishPlatform | undefined {
+  return typeof value === 'string' && PUBLISH_PLATFORMS.has(value as PublishPlatform)
+    ? value as PublishPlatform
+    : undefined;
+}
+
+function normalizeStoredPlatformCopy(value: unknown): Record<string, PlatformCopy> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([platform, rawCopy]) => {
+    if (!rawCopy || typeof rawCopy !== 'object' || Array.isArray(rawCopy)) return [];
+    const copy = rawCopy as Record<string, unknown>;
+    return [[platform, {
+      title: storedOptionalString(copy.title),
+      description: storedOptionalString(copy.description),
+      caption: storedOptionalString(copy.caption),
+      text: storedOptionalString(copy.text),
+      tags: storedStringArray(copy.tags),
+      hashtags: storedStringArray(copy.hashtags),
+      firstComment: storedOptionalString(copy.firstComment),
+    } satisfies PlatformCopy]];
+  }));
+}
+
+export function normalizeStoredPublishDraft(value: unknown): PublishDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const normalizeItem = (item: unknown): PublishDraftItem | null => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const record = item as Record<string, unknown>;
+    return {
+      videoPath: storedOptionalString(record.videoPath),
+      previewUrl: storedOptionalString(record.previewUrl),
+      title: storedString(record.title),
+      description: storedString(record.description),
+      ratio: storedOptionalString(record.ratio),
+      sourceProjectId: storedOptionalString(record.sourceProjectId),
+      platform: storedPlatform(record.platform),
+    };
+  };
+  const base = normalizeItem(raw);
+  if (!base) return null;
+  const items = Array.isArray(raw.items)
+    ? raw.items.map(normalizeItem).filter((item): item is PublishDraftItem => Boolean(item))
+    : [];
+  return items.length ? { ...base, items } : base;
+}
+
+export function normalizeStoredPublishQueueItem(value: unknown): PublishQueueItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const id = storedString(raw.id).trim();
+  if (!id) return null;
+  const status = typeof raw.status === 'string' && PUBLISH_ITEM_STATUSES.has(raw.status as PublishItemStatus)
+    ? raw.status as PublishItemStatus
+    : 'draft';
+  const deliveryMode = typeof raw.deliveryMode === 'string' && PUBLISH_DELIVERY_MODES.has(raw.deliveryMode as DeliveryMode)
+    ? raw.deliveryMode as DeliveryMode
+    : 'now';
+  const completedTargets = Number(raw.completedTargets);
+  return {
+    id,
+    selected: raw.selected === true,
+    videoPath: storedString(raw.videoPath),
+    previewUrl: storedOptionalString(raw.previewUrl),
+    title: storedString(raw.title),
+    description: storedString(raw.description),
+    ratio: storedOptionalString(raw.ratio),
+    sourceProjectId: storedOptionalString(raw.sourceProjectId),
+    sourcePlatform: storedPlatform(raw.sourcePlatform),
+    targetAccountIds: storedStringArray(raw.targetAccountIds),
+    platformCopy: normalizeStoredPlatformCopy(raw.platformCopy),
+    firstComment: storedString(raw.firstComment),
+    trackWaLink: raw.trackWaLink !== false,
+    deliveryMode,
+    scheduledAt: storedString(raw.scheduledAt),
+    calendarPostIds: storedStringArray(raw.calendarPostIds),
+    status,
+    completedTargets: Number.isFinite(completedTargets) ? Math.max(0, completedTargets) : 0,
+    error: storedOptionalString(raw.error),
+  };
+}
+
 function titleFromVideoPath(videoPath: string) {
   const filename = videoPath.trim().split(/[\\/]/).pop() || '';
   return filename.replace(/\.(mp4|mov|webm|mkv|avi)$/i, '') || '未命名视频';
@@ -175,22 +278,25 @@ function browserVideoUrl(value: string | undefined): string {
 
 function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: string[] = []): PublishQueueItem {
   const sourcePlatform = draft?.platform;
+  const videoPath = storedString(draft?.videoPath);
+  const title = storedString(draft?.title);
+  const description = storedString(draft?.description);
   const initialCopy: Record<string, PlatformCopy> = sourcePlatform
     ? {
       [sourcePlatform]: sourcePlatform === 'youtube'
-        ? { title: draft?.title || '', description: draft?.description || '' }
+        ? { title, description }
         : sourcePlatform === 'facebook'
-          ? { text: draft?.description || '' }
-          : { caption: draft?.description || '' },
+          ? { text: description }
+          : { caption: description },
     }
     : {};
   return {
     id: publishItemId(),
-    selected: Boolean(draft?.videoPath?.trim()),
-    videoPath: draft?.videoPath || '',
-    previewUrl: draft?.previewUrl || browserVideoUrl(draft?.videoPath),
-    title: draft?.title || '',
-    description: draft?.description || '',
+    selected: Boolean(videoPath.trim()),
+    videoPath,
+    previewUrl: storedOptionalString(draft?.previewUrl) || browserVideoUrl(videoPath),
+    title,
+    description,
     ratio: draft?.ratio,
     sourceProjectId: draft?.sourceProjectId,
     sourcePlatform,
@@ -208,7 +314,7 @@ function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: st
 function expandPublishDraft(draft?: PublishDraft | null): PublishDraftItem[] {
   if (!draft) return [];
   const { items, ...base } = draft;
-  if (!items?.length) return [base];
+  if (!Array.isArray(items) || !items.length) return [base];
   return items.map(item => ({ ...base, ...item }));
 }
 
@@ -250,7 +356,7 @@ function nextScheduleValue(): string {
 
 function readStoredPublishDraft(): PublishDraft | null {
   try {
-    return JSON.parse(localStorage.getItem('ow_publish_draft') || 'null') as PublishDraft | null;
+    return normalizeStoredPublishDraft(JSON.parse(localStorage.getItem('ow_publish_draft') || 'null'));
   } catch {
     return null;
   }
@@ -262,7 +368,7 @@ function readStoredPublishQueue(): PublishQueueItem[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(PUBLISH_QUEUE_STORAGE_KEY) || '[]');
     return Array.isArray(parsed)
-      ? parsed.filter(item => item && typeof item === 'object' && typeof item.id === 'string') as PublishQueueItem[]
+      ? parsed.map(normalizeStoredPublishQueueItem).filter((item): item is PublishQueueItem => Boolean(item))
       : [];
   } catch {
     return [];
@@ -506,7 +612,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   const [savingContent, setSavingContent] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false);
-  const [adapting, setAdapting] = useState(false);
+  const [adaptingTarget, setAdaptingTarget] = useState<'all' | PublishPlatform | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
@@ -546,6 +652,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   const selectedTargetAccountIds = activeItem?.targetAccountIds ?? pendingTargetAccountIds;
   const selectedConnectedAccounts = connectedAccounts.filter(account => selectedTargetAccountIds.includes(account.id));
   const selectedPlatforms = Array.from(new Set(selectedConnectedAccounts.map(account => account.platform)));
+  const visiblePlatforms = selectedPlatforms.length ? selectedPlatforms : ALL_PUBLISH_PLATFORMS;
   const connectedAccountIds = new Set(connectedAccounts.map(account => account.id));
   const totalAssignments = items.reduce(
     (sum, item) => sum + item.targetAccountIds.filter(id => connectedAccountIds.has(id)).length,
@@ -1021,30 +1128,45 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   };
 
   const adaptCopy = async (platform?: PublishPlatform) => {
-    if (!activeItem) return;
-    const platforms = platform ? [platform] : selectedPlatforms;
-    if (!platforms.length) {
-      setError('请先选择至少一个发布账号');
+    if (!activeItem || adaptingTarget) return;
+    if (!activeItem.title.trim() && !activeItem.description.trim()) {
+      setError('请先在“通用内容”中填写作品标题或发布配文');
       return;
     }
-    setAdapting(true);
+    const requestItem = activeItem;
+    const platforms = platform ? [platform] : visiblePlatforms;
+    const mode = platform ? 'regenerate' : 'generate';
+    setAdaptingTarget(platform || 'all');
     setError('');
+    setNotice('');
     try {
-      const data = await fetchJson<{ copy: Record<string, PlatformCopy> }>('/api/overseas/publishing/adapt-copy', {
+      const data = await fetchJson<{ copy: Record<string, PlatformCopy>; source?: 'ai' | 'fallback' }>('/api/overseas/publishing/adapt-copy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: activeItem.title, description: activeItem.description, platforms, language: 'English' }),
+        body: JSON.stringify({
+          title: requestItem.title,
+          description: requestItem.description,
+          platforms,
+          language: 'English',
+          mode,
+          currentCopy: Object.fromEntries(platforms.map(target => [target, requestItem.platformCopy[target] || {}])),
+        }),
       });
       const first = platforms[0];
-      updateItem(activeItem.id, {
-        platformCopy: { ...activeItem.platformCopy, ...data.copy },
-        firstComment: data.copy[first]?.firstComment || activeItem.firstComment,
+      setItems(previous => previous.map(item => item.id === requestItem.id ? {
+        ...item,
+        platformCopy: { ...item.platformCopy, ...data.copy },
+        firstComment: data.copy[first]?.firstComment || item.firstComment,
         status: 'draft',
-      });
+        error: undefined,
+      } : item));
+      setNotice(platform
+        ? `${PLATFORM_META[platform].label} 已换成新版本。`
+        : `已生成 ${platforms.map(target => PLATFORM_META[target].label).join('、')} 的差异化文案。`);
     } catch (e) {
       setError(e instanceof Error ? e.message : '生成平台文案失败');
     } finally {
-      setAdapting(false);
+      setAdaptingTarget(null);
     }
   };
 
@@ -1446,14 +1568,19 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
 
               {contentEditorMode === 'platform' && (
               <div className="mt-4 border-t border-border pt-4">
-              <div className="mt-4 flex justify-end">
-                <button type="button" onClick={() => void adaptCopy()} disabled={adapting || selectedPlatforms.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
-                  {adapting ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                  一键生成
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] text-text-muted">
+                  {selectedPlatforms.length
+                    ? `将按已选账号生成 ${visiblePlatforms.length} 个平台版本。`
+                    : '尚未连接账号，也可以先生成四个平台版本；连接账号后直接使用。'}
+                </p>
+                <button type="button" onClick={() => void adaptCopy()} disabled={Boolean(adaptingTarget) || !activeItem} className="inline-flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                  {adaptingTarget === 'all' ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                  {adaptingTarget === 'all' ? '正在生成' : '一键生成'}
                 </button>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {(selectedPlatforms.length ? selectedPlatforms : (['youtube', 'tiktok', 'instagram', 'facebook'] as PublishPlatform[])).map(platform => {
+                {visiblePlatforms.map(platform => {
                   const meta = PLATFORM_META[platform];
                   const copy = activeItem?.platformCopy[platform];
                   const body = platformBody(platform, copy, activeItem?.description || '');
@@ -1461,7 +1588,16 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                     <div key={platform} className="rounded-2xl border border-border bg-surface p-4">
                       <div className="flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-1.5 text-sm font-black text-text-primary"><SocialPlatformIcon platform={platform} size={16} /> {meta.label}</span>
-                        <button type="button" onClick={() => void adaptCopy(platform)} className="rounded-lg border border-border px-2 py-1 text-[11px] font-bold text-text-secondary hover:border-accent hover:text-accent">换一版</button>
+                        <button
+                          type="button"
+                          onClick={() => void adaptCopy(platform)}
+                          disabled={Boolean(adaptingTarget) || !activeItem}
+                          aria-label={`为 ${meta.label} 换一版文案`}
+                          className="inline-flex min-w-[64px] items-center justify-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-bold text-text-secondary hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {adaptingTarget === platform && <Loader2 size={11} className="animate-spin" />}
+                          {adaptingTarget === platform ? '生成中' : '换一版'}
+                        </button>
                       </div>
                       {platform === 'youtube' && (
                         <input value={platformTitle(platform, copy, activeItem?.title || '')} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], title: event.target.value } }, status: 'draft', error: undefined })} className="mt-3 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />

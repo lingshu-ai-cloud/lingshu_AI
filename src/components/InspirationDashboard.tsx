@@ -620,13 +620,6 @@ function shortenText(text: string, max = 72): string {
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
 
-const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result));
-  reader.onerror = reject;
-  reader.readAsDataURL(file);
-});
-
 function tokenizeForMatch(...values: string[]): string[] {
   const stop = new Set(['the', 'and', 'with', 'this', 'that', 'for', 'you', 'your', 'our', '字幕', '画面', '镜头', '固定', '中近景', '特写']);
   return Array.from(new Set(values.join(' ')
@@ -3267,17 +3260,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const uploadedIds: string[] = [];
       for (const file of Array.from(files)) {
         const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
-        const dataBase64 = await fileToDataUrl(file);
-        const result = await studioApi.uploadMaterial({
-          name: file.name,
+        const result = await studioApi.uploadMaterialFile(file, {
           folder: 'social',
           type,
           duration: 0,
-          dataBase64,
-          mimeType: file.type,
           sourceType: 'local-upload',
         });
-        if (!result.ok || !result.material?.id) throw new Error(`「${file.name}」上传失败，请检查素材服务后重试`);
+        if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
         uploadedIds.push(result.material.id);
         if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }

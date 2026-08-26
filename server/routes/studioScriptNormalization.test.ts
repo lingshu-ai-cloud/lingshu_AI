@@ -10,6 +10,7 @@ import {
   fitStoryboardSpeech,
   fitSpeechToShot,
   isPackagingOnlyProductInfo,
+  isBeautyProductInfo,
   isNonBlockingScriptQualityIssue,
   normalizeCompleteTimestampTranslation,
   normalizeTimestampTranslationValue,
@@ -18,6 +19,7 @@ import {
   productVoicePlanSupportsTheme,
   repairMaterialScript,
   restoreProductStoryboardBoundaries,
+  serializeLockedStoryboard,
   storyboardReferenceLeakIssues,
   stripStoryboardHashtags,
   stripStoryboardReferenceLeaks,
@@ -27,6 +29,24 @@ import {
   splitVoiceoverLanguageLines,
   voiceoverLineNeedsLanguageRepair,
 } from './studio.js';
+
+assert.equal(isBeautyProductInfo('LX-Press Servo Press-Fit Cell · Industrial Automation'), false);
+assert.equal(isBeautyProductInfo('Hydrating lip balm skincare product'), true);
+
+const targetSizedStoryboard = serializeLockedStoryboard(
+  Array.from({ length: 4 }, (_, index) => ({
+    environment: '待匹配真实素材',
+    shot: '特写',
+    camera: '固定镜头',
+    composition: '主体清晰可见',
+    purpose: index === 0 ? '主题钩子' : index === 3 ? 'CTA' : '产品证据',
+    visual: '只展示资料可验证内容',
+    music: '轻量中性节奏',
+  })),
+  ['自动化经理，如何核实产品实证？', '0–50 kN 伺服压装。', '力-位移闭环监控。', '申请压装工艺评估'],
+  20,
+);
+assert.match(targetSizedStoryboard, /^\[[^\]]+-20s\]\n环境：待匹配真实素材/m, '短口播应保留设置的 20 秒视觉节奏');
 
 const compact = '[0-3s] 素材：瓶身 环境：桌面 景别：特写 运镜：推进 构图：居中 镜头功能：钩子 画面：旋出膏体 配乐：轻快 台词：买家先看膏体。 字幕：旧字幕';
 const normalized = normalizeStoryboardFieldLines(compact);

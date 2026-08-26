@@ -7,22 +7,19 @@ import { callLLM } from '../agents/llm.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { getBestTimeScores } from '../publishing/bestTime.js';
+import {
+  PUBLISH_COPY_PLATFORMS,
+  normalizePlatformCopies,
+  sanitizePublishCopyPlatforms,
+  type PlatformCopy,
+  type PublishCopyPlatform,
+} from '../publishing/copyAdaptation.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 
 export const publishingRouter = Router();
 
 const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
-
-type PlatformCopy = {
-  title?: string;
-  description?: string;
-  caption?: string;
-  text?: string;
-  tags?: string[];
-  hashtags?: string[];
-  firstComment?: string;
-};
 
 interface RecycleListRecord {
   id: string;
@@ -141,46 +138,6 @@ function hasPublishedTargets(post: PostRecord): boolean {
 function isPublishingPost(post: PostRecord): boolean {
   const stats = parseJson<Record<string, unknown>>(post.stats, {});
   return text(stats.status) === 'publishing';
-}
-
-function platformCopyFallback(platform: string, title: string, description: string): PlatformCopy {
-  const base = description || title || 'New product update';
-  if (platform === 'youtube') {
-    return {
-      title: title.slice(0, 70) || 'Product update',
-      description: `${base}\n\nContact us on WhatsApp for wholesale details.`,
-      tags: ['wholesale', 'factory', 'export'],
-      firstComment: '#wholesale #factory',
-    };
-  }
-  if (platform === 'tiktok') {
-    return {
-      caption: `${base.slice(0, 100)} DM us for catalog.`,
-      hashtags: ['#wholesale', '#factory', '#export'],
-      firstComment: '#wholesale #factory #export',
-    };
-  }
-  if (platform === 'instagram') {
-    return {
-      caption: `${base}\n\nAsk us for MOQ and catalog.`,
-      hashtags: ['#wholesale', '#export'],
-      firstComment: '#wholesale #export',
-    };
-  }
-  return {
-    text: `${base}\n\nMessage us on WhatsApp for price and MOQ.`,
-    hashtags: ['#wholesale', '#factory'],
-    firstComment: '',
-  };
-}
-
-function normalizeCopy(raw: any, platforms: string[], title: string, description: string): Record<string, PlatformCopy> {
-  const out: Record<string, PlatformCopy> = {};
-  for (const platform of platforms) {
-    const value = raw?.[platform] && typeof raw[platform] === 'object' ? raw[platform] : {};
-    out[platform] = { ...platformCopyFallback(platform, title, description), ...value };
-  }
-  return out;
 }
 
 function presetSchedule(preset: PostingScheduleRecord['preset'] = 'standard'): Array<{ weekday: number; time: string }> {
@@ -572,29 +529,56 @@ publishingRouter.post('/adapt-copy', async (req, res) => {
   const title = text(req.body?.title);
   const description = text(req.body?.description);
   const language = text(req.body?.language) || 'English';
-  const platforms = Array.isArray(req.body?.platforms)
-    ? req.body.platforms.map(String).map(text).filter(Boolean)
-    : ['youtube', 'tiktok', 'instagram', 'facebook'];
-  const single = text(req.body?.platform);
-  const targetPlatforms = single ? [single] : platforms;
+  const requestedPlatforms = sanitizePublishCopyPlatforms(req.body?.platforms);
+  const single = sanitizePublishCopyPlatforms([req.body?.platform])[0];
+  const targetPlatforms = single
+    ? [single]
+    : requestedPlatforms.length ? requestedPlatforms : [...PUBLISH_COPY_PLATFORMS];
+  const mode = text(req.body?.mode) === 'regenerate' ? 'regenerate' : 'generate';
+  const rawCurrentCopy = req.body?.currentCopy && typeof req.body.currentCopy === 'object' && !Array.isArray(req.body.currentCopy)
+    ? req.body.currentCopy as Record<string, PlatformCopy>
+    : {};
+  const currentCopy = Object.fromEntries(
+    targetPlatforms
+      .filter(platform => rawCurrentCopy[platform] && typeof rawCurrentCopy[platform] === 'object')
+      .map(platform => [platform, rawCurrentCopy[platform]]),
+  ) as Partial<Record<PublishCopyPlatform, PlatformCopy>>;
+  const requireAlternative = mode === 'regenerate';
+
+  if (!title && !description) {
+    res.status(400).json({ error: 'copy_source_required', message: '请先填写作品标题或发布配文' });
+    return;
+  }
+
   const prompt = [
     'Generate platform-native publishing copy as strict JSON only.',
     `Target language: ${language}`,
     `Title: ${title}`,
     `Draft copy: ${description}`,
-    'Required keys: youtube, tiktok, instagram, facebook when requested.',
+    `Requested platforms: ${targetPlatforms.join(', ')}`,
+    'Only return the requested platform keys.',
     'youtube: { title <=70 chars, description, tags[], firstComment }',
     'tiktok: { caption <=120 chars, hashtags[], firstComment }',
     'instagram: { caption, hashtags[], firstComment }',
     'facebook: { text, hashtags[], firstComment }',
     'Make every platform different. Put hashtags and wa.me link friendly text in firstComment when useful.',
+    'Use only facts present in the title and draft copy. Do not invent features, specifications, certifications, prices, inventory, customer results, or delivery promises.',
+    requireAlternative
+      ? `Create a materially different alternative from this current version while preserving facts: ${JSON.stringify(currentCopy)}`
+      : '',
   ].join('\n');
   try {
     const raw = await callLLM(prompt);
     const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
-    res.json({ copy: normalizeCopy(parsed, targetPlatforms, title, description) });
+    res.json({
+      copy: normalizePlatformCopies(parsed, targetPlatforms, title, description, { currentCopy, requireAlternative }),
+      source: 'ai',
+    });
   } catch {
-    res.json({ copy: normalizeCopy({}, targetPlatforms, title, description) });
+    res.json({
+      copy: normalizePlatformCopies({}, targetPlatforms, title, description, { currentCopy, requireAlternative }),
+      source: 'fallback',
+    });
   }
 });
 

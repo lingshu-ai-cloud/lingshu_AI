@@ -714,6 +714,42 @@ export const studioApi = {
   },
   uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
+  uploadMaterialFile: async (
+    file: File,
+    metadata: { folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; sourceType?: string },
+  ): Promise<{ ok: boolean; material: Material; error?: string }> => {
+    const maxBytes = 110 * 1024 * 1024;
+    if (!file.size) return { ok: false, material: null as unknown as Material, error: '素材文件为空' };
+    if (file.size > maxBytes) return { ok: false, material: null as unknown as Material, error: '单个素材不能超过 110 MB' };
+    const query = new URLSearchParams({
+      name: file.name,
+      folder: metadata.folder || 'upload',
+      type: metadata.type,
+      duration: String(metadata.duration || 0),
+      width: String(metadata.width || 0),
+      height: String(metadata.height || 0),
+      mimeType: file.type || 'application/octet-stream',
+      sourceType: metadata.sourceType || '',
+    });
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/file?${query.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', ...authHeader() },
+        body: file,
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; material?: Material; error?: string };
+      if (!response.ok || !payload.ok || !payload.material) {
+        return { ok: false, material: null as unknown as Material, error: payload.error || `上传失败（HTTP ${response.status}）` };
+      }
+      return { ok: true, material: payload.material };
+    } catch (error) {
+      return {
+        ok: false,
+        material: null as unknown as Material,
+        error: error instanceof Error ? error.message : '素材上传失败',
+      };
+    }
+  },
   analyzeMaterialSegments: (id: string) =>
     post<{ ok: boolean; material?: Material; segments?: MaterialSegment[]; error?: string }>(`materials/${id}/analyze-segments`, {}, { ok: false, error: '片段分析失败' }),
   classifyMaterial: (id: string) =>

@@ -194,7 +194,7 @@
   }
 }
 
-body:has([data-lingshu-assistant-clearance="bottom-navigation"]) [data-global-assistant="root"] {
+body:has([data-lingshu-assistant-clearance="bottom-navigation"]) [data-global-assistant="root"]:not([data-lingshu-assistant-dragged="true"]) {
   bottom: 5rem;
   transition: bottom 180ms ease;
 }

@@ -10,6 +10,8 @@ import {
 import {
   ensureMaterialCanonicalCta,
   materialGroundingIssues,
+  safeProductScenes,
+  safeProductVoicePlan,
 } from './studio.js';
 
 const productInfo = `产品名称：LX-Vision 工业视觉检测工作站
@@ -18,6 +20,30 @@ const productInfo = `产品名称：LX-Vision 工业视觉检测工作站
 const materialObservation = '素材：气动输送带与工件；观察到工件在输送带上移动；未观察到文字或显示设备';
 const primaryCta = '发送工件、节拍、缺陷样本或现场布局，预约一次 30 分钟英文方案诊断';
 const targetBuyers = 'Factory Automation Manager、Engineering Manager、Plant Manager、Project Buyer';
+
+const industrialFallbackScenes = safeProductScenes(productInfo, 4);
+assert.equal(industrialFallbackScenes.length, 4);
+assert.match(JSON.stringify(industrialFallbackScenes), /真实产品或现场素材/);
+assert.match(JSON.stringify(industrialFallbackScenes), /可根据工件、节拍、缺陷样本或现场布局开展方案诊断/);
+assert.doesNotMatch(
+  JSON.stringify(industrialFallbackScenes),
+  /empty packaging|Clean studio table|空包装/i,
+  '没有生成出视觉方案时，工业品兜底镜头不得臆造为包装展示',
+);
+
+const industrialVoicePlan = safeProductVoicePlan(
+  'product_proof',
+  `产品名称：LX-Press Servo Press-Fit Cell
+所属类目：Industrial Automation
+产品卖点：0–50 kN 伺服压装；力-位移闭环监控；重复定位精度 ±0.01 mm；支持 PLC/MES 对接`,
+  '申请压装工艺评估',
+  'zh',
+  '北美汽车零部件工厂的自动化经理与工程经理',
+);
+assert.match(industrialVoicePlan[0] || '', /自动化经理/);
+assert.equal(industrialVoicePlan[1], '0–50 kN 伺服压装。');
+assert.equal(industrialVoicePlan[2], '力-位移闭环监控。');
+assert.doesNotMatch(industrialVoicePlan.join('\n'), /品牌创始人|另一款已选产品/);
 
 // Buyer roles are audience entities. They must never be interpreted as an
 // unsupported brand or machine name merely because they use title case.

@@ -972,7 +972,15 @@ function parseTimeRangeLabel(value: string): { label: string; start: number; end
   return { label: `${start.toFixed(1)}s-${safeEnd.toFixed(1)}s`, start, end: safeEnd };
 }
 
-function parseStoryboardSlots(value: string, totalDuration: number): StoryboardSlot[] {
+function parseStandaloneTimeRangeLabel(value: string): { label: string; start: number; end: number } | null {
+  // A plain, unbracketed timestamp must occupy the beginning of the line and
+  // end there (or be followed by a colon). Product specifications such as
+  // "0–50 kN" inside narration are data, not new storyboard boundaries.
+  const standaloneRange = /^\s*(?:(?:start|开始)|\d+(?:\.\d+)?)\s*(?:s|秒)?\s*[-–]\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*(?:[:：]|$)/i;
+  return standaloneRange.test(value) ? parseTimeRangeLabel(value) : null;
+}
+
+export function parseStoryboardSlots(value: string, totalDuration: number): StoryboardSlot[] {
   const lines = String(value || '').split('\n');
   const slots: StoryboardSlot[] = [];
   let current: { range: { label: string; start: number; end: number }; lines: string[] } | null = null;
@@ -998,7 +1006,7 @@ function parseStoryboardSlots(value: string, totalDuration: number): StoryboardS
     if (!line) continue;
     const bracket = line.match(/\[([^\]]*?(?:(?:start|开始)|\d+(?:\.\d+)?)\s*(?:s|秒)?\s*[-–]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*)\]/i);
     const scene = line.match(/Scene\s+\d+\s*\(([^)]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^)]*)\)/i);
-    const inline = !bracket && !scene ? parseTimeRangeLabel(line) : null;
+    const inline = !bracket && !scene ? parseStandaloneTimeRangeLabel(line) : null;
     const range = bracket ? parseTimeRangeLabel(bracket[1]) : scene ? parseTimeRangeLabel(scene[1]) : inline;
     if (range) {
       push();
@@ -1025,6 +1033,10 @@ export function fitTimelineToVoiceover<T extends {
 }>(timeline: T[], voiceoverDuration: number): T[] {
   const sourceDuration = timeline.reduce((sum, item) => sum + Math.max(0, Number(item.targetDuration) || 0), 0);
   if (!timeline.length || !Number.isFinite(voiceoverDuration) || voiceoverDuration <= 0 || sourceDuration <= 0) return timeline;
+  // A shorter voiceover may end before the visuals, but must not compress an
+  // approved storyboard. Only extend the visual timeline when narration needs
+  // more room so captions and speech are not cut off.
+  if (voiceoverDuration <= sourceDuration) return timeline;
   const minimumShotDuration = Math.min(0.5, voiceoverDuration / timeline.length);
   const scale = voiceoverDuration / sourceDuration;
   let cursor = 0;
@@ -1051,6 +1063,7 @@ export function fitTimelineToVoiceover<T extends {
 export function fitStoryboardSlotsToDuration(slots: StoryboardSlot[], duration: number): StoryboardSlot[] {
   const sourceDuration = slots.reduce((max, slot) => Math.max(max, slot.end), 0);
   if (!slots.length || !Number.isFinite(duration) || duration <= 0 || sourceDuration <= 0) return slots;
+  if (duration <= sourceDuration) return slots;
   const scale = duration / sourceDuration;
   return slots.map((slot, index) => {
     const start = index === 0 ? 0 : slot.start * scale;
@@ -1120,12 +1133,6 @@ const DEFAULT_TTS_SETTINGS: LanguageTtsSettings = {
   pauseStyle: 'natural',
   pronunciationText: 'MOQ=M O Q\nOEM=O E M\nODM=O D M',
 };
-
-const COVERS = [
-  { id: 'cv1', title: 'You NEED this in 2026', accent: '#16a34a' },
-  { id: 'cv2', title: 'Factory price, 24h ship', accent: '#16a34a' },
-  { id: 'cv3', title: 'Why everyone is obsessed', accent: '#c13584' },
-];
 
 interface SocialAccount { id: string; platform: string; handle: string; color: string }
 const ACCOUNTS: SocialAccount[] = [
@@ -2740,6 +2747,18 @@ function parseTimestampedVoiceover(value: string): Array<{ time: string; text: s
     if (!prefixed && NON_VOICE_FIELD_RE.test(line)) continue;
     const quoted = !prefixed && !structuredStoryboard ? line.match(/[“"]([^”"]{2,})[”"]/) : null;
     const sameLine = timeMatch ? line.replace(timeMatch[0], '').trim() : '';
+    // A plain timestamped document is already the extracted voiceover format.
+    // Treat every non-empty line as speech instead of sending it through the
+    // storyboard/on-screen-text heuristics again; otherwise valid middle cues
+    // can disappear when a saved draft is revalidated or translated.
+    if (!structuredStoryboard && timeMatch && sameLine && !prefixed) {
+      const directText = cleanVoiceoverLine(sameLine);
+      if (directText && !looksLikeProductionInstruction(directText) && !isNonSpeechSfx(directText)) {
+        segments.push({ time: currentTime || normalizeTimeLabel('', fallbackIndex), text: directText });
+        fallbackIndex += 1;
+      }
+      continue;
+    }
     let text = quoted?.[1] || prefixed?.[1] || '';
     if (!text && sameLine && !structuredStoryboard
       && !looksLikeProductionInstruction(sameLine)
@@ -2758,11 +2777,49 @@ function parseTimestampedVoiceover(value: string): Array<{ time: string; text: s
 }
 
 
-function formatVoiceoverWithTimestamps(value: string): string {
+export function formatVoiceoverWithTimestamps(value: string): string {
   const parsed = parseTimestampedVoiceover(value).filter(item => !isNonSpeechSfx(item.text));
   if (parsed.length) return parsed.map(item => `${item.time} ${item.text}`).join('\n');
   const fallback = cleanVoiceoverLine(value);
   return isNonSpeechSfx(fallback) ? '' : fallback;
+}
+
+function voiceoverTimelineSignature(value: string): string[] {
+  const directTimeline = String(value || '')
+    .split(/\n+/)
+    .map(line => line.match(/^\s*\[([^\]]*?\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?[^\]]*)\]/i)?.[1] || '')
+    .filter(Boolean)
+    .map((time, index) => normalizeTimeLabel(time, index));
+  if (directTimeline.length) return directTimeline;
+  return parseTimestampedVoiceover(value)
+    .filter(item => !isNonSpeechSfx(item.text))
+    .map(item => item.time);
+}
+
+export function voiceoverDraftCoversSource(sourceVoiceover: string, draft: string): boolean {
+  const sourceTimeline = voiceoverTimelineSignature(sourceVoiceover);
+  const draftTimeline = voiceoverTimelineSignature(draft);
+  if (!sourceTimeline.length) return Boolean(String(draft || '').trim());
+  return draftTimeline.length === sourceTimeline.length
+    && draftTimeline.every((time, index) => time === sourceTimeline[index]);
+}
+
+/**
+ * A storyboard is the source of truth for which shots contain speech. Keep a
+ * manually edited voice draft only when it still covers the exact storyboard
+ * cue timeline; otherwise rebuild from every 台词/Voiceover field so a stale
+ * two-line draft cannot hide newly added middle shots.
+ */
+export function selectCompleteVoiceoverSource(storyboard: string, currentVoiceover = ''): string {
+  const storyboardVoiceover = formatVoiceoverWithTimestamps(storyboard);
+  if (!storyboardVoiceover.trim()) return formatVoiceoverWithTimestamps(currentVoiceover);
+  if (!hasStoryboardFieldLabels(String(storyboard || '').split(/\n+/))) {
+    return formatVoiceoverWithTimestamps(currentVoiceover || storyboard);
+  }
+
+  const current = formatVoiceoverWithTimestamps(currentVoiceover);
+  if (!current.trim()) return storyboardVoiceover;
+  return voiceoverDraftCoversSource(storyboardVoiceover, current) ? current : storyboardVoiceover;
 }
 
 function stripCloneAnalysisSummary(value: string): string {
@@ -2826,6 +2883,9 @@ export function sanitizeStoryboardScript(value: string, productInfo: string, str
     if (/^\s*(?:\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?|Scene\s+\d+\s*\()/i.test(line)) {
       currentVoice = '';
       currentOriginalVoiceKey = '';
+      // Repeated narration in different shots is intentional timeline data.
+      // Only duplicate voice fields inside the same shot may be collapsed.
+      lastVoiceKey = '';
     }
     const voiceMatch = line.match(/^(\s*(?:人物说|台词|Voiceover|VO|口播)\s*[：:]\s*)(.+)$/i);
     if (voiceMatch) {
@@ -2900,7 +2960,7 @@ function isNonSpeechSfx(text: string): boolean {
   return false;
 }
 
-function normalizeTranslatedVoiceover(base: string, translated: string, target: string): string {
+export function normalizeTranslatedVoiceover(base: string, translated: string, target: string): string {
   const source = parseTimestampedVoiceover(base).filter(item => !isNonSpeechSfx(item.text));
   const parsed = parseTimestampedVoiceover(translated);
   if (!source.length) {
@@ -2914,17 +2974,23 @@ function normalizeTranslatedVoiceover(base: string, translated: string, target: 
     .map(item => item.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
   if (candidates.length !== source.length) return '';
+  const sourceKeys = source.map(item => compactComparable(item.text));
   const uniqueTranslatedLines = new Set(candidates.map(item => item.toLowerCase()));
-  const looksRepeated = candidates.length >= 4 && uniqueTranslatedLines.size === 1;
-  const used = new Set<string>();
+  const looksRepeated = candidates.length > 1
+    && new Set(sourceKeys).size > 1
+    && uniqueTranslatedLines.size === 1;
+  const targetSourceOwners = new Map<string, string>();
   const lines: string[] = [];
   for (let index = 0; index < source.length; index += 1) {
     const item = source[index]!;
     const candidate = candidates[index] || '';
     const key = candidate.replace(/\s+/g, ' ').trim().toLowerCase();
-    const duplicate = Boolean(key && used.has(key));
-    if (key) used.add(key);
-    if (looksRepeated || duplicate || isBadTranslatedLine(candidate, target)) return '';
+    const sourceKey = sourceKeys[index] || `cue-${index}`;
+    const existingSourceOwner = key ? targetSourceOwners.get(key) : undefined;
+    // The same source sentence may legitimately repeat at another timestamp.
+    // Reject only when distinct source lines collapse into one target line.
+    if (key && !existingSourceOwner) targetSourceOwners.set(key, sourceKey);
+    if (looksRepeated || (existingSourceOwner && existingSourceOwner !== sourceKey) || isBadTranslatedLine(candidate, target)) return '';
     lines.push(`${item.time} ${candidate}`);
   }
   return lines.join('\n');
@@ -3670,7 +3736,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const previewVoiceAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [cover, setCover] = useState(''); // 某素材 id（用其帧画面作封面底图）
-  const [coverTitle, setCoverTitle] = useState(COVERS[0].title);
+  const [coverTitle, setCoverTitle] = useState('');
   const [coverTitleZh, setCoverTitleZh] = useState('');   // 标题中文翻译（供确认）
   const [coverStyle, setCoverStyle] = useState<CoverStyle>({ color: '#ffffff', size: 'M', position: 'bottom', align: 'left', font: 'sans', weight: 'bold', artPreset: 'clean' });
   const [coverLoading, setCoverLoading] = useState(false);
@@ -3699,7 +3765,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const renderPreviewUrlsRef = useRef<Record<string, string>>({});
 
   const [account, setAccount] = useState<string | null>('a1');
-  const [caption, setCaption] = useState('Factory-direct home essentials 🏠✨ #tiktokmademebuyit #homefinds');
+  const [caption, setCaption] = useState('');
   const [captionLoading, setCaptionLoading] = useState(false);
   const [published, setPublished] = useState(false);
   const [demoAutoLoading, setDemoAutoLoading] = useState(false);
@@ -3885,6 +3951,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const unknownDurationCount = selectedClips.filter(item => item.type === 'video' && (!Number.isFinite(item.duration) || item.duration <= 0)).length;
   const targetAspectRatio = ratioNumber(ratio);
   const selectedVisualClips = selectedClips.filter(item => item.type === 'video' || item.type === 'image');
+  const removeSelectedVisualClip = (clipId: string) => {
+    const remaining = selectedVisualClips.filter(item => item.id !== clipId);
+    setSelected(current => current.filter(id => id !== clipId));
+    if (hookMaterialId === clipId) setHookMaterialId(remaining[0]?.id || '');
+  };
   const effectiveSelectedDuration = selectedVisualClips.reduce((sum, clip) => sum + effectiveClipDuration(clip), 0);
   const recommendedMaterialDuration = effectiveSelectedDuration <= 16 ? 15 : effectiveSelectedDuration <= 24 ? 20 : effectiveSelectedDuration <= 36 ? 30 : 45;
   useEffect(() => {
@@ -4182,7 +4253,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [activeMaterialVersionKey, cover, coverTitle, coverStyle, coverUrl]);
   // 成片预览可播放的真实视频片段（mock 占位素材没有 url）
   const previewable = useMemo(() => selectedClips.filter(c => c.url && c.type === 'video'), [selectedClips]);
-  const activeSpokenScript = voiceDrafts[activeVoiceLang] || voiceoverLines || script;
+  const masterSourceVoiceover = useMemo(
+    () => selectCompleteVoiceoverSource(script, voiceoverLines),
+    [script, voiceoverLines],
+  );
+  const masterSourceLanguage = detectScriptLanguageCode(masterSourceVoiceover || script);
+  const activeSpokenScript = voiceDrafts[activeVoiceLang] || masterSourceVoiceover || script;
   const activeVoiceoverAudio = voiceoverMode === 'ai' && !voiceoverStaleLangs.includes(activeVoiceLang)
     ? voiceoverAudios[activeVoiceLang]
     : undefined;
@@ -4217,10 +4293,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const masterScriptSnapshot = useRef(script);
   useEffect(() => {
     if (masterScriptSnapshot.current !== script && Object.keys(voiceDrafts).length) {
-      setVoiceDraftStaleLangs(current => [...new Set([...current, ...voiceLangs.filter(code => code !== 'zh')])]);
+      setVoiceDraftStaleLangs(current => [...new Set([...current, ...voiceLangs.filter(code => code !== masterSourceLanguage)])]);
     }
     masterScriptSnapshot.current = script;
-  }, [script, voiceDrafts, voiceLangs]);
+  }, [masterSourceLanguage, script, voiceDrafts, voiceLangs]);
   // 字幕 cue：当前语种口播台词 + TTS 时长（无配音则用素材总时长）
   const cues = useMemo(() => alignedCuesByLang[activeVoiceLang]?.length
     ? alignedCuesByLang[activeVoiceLang]
@@ -4242,7 +4318,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     return assessment.level === 'review' && !sourcePlanFor(slot).confirmed;
   }).length;
   const hasTimestampScript = Boolean(script.trim());
-  const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim()) && !voiceDraftFailedLangs.includes(code) && !voiceDraftStaleLangs.includes(code) && !voiceDraftPendingLangs.includes(code));
+  const hasRequestedVoiceDrafts = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceDrafts[code]?.trim())
+    && voiceoverDraftCoversSource(masterSourceVoiceover, voiceDrafts[code] || '')
+    && !voiceDraftFailedLangs.includes(code)
+    && !voiceDraftStaleLangs.includes(code)
+    && !voiceDraftPendingLangs.includes(code));
   const hasRequestedVoiceovers = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(voiceoverAudios[code]?.url) && !voiceoverStaleLangs.includes(code));
   const hasRequestedSubtitles = voiceLangs.length > 0 && voiceLangs.every(code => Boolean(alignedCuesByLang[code]?.length));
   const hasReadyVoiceStrategy = voiceoverMode === 'none'
@@ -5636,7 +5716,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     voiceDraftAbortRef.current = controller;
     const isCurrentRequest = () => voiceDraftAbortRef.current === controller;
     const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
-    const base = extractVoiceoverText(sourceText);
+    const base = selectCompleteVoiceoverSource(script, sourceText);
     setVoiceoverLines(base);
     setVoiceDraftLoading(true);
     setVoiceDraftFailedLangs([]);
@@ -6156,7 +6236,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         videoPath,
         previewUrl: output?.previewUrl || latestDone?.previewUrl || (key === activeRenderCombinationKey ? renderOutputPreviewUrl || undefined : undefined),
         title: `${baseTitle} - ${versionName}`,
-        description: caption.trim() || voiceDrafts[code] || activeSpokenScript,
+        description: (code === activeVoiceLang ? caption.trim() : '') || voiceDrafts[code] || activeSpokenScript,
         ratio,
         sourceProjectId: projectId || undefined,
         platform: publishPlatform,
@@ -6473,21 +6553,30 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (!files?.length) return;
     setUploading(true);
     const uploadedIds: string[] = [];
+    const uploadErrors: string[] = [];
     const targetFolder = activeFolder && !['all', 'hot', 'recommend'].includes(activeFolder) ? activeFolder : 'upload';
     for (const f of Array.from(files)) {
       try {
-        const [dataBase64, media] = await Promise.all([fileToDataUrl(f), probeMedia(f)]);
-        const { material } = await studioApi.uploadMaterial({
-          name: f.name, folder: targetFolder, type: mediaType(f), duration: media.duration, width: media.width, height: media.height, dataBase64, mimeType: f.type,
+        const media = await probeMedia(f);
+        const { material, ok, error } = await studioApi.uploadMaterialFile(f, {
+          folder: targetFolder,
+          type: mediaType(f),
+          duration: media.duration,
+          width: media.width,
+          height: media.height,
         });
+        if (!ok || !material?.id) throw new Error(error || `「${f.name}」上传失败`);
         if (material?.id) uploadedIds.push(material.id);
-      } catch { /* 单个失败不影响其它 */ }
+      } catch (error) {
+        uploadErrors.push(error instanceof Error ? error.message : `「${f.name}」上传失败`);
+      }
     }
     await refreshMaterials();
     if (uploadedIds.length) {
       setSelected(s => [...s, ...uploadedIds]);  // 上传完自动选中
       setActiveFolder(targetFolder);
     }
+    if (uploadErrors.length) setModeNotice(uploadErrors[0]);
     setUploading(false);
   };
 
@@ -6716,7 +6805,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const isCurrentTtsRequest = () => ttsRequestRef.current === requestId;
     setTtsLoading(true);
     setTtsLoadingScope(onlyLanguage ? 'single' : 'all');
-    const detectedSourceLanguage = detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script));
+    const completeSourceVoiceover = selectCompleteVoiceoverSource(script, voiceoverLines);
+    const detectedSourceLanguage = detectScriptLanguageCode(completeSourceVoiceover || extractVoiceoverText(script));
     const requestedLangs = onlyLanguage ? [onlyLanguage] : (voiceLangs.length ? voiceLangs : [detectedSourceLanguage]);
     const failureReasonsByLang: Record<string, string> = {};
     setTtsActiveLangs(requestedLangs);
@@ -6730,16 +6820,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
     try {
       const langs = requestedLangs;
-      const base = voiceDrafts[activeVoiceLang] || voiceoverLines || extractVoiceoverText(script) || script;
+      const base = completeSourceVoiceover || extractVoiceoverText(script) || script;
       const sourceLanguage = detectScriptLanguageCode(base);
-      const drafts: Record<string, string> = { ...voiceDrafts, [sourceLanguage]: voiceDrafts[sourceLanguage] || base };
+      const drafts: Record<string, string> = { ...voiceDrafts, [sourceLanguage]: base };
       const missingTranslationLangs: string[] = [];
       const targetsToTranslate: string[] = [];
       for (const code of langs) {
-        if (drafts[code]?.trim()) continue;
         if (code === sourceLanguage) {
           drafts[sourceLanguage] = base;
+        } else if (drafts[code]?.trim() && voiceoverDraftCoversSource(base, drafts[code])) {
+          continue;
         } else {
+          delete drafts[code];
           targetsToTranslate.push(code);
         }
       }
@@ -7915,21 +8007,34 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         整段规划
                         <span className="mt-0.5 block font-normal">围绕全部已选素材写脚本</span>
                       </button>
-                      <button type="button" onClick={() => setHookMaterialId(selectedVisualClips[0]!.id)} className={`rounded-lg border px-2 py-2 text-[10px] font-bold ${hookMaterialId ? 'border-emerald-400 bg-white text-emerald-700' : 'border-border bg-white text-text-muted'}`}>
-                        仅作开场钩子
-                        <span className="mt-0.5 block font-normal">先用第一条，后续镜头再匹配</span>
+                      <button type="button" onClick={() => setHookMaterialId(current => selectedVisualClips.some(item => item.id === current) ? current : selectedVisualClips[0]!.id)} className={`rounded-lg border px-2 py-2 text-[10px] font-bold ${hookMaterialId ? 'border-emerald-400 bg-white text-emerald-700' : 'border-border bg-white text-text-muted'}`}>
+                        指定开场钩子
+                        <span className="mt-0.5 block font-normal">指定 1 个开场素材，其余用于后续分镜匹配</span>
                       </button>
                     </div>
+                    {hookMaterialId && <p className="mt-2 text-[10px] font-semibold text-emerald-700">已指定 1 个开场钩子；点击下方素材可切换，其他已选素材仍作为后续候选。</p>}
                   </div>
                 )}
                 {selectedVisualClips.length > 0 && (
                   <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                    {selectedVisualClips.map(clip => (
-                      <button key={clip.id} type="button" title="点击移除" onClick={() => setSelected(current => current.filter(id => id !== clip.id))} className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-border bg-surface-2">
-                        {clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt={clip.name} className="h-full w-full object-cover" /> : <Film size={16} className="absolute inset-0 m-auto text-text-muted" />}
-                        <span className="absolute inset-0 hidden items-center justify-center bg-black/55 text-[9px] font-bold text-white group-hover:flex">移除</span>
-                      </button>
-                    ))}
+                    {selectedVisualClips.map(clip => {
+                      const isHook = hookMaterialId === clip.id;
+                      return <div key={clip.id} className={`group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border bg-surface-2 ${isHook ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-border'}`}>
+                        <button
+                          type="button"
+                          title={hookMaterialId ? (isHook ? '当前开场钩子' : '设为开场钩子') : `移除${clip.name}`}
+                          aria-label={hookMaterialId ? (isHook ? `${clip.name}，当前开场钩子` : `将${clip.name}设为开场钩子`) : `移除${clip.name}`}
+                          onClick={() => hookMaterialId ? setHookMaterialId(clip.id) : removeSelectedVisualClip(clip.id)}
+                          className="relative h-full w-full overflow-hidden"
+                        >
+                          {clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt={clip.name} className="h-full w-full object-cover" /> : <Film size={16} className="absolute inset-0 m-auto text-text-muted" />}
+                          {isHook
+                            ? <span className="absolute bottom-0 left-0 right-0 bg-emerald-600/95 py-0.5 text-center text-[8px] font-black text-white">开场钩子</span>
+                            : hookMaterialId && <span className="absolute inset-0 hidden items-center justify-center bg-black/55 text-[9px] font-bold text-white group-hover:flex">设为钩子</span>}
+                        </button>
+                        <button type="button" title={`移除${clip.name}`} aria-label={`移除${clip.name}`} onClick={() => removeSelectedVisualClip(clip.id)} className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/65 text-white"><X size={10} /></button>
+                      </div>;
+                    })}
                   </div>
                 )}
               </section>
@@ -7949,10 +8054,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                           {materials.filter(item => item.type !== 'audio' && (!search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase()))).map(clip => {
                             const checked = selected.includes(clip.id);
-                            return <button key={clip.id} type="button" onClick={() => setSelected(current => checked ? current.filter(id => id !== clip.id) : [...current, clip.id])} className={`overflow-hidden rounded-xl border text-left transition ${checked ? 'border-accent ring-2 ring-accent/15' : 'border-border hover:border-accent/40'}`}>
-                              <span className="relative block aspect-video bg-slate-900">{clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="h-full w-full object-cover" /> : <Film size={20} className="absolute inset-0 m-auto text-white/55" />}{checked && <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white"><Check size={14} /></span>}</span>
-                              <span className="block truncate px-3 py-2 text-[11px] font-bold text-text-primary">{clip.name}</span>
-                            </button>;
+                            const isHook = hookMaterialId === clip.id;
+                            return <div key={clip.id} className={`relative overflow-hidden rounded-xl border text-left transition ${isHook ? 'border-emerald-500 ring-2 ring-emerald-500/20' : checked ? 'border-accent ring-2 ring-accent/15' : 'border-border hover:border-accent/40'}`}>
+                              <button type="button" onClick={() => checked ? removeSelectedVisualClip(clip.id) : setSelected(current => [...current, clip.id])} className="block w-full text-left">
+                                <span className="relative block aspect-video bg-slate-900">{clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="h-full w-full object-cover" /> : <Film size={20} className="absolute inset-0 m-auto text-white/55" />}{checked && <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white"><Check size={14} /></span>}</span>
+                                <span className="block truncate px-3 py-2 text-[11px] font-bold text-text-primary">{clip.name}</span>
+                              </button>
+                              {checked && hookMaterialId && <button type="button" onClick={() => setHookMaterialId(clip.id)} className={`absolute left-2 top-2 rounded-full px-2 py-1 text-[9px] font-black shadow-sm ${isHook ? 'bg-emerald-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'}`}>{isHook ? '开场钩子' : '设为钩子'}</button>}
+                            </div>;
                           })}
                         </div>
                       ) : <div className="py-16 text-center text-xs text-text-muted">暂无可用素材，请先上传视频或图片。</div>}
@@ -7969,21 +8078,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 >
                   <span>
                     <span className="block text-xs font-black text-text-primary">高级设置</span>
-                    <span className="mt-0.5 block text-[10px] text-text-muted">{platform} · {ratio} · {duration}s · {LANGS.find(item => item.code === lang)?.label || lang}</span>
+                    <span className="mt-0.5 block text-[10px] text-text-muted">{ratio} · {duration}s · {provider === 'qwen' ? '千问' : 'Gemini'}</span>
                   </span>
                   <ChevronDown size={15} className={`text-text-muted transition ${showAdvancedSetup ? 'rotate-180' : ''}`} />
                 </button>
                 {showAdvancedSetup && (
                   <div className="grid grid-cols-1 gap-3 border-t border-border bg-surface-2/40 p-4">
-                    <label className="block">
-                      <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">发布平台</span>
-                      <select value={platform} onChange={event => setPlatform(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent">
-                        {(contentMode === 'poster'
-                          ? [['facebook', 'Facebook'], ['instagram', 'Instagram']]
-                          : [['tiktok', 'TikTok'], ['instagram', 'Instagram'], ['youtube', 'YouTube']]
-                        ).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                    </label>
                     <label className="block">
                       <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">画面比例</span>
                       <select value={ratio} onChange={event => setRatio(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent">
@@ -7993,12 +8093,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <label className="block">
                       <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">目标时长</span>
                       <input type="number" min={5} max={180} value={duration} onChange={event => setDuration(Math.max(5, Number(event.target.value) || 5))} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent" />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">输出语言</span>
-                      <select value={lang} onChange={event => setLang(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent">
-                        {LANGS.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}
-                      </select>
                     </label>
                     <label className="block">
                       <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">生成引擎</span>
@@ -8483,6 +8577,98 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setSelected([]);
           setActiveStoryboardSlotId(storyboardSlots[0]?.id || '');
         };
+        const createMatchedAssembly = () => {
+          const allVisuals = materials.filter(item => item.type !== 'audio' && item.usage !== 'reference_only');
+          if (!storyboardSlots.length) {
+            setModeNotice('请先生成分镜脚本，再创建不同的素材组合版本。');
+            return;
+          }
+          if (!allVisuals.length) {
+            setModeNotice('素材库暂无可匹配的视频或图片，请先上传素材。');
+            return;
+          }
+          const current = currentAssemblySnapshot();
+          const savedPlans = storyboardAssemblies.map(item => item.id === activeAssemblyId ? current : item);
+          const previousAssignments = savedPlans.map(item => item.assignments).filter(item => Object.keys(item).length > 0);
+          const nextNumber = savedPlans.reduce((max, item) => {
+            const match = item.name.match(/^视频(\d+)$/);
+            return Math.max(max, match ? Number(match[1]) : 0);
+          }, 0) + 1;
+          const nextId = `video-${Date.now()}`;
+          const hookClip = hookMaterialId ? allVisuals.find(item => item.id === hookMaterialId) : undefined;
+          const hookSlot = hookClip ? storyboardSlots[0] : undefined;
+          const slotsToMatch = hookSlot ? storyboardSlots.slice(1) : storyboardSlots;
+          const matchPool = hookClip && allVisuals.length > 1 ? allVisuals.filter(item => item.id !== hookClip.id) : allVisuals;
+          const candidateAssignments = matchMaterialsToStoryboardLocally(
+            matchPool,
+            slotsToMatch,
+            selected.filter(id => id !== hookMaterialId),
+            { variantIndex: savedPlans.length, previousAssignments, targetRatio: ratio },
+          );
+          const nextAssignments: Record<string, string> = hookSlot && hookClip ? { [hookSlot.id]: hookClip.id } : {};
+          const nextSourcePlans: Record<string, StoryboardSourcePlan> = {};
+          if (hookSlot && hookClip) {
+            const detectedSource = clipSourceMode(hookClip);
+            nextSourcePlans[hookSlot.id] = {
+              mode: detectedSource,
+              decided: true,
+              confirmed: true,
+              critical: isCriticalStoryboardSlot(hookSlot),
+              generatedClipId: detectedSource === 'ai' ? hookClip.id : undefined,
+              error: '',
+              matchScore: 100,
+              matchReason: '用户指定的开场钩子',
+              matchDifference: '各素材组合版本共用已锁定的开场钩子',
+              matchLevel: 'direct',
+            };
+          }
+          Object.entries(candidateAssignments).forEach(([slotId, clipId]) => {
+            const slot = storyboardSlots.find(item => item.id === slotId);
+            const clip = materialById.get(clipId);
+            if (!slot || !clip) return;
+            const assessment = assessMaterialMatch(slot, clip, ratio);
+            if (assessment.score < 60) return;
+            const detectedSource = clipSourceMode(clip);
+            nextAssignments[slotId] = clipId;
+            nextSourcePlans[slotId] = {
+              mode: detectedSource,
+              decided: true,
+              confirmed: false,
+              critical: isCriticalStoryboardSlot(slot),
+              generatedClipId: detectedSource === 'ai' ? clip.id : undefined,
+              error: '',
+              matchScore: assessment.score,
+              matchReason: assessment.reason,
+              matchDifference: assessment.difference,
+              matchLevel: assessment.level,
+            };
+          });
+          const orderedIds = storyboardSlots.map(slot => nextAssignments[slot.id]).filter((id): id is string => Boolean(id));
+          const next: StoryboardAssembly = {
+            id: nextId,
+            name: `视频${nextNumber}`,
+            assignments: nextAssignments,
+            sourcePlans: nextSourcePlans,
+            selected: [...new Set(orderedIds)],
+          };
+          const previousMaterialIds = new Set(previousAssignments.flatMap(item => Object.values(item)));
+          const freshCount = new Set(orderedIds.filter(id => !previousMaterialIds.has(id))).size;
+          const nextEdits: Record<string, ClipEdit> = {};
+          storyboardSlots.forEach(slot => {
+            const clip = materialById.get(nextAssignments[slot.id] || '');
+            if (clip) nextEdits[slotClipEditKey(slot.id, clip.id)] = defaultEditForSlot(clip, slot);
+          });
+          setStoryboardAssemblies([...savedPlans, next]);
+          setActiveAssemblyId(next.id);
+          setAssemblyName(next.name);
+          setStoryboardAssignments(next.assignments);
+          setStoryboardSourcePlans(next.sourcePlans);
+          setSelected(next.selected);
+          setClipEdits(currentEdits => ({ ...currentEdits, ...nextEdits }));
+          setActiveFolder('recommend');
+          setActiveStoryboardSlotId(storyboardSlots.find(slot => !nextAssignments[slot.id])?.id || storyboardSlots[0]?.id || '');
+          setModeNotice(`已生成“${next.name}”：匹配 ${orderedIds.length}/${storyboardSlots.length} 个分镜${freshCount ? `，其中 ${freshCount} 个素材未在其他版本使用` : '；素材池不足时会调整同一批素材的分镜组合'}。`);
+        };
         const updateSourcePlan = (slot: StoryboardSlot, patch: Partial<StoryboardSourcePlan>) => {
           const current = sourcePlanFor(slot);
           setStoryboardSourcePlans(prev => ({
@@ -8840,18 +9026,30 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     </div>
                   </div>
                 </div>
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">分镜匹配 · 视频草稿</p>
-                  <button type="button" onClick={createAssembly}
-                    className="rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary hover:bg-surface-2">
-                    + 新建视频
-                  </button>
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">分镜匹配 · 素材组合版本</p>
+                    <p className="mt-0.5 text-[10px] text-text-muted">每个版本独立保存素材组合；新组合会优先使用前面版本未出现的素材。</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button type="button" onClick={createAssembly}
+                      className="rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary hover:bg-surface-2">
+                      + 空白版本
+                    </button>
+                    <button type="button" onClick={createMatchedAssembly} disabled={!storyboardSlots.length || !materials.some(item => item.type !== 'audio' && item.usage !== 'reference_only')}
+                      className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-black text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40">
+                      <Sparkles size={11} />生成新组合
+                    </button>
+                  </div>
                 </div>
                 <div className="mb-3 flex gap-1.5 overflow-x-auto pb-1">
-                  {storyboardAssemblies.map(item => {
+                  {storyboardAssemblies.map((item, itemIndex) => {
                     const active = item.id === activeAssemblyId;
                     const itemAssignments = active ? storyboardAssignments : item.assignments;
                     const matched = storyboardSlots.filter(slot => Boolean(itemAssignments[slot.id])).length;
+                    const baseItem = storyboardAssemblies[0];
+                    const baseAssignments = baseItem?.id === activeAssemblyId ? storyboardAssignments : baseItem?.assignments || {};
+                    const differentSlots = itemIndex === 0 ? 0 : storyboardSlots.filter(slot => itemAssignments[slot.id] !== baseAssignments[slot.id]).length;
                     return (
                       <button
                         key={item.id}
@@ -8861,6 +9059,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       >
                         <span className="text-xs font-black">{active ? assemblyName : item.name}</span>
                         <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${active ? 'bg-accent/10 text-accent' : 'bg-surface-2 text-text-muted'}`}>{storyboardSlots.length ? `${matched}/${storyboardSlots.length}` : '暂无'}</span>
+                        <span className="text-[9px] font-semibold text-text-muted">{itemIndex === 0 ? '基准' : `${differentSlots} 镜不同`}</span>
                       </button>
                     );
                   })}

@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { automaticStoryboardTrim, matchMaterialsToStoryboardLocally } from './AiCreateStudio.js';
+import {
+  automaticStoryboardTrim,
+  fitStoryboardSlotsToDuration,
+  fitTimelineToVoiceover,
+  matchMaterialsToStoryboardLocally,
+} from './AiCreateStudio.js';
 
 const clips = [
   { id: 'portrait-1', name: '产品全景', folder: 'product', type: 'video', duration: 5, width: 1080, height: 1920 },
@@ -26,6 +31,26 @@ const limitedAssignments = matchMaterialsToStoryboardLocally(clips.slice(0, 2), 
 assert.equal(Object.keys(limitedAssignments).length, slots.length, '素材不足时仍应覆盖全部分镜');
 assert.equal(new Set(Object.values(limitedAssignments)).size, 2, '只有素材池耗尽后才允许复用');
 
+const variantClips = [
+  ...clips,
+  { id: 'portrait-3', name: '真人开场', folder: 'presenter', type: 'video', duration: 5, width: 1080, height: 1920 },
+  { id: 'portrait-4', name: '产品旋转', folder: 'product', type: 'video', duration: 5, width: 1080, height: 1920 },
+  { id: 'portrait-5', name: '纹理细节', folder: 'detail', type: 'video', duration: 4, width: 1080, height: 1920 },
+  { id: 'portrait-6', name: '仓库备货', folder: 'factory', type: 'video', duration: 6, width: 1080, height: 1920 },
+  { id: 'portrait-7', name: '品牌包装', folder: 'packaging', type: 'video', duration: 4, width: 1080, height: 1920 },
+] as any[];
+const firstVariant = matchMaterialsToStoryboardLocally(variantClips, slots, [], { variantIndex: 0, targetRatio: '9:16' });
+const secondVariant = matchMaterialsToStoryboardLocally(variantClips, slots, [], {
+  variantIndex: 1,
+  previousAssignments: [firstVariant],
+  targetRatio: '9:16',
+});
+const firstVariantIds = new Set(Object.values(firstVariant));
+const secondVariantIds = new Set(Object.values(secondVariant));
+const freshSecondVariantIds = [...secondVariantIds].filter(id => !firstVariantIds.has(id));
+assert.notDeepEqual([...secondVariantIds].sort(), [...firstVariantIds].sort(), '素材充足时，新版本不能只是沿用同一组素材');
+assert.ok(freshSecondVariantIds.length >= 3, '第二个版本应至少替换 60% 的分镜素材');
+
 assert.deepEqual(
   automaticStoryboardTrim(12, 4, 'video'),
   { trimStart: 0, trimEnd: 4, targetDuration: 4 },
@@ -35,6 +60,26 @@ assert.deepEqual(
   automaticStoryboardTrim(2.5, 4, 'video'),
   { trimStart: 0, trimEnd: 2.5, targetDuration: 4 },
   '短素材不应虚构超出源文件的裁切终点',
+);
+
+const approvedTimeline = [
+  { targetStart: 0, targetEnd: 6, targetDuration: 6, trimStart: 0, trimEnd: 6, speed: 1 },
+  { targetStart: 6, targetEnd: 13, targetDuration: 7, trimStart: 0, trimEnd: 7, speed: 1 },
+];
+assert.equal(
+  fitTimelineToVoiceover(approvedTimeline, 9.1),
+  approvedTimeline,
+  '较短配音不得把已确认的 13 秒分镜压缩成 9.1 秒',
+);
+assert.equal(
+  fitStoryboardSlotsToDuration(slots, 9.1),
+  slots,
+  '较短配音不得改写分镜时间戳',
+);
+assert.equal(
+  fitTimelineToVoiceover(approvedTimeline, 15).at(-1)?.targetEnd,
+  15,
+  '配音更长时应延展画面，避免旁白被截断',
 );
 
 console.log('studio material matching regression passed');
