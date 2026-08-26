@@ -359,15 +359,15 @@ export function StudioWorkbenchFrame({
       </div>
 
       {timelinePanel && (
-        <section className="flex h-[122px] shrink-0 flex-col border-t border-border bg-surface lg:h-[142px]" aria-label={timelineTitle}>
-          <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4">
+        <section className="flex h-[78px] shrink-0 flex-col border-t border-border bg-surface lg:h-[82px]" aria-label={timelineTitle}>
+          <div className="flex h-8 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4">
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="shrink-0 text-[11px] font-black text-text-primary">{timelineTitle}</h2>
               {timelineDescription && <p className="truncate text-[10px] text-text-muted">{timelineDescription}</p>}
             </div>
             {timelineToolbar}
           </div>
-          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden px-4 py-2.5">{timelinePanel}</div>
+          <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden px-4 py-1.5">{timelinePanel}</div>
         </section>
       )}
 

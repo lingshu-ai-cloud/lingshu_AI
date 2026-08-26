@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send,
@@ -3814,6 +3814,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const workbenchVideoRef = useRef<HTMLVideoElement | null>(null);
   const [workbenchTimelineTime, setWorkbenchTimelineTime] = useState(0);
+  const [workbenchTimelineHoverTime, setWorkbenchTimelineHoverTime] = useState<number | null>(null);
   const previewVideoCacheRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const previewAdvanceTimerRef = useRef<number | null>(null);
   const previewAdvanceLockRef = useRef(false);
@@ -11146,6 +11147,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       else video.addEventListener('loadedmetadata', applySeek, { once: true });
     });
   };
+  const timeFromWorkbenchTimelinePointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0) return 0;
+    return Math.max(0, Math.min(workbenchTimelineDuration, ((event.clientX - bounds.left) / bounds.width) * workbenchTimelineDuration));
+  };
   const captureWorkbenchCoverFrame = () => {
     if (activeWorkbenchClip?.type === 'image') {
       setCapturedCoverFrameUrl(activeWorkbenchClip.url || activeWorkbenchClip.poster || '');
@@ -11638,7 +11644,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             {contentMode === 'video' && stageIdx === 2 && (
               <section className="border-b border-border pb-3" aria-label="成片制作任务">
                 <p className="px-1 pb-2 text-[10px] font-bold text-text-muted">成片制作任务</p>
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-3 gap-1.5">
                   {([
                     { id: 'material', label: '素材匹配', done: storyboardSlots.length > 0 && assignedCount === storyboardSlots.length },
                     { id: 'cover', label: '封面', done: Boolean(cover) },
@@ -11856,17 +11862,58 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         timelineToolbar={storyboardSlots.length ? <div className="flex items-center gap-2"><span className="text-[10px] font-black tabular-nums text-text-secondary">{workbenchTimelineTime.toFixed(1)}s / {workbenchTimelineDuration.toFixed(1)}s</span>{step === 'cover' && <button type="button" onClick={captureWorkbenchCoverFrame} className="rounded-md border border-border bg-white px-2 py-1 text-[9px] font-bold text-text-secondary">截取为封面</button>}</div> : undefined}
         timelinePanel={storyboardSlots.length ? (
           <div className="relative h-full min-w-[560px]">
-            <div className="flex h-11 overflow-hidden rounded-lg border border-border bg-surface-2">
+            <div
+              role="slider"
+              tabIndex={0}
+              aria-label="整片时间轴"
+              aria-valuemin={0}
+              aria-valuemax={workbenchTimelineDuration}
+              aria-valuenow={Math.min(workbenchTimelineTime, workbenchTimelineDuration)}
+              onPointerDown={event => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                const nextTime = timeFromWorkbenchTimelinePointer(event);
+                setWorkbenchTimelineHoverTime(nextTime);
+                seekWorkbenchTimeline(nextTime);
+              }}
+              onPointerMove={event => {
+                const nextTime = timeFromWorkbenchTimelinePointer(event);
+                setWorkbenchTimelineHoverTime(nextTime);
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) seekWorkbenchTimeline(nextTime);
+              }}
+              onPointerUp={event => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+              }}
+              onPointerLeave={() => setWorkbenchTimelineHoverTime(null)}
+              onKeyDown={event => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                seekWorkbenchTimeline(workbenchTimelineTime + (event.key === 'ArrowRight' ? 0.1 : -0.1));
+              }}
+              className="relative flex h-8 cursor-col-resize touch-none select-none overflow-hidden rounded-md border border-border bg-surface-2 outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            >
               {storyboardSlots.map((slot, index) => {
                 const clip = materialById.get(storyboardAssignments[slot.id] || '');
                 const width = Math.max(4, ((slot.end - slot.start) / workbenchTimelineDuration) * 100);
-                return <button key={slot.id} type="button" onClick={() => seekWorkbenchTimeline(slot.start)} style={{ width: `${width}%` }} className={`relative min-w-[42px] overflow-hidden border-r border-white/70 text-left last:border-r-0 ${activeWorkbenchSlot?.id === slot.id ? 'ring-2 ring-inset ring-emerald-500' : ''}`}>
+                return <div key={slot.id} style={{ width: `${width}%` }} className={`relative min-w-[42px] overflow-hidden border-r border-white/70 text-left last:border-r-0 ${activeWorkbenchSlot?.id === slot.id ? 'ring-1 ring-inset ring-emerald-500' : ''}`}>
                   {clip?.poster || clip?.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" /> : <span className="absolute inset-0 bg-slate-700" />}
-                  <span className="relative z-10 flex h-full items-end bg-gradient-to-t from-slate-950/80 to-transparent px-1.5 pb-1 text-[8px] font-black text-white">{index + 1}</span>
-                </button>;
+                  <span className="relative z-10 flex h-full items-end bg-gradient-to-t from-slate-950/80 to-transparent px-1 pb-0.5 text-[8px] font-black text-white">{index + 1}</span>
+                </div>;
               })}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 z-20 w-0.5 -translate-x-1/2 bg-emerald-500 shadow-[0_0_0_1px_rgba(255,255,255,0.85)]"
+                style={{ left: `${Math.min(100, Math.max(0, (workbenchTimelineTime / workbenchTimelineDuration) * 100))}%` }}
+              />
+              {workbenchTimelineHoverTime !== null && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute top-0.5 z-30 -translate-x-1/2 rounded bg-slate-950/90 px-1.5 py-0.5 text-[8px] font-black tabular-nums text-white shadow-sm"
+                  style={{ left: `${Math.min(98, Math.max(2, (workbenchTimelineHoverTime / workbenchTimelineDuration) * 100))}%` }}
+                >
+                  {workbenchTimelineHoverTime.toFixed(1)}s
+                </span>
+              )}
             </div>
-            <input aria-label="整片时间轴" type="range" min="0" max={workbenchTimelineDuration} step="0.05" value={Math.min(workbenchTimelineTime, workbenchTimelineDuration)} onChange={event => seekWorkbenchTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
           </div>
         ) : undefined}
         previousAction={{ label: '上一步', onClick: prev, disabled: stepIdx === 0 }}
