@@ -11500,6 +11500,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           {selectedBgmTrack && <button type="button" onClick={() => togglePlay(selectedBgmTrack)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-text-secondary">{playingBgm === selectedBgmTrack.id ? <Pause size={13} /> : <Play size={13} />}</button>}
         </div>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">配乐音量 · {bgmVol}%<input type="range" min="0" max="100" value={bgmVol} disabled={!bgm} onChange={event => setBgmVol(Number(event.target.value))} className="mt-2 w-full accent-emerald-600 disabled:opacity-35" /></label>
+        {selectedBgmTrack && <p className="mt-2 rounded-lg border border-border bg-white px-2.5 py-2 text-[9px] leading-4 text-text-muted">从视频 0 秒开始铺满整片；音乐不足 {workbenchTimelineDuration.toFixed(1)} 秒时自动循环，超过时从开头截到成片结束。口播出现时配乐自动降为当前音量的一半。</p>}
       </div>
       <button type="button" onClick={() => setBgmLibraryOpen(value => !value)} className="flex w-full items-center justify-between rounded-xl border border-border bg-white px-3 py-3 text-left">
         <span><span className="block text-xs font-black text-text-primary">选择配乐</span><span className="mt-0.5 block text-[10px] text-text-muted">{bgms.length} 首音乐，可试听后选择</span></span>
@@ -11568,7 +11569,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   return (
     <div className="flex flex-col h-full relative">
       {/* BGM 试听用的隐藏音频元素 */}
-      <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
+      <audio ref={audioRef} loop className="hidden" />
 
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
@@ -11640,7 +11641,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 <div className="grid grid-cols-2 gap-1.5">
                   {([
                     { id: 'material', label: '素材匹配', done: storyboardSlots.length > 0 && assignedCount === storyboardSlots.length },
-                    { id: 'bgm', label: '配乐', done: Boolean(bgm) },
                     { id: 'cover', label: '封面', done: Boolean(cover) },
                     { id: 'preview', label: '合成输出', done: workbenchHasFormalVideo },
                   ] as Array<{ id: StepId; label: string; done: boolean }>).map(task => {
