@@ -4,8 +4,10 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import ffmpegStatic from 'ffmpeg-static';
-import { uploadVideoToYouTube, type YouTubeConfig } from '../integrations/youtube.js';
+import { postYouTubeFirstComment, uploadVideoToYouTube, type YouTubeConfig } from '../integrations/youtube.js';
 import {
+  postFacebookFirstComment,
+  postInstagramFirstComment,
   publishInstagramReel,
   uploadFacebookVideo,
   uploadTikTokVideo,
@@ -16,6 +18,12 @@ import { recordSuccessfulPublish, type PublishPlatform } from '../lib/publishHis
 import { store } from '../storage/index.js';
 import { r2Upload } from '../storage/r2.js';
 import { appendTrackedWaLink, createTrackedPostDraft, finalizeTrackedPost, type PostRecord } from './waLink.js';
+import {
+  composePlatformBody,
+  normalizePublishTags,
+  truncatePublishText,
+  type PublishCopyPlatform,
+} from './copyAdaptation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,6 +55,7 @@ export interface PublishToAccountInput {
   title: string;
   description?: string;
   tags?: unknown;
+  firstComment?: string;
   privacyStatus?: 'private' | 'unlisted' | 'public';
   madeForKids?: boolean;
   projectId?: string;
@@ -64,6 +73,8 @@ export interface PublishToAccountResult {
   tracking: PostRecord;
   publishRecord: ReturnType<typeof recordSuccessfulPublish> | null;
   platformPostId: string;
+  firstCommentId?: string;
+  warnings: string[];
 }
 
 function publishError(message: string, statusCode: number): Error & { statusCode: number } {
@@ -75,10 +86,11 @@ function normalizeVideoPath(input: string): string {
   return raw.startsWith('file://') ? fileURLToPath(raw) : path.resolve(raw);
 }
 
-function parseTags(tags: unknown, description: string): string[] {
-  if (Array.isArray(tags)) return tags.map(String).map(item => item.replace(/^#/, '').trim()).filter(Boolean);
-  if (typeof tags === 'string') return tags.split(/[\s,，]+/).map(item => item.replace(/^#/, '').trim()).filter(Boolean);
-  return Array.from(description.matchAll(/#([\p{L}\p{N}_-]+)/gu)).map(match => match[1]);
+function parseTags(platform: PublishCopyPlatform, tags: unknown, description: string): string[] {
+  const source = Array.isArray(tags) || typeof tags === 'string'
+    ? tags
+    : Array.from(description.matchAll(/#([\p{L}\p{N}_-]+)/gu)).map(match => match[1]);
+  return normalizePublishTags(platform, source);
 }
 
 function accountStatus(error: any): number {
@@ -184,13 +196,29 @@ function platformContentId(video: any): string {
   return String(video?.id || video?.videoId || video?.publishId || '').trim();
 }
 
-async function finalizeIfRequested(input: PublishToAccountInput, tracked: PostRecord, platformPostId: string): Promise<void> {
+async function finalizeIfRequested(
+  input: PublishToAccountInput,
+  tracked: PostRecord,
+  platformPostId: string,
+  firstCommentId: string,
+  warnings: string[],
+): Promise<void> {
   if (input.finalizeTracking === false) return;
   await finalizeTrackedPost(tracked.id, {
     platformPostId,
     title: input.title,
-    stats: { status: 'published' },
+    stats: {
+      status: 'published',
+      firstComment: input.firstComment?.trim() || '',
+      firstCommentId,
+      warnings,
+    },
   });
+}
+
+function firstCommentWarning(platform: string, error: unknown): string {
+  const reason = error instanceof Error && error.message.trim() ? error.message.trim() : '平台没有返回明确错误';
+  return `${platform} 主帖已发布，但首评失败：${reason}`;
 }
 
 export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
@@ -203,7 +231,16 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     if (!['private', 'unlisted', 'public'].includes(privacyStatus)) throw publishError('Invalid YouTube privacy status', 400);
     const filePath = validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm', '.mkv', '.avi'], Number(process.env.YOUTUBE_MAX_UPLOAD_MB ?? 2048));
     const tracked = await trackingPost(input);
-    const description = appendTrackedWaLink('youtube', input.description || '', tracked.wa_link || '');
+    const trackedLine = appendTrackedWaLink('youtube', '', tracked.wa_link || '');
+    const composed = composePlatformBody(
+      'youtube',
+      input.description || '',
+      parseTags('youtube', input.tags, input.description || ''),
+      trackedLine ? [trackedLine] : [],
+    );
+    const description = composed.text;
+    const publishTitle = truncatePublishText('youtube', 'title', input.title);
+    const firstComment = truncatePublishText('youtube', 'firstComment', input.firstComment || '');
     const config: YouTubeConfig = {
       clientId: account.clientId,
       clientSecret: account.clientSecret,
@@ -213,15 +250,24 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     try {
       const video = await uploadVideoToYouTube(config, {
         filePath,
-        title: input.title,
+        title: publishTitle,
         description,
-        tags: parseTags(input.tags, description),
+        tags: composed.tags,
         privacyStatus,
         madeForKids: input.madeForKids ?? false,
       });
       const id = platformContentId(video);
       if (!id) throw publishError('YouTube did not return a video id', 502);
-      await finalizeIfRequested(input, tracked, id).catch(error => console.error('[publishing] YouTube tracking update failed:', error));
+      const warnings: string[] = [];
+      let firstCommentId = '';
+      if (firstComment) {
+        try {
+          firstCommentId = (await postYouTubeFirstComment(config, id, firstComment)).id;
+        } catch (error) {
+          warnings.push(firstCommentWarning('YouTube', error));
+        }
+      }
+      await finalizeIfRequested(input, tracked, id, firstCommentId, warnings).catch(error => console.error('[publishing] YouTube tracking update failed:', error));
       await store.update('youtube_accounts', input.accountId, { lastSyncAt: new Date().toISOString(), status: 'connected' })
         .catch(error => console.error('[publishing] YouTube account sync update failed:', error));
       let publishRecord: ReturnType<typeof recordSuccessfulPublish> | null = null;
@@ -233,8 +279,8 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
           platformContentId: id,
           projectId: input.projectId,
           generationVersionId: input.generationVersionId,
-          title: input.title,
-          description: input.description || '',
+          title: publishTitle,
+          description,
           videoPath: input.videoPath,
           ratio: input.ratio,
           language: input.language,
@@ -242,7 +288,7 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
       } catch (error) {
         console.error('[publishing] YouTube history write failed:', error);
       }
-      return { video, tracking: tracked, publishRecord, platformPostId: id };
+      return { video, tracking: tracked, publishRecord, platformPostId: id, firstCommentId: firstCommentId || undefined, warnings };
     } catch (error) {
       const status = accountStatus(error);
       if (status === 401 || status === 403) await store.update('youtube_accounts', input.accountId, { status: 'error' });
@@ -261,11 +307,19 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     throw publishError('Instagram 发布需要配置 R2_PUBLIC_URL 或提供公开视频地址', 400);
   }
   const tracked = await trackingPost(input);
+  const platform = account.platform as PublishCopyPlatform;
+  const trackedLine = appendTrackedWaLink(platform, '', tracked.wa_link || '');
+  const composed = composePlatformBody(
+    platform,
+    input.description || '',
+    parseTags(platform, input.tags, input.description || ''),
+    trackedLine ? [trackedLine] : [],
+  );
   const socialInput: SocialUploadInput = {
     filePath,
     videoUrl: input.videoUrl,
-    title: input.title,
-    description: appendTrackedWaLink(account.platform, input.description || '', tracked.wa_link || ''),
+    title: account.platform === 'facebook' ? truncatePublishText('facebook', 'title', input.title) : input.title.trim(),
+    description: composed.text,
     privacyStatus: input.privacyStatus,
   };
   try {
@@ -282,7 +336,24 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     }
     const id = platformContentId(video);
     if (!video || !id) throw publishError('平台没有返回发布内容 id', 502);
-    await finalizeIfRequested(input, tracked, id).catch(error => console.error(`[publishing] ${account.platform} tracking update failed:`, error));
+    const warnings: string[] = [];
+    let firstCommentId = '';
+    const firstComment = truncatePublishText(platform, 'firstComment', input.firstComment || '');
+    if (input.firstComment?.trim() && account.platform === 'tiktok') {
+      warnings.push('TikTok 主帖已发布；Content Posting API 暂无自动发布首评接口。');
+    } else if (firstComment) {
+      try {
+        if (account.platform === 'facebook') {
+          firstCommentId = (await postFacebookFirstComment(id, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', firstComment)).id;
+        }
+        if (account.platform === 'instagram') {
+          firstCommentId = (await postInstagramFirstComment(id, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', firstComment)).id;
+        }
+      } catch (error) {
+        warnings.push(firstCommentWarning(account.platform === 'facebook' ? 'Facebook' : 'Instagram', error));
+      }
+    }
+    await finalizeIfRequested(input, tracked, id, firstCommentId, warnings).catch(error => console.error(`[publishing] ${account.platform} tracking update failed:`, error));
     await store.update('social_accounts', input.accountId, { lastSyncAt: new Date().toISOString(), status: 'connected' })
       .catch(error => console.error(`[publishing] ${account.platform} account sync update failed:`, error));
     let publishRecord: ReturnType<typeof recordSuccessfulPublish> | null = null;
@@ -295,7 +366,7 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
         projectId: input.projectId,
         generationVersionId: input.generationVersionId,
         title: input.title,
-        description: input.description || '',
+        description: composed.text,
         videoPath: input.videoPath,
         ratio: input.ratio,
         language: input.language,
@@ -303,7 +374,7 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     } catch (error) {
       console.error(`[publishing] ${account.platform} history write failed:`, error);
     }
-    return { video, tracking: tracked, publishRecord, platformPostId: id };
+    return { video, tracking: tracked, publishRecord, platformPostId: id, firstCommentId: firstCommentId || undefined, warnings };
   } catch (error) {
     const status = accountStatus(error);
     if (status === 401 || status === 403) await store.update('social_accounts', input.accountId, { status: 'error' });

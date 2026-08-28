@@ -30,6 +30,7 @@ export type CalendarPost = {
   id: string;
   platform: string;
   title: string;
+  internalTitle?: string;
   description?: string;
   publishedAt: string;
   status: 'scheduled' | 'published' | string;
@@ -38,6 +39,7 @@ export type CalendarPost = {
   duration?: number;
   contentId?: string;
   firstComment?: string;
+  tags?: string[];
   videoPath?: string;
   videoPreviewUrl?: string;
   trackWaLink?: boolean;

@@ -15,6 +15,8 @@ type PublishResult = {
   publishedAt?: string;
   error?: string;
   failedAt?: string;
+  firstCommentId?: string;
+  warnings?: string[];
 };
 
 function text(value: unknown): string {
@@ -72,6 +74,10 @@ function errorMessage(error: unknown): string {
   return '平台未返回明确错误，请稍后重试';
 }
 
+function publishWarnings(results: Record<string, PublishResult>): string[] {
+  return Array.from(new Set(Object.values(results).flatMap(result => result.warnings || []).filter(Boolean)));
+}
+
 async function markFailed(post: PostRecord, stats: Record<string, unknown>, attempts: number, message: string): Promise<void> {
   const exhausted = attempts >= MAX_ATTEMPTS;
   const results = resultMap(stats);
@@ -82,7 +88,7 @@ async function markFailed(post: PostRecord, stats: Record<string, unknown>, atte
       status: exhausted ? (hasSuccess ? 'partial' : 'failed') : 'failed',
       publishAttempts: attempts,
       publishError: message,
-      warnings: [message],
+      warnings: Array.from(new Set([message, ...publishWarnings(results)])),
       nextPublishAttemptAt: exhausted ? '' : new Date(Date.now() + scheduledRetryDelay(attempts)).toISOString(),
     },
   });
@@ -138,6 +144,8 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
         videoUrl: videoUrl || undefined,
         title: text(post.title) || 'Untitled content',
         description: text(initialStats.description),
+        tags: initialStats.tags,
+        firstComment: text(initialStats.firstComment),
         privacyStatus: 'public',
         language: text(initialStats.language),
         contentId: text(post.content_id),
@@ -149,6 +157,8 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
         status: 'published',
         platformPostId: result.platformPostId,
         publishedAt: new Date().toISOString(),
+        firstCommentId: result.firstCommentId,
+        warnings: result.warnings,
       };
     } catch (error) {
       results[accountId] = {
@@ -180,7 +190,7 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
       publishedAt: new Date().toISOString(),
       publishError: '',
       nextPublishAttemptAt: '',
-      warnings: [],
+      warnings: publishWarnings(results),
     },
   });
 }

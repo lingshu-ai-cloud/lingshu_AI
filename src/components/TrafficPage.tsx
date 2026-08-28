@@ -43,6 +43,8 @@ type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
 type PublishDraftItem = {
   videoPath?: string;
   previewUrl?: string;
+  internalTitle?: string;
+  publishTitle?: string;
   title: string;
   description: string;
   ratio?: string;
@@ -81,6 +83,8 @@ type PublishQueueItem = {
   selected: boolean;
   videoPath: string;
   previewUrl?: string;
+  internalTitle: string;
+  /** Buyer-facing title used in real provider payloads. */
   title: string;
   description: string;
   ratio?: string;
@@ -157,6 +161,36 @@ function platformTitle(platform: PublishPlatform, copy?: PlatformCopy, fallback 
   return fallback;
 }
 
+function platformTags(platform: PublishPlatform, copy?: PlatformCopy): string[] {
+  const source = platform === 'youtube' ? copy?.tags : copy?.hashtags;
+  return Array.from(new Set((source || []).map(tag => String(tag).trim()).filter(Boolean)));
+}
+
+const PLATFORM_BODY_LIMITS: Record<PublishPlatform, number> = {
+  youtube: 5_000,
+  tiktok: 2_200,
+  instagram: 2_200,
+  facebook: 63_206,
+};
+
+function platformBodyLength(platform: PublishPlatform, value: string): number {
+  return platform === 'youtube' ? new TextEncoder().encode(value).length : Array.from(value).length;
+}
+
+function buyerTitleFromDescription(description: string, fallback = ''): string {
+  const firstLine = description
+    .split(/\r?\n/)
+    .map(line => line.replace(/(?:^|\s)#[\p{L}\p{N}_-]+/gu, '').trim())
+    .find(Boolean) || fallback.trim();
+  const sentence = firstLine.split(/(?<=[.!?。！？])\s+/)[0]?.trim() || '';
+  return Array.from(sentence || 'Product in Action').slice(0, 100).join('').trim();
+}
+
+function looksLikeInternalWorkTitle(value: string): boolean {
+  const normalized = value.trim();
+  return /素材库智能生成|AI\s*快剪成片|未命名视频|(?:^|[-·*])\s*(?:视频|video)\s*\d+|(?:视频|video)\s*\d+\s*[*·-]\s*(?:英语|中文|西语|葡语|法语|德语|语种)/i.test(normalized);
+}
+
 function publishItemId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -214,6 +248,8 @@ export function normalizeStoredPublishDraft(value: unknown): PublishDraft | null
     return {
       videoPath: storedOptionalString(record.videoPath),
       previewUrl: storedOptionalString(record.previewUrl),
+      internalTitle: storedOptionalString(record.internalTitle),
+      publishTitle: storedOptionalString(record.publishTitle),
       title: storedString(record.title),
       description: storedString(record.description),
       ratio: storedOptionalString(record.ratio),
@@ -241,13 +277,22 @@ export function normalizeStoredPublishQueueItem(value: unknown): PublishQueueIte
     ? raw.deliveryMode as DeliveryMode
     : 'now';
   const completedTargets = Number(raw.completedTargets);
+  const legacyTitle = storedString(raw.title);
+  const storedInternalTitle = storedString(raw.internalTitle);
+  const description = storedString(raw.description);
+  const legacyInternalTitleWasCopied = looksLikeInternalWorkTitle(legacyTitle)
+    && (!storedInternalTitle || storedInternalTitle === legacyTitle);
   return {
     id,
     selected: raw.selected === true,
     videoPath: storedString(raw.videoPath),
     previewUrl: storedOptionalString(raw.previewUrl),
-    title: storedString(raw.title),
-    description: storedString(raw.description),
+    internalTitle: storedInternalTitle || legacyTitle || titleFromVideoPath(storedString(raw.videoPath)),
+    title: storedString(raw.publishTitle)
+      || (legacyInternalTitleWasCopied
+        ? buyerTitleFromDescription(description)
+        : legacyTitle),
+    description,
     ratio: storedOptionalString(raw.ratio),
     sourceProjectId: storedOptionalString(raw.sourceProjectId),
     sourcePlatform: storedPlatform(raw.sourcePlatform),
@@ -279,8 +324,13 @@ function browserVideoUrl(value: string | undefined): string {
 function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: string[] = []): PublishQueueItem {
   const sourcePlatform = draft?.platform;
   const videoPath = storedString(draft?.videoPath);
-  const title = storedString(draft?.title);
+  const legacyTitle = storedString(draft?.title);
+  const internalTitle = storedString(draft?.internalTitle) || legacyTitle || titleFromVideoPath(videoPath);
   const description = storedString(draft?.description);
+  const title = storedString(draft?.publishTitle)
+    || (description.trim() || legacyTitle.trim()
+      ? buyerTitleFromDescription(description, looksLikeInternalWorkTitle(legacyTitle) ? '' : legacyTitle)
+      : '');
   const initialCopy: Record<string, PlatformCopy> = sourcePlatform
     ? {
       [sourcePlatform]: sourcePlatform === 'youtube'
@@ -295,6 +345,7 @@ function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: st
     selected: Boolean(videoPath.trim()),
     videoPath,
     previewUrl: storedOptionalString(draft?.previewUrl) || browserVideoUrl(videoPath),
+    internalTitle,
     title,
     description,
     ratio: draft?.ratio,
@@ -734,7 +785,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     if (!item) return;
     setActiveItemId(id);
     setWorkspaceTab('publish');
-    setNotice(`已打开“${item.title || titleFromVideoPath(item.videoPath)}”，可以继续编辑或安排发布时间。`);
+    setNotice(`已打开“${item.internalTitle || titleFromVideoPath(item.videoPath)}”，可以继续编辑或安排发布时间。`);
     window.setTimeout(() => document.getElementById('publishing-content-editor')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
   };
 
@@ -742,7 +793,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     if (!activeItem) return;
     const targets = connectedAccounts.filter(account => activeItem.targetAccountIds.includes(account.id));
     if (!activeItem.videoPath.trim()) { setError('请先上传视频'); return; }
-    if (!activeItem.title.trim()) { setError('请填写视频标题'); return; }
+    if (!activeItem.title.trim()) { setError('请填写面向买家的发布标题'); return; }
     if (!activeItem.description.trim()) { setError('请填写发布文案'); return; }
     if (activeItem.calendarPostIds?.length) {
       if (!targets.length) { setError('日历内容需要至少选择一个发布平台账号'); return; }
@@ -759,7 +810,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: calendarPlatform ? platformTitle(calendarPlatform, copy, activeItem.title.trim()) : activeItem.title.trim(),
+            internalTitle: activeItem.internalTitle,
             description: calendarPlatform ? platformBody(calendarPlatform, copy, activeItem.description.trim()) : activeItem.description.trim(),
+            tags: calendarPlatform ? platformTags(calendarPlatform, copy) : [],
             firstComment: copy?.firstComment || activeItem.firstComment,
             videoPath: activeItem.videoPath.trim(),
             targetAccountIds: platformTargets.map(account => account.id),
@@ -832,7 +885,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
             scheduledAt: scheduledAt.toISOString(),
             platform,
             title: platformTitle(platform, copy, item.title.trim()),
+            internalTitle: item.internalTitle,
             description: platformBody(platform, copy, item.description.trim()),
+            tags: platformTags(platform, copy),
             contentId: item.sourceProjectId,
             firstComment: copy?.firstComment || item.firstComment,
             videoPath: item.videoPath.trim(),
@@ -889,11 +944,21 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     const patch: Partial<PublishQueueItem> = {
       videoPath: post.videoPath || '',
       previewUrl: post.videoPreviewUrl || post.videoUrl || browserVideoUrl(post.videoPath),
+      internalTitle: post.internalTitle || post.title,
       title: post.title,
       description: post.description || '',
       sourcePlatform: post.platform in PLATFORM_META ? post.platform as PublishPlatform : undefined,
       targetAccountIds: targetAccountIds.length ? targetAccountIds : fallbackTargetIds,
       firstComment: post.firstComment || '',
+      platformCopy: post.platform in PLATFORM_META
+        ? {
+          [post.platform]: post.platform === 'youtube'
+            ? { title: post.title, description: post.description || '', tags: post.tags || [], firstComment: post.firstComment || '' }
+            : post.platform === 'facebook'
+              ? { text: post.description || '', hashtags: post.tags || [], firstComment: post.firstComment || '' }
+              : { caption: post.description || '', hashtags: post.tags || [], firstComment: post.firstComment || '' },
+        }
+        : {},
       trackWaLink: post.trackWaLink !== false,
       deliveryMode: post.scheduleLocked ? 'schedule' : 'flexible',
       scheduledAt: dateTimeLocalValue(new Date(post.publishedAt)),
@@ -1100,10 +1165,13 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
         });
         const data = await response.json().catch(() => ({})) as { video?: { videoPath?: string; previewUrl?: string }; error?: string };
         if (!response.ok || !data.video?.videoPath) throw new Error(data.error || '视频接收失败');
+        const internalTitle = titleFromVideoPath(file.name);
         additions.push(createPublishItem({
           videoPath: data.video.videoPath,
           previewUrl: data.video.previewUrl,
-          title: titleFromVideoPath(file.name),
+          title: internalTitle,
+          internalTitle,
+          publishTitle: activeItem?.title || buyerTitleFromDescription(activeItem?.description || ''),
           description: activeItem?.description || '',
           ratio: activeItem?.ratio,
           platform: activeItem?.sourcePlatform,
@@ -1130,7 +1198,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   const adaptCopy = async (platform?: PublishPlatform) => {
     if (!activeItem || adaptingTarget) return;
     if (!activeItem.title.trim() && !activeItem.description.trim()) {
-      setError('请先在“通用内容”中填写作品标题或发布配文');
+      setError('请先在“通用内容”中填写买家发布标题或发布配文');
       return;
     }
     const requestItem = activeItem;
@@ -1193,6 +1261,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     let scheduledTargets = 0;
     let failedTargets = 0;
     let skippedItems = 0;
+    const publishWarnings: string[] = [];
 
     for (const item of items) {
       if (!item.selected) continue;
@@ -1241,7 +1310,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                 scheduledAt: new Date(scheduledTime).toISOString(),
                 platform,
                 title: platformTitle(platform, copy, item.title.trim()),
+                internalTitle: item.internalTitle,
                 description: platformBody(platform, copy, item.description.trim()),
+                tags: platformTags(platform, copy),
                 contentId: item.sourceProjectId,
                 firstComment: copy?.firstComment || item.firstComment,
                 videoPath: item.videoPath.trim(),
@@ -1276,19 +1347,21 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
           const url = account.platform === 'youtube'
             ? `/api/overseas/youtube/accounts/${account.id}/upload`
             : `/api/overseas/social/accounts/${account.id}/upload`;
-          const publishResult = await fetchJson<{ ok: boolean; video?: unknown; tracking?: unknown }>(url, {
+          const publishResult = await fetchJson<{ ok: boolean; video?: unknown; tracking?: unknown; warnings?: string[] }>(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               videoPath: item.videoPath.trim(),
               title: platformTitle(account.platform, copy, item.title.trim()),
               description: platformBody(account.platform, copy, item.description.trim()),
+              tags: platformTags(account.platform, copy),
               firstComment: copy?.firstComment || item.firstComment,
               trackWaLink: item.trackWaLink,
               privacyStatus: 'public',
               madeForKids: false,
             }),
           });
+          publishWarnings.push(...(publishResult.warnings || []).map(warning => `${meta.label} · ${account.title}: ${warning}`));
           if (item.sourceProjectId) {
             await fetch('/api/overseas/studio/publish-links', {
               method: 'POST',
@@ -1327,6 +1400,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     setPublishing(false);
     setCalendarRefreshKey(value => value + 1);
     if (failedTargets || skippedItems) setError(`${failedTargets} 个发布目标失败，${skippedItems} 条视频配置不完整；可在队列中查看并修改。`);
+    if (publishWarnings.length) setError(previous => [previous, ...publishWarnings].filter(Boolean).join('；'));
     if (successfulTargets) setNotice(`已完成 ${successfulTargets} 个账号发布，每条发布均生成独立追踪码。`);
     if (scheduledTargets) setNotice(previous => `${previous ? `${previous} ` : ''}已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在设定时间自动发布到已选账号。`);
   };
@@ -1422,13 +1496,13 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                       checked={item.selected}
                       onChange={event => updateItem(item.id, { selected: event.target.checked })}
                       disabled={!hasVideo}
-                      aria-label={`选择素材 ${item.title || index + 1}`}
+                      aria-label={`选择素材 ${item.internalTitle || index + 1}`}
                       className="h-4 w-4 flex-shrink-0 rounded border-border text-emerald-600"
                     />
                     <button type="button" onClick={() => setActiveItemId(item.id)} className="min-w-0 flex-1 px-1.5 py-1 text-left">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-black text-text-muted">{String(index + 1).padStart(2, '0')}</span>
-                        <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{item.title || titleFromVideoPath(item.videoPath) || '待填写视频'}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary">{item.internalTitle || titleFromVideoPath(item.videoPath) || '待填写视频'}</span>
                         <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${hasVideo ? status.className : 'bg-amber-50 text-amber-700'}`}>{hasVideo ? status.label : '未生成成片'}</span>
                       </div>
                       <p className="mt-1 truncate text-[11px] text-text-muted">
@@ -1526,8 +1600,13 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                   <input value={activeItem?.videoPath || ''} onChange={event => activeItem && updateItem(activeItem.id, { videoPath: event.target.value, status: 'draft', error: undefined })} placeholder="/Users/.../rendered-video.mp4" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
                 </label>
                 <label className="block">
-                  <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">作品标题</span>
-                  <input value={activeItem?.title || ''} onChange={event => activeItem && updateItem(activeItem.id, { title: event.target.value, status: 'draft', error: undefined })} placeholder="发布标题" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">内部作品名</span>
+                  <input value={activeItem?.internalTitle || ''} onChange={event => activeItem && updateItem(activeItem.id, { internalTitle: event.target.value, status: 'draft', error: undefined })} placeholder="仅用于内部识别版本，不会发布给买家" className="w-full rounded-xl border border-border bg-slate-100 px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <span className="mt-1 block text-[10px] text-text-muted">用于区分项目、版本和语种，不进入任何平台发布载荷。</span>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">买家发布标题</span>
+                  <input value={activeItem?.title || ''} onChange={event => activeItem && updateItem(activeItem.id, { title: event.target.value, status: 'draft', error: undefined })} placeholder="面向买家的产品标题" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">发布配文</span>
@@ -1584,6 +1663,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                   const meta = PLATFORM_META[platform];
                   const copy = activeItem?.platformCopy[platform];
                   const body = platformBody(platform, copy, activeItem?.description || '');
+                  const bodyLength = platformBodyLength(platform, body);
+                  const bodyLimit = PLATFORM_BODY_LIMITS[platform];
+                  const tags = platformTags(platform, copy);
                   return (
                     <div key={platform} className="rounded-2xl border border-border bg-surface p-4">
                       <div className="flex items-center justify-between gap-2">
@@ -1604,9 +1686,27 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                       )}
                       <textarea value={body} onChange={event => activeItem && updateItem(activeItem.id, { platformCopy: { ...activeItem.platformCopy, [platform]: { ...activeItem.platformCopy[platform], ...(platform === 'facebook' ? { text: event.target.value } : platform === 'youtube' ? { description: event.target.value } : { caption: event.target.value }) } }, status: 'draft', error: undefined })} rows={4} className="mt-3 w-full resize-none rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent" />
                       <div className="mt-2 flex items-center justify-between text-[11px] text-text-muted">
-                        <span>{body.length} 字符</span>
-                        <span>{platform === 'tiktok' && body.length > 120 ? '超出建议长度' : '长度正常'}</span>
+                        <span>{bodyLength} / {bodyLimit} {platform === 'youtube' ? '字节' : '字符'}</span>
+                        <span className={bodyLength > bodyLimit ? 'font-bold text-red-600' : ''}>{bodyLength > bodyLimit ? '超出平台上限' : '长度正常'}</span>
                       </div>
+                      {tags.length > 0 && <p className="mt-2 text-[10px] leading-4 text-emerald-700">已进入真实发布载荷：{tags.join(' ')}</p>}
+                      <label className="mt-3 block border-t border-border pt-3">
+                        <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">平台首评</span>
+                        <textarea
+                          value={copy?.firstComment ?? activeItem?.firstComment ?? ''}
+                          onChange={event => activeItem && updateItem(activeItem.id, {
+                            platformCopy: {
+                              ...activeItem.platformCopy,
+                              [platform]: { ...activeItem.platformCopy[platform], firstComment: event.target.value },
+                            },
+                            status: 'draft',
+                            error: undefined,
+                          })}
+                          rows={2}
+                          placeholder={platform === 'tiktok' ? 'TikTok Direct Post API 暂无首评接口；填写后会记录 warning。' : '主帖成功后将由账号自动发布此评论。'}
+                          className="w-full resize-none rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none focus:border-accent"
+                        />
+                      </label>
                     </div>
                   );
                 })}
@@ -1707,8 +1807,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
             </div>
 
             <label className="mt-4 block">
-              <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">首条评论</span>
-              <textarea value={activeItem?.firstComment || ''} onChange={event => activeItem && updateItem(activeItem.id, { firstComment: event.target.value, status: 'draft' })} rows={3} placeholder="hashtags、wa.me 链接或补充说明。平台不支持时会记录 warning。" className="w-full resize-none rounded-xl border border-border bg-surface px-3 py-2.5 text-xs outline-none focus:border-accent" />
+              <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">通用首评</span>
+              <textarea value={activeItem?.firstComment || ''} onChange={event => activeItem && updateItem(activeItem.id, { firstComment: event.target.value, status: 'draft' })} rows={3} placeholder="未设置平台首评时使用；主帖成功后自动发布。" className="w-full resize-none rounded-xl border border-border bg-surface px-3 py-2.5 text-xs outline-none focus:border-accent" />
+              <span className="mt-1 block text-[10px] leading-4 text-text-muted">YouTube、Instagram、Facebook 已接真实首评接口；TikTok Direct Post 暂无该接口，会保留主帖并记录 warning。</span>
             </label>
 
             <div className="mt-5 rounded-xl border border-green-100 bg-green-50 p-3">

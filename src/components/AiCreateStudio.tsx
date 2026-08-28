@@ -500,6 +500,8 @@ type StudioPublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
 type StudioPublishItem = {
   videoPath?: string;
   previewUrl?: string;
+  internalTitle?: string;
+  publishTitle?: string;
   title: string;
   description: string;
   ratio: string;
@@ -507,6 +509,13 @@ type StudioPublishItem = {
   platform?: StudioPublishPlatform;
 };
 type StudioPublishPayload = StudioPublishItem & { items?: StudioPublishItem[] };
+
+function studioBuyerPublishTitle(...sources: Array<string | undefined>): string {
+  const source = sources.map(value => String(value || '').trim()).find(Boolean) || 'Product in Action';
+  const firstLine = source.split(/\r?\n/).map(line => line.replace(/(?:^|\s)#[\p{L}\p{N}_-]+/gu, '').trim()).find(Boolean) || source;
+  const firstSentence = firstLine.split(/(?<=[.!?。！？])\s+/)[0]?.trim() || firstLine;
+  return Array.from(firstSentence).slice(0, 100).join('').trim();
+}
 
 type LanguageRenderOutput = {
   status: 'pending' | 'rendering' | 'done' | 'failed';
@@ -6232,11 +6241,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (videoPath && seenPaths.has(videoPath)) return null;
       if (videoPath) seenPaths.add(videoPath);
       const versionName = `${plan.name || `视频${planIndex + 1}`} * ${langZh(code) || `语种${languageIndex + 1}`}`;
+      const internalTitle = `${baseTitle} - ${versionName}`;
+      const description = (code === activeVoiceLang ? caption.trim() : '') || voiceDrafts[code] || activeSpokenScript;
       return {
         videoPath,
         previewUrl: output?.previewUrl || latestDone?.previewUrl || (key === activeRenderCombinationKey ? renderOutputPreviewUrl || undefined : undefined),
-        title: `${baseTitle} - ${versionName}`,
-        description: (code === activeVoiceLang ? caption.trim() : '') || voiceDrafts[code] || activeSpokenScript,
+        title: internalTitle,
+        internalTitle,
+        publishTitle: studioBuyerPublishTitle(coverTitle, description),
+        description,
         ratio,
         sourceProjectId: projectId || undefined,
         platform: publishPlatform,
@@ -6246,11 +6259,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const buildPublishPayload = (): StudioPublishPayload => {
     const items = buildPublishVersions();
+    const fallbackInternalTitle = projectTitle.trim() || coverTitle || 'AI 快剪成片';
+    const fallbackDescription = caption.trim() || activeSpokenScript;
     const fallback: StudioPublishItem = {
       videoPath: renderOutputPath || '',
       previewUrl: renderOutputPreviewUrl || undefined,
-      title: projectTitle.trim() || coverTitle || 'AI 快剪成片',
-      description: caption.trim() || activeSpokenScript,
+      title: fallbackInternalTitle,
+      internalTitle: fallbackInternalTitle,
+      publishTitle: studioBuyerPublishTitle(coverTitle, fallbackDescription),
+      description: fallbackDescription,
       ratio,
       sourceProjectId: projectId || undefined,
       platform: platform as StudioPublishPlatform,

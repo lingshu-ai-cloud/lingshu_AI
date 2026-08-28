@@ -881,7 +881,17 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'Account is not connected' });
     return;
   }
-  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean };
+  const body = req.body as SocialUploadInput & {
+    videoPath?: string;
+    projectId?: string;
+    generationVersionId?: string;
+    ratio?: string;
+    contentId?: string;
+    language?: string;
+    trackWaLink?: boolean;
+    tags?: unknown;
+    firstComment?: string;
+  };
   if (!body.title || (!body.videoPath && !body.videoUrl)) {
     res.status(400).json({ error: 'title and videoPath/videoUrl are required' });
     return;
@@ -895,6 +905,8 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       videoUrl: body.videoUrl,
       title: body.title,
       description: body.description,
+      tags: body.tags,
+      firstComment: body.firstComment,
       privacyStatus: body.privacyStatus,
       projectId: body.projectId,
       generationVersionId: body.generationVersionId,
@@ -903,7 +915,14 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       language: body.language,
       trackWaLink: body.trackWaLink,
     });
-    res.status(201).json({ ok: true, video: result.video, tracking: result.tracking, publishRecord: result.publishRecord });
+    res.status(201).json({
+      ok: true,
+      video: result.video,
+      tracking: result.tracking,
+      publishRecord: result.publishRecord,
+      firstCommentId: result.firstCommentId,
+      warnings: result.warnings,
+    });
   } catch (error: any) {
     console.error(`${account.platform} upload error:`, error?.response?.data ?? error?.message ?? error);
     const status = error?.statusCode || error?.response?.status || 500;

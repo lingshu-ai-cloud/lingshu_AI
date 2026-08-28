@@ -304,7 +304,7 @@ export async function uploadVideoToYouTube(
   const mimeType = videoMimeType(input.filePath);
   const metadata = {
     snippet: {
-      title: input.title.trim().slice(0, 100),
+      title: Array.from(input.title.trim()).slice(0, 100).join(''),
       description: input.description ?? '',
       categoryId: input.categoryId ?? '22',
       ...(input.tags?.length ? { tags: input.tags.slice(0, 30) } : {}),
@@ -556,6 +556,23 @@ export async function replyToYouTubeComment(config: YouTubeConfig, parentId: str
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
   });
   return { id: String(res.data?.id || '') };
+}
+
+/** Publish the channel's top-level first comment on a newly uploaded video. */
+export async function postYouTubeFirstComment(config: YouTubeConfig, videoId: string, text: string): Promise<{ id: string }> {
+  const token = await getAccessToken(config);
+  const res = await axios.post(`${YOUTUBE_API_URL}/commentThreads`, {
+    snippet: {
+      videoId,
+      topLevelComment: { snippet: { textOriginal: text } },
+    },
+  }, {
+    params: { part: 'snippet' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  const id = String(res.data?.id || res.data?.snippet?.topLevelComment?.id || '');
+  if (!id) throw new Error('YouTube 未返回首评 ID');
+  return { id };
 }
 
 /**

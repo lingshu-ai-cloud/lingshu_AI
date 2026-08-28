@@ -244,7 +244,9 @@ export async function getInstagramAccountInsights(
 
 export async function uploadTikTokVideo(accessToken: string, input: SocialUploadInput): Promise<SocialUploadResult> {
   const stat = requireFile(input.filePath);
-  const title = (input.title || input.description || 'Untitled video').slice(0, 150);
+  // TikTok's Direct Post `title` is the public video caption. Prefer the
+  // platform-adapted description so generated hashtags reach the real post.
+  const title = Array.from(input.description || input.title || 'Untitled video').slice(0, 2_200).join('');
   const init = await axios.post(
     `${TIKTOK_API}/v2/post/publish/video/init/`,
     {
@@ -483,7 +485,7 @@ export async function getFacebookComments(videoId: string, pageAccessToken: stri
 
 export async function uploadFacebookVideo(pageId: string, pageAccessToken: string, graphVersion: string, input: SocialUploadInput): Promise<SocialUploadResult> {
   const stat = requireFile(input.filePath);
-  const title = (input.title || 'Untitled video').slice(0, 255);
+  const title = Array.from(input.title || 'Untitled video').slice(0, 255).join('');
   const form = new FormData();
   form.append('title', title);
   form.append('description', input.description || '');
@@ -563,11 +565,31 @@ export async function replyToFacebookComment(commentId: string, pageAccessToken:
   return { id: String(res.data?.id || '') };
 }
 
+/** Publish a Page-authored top-level comment on a newly uploaded Facebook video. */
+export async function postFacebookFirstComment(videoId: string, pageAccessToken: string, graphVersion: string, message: string): Promise<{ id: string }> {
+  const res = await axios.post(`${META_GRAPH}/${graphVersion}/${videoId}/comments`, null, {
+    params: { access_token: pageAccessToken, message },
+  });
+  const id = String(res.data?.id || '');
+  if (!id) throw new Error('Facebook 未返回首评 ID');
+  return { id };
+}
+
 export async function replyToInstagramComment(commentId: string, pageAccessToken: string, graphVersion: string, message: string): Promise<{ id: string }> {
   const res = await axios.post(`${META_GRAPH}/${graphVersion}/${commentId}/replies`, null, {
     params: { access_token: pageAccessToken, message },
   });
   return { id: String(res.data?.id || '') };
+}
+
+/** Publish an account-authored top-level comment on a newly published Reel. */
+export async function postInstagramFirstComment(mediaId: string, pageAccessToken: string, graphVersion: string, message: string): Promise<{ id: string }> {
+  const res = await axios.post(`${META_GRAPH}/${graphVersion}/${mediaId}/comments`, null, {
+    params: { access_token: pageAccessToken, message },
+  });
+  const id = String(res.data?.id || '');
+  if (!id) throw new Error('Instagram 未返回首评 ID');
+  return { id };
 }
 
 export async function publishInstagramReel(igUserId: string, pageAccessToken: string, graphVersion: string, input: SocialUploadInput): Promise<SocialUploadResult> {

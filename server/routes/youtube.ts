@@ -661,6 +661,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     title,
     description = '',
     tags,
+    firstComment = '',
     privacyStatus = 'unlisted',
     madeForKids = false,
     projectId,
@@ -674,6 +675,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     title?: string;
     description?: string;
     tags?: unknown;
+    firstComment?: string;
     privacyStatus?: 'private' | 'unlisted' | 'public';
     madeForKids?: boolean;
     projectId?: string;
@@ -724,6 +726,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
       title,
       description,
       tags,
+      firstComment,
       privacyStatus,
       madeForKids,
       projectId,
@@ -733,7 +736,14 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
       contentId,
       trackWaLink,
     });
-    res.status(201).json({ ok: true, video: result.video, tracking: result.tracking, publishRecord: result.publishRecord });
+    res.status(201).json({
+      ok: true,
+      video: result.video,
+      tracking: result.tracking,
+      publishRecord: result.publishRecord,
+      firstCommentId: result.firstCommentId,
+      warnings: result.warnings,
+    });
   } catch (error: any) {
     console.error('YouTube upload error:', error?.response?.data ?? error);
     const status = error?.statusCode || (error?.response?.status === 401 ? 401 : error?.response?.status === 403 ? 403 : 500);

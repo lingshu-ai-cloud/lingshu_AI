@@ -8,7 +8,9 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { getBestTimeScores } from '../publishing/bestTime.js';
 import {
+  PUBLISH_COPY_LIMITS,
   PUBLISH_COPY_PLATFORMS,
+  normalizePublishTags,
   normalizePlatformCopies,
   sanitizePublishCopyPlatforms,
   type PlatformCopy,
@@ -56,6 +58,11 @@ function numberValue(value: unknown): number {
   return Number.isFinite(next) ? next : 0;
 }
 
+function publishTags(platform: string, value: unknown): string[] {
+  if (!PUBLISH_COPY_PLATFORMS.includes(platform as PublishCopyPlatform)) return [];
+  return normalizePublishTags(platform as PublishCopyPlatform, value);
+}
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (value && typeof value === 'object') return value as T;
   if (typeof value === 'string') {
@@ -99,6 +106,7 @@ function publicPost(post: PostRecord) {
     platform: text(post.platform),
     platformPostId: text(post.platform_post_id),
     title: text(post.title) || text(post.track_code),
+    internalTitle: text(stats.internalTitle),
     description: text(stats.description),
     publishedAt: text(post.published_at || post.created),
     trackCode: text(post.track_code),
@@ -109,6 +117,7 @@ function publicPost(post: PostRecord) {
     videoUrl: text(stats.videoUrl || stats.mediaUrl || stats.url),
     duration: numberValue(stats.duration),
     firstComment: text(stats.firstComment),
+    tags: publishTags(text(post.platform) || 'tiktok', stats.tags),
     videoPath: text(stats.videoPath),
     videoPreviewUrl: publishingPreviewUrl(post.tenant_id, stats.videoPath) || text(stats.videoPreviewUrl),
     trackWaLink: stats.trackWaLink !== false,
@@ -385,8 +394,10 @@ publishingRouter.post('/calendar', async (req, res) => {
     stats: {
       status: 'scheduled',
       coverUrl: text(req.body?.coverUrl),
+      internalTitle: text(req.body?.internalTitle),
       description: text(req.body?.description),
       firstComment: text(req.body?.firstComment),
+      tags: publishTags(platform, req.body?.tags),
       videoPath: text(req.body?.videoPath),
       trackWaLink: req.body?.trackWaLink !== false,
       scheduleLocked: req.body?.scheduleLocked === true,
@@ -493,9 +504,13 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     update.title = title;
     changed = true;
   }
-  for (const field of ['description', 'firstComment', 'coverUrl', 'videoPath'] as const) {
+  for (const field of ['description', 'firstComment', 'coverUrl', 'videoPath', 'internalTitle'] as const) {
     if (!Object.prototype.hasOwnProperty.call(req.body || {}, field)) continue;
     stats[field] = text(req.body?.[field]);
+    changed = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'tags')) {
+    stats.tags = publishTags(text(post.platform) || 'tiktok', req.body?.tags);
     changed = true;
   }
   for (const field of ['targetAccountIds', 'targetAccountLabels'] as const) {
@@ -546,7 +561,7 @@ publishingRouter.post('/adapt-copy', async (req, res) => {
   const requireAlternative = mode === 'regenerate';
 
   if (!title && !description) {
-    res.status(400).json({ error: 'copy_source_required', message: '请先填写作品标题或发布配文' });
+    res.status(400).json({ error: 'copy_source_required', message: '请先填写买家发布标题或发布配文' });
     return;
   }
 
@@ -557,11 +572,12 @@ publishingRouter.post('/adapt-copy', async (req, res) => {
     `Draft copy: ${description}`,
     `Requested platforms: ${targetPlatforms.join(', ')}`,
     'Only return the requested platform keys.',
-    'youtube: { title <=70 chars, description, tags[], firstComment }',
-    'tiktok: { caption <=120 chars, hashtags[], firstComment }',
-    'instagram: { caption, hashtags[], firstComment }',
-    'facebook: { text, hashtags[], firstComment }',
-    'Make every platform different. Put hashtags and wa.me link friendly text in firstComment when useful.',
+    `youtube: { title <=${PUBLISH_COPY_LIMITS.youtube.title} characters, description <=${PUBLISH_COPY_LIMITS.youtube.body} UTF-8 bytes, tags[] <=${PUBLISH_COPY_LIMITS.youtube.tagCharacters} aggregate characters, firstComment <=${PUBLISH_COPY_LIMITS.youtube.firstComment} characters }`,
+    `tiktok: { caption including hashtags <=${PUBLISH_COPY_LIMITS.tiktok.body} characters, hashtags[], firstComment must be empty because Direct Post has no first-comment endpoint }`,
+    `instagram: { caption including hashtags <=${PUBLISH_COPY_LIMITS.instagram.body} characters, hashtags[], firstComment <=${PUBLISH_COPY_LIMITS.instagram.firstComment} characters }`,
+    `facebook: { text including hashtags <=${PUBLISH_COPY_LIMITS.facebook.body} characters, hashtags[], firstComment <=${PUBLISH_COPY_LIMITS.facebook.firstComment} characters }`,
+    'Make every platform different, concise, buyer-facing, and useful. Return tags/hashtags separately; the server will merge social hashtags into the final body.',
+    'Do not generate wa.me links or any other URL. The server injects the tenant-specific tracked link into the final payload.',
     'Use only facts present in the title and draft copy. Do not invent features, specifications, certifications, prices, inventory, customer results, or delivery promises.',
     requireAlternative
       ? `Create a materially different alternative from this current version while preserving facts: ${JSON.stringify(currentCopy)}`
