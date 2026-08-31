@@ -27,6 +27,9 @@ data/analysis-temp/
 data/qwen-reanalysis-original.json
 data/studio-variation-batches.json
 data/studio-video-versions.json
+data/digital-human-jobs.json
+data/digital-human-worker/
+data/generated/
 data/publishing-uploads/
 data/crawler-ops-queue.json
 data/apify-video-usage.json
@@ -59,3 +62,9 @@ data/daily-briefing-queue.json
 logs/
 output/
 tmp/
+__pycache__/
+*.pyc
+
+# 本地开发服务日志
+.*.stdout.log
+.*.stderr.log

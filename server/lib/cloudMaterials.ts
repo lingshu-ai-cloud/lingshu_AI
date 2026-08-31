@@ -13,10 +13,11 @@ function canAccessCloudMaterial(item: Record<string, unknown>, tenantId: string)
 }
 
 export async function listCloudMaterials(tenantId: string): Promise<Array<Record<string, unknown>>> {
-  const response = await adminFetch('/api/collections/materials/records?perPage=500');
-  if (!response.ok) return [];
-  const data = await response.json() as { items?: CloudMaterialRecord[] };
-  return (data.items || []).filter(item => canAccessCloudMaterial(item, tenantId)).map(item => ({
+  try {
+    const response = await adminFetch('/api/collections/materials/records?perPage=500');
+    if (!response.ok) return [];
+    const data = await response.json() as { items?: CloudMaterialRecord[] };
+    return (data.items || []).filter(item => canAccessCloudMaterial(item, tenantId)).map(item => ({
     id: `pb-${item.id}`,
     name: String(item.title || item.sourceName || '云端素材'),
     folder: String(item.folder || 'upload'),
@@ -43,8 +44,14 @@ export async function listCloudMaterials(tenantId: string): Promise<Array<Record
     pinned: Boolean(item.pinned),
     segmentAnalysisStatus: item.segmentAnalysisStatus ? String(item.segmentAnalysisStatus) : undefined,
     segmentAnalysisError: item.segmentAnalysisError ? String(item.segmentAnalysisError) : undefined,
-    segments: parseSegments(item.segments),
-  }));
+      segments: parseSegments(item.segments),
+    }));
+  } catch (error) {
+    // PocketBase is optional in local development. A temporarily unavailable
+    // cloud material store must not crash the whole API process.
+    console.warn('[cloud-materials] list unavailable:', error instanceof Error ? error.message : error);
+    return [];
+  }
 }
 
 export async function getCloudMaterialRecord(id: string, tenantId?: string): Promise<Record<string, unknown> | null> {

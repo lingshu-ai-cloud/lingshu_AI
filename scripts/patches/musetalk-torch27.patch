@@ -1,0 +1,22 @@
+diff --git a/musetalk/utils/face_parsing/resnet.py b/musetalk/utils/face_parsing/resnet.py
+--- a/musetalk/utils/face_parsing/resnet.py
++++ b/musetalk/utils/face_parsing/resnet.py
+@@ -82,3 +82,3 @@ class Resnet18(nn.Module):
+     def init_weight(self, model_path):
+-        state_dict = torch.load(model_path) #modelzoo.load_url(resnet18_url)
++        state_dict = torch.load(model_path, weights_only=False) # trusted official torchvision checkpoint
+         self_state_dict = self.state_dict()
+diff --git a/musetalk/utils/face_parsing/__init__.py b/musetalk/utils/face_parsing/__init__.py
+--- a/musetalk/utils/face_parsing/__init__.py
++++ b/musetalk/utils/face_parsing/__init__.py
+@@ -62,8 +62,8 @@ class FaceParsing():
+         net = BiSeNet(resnet_path)
+         if torch.cuda.is_available():
+             net.cuda()
+-            net.load_state_dict(torch.load(model_pth)) 
++            net.load_state_dict(torch.load(model_pth, weights_only=False))
+         else:
+-            net.load_state_dict(torch.load(model_pth, map_location=torch.device('cpu')))
++            net.load_state_dict(torch.load(model_pth, map_location=torch.device('cpu'), weights_only=False))
+         net.eval()
+         return net

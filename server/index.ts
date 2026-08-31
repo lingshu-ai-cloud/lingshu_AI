@@ -181,6 +181,7 @@ app.get('/api/overseas/health', (_req, res) => {
     featureLocks: {
       geminiVideo: process.env.GEMINI_VIDEO_ENABLED !== 'true',
       seedanceVideo: process.env.SEEDANCE_VIDEO_ENABLED !== 'true',
+      digitalHuman: !String(process.env.DIGITAL_HUMAN_API_URL || '').trim(),
     },
   });
 });

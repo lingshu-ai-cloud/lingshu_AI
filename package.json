@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "dev:server": "NODE_USE_ENV_PROXY=1 tsx watch --exclude data server/index.ts",
+    "dev:digital-human": "tsx watch --exclude data scripts/digital-human-local-worker.ts",
     "build": "vite build",
     "preview": "vite preview",
     "start": "NODE_ENV=production NODE_USE_ENV_PROXY=1 tsx server/index.ts",

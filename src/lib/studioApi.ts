@@ -776,6 +776,29 @@ export const studioApi = {
   },
   deleteMaterial: (id: string) => del(`materials/${id}`),
 
+  digitalHumanCapabilities: () => get<DigitalHumanCapabilities>('digital-human/capabilities', {
+    available: false, provider: 'unconfigured', modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],
+    output: { ratio: '9:16', container: 'mp4' }, qualityGateRequired: true, maxConcurrentJobs: 2,
+    unavailableReason: '无法连接数字人服务',
+  }),
+  createDigitalHumanJob: (body: { projectId?: string; avatarMaterialId: string; voiceoverUrl: string; script: string; language: string; mode: 'fast' | 'quality'; consentConfirmed: boolean }) =>
+    post<{ ok: boolean; job?: DigitalHumanJob; error?: string; code?: string }>('digital-human/jobs', body, { ok: false, error: '数字人任务提交失败' }),
+  getDigitalHumanJob: (id: string) =>
+    get<{ ok: boolean; job?: DigitalHumanJob; outputMaterial?: Material; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}`, { ok: false, error: '数字人任务查询失败' }),
+  listDigitalHumanJobs: async (projectId?: string): Promise<DigitalHumanJob[]> => {
+    try {
+      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      const response = await fetch(`/api/overseas/studio/digital-human/jobs${query}`, { headers: authHeader(), cache: 'no-store' });
+      if (!response.ok) return [];
+      const payload = await response.json();
+      return Array.isArray(payload) ? payload as DigitalHumanJob[] : [];
+    } catch { return []; }
+  },
+  retryDigitalHumanJob: (id: string) =>
+    post<{ ok: boolean; job?: DigitalHumanJob; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}/retry`, {}, { ok: false, error: '数字人任务重试失败' }),
+  cancelDigitalHumanJob: (id: string) =>
+    post<{ ok: boolean; job?: DigitalHumanJob; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}/cancel`, {}, { ok: false, error: '数字人任务取消失败' }),
+
   // BGM 曲库
   listBgm: async (): Promise<BgmTrack[]> => {
     try {
@@ -891,4 +914,49 @@ export interface MaterialSegment {
   confidence: number;
   needsReview: boolean;
   manualConfirmed?: boolean;
+}
+
+export interface DigitalHumanCapabilities {
+  available: boolean;
+  provider: string;
+  features?: Array<'lip_sync' | 'expression' | 'head_motion' | 'source_motion' | 'neck_shoulder_preservation'>;
+  modes: Array<{ id: 'fast' | 'quality'; label: string }>;
+  output: { ratio: '9:16'; container: 'mp4' };
+  qualityGateRequired: boolean;
+  maxConcurrentJobs: number;
+  unavailableReason?: string;
+}
+
+export interface DigitalHumanQualityReport {
+  passed: boolean;
+  lipSyncScore?: number;
+  avOffsetFrames?: number;
+  identityScore?: number;
+  freezeSegments?: number;
+  durationSeconds?: number;
+  notes?: string[];
+}
+
+export interface DigitalHumanJob {
+  id: string;
+  projectId?: string;
+  avatarMaterialId: string;
+  avatarName: string;
+  scriptSnapshot: string;
+  language: string;
+  mode: 'fast' | 'quality';
+  provider: string;
+  status: 'queued' | 'submitting' | 'processing' | 'quality_check' | 'review' | 'completed' | 'failed' | 'cancelled';
+  stage: string;
+  progress: number;
+  outputMaterialId?: string;
+  outputUrl?: string;
+  qualityReport?: DigitalHumanQualityReport;
+  errorCode?: string;
+  errorMessage?: string;
+  versionNumber: number;
+  parentJobId?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
