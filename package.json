@@ -58,6 +58,7 @@
     "test:script-matrix": "tsx server/strategy/scriptGenerationMatrix.test.ts",
     "test:studio-script": "tsx server/routes/studioScriptNormalization.test.ts && tsx server/routes/studioQualityRulesV2.test.ts && tsx server/routes/studioQualityRouteV2.test.ts",
     "test:studio-media": "tsx src/components/AiCreateStudio.mediaRegression.test.ts && tsx src/components/AiCreateStudio.sanitize.test.ts && tsx src/lib/studioMaterialUpload.test.ts && node desktop/render.test.cjs",
+    "test:creative-transformation": "tsx server/lib/creativeTransformation.test.ts",
     "test:tenant-isolation": "tsx server/security/tenantIsolation.test.ts",
     "test:onboarding-reset": "tsx server/security/onboardingReset.test.ts",
     "test:customer-service-activation": "tsx server/security/customerServiceActivation.test.ts",

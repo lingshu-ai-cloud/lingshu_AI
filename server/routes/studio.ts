@@ -43,6 +43,7 @@ import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
 import { groundedCaptionFallback, groundedCoverTitleFallbacks } from '../publishing/copyAdaptation.js';
+import { assessTransformation, commercialDigitalHumanGate, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import {
@@ -4042,6 +4043,10 @@ interface DigitalHumanQualityReport {
   identityScore?: number;
   freezeSegments?: number;
   durationSeconds?: number;
+  faceDetectionRate?: number;
+  mouthJumpP95?: number;
+  gateVersion?: string;
+  gateFailures?: string[];
   notes?: string[];
 }
 interface DigitalHumanJob {
@@ -4146,10 +4151,17 @@ function appAssetUrl(req: Request, value: string): string {
 }
 
 async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: string, providerQuality: DigitalHumanQualityReport): Promise<DigitalHumanJob> {
-  if (!providerQuality || providerQuality.passed !== true) {
+  const commercialGate = commercialDigitalHumanGate(providerQuality || {}, job.mode);
+  if (!providerQuality || !commercialGate.passed) {
     return updateDigitalHumanJob(job.id, {
       status: 'review', stage: 'quality_review', progress: 100,
-      qualityReport: { ...providerQuality, passed: false, notes: [...(providerQuality?.notes || []), '模型质量报告未通过，禁止自动进入成片。'] },
+      qualityReport: {
+        ...providerQuality,
+        passed: false,
+        gateVersion: 'commercial-v1',
+        gateFailures: commercialGate.failures,
+        notes: [...(providerQuality?.notes || []), ...commercialGate.failures, '商业质量门禁未通过，禁止自动进入成片与发布。'],
+      },
     });
   }
   const response = await digitalHumanFetch(outputUrl, { headers: digitalHumanProviderHeaders() });
@@ -4178,7 +4190,7 @@ async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: strin
   return updateDigitalHumanJob(job.id, {
     status: 'completed', stage: 'completed', progress: 100,
     outputMaterialId: material.id, outputUrl: material.url || undefined,
-    qualityReport: providerQuality, completedAt: new Date().toISOString(),
+    qualityReport: { ...providerQuality, passed: true, gateVersion: 'commercial-v1', gateFailures: [] }, completedAt: new Date().toISOString(),
   });
 }
 
@@ -4274,6 +4286,19 @@ function digitalHumanCapabilities() {
 
 studioRouter.get('/digital-human/capabilities', (_req, res) => {
   res.json(digitalHumanCapabilities());
+});
+
+studioRouter.post('/transformations/assess', (req, res) => {
+  try {
+    const input = req.body as TransformationAssessmentInput;
+    if (!input || !input.mode || !input.rights || !input.source) {
+      res.status(400).json({ ok: false, error: '缺少替换模式、授权声明或源素材指标' });
+      return;
+    }
+    res.json({ ok: true, assessment: assessTransformation(input) });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '替换兼容性评估失败' });
+  }
 });
 
 studioRouter.get('/digital-human/jobs', (req, res) => {

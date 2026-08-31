@@ -154,6 +154,8 @@ async function validateOutput(avatarPath: string, outputPath: string): Promise<N
     avOffsetFrames: Number(syncnet.av_offset_frames),
     freezeSegments: 0,
     durationSeconds: Number(visual.duration_seconds),
+    faceDetectionRate: Number(visual.face_detection_rate),
+    mouthJumpP95: Number(visual.mouth_jump_p95),
     notes: [
       'MuseTalk 1.5 + MediaPipe 动态嘴部裁剪推理成功',
       `SyncNet 通过：置信度 ${Number(syncnet.syncnet_confidence).toFixed(3)}，音画偏移 ${Number(syncnet.av_offset_frames)} 帧`,

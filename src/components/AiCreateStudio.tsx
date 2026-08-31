@@ -8960,6 +8960,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 	                        {digitalHumanJob.qualityReport && (
 	                          <div className="mt-2 text-[10px] text-text-muted">
 	                            <p>口型 {digitalHumanJob.qualityReport.lipSyncScore ?? '待自动评分'} · 身份保持 {digitalHumanJob.qualityReport.identityScore ?? '待自动评分'} · 音画偏移 {digitalHumanJob.qualityReport.avOffsetFrames ?? '待自动评分'}</p>
+	                            {digitalHumanJob.qualityReport.gateVersion ? <p className="mt-1">门禁 {digitalHumanJob.qualityReport.gateVersion}{digitalHumanJob.qualityReport.gateFailures?.length ? ` · ${digitalHumanJob.qualityReport.gateFailures.join('；')}` : ' · 已通过'}</p> : null}
 	                            {digitalHumanJob.qualityReport.notes?.length ? <p className="mt-1">{digitalHumanJob.qualityReport.notes.join(' · ')}</p> : null}
 	                          </div>
 	                        )}

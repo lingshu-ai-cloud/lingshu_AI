@@ -798,6 +798,8 @@ export const studioApi = {
     post<{ ok: boolean; job?: DigitalHumanJob; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}/retry`, {}, { ok: false, error: '数字人任务重试失败' }),
   cancelDigitalHumanJob: (id: string) =>
     post<{ ok: boolean; job?: DigitalHumanJob; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}/cancel`, {}, { ok: false, error: '数字人任务取消失败' }),
+  assessTransformation: (body: TransformationAssessmentInput) =>
+    post<{ ok: boolean; assessment?: TransformationAssessment; error?: string }>('transformations/assess', body, { ok: false, error: '替换兼容性评估失败' }),
 
   // BGM 曲库
   listBgm: async (): Promise<BgmTrack[]> => {
@@ -934,7 +936,35 @@ export interface DigitalHumanQualityReport {
   identityScore?: number;
   freezeSegments?: number;
   durationSeconds?: number;
+  faceDetectionRate?: number;
+  mouthJumpP95?: number;
+  gateVersion?: string;
+  gateFailures?: string[];
   notes?: string[];
+}
+
+export type TransformationMode = 'talking_avatar' | 'face_swap' | 'head_swap' | 'person_replace' | 'product_replace' | 'structure_remake';
+export interface TransformationAssessmentInput {
+  mode: TransformationMode;
+  rights: {
+    referenceVideo: 'cleared' | 'unknown' | 'not_required';
+    sourcePerson: 'cleared' | 'unknown' | 'not_required';
+    targetPerson: 'cleared' | 'unknown' | 'not_required';
+    voice: 'cleared' | 'unknown' | 'not_required';
+    productBrand: 'cleared' | 'unknown' | 'not_required';
+  };
+  source: {
+    personCount?: number; continuousShot?: boolean; durationSeconds?: number; faceForwardRatio?: number;
+    maximumOcclusionRatio?: number; productVisibleRatio?: number; productCount?: number;
+    productCategory?: string; targetProductCategory?: string; gripSimilarity?: number; transparentOrReflective?: boolean;
+  };
+}
+export interface TransformationAssessment {
+  status: 'compatible' | 'review' | 'blocked';
+  blockers: string[];
+  warnings: string[];
+  requiredQa: string[];
+  recommendedMode: TransformationMode;
 }
 
 export interface DigitalHumanJob {
