@@ -6629,7 +6629,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             avatarMaterialId: binding.avatarMaterialId,
           }) : '';
           if (currentSignature === binding.inputSignature) {
-            setMaterials(current => mergeMaterials(current, [result.outputMaterial as Clip]));
+            setMaterials(current => mergeClipLists(current, [result.outputMaterial as Clip]));
             setSelected(current => [...new Set([...current, result.outputMaterial!.id])]);
             setStoryboardAssignments(current => ({ ...current, [slotId]: result.outputMaterial!.id }));
             setStoryboardSourcePlans(current => ({ ...current, [slotId]: { ...sourcePlanFor(slot!), mode: 'ai', decided: true, confirmed: true, generatedClipId: result.outputMaterial!.id } }));
