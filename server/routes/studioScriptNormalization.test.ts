@@ -12,6 +12,7 @@ import {
   isPackagingOnlyProductInfo,
   isNonBlockingScriptQualityIssue,
   normalizeCompleteTimestampTranslation,
+  normalizeTimestampTranslationValue,
   normalizeStoryboardFieldLines,
   openingMatchesCooperationRoute,
   productVoicePlanSupportsTheme,
@@ -376,6 +377,24 @@ assert.equal(
   ),
   '',
   'distinct source cues must not collapse into one repeated sentence',
+);
+assert.equal(
+  normalizeTimestampTranslationValue(
+    translationSource,
+    { lines: ['Buyers, how do you judge this risk?', 'Check the visible details.', 'Message us for details.'] },
+    'en',
+  ),
+  '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+  'a valid lines array must be rebuilt with the exact source timestamps',
+);
+assert.equal(
+  normalizeTimestampTranslationValue(
+    translationSource,
+    '1. Buyers, how do you judge this risk?\n2. Check the visible details.\n3. Message us for details.',
+    'en',
+  ),
+  '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+  'a numbered line response must not be rejected just because timestamps were omitted',
 );
 
 assert.equal(voiceoverLineNeedsLanguageRepair('Buyers, how do you judge this risk?', 'en'), false);

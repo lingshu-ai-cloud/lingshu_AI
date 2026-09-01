@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { matchMaterialsToStoryboardLocally } from './AiCreateStudio.js';
+import { automaticStoryboardTrim, matchMaterialsToStoryboardLocally } from './AiCreateStudio.js';
 
 const clips = [
   { id: 'portrait-1', name: '产品全景', folder: 'product', type: 'video', duration: 5, width: 1080, height: 1920 },
@@ -25,5 +25,16 @@ assert.ok(Object.values(assignments).includes('portrait-1'), '同画幅素材仍
 const limitedAssignments = matchMaterialsToStoryboardLocally(clips.slice(0, 2), slots, [], { targetRatio: '9:16' });
 assert.equal(Object.keys(limitedAssignments).length, slots.length, '素材不足时仍应覆盖全部分镜');
 assert.equal(new Set(Object.values(limitedAssignments)).size, 2, '只有素材池耗尽后才允许复用');
+
+assert.deepEqual(
+  automaticStoryboardTrim(12, 4, 'video'),
+  { trimStart: 0, trimEnd: 4, targetDuration: 4 },
+  '长素材应从第一帧开始，只截取到分镜结束时间',
+);
+assert.deepEqual(
+  automaticStoryboardTrim(2.5, 4, 'video'),
+  { trimStart: 0, trimEnd: 2.5, targetDuration: 4 },
+  '短素材不应虚构超出源文件的裁切终点',
+);
 
 console.log('studio material matching regression passed');

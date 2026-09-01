@@ -102,6 +102,8 @@ const COLLECTIONS: { name: string; fields: Field[] }[] = [
     // PocketBase does not come up with an empty material library.
     name: 'materials',
     fields: [
+      // 私有素材归属；历史共享素材可为空，因此不能设 required。
+      { name: 'tenantId', type: 'text' },
       { name: 'title', type: 'text', required: true },
       { name: 'folder', type: 'text', required: true },
       { name: 'type', type: 'text', required: true },

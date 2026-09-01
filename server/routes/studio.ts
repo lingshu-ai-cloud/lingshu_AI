@@ -28,7 +28,7 @@ import {
   isBusinessRoleEntity,
 } from '../lib/studioScriptQualityV2.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
-import { fetchCloudMaterial, getCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
+import { fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
@@ -3278,11 +3278,88 @@ export function normalizeCompleteTimestampTranslation(source: string, translated
   if (translatedCues.length !== sourceCues.length) return '';
   const targetTexts = translatedCues.map(cue => cue.text.replace(/^[-*•]\s*/, '').trim());
   if (targetTexts.some(text => !text || /translation unavailable|无法翻译|不能翻译|作为AI|Here is|```/i.test(text))) return '';
-  if (targetCode !== 'zh' && targetTexts.some(text => /[\u4e00-\u9fff]/.test(text))) return '';
+  if (targetCode !== 'zh' && targetTexts.some(text => {
+    const hanCount = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+    const letterCount = (text.match(/\p{L}/gu) || []).length;
+    return hanCount >= 6 && hanCount / Math.max(1, letterCount) > 0.45;
+  })) return '';
   const distinctSource = new Set(sourceCues.map(cue => cue.text.replace(/\s+/g, '').toLowerCase())).size;
   const distinctTarget = new Set(targetTexts.map(text => text.replace(/\s+/g, '').toLowerCase())).size;
   if (sourceCues.length > 1 && distinctSource > 1 && distinctTarget === 1) return '';
   return sourceCues.map((cue, index) => `${cue.timestamp} ${targetTexts[index]}`).join('\n');
+}
+
+function translationLinesFromUnknown(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      if (typeof item === 'string' || typeof item === 'number') return String(item).trim();
+      if (item && typeof item === 'object') {
+        const row = item as Record<string, unknown>;
+        return String(row.text ?? row.translation ?? row.content ?? row.value ?? '').trim();
+      }
+      return '';
+    }).filter(Boolean);
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['lines', 'translations', 'translation', 'text', 'content', 'result', 'output']) {
+      if (record[key] !== undefined) {
+        const nested = translationLinesFromUnknown(record[key]);
+        if (nested.length) return nested;
+      }
+    }
+    return [];
+  }
+  const text = String(value ?? '').trim();
+  if (!text) return [];
+  const parsed = extractJSON<unknown>(text);
+  if (parsed && parsed !== value) {
+    const nested = translationLinesFromUnknown(parsed);
+    if (nested.length) return nested;
+  }
+  return text.split(/\n+/).map(line => line
+    .replace(/^\s*(?:[-*•]|\d+[.)．、])\s*/, '')
+    .trim()).filter(Boolean);
+}
+
+/**
+ * Accept the common response shapes returned by Qwen (timestamped text,
+ * {lines:[...]}, an array, or a newline list) and rebuild the exact source
+ * timeline before validating it. This keeps strict cue completeness without
+ * rejecting an otherwise valid translation solely because of JSON shape.
+ */
+export function normalizeTimestampTranslationValue(source: string, value: unknown, targetCode: string): string {
+  const sourceCues = timestampedTranslationCues(source);
+  if (!sourceCues.length) return translationLinesFromUnknown(value).join('\n').trim();
+  if (typeof value === 'string') {
+    const direct = normalizeCompleteTimestampTranslation(source, value, targetCode);
+    if (direct) return direct;
+  }
+  const lines = translationLinesFromUnknown(value);
+  if (lines.length !== sourceCues.length) return '';
+  const rebuilt = sourceCues.map((cue, index) => {
+    const line = String(lines[index] || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    return `${cue.timestamp} ${line}`;
+  }).join('\n');
+  return normalizeCompleteTimestampTranslation(source, rebuilt, targetCode);
+}
+
+function translationValueForLanguage(value: Record<string, unknown>, code: string): unknown {
+  const containers: Record<string, unknown>[] = [value];
+  if (value.translations && typeof value.translations === 'object' && !Array.isArray(value.translations)) {
+    containers.push(value.translations as Record<string, unknown>);
+  }
+  for (const container of containers) {
+    const languageKey = Object.keys(container).find(key => key.toLowerCase() === code.toLowerCase()
+      || key.toLowerCase() === langName(code).toLowerCase());
+    if (languageKey) return container[languageKey];
+  }
+  if (Array.isArray(value.translations)) {
+    const row = value.translations.find(item => item && typeof item === 'object'
+      && [code.toLowerCase(), langName(code).toLowerCase()].includes(String((item as Record<string, unknown>).language ?? (item as Record<string, unknown>).code ?? '').toLowerCase())) as Record<string, unknown> | undefined;
+    if (row) return row.lines ?? row.translation ?? row.text ?? row.content;
+  }
+  return undefined;
 }
 
 // POST /studio/translate  Body: { text, target?, source? }
@@ -3311,7 +3388,7 @@ Text: ${src}`;
     const sourceCues = timestampedTranslationCues(src);
     const first = await callLLM(prompt, { backend: 'qwen', model: 'qwen-plus', signal: deadline.signal, timeoutMs: providerTimeoutMs });
     let out = sourceCues.length
-      ? normalizeCompleteTimestampTranslation(src, first, String(target || 'zh'))
+      ? normalizeTimestampTranslationValue(src, first, String(target || 'zh'))
       : first.trim();
     if (!out && sourceCues.length) {
       const indexedPrompt = `Translate every numbered spoken line into ${targetLang}. Return ONLY valid JSON {"lines":["translation 1","translation 2"]}. The lines array must contain exactly ${sourceCues.length} non-empty strings in the same order. Never merge, omit, summarize or repeat a line. Do not include timestamps inside the strings. Do not add claims or explanations.\n\n${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
@@ -3320,7 +3397,7 @@ Text: ${src}`;
       const lines = Array.isArray(parsed) ? parsed : parsed?.lines;
       if (Array.isArray(lines) && lines.length === sourceCues.length) {
         const rebuilt = sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n');
-        out = normalizeCompleteTimestampTranslation(src, rebuilt, String(target || 'zh'));
+        out = normalizeTimestampTranslationValue(src, rebuilt, String(target || 'zh'));
       }
     }
     if (!out.trim()) throw new Error('qwen returned an incomplete line-by-line translation');
@@ -3364,7 +3441,7 @@ Rules:
 - Preserve every timestamp label exactly, such as [0-3s].
 - Translate only the spoken text after each timestamp.
 - Keep one output line per input line for every language.
-- Omit short sound-effect lines or onomatopoeia such as “噗噗/砰砰/咚咚/咯吱”; they are audio SFX, not voiceover subtitles.
+- Keep every supplied source line. The caller has already removed non-spoken production notes, so never omit a remaining line.
 - Do not leave source-language text in translated outputs unless it is a product name or proper noun.
 - Use natural conversational wording, not stiff word-for-word translation.
 - Repair Chinese short-video slang into idiomatic buyer-facing wording based on product context. For example, for non-cosmetic products, “上脸质感” should become “feels good in hand” or “looks premium on camera”, not “on the skin”.
@@ -3387,7 +3464,11 @@ ${src}`;
     if (!spokenValue) return true;
     const compactSpokenValue = spokenValue.replace(/\s+/g, '');
     if (compactSpokenValue.length < 6) return true;
-    if (code !== 'zh' && /[\u4e00-\u9fff]/.test(textValue)) return true;
+    if (code !== 'zh') {
+      const hanCount = (textValue.match(/[\u4e00-\u9fff]/g) || []).length;
+      const letterCount = (textValue.match(/\p{L}/gu) || []).length;
+      if (hanCount >= 6 && hanCount / Math.max(1, letterCount) > 0.45) return true;
+    }
     if (/translation unavailable|无法翻译|不能翻译|作为AI|Here is|```/i.test(textValue)) return true;
     return false;
   };
@@ -3411,16 +3492,16 @@ ${src}`;
         // object-of-strings was requested. Rebuild the expected timestamped
         // text instead of discarding an otherwise valid translation.
         value = parsed.map((row, index) => {
-          const line = String(row?.[code] ?? '').trim();
+          const line = String(row?.[code] ?? row?.[langName(code)] ?? row?.translation ?? row?.text ?? '').trim();
           if (!line) return '';
           const timestamp = sourceTimestamps[index] || '';
           return timestamp && !/^\s*\[[^\]]+\]/.test(line) ? `${timestamp} ${line}` : line;
         }).filter(Boolean).join('\n');
       } else {
-        const raw = parsed[code];
-        value = Array.isArray(raw) ? raw.map(String).join('\n') : String(raw ?? '').trim();
+        const raw = translationValueForLanguage(parsed, code);
+        value = normalizeTimestampTranslationValue(src, raw, code);
       }
-      const normalized = normalizeCompleteTimestampTranslation(src, value, code) || value;
+      const normalized = normalizeTimestampTranslationValue(src, value, code);
       if (!invalid(normalized, code)) translations[code] = normalized;
     }
     return translations;
@@ -3447,7 +3528,7 @@ ${sourceCues.map((cue, index) => `${index + 1}. ${cue.text}`).join('\n')}`;
     const value = Array.isArray(lines) && lines.length === sourceCues.length
       ? sourceCues.map((cue, index) => `${cue.timestamp} ${String(lines[index] || '').trim()}`).join('\n')
       : out.trim();
-    const normalized = normalizeCompleteTimestampTranslation(src, value, code) || value;
+    const normalized = normalizeTimestampTranslationValue(src, value, code);
     return invalid(normalized, code) ? '' : normalized;
   };
 
@@ -4314,7 +4395,7 @@ studioRouter.get('/materials', async (req, res) => {
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
   let list = [
-    ...await listCloudMaterials(),
+    ...await listCloudMaterials(tenantId),
     ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
   ] as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
@@ -4331,14 +4412,16 @@ studioRouter.get('/materials', async (req, res) => {
 });
 
 studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const field = req.params.kind === 'poster' ? 'posterFile' : req.params.kind === 'media' ? 'videoFile' : null;
   if (!field) { res.status(404).end(); return; }
-  let upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range);
+  if (!await getCloudMaterialRecord(req.params.id, tenantId)) { res.status(404).end(); return; }
+  let upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range, tenantId);
   if (!upstream && field === 'posterFile') {
     const cacheDir = path.join(MEDIA_DIR, 'cloud-poster-cache');
     const cachePath = path.join(cacheDir, `${req.params.id}.jpg`);
     if (!fs.existsSync(cachePath)) {
-      const video = await fetchCloudMaterial(req.params.id, 'videoFile');
+      const video = await fetchCloudMaterial(req.params.id, 'videoFile', undefined, tenantId);
       if (video?.ok) {
         fs.mkdirSync(cacheDir, { recursive: true });
         const tempPath = path.join(cacheDir, `${req.params.id}.${Date.now()}.mp4`);
@@ -4362,7 +4445,8 @@ studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
     const value = upstream.headers.get(header);
     if (value) res.setHeader(header, value);
   }
-  res.setHeader('Cache-Control', field === 'posterFile' ? 'public, max-age=86400' : 'private, max-age=3600');
+  res.setHeader('Cache-Control', field === 'posterFile' ? 'private, max-age=86400' : 'private, max-age=3600');
+  res.setHeader('Vary', 'Cookie, Authorization');
   res.status(upstream.status);
   Readable.fromWeb(upstream.body as any).pipe(res);
 });
@@ -4516,7 +4600,7 @@ async function analyzeMaterialVideo(videoPath: string, buffer: Buffer, duration:
  * 分析 → 片段和状态写回同一条记录，让云端素材也能进入分镜匹配池。
  */
 async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Promise<{ status: number; body: Record<string, unknown> }> {
-  const record = await getCloudMaterialRecord(pbId);
+  const record = await getOwnedCloudMaterialRecord(pbId, tenantId);
   if (!record) return { status: 404, body: { ok: false, error: 'Material not found' } };
   if (String(record.type || 'video') !== 'video') {
     return { status: 400, body: { ok: false, error: '仅视频素材支持片段分析' } };
@@ -4527,7 +4611,7 @@ async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Pro
   const tempPath = path.join(tempDir, `material-${pbId}.mp4`);
   try {
     fs.mkdirSync(tempDir, { recursive: true });
-    const media = await fetchCloudMaterial(pbId, 'videoFile');
+    const media = await fetchCloudMaterial(pbId, 'videoFile', undefined, tenantId);
     if (!media?.ok) throw new Error('云端素材文件不可读');
     const buffer = Buffer.from(await media.arrayBuffer());
     if (!buffer.length) throw new Error('云端素材文件为空');
@@ -4702,7 +4786,7 @@ studioRouter.patch('/materials/:id/pin', async (req, res) => {
   // 云端素材同样不在 data/materials.json 里，直接写回 PocketBase。
   if (req.params.id.startsWith('pb-')) {
     const pbId = req.params.id.slice(3);
-    if (!await getCloudMaterialRecord(pbId)) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
+    if (!await getOwnedCloudMaterialRecord(pbId, tenantId)) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
     const saved = await updateCloudMaterial(pbId, { pinned });
     if (!saved) { res.status(500).json({ ok: false, error: '置顶写回云端失败' }); return; }
     res.json({ ok: true, material: { id: req.params.id, pinned } });
@@ -5654,6 +5738,20 @@ function wavDurationFromBytes(bytes: Buffer): number {
   return Math.max(0, (bytes.length - dataStart) / byteRate);
 }
 
+function friendlyTtsProviderError(value: unknown, provider = '语音服务'): string {
+  const message = String(value instanceof Error ? value.message : value || '').trim();
+  if (/arrears|recharge|past due|overdue|欠费|充值/i.test(message)) {
+    return `${provider}账户欠费，暂时无法生成口播。请为该 API Key 所属账户充值，或改用“上传口播”。`;
+  }
+  if (/quota|insufficient|balance|credit|resource_exhausted|额度|余额/i.test(message)) {
+    return `${provider}额度或余额不足，暂时无法生成口播。请补充额度，或改用“上传口播”。`;
+  }
+  if (/401|403|unauthorized|forbidden|api.?key|permission|鉴权|权限/i.test(message)) {
+    return `${provider}鉴权失败。请检查 API Key 与模型调用权限，或改用“上传口播”。`;
+  }
+  return message || `${provider}暂时不可用，请稍后重试或改用“上传口播”。`;
+}
+
 async function generateQwenTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
   const apiKey = String(process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) return null;
@@ -5674,18 +5772,46 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   });
   const json = await response.json().catch(() => ({} as any)) as any;
   if (!response.ok || json?.code) {
-    throw new Error(`Qwen TTS ${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`);
+    throw new Error(friendlyTtsProviderError(`${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`, 'DashScope 语音服务'));
   }
   const remoteUrl = String(json?.output?.audio?.url || '').trim();
   if (!/^https?:\/\//i.test(remoteUrl)) throw new Error('Qwen TTS did not return an audio URL');
   const audioResponse = await fetch(remoteUrl, { signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_DOWNLOAD_TIMEOUT_MS || 60_000)) });
   if (!audioResponse.ok) throw new Error(`Qwen TTS audio download HTTP ${audioResponse.status}`);
   const bytes = Buffer.from(await audioResponse.arrayBuffer());
-  const measuredDuration = wavDurationFromBytes(bytes);
-  if (bytes.length < 1000 || measuredDuration < 0.5) throw new Error('Qwen TTS returned invalid or empty WAV audio');
+  if (bytes.length < 1000) throw new Error('Qwen TTS returned empty audio');
   try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
-  const file = `${randomUUID()}.wav`;
-  fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), bytes);
+  const base = randomUUID();
+  const file = `${base}.wav`;
+  const wavPath = path.join(scopedStudioAssetDir(TTS_ROOT), file);
+  let measuredDuration = wavDurationFromBytes(bytes);
+  if (measuredDuration >= 0.5) {
+    fs.writeFileSync(wavPath, bytes);
+  } else {
+    const contentType = String(audioResponse.headers.get('content-type') || '').toLowerCase();
+    let sourceExt = '.bin';
+    if (/mpeg|mp3/.test(contentType)) sourceExt = '.mp3';
+    else if (/mp4|m4a/.test(contentType)) sourceExt = '.m4a';
+    else if (/ogg/.test(contentType)) sourceExt = '.ogg';
+    else if (/aac/.test(contentType)) sourceExt = '.aac';
+    else if (/webm/.test(contentType)) sourceExt = '.webm';
+    else {
+      try {
+        const remoteExt = path.extname(new URL(remoteUrl).pathname).toLowerCase();
+        if (/^\.(mp3|m4a|mp4|ogg|aac|webm|wav)$/.test(remoteExt)) sourceExt = remoteExt;
+      } catch { /* keep generic extension; ffmpeg probes the byte stream */ }
+    }
+    const sourcePath = path.join(scopedStudioAssetDir(TTS_ROOT), `${base}${sourceExt}`);
+    fs.writeFileSync(sourcePath, bytes);
+    const converted = await runFfmpeg(['-i', sourcePath, '-ar', '24000', '-ac', '1', '-y', wavPath]);
+    try { fs.unlinkSync(sourcePath); } catch { /* ignore */ }
+    if (!converted || !fs.existsSync(wavPath)) throw new Error('Qwen TTS returned an unsupported audio format');
+    measuredDuration = wavDurationFromBytes(fs.readFileSync(wavPath));
+  }
+  if (measuredDuration < 0.5) {
+    try { fs.unlinkSync(wavPath); } catch { /* ignore */ }
+    throw new Error('Qwen TTS returned invalid audio');
+  }
   return {
     url: scopedStudioAssetUrl('tts', file),
     duration: Math.max(1, Number(measuredDuration.toFixed(3))),
@@ -5739,7 +5865,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
     const qwen = await generateQwenTts(spoken, voice, language);
     if (qwen) return { ok: true, ...qwen };
   } catch (e: any) {
-    aiError = `Qwen: ${String(e?.message ?? e).slice(0, 200)}`;
+    aiError = friendlyTtsProviderError(e, 'DashScope 语音服务').slice(0, 240);
   }
 
   try {
@@ -5747,7 +5873,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
     const minimax = await generateMinimaxTts(spoken, minimaxVoiceId, language, style);
     if (minimax) return { ok: true, ...minimax };
   } catch (e: any) {
-    aiError = [aiError, `MiniMax: ${String(e?.message ?? e).slice(0, 200)}`].filter(Boolean).join('；');
+    aiError = [aiError, friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240)].filter(Boolean).join('；');
   }
 
   const piper = await generatePiperTts(spoken, language);

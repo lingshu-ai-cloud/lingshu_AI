@@ -40,6 +40,7 @@ cloudMaterialMediaRouter.use(async (req, res, next) => {
 cloudMaterialMediaRouter.use(entitlementGate());
 
 cloudMaterialMediaRouter.get(['/:id/:kind', '/:id/signed/:assetToken/:kind'], async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const field = req.params.kind === 'poster.jpg'
     ? 'posterFile'
     : req.params.kind === 'media.mp4'
@@ -50,7 +51,7 @@ cloudMaterialMediaRouter.get(['/:id/:kind', '/:id/signed/:assetToken/:kind'], as
     return;
   }
 
-  const upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range);
+  const upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range, tenantId);
   if (!upstream || !upstream.body) {
     res.status(404).end();
     return;
