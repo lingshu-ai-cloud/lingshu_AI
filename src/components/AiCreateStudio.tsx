@@ -6630,7 +6630,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           }) : '';
           const resolution = resolveShotDigitalHumanResult({
             binding, currentSignature, jobStatus: job.status, outputMaterialId: job.outputMaterialId,
-            error: job.status === 'review' ? (job.qualityReport?.gateFailures?.join('；') || '质量检测未通过') : job.errorMessage,
+            error: job.errorMessage,
           });
           if (resolution.assignmentMaterialId) {
             setMaterials(current => mergeClipLists(current, [result.outputMaterial as Clip]));
