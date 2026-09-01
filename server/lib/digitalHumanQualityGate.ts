@@ -9,9 +9,13 @@ export interface DigitalHumanGateInput {
   mouthJumpP95?: number;
 }
 
-export function commercialDigitalHumanGate(input: DigitalHumanGateInput, mode: DigitalHumanMode) {
+export function commercialDigitalHumanGate(input: DigitalHumanGateInput, mode: DigitalHumanMode, provider = '') {
   const failures: string[] = [];
-  const minimumSync = mode === 'quality' ? 7 : 4;
+  // Raw SyncNet confidence distributions differ materially by model family.
+  // MuseTalk's official/validated gate uses 3.0; we require 4.0 in quality
+  // mode and retain the stricter 7.0 bar for LatentSync-class providers.
+  const museTalk = /musetalk/i.test(provider);
+  const minimumSync = museTalk ? (mode === 'quality' ? 4 : 3) : (mode === 'quality' ? 7 : 4);
   const maximumOffset = mode === 'quality' ? 1 : 2;
 
   if (input.passed !== true) failures.push('推理服务未确认质量通过');

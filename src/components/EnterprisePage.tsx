@@ -1,7 +1,8 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, Copy, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, Copy, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, Users, Star, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { studioApi, type Material } from '../lib/studioApi';
 import { completeDemoStep } from '../lib/demoProgress';
 import {
   heuristicProductMapping,
@@ -204,14 +205,14 @@ const COMMUNICATION_STYLE_OPTIONS = ['专业', '轻松', '亲切', '正式'];
 const PAGE_SIZE = 5;
 const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
 
-type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'socialStrategy' | 'materials' | 'salesStyle' | 'advanced';
+type KnowledgeView = 'products' | 'people' | 'bizRules' | 'faq' | 'company' | 'socialStrategy' | 'materials' | 'salesStyle' | 'advanced';
 type EnterpriseArea = 'facts' | 'social' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
     const value = localStorage.getItem('lingshu:enterprise:initial-view') as KnowledgeView | null;
     if (value === 'materials') return 'products';
-    if (value && ['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'materials', 'salesStyle', 'advanced'].includes(value)) return value;
+    if (value && ['products', 'people', 'bizRules', 'faq', 'company', 'socialStrategy', 'materials', 'salesStyle', 'advanced'].includes(value)) return value;
   } catch { /* ignore */ }
   return 'company';
 }
@@ -219,6 +220,7 @@ function advisorInitialEnterpriseView(): KnowledgeView {
 const FACT_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
   { id: 'company', label: '公司与市场', hint: '你是谁' },
   { id: 'products', label: '产品资料', hint: '你卖什么' },
+  { id: 'people', label: '人物资产', hint: '数字人 IP' },
 ];
 
 const SERVICE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
@@ -238,6 +240,7 @@ const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
   company: Globe2,
   socialStrategy: Megaphone,
   products: Package,
+  people: Users,
   materials: Image,
   bizRules: ShieldCheck,
   faq: BookOpen,
@@ -683,6 +686,11 @@ export default function EnterprisePage() {
   const [autonomyHighlight, setAutonomyHighlight] = useState(false);
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState('');
+  const [personAssets, setPersonAssets] = useState<Material[]>([]);
+  const [preferredPersonAssetId, setPreferredPersonAssetId] = useState('');
+  const [personAssetsLoading, setPersonAssetsLoading] = useState(true);
+  const [personAssetsUploading, setPersonAssetsUploading] = useState(false);
+  const [personAssetsMessage, setPersonAssetsMessage] = useState('');
   const [faqPreview, setFaqPreview] = useState<FaqItem[]>([]);
   const [faqStructuring, setFaqStructuring] = useState(false);
   const [faqPacks, setFaqPacks] = useState<FaqPack[]>([]);
@@ -708,6 +716,17 @@ export default function EnterprisePage() {
   const persistedProfileRef = useRef('');
   const productStatusAbortRef = useRef<AbortController | null>(null);
   const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== profileSnapshot(profile);
+
+  const reloadPersonAssets = async () => {
+    setPersonAssetsLoading(true);
+    const result = await studioApi.listDigitalHumanAvatars();
+    setPersonAssets(result.items);
+    setPreferredPersonAssetId(result.preferredAvatarMaterialId);
+    setPersonAssetsLoading(false);
+    return result;
+  };
+
+  useEffect(() => { void reloadPersonAssets(); }, []);
 
   useEffect(() => {
     if (window.sessionStorage.getItem('lingshu:enterprise-focus') !== 'language-settings') return;
@@ -1464,6 +1483,42 @@ export default function EnterprisePage() {
     });
   };
 
+  const uploadPersonAssets = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const videos = Array.from(files).filter(file => file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name));
+    if (!videos.length) { setPersonAssetsMessage('请选择 MP4、MOV 或 WebM 视频。'); return; }
+    setPersonAssetsUploading(true);
+    setPersonAssetsMessage('');
+    let uploaded = 0;
+    try {
+      for (const file of videos) {
+        const dataBase64 = (await fileToDataUrl(file)).replace(/^data:[^,]+,/, '');
+        const result = await studioApi.uploadMaterial({ name: file.name, folder: 'presenter', type: 'video', dataBase64, mimeType: file.type || 'video/mp4', sourceType: 'digital-human-avatar' });
+        if (result.ok && result.material) uploaded += 1;
+      }
+      const refreshed = await reloadPersonAssets();
+      if (!preferredPersonAssetId && refreshed.items[0]) {
+        await studioApi.setPreferredDigitalHumanAvatar(refreshed.items[0].id);
+        setPreferredPersonAssetId(refreshed.items[0].id);
+      }
+      setPersonAssetsMessage(uploaded === videos.length ? `已上传 ${uploaded} 个人物资产` : `成功上传 ${uploaded}/${videos.length} 个视频`);
+    } finally {
+      setPersonAssetsUploading(false);
+    }
+  };
+
+  const selectPreferredPersonAsset = async (id: string) => {
+    const previous = preferredPersonAssetId;
+    setPreferredPersonAssetId(id);
+    const result = await studioApi.setPreferredDigitalHumanAvatar(id);
+    if (!result.ok) {
+      setPreferredPersonAssetId(previous);
+      setPersonAssetsMessage(result.error || '首选人物保存失败');
+      return;
+    }
+    setPersonAssetsMessage('首选人物已更新，新数字人口播将默认使用该人物');
+  };
+
   const removeProductAsset = (index: number, key: ProductAssetKey, assetIndex: number) => {
     setProfile(prev => {
       const items = normalizeProductItems(prev.products);
@@ -1832,7 +1887,7 @@ export default function EnterprisePage() {
         <div className="mx-auto max-w-5xl space-y-5 px-6 py-5">
           {enterpriseArea !== 'social' && (
             <div className="overflow-x-auto pb-0.5">
-              <div className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm ${enterpriseArea === 'facts' ? 'min-w-[360px] grid-cols-2' : 'min-w-[680px] grid-cols-4'}`}>
+              <div className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm ${enterpriseArea === 'facts' ? 'min-w-[520px] grid-cols-3' : 'min-w-[680px] grid-cols-4'}`}>
                 {(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
                   const active = knowledgeView === item.id;
                   const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
@@ -1869,6 +1924,59 @@ export default function EnterprisePage() {
 
           {knowledgeView === 'company' && <>{marketSection}{companySection}</>}
           {knowledgeView === 'socialStrategy' && socialStrategySection}
+
+          {knowledgeView === 'people' && (
+            <KnowledgeCard
+              icon={Users}
+              title="人物资产"
+              purpose="统一管理数字人口播使用的人物 IP；首选人物会自动应用到新的数字人分镜"
+              completed={personAssets.length > 0}
+              stat={`${personAssets.length} 个人物 · ${preferredPersonAssetId ? '已设首选' : '未设首选'}`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
+                <div>
+                  <p className="text-sm font-black text-text-primary">上传已授权的人物视频</p>
+                  <p className="mt-1 text-xs font-semibold text-text-muted">支持一次选择多个 MP4、MOV 或 WebM；单个文件不超过 110MB。</p>
+                </div>
+                <label className={`inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white ${personAssetsUploading ? 'cursor-wait opacity-60' : 'cursor-pointer hover:bg-emerald-700'}`}>
+                  {personAssetsUploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+                  {personAssetsUploading ? '正在上传' : '批量上传人物视频'}
+                  <input type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple disabled={personAssetsUploading} className="hidden" onChange={event => { void uploadPersonAssets(event.currentTarget.files); event.currentTarget.value = ''; }} />
+                </label>
+              </div>
+              {personAssetsMessage && <p className="mt-3 text-xs font-bold text-emerald-700">{personAssetsMessage}</p>}
+              {personAssetsLoading ? (
+                <div className="flex h-36 items-center justify-center text-sm font-bold text-text-muted"><Loader2 size={18} className="mr-2 animate-spin" />正在加载人物资产</div>
+              ) : personAssets.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-border px-4 py-10 text-center">
+                  <Users size={28} className="mx-auto text-text-muted" />
+                  <p className="mt-3 text-sm font-black text-text-primary">还没有人物资产</p>
+                  <p className="mt-1 text-xs text-text-muted">上传第一条人物视频后，系统会自动将它设为首选人物。</p>
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {personAssets.map(asset => {
+                    const preferred = asset.id === preferredPersonAssetId;
+                    return (
+                      <article key={asset.id} className={`overflow-hidden rounded-xl border bg-white ${preferred ? 'border-emerald-400 ring-2 ring-emerald-100' : 'border-border'}`}>
+                        <div className="relative aspect-[9/12] bg-slate-950">
+                          <video src={asset.url} poster={asset.poster} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                          {preferred && <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-1 text-[11px] font-black text-white"><Star size={11} fill="currentColor" />首选人物</span>}
+                        </div>
+                        <div className="p-3">
+                          <p className="truncate text-sm font-black text-text-primary" title={asset.name}>{asset.name}</p>
+                          <p className="mt-1 text-[11px] font-semibold text-text-muted">{asset.duration ? `${asset.duration.toFixed(1)} 秒 · ` : ''}{asset.size}</p>
+                          <button type="button" disabled={preferred} onClick={() => { void selectPreferredPersonAsset(asset.id); }} className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-black ${preferred ? 'cursor-default bg-emerald-50 text-emerald-700' : 'border border-border bg-white text-text-secondary hover:border-emerald-300 hover:text-emerald-700'}`}>
+                            {preferred ? '当前首选' : '设为首选人物'}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </KnowledgeCard>
+          )}
 
           {knowledgeView === 'products' && (
           <KnowledgeCard

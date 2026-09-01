@@ -1735,6 +1735,81 @@ function safeMaterialScenes(infos: ScriptMaterialInfo[]): LockedStoryboardScene[
 }
 
 export const studioRouter = Router();
+function requireDigitalHumanWorker(req: Request, res: Response, next: () => void): void {
+  const expected = String(process.env.DIGITAL_HUMAN_WORKER_KEY || process.env.DIGITAL_HUMAN_API_KEY || '').trim();
+  if (!expected || req.headers.authorization !== `Bearer ${expected}`) {
+    res.status(401).json({ ok: false, error: 'worker unauthorized' });
+    return;
+  }
+  next();
+}
+
+// Pull-worker endpoints intentionally sit before user authentication. A local
+// GPU node authenticates with a dedicated key and only sees the one job it
+// leases; browser/customer credentials are never copied to the worker.
+studioRouter.get('/digital-human/worker/claim', requireDigitalHumanWorker, async (req, res) => {
+  if (!digitalHumanConfig().pullWorkerEnabled) { res.status(404).json({ ok: false, error: 'pull worker disabled' }); return; }
+  const workerId = String(req.query.workerId || '').trim().slice(0, 160);
+  if (!workerId) { res.status(400).json({ ok: false, error: 'workerId required' }); return; }
+  const now = Date.now();
+  const candidate = loadDigitalHumanJobs()
+    .filter(job => job.status === 'queued' || (job.status === 'submitting' && Date.parse(String(job.workerLeaseUntil || '')) < now))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  if (!candidate) { res.status(204).end(); return; }
+  const material = loadMaterials().find(item => item.id === candidate.avatarMaterialId && isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || item.tenantId === candidate.tenantId));
+  if (!material) {
+    updateDigitalHumanJob(candidate.id, { status: 'failed', stage: 'input_validation', errorCode: 'AVATAR_NOT_FOUND', errorMessage: '人物资产不存在或无权使用。' });
+    res.status(204).end(); return;
+  }
+  const avatar = await materialResponse(material, candidate.tenantId);
+  const leased = updateDigitalHumanJob(candidate.id, {
+    status: 'submitting', stage: 'worker_claimed', progress: Math.max(1, candidate.progress),
+    workerId, workerLeaseUntil: new Date(now + 5 * 60_000).toISOString(), providerTaskId: `pull:${workerId}`,
+  });
+  res.json({
+    ok: true,
+    job: {
+      id: leased.id, provider: leased.provider, mode: leased.mode, script: leased.scriptSnapshot, language: leased.language,
+      avatarVideoUrl: publicDigitalHumanAssetUrl(req, String(avatar.url || '')),
+      audioUrl: publicDigitalHumanAssetUrl(req, leased.voiceoverUrl),
+      ...(leased.storyboardSlotId ? { storyboardSlotId: leased.storyboardSlotId, audioSegment: { startSeconds: leased.audioStartSeconds, endSeconds: leased.audioEndSeconds }, inputSignature: leased.inputSignature } : {}),
+      output: { ratio: '9:16', container: 'mp4' },
+    },
+  });
+});
+
+studioRouter.post('/digital-human/worker/jobs/:id/progress', requireDigitalHumanWorker, (req, res) => {
+  const workerId = String(req.body?.workerId || '').trim();
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.workerId === workerId);
+  if (!job || !['submitting', 'processing', 'quality_check'].includes(job.status)) { res.status(404).json({ ok: false, error: 'leased job not found' }); return; }
+  const providerStatus = String(req.body?.status || 'processing');
+  const status: DigitalHumanJobStatus = providerStatus === 'quality_check' ? 'quality_check' : 'processing';
+  const updated = updateDigitalHumanJob(job.id, {
+    status, stage: String(req.body?.stage || 'inference').slice(0, 120),
+    progress: Math.max(job.progress, Math.min(95, Number(req.body?.progress) || job.progress)),
+    workerLeaseUntil: new Date(Date.now() + 5 * 60_000).toISOString(),
+  });
+  res.json({ ok: true, job: publicDigitalHumanJob(updated) });
+});
+
+studioRouter.post('/digital-human/worker/jobs/:id/result', requireDigitalHumanWorker, async (req, res) => {
+  const workerId = String(req.body?.workerId || '').trim();
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.workerId === workerId);
+  if (!job || !['submitting', 'processing', 'quality_check'].includes(job.status)) { res.status(404).json({ ok: false, error: 'leased job not found' }); return; }
+  if (req.body?.status === 'failed') {
+    const failed = updateDigitalHumanJob(job.id, { status: 'failed', stage: 'worker', errorCode: String(req.body?.errorCode || 'WORKER_FAILED'), errorMessage: String(req.body?.error || '本地 GPU 生成失败').slice(0, 2000), workerLeaseUntil: undefined });
+    res.json({ ok: true, job: publicDigitalHumanJob(failed) }); return;
+  }
+  try {
+    const bytes = Buffer.from(String(req.body?.dataBase64 || ''), 'base64');
+    const completed = await finalizeDigitalHumanBytes(job, bytes, req.body?.quality as DigitalHumanQualityReport);
+    res.json({ ok: true, job: publicDigitalHumanJob(completed) });
+  } catch (error) {
+    const failed = updateDigitalHumanJob(job.id, { status: 'failed', stage: 'result_upload', errorCode: 'RESULT_REJECTED', errorMessage: error instanceof Error ? error.message : String(error), workerLeaseUntil: undefined });
+    res.status(422).json({ ok: false, job: publicDigitalHumanJob(failed), error: failed.errorMessage });
+  }
+});
+
 studioRouter.use(requireAuth);
 studioRouter.use((_req, res, next) => {
   studioTenantContext.run((res.locals as AuthLocals).tenantId, next);
@@ -3815,6 +3890,24 @@ studioRouter.post('/render/open-output', async (req, res) => {
 const MEDIA_DIR = path.join(__dirname, '../../data/media');
 const MATERIALS_FILE = path.join(__dirname, '../../data/materials.json');
 const VIDEO_VERSIONS_FILE = path.join(__dirname, '../../data/studio-video-versions.json');
+const DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE = path.join(__dirname, '../../data/digital-human-avatar-preferences.json');
+
+interface DigitalHumanAvatarPreference {
+  preferredAvatarMaterialId: string;
+  updatedAt: string;
+}
+
+function loadDigitalHumanAvatarPreferences(): Record<string, DigitalHumanAvatarPreference> {
+  try { return JSON.parse(fs.readFileSync(DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE, 'utf8')) as Record<string, DigitalHumanAvatarPreference>; }
+  catch { return {}; }
+}
+
+function persistDigitalHumanAvatarPreferences(value: Record<string, DigitalHumanAvatarPreference>): void {
+  fs.mkdirSync(path.dirname(DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE), { recursive: true });
+  const temp = `${DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(value, null, 2), 'utf8');
+  fs.renameSync(temp, DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE);
+}
 
 interface VideoGenerationVersion {
   id: string;
@@ -3888,6 +3981,8 @@ interface Material {
   usage?: MaterialUsage;   // editable=可剪辑；reference_only=仅供对标分析，禁止进入公共下载库
   sourceType?: string;
   sourceUrl?: string;
+  assetRole?: 'avatar_master' | 'generated_clip';
+  rightsStatus?: 'internal_test' | 'commercial_cleared';
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
@@ -3897,6 +3992,13 @@ interface Material {
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
   createdAt: string;
+}
+
+function isDigitalHumanAvatarMaster(item: Material): boolean {
+  return item.folder === 'presenter' && item.type === 'video'
+    && item.assetRole !== 'generated_clip'
+    && item.sourceType !== 'digital-human'
+    && item.sourceType !== 'codex-thread-generated';
 }
 
 interface MaterialSegment {
@@ -3988,6 +4090,8 @@ interface DigitalHumanJob {
   commercialRightsStatus: 'cleared';
   provider: string;
   providerTaskId?: string;
+  workerId?: string;
+  workerLeaseUntil?: string;
   status: DigitalHumanJobStatus;
   stage: string;
   progress: number;
@@ -4034,7 +4138,8 @@ function digitalHumanConfig() {
   const apiKey = String(process.env.DIGITAL_HUMAN_API_KEY || '').trim();
   const provider = String(process.env.DIGITAL_HUMAN_PROVIDER || 'latentsync').trim() || 'latentsync';
   const timeoutMs = Math.max(10_000, Number(process.env.DIGITAL_HUMAN_API_TIMEOUT_MS || 30_000));
-  return { baseUrl, apiKey, provider, timeoutMs };
+  const pullWorkerEnabled = process.env.DIGITAL_HUMAN_PULL_WORKER_ENABLED === 'true';
+  return { baseUrl, apiKey, provider, timeoutMs, pullWorkerEnabled };
 }
 
 function digitalHumanProviderHeaders(): Record<string, string> {
@@ -4075,8 +4180,24 @@ function appAssetUrl(req: Request, value: string): string {
   return `${base}${value.startsWith('/') ? value : `/${value}`}`;
 }
 
+function publicDigitalHumanAssetUrl(req: Request, value: string): string {
+  if (/^https?:\/\//i.test(value)) return value;
+  const configured = String(process.env.DIGITAL_HUMAN_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  return `${configured || `${req.protocol}://${req.get('host')}`}${value.startsWith('/') ? value : `/${value}`}`;
+}
+
 async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: string, providerQuality: DigitalHumanQualityReport): Promise<DigitalHumanJob> {
-  const commercialGate = commercialDigitalHumanGate(providerQuality || {}, job.mode);
+  const response = await digitalHumanFetch(outputUrl, { headers: digitalHumanProviderHeaders() });
+  if (!response.ok) throw new Error(`数字人成片下载失败（${response.status}）`);
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType && !contentType.startsWith('video/') && contentType !== 'application/octet-stream') throw new Error('数字人服务返回的不是视频');
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片超过 110MB 限制');
+  return finalizeDigitalHumanBytes(job, Buffer.from(await response.arrayBuffer()), providerQuality);
+}
+
+async function finalizeDigitalHumanBytes(job: DigitalHumanJob, bytes: Buffer, providerQuality: DigitalHumanQualityReport): Promise<DigitalHumanJob> {
+  const commercialGate = commercialDigitalHumanGate(providerQuality || {}, job.mode, job.provider);
   if (!providerQuality || !commercialGate.passed) {
     return updateDigitalHumanJob(job.id, {
       status: 'review', stage: 'quality_review', progress: 100,
@@ -4089,13 +4210,6 @@ async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: strin
       },
     });
   }
-  const response = await digitalHumanFetch(outputUrl, { headers: digitalHumanProviderHeaders() });
-  if (!response.ok) throw new Error(`数字人成片下载失败（${response.status}）`);
-  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-  if (contentType && !contentType.startsWith('video/') && contentType !== 'application/octet-stream') throw new Error('数字人服务返回的不是视频');
-  const declaredSize = Number(response.headers.get('content-length') || 0);
-  if (declaredSize > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片超过 110MB 限制');
-  const bytes = Buffer.from(await response.arrayBuffer());
   if (!bytes.length || bytes.length > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片大小无效');
 
   const outputDir = tenantAssetDir(MEDIA_DIR, job.tenantId);
@@ -4115,7 +4229,7 @@ async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: strin
   return updateDigitalHumanJob(job.id, {
     status: 'completed', stage: 'completed', progress: 100,
     outputMaterialId: material.id, outputUrl: material.url || undefined,
-    qualityReport: { ...providerQuality, passed: true, gateVersion: 'commercial-v1', gateFailures: [] }, completedAt: new Date().toISOString(),
+    qualityReport: { ...providerQuality, passed: true, gateVersion: 'commercial-v1', gateFailures: [] }, completedAt: new Date().toISOString(), workerLeaseUntil: undefined,
   });
 }
 
@@ -4126,13 +4240,14 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
     let job = loadDigitalHumanJobs().find(item => item.id === jobId);
     if (!job) throw new Error('digital human job not found');
     if (['completed', 'review', 'failed', 'cancelled'].includes(job.status)) return job;
-    const { baseUrl, provider } = digitalHumanConfig();
+    const { baseUrl, provider, pullWorkerEnabled } = digitalHumanConfig();
+    if (pullWorkerEnabled) return job;
     if (!baseUrl) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'configuration', errorCode: 'PROVIDER_NOT_CONFIGURED', errorMessage: '数字人推理服务尚未配置。' });
 
     if (!job.providerTaskId) {
       if (!req) return job;
-      const material = loadMaterials().find(item => item.id === job!.avatarMaterialId && item.tenantId === job!.tenantId && item.scope === 'own');
-      if (!material) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'input_validation', errorCode: 'AVATAR_NOT_FOUND', errorMessage: '人物素材不存在或不属于当前企业。' });
+      const material = loadMaterials().find(item => item.id === job!.avatarMaterialId && isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || (item.scope === 'own' && item.tenantId === job!.tenantId)));
+      if (!material) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'input_validation', errorCode: 'AVATAR_NOT_FOUND', errorMessage: '人物 IP 不存在、未启用或当前企业无权使用。' });
       const avatar = await materialResponse(material, job.tenantId);
       const response = await digitalHumanFetch(`${baseUrl}/v1/jobs`, {
         method: 'POST', headers: digitalHumanProviderHeaders(), body: JSON.stringify({
@@ -4179,7 +4294,7 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
 // are submitted synchronously by their POST request; only already-submitted jobs
 // are safe to recover here because their signed inputs are no longer needed.
 const digitalHumanRecoveryTimer = setInterval(() => {
-  if (!digitalHumanConfig().baseUrl) return;
+  if (!digitalHumanConfig().baseUrl || digitalHumanConfig().pullWorkerEnabled) return;
   for (const job of loadDigitalHumanJobs().filter(item => item.providerTaskId && ['processing', 'quality_check'].includes(item.status)).slice(0, 20)) {
     void refreshDigitalHumanJob(job.id);
   }
@@ -4196,7 +4311,7 @@ function validDigitalHumanVoiceoverUrl(value: unknown): string {
 function digitalHumanCapabilities() {
   const config = digitalHumanConfig();
   return {
-    available: Boolean(config.baseUrl),
+    available: Boolean(config.baseUrl || config.pullWorkerEnabled),
     provider: config.provider,
     modes: [
       { id: 'fast', label: '极速模式' },
@@ -4205,7 +4320,7 @@ function digitalHumanCapabilities() {
     output: { ratio: '9:16', container: 'mp4' },
     qualityGateRequired: true,
     maxConcurrentJobs: 2,
-    unavailableReason: config.baseUrl ? undefined : '数字人 GPU 推理服务尚未配置',
+    unavailableReason: (config.baseUrl || config.pullWorkerEnabled) ? undefined : '数字人 GPU 推理服务尚未配置',
   };
 }
 
@@ -4229,8 +4344,8 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
   const capabilities = digitalHumanCapabilities();
   if (!capabilities.available) { res.status(503).json({ ok: false, error: capabilities.unavailableReason, code: 'PROVIDER_NOT_CONFIGURED' }); return; }
   const avatarMaterialId = String(req.body?.avatarMaterialId || '').trim();
-  const avatar = loadMaterials().find(item => item.id === avatarMaterialId && item.tenantId === tenantId && item.scope === 'own' && item.type === 'video');
-  if (!avatar) { res.status(400).json({ ok: false, error: '请选择当前企业拥有的人物视频素材', code: 'INVALID_AVATAR' }); return; }
+  const avatar = loadMaterials().find(item => item.id === avatarMaterialId && isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || (item.scope === 'own' && item.tenantId === tenantId)));
+  if (!avatar) { res.status(400).json({ ok: false, error: '请选择人物资产库中当前企业可用的人物 IP', code: 'INVALID_AVATAR' }); return; }
   const voiceoverUrl = validDigitalHumanVoiceoverUrl(req.body?.voiceoverUrl);
   if (!voiceoverUrl) { res.status(400).json({ ok: false, error: '请先生成或上传有效的口播音频', code: 'INVALID_VOICEOVER' }); return; }
   const scriptSnapshot = String(req.body?.script || '').trim();
@@ -4261,7 +4376,7 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
     createdAt: now, updatedAt: now,
   };
   const jobs = loadDigitalHumanJobs(); jobs.push(job); persistDigitalHumanJobs(jobs);
-  void refreshDigitalHumanJob(job.id, req);
+  if (!digitalHumanConfig().pullWorkerEnabled) void refreshDigitalHumanJob(job.id, req);
   res.status(202).json({ ok: true, job: publicDigitalHumanJob(job) });
 });
 
@@ -4269,7 +4384,7 @@ studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   let job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
-  if (['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
+  if (!digitalHumanConfig().pullWorkerEnabled && ['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
   const outputMaterial = job.outputMaterialId ? loadMaterials().find(item => item.id === job!.outputMaterialId && item.tenantId === tenantId) : undefined;
   res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
 });
@@ -4290,7 +4405,7 @@ studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
     versionNumber: source.versionNumber + 1, createdAt: now, updatedAt: now,
   };
   const jobs = loadDigitalHumanJobs(); jobs.push(retry); persistDigitalHumanJobs(jobs);
-  void refreshDigitalHumanJob(retry.id, req);
+  if (!digitalHumanConfig().pullWorkerEnabled) void refreshDigitalHumanJob(retry.id, req);
   res.status(202).json({ ok: true, job: publicDigitalHumanJob(retry) });
 });
 
@@ -4299,7 +4414,7 @@ studioRouter.post('/digital-human/jobs/:id/cancel', async (req, res) => {
   const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
   if (['completed', 'failed', 'review', 'cancelled'].includes(job.status)) { res.status(409).json({ ok: false, error: '该任务当前不可取消' }); return; }
-  if (job.providerTaskId && digitalHumanConfig().baseUrl) {
+  if (!digitalHumanConfig().pullWorkerEnabled && job.providerTaskId && digitalHumanConfig().baseUrl) {
     void digitalHumanFetch(`${digitalHumanConfig().baseUrl}/v1/jobs/${encodeURIComponent(job.providerTaskId)}/cancel`, { method: 'POST', headers: digitalHumanProviderHeaders() }).catch(() => undefined);
   }
   const cancelled = updateDigitalHumanJob(job.id, { status: 'cancelled', stage: 'cancelled', errorCode: undefined, errorMessage: undefined });
@@ -4426,7 +4541,10 @@ studioRouter.get('/materials', async (req, res) => {
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
   let list = [
-    ...await listCloudMaterials(tenantId),
+    ...await listCloudMaterials(tenantId).catch(error => {
+      console.warn('[studio/materials] cloud library unavailable, using local materials:', error instanceof Error ? error.message : error);
+      return [];
+    }),
     ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
   ] as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
@@ -4440,6 +4558,30 @@ studioRouter.get('/materials', async (req, res) => {
   })));
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   res.json(response);
+});
+
+// 企业人物资产库：只暴露已授权的 presenter 视频，并持久化租户级首选人物。
+studioRouter.get('/digital-human/avatars', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const avatars = loadMaterials()
+    .filter(item => isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || item.tenantId === tenantId))
+    .sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
+  const configuredId = loadDigitalHumanAvatarPreferences()[tenantId]?.preferredAvatarMaterialId;
+  const preferredAvatarMaterialId = avatars.some(item => item.id === configuredId) ? configuredId : (avatars[0]?.id || '');
+  const items = await Promise.all(avatars.map(item => materialResponse(item, tenantId)));
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.json({ items, preferredAvatarMaterialId });
+});
+
+studioRouter.patch('/digital-human/avatars/preferred', (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const preferredAvatarMaterialId = String(req.body?.preferredAvatarMaterialId || '');
+  const allowed = loadMaterials().some(item => item.id === preferredAvatarMaterialId && isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || item.tenantId === tenantId));
+  if (!allowed) { res.status(404).json({ ok: false, error: '人物资产不存在或无权使用' }); return; }
+  const preferences = loadDigitalHumanAvatarPreferences();
+  preferences[tenantId] = { preferredAvatarMaterialId, updatedAt: new Date().toISOString() };
+  persistDigitalHumanAvatarPreferences(preferences);
+  res.json({ ok: true, preferredAvatarMaterialId });
 });
 
 studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
@@ -4582,6 +4724,8 @@ studioRouter.post('/materials', async (req, res) => {
     usage: requestedUsage,
     sourceType: sourceType ? String(sourceType) : undefined,
     sourceUrl: sourceUrl ? String(sourceUrl) : undefined,
+    assetRole: folder === 'presenter' ? (sourceType === 'digital-human' || sourceType === 'codex-thread-generated' ? 'generated_clip' : 'avatar_master') : undefined,
+    rightsStatus: folder === 'presenter' ? (sourceType === 'codex-thread-avatar-master' ? 'internal_test' : 'commercial_cleared') : undefined,
     createdAt: new Date().toISOString(),
   };
   const list = loadMaterials();

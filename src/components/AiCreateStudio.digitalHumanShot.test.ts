@@ -14,7 +14,7 @@ assert.doesNotMatch(studio, /新增数字人创作步骤/, '不得增加新的�
 
 assert.match(api, /storyboardSlotId\?: string/, 'API必须支持分镜任务');
 assert.match(route, /audioSegment: \{ startSeconds: job\.audioStartSeconds, endSeconds: job\.audioEndSeconds \}/, '灵枢必须把分镜音频区间传给Worker');
-assert.match(route, /commercialDigitalHumanGate\(providerQuality \|\| \{\}, job\.mode\)/, '灵枢必须执行商业二次门禁');
+assert.match(route, /commercialDigitalHumanGate\(providerQuality \|\| \{\}, job\.mode, job\.provider\)/, '灵枢必须按模型族执行商业二次门禁');
 assert.match(worker, /const trimArgs = segment \? \['-ss'/, 'Worker必须截取分镜音频');
 assert.match(worker, /jobs\.find\(item => item\.externalJobId === externalJobId\)/, 'Worker必须支持幂等提交');
 

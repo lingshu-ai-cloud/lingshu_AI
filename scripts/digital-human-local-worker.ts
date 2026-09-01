@@ -39,6 +39,9 @@ interface WorkerJob {
 const port = Math.max(1024, Number(process.env.DIGITAL_HUMAN_WORKER_PORT || 8792));
 const host = String(process.env.DIGITAL_HUMAN_WORKER_HOST || '127.0.0.1');
 const apiKey = String(process.env.DIGITAL_HUMAN_API_KEY || '').trim();
+const hubUrl = String(process.env.DIGITAL_HUMAN_HUB_URL || '').trim().replace(/\/+$/, '');
+const workerKey = String(process.env.DIGITAL_HUMAN_WORKER_KEY || apiKey).trim();
+const workerId = String(process.env.DIGITAL_HUMAN_WORKER_ID || `gpu-${process.env.COMPUTERNAME || 'local'}`).trim();
 const runnerSetting = String(process.env.DIGITAL_HUMAN_LOCAL_RUNNER || '').trim();
 const runner = runnerSetting ? path.resolve(runnerSetting) : '';
 const workRoot = path.resolve(process.env.DIGITAL_HUMAN_WORKER_DATA_DIR || path.join(rootDir, 'data', 'digital-human-worker'));
@@ -76,7 +79,23 @@ function updateJob(id: string, patch: Partial<WorkerJob>): WorkerJob {
   if (index < 0) throw new Error('worker job not found');
   jobs[index] = { ...jobs[index]!, ...patch, updatedAt: new Date().toISOString() };
   persistJobs();
-  return jobs[index]!;
+  const updated = jobs[index]!;
+  if (hubUrl && updated.externalJobId && ['processing', 'quality_check'].includes(updated.status)) {
+    void hubFetch(`/api/overseas/studio/digital-human/worker/jobs/${encodeURIComponent(updated.externalJobId)}/progress`, {
+      method: 'POST',
+      body: JSON.stringify({ workerId, status: updated.status, stage: updated.stage, progress: updated.progress }),
+    }).catch(() => undefined);
+  }
+  return updated;
+}
+
+async function hubFetch(route: string, init?: RequestInit): Promise<Response> {
+  if (!hubUrl || !workerKey) throw new Error('DIGITAL_HUMAN_HUB_URL / DIGITAL_HUMAN_WORKER_KEY 未配置');
+  return fetch(`${hubUrl}${route}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${workerKey}`, ...(init?.headers || {}) },
+    signal: AbortSignal.timeout(120_000),
+  });
 }
 
 function authorized(req: Request, res: Response, next: NextFunction): void {
@@ -174,6 +193,7 @@ async function executeJob(id: string, input: { avatarVideoUrl: string; audioUrl:
   const avatarPath = path.join(jobDir, 'avatar.mp4');
   const sourceAudioPath = path.join(jobDir, 'voice-source');
   const audioPath = path.join(jobDir, 'voice.wav');
+  const rawOutputPath = path.join(jobDir, 'result.raw.mp4');
   const outputPath = path.join(jobDir, 'result.mp4');
   try {
     updateJob(id, { status: 'processing', stage: 'download_inputs', progress: 8 });
@@ -187,7 +207,17 @@ async function executeJob(id: string, input: { avatarVideoUrl: string; audioUrl:
     await runProcess(ffmpegStatic, ['-y', '-hide_banner', '-loglevel', 'error', ...trimArgs, '-i', sourceAudioPath, '-vn', '-ar', '16000', '-ac', '1', audioPath]);
     if (!runner || !fs.existsSync(runner)) throw new Error('DIGITAL_HUMAN_LOCAL_RUNNER 未配置或文件不存在');
     updateJob(id, { stage: 'video_preserving_lip_sync', progress: 30 });
-    await runProcess('pwsh.exe', ['-NoProfile', '-File', runner, '-Video', avatarPath, '-Audio', audioPath, '-Output', outputPath], id);
+    await runProcess('pwsh.exe', ['-NoProfile', '-File', runner, '-Video', avatarPath, '-Audio', audioPath, '-Output', rawOutputPath], id);
+    updateJob(id, { stage: 'vertical_composition', progress: 82 });
+    await runProcess(ffmpegStatic, [
+      '-y', '-hide_banner', '-loglevel', 'error', '-i', rawOutputPath,
+      '-filter_complex', '[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=60,eq=brightness=-0.28:saturation=0.55[bg];[0:v]scale=1000:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]',
+      '-map', '[v]', '-map', '0:a:0', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', outputPath,
+    ], id);
+    for (const suffix of ['.visual-quality.json', '.syncnet-quality.json']) {
+      const report = `${rawOutputPath}${suffix}`;
+      if (fs.existsSync(report)) fs.copyFileSync(report, `${outputPath}${suffix}`);
+    }
     updateJob(id, { status: 'quality_check', stage: 'output_validation', progress: 88 });
     const quality = await validateOutput(avatarPath, outputPath);
     updateJob(id, {
@@ -263,3 +293,45 @@ app.get('/outputs/:file', (req, res) => {
 app.listen(port, host, () => {
   console.log(`[video-preserving-avatar-worker] http://${host}:${port} runner=${runner || 'unconfigured'}`);
 });
+
+let claiming = false;
+async function pollHub(): Promise<void> {
+  if (!hubUrl || !workerKey || claiming || running.size > 0) return;
+  claiming = true;
+  try {
+    const response = await hubFetch(`/api/overseas/studio/digital-human/worker/claim?workerId=${encodeURIComponent(workerId)}`);
+    if (response.status === 204) return;
+    const payload = await response.json().catch(() => ({})) as any;
+    if (!response.ok || !payload?.job?.id) throw new Error(String(payload?.error || `claim failed (${response.status})`));
+    const remote = payload.job;
+    const now = new Date().toISOString();
+    const local: WorkerJob = { id: randomUUID(), externalJobId: String(remote.id), status: 'queued', stage: 'queued', progress: 0, createdAt: now, updatedAt: now };
+    jobs.push(local); persistJobs();
+    await executeJob(local.id, { avatarVideoUrl: String(remote.avatarVideoUrl), audioUrl: String(remote.audioUrl), audioSegment: remote.audioSegment });
+    const finished = jobs.find(item => item.id === local.id)!;
+    if (finished.status === 'completed') {
+      const outputPath = path.join(workRoot, local.id, 'result.mp4');
+      const result = await hubFetch(`/api/overseas/studio/digital-human/worker/jobs/${encodeURIComponent(remote.id)}/result`, {
+        method: 'POST',
+        body: JSON.stringify({ workerId, status: 'completed', quality: finished.quality, dataBase64: fs.readFileSync(outputPath).toString('base64') }),
+      });
+      if (!result.ok) throw new Error(`result upload failed (${result.status}): ${await result.text()}`);
+    } else {
+      await hubFetch(`/api/overseas/studio/digital-human/worker/jobs/${encodeURIComponent(remote.id)}/result`, {
+        method: 'POST',
+        body: JSON.stringify({ workerId, status: 'failed', errorCode: finished.errorCode, error: finished.error }),
+      });
+    }
+  } catch (error) {
+    console.error('[digital-human-worker] hub poll:', error instanceof Error ? error.message : error);
+  } finally {
+    claiming = false;
+  }
+}
+
+if (hubUrl) {
+  console.log(`[digital-human-worker] pull mode hub=${hubUrl} worker=${workerId}`);
+  const pollTimer = setInterval(() => { void pollHub(); }, Math.max(2_000, Number(process.env.DIGITAL_HUMAN_WORKER_POLL_MS || 5_000)));
+  pollTimer.unref?.();
+  void pollHub();
+}

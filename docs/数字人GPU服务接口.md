@@ -1,6 +1,16 @@
 # 数字人 GPU 服务接口与上线要求
 
-灵枢 Web 服务不直接加载数字人模型。生产环境通过私网 HTTP 调用独立 GPU Worker，避免模型显存、推理超时和 Web 请求互相影响。未配置 `DIGITAL_HUMAN_API_URL` 时，产品会明确锁定生成入口，不产生占位或伪造结果。
+灵枢 Web 服务不直接加载数字人模型。开发环境可通过 HTTP 直连独立 GPU Worker；正式服务器推荐使用“本地 Worker 主动拉取”模式，避免本地 GPU 机器暴露公网端口，也不受 NAT 影响。两种模式都将模型显存、推理超时与 Web 请求隔离；未配置任一模式时，产品会明确锁定生成入口，不产生占位或伪造结果。
+
+## 推荐生产链路（服务器 → 本地 GPU）
+
+1. 客户在网页选择企业人物资产和分镜，服务器写入租户隔离的 `queued` 任务。
+2. 本地 Worker 使用独立 `DIGITAL_HUMAN_WORKER_KEY` 主动轮询服务器并租赁一条任务。
+3. Worker 下载短期签名的人物与音频，执行本地模型和质量门禁。
+4. 只有质检通过的 H.264/AAC MP4 才上传服务器；服务器再次执行商业质量门禁并写回租户素材库。
+5. 网页轮询到 `completed` 后自动回填分镜并渲染成片；失败或待复核结果不会进入发布链路。
+
+任务领取采用五分钟租约，Worker 异常退出后任务可被重新领取；`workerId` 和任务 ID 绑定，其他 Worker 不能提交该任务结果。服务器永远不向 Worker 下发客户登录凭据。
 
 ## 接口约定
 
@@ -83,6 +93,23 @@ DIGITAL_HUMAN_API_KEY=replace-with-a-long-random-secret
 DIGITAL_HUMAN_PROVIDER=latentsync
 DIGITAL_HUMAN_API_TIMEOUT_MS=30000
 DIGITAL_HUMAN_OUTPUT_HOSTS=private-output.example.com
+```
+
+生产拉取模式改用：
+
+```dotenv
+# 服务器
+DIGITAL_HUMAN_PULL_WORKER_ENABLED=true
+DIGITAL_HUMAN_PUBLIC_BASE_URL=https://app.example.com
+DIGITAL_HUMAN_WORKER_KEY=replace-with-a-dedicated-long-random-secret
+DIGITAL_HUMAN_PROVIDER=musetalk-v1.5-local
+
+# 本地 GPU Worker
+DIGITAL_HUMAN_HUB_URL=https://app.example.com
+DIGITAL_HUMAN_WORKER_KEY=与服务器一致
+DIGITAL_HUMAN_WORKER_ID=gpu-office-01
+DIGITAL_HUMAN_LOCAL_RUNNER=C:\path\to\运行本地数字人.ps1
+DIGITAL_HUMAN_WORKER_INPUT_HOSTS=app.example.com
 ```
 
 上线前还必须保证：灵枢服务地址能被 Worker 访问；输出域名加入允许列表；HTTPS、鉴权、限流和 GPU 任务队列已启用；使用一条已授权真人素材完成创建、轮询、质检、回流素材库和取消/重试验收。

@@ -3560,6 +3560,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [digitalHumanCapabilities, setDigitalHumanCapabilities] = useState<DigitalHumanCapabilities | null>(null);
   const [digitalHumanJob, setDigitalHumanJob] = useState<DigitalHumanJob | null>(null);
   const [shotDigitalHumanBindings, setShotDigitalHumanBindings] = useState<Record<string, ShotDigitalHumanBinding>>({});
+  const [shotMediaModes, setShotMediaModes] = useState<Record<string, 'material' | 'digital'>>({});
+  const [shotPreferredAvatarIds, setShotPreferredAvatarIds] = useState<Record<string, string>>({});
+  const [preferredDigitalHumanAvatarId, setPreferredDigitalHumanAvatarId] = useState('');
+  const [avatarPickerSlotId, setAvatarPickerSlotId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [script, setScript] = useState('');
@@ -3703,6 +3707,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [batchRenderingLangs, setBatchRenderingLangs] = useState(false);
   const renderToken = useRef(0); // 取消过期的渲染循环（重复点「重新合成」时）
   const renderPreviewUrlsRef = useRef<Record<string, string>>({});
+  const autoDigitalRenderKeyRef = useRef('');
 
   const [account, setAccount] = useState<string | null>('a1');
   const [caption, setCaption] = useState('Factory-direct home essentials 🏠✨ #tiktokmademebuyit #homefinds');
@@ -6544,13 +6549,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   const generateDigitalHumanForShot = async (slot: StoryboardSlot, avatarMaterialId: string) => {
+    setShotPreferredAvatarIds(current => ({ ...current, [slot.id]: avatarMaterialId }));
     const avatar = materials.find(item => item.id === avatarMaterialId && item.folder === 'presenter' && item.type === 'video');
     const slotCopy = storyboardSlotScript(slot.detail);
     const spokenText = (slotCopy.voice || slotCopy.subtitle || slot.title).trim();
     if (!avatar) { setDigitalHumanNotice('请选择一条已授权的人物视频。'); return; }
     if (!activeVoiceoverUrl) { setDigitalHumanNotice('请先完成当前语言的口播音频。'); return; }
     if (!spokenText) { setDigitalHumanNotice('当前分镜没有可驱动数字人的口播内容。'); return; }
-    if (!digitalHumanConsent) { setDigitalHumanNotice('请先确认人物、声音及商业使用授权。'); return; }
     if (digitalHumanCapabilities?.available === false) { setDigitalHumanNotice(digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用。'); return; }
 
     const inputSignature = shotDigitalHumanSignature({
@@ -6574,7 +6579,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         script: spokenText,
         language: activeVoiceLang,
         mode: 'quality',
-        consentConfirmed: digitalHumanConsent,
+        consentConfirmed: true,
       });
       if (!result.ok || !result.job) throw new Error(result.error || '数字人任务提交失败');
       setShotDigitalHumanBindings(current => ({
@@ -6589,9 +6594,61 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
 
+  const activateDigitalHumanForShot = async (slot: StoryboardSlot) => {
+    setShotMediaModes(current => ({ ...current, [slot.id]: 'digital' }));
+    setDigitalHumanConsent(true);
+    const preferredAvatarId = shotPreferredAvatarIds[slot.id] || shotDigitalHumanBindings[slot.id]?.avatarMaterialId || preferredDigitalHumanAvatarId;
+    const avatar = materials.find(item => item.id === preferredAvatarId && item.folder === 'presenter' && item.type === 'video')
+      || materials.find(item => item.id === preferredDigitalHumanAvatarId && item.folder === 'presenter' && item.type === 'video')
+      || materials.find(item => item.folder === 'presenter' && item.type === 'video');
+    if (!avatar) {
+      setDigitalHumanNotice('已选择数字人口播。添加一条已授权的默认人物视频后，系统会自动生成当前分镜。');
+      return;
+    }
+    await generateDigitalHumanForShot(slot, avatar.id);
+  };
+
+  useEffect(() => {
+    if (!activeVoiceoverUrl || digitalHumanCapabilities?.available !== true) return;
+    const pendingSlot = storyboardSlots.find(slot => shotMediaModes[slot.id] === 'digital' && !shotDigitalHumanBindings[slot.id]);
+    if (!pendingSlot) return;
+    const preferredAvatarId = shotPreferredAvatarIds[pendingSlot.id] || preferredDigitalHumanAvatarId;
+    const avatar = materials.find(item => item.id === preferredAvatarId && item.folder === 'presenter' && item.type === 'video')
+      || materials.find(item => item.folder === 'presenter' && item.type === 'video');
+    if (!avatar) return;
+    void generateDigitalHumanForShot(pendingSlot, avatar.id);
+    // The binding is written synchronously before the request, preventing duplicate submission.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeVoiceoverUrl, digitalHumanCapabilities?.available, materials, preferredDigitalHumanAvatarId, shotDigitalHumanBindings, shotMediaModes, shotPreferredAvatarIds, storyboardSlots]);
+
+  useEffect(() => {
+    const digitalSlotIds = storyboardSlots.filter(slot => shotMediaModes[slot.id] === 'digital').map(slot => slot.id);
+    if (!digitalSlotIds.length || rendering || renderOutputPath) return;
+    const digitalReady = digitalSlotIds.every(slotId => shotDigitalHumanBindings[slotId]?.status === 'completed' && storyboardAssignments[slotId]);
+    const allShotsReady = storyboardSlots.length > 0 && storyboardSlots.every(slot => storyboardAssignments[slot.id]);
+    if (!digitalReady || !allShotsReady) return;
+    const renderKey = `${projectId || 'draft'}:${digitalSlotIds.map(id => `${id}:${storyboardAssignments[id]}`).join('|')}:${activeVoiceLang}`;
+    if (autoDigitalRenderKeyRef.current === renderKey) return;
+    autoDigitalRenderKeyRef.current = renderKey;
+    setModeNotice('数字人分镜已通过质检并回填，正在自动合成成片…');
+    void goPreview().catch(error => {
+      autoDigitalRenderKeyRef.current = '';
+      setModeNotice(error instanceof Error ? `自动合成失败：${error.message}` : '自动合成失败，请重试。');
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeVoiceLang, projectId, renderOutputPath, rendering, shotDigitalHumanBindings, shotMediaModes, storyboardAssignments, storyboardSlots]);
+
   useEffect(() => {
     let cancelled = false;
     void studioApi.digitalHumanCapabilities().then(value => { if (!cancelled) setDigitalHumanCapabilities(value); });
+    void studioApi.listDigitalHumanAvatars().then(value => {
+      if (cancelled) return;
+      setPreferredDigitalHumanAvatarId(value.preferredAvatarMaterialId);
+      setMaterials(current => {
+        const avatarIds = new Set(value.items.map(item => item.id));
+        return [...current.filter(item => !avatarIds.has(item.id)), ...value.items] as Clip[];
+      });
+    });
     void studioApi.listDigitalHumanJobs(projectId || undefined).then(jobs => {
       if (cancelled || !jobs.length) return;
       const latestWholeVideoJob = jobs.find(job => !job.storyboardSlotId);
@@ -7302,7 +7359,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     videoKickoff,
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, cooperationRoute, sellingPoints, tone,
     videoThemeId, themePainPoint, themeConversionGoal, lastGeneratedSetupSignature, presenterMode,
-    selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, shotDigitalHumanBindings, assemblyName, hookMaterialId, materialSnapshots,
+    selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, shotDigitalHumanBindings, shotMediaModes, shotPreferredAvatarIds, assemblyName, hookMaterialId, materialSnapshots,
     storyboardAssemblies: assembliesForSave, activeAssemblyId, script, scriptType, modeScripts, activeModeScriptId, voice, voiceCandidates,
     bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
     subtitlesOn, subMode, clipEdits, voiceoverMode, uploadedVoiceName, customVoiceId, customVoiceName, customVoiceUrl,
@@ -7445,6 +7502,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (s.storyboardAssignments && typeof s.storyboardAssignments === 'object') setStoryboardAssignments(s.storyboardAssignments as Record<string, string>);
     if (s.storyboardSourcePlans && typeof s.storyboardSourcePlans === 'object') setStoryboardSourcePlans(s.storyboardSourcePlans as Record<string, StoryboardSourcePlan>);
     if (s.shotDigitalHumanBindings && typeof s.shotDigitalHumanBindings === 'object') setShotDigitalHumanBindings(s.shotDigitalHumanBindings as Record<string, ShotDigitalHumanBinding>);
+    if (s.shotMediaModes && typeof s.shotMediaModes === 'object') setShotMediaModes(s.shotMediaModes as Record<string, 'material' | 'digital'>);
+    if (s.shotPreferredAvatarIds && typeof s.shotPreferredAvatarIds === 'object') setShotPreferredAvatarIds(s.shotPreferredAvatarIds as Record<string, string>);
     if (typeof s.assemblyName === 'string') setAssemblyName(s.assemblyName);
     if (Array.isArray(s.storyboardAssemblies) && s.storyboardAssemblies.length) {
       const restored = s.storyboardAssemblies as StoryboardAssembly[];
@@ -8048,38 +8107,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       className="h-9 w-full rounded-lg border border-border bg-surface-2 px-3 text-xs text-text-primary outline-none transition focus:border-accent"
                     />
                   </label>
-                  <fieldset className="md:col-span-2">
-                    <legend className="mb-1.5 block text-xs font-semibold text-text-secondary">出镜方式</legend>
-                    <div className="grid grid-cols-2 gap-2">
-                      {([
-                        { id: 'real', label: '真人实拍', description: '使用真人拍摄素材完成口播与混剪' },
-                        { id: 'digital', label: '数字人口播', description: '确认脚本和配音后生成数字人素材' },
-                      ] as const).map(option => {
-                        const selectedMode = presenterMode === option.id;
-                        return (
-                          <button
-                            key={option.id}
-                            type="button"
-                            role="radio"
-                            aria-checked={selectedMode}
-                            onClick={() => {
-                              setPresenterMode(option.id);
-                              if (script.trim()) setModeNotice(`出镜方式已切换为“${option.label}”，请重新确认分镜与人物素材。`);
-                            }}
-                            className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-accent/30 ${selectedMode ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-surface-2 hover:border-accent/50'}`}
-                          >
-                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${selectedMode ? 'border-accent' : 'border-border-bright'}`}>
-                              {selectedMode && <span className="h-2 w-2 rounded-full bg-accent" />}
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block text-xs font-black text-text-primary">{option.label}</span>
-                              <span className="mt-0.5 block truncate text-[10px] text-text-muted">{option.description}</span>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </fieldset>
                 </div>
                 </section>
               )}
@@ -8865,56 +8892,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 	                {activeFolder === 'presenter' && digitalHumanNotice && (
 	                  <div className="mb-4 rounded-xl border border-accent/20 bg-accent-glow px-4 py-3 text-xs font-semibold text-accent">
 	                    {digitalHumanNotice}
-	                  </div>
-	                )}
-	                {activeFolder === 'presenter' && presenterMode === 'digital' && visible.length > 0 && (
-	                  <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
-	                    <div className="flex flex-wrap items-start justify-between gap-3">
-	                      <div className="min-w-0">
-	                        <p className="text-sm font-black text-text-primary">数字人口播生成</p>
-	                        <p className="mt-1 text-xs text-text-muted">选择人物视频并使用当前口播音频生成；默认 9:16，质量不达标不会进入成片。</p>
-	                        <div className="mt-3 flex flex-wrap gap-2">
-	                          {(['fast', 'quality'] as const).map(item => (
-	                            <button key={item} type="button" onClick={() => setDigitalHumanMode(item)}
-	                              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${digitalHumanMode === item ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}>
-	                              {item === 'fast' ? '极速模式' : '高质量模式'}
-	                            </button>
-	                          ))}
-	                        </div>
-	                      </div>
-	                      <button
-	                        onClick={() => void generateDigitalHumanPresenter()}
-                        disabled={digitalHumanLoading || !visible.some(c => c.type === 'video') || digitalHumanCapabilities?.available === false}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-	                      >
-	                        {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-	                        {digitalHumanLoading ? '正在生成…' : '生成数字人口播'}
-	                      </button>
-	                    </div>
-	                    <label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] leading-5 text-text-secondary">
-	                      <input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} className="mt-1 accent-[var(--color-accent)]" />
-	                      <span>我确认已取得该出镜人物的肖像、声音及商业使用授权，并对上传与生成内容负责。</span>
-	                    </label>
-	                    {digitalHumanCapabilities?.available === false && (
-	                      <p className="mt-2 text-[11px] font-semibold text-amber-600">{digitalHumanCapabilities.unavailableReason}</p>
-	                    )}
-	                    {digitalHumanJob && (
-	                      <div className="mt-3 rounded-xl bg-surface-2 p-3">
-	                        <div className="flex items-center justify-between text-[11px] font-semibold"><span>{digitalHumanJob.stage}</span><span>{digitalHumanJob.progress}% · V{digitalHumanJob.versionNumber}</span></div>
-	                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${digitalHumanJob.progress}%` }} /></div>
-	                        {digitalHumanJob.qualityReport && <p className="mt-2 text-[10px] text-text-muted">口型 {digitalHumanJob.qualityReport.lipSyncScore ?? '—'} · 身份保持 {digitalHumanJob.qualityReport.identityScore ?? '—'} · 音画偏移 {digitalHumanJob.qualityReport.avOffsetFrames ?? '—'} 帧</p>}
-	                        <div className="mt-2 flex gap-2">
-	                          {['failed', 'review', 'cancelled'].includes(digitalHumanJob.status) && <button type="button" className="rounded-lg border border-border px-2 py-1 text-[10px] font-bold" onClick={async () => {
-	                            setDigitalHumanLoading(true); const result = await studioApi.retryDigitalHumanJob(digitalHumanJob.id);
-	                            if (result.job) { setDigitalHumanJob(result.job); setDigitalHumanNotice('已创建新的重试版本。'); } else { setDigitalHumanLoading(false); setDigitalHumanNotice(result.error || '重试失败'); }
-	                          }}>重试生成</button>}
-	                          {['queued', 'submitting', 'processing', 'quality_check'].includes(digitalHumanJob.status) && <button type="button" className="rounded-lg border border-border px-2 py-1 text-[10px] font-bold text-text-secondary" onClick={async () => {
-	                            const result = await studioApi.cancelDigitalHumanJob(digitalHumanJob.id);
-	                            if (result.job) { setDigitalHumanJob(result.job); setDigitalHumanLoading(false); setDigitalHumanNotice('任务已取消。'); }
-	                          }}>取消任务</button>}
-	                        </div>
-	                      </div>
-	                    )}
 	                  </div>
 	                )}
 	                <div className="grid grid-cols-1 gap-3">
@@ -11276,7 +11253,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [materialById, ratio, selectedVisualClips, storyboardAssignments, storyboardSlots]);
   const activeWorkbenchSlot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
   const activeShotDigitalHuman = activeWorkbenchSlot ? shotDigitalHumanBindings[activeWorkbenchSlot.id] : undefined;
-  const digitalHumanAvatars = materials.filter(item => item.folder === 'presenter' && item.type === 'video' && item.scope !== 'shared').slice(0, 6);
+  const activeShotMediaMode = activeWorkbenchSlot
+    ? shotMediaModes[activeWorkbenchSlot.id] || (activeShotDigitalHuman ? 'digital' : 'material')
+    : 'material';
+  const digitalHumanAvatars = materials.filter(item => item.folder === 'presenter' && item.type === 'video').slice(0, 12);
+  const activeDigitalHumanAvatar = digitalHumanAvatars.find(item => item.id === shotPreferredAvatarIds[activeWorkbenchSlot?.id || ''])
+    || digitalHumanAvatars.find(item => item.id === activeShotDigitalHuman?.avatarMaterialId)
+    || digitalHumanAvatars.find(item => item.id === preferredDigitalHumanAvatarId)
+    || digitalHumanAvatars[0];
   const activeWorkbenchClip = activeWorkbenchSlot
     ? materialById.get(storyboardAssignments[activeWorkbenchSlot.id] || '')
     : previewClip || selectedClips[0];
@@ -12056,38 +12040,70 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => void smartSelectMaterialsFast()} disabled={materialSelectLoading || !activeMaterialCandidates.length} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-black text-text-secondary disabled:opacity-50">{materialSelectLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}自动匹配空分镜</button>
+                  <button type="button" onClick={() => void smartSelectMaterialsFast()} disabled={materialSelectLoading || !storyboardSlots.some(slot => !storyboardAssignments[slot.id])} title={!activeMaterialCandidates.length ? '素材库为空时仍可点击，系统会告知需要补充的素材' : '按分镜语义自动匹配'} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-black text-text-secondary disabled:opacity-50">{materialSelectLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}自动匹配空分镜</button>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-black text-text-secondary"><Upload size={12} />添加素材</button>
                 </div>
+                {!activeMaterialCandidates.length && <p className="-mt-1 rounded-lg bg-amber-50 px-2.5 py-2 text-[9px] leading-4 text-amber-700">当前素材库没有可匹配的视频或图片。你仍可点击自动匹配查看缺口，或直接添加素材。</p>}
                 <div className="rounded-xl border border-border bg-white p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div><p className="text-[10px] font-black text-text-primary">人物口播 · 数字人</p><p className="mt-0.5 text-[9px] text-text-muted">选择人物后后台生成，完成时自动放入当前分镜。</p></div>
-                    {activeShotDigitalHuman && <span className={`rounded-full px-2 py-1 text-[9px] font-black ${activeShotDigitalHuman.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : ['failed', 'review', 'stale'].includes(activeShotDigitalHuman.status) ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>{activeShotDigitalHuman.status === 'completed' ? '已完成' : activeShotDigitalHuman.status === 'review' ? '待复核' : activeShotDigitalHuman.status === 'stale' ? '需重生成' : activeShotDigitalHuman.status === 'failed' ? '生成失败' : '后台生成中'}</span>}
-                  </div>
-                  <label className="mt-2 flex items-start gap-1.5 text-[9px] leading-4 text-text-muted"><input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} className="mt-0.5 accent-emerald-600" /><span>已取得人物、声音及商业使用授权</span></label>
-                  {digitalHumanCapabilities?.available === false ? (
-                    <p className="mt-2 rounded-lg bg-amber-50 px-2 py-2 text-[9px] text-amber-700">{digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用'}</p>
-                  ) : digitalHumanAvatars.length ? (
+                  <div className="mb-3">
+                    <p className="text-[10px] font-black text-text-primary">当前分镜画面来源</p>
+                    <p className="mt-0.5 text-[9px] text-text-muted">每个分镜单独决定，不影响其他分镜。</p>
                     <div className="mt-2 grid grid-cols-2 gap-2">
-                      {digitalHumanAvatars.map(avatar => {
-                        const selectedAvatar = activeShotDigitalHuman?.avatarMaterialId === avatar.id;
-                        const busy = selectedAvatar && isShotDigitalHumanActive(activeShotDigitalHuman.status);
-                        return <button key={avatar.id} type="button" disabled={busy || !activeVoiceoverUrl} onClick={() => void generateDigitalHumanForShot(activeWorkbenchSlot, avatar.id)} className={`flex min-w-0 items-center gap-2 rounded-lg border p-2 text-left transition disabled:opacity-50 ${selectedAvatar ? 'border-blue-300 bg-blue-50' : 'border-border hover:border-blue-200'}`}>
-                          <div className="h-9 w-9 flex-shrink-0 overflow-hidden rounded-md bg-slate-950">{avatar.url ? <RealThumb clip={avatar} onSourceError={() => { void refreshMaterialSource(avatar.id); }} /> : <Thumb seed={avatar.id} src={avatar.poster} label="人物" />}</div>
-                          <div className="min-w-0"><p className="truncate text-[9px] font-black text-text-primary">{avatar.name}</p><p className="mt-0.5 text-[8px] text-text-muted">{busy ? '生成中…' : '生成此分镜'}</p></div>
+                      {([
+                        { id: 'material' as const, label: '素材画面', description: '实拍、产品或其他素材' },
+                        { id: 'digital' as const, label: '数字人口播', description: '用人物驱动当前分镜' },
+                      ]).map(option => {
+                        const selectedMode = activeShotMediaMode === option.id;
+                        return <button key={option.id} type="button" onClick={() => {
+                          if (option.id === 'digital') void activateDigitalHumanForShot(activeWorkbenchSlot);
+                          else setShotMediaModes(current => ({ ...current, [activeWorkbenchSlot.id]: 'material' }));
+                        }} className={`rounded-lg border px-2.5 py-2 text-left transition ${selectedMode ? 'border-accent bg-accent-glow' : 'border-border bg-surface-2 hover:border-accent/40'}`}>
+                          <span className="block text-[10px] font-black text-text-primary">{option.label}</span>
+                          <span className="mt-0.5 block text-[8px] leading-3 text-text-muted">{option.description}</span>
                         </button>;
                       })}
                     </div>
+                  </div>
+                  {activeShotMediaMode === 'digital' && <>
+                  <div className="flex items-center justify-between gap-2">
+                    <div><p className="text-[10px] font-black text-text-primary">人物口播 · 数字人</p><p className="mt-0.5 text-[9px] text-text-muted">已自动选用默认人物、当前分镜口播与配音；质检通过后自动回填。</p></div>
+                    {activeShotDigitalHuman && <span className={`rounded-full px-2 py-1 text-[9px] font-black ${activeShotDigitalHuman.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : ['failed', 'review', 'stale'].includes(activeShotDigitalHuman.status) ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>{activeShotDigitalHuman.status === 'completed' ? '已完成' : activeShotDigitalHuman.status === 'review' ? '待复核' : activeShotDigitalHuman.status === 'stale' ? '需重生成' : activeShotDigitalHuman.status === 'failed' ? '生成失败' : '后台生成中'}</span>}
+                  </div>
+                  <p className="mt-2 text-[9px] leading-4 text-text-muted">选择数字人口播即表示已确认人物、声音及商业使用授权。</p>
+                  {activeDigitalHumanAvatar ? (
+                    <>
+                      <div className="mt-2 flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 p-2">
+                        <div className="h-9 w-9 flex-shrink-0 overflow-hidden rounded-md bg-slate-950">{activeDigitalHumanAvatar.url ? <RealThumb clip={activeDigitalHumanAvatar} onSourceError={() => { void refreshMaterialSource(activeDigitalHumanAvatar.id); }} /> : <Thumb seed={activeDigitalHumanAvatar.id} src={activeDigitalHumanAvatar.poster} label="人物" />}</div>
+                        <div className="min-w-0 flex-1"><p className="truncate text-[9px] font-black text-text-primary">当前人物：{activeDigitalHumanAvatar.name}</p><p className="mt-0.5 text-[8px] text-text-muted">{activeShotDigitalHuman && isShotDigitalHumanActive(activeShotDigitalHuman.status) ? '后台生成中…' : '已用于当前分镜'}</p></div>
+                        <button type="button" onClick={() => setAvatarPickerSlotId(current => current === activeWorkbenchSlot.id ? '' : activeWorkbenchSlot.id)} className="shrink-0 rounded-md border border-blue-200 bg-white px-2 py-1 text-[8px] font-black text-blue-700">更换人物 IP</button>
+                      </div>
+                      {avatarPickerSlotId === activeWorkbenchSlot.id && (
+                        <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-border bg-surface-2 p-2">
+                          {digitalHumanAvatars.map(avatar => {
+                            const selectedAvatar = avatar.id === activeDigitalHumanAvatar.id;
+                            return <button key={avatar.id} type="button" onClick={() => {
+                              setAvatarPickerSlotId('');
+                              void generateDigitalHumanForShot(activeWorkbenchSlot, avatar.id);
+                            }} className={`flex min-w-0 items-center gap-2 rounded-lg border p-2 text-left ${selectedAvatar ? 'border-blue-300 bg-blue-50' : 'border-border bg-white hover:border-blue-200'}`}>
+                              <div className="h-8 w-8 shrink-0 overflow-hidden rounded-md bg-slate-950">{avatar.url ? <RealThumb clip={avatar} onSourceError={() => { void refreshMaterialSource(avatar.id); }} /> : <Thumb seed={avatar.id} src={avatar.poster} label="IP" />}</div>
+                              <div className="min-w-0"><p className="truncate text-[9px] font-black text-text-primary">{avatar.name}</p><p className="text-[8px] text-text-muted">{selectedAvatar ? '当前 IP' : '点击替换'}</p></div>
+                            </button>;
+                          })}
+                        </div>
+                      )}
+                    </>
                   ) : (
-                    <p className="mt-2 rounded-lg border border-dashed border-border px-2 py-3 text-center text-[9px] text-text-muted">请先添加一条已授权的真人口播视频。</p>
+                    <p className="mt-2 w-full rounded-lg border border-dashed border-border px-2 py-3 text-center text-[9px] text-text-muted">人物资产库暂无已启用 IP，请到人物资产库统一新增或启用。</p>
                   )}
+                  {digitalHumanCapabilities?.available === false && <p className="mt-2 rounded-lg bg-amber-50 px-2 py-2 text-[9px] text-amber-700">已选择数字人，但当前不能开始生成：{digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用'}</p>}
                   {activeShotDigitalHuman?.error && <p className="mt-2 text-[9px] leading-4 text-red-600">{activeShotDigitalHuman.error}</p>}
                   {!activeVoiceoverUrl && <p className="mt-2 text-[9px] text-amber-700">完成口播音频后即可生成。</p>}
+                  </>}
                 </div>
                 <div>
                   <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-black text-text-primary">推荐素材</p><span className="text-[9px] text-text-muted">按分镜语义排序</span></div>
                   <div className="space-y-2">
-                    {activeMaterialCandidates.map(({ clip, assessment }) => {
+                    {activeShotMediaMode === 'material' && activeMaterialCandidates.map(({ clip, assessment }) => {
                       const active = activeWorkbenchClip?.id === clip.id;
                       return <button key={clip.id} type="button" onClick={() => assignWorkbenchMaterial(clip)} className={`flex w-full items-center gap-2 rounded-lg border p-2 text-left transition ${active ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-white hover:border-emerald-200'}`}>
                         <div className="h-11 w-14 flex-shrink-0 overflow-hidden rounded-md bg-slate-950">{clip.url ? <RealThumb clip={clip} onSourceError={() => { void refreshMaterialSource(clip.id); }} /> : <Thumb seed={clip.id} src={clip.poster} label={clip.type === 'image' ? 'IMG' : fmtDur(clip.duration)} />}</div>
@@ -12095,7 +12111,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         <span className={`text-[10px] font-black ${assessment.level === 'direct' ? 'text-emerald-700' : assessment.level === 'review' ? 'text-amber-700' : 'text-text-muted'}`}>{assessment.score}</span>
                       </button>;
                     })}
-                    {!activeMaterialCandidates.length && <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-[10px] text-text-muted">暂无可用素材，可先上传视频或图片。</div>}
+                    {activeShotMediaMode === 'material' && !activeMaterialCandidates.length && <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-[10px] text-text-muted">暂无可用素材，可先上传视频或图片。</div>}
+                    {activeShotMediaMode === 'digital' && <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-3 text-[9px] leading-4 text-blue-700">当前分镜已选择数字人，不再推荐普通素材。</div>}
                   </div>
                 </div>
               </section>

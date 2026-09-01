@@ -745,6 +745,17 @@ export const studioApi = {
     output: { ratio: '9:16', container: 'mp4' }, qualityGateRequired: true, maxConcurrentJobs: 2,
     unavailableReason: '无法连接数字人服务',
   }),
+  listDigitalHumanAvatars: () => get<{ items: Material[]; preferredAvatarMaterialId: string }>('digital-human/avatars', { items: [], preferredAvatarMaterialId: '' }),
+  setPreferredDigitalHumanAvatar: async (preferredAvatarMaterialId: string): Promise<{ ok: boolean; preferredAvatarMaterialId?: string; error?: string }> => {
+    try {
+      const response = await fetch('/api/overseas/studio/digital-human/avatars/preferred', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ preferredAvatarMaterialId }),
+      });
+      return await response.json();
+    } catch { return { ok: false, error: '首选人物保存失败' }; }
+  },
   createDigitalHumanJob: (body: { projectId?: string; storyboardSlotId?: string; audioStartSeconds?: number; audioEndSeconds?: number; inputSignature?: string; avatarMaterialId: string; voiceoverUrl: string; script: string; language: string; mode: 'fast' | 'quality'; consentConfirmed: boolean }) =>
     post<{ ok: boolean; job?: DigitalHumanJob; error?: string; code?: string; reused?: boolean }>('digital-human/jobs', body, { ok: false, error: '数字人任务提交失败' }),
   getDigitalHumanJob: (id: string) =>
@@ -823,6 +834,8 @@ export interface Material {
   canManage?: boolean;
   sourceType?: string;
   sourceUrl?: string;
+  assetRole?: 'avatar_master' | 'generated_clip';
+  rightsStatus?: 'internal_test' | 'commercial_cleared';
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
