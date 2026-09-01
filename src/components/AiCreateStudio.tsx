@@ -7,6 +7,7 @@ import {
   Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
 } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
+import { isShotDigitalHumanActive, shotDigitalHumanSignature, type ShotDigitalHumanBinding } from '../lib/shotDigitalHuman';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
@@ -3558,6 +3559,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [digitalHumanConsent, setDigitalHumanConsent] = useState(false);
   const [digitalHumanCapabilities, setDigitalHumanCapabilities] = useState<DigitalHumanCapabilities | null>(null);
   const [digitalHumanJob, setDigitalHumanJob] = useState<DigitalHumanJob | null>(null);
+  const [shotDigitalHumanBindings, setShotDigitalHumanBindings] = useState<Record<string, ShotDigitalHumanBinding>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [script, setScript] = useState('');
@@ -6541,17 +6543,137 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
 
+  const generateDigitalHumanForShot = async (slot: StoryboardSlot, avatarMaterialId: string) => {
+    const avatar = materials.find(item => item.id === avatarMaterialId && item.folder === 'presenter' && item.type === 'video');
+    const slotCopy = storyboardSlotScript(slot.detail);
+    const spokenText = (slotCopy.voice || slotCopy.subtitle || slot.title).trim();
+    if (!avatar) { setDigitalHumanNotice('请选择一条已授权的人物视频。'); return; }
+    if (!activeVoiceoverUrl) { setDigitalHumanNotice('请先完成当前语言的口播音频。'); return; }
+    if (!spokenText) { setDigitalHumanNotice('当前分镜没有可驱动数字人的口播内容。'); return; }
+    if (digitalHumanCapabilities?.available === false) { setDigitalHumanNotice(digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用。'); return; }
+
+    const inputSignature = shotDigitalHumanSignature({
+      slotId: slot.id, script: spokenText, language: activeVoiceLang, voiceoverUrl: activeVoiceoverUrl,
+      start: slot.start, end: slot.end, avatarMaterialId,
+    });
+    setShotDigitalHumanBindings(current => ({
+      ...current,
+      [slot.id]: { jobId: '', avatarMaterialId, status: 'submitting', inputSignature },
+    }));
+    setDigitalHumanNotice('');
+    try {
+      const result = await studioApi.createDigitalHumanJob({
+        projectId: projectId || undefined,
+        storyboardSlotId: slot.id,
+        audioStartSeconds: slot.start,
+        audioEndSeconds: slot.end,
+        inputSignature,
+        avatarMaterialId,
+        voiceoverUrl: activeVoiceoverUrl,
+        script: spokenText,
+        language: activeVoiceLang,
+        mode: 'quality',
+        // 人物文件只能从当前企业的“真人口播”资产中选择；后台仍会保存本次授权声明。
+        consentConfirmed: true,
+      });
+      if (!result.ok || !result.job) throw new Error(result.error || '数字人任务提交失败');
+      setShotDigitalHumanBindings(current => ({
+        ...current,
+        [slot.id]: { jobId: result.job!.id, avatarMaterialId, status: result.job!.status, inputSignature },
+      }));
+    } catch (error) {
+      setShotDigitalHumanBindings(current => ({
+        ...current,
+        [slot.id]: { jobId: '', avatarMaterialId, status: 'failed', inputSignature, error: error instanceof Error ? error.message : '数字人任务提交失败' },
+      }));
+    }
+  };
+
   useEffect(() => {
-    if (presenterMode !== 'digital') return;
     let cancelled = false;
     void studioApi.digitalHumanCapabilities().then(value => { if (!cancelled) setDigitalHumanCapabilities(value); });
     void studioApi.listDigitalHumanJobs(projectId || undefined).then(jobs => {
-      if (cancelled || !jobs[0]) return;
-      setDigitalHumanJob(jobs[0]);
-      setDigitalHumanLoading(['queued', 'submitting', 'processing', 'quality_check'].includes(jobs[0].status));
+      if (cancelled || !jobs.length) return;
+      const latestWholeVideoJob = jobs.find(job => !job.storyboardSlotId);
+      if (latestWholeVideoJob) {
+        setDigitalHumanJob(latestWholeVideoJob);
+        setDigitalHumanLoading(['queued', 'submitting', 'processing', 'quality_check'].includes(latestWholeVideoJob.status));
+      }
+      const restored: Record<string, ShotDigitalHumanBinding> = {};
+      for (const job of [...jobs].reverse()) {
+        if (!job.storyboardSlotId || !job.inputSignature) continue;
+        restored[job.storyboardSlotId] = {
+          jobId: job.id, avatarMaterialId: job.avatarMaterialId, status: job.status,
+          inputSignature: job.inputSignature, outputMaterialId: job.outputMaterialId, error: job.errorMessage,
+        };
+      }
+      setShotDigitalHumanBindings(current => ({ ...restored, ...current }));
     });
     return () => { cancelled = true; };
-  }, [presenterMode, projectId]);
+  }, [projectId]);
+
+  useEffect(() => {
+    const active = Object.entries(shotDigitalHumanBindings).filter(([, binding]) => binding.jobId && isShotDigitalHumanActive(binding.status));
+    if (!active.length) return;
+    let cancelled = false;
+    const poll = async () => {
+      for (const [slotId, binding] of active) {
+        const result = await studioApi.getDigitalHumanJob(binding.jobId);
+        if (cancelled || !result.job) continue;
+        const job = result.job;
+        if (job.status === 'completed' && result.outputMaterial?.id) {
+          const slot = storyboardSlots.find(item => item.id === slotId);
+          const currentSignature = slot ? shotDigitalHumanSignature({
+            slotId, script: (storyboardSlotScript(slot.detail).voice || storyboardSlotScript(slot.detail).subtitle || slot.title).trim(),
+            language: activeVoiceLang, voiceoverUrl: activeVoiceoverUrl, start: slot.start, end: slot.end,
+            avatarMaterialId: binding.avatarMaterialId,
+          }) : '';
+          if (currentSignature === binding.inputSignature) {
+            setMaterials(current => mergeMaterials(current, [result.outputMaterial as Clip]));
+            setSelected(current => [...new Set([...current, result.outputMaterial!.id])]);
+            setStoryboardAssignments(current => ({ ...current, [slotId]: result.outputMaterial!.id }));
+            setStoryboardSourcePlans(current => ({ ...current, [slotId]: { ...sourcePlanFor(slot!), mode: 'ai', decided: true, confirmed: true, generatedClipId: result.outputMaterial!.id } }));
+          }
+        }
+        setShotDigitalHumanBindings(current => ({
+          ...current,
+          [slotId]: {
+            ...current[slotId]!, status: job.status, outputMaterialId: job.outputMaterialId,
+            error: job.status === 'review' ? (job.qualityReport?.gateFailures?.join('；') || '质量检测未通过') : job.errorMessage,
+          },
+        }));
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [shotDigitalHumanBindings, storyboardSlots, activeVoiceLang, activeVoiceoverUrl]);
+
+  useEffect(() => {
+    let changed = false;
+    const staleOutputIds: string[] = [];
+    const next = { ...shotDigitalHumanBindings };
+    for (const [slotId, binding] of Object.entries(shotDigitalHumanBindings)) {
+      if (binding.status === 'stale') continue;
+      const slot = storyboardSlots.find(item => item.id === slotId);
+      if (!slot) continue;
+      const copy = storyboardSlotScript(slot.detail);
+      const signature = shotDigitalHumanSignature({
+        slotId, script: (copy.voice || copy.subtitle || slot.title).trim(), language: activeVoiceLang,
+        voiceoverUrl: activeVoiceoverUrl, start: slot.start, end: slot.end, avatarMaterialId: binding.avatarMaterialId,
+      });
+      if (signature !== binding.inputSignature) {
+        next[slotId] = { ...binding, status: 'stale', error: '分镜口播、配音或时间区间已变化，请重新生成。' };
+        if (binding.outputMaterialId) staleOutputIds.push(binding.outputMaterialId);
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    setShotDigitalHumanBindings(next);
+    if (staleOutputIds.length) {
+      setStoryboardAssignments(current => Object.fromEntries(Object.entries(current).filter(([, materialId]) => !staleOutputIds.includes(materialId))));
+    }
+  }, [storyboardSlots, activeVoiceLang, activeVoiceoverUrl]);
 
   useEffect(() => {
     if (!digitalHumanJob || !['queued', 'submitting', 'processing', 'quality_check'].includes(digitalHumanJob.status)) return;
@@ -7174,7 +7296,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     videoKickoff,
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, cooperationRoute, sellingPoints, tone,
     videoThemeId, themePainPoint, themeConversionGoal, lastGeneratedSetupSignature, presenterMode,
-    selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, assemblyName, hookMaterialId, materialSnapshots,
+    selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, shotDigitalHumanBindings, assemblyName, hookMaterialId, materialSnapshots,
     storyboardAssemblies: assembliesForSave, activeAssemblyId, script, scriptType, modeScripts, activeModeScriptId, voice, voiceCandidates,
     bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
     subtitlesOn, subMode, clipEdits, voiceoverMode, uploadedVoiceName, customVoiceId, customVoiceName, customVoiceUrl,
@@ -7316,6 +7438,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (Array.isArray(s.scriptRecommendedMaterialIds)) setScriptRecommendedMaterialIds(s.scriptRecommendedMaterialIds as string[]);
     if (s.storyboardAssignments && typeof s.storyboardAssignments === 'object') setStoryboardAssignments(s.storyboardAssignments as Record<string, string>);
     if (s.storyboardSourcePlans && typeof s.storyboardSourcePlans === 'object') setStoryboardSourcePlans(s.storyboardSourcePlans as Record<string, StoryboardSourcePlan>);
+    if (s.shotDigitalHumanBindings && typeof s.shotDigitalHumanBindings === 'object') setShotDigitalHumanBindings(s.shotDigitalHumanBindings as Record<string, ShotDigitalHumanBinding>);
     if (typeof s.assemblyName === 'string') setAssemblyName(s.assemblyName);
     if (Array.isArray(s.storyboardAssemblies) && s.storyboardAssemblies.length) {
       const restored = s.storyboardAssemblies as StoryboardAssembly[];
@@ -11146,6 +11269,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     };
   }, [materialById, ratio, selectedVisualClips, storyboardAssignments, storyboardSlots]);
   const activeWorkbenchSlot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
+  const activeShotDigitalHuman = activeWorkbenchSlot ? shotDigitalHumanBindings[activeWorkbenchSlot.id] : undefined;
+  const digitalHumanAvatars = materials.filter(item => item.folder === 'presenter' && item.type === 'video' && item.scope !== 'shared').slice(0, 6);
   const activeWorkbenchClip = activeWorkbenchSlot
     ? materialById.get(storyboardAssignments[activeWorkbenchSlot.id] || '')
     : previewClip || selectedClips[0];
@@ -11927,6 +12052,30 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 <div className="flex gap-2">
                   <button type="button" onClick={() => void smartSelectMaterialsFast()} disabled={materialSelectLoading || !activeMaterialCandidates.length} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-black text-text-secondary disabled:opacity-50">{materialSelectLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}自动匹配空分镜</button>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-black text-text-secondary"><Upload size={12} />添加素材</button>
+                </div>
+                <div className="rounded-xl border border-border bg-white p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div><p className="text-[10px] font-black text-text-primary">人物口播 · 数字人</p><p className="mt-0.5 text-[9px] text-text-muted">选择人物后后台生成，完成时自动放入当前分镜。</p></div>
+                    {activeShotDigitalHuman && <span className={`rounded-full px-2 py-1 text-[9px] font-black ${activeShotDigitalHuman.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : ['failed', 'review', 'stale'].includes(activeShotDigitalHuman.status) ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>{activeShotDigitalHuman.status === 'completed' ? '已完成' : activeShotDigitalHuman.status === 'review' ? '待复核' : activeShotDigitalHuman.status === 'stale' ? '需重生成' : activeShotDigitalHuman.status === 'failed' ? '生成失败' : '后台生成中'}</span>}
+                  </div>
+                  {digitalHumanCapabilities?.available === false ? (
+                    <p className="mt-2 rounded-lg bg-amber-50 px-2 py-2 text-[9px] text-amber-700">{digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用'}</p>
+                  ) : digitalHumanAvatars.length ? (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {digitalHumanAvatars.map(avatar => {
+                        const selectedAvatar = activeShotDigitalHuman?.avatarMaterialId === avatar.id;
+                        const busy = selectedAvatar && isShotDigitalHumanActive(activeShotDigitalHuman.status);
+                        return <button key={avatar.id} type="button" disabled={busy || !activeVoiceoverUrl} onClick={() => void generateDigitalHumanForShot(activeWorkbenchSlot, avatar.id)} className={`flex min-w-0 items-center gap-2 rounded-lg border p-2 text-left transition disabled:opacity-50 ${selectedAvatar ? 'border-blue-300 bg-blue-50' : 'border-border hover:border-blue-200'}`}>
+                          <div className="h-9 w-9 flex-shrink-0 overflow-hidden rounded-md bg-slate-950">{avatar.url ? <RealThumb clip={avatar} onSourceError={() => { void refreshMaterialSource(avatar.id); }} /> : <Thumb seed={avatar.id} src={avatar.poster} label="人物" />}</div>
+                          <div className="min-w-0"><p className="truncate text-[9px] font-black text-text-primary">{avatar.name}</p><p className="mt-0.5 text-[8px] text-text-muted">{busy ? '生成中…' : '生成此分镜'}</p></div>
+                        </button>;
+                      })}
+                    </div>
+                  ) : (
+                    <p className="mt-2 rounded-lg border border-dashed border-border px-2 py-3 text-center text-[9px] text-text-muted">请先添加一条已授权的真人口播视频。</p>
+                  )}
+                  {activeShotDigitalHuman?.error && <p className="mt-2 text-[9px] leading-4 text-red-600">{activeShotDigitalHuman.error}</p>}
+                  {!activeVoiceoverUrl && <p className="mt-2 text-[9px] text-amber-700">完成口播音频后即可生成。</p>}
                 </div>
                 <div>
                   <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-black text-text-primary">推荐素材</p><span className="text-[9px] text-text-muted">按分镜语义排序</span></div>

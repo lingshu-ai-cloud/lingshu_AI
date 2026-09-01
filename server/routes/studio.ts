@@ -41,6 +41,7 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
+import { commercialDigitalHumanGate } from '../lib/digitalHumanQualityGate.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import {
@@ -3963,12 +3964,20 @@ interface DigitalHumanQualityReport {
   avOffsetFrames?: number;
   identityScore?: number;
   freezeSegments?: number;
+  faceDetectionRate?: number;
+  mouthJumpP95?: number;
+  gateVersion?: string;
+  gateFailures?: string[];
   notes?: string[];
 }
 interface DigitalHumanJob {
   id: string;
   tenantId: string;
   projectId?: string;
+  storyboardSlotId?: string;
+  audioStartSeconds?: number;
+  audioEndSeconds?: number;
+  inputSignature?: string;
   avatarMaterialId: string;
   avatarName: string;
   voiceoverUrl: string;
@@ -4067,10 +4076,17 @@ function appAssetUrl(req: Request, value: string): string {
 }
 
 async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: string, providerQuality: DigitalHumanQualityReport): Promise<DigitalHumanJob> {
-  if (!providerQuality || providerQuality.passed !== true) {
+  const commercialGate = commercialDigitalHumanGate(providerQuality || {}, job.mode);
+  if (!providerQuality || !commercialGate.passed) {
     return updateDigitalHumanJob(job.id, {
       status: 'review', stage: 'quality_review', progress: 100,
-      qualityReport: { ...providerQuality, passed: false, notes: [...(providerQuality?.notes || []), '模型质量报告未通过，禁止自动进入成片。'] },
+      qualityReport: {
+        ...providerQuality,
+        passed: false,
+        gateVersion: 'commercial-v1',
+        gateFailures: commercialGate.failures,
+        notes: [...(providerQuality?.notes || []), ...commercialGate.failures, '商业质量门禁未通过，禁止自动进入成片与发布。'],
+      },
     });
   }
   const response = await digitalHumanFetch(outputUrl, { headers: digitalHumanProviderHeaders() });
@@ -4099,7 +4115,7 @@ async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: strin
   return updateDigitalHumanJob(job.id, {
     status: 'completed', stage: 'completed', progress: 100,
     outputMaterialId: material.id, outputUrl: material.url || undefined,
-    qualityReport: providerQuality, completedAt: new Date().toISOString(),
+    qualityReport: { ...providerQuality, passed: true, gateVersion: 'commercial-v1', gateFailures: [] }, completedAt: new Date().toISOString(),
   });
 }
 
@@ -4127,6 +4143,11 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
           script: job.scriptSnapshot,
           language: job.language,
           mode: job.mode,
+          ...(job.storyboardSlotId ? {
+            storyboardSlotId: job.storyboardSlotId,
+            audioSegment: { startSeconds: job.audioStartSeconds, endSeconds: job.audioEndSeconds },
+            inputSignature: job.inputSignature,
+          } : {}),
           output: { ratio: '9:16', container: 'mp4' },
         }),
       });
@@ -4220,10 +4241,20 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
   const mode: DigitalHumanMode = req.body?.mode === 'fast' ? 'fast' : 'quality';
   const projectId = String(req.body?.projectId || '').trim().slice(0, 160) || undefined;
   const language = String(req.body?.language || 'zh').trim().slice(0, 24) || 'zh';
+  const storyboardSlotId = String(req.body?.storyboardSlotId || '').trim().slice(0, 160) || undefined;
+  const audioStartSeconds = storyboardSlotId ? Number(req.body?.audioStartSeconds) : undefined;
+  const audioEndSeconds = storyboardSlotId ? Number(req.body?.audioEndSeconds) : undefined;
+  if (storyboardSlotId && (!Number.isFinite(audioStartSeconds) || !Number.isFinite(audioEndSeconds) || Number(audioStartSeconds) < 0 || Number(audioEndSeconds) <= Number(audioStartSeconds) || Number(audioEndSeconds) - Number(audioStartSeconds) > 30)) {
+    res.status(400).json({ ok: false, error: '分镜音频区间无效', code: 'INVALID_AUDIO_SEGMENT' }); return;
+  }
+  const inputSignature = storyboardSlotId ? String(req.body?.inputSignature || '').trim().slice(0, 4000) : undefined;
+  if (storyboardSlotId && !inputSignature) { res.status(400).json({ ok: false, error: '缺少分镜生成签名', code: 'INPUT_SIGNATURE_REQUIRED' }); return; }
+  const duplicate = inputSignature ? loadDigitalHumanJobs().find(item => item.tenantId === tenantId && item.inputSignature === inputSignature && !['failed', 'cancelled', 'review'].includes(item.status)) : undefined;
+  if (duplicate) { res.status(200).json({ ok: true, job: publicDigitalHumanJob(duplicate), reused: true }); return; }
   const siblings = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && item.avatarMaterialId === avatarMaterialId && item.projectId === projectId);
   const now = new Date().toISOString();
   const job: DigitalHumanJob = {
-    id: randomUUID(), tenantId, projectId, avatarMaterialId, avatarName: avatar.name,
+    id: randomUUID(), tenantId, projectId, storyboardSlotId, audioStartSeconds, audioEndSeconds, inputSignature, avatarMaterialId, avatarName: avatar.name,
     voiceoverUrl, scriptSnapshot, language, mode, consentConfirmed: true,
     commercialRightsStatus: 'cleared', provider: digitalHumanConfig().provider,
     status: 'queued', stage: 'queued', progress: 0, versionNumber: siblings.length + 1,
