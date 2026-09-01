@@ -4103,9 +4103,9 @@ async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: strin
   const filename = `${job.id}.mp4`;
   fs.writeFileSync(path.join(outputDir, filename), bytes);
   const material = await createGeneratedVideoMaterial({
-    title: `数字人口播 · ${job.avatarName}`,
+    title: job.storyboardSlotId ? `数字人口播 · ${job.avatarName} · 分镜` : `数字人口播 · ${job.avatarName}`,
     filename,
-    duration: 0,
+    duration: job.audioEndSeconds && job.audioStartSeconds != null ? Math.max(0, job.audioEndSeconds - job.audioStartSeconds) : 0,
     tenantId: job.tenantId,
     sourceType: 'digital-human',
   });

@@ -6550,6 +6550,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (!avatar) { setDigitalHumanNotice('请选择一条已授权的人物视频。'); return; }
     if (!activeVoiceoverUrl) { setDigitalHumanNotice('请先完成当前语言的口播音频。'); return; }
     if (!spokenText) { setDigitalHumanNotice('当前分镜没有可驱动数字人的口播内容。'); return; }
+    if (!digitalHumanConsent) { setDigitalHumanNotice('请先确认人物、声音及商业使用授权。'); return; }
     if (digitalHumanCapabilities?.available === false) { setDigitalHumanNotice(digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用。'); return; }
 
     const inputSignature = shotDigitalHumanSignature({
@@ -6573,8 +6574,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         script: spokenText,
         language: activeVoiceLang,
         mode: 'quality',
-        // 人物文件只能从当前企业的“真人口播”资产中选择；后台仍会保存本次授权声明。
-        consentConfirmed: true,
+        consentConfirmed: digitalHumanConsent,
       });
       if (!result.ok || !result.job) throw new Error(result.error || '数字人任务提交失败');
       setShotDigitalHumanBindings(current => ({
@@ -12058,6 +12058,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <div><p className="text-[10px] font-black text-text-primary">人物口播 · 数字人</p><p className="mt-0.5 text-[9px] text-text-muted">选择人物后后台生成，完成时自动放入当前分镜。</p></div>
                     {activeShotDigitalHuman && <span className={`rounded-full px-2 py-1 text-[9px] font-black ${activeShotDigitalHuman.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : ['failed', 'review', 'stale'].includes(activeShotDigitalHuman.status) ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>{activeShotDigitalHuman.status === 'completed' ? '已完成' : activeShotDigitalHuman.status === 'review' ? '待复核' : activeShotDigitalHuman.status === 'stale' ? '需重生成' : activeShotDigitalHuman.status === 'failed' ? '生成失败' : '后台生成中'}</span>}
                   </div>
+                  <label className="mt-2 flex items-start gap-1.5 text-[9px] leading-4 text-text-muted"><input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} className="mt-0.5 accent-emerald-600" /><span>已取得人物、声音及商业使用授权</span></label>
                   {digitalHumanCapabilities?.available === false ? (
                     <p className="mt-2 rounded-lg bg-amber-50 px-2 py-2 text-[9px] text-amber-700">{digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用'}</p>
                   ) : digitalHumanAvatars.length ? (

@@ -21,9 +21,14 @@
   "script": "生成时的脚本快照",
   "language": "zh",
   "mode": "quality",
+  "storyboardSlotId": "shot-3",
+  "audioSegment": { "startSeconds": 6.2, "endSeconds": 9.8 },
+  "inputSignature": "由分镜、文案、配音、区间和人物共同生成的幂等签名",
   "output": { "ratio": "9:16", "container": "mp4" }
 }
 ```
+
+`storyboardSlotId` 存在时代表逐分镜数字人口播任务。Worker 必须先按 `audioSegment` 截取当前分镜音频，再执行口型生成；不得使用整条口播音频生成后强行裁剪视频。相同 `externalJobId` 的重复提交必须返回原任务，不能重复占用 GPU。
 
 返回 HTTP 202/200：
 
