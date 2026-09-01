@@ -7,7 +7,7 @@ const route = readFileSync(new URL('../../server/routes/studio.ts', import.meta.
 const worker = readFileSync(new URL('../../scripts/digital-human-local-worker.ts', import.meta.url), 'utf8');
 
 assert.match(studio, /generateDigitalHumanForShot\(activeWorkbenchSlot, avatar\.id\)/, '数字人入口必须作用于当前分镜');
-assert.match(studio, /setStoryboardAssignments\(current => \(\{ \.\.\.current, \[slotId\]: result\.outputMaterial!\.id \}\)\)/, '合格输出必须自动回填原分镜');
+assert.match(studio, /setStoryboardAssignments\(current => \(\{ \.\.\.current, \[slotId\]: resolution\.assignmentMaterialId! \}\)\)/, '合格输出必须自动回填原分镜');
 assert.match(studio, /status: 'stale'.+分镜口播、配音或时间区间已变化/s, '输入变化必须使旧输出失效');
 assert.match(studio, /人物口播 · 数字人/, '入口应位于现有素材匹配区域');
 assert.doesNotMatch(studio, /新增数字人创作步骤/, '不得增加新的创作步骤');

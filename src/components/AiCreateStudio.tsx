@@ -7,7 +7,7 @@ import {
   Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
 } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
-import { isShotDigitalHumanActive, shotDigitalHumanSignature, type ShotDigitalHumanBinding } from '../lib/shotDigitalHuman';
+import { isShotDigitalHumanActive, resolveShotDigitalHumanResult, shotDigitalHumanSignature, type ShotDigitalHumanBinding } from '../lib/shotDigitalHuman';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
@@ -6628,12 +6628,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             language: activeVoiceLang, voiceoverUrl: activeVoiceoverUrl, start: slot.start, end: slot.end,
             avatarMaterialId: binding.avatarMaterialId,
           }) : '';
-          if (currentSignature === binding.inputSignature) {
+          const resolution = resolveShotDigitalHumanResult({
+            binding, currentSignature, jobStatus: job.status, outputMaterialId: job.outputMaterialId,
+            error: job.status === 'review' ? (job.qualityReport?.gateFailures?.join('；') || '质量检测未通过') : job.errorMessage,
+          });
+          if (resolution.assignmentMaterialId) {
             setMaterials(current => mergeClipLists(current, [result.outputMaterial as Clip]));
             setSelected(current => [...new Set([...current, result.outputMaterial!.id])]);
-            setStoryboardAssignments(current => ({ ...current, [slotId]: result.outputMaterial!.id }));
-            setStoryboardSourcePlans(current => ({ ...current, [slotId]: { ...sourcePlanFor(slot!), mode: 'ai', decided: true, confirmed: true, generatedClipId: result.outputMaterial!.id } }));
+            setStoryboardAssignments(current => ({ ...current, [slotId]: resolution.assignmentMaterialId! }));
+            setStoryboardSourcePlans(current => ({ ...current, [slotId]: { ...sourcePlanFor(slot!), mode: 'ai', decided: true, confirmed: true, generatedClipId: resolution.assignmentMaterialId } }));
           }
+          setShotDigitalHumanBindings(current => ({ ...current, [slotId]: resolution.binding }));
+          continue;
         }
         setShotDigitalHumanBindings(current => ({
           ...current,

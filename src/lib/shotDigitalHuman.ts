@@ -28,3 +28,25 @@ export function isShotDigitalHumanActive(status: ShotDigitalHumanStatus) {
 export function isShotDigitalHumanCurrent(binding: ShotDigitalHumanBinding | undefined, signature: string) {
   return Boolean(binding && binding.inputSignature === signature && binding.status !== 'stale');
 }
+
+export function resolveShotDigitalHumanResult(input: {
+  binding: ShotDigitalHumanBinding;
+  currentSignature: string;
+  jobStatus: Exclude<ShotDigitalHumanStatus, 'stale'>;
+  outputMaterialId?: string;
+  error?: string;
+}) {
+  if (input.binding.inputSignature !== input.currentSignature) {
+    return { binding: { ...input.binding, status: 'stale' as const, error: '分镜输入已变化，请重新生成。' } };
+  }
+  const binding: ShotDigitalHumanBinding = {
+    ...input.binding,
+    status: input.jobStatus,
+    outputMaterialId: input.outputMaterialId,
+    error: input.error,
+  };
+  return {
+    binding,
+    assignmentMaterialId: input.jobStatus === 'completed' ? input.outputMaterialId : undefined,
+  };
+}
