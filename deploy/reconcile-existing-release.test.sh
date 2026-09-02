@@ -38,15 +38,25 @@ grep -Fq 'source_ref:' "$deploy_workflow"
 grep -Fq 'expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA' "$deploy_workflow"
 grep -Fq 'sourceRef: process.env.SOURCE_REF' "$deploy_workflow"
 grep -Fq 'git merge-base --is-ancestor "$IMAGE_SHA" refs/remotes/origin/release-source' "$deploy_workflow"
-grep -Fq 'sudo --preserve-env=APP_IMAGE,POCKETBASE_IMAGE,DEPLOY_ACTOR,DEPLOY_RUN_URL bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$deploy_workflow"
+grep -Fq 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$deploy_workflow"
+[[ "$(grep -Fc 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$deploy_workflow")" == "2" ]]
+grep -Fq 'sudo --preserve-env=APP_IMAGE,POCKETBASE_IMAGE,DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$deploy_workflow"
 grep -Fq 'expected_current_sha:' "$rollback_workflow"
 grep -Fq 'source_ref:' "$rollback_workflow"
 grep -Fq 'expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA' "$rollback_workflow"
-grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR,DEPLOY_RUN_URL bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$rollback_workflow"
+grep -Fq 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$rollback_workflow"
+[[ "$(grep -Fc 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$rollback_workflow")" == "2" ]]
+grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$rollback_workflow"
 grep -Fq 'Report verified post-deployment inventory' "$deploy_workflow"
 grep -Fq 'Report verified post-rollback inventory' "$rollback_workflow"
 grep -Fq 'sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal' "$deploy_workflow"
 grep -Fq 'sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal' "$rollback_workflow"
+grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR bash deploy/reconcile-existing-release.sh' "$workflow"
+grep -Fq 'flock -n 9' "$report"
+grep -Fq 'RELEASE_CONSOLE_URL must use HTTPS.' "$report"
+grep -Fq 'RELEASE_CONSOLE_URL must not contain whitespace.' "$report"
+grep -Fq 'chmod 600 "$auth_header_file"' "$report"
+grep -Fq -- '--header "@$auth_header_file"' "$report"
 
 mkdir -p "$fixture/bin" "$fixture/compose" "$fixture/deploy"
 touch "$fixture/compose/docker-compose.yml" "$fixture/deploy/compose.release.yml"
@@ -120,7 +130,7 @@ done
 MOCK_CURL
 cat > "$fixture/bin/flock" <<'MOCK_FLOCK'
 #!/usr/bin/env bash
-exit 0
+exit "${MOCK_FLOCK_EXIT:-0}"
 MOCK_FLOCK
 chmod +x "$fixture/bin/docker" "$fixture/bin/curl" "$fixture/bin/flock"
 
@@ -161,6 +171,19 @@ PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
 grep -Fq 'http://127.0.0.1:18788/api/overseas/health' "$MOCK_CURL_LOG"
 grep -Fq 'http://127.0.0.1:18788/' "$MOCK_CURL_LOG"
 grep -Fq 'http://127.0.0.1:8090/api/health' "$MOCK_CURL_LOG"
+! grep -Fq 'test-secret' "$MOCK_CURL_LOG"
+
+curl_calls_before_locked_report="$(wc -l < "$MOCK_CURL_LOG" | tr -d ' ')"
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  MOCK_FLOCK_EXIT=1 \
+  RELEASE_CONSOLE_URL=https://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null 2>&1; then
+  echo "Inventory reporting unexpectedly ignored the deployment lock." >&2
+  exit 1
+fi
+curl_calls_after_locked_report="$(wc -l < "$MOCK_CURL_LOG" | tr -d ' ')"
+[[ "$curl_calls_after_locked_report" == "$curl_calls_before_locked_report" ]]
 
 node - "$MOCK_INVENTORY_PAYLOAD" <<'NODE'
 const fs = require('node:fs');
@@ -182,6 +205,8 @@ IMAGE_SOURCE=registry
 IMAGE_TAG=sha-${registry_rollback_sha}
 APP_IMAGE=ghcr.io/example/app
 POCKETBASE_IMAGE=ghcr.io/example/pocketbase
+REGISTRY_APP_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+REGISTRY_POCKETBASE_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 EOF
 PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
   MOCK_IMAGE_REVISION="$registry_rollback_sha" \
@@ -195,6 +220,14 @@ if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
   RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
   bash "$report" internal >/dev/null 2>&1; then
   echo "Inventory reporting unexpectedly accepted a drifting registry rollback tag." >&2
+  exit 1
+fi
+
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  RELEASE_CONSOLE_URL=http://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null 2>&1; then
+  echo "Inventory reporting unexpectedly accepted a plaintext HTTP endpoint." >&2
   exit 1
 fi
 

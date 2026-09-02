@@ -127,17 +127,28 @@ verify_running_registry_release() {
   local recorded_commit image_tag app_image pocketbase_image
   local app_id pocketbase_id running_app_id running_pocketbase_id
   local tagged_app_id tagged_pocketbase_id app_revision pocketbase_revision
+  local recorded_app_id recorded_pocketbase_id
 
   recorded_commit="$(read_release_value DEPLOYED_COMMIT "$release_file")"
   image_tag="$(read_release_value IMAGE_TAG "$release_file")"
   app_image="$(read_release_value APP_IMAGE "$release_file")"
   pocketbase_image="$(read_release_value POCKETBASE_IMAGE "$release_file")"
+  recorded_app_id="$(read_release_value REGISTRY_APP_IMAGE_ID "$release_file")"
+  recorded_pocketbase_id="$(read_release_value REGISTRY_POCKETBASE_IMAGE_ID "$release_file")"
   [[ "$recorded_commit" =~ ^[0-9a-f]{40}$ ]] || {
     echo "Current registry release has an invalid recorded commit." >&2
     return 1
   }
   [[ -n "$image_tag" && -n "$app_image" && -n "$pocketbase_image" ]] || {
     echo "Current registry release image metadata is incomplete." >&2
+    return 1
+  }
+  [[ "$recorded_app_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Current registry application image ID is missing or invalid." >&2
+    return 1
+  }
+  [[ "$recorded_pocketbase_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Current registry PocketBase image ID is missing or invalid." >&2
     return 1
   }
 
@@ -157,6 +168,14 @@ verify_running_registry_release() {
     echo "Current registry PocketBase tag is not available locally." >&2
     return 1
   }
+  [[ "$tagged_app_id" == "$recorded_app_id" ]] || {
+    echo "Current registry application tag has drifted from its recorded image ID." >&2
+    return 1
+  }
+  [[ "$tagged_pocketbase_id" == "$recorded_pocketbase_id" ]] || {
+    echo "Current registry PocketBase tag has drifted from its recorded image ID." >&2
+    return 1
+  }
   [[ "$running_app_id" == "$tagged_app_id" ]] || {
     echo "Running application image does not match the recorded registry tag." >&2
     return 1
@@ -170,6 +189,81 @@ verify_running_registry_release() {
   pocketbase_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$pocketbase_id" 2>/dev/null)" || return 1
   [[ "$app_revision" == "$recorded_commit" && "$pocketbase_revision" == "$recorded_commit" ]] || {
     echo "Running registry images are not labeled with the recorded commit SHA." >&2
+    return 1
+  }
+}
+
+verify_registry_image_tags() {
+  local release_file="$1"
+  local allow_record="${2:-false}"
+  local recorded_commit image_tag app_image pocketbase_image
+  local app_revision pocketbase_revision app_id pocketbase_id
+  local recorded_app_id recorded_pocketbase_id
+
+  recorded_commit="$(read_release_value DEPLOYED_COMMIT "$release_file")"
+  image_tag="$(read_release_value IMAGE_TAG "$release_file")"
+  app_image="$(read_release_value APP_IMAGE "$release_file")"
+  pocketbase_image="$(read_release_value POCKETBASE_IMAGE "$release_file")"
+  [[ "$recorded_commit" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "Registry candidate has an invalid recorded commit." >&2
+    return 1
+  }
+  [[ "$image_tag" == "sha-${recorded_commit}" ]] || {
+    echo "Registry candidate tag is not derived from its recorded commit." >&2
+    return 1
+  }
+  [[ -n "$app_image" && -n "$pocketbase_image" ]] || {
+    echo "Registry candidate image repositories are incomplete." >&2
+    return 1
+  }
+
+  app_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$app_image:$image_tag" 2>/dev/null)" || {
+    echo "Registry candidate application image is not available locally." >&2
+    return 1
+  }
+  pocketbase_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$pocketbase_image:$image_tag" 2>/dev/null)" || {
+    echo "Registry candidate PocketBase image is not available locally." >&2
+    return 1
+  }
+  [[ "$app_revision" == "$recorded_commit" && "$pocketbase_revision" == "$recorded_commit" ]] || {
+    echo "Registry candidate images are not labeled with the authorized commit SHA." >&2
+    return 1
+  }
+
+  app_id="$(docker image inspect --format '{{.Id}}' "$app_image:$image_tag" 2>/dev/null)" || return 1
+  pocketbase_id="$(docker image inspect --format '{{.Id}}' "$pocketbase_image:$image_tag" 2>/dev/null)" || return 1
+  [[ "$app_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Registry candidate application image ID is invalid." >&2
+    return 1
+  }
+  [[ "$pocketbase_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Registry candidate PocketBase image ID is invalid." >&2
+    return 1
+  }
+
+  recorded_app_id="$(read_release_value REGISTRY_APP_IMAGE_ID "$release_file")"
+  recorded_pocketbase_id="$(read_release_value REGISTRY_POCKETBASE_IMAGE_ID "$release_file")"
+  if [[ -z "$recorded_app_id" && -z "$recorded_pocketbase_id" && "$allow_record" == "true" ]]; then
+    printf 'REGISTRY_APP_IMAGE_ID=%s\nREGISTRY_POCKETBASE_IMAGE_ID=%s\n' \
+      "$app_id" "$pocketbase_id" >> "$release_file"
+    chmod 600 "$release_file"
+    recorded_app_id="$app_id"
+    recorded_pocketbase_id="$pocketbase_id"
+  fi
+  [[ "$recorded_app_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Registry candidate is missing its recorded application image ID." >&2
+    return 1
+  }
+  [[ "$recorded_pocketbase_id" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Registry candidate is missing its recorded PocketBase image ID." >&2
+    return 1
+  }
+  [[ "$app_id" == "$recorded_app_id" ]] || {
+    echo "Registry candidate application tag has drifted from its recorded image ID." >&2
+    return 1
+  }
+  [[ "$pocketbase_id" == "$recorded_pocketbase_id" ]] || {
+    echo "Registry candidate PocketBase tag has drifted from its recorded image ID." >&2
     return 1
   }
 }
@@ -257,7 +351,9 @@ backup_pocketbase() {
   if is_local_baseline_release "$candidate_file"; then
     candidate_pb_image="$(read_release_value BASELINE_POCKETBASE_IMAGE_ID "$candidate_file")"
   else
-    candidate_pb_image="$(read_release_value POCKETBASE_IMAGE "$candidate_file"):$(read_release_value IMAGE_TAG "$candidate_file")"
+    candidate_pb_image="$(read_release_value REGISTRY_POCKETBASE_IMAGE_ID "$candidate_file")"
+    [[ "$candidate_pb_image" =~ ^sha256:[0-9a-f]{64}$ ]] \
+      || fail "Registry candidate PocketBase image ID is not locked before backup."
   fi
   if ! docker run --rm \
     --entrypoint sh \
@@ -385,6 +481,13 @@ case "$candidate_image_source" in
   registry|"")
     echo "Pulling release $(read_release_value IMAGE_TAG "$candidate_release") for ${deploy_environment}"
     compose "$candidate_release" pull app pocketbase
+    if [[ "$rollback_mode" == "1" ]]; then
+      verify_registry_image_tags "$candidate_release" false \
+        || fail "The authorized registry rollback images are missing or have drifted."
+    else
+      verify_registry_image_tags "$candidate_release" true \
+        || fail "The pulled registry images do not match the authorized commit SHA."
+    fi
     ;;
   *)
     fail "Candidate release has an unsupported image source."
@@ -398,17 +501,22 @@ if is_local_baseline_release "$candidate_release"; then
     compose "$current_release" start pocketbase || true
     fail "The local rollback baseline changed before container replacement."
   fi
+else
+  if ! verify_registry_image_tags "$candidate_release" false; then
+    compose "$current_release" start pocketbase || true
+    fail "The registry candidate images changed before container replacement."
+  fi
 fi
 
 set +e
 compose "$candidate_release" up -d pocketbase app
 deploy_status=$?
 if [[ "$deploy_status" == "0" ]]; then
-  wait_for_health "$candidate_release"
+  verify_running_recorded_release "$candidate_release"
   deploy_status=$?
 fi
-if [[ "$deploy_status" == "0" ]] && is_local_baseline_release "$candidate_release"; then
-  verify_running_local_baseline "$candidate_release"
+if [[ "$deploy_status" == "0" ]]; then
+  wait_for_health "$candidate_release"
   deploy_status=$?
 fi
 set -e
@@ -419,15 +527,22 @@ if [[ "$deploy_status" != "0" ]]; then
 
   if [[ -f "$current_release" ]]; then
     echo "Restoring the current release $(read_release_value IMAGE_TAG "$current_release")" >&2
-    if ! is_local_baseline_release "$current_release" \
-      || verify_local_baseline_tags "$current_release"; then
+    current_image_source="$(read_release_value IMAGE_SOURCE "$current_release")"
+    if [[ "$current_image_source" == "local-baseline" ]] \
+      && verify_local_baseline_tags "$current_release"; then
+      can_restore_current=true
+    elif [[ "$current_image_source" == "registry" || -z "$current_image_source" ]] \
+      && verify_registry_image_tags "$current_release" false; then
+      can_restore_current=true
+    else
+      can_restore_current=false
+    fi
+    if [[ "$can_restore_current" == "true" ]]; then
       compose "$current_release" up -d pocketbase app || true
       wait_for_health "$current_release" || true
-      if is_local_baseline_release "$current_release"; then
-        verify_running_local_baseline "$current_release" || true
-      fi
+      verify_running_recorded_release "$current_release" || true
     else
-      echo "Current local baseline could not be verified; refusing to recreate containers from a drifting tag." >&2
+      echo "Current release images could not be verified; refusing to recreate containers from drifting tags." >&2
     fi
   else
     echo "No previous managed release exists; leaving failed candidate containers for inspection." >&2

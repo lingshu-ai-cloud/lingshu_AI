@@ -74,7 +74,7 @@ jobs:
           CURRENT_COMMIT: ${{ inputs.current_commit }}
           CURRENT_BRANCH: ${{ inputs.current_branch }}
         run: |
-          sudo bash deploy/reconcile-existing-release.sh \
+          sudo --preserve-env=DEPLOY_ACTOR bash deploy/reconcile-existing-release.sh \
             internal \
             lingshu-ai-cs-preview \
             /home/ubuntu/lingshu-ai-cs-preview \

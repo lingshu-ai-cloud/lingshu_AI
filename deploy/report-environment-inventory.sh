@@ -10,11 +10,21 @@ environment="${1:-}"
 [[ "$environment" == "internal" ]] || fail "Inventory reporting is limited to internal."
 : "${RELEASE_CONSOLE_URL:?RELEASE_CONSOLE_URL is required}"
 : "${RELEASE_INVENTORY_WEBHOOK_SECRET:?RELEASE_INVENTORY_WEBHOOK_SECRET is required}"
+[[ "$RELEASE_CONSOLE_URL" == https://* ]] \
+  || fail "RELEASE_CONSOLE_URL must use HTTPS."
+[[ ! "$RELEASE_CONSOLE_URL" =~ [[:space:]] ]] \
+  || fail "RELEASE_CONSOLE_URL must not contain whitespace."
+[[ "$RELEASE_INVENTORY_WEBHOOK_SECRET" != *$'\r'* \
+  && "$RELEASE_INVENTORY_WEBHOOK_SECRET" != *$'\n'* ]] \
+  || fail "RELEASE_INVENTORY_WEBHOOK_SECRET must not contain line breaks."
 
 deploy_root="${DEPLOY_ROOT:-/opt/lingshu/internal}"
 release_file="$deploy_root/.release.env"
 previous_release_file="$deploy_root/.previous-release.env"
 compose_file="$deploy_root/compose.release.yml"
+deploy_lock="$deploy_root/.deploy.lock"
+exec 9>"$deploy_lock"
+flock -n 9 || fail "Another deployment operation is running; inventory was not reported."
 [[ -f "$release_file" && -f "$compose_file" ]] || fail "Managed release files are missing."
 
 read_file_value() {
@@ -57,6 +67,11 @@ verify_recorded_rollback() {
       [[ "$rollback_app_id" == "$expected_app_id" && "$rollback_pb_id" == "$expected_pb_id" ]] || return 1
       ;;
     registry|"")
+      expected_app_id="$(read_file_value REGISTRY_APP_IMAGE_ID "$rollback_file")"
+      expected_pb_id="$(read_file_value REGISTRY_POCKETBASE_IMAGE_ID "$rollback_file")"
+      [[ "$expected_app_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+      [[ "$expected_pb_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+      [[ "$rollback_app_id" == "$expected_app_id" && "$rollback_pb_id" == "$expected_pb_id" ]] || return 1
       rollback_app_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$rollback_app:$rollback_tag" 2>/dev/null)" || return 1
       rollback_pb_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$rollback_pb:$rollback_tag" 2>/dev/null)" || return 1
       [[ "$rollback_app_revision" == "$rollback_commit" && "$rollback_pb_revision" == "$rollback_commit" ]] || return 1
@@ -80,6 +95,8 @@ attested="$(read_value BASELINE_ATTESTED)"
 image_source="$(read_value IMAGE_SOURCE)"
 recorded_app_image_id="$(read_value BASELINE_APP_IMAGE_ID)"
 recorded_pb_image_id="$(read_value BASELINE_POCKETBASE_IMAGE_ID)"
+recorded_registry_app_image_id="$(read_value REGISTRY_APP_IMAGE_ID)"
+recorded_registry_pb_image_id="$(read_value REGISTRY_POCKETBASE_IMAGE_ID)"
 
 [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || fail "Recorded commit is invalid."
 [[ -n "$branch_name" && -n "$compose_project" ]] || fail "Recorded source metadata is incomplete."
@@ -116,6 +133,18 @@ if [[ "$attested" == "true" ]]; then
     || fail "Attested PocketBase baseline tag or running image has drifted."
   source_known=true
 else
+  [[ "$image_source" == "registry" || -z "$image_source" ]] \
+    || fail "Registry release has an unsupported image source marker."
+  [[ "$recorded_registry_app_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "Recorded registry application image ID is invalid."
+  [[ "$recorded_registry_pb_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "Recorded registry PocketBase image ID is invalid."
+  [[ "$tagged_app_image_id" == "$recorded_registry_app_image_id" \
+    && "$running_app_image_id" == "$recorded_registry_app_image_id" ]] \
+    || fail "Registry application tag or running image has drifted."
+  [[ "$tagged_pb_image_id" == "$recorded_registry_pb_image_id" \
+    && "$running_pb_image_id" == "$recorded_registry_pb_image_id" ]] \
+    || fail "Registry PocketBase tag or running image has drifted."
   app_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$app_id")"
   pb_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$pocketbase_id")"
   [[ "$app_revision" == "$commit_sha" && "$pb_revision" == "$commit_sha" ]] && source_known=true
@@ -139,7 +168,12 @@ app_port="$(read_value APP_HOST_PORT)"
 curl -fsS --max-time 10 "http://127.0.0.1:${app_port}/api/overseas/health" >/dev/null \
   || fail "Application API smoke test failed."
 root_page="$(mktemp)"
-trap 'rm -f -- "$root_page"' EXIT
+auth_header_file="$(mktemp)"
+cleanup_inventory_files() {
+  rm -f -- "$root_page" "$auth_header_file"
+}
+trap cleanup_inventory_files EXIT
+chmod 600 "$auth_header_file"
 curl -fsS --max-time 10 --output "$root_page" "http://127.0.0.1:${app_port}/" \
   || fail "Application root-page smoke test failed."
 [[ -s "$root_page" ]] || fail "Application root page was empty."
@@ -148,7 +182,6 @@ grep -Eiq '<!doctype[[:space:]]+html|<html([[:space:]>])' "$root_page" \
 curl -fsS --max-time 10 "http://127.0.0.1:${PB_HOST_PORT:-8090}/api/health" >/dev/null \
   || fail "PocketBase API smoke test failed."
 rm -f -- "$root_page"
-trap - EXIT
 export INVENTORY_COMMIT="$commit_sha"
 export INVENTORY_BRANCH="$branch_name"
 export INVENTORY_APP_IMAGE="$app_image"
@@ -183,10 +216,11 @@ process.stdout.write(JSON.stringify(payload));
 NODE
 )"
 
-curl --fail --silent --show-error \
+printf 'Authorization: Bearer %s\nContent-Type: application/json\n' \
+  "$RELEASE_INVENTORY_WEBHOOK_SECRET" > "$auth_header_file"
+curl --fail --silent --show-error --max-time 20 \
   --request POST \
-  --header "Authorization: Bearer $RELEASE_INVENTORY_WEBHOOK_SECRET" \
-  --header "Content-Type: application/json" \
+  --header "@$auth_header_file" \
   --data-binary "$payload" \
   "${RELEASE_CONSOLE_URL%/}/api/environment-inventory" >/dev/null
 
