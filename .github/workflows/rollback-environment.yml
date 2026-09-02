@@ -77,6 +77,16 @@ jobs:
           echo "This workflow accepts linked rollback requests only." >&2
           exit 1
 
+      - name: Validate immutable rollback version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Rollback version must be a full lowercase 40-character Git commit SHA." >&2
+            exit 1
+          fi
+
       - name: Consume release-console authorization
         env:
           CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
@@ -146,7 +156,7 @@ jobs:
         env:
           DEPLOY_ACTOR: ${{ github.actor }}
           DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash deploy/release.sh rollback internal
+        run: bash deploy/release.sh rollback internal "${{ inputs.version }}"
 
       - name: Record rollback in job summary
         run: |
