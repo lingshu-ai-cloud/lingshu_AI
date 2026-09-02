@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage:
   release.sh deploy <internal|presales|production> <40-character-commit-sha>
-  release.sh rollback <internal|presales|production>
+  release.sh rollback <internal|presales|production> <expected-40-character-commit-sha>
 EOF
 }
 
@@ -154,9 +154,6 @@ if [[ ! -f "$deploy_root/.env.runtime" ]]; then
 fi
 chmod 600 "$deploy_root/.env.runtime"
 
-install -m 0644 "$source_root/deploy/compose.release.yml" "$deploy_root/compose.release.yml"
-install -m 0644 "$source_root/Caddyfile" "$deploy_root/Caddyfile"
-
 rollback_mode=0
 if [[ "$action" == "deploy" ]]; then
   commit_sha="${3:-}"
@@ -176,11 +173,18 @@ if [[ "$action" == "deploy" ]]; then
   fi
   write_candidate_release "$commit_sha" "$candidate_release"
 else
+  expected_rollback_sha="${3:-}"
+  [[ "$expected_rollback_sha" =~ ^[0-9a-f]{40}$ ]] || fail "A full lowercase expected rollback commit SHA is required."
   [[ -f "$previous_release" ]] || fail "No previous release is recorded for ${deploy_environment}."
+  recorded_rollback_sha="$(read_release_value DEPLOYED_COMMIT "$previous_release")"
+  [[ "$recorded_rollback_sha" == "$expected_rollback_sha" ]] || fail "Recorded rollback baseline does not match the authorized commit SHA."
   cp "$previous_release" "$candidate_release"
   chmod 600 "$candidate_release"
   rollback_mode=1
 fi
+
+install -m 0644 "$source_root/deploy/compose.release.yml" "$deploy_root/compose.release.yml"
+install -m 0644 "$source_root/Caddyfile" "$deploy_root/Caddyfile"
 
 app_host_port="$(read_release_value APP_HOST_PORT "$candidate_release")"
 compose_project="$(read_release_value COMPOSE_PROJECT_NAME "$candidate_release")"

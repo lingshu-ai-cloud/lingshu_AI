@@ -86,8 +86,15 @@ grep -q "^COMPOSE_PROJECT_NAME=legacy-project$" "$test_root/.release.env"
 grep -q "^APP_DATA_PATH=$test_root/existing-data$" "$test_root/.release.env"
 grep -q "^PB_DATA_VOLUME_NAME=legacy_pb_data$" "$test_root/.release.env"
 
+if DEPLOY_ROOT="$test_root" \
+  bash "$repository_root/deploy/release.sh" rollback internal "$sha_three"; then
+  echo "Expected rollback with a mismatched authorized SHA to fail." >&2
+  exit 1
+fi
+grep -q "^IMAGE_TAG=sha-${sha_two}$" "$test_root/.release.env"
+
 DEPLOY_ROOT="$test_root" \
-  bash "$repository_root/deploy/release.sh" rollback internal
+  bash "$repository_root/deploy/release.sh" rollback internal "$sha_one"
 
 grep -q "^IMAGE_TAG=sha-${sha_one}$" "$test_root/.release.env"
 grep -q "^IMAGE_TAG=sha-${sha_two}$" "$test_root/.previous-release.env"
