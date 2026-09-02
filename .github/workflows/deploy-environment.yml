@@ -31,6 +31,14 @@ on:
         description: Full 40-character commit SHA already published by Build release images
         required: true
         type: string
+      expected_current_sha:
+        description: Current immutable commit SHA observed when this deployment was authorized
+        required: true
+        type: string
+      source_ref:
+        description: Remote branch that contains the locked version
+        required: true
+        type: string
       rollback_of_request_id:
         description: Must be empty for a deployment
         required: false
@@ -77,6 +85,21 @@ jobs:
           echo "This workflow accepts deploy requests only." >&2
           exit 1
 
+      - name: Validate the bound execution context
+        env:
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "expected_current_sha must be a full lowercase commit SHA." >&2
+            exit 1
+          }
+          git check-ref-format --branch "$SOURCE_REF" >/dev/null || {
+            echo "source_ref is not a valid Git branch name." >&2
+            exit 1
+          }
+
       - name: Consume release-console authorization
         env:
           CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
@@ -87,6 +110,8 @@ jobs:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_OPERATION: ${{ inputs.operation }}
           RELEASE_VERSION: ${{ inputs.version }}
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
           : "${CONSOLE_URL:?RELEASE_CONSOLE_URL secret is required}"
@@ -103,6 +128,8 @@ jobs:
             environment: process.env.TARGET_ENVIRONMENT,
             operation: process.env.RELEASE_OPERATION,
             version: process.env.RELEASE_VERSION,
+            expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA,
+            sourceRef: process.env.SOURCE_REF,
           };
           process.stdout.write(JSON.stringify(payload));
           NODE
@@ -120,6 +147,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       image_sha: ${{ steps.validate.outputs.image_sha }}
+      source_ref: ${{ steps.validate.outputs.source_ref }}
     steps:
       - name: Check out complete main history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -131,6 +159,8 @@ jobs:
         id: validate
         env:
           IMAGE_SHA: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
 
@@ -139,17 +169,42 @@ jobs:
             exit 1
           fi
 
+          git check-ref-format --branch "$SOURCE_REF" >/dev/null || {
+            echo "source_ref is not a valid Git branch name." >&2
+            exit 1
+          }
+          git fetch --no-tags origin \
+            "+refs/heads/${SOURCE_REF}:refs/remotes/origin/release-source"
           if ! git cat-file -e "${IMAGE_SHA}^{commit}"; then
-            echo "Commit $IMAGE_SHA does not exist in this repository." >&2
+            echo "Commit $IMAGE_SHA does not exist in the fetched source branch history." >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$IMAGE_SHA" refs/remotes/origin/release-source; then
+            echo "Commit $IMAGE_SHA is not contained in the authorized source branch history." >&2
             exit 1
           fi
 
-          if ! git merge-base --is-ancestor "$IMAGE_SHA" origin/main; then
-            echo "Commit $IMAGE_SHA is not contained in main." >&2
-            exit 1
-          fi
+          case "$TARGET_ENVIRONMENT" in
+            internal)
+              ;;
+            presales|production)
+              [[ "$SOURCE_REF" == "main" ]] || {
+                echo "Presales and production releases must use the main source branch." >&2
+                exit 1
+              }
+              if ! git merge-base --is-ancestor "$IMAGE_SHA" origin/main; then
+                echo "Commit $IMAGE_SHA is not contained in main." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported target environment." >&2
+              exit 1
+              ;;
+          esac
 
           echo "image_sha=$IMAGE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
 
   deploy:
     name: Deploy internal
@@ -186,15 +241,30 @@ jobs:
           POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase
           DEPLOY_ACTOR: ${{ github.actor }}
           DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}"
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+        run: sudo --preserve-env=APP_IMAGE,POCKETBASE_IMAGE,DEPLOY_ACTOR,DEPLOY_RUN_URL bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
+
+      - name: Report verified post-deployment inventory
+        env:
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal
 
       - name: Record deployment in job summary
+        env:
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOYED_COMMIT: ${{ needs.validate.outputs.image_sha }}
+          SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+          RUNNER_NAME: ${{ runner.name }}
         run: |
           echo "### Deployment complete" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Release request: ${{ inputs.release_request_id }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Environment: ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: ${{ needs.validate.outputs.image_sha }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Runner: ${{ runner.name }}" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Release request: $RELEASE_REQUEST_ID" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Environment: $TARGET_ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Commit: $DEPLOYED_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Source branch: $SOURCE_REF" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Runner: $RUNNER_NAME" >> "$GITHUB_STEP_SUMMARY"
 
   report:
     name: Report execution result

@@ -47,30 +47,39 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Verify the attested branch resolves to the attested commit
+      - name: Verify the attested branch contains the attested commit
         env:
           CURRENT_COMMIT: ${{ inputs.current_commit }}
           CURRENT_BRANCH: ${{ inputs.current_branch }}
         run: |
           set -euo pipefail
+          git check-ref-format --branch "$CURRENT_BRANCH" >/dev/null || {
+            echo "The attested branch name is invalid." >&2
+            exit 1
+          }
           git fetch --no-tags origin \
-            "+refs/heads/${CURRENT_BRANCH}:refs/remotes/origin/${CURRENT_BRANCH}"
-          resolved_commit="$(git rev-parse "refs/remotes/origin/${CURRENT_BRANCH}^{commit}")"
-          [[ "$resolved_commit" == "$CURRENT_COMMIT" ]] || {
-            echo "The named branch no longer resolves to the attested commit." >&2
+            "+refs/heads/${CURRENT_BRANCH}:refs/remotes/origin/reconciliation-source"
+          git cat-file -e "${CURRENT_COMMIT}^{commit}" || {
+            echo "The attested commit is not available from the named branch." >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "$CURRENT_COMMIT" refs/remotes/origin/reconciliation-source || {
+            echo "The attested commit is not contained in the named branch history." >&2
             exit 1
           }
 
       - name: Reconcile the running internal images without restarting them
         env:
           DEPLOY_ACTOR: ${{ github.actor }}
+          CURRENT_COMMIT: ${{ inputs.current_commit }}
+          CURRENT_BRANCH: ${{ inputs.current_branch }}
         run: |
           sudo bash deploy/reconcile-existing-release.sh \
             internal \
             lingshu-ai-cs-preview \
             /home/ubuntu/lingshu-ai-cs-preview \
-            "${{ inputs.current_commit }}" \
-            "${{ inputs.current_branch }}"
+            "$CURRENT_COMMIT" \
+            "$CURRENT_BRANCH"
 
       - name: Report signed fail-closed inventory
         env:

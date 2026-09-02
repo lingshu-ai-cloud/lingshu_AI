@@ -17,24 +17,24 @@ branch_name="${5:-}"
 [[ "$compose_directory" == /* ]] || fail "Compose directory must be absolute."
 [[ -f "$compose_directory/docker-compose.yml" ]] || fail "docker-compose.yml was not found."
 [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || fail "A full lowercase commit SHA is required."
-[[ "$branch_name" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "Branch name is invalid."
-[[ "$branch_name" != -* && "$branch_name" != /* && "$branch_name" != *..* ]] \
-  || fail "Branch name is invalid."
 
-for command_name in docker curl flock install; do
+for command_name in docker curl flock git install; do
   command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required."
 done
+git check-ref-format --branch "$branch_name" >/dev/null 2>&1 || fail "Branch name is invalid."
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
 
 deploy_root="${DEPLOY_ROOT:-/opt/lingshu/internal}"
 current_release="$deploy_root/.release.env"
 previous_release="$deploy_root/.previous-release.env"
 compose_file="$compose_directory/docker-compose.yml"
+source_root="$(cd "$(dirname "$0")/.." && pwd)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 install -d -m 0750 "$deploy_root" "$deploy_root/backups" "$deploy_root/reconciliation-archive"
 exec 9>"$deploy_root/.deploy.lock"
 flock -n 9 || fail "Another deployment operation is running."
+install -m 0644 "$source_root/deploy/compose.release.yml" "$deploy_root/compose.release.yml"
 
 compose=(docker compose --project-name "$compose_project" --file "$compose_file")
 app_id="$("${compose[@]}" ps -q app)"
@@ -78,6 +78,7 @@ trap 'rm -f -- "$candidate"' EXIT
 chmod 600 "$candidate"
 cat > "$candidate" <<EOF
 DEPLOY_ENV=internal
+IMAGE_SOURCE=local-baseline
 IMAGE_TAG=${image_tag}
 APP_IMAGE=${app_image}
 POCKETBASE_IMAGE=${pocketbase_image}
