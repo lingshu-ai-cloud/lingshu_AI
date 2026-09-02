@@ -33,12 +33,16 @@ jobs:
         env:
           CURRENT_COMMIT: ${{ inputs.current_commit }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
           [[ "$CONFIRMATION" == "RECONCILE internal" ]]
           [[ "$CURRENT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_CONSOLE_URL" == https://* ]]
+          [[ ${#RELEASE_INVENTORY_WEBHOOK_SECRET} -ge 32 ]]
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           fetch-depth: 0
@@ -72,5 +76,4 @@ jobs:
         env:
           RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
           RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
-          PUBLIC_SMOKE_URL: https://lingshu.site/api/health
-        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET,PUBLIC_SMOKE_URL bash deploy/report-environment-inventory.sh internal
+        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal
