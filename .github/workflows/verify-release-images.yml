@@ -158,6 +158,7 @@ jobs:
             --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
             --env "WORKBENCH_ADMIN_EMAIL=$smoke_admin_email" \
             --env "WORKBENCH_ADMIN_PASSWORD=$smoke_admin_password" \
+            --env "TENANT_PLATFORM_APP_KEY=release-image-smoke-tenant-platform-key-2026" \
             "$APP_IMAGE" >/dev/null
 
           wait_for_url \
