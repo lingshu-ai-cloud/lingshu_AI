@@ -429,13 +429,17 @@ function videoLevelSuccessPatch(input: {
 }
 
 function publicVideoRecord<T extends Record<string, unknown>>(record: T): T {
+  const analysis = videoAnalysisOf(record);
+  const storedThumbnail = record.thumbnailFile || analysis.thumbnailObjectKey
+    ? `/api/overseas/videos/${encodeURIComponent(String(record.id))}/thumbnail`
+    : '';
   const stableYouTubeThumbnail = record.platform === 'youtube'
     ? youtubeThumbnailFromUrl(String(record.sourceUrl || ''))
     : '';
-  const publicRecord = stableYouTubeThumbnail
-    ? { ...record, thumbnailUrl: stableYouTubeThumbnail } as T
+  const thumbnail = storedThumbnail || String(record.thumbnailUrl || '') || stableYouTubeThumbnail;
+  const publicRecord = thumbnail
+    ? { ...record, thumbnailUrl: thumbnail } as T
     : record;
-  const analysis = videoAnalysisOf(record);
   if (!Object.keys(analysis).length) return publicRecord;
   const scrubbed = { ...analysis };
   for (const key of [
@@ -1908,7 +1912,7 @@ videosRouter.get('/:id/media', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const record = await store.getById(COL, req.params.id);
   if (!record) { res.status(404).json({ error: 'Not found' }); return; }
-  if (record.tenantId !== tenantId && !await requireAdminUser(req)) { res.status(404).json({ error: 'Not found' }); return; }
+  if (record.tenantId !== tenantId && !await isAdminForAssetRequest(req)) { res.status(404).json({ error: 'Not found' }); return; }
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const cosKey = String(analysis.videoObjectKey || '');
   if (cosKey) {
