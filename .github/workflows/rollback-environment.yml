@@ -184,13 +184,13 @@ jobs:
           SOURCE_REF: ${{ inputs.source_ref }}
           ROLLBACK_VERSION: ${{ inputs.version }}
           DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config
-        run: sudo --preserve-env=DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
+        run: bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
 
       - name: Report verified post-rollback inventory
         env:
           RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
           RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
-        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal
+        run: bash deploy/report-environment-inventory.sh internal
 
       - name: Record rollback in job summary
         env:

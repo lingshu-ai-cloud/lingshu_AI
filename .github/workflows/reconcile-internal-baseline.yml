@@ -74,7 +74,7 @@ jobs:
           CURRENT_COMMIT: ${{ inputs.current_commit }}
           CURRENT_BRANCH: ${{ inputs.current_branch }}
         run: |
-          sudo --preserve-env=DEPLOY_ACTOR bash deploy/reconcile-existing-release.sh \
+          bash deploy/reconcile-existing-release.sh \
             internal \
             lingshu-ai-cs-preview \
             /home/ubuntu/lingshu-ai-cs-preview \
@@ -85,4 +85,4 @@ jobs:
         env:
           RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
           RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
-        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal
+        run: bash deploy/report-environment-inventory.sh internal

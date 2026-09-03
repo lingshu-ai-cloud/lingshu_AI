@@ -40,18 +40,22 @@ grep -Fq 'sourceRef: process.env.SOURCE_REF' "$deploy_workflow"
 grep -Fq 'git merge-base --is-ancestor "$IMAGE_SHA" refs/remotes/origin/release-source' "$deploy_workflow"
 grep -Fq 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$deploy_workflow"
 [[ "$(grep -Fc 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$deploy_workflow")" == "2" ]]
-grep -Fq 'sudo --preserve-env=APP_IMAGE,POCKETBASE_IMAGE,DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$deploy_workflow"
+grep -Fq 'bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$deploy_workflow"
 grep -Fq 'expected_current_sha:' "$rollback_workflow"
 grep -Fq 'source_ref:' "$rollback_workflow"
 grep -Fq 'expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA' "$rollback_workflow"
 grep -Fq 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$rollback_workflow"
 [[ "$(grep -Fc 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$rollback_workflow")" == "2" ]]
-grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$rollback_workflow"
+grep -Fq 'bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$rollback_workflow"
 grep -Fq 'Report verified post-deployment inventory' "$deploy_workflow"
 grep -Fq 'Report verified post-rollback inventory' "$rollback_workflow"
-grep -Fq 'sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal' "$deploy_workflow"
-grep -Fq 'sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal' "$rollback_workflow"
-grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR bash deploy/reconcile-existing-release.sh' "$workflow"
+grep -Fq 'bash deploy/report-environment-inventory.sh internal' "$deploy_workflow"
+grep -Fq 'bash deploy/report-environment-inventory.sh internal' "$rollback_workflow"
+grep -Fq 'bash deploy/reconcile-existing-release.sh' "$workflow"
+if grep -Eq '(^|[[:space:]])sudo([[:space:]]|$)' "$workflow" "$deploy_workflow" "$rollback_workflow"; then
+  echo "Runner workflows must not depend on interactive sudo." >&2
+  exit 1
+fi
 grep -Fq 'flock -n 9' "$report"
 grep -Fq 'RELEASE_CONSOLE_URL must use HTTPS.' "$report"
 grep -Fq 'RELEASE_CONSOLE_URL must not contain whitespace.' "$report"
