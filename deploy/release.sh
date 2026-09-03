@@ -299,7 +299,7 @@ wait_for_health() {
       pocketbase_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$pocketbase_id" 2>/dev/null || true)"
 
       if [[ "$app_health" == "healthy" && "$pocketbase_health" == "healthy" ]] \
-        && curl -fsS --max-time 5 "http://127.0.0.1:${app_host_port}/api/overseas/health" >/dev/null; then
+        && curl -fsS --max-time 5 "http://${app_bind_address}:${app_host_port}/api/overseas/health" >/dev/null; then
         return 0
       fi
     fi
@@ -322,6 +322,7 @@ IMAGE_TAG=sha-${commit_sha}
 APP_IMAGE=${APP_IMAGE}
 POCKETBASE_IMAGE=${POCKETBASE_IMAGE}
 APP_HOST_PORT=${app_host_port}
+APP_BIND_ADDRESS=${app_bind_address}
 COMPOSE_PROJECT_NAME=${compose_project}
 APP_DATA_PATH=${app_data_path}
 PB_DATA_VOLUME_NAME=${pb_data_volume}
@@ -393,6 +394,7 @@ docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required."
 deploy_root="${DEPLOY_ROOT:-/opt/lingshu/${deploy_environment}}"
 compose_project="lingshu-${deploy_environment}"
 app_host_port="${APP_HOST_PORT:-18788}"
+app_bind_address="${APP_BIND_ADDRESS:-127.0.0.1}"
 app_data_path="$deploy_root/data"
 pb_data_volume="lingshu_${deploy_environment}_pb_data"
 caddy_data_volume="lingshu_${deploy_environment}_caddy_data"
@@ -435,6 +437,8 @@ if [[ "$action" == "deploy" ]]; then
   : "${POCKETBASE_IMAGE:?POCKETBASE_IMAGE is required for deploy}"
   if [[ -f "$current_release" ]]; then
     app_host_port="$(read_release_value APP_HOST_PORT "$current_release")"
+    app_bind_address="$(read_release_value APP_BIND_ADDRESS "$current_release")"
+    app_bind_address="${app_bind_address:-127.0.0.1}"
     compose_project="$(read_release_value COMPOSE_PROJECT_NAME "$current_release")"
     app_data_path="$(read_release_value APP_DATA_PATH "$current_release")"
     pb_data_volume="$(read_release_value PB_DATA_VOLUME_NAME "$current_release")"
@@ -461,6 +465,8 @@ fi
 install -m 0644 "$source_root/deploy/compose.release.yml" "$deploy_root/compose.release.yml"
 
 app_host_port="$(read_release_value APP_HOST_PORT "$candidate_release")"
+app_bind_address="$(read_release_value APP_BIND_ADDRESS "$candidate_release")"
+app_bind_address="${app_bind_address:-127.0.0.1}"
 compose_project="$(read_release_value COMPOSE_PROJECT_NAME "$candidate_release")"
 app_data_path="$(read_release_value APP_DATA_PATH "$candidate_release")"
 pb_data_volume="$(read_release_value PB_DATA_VOLUME_NAME "$candidate_release")"
@@ -469,6 +475,8 @@ caddy_config_volume="$(read_release_value CADDY_CONFIG_VOLUME_NAME "$candidate_r
 
 [[ -n "$compose_project" ]] || fail "Candidate release is missing COMPOSE_PROJECT_NAME."
 [[ -n "$app_data_path" && "$app_data_path" == /* ]] || fail "APP_DATA_PATH must be an absolute path."
+[[ "$app_bind_address" =~ ^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)[0-9.]+$ ]] \
+  || fail "APP_BIND_ADDRESS must be a private IPv4 address."
 
 candidate_image_source="$(read_release_value IMAGE_SOURCE "$candidate_release")"
 case "$candidate_image_source" in

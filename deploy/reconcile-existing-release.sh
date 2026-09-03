@@ -50,16 +50,19 @@ done
 
 app_image_id="$(docker inspect --format '{{.Image}}' "$app_id")"
 pocketbase_image_id="$(docker inspect --format '{{.Image}}' "$pocketbase_id")"
+app_bind_address="$(docker inspect --format '{{with (index .NetworkSettings.Ports "8788/tcp")}}{{(index . 0).HostIp}}{{end}}' "$app_id")"
 app_data_path="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}' "$app_id")"
 pb_data_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/pb/pb_data"}}{{.Name}}{{end}}{{end}}' "$pocketbase_id")"
 caddy_data_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$caddy_id")"
 caddy_config_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Name}}{{end}}{{end}}' "$caddy_id")"
 
 [[ "$app_data_path" == /* ]] || fail "The /app/data bind mount could not be identified."
+[[ "$app_bind_address" =~ ^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)[0-9.]+$ ]] \
+  || fail "The application host binding is not a private IPv4 address."
 [[ -n "$pb_data_volume" && -n "$caddy_data_volume" && -n "$caddy_config_volume" ]] \
   || fail "One or more persistent volumes could not be identified."
 
-curl -fsS --max-time 10 "http://127.0.0.1:${APP_HOST_PORT:-18788}/api/overseas/health" >/dev/null \
+curl -fsS --max-time 10 "http://${app_bind_address}:${APP_HOST_PORT:-18788}/api/overseas/health" >/dev/null \
   || fail "Current application smoke test failed."
 
 image_tag="baseline-$(printf '%s' "$timestamp" | tr '[:upper:]' '[:lower:]')"
@@ -83,6 +86,7 @@ IMAGE_TAG=${image_tag}
 APP_IMAGE=${app_image}
 POCKETBASE_IMAGE=${pocketbase_image}
 APP_HOST_PORT=${APP_HOST_PORT:-18788}
+APP_BIND_ADDRESS=${app_bind_address}
 COMPOSE_PROJECT_NAME=${compose_project}
 APP_DATA_PATH=${app_data_path}
 PB_DATA_VOLUME_NAME=${pb_data_volume}

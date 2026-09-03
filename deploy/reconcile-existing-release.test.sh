@@ -89,6 +89,7 @@ if [[ "${1:-}" == "inspect" ]]; then
   target="${4:-}"
   case "$format" in
     *State.Health*) echo healthy ;;
+    *'.NetworkSettings.Ports "8788/tcp"'*) echo 172.17.0.1 ;;
     '{{.Image}}') [[ "$target" == app-container ]] \
       && echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
       || echo sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
@@ -158,6 +159,7 @@ PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
 grep -Fq 'DEPLOYED_COMMIT=f0dde18b1137cea535c1de2052bdbbd84f8a6b91' "$fixture/deploy/.release.env"
 grep -Fq 'DEPLOYED_BRANCH=codex/吴小姐大改全ui后3-客服agent+状态判定' "$fixture/deploy/.release.env"
 grep -Fq 'IMAGE_SOURCE=local-baseline' "$fixture/deploy/.release.env"
+grep -Fq 'APP_BIND_ADDRESS=172.17.0.1' "$fixture/deploy/.release.env"
 grep -Fq 'BASELINE_APP_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$fixture/deploy/.release.env"
 grep -Fq 'BASELINE_POCKETBASE_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$fixture/deploy/.release.env"
 [[ ! -e "$fixture/deploy/.previous-release.env" ]]
@@ -172,8 +174,8 @@ PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
   RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
   bash "$report" internal >/dev/null
 
-grep -Fq 'http://127.0.0.1:18788/api/overseas/health' "$MOCK_CURL_LOG"
-grep -Fq 'http://127.0.0.1:18788/' "$MOCK_CURL_LOG"
+grep -Fq 'http://172.17.0.1:18788/api/overseas/health' "$MOCK_CURL_LOG"
+grep -Fq 'http://172.17.0.1:18788/' "$MOCK_CURL_LOG"
 grep -Fq 'http://127.0.0.1:8090/api/health' "$MOCK_CURL_LOG"
 ! grep -Fq 'test-secret' "$MOCK_CURL_LOG"
 

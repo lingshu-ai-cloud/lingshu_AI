@@ -28,6 +28,7 @@ docker() {
       *"State.Health"*) printf '%s\n' "healthy" ;;
       *"{{.Image}}"*"existing-app") printf '%s\n' "sha256:app" ;;
       *"{{.Image}}"*"existing-pocketbase") printf '%s\n' "sha256:pocketbase" ;;
+      *'.NetworkSettings.Ports "8788/tcp"'*) printf '%s\n' "172.17.0.1" ;;
       *'Destination "/app/data"'*) printf '%s\n' "$ADOPT_APP_DATA" ;;
       *'Destination "/pb/pb_data"'*) printf '%s\n' "legacy_pb_data" ;;
       *'Destination "/data"'*) printf '%s\n' "legacy_caddy_data" ;;
@@ -59,6 +60,7 @@ release_file="$test_root/deploy-root/.release.env"
 grep -q '^COMPOSE_PROJECT_NAME=legacy-project$' "$release_file"
 grep -q "^APP_DATA_PATH=$ADOPT_APP_DATA$" "$release_file"
 grep -q '^PB_DATA_VOLUME_NAME=legacy_pb_data$' "$release_file"
+grep -q '^APP_BIND_ADDRESS=172.17.0.1$' "$release_file"
 grep -q '^CADDY_DATA_VOLUME_NAME=legacy_caddy_data$' "$release_file"
 grep -q '^CADDY_CONFIG_VOLUME_NAME=legacy_caddy_config$' "$release_file"
 grep -q "^IMAGE_TAG=sha-${sha}$" "$release_file"

@@ -165,7 +165,11 @@ server_unique_code_count="$(docker inspect --format '{{range .Mounts}}{{if and (
 [[ "$server_unique_code_count" == "0" ]] || fail "The app container has server-side code bind mounts."
 
 app_port="$(read_value APP_HOST_PORT)"
-curl -fsS --max-time 10 "http://127.0.0.1:${app_port}/api/overseas/health" >/dev/null \
+app_bind_address="$(read_value APP_BIND_ADDRESS)"
+app_bind_address="${app_bind_address:-127.0.0.1}"
+[[ "$app_bind_address" =~ ^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)[0-9.]+$ ]] \
+  || fail "APP_BIND_ADDRESS must be a private IPv4 address."
+curl -fsS --max-time 10 "http://${app_bind_address}:${app_port}/api/overseas/health" >/dev/null \
   || fail "Application API smoke test failed."
 root_page="$(mktemp)"
 auth_header_file="$(mktemp)"
@@ -174,7 +178,7 @@ cleanup_inventory_files() {
 }
 trap cleanup_inventory_files EXIT
 chmod 600 "$auth_header_file"
-curl -fsS --max-time 10 --output "$root_page" "http://127.0.0.1:${app_port}/" \
+curl -fsS --max-time 10 --output "$root_page" "http://${app_bind_address}:${app_port}/" \
   || fail "Application root-page smoke test failed."
 [[ -s "$root_page" ]] || fail "Application root page was empty."
 grep -Eiq '<!doctype[[:space:]]+html|<html([[:space:]>])' "$root_page" \
