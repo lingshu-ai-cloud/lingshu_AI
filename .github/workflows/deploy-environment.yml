@@ -246,13 +246,13 @@ jobs:
           EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
           SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
           DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config
-        run: sudo --preserve-env=APP_IMAGE,POCKETBASE_IMAGE,DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
+        run: bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
 
       - name: Report verified post-deployment inventory
         env:
           RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
           RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
-        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal
+        run: bash deploy/report-environment-inventory.sh internal
 
       - name: Record deployment in job summary
         env:
