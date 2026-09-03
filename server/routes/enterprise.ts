@@ -16,14 +16,24 @@ import {
   enterpriseAssetTenantKey,
   enterpriseAssetTypeAllowed,
 } from '../storage/enterpriseAssets.js';
+import {
+  ensureProductApiKey,
+  ProductApiKeyConflictError,
+  productApiKeyStatus,
+  rotateProductApiKey,
+  touchProductApiKey,
+  verifyProductApiKey as verifyStoredProductApiKey,
+  type ProductApiCredential,
+  type ProductApiKeyMetadata,
+} from '../security/productApiKeys.js';
+import { requireOrganizationAdmin } from './organizationAdminAccess.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
 const DATA_DIR = path.join(__dirname, '../../data');
 const ASSETS_DIR = path.join(DATA_DIR, 'enterprise-assets');
 const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
-// 生成的 productApi 密钥单独存放，不进 data/enterprise.json（避免和会被提交/覆盖的企业资料文件混在一起）。
-const PRODUCT_API_FILE = path.join(DATA_DIR, 'product-api.json');
+const LEGACY_PRODUCT_API_FILE = path.join(DATA_DIR, 'product-api.json');
 
 type OrderStatus = '待付款' | '已付款' | '生产中' | '已发货' | '已完成' | '退款';
 
@@ -234,14 +244,6 @@ export interface EnterpriseProfile {
   knowledge: string;
 }
 
-interface ProductApiSecret {
-  tenantId: string;
-  apiKey: string;
-  createdAt: string;
-  lastIngestedAt?: string;
-  lastProductName?: string;
-}
-
 const DEFAULT_BIZ_RULES: BizRules = {
   quoteMode: 'human_only',
   priceRange: '',
@@ -277,34 +279,32 @@ const DEFAULT_HANDOFF_RULES: HandoffRules = {
   negativeSentiment: true,
 };
 
-function readProductApiSecret(): ProductApiSecret | null {
-  try {
-    return JSON.parse(fs.readFileSync(PRODUCT_API_FILE, 'utf8')) as ProductApiSecret;
-  } catch {
-    return null;
-  }
-}
-
-function writeProductApiSecret(secret: ProductApiSecret): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(PRODUCT_API_FILE, JSON.stringify(secret, null, 2), 'utf8');
-}
-
-// 兼容旧数据：老版本把 productApi 密钥写进了 data/enterprise.json 的 integrations 字段。
-// 首次读取到这种旧格式时，把密钥迁移到独立文件，并从企业资料里彻底删除，避免它再被写回 enterprise.json。
-function migrateLegacyProductApiSecret(parsed: Record<string, unknown>): void {
-  const legacy = (parsed?.integrations as { productApi?: ProductApiSecret } | undefined)?.productApi;
-  if (legacy?.apiKey && !fs.existsSync(PRODUCT_API_FILE)) {
-    writeProductApiSecret(legacy);
-  }
+// Legacy plaintext product API credentials are revoked, never migrated. The
+// database migration removes the old column; this local fallback scrub covers
+// older demo data and makes recovery require an explicit administrator rotate.
+function scrubLegacyProductApiSecret(parsed: Record<string, unknown>): void {
+  const containedLegacySecret = Boolean((parsed.integrations as { productApi?: { apiKey?: unknown } } | undefined)?.productApi?.apiKey);
   delete parsed.integrations;
+  try {
+    if (fs.existsSync(LEGACY_PRODUCT_API_FILE)) fs.rmSync(LEGACY_PRODUCT_API_FILE);
+  } catch (error) {
+    console.warn('[enterprise] unable to remove revoked legacy product API secret file:', error instanceof Error ? error.message : error);
+  }
+  if (!containedLegacySecret) return;
+  try {
+    const temporaryFile = `${DATA_FILE}.${process.pid}.product-api-scrub.tmp`;
+    fs.writeFileSync(temporaryFile, JSON.stringify(parsed, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporaryFile, DATA_FILE);
+  } catch (error) {
+    console.warn('[enterprise] unable to scrub revoked embedded product API secret:', error instanceof Error ? error.message : error);
+  }
 }
 
 function readProfile(): EnterpriseProfile {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    migrateLegacyProductApiSecret(parsed);
+    scrubLegacyProductApiSecret(parsed);
     return normalizeProfile(parsed);
   } catch {
     return normalizeProfile({
@@ -1082,66 +1082,22 @@ export function notificationTargetReady(profile: EnterpriseProfile): boolean {
   return hasTestedNotificationTarget(normalizeProfile(profile));
 }
 
-async function resolveTenantId(req: Request): Promise<string> {
-  const id = await auth.verifyToken(req.headers.authorization);
-  return id?.tenantId || String(req.query.tenantId || req.headers['x-tenant-id'] || 'local_tenant_default');
-}
-
-function publicProductApiInfo(secret: ProductApiSecret | null) {
-  return {
-    apiKey: secret?.apiKey || '',
-    tenantId: secret?.tenantId || '',
-    createdAt: secret?.createdAt || '',
-    lastIngestedAt: secret?.lastIngestedAt || '',
-    lastProductName: secret?.lastProductName || '',
-  };
-}
-
-function storedProductApiSecret(record: Record<string, unknown> | undefined): ProductApiSecret | null {
-  if (!record?.api_key || !record.tenant_id) return null;
-  return {
-    tenantId: String(record.tenant_id),
-    apiKey: String(record.api_key),
-    createdAt: String(record.created_at || ''),
-    lastIngestedAt: String(record.last_ingested_at || ''),
-    lastProductName: String(record.last_product_name || ''),
-  };
-}
-
-async function productApiSecretForTenant(tenantId: string): Promise<ProductApiSecret | null> {
-  const result = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
-  });
-  return storedProductApiSecret(result.items[0]);
-}
-
-async function ensureProductApiKey(tenantId: string): Promise<ProductApiSecret> {
-  const current = await productApiSecretForTenant(tenantId);
-  if (current?.apiKey) return current;
-  const next: ProductApiSecret = {
-    tenantId,
-    apiKey: `ls_prod_${randomBytes(24).toString('base64url')}`,
-    createdAt: new Date().toISOString(),
-  };
-  const created = await store.create('tenant_api_keys', {
-    tenant_id: tenantId, api_key: next.apiKey, created_at: next.createdAt,
-  });
-  if (!created) throw new Error('tenant_api_key_storage_unavailable');
-  return next;
-}
-
 function readApiKey(req: Request) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   return String(req.headers['x-api-key'] || bearer || '').trim();
 }
 
-async function verifyProductApiKey(req: Request): Promise<{ profile: EnterpriseProfile; secret: ProductApiSecret } | null> {
+function publicProductApiInfo(metadata: ProductApiKeyMetadata, secret?: string) {
+  return {
+    ...metadata,
+    ...(secret ? { apiKey: secret, oneTimeSecret: true } : {}),
+  };
+}
+
+async function verifyProductApiKey(req: Request): Promise<{ profile: EnterpriseProfile; secret: ProductApiCredential } | null> {
   const provided = readApiKey(req);
   if (!provided) return null;
-  const result = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { api_key: provided }, page: 1, perPage: 1,
-  });
-  const secret = storedProductApiSecret(result.items[0]);
+  const secret = await verifyStoredProductApiKey(store, provided);
   if (!secret) return null;
   return { profile: await readTenantProfile(secret.tenantId), secret };
 }
@@ -1886,39 +1842,50 @@ enterpriseRouter.post('/orders/import', async (req, res) => {
   res.json({ ok: true, imported: result.imported.length, skipped: result.skipped, total: items.length });
 });
 
-enterpriseRouter.get('/product-api', async (req, res) => {
-  const tenantId = await resolveTenantId(req);
-  const secret = await ensureProductApiKey(tenantId);
-  res.json(publicProductApiInfo(secret));
+enterpriseRouter.get('/product-api', requireOrganizationAdmin, async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const provisioned = await ensureProductApiKey(store, tenantId);
+    res.json(publicProductApiInfo(provisioned.metadata, provisioned.secret));
+  } catch (error) {
+    console.error('[enterprise] product API key provision failed:', error instanceof Error ? error.message : error);
+    res.status(error instanceof ProductApiKeyConflictError ? 409 : 503).json({
+      error: error instanceof ProductApiKeyConflictError ? error.message : 'tenant_api_key_storage_unavailable',
+    });
+  }
 });
 
-enterpriseRouter.post('/product-api/rotate', async (req, res) => {
-  const tenantId = await resolveTenantId(req);
-  const next: ProductApiSecret = {
-    tenantId,
-    apiKey: `ls_prod_${randomBytes(24).toString('base64url')}`,
-    createdAt: new Date().toISOString(),
-  };
-  const existing = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
-  });
-  const payload = { tenant_id: tenantId, api_key: next.apiKey, created_at: next.createdAt, last_ingested_at: '', last_product_name: '' };
-  const ok = existing.items[0]?.id
-    ? await store.update('tenant_api_keys', String(existing.items[0].id), payload)
-    : Boolean(await store.create('tenant_api_keys', payload));
-  if (!ok) { res.status(503).json({ error: 'tenant_api_key_storage_unavailable' }); return; }
-  res.json(publicProductApiInfo(next));
+enterpriseRouter.post('/product-api/rotate', requireOrganizationAdmin, async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const rotated = await rotateProductApiKey(store, tenantId);
+    res.json(publicProductApiInfo(rotated.metadata, rotated.secret));
+  } catch (error) {
+    console.error('[enterprise] product API key rotation failed:', error instanceof Error ? error.message : error);
+    res.status(error instanceof ProductApiKeyConflictError ? 409 : 503).json({
+      error: error instanceof ProductApiKeyConflictError ? error.message : 'tenant_api_key_storage_unavailable',
+    });
+  }
 });
 
-enterpriseRouter.get('/product-api/status', async (_req, res) => {
+enterpriseRouter.get('/product-api/status', requireOrganizationAdmin, async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const profile = await readTenantProfile(tenantId);
   const items = profile.products.items ?? [];
-  const secret = await productApiSecretForTenant(tenantId);
+  const key = await productApiKeyStatus(store, tenantId);
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     count: items.length,
-    lastIngestedAt: secret?.lastIngestedAt || '',
-    lastProductName: secret?.lastProductName || items.at(-1)?.name || '',
+    configured: key.configured,
+    rotationRequired: key.rotationRequired,
+    keyPrefix: key.keyPrefix,
+    keyLast4: key.keyLast4,
+    createdAt: key.createdAt,
+    rotatedAt: key.rotatedAt,
+    lastIngestedAt: key.lastIngestedAt,
+    lastProductName: key.lastProductName || items.at(-1)?.name || '',
   });
 });
 
@@ -2069,8 +2036,10 @@ productApiRouter.post('/bulk', async (req, res) => {
   const nextItems = upsertProductItems(existing, products);
   const last = products.at(-1);
   await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: nextItems } }, 'product-api');
-  const keyRecord = await store.list<Record<string, unknown>>('tenant_api_keys', { where: { tenant_id: secret.tenantId }, page: 1, perPage: 1 });
-  if (keyRecord.items[0]?.id) await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
+  await touchProductApiKey(store, secret, {
+    lastIngestedAt: new Date().toISOString(),
+    lastProductName: last?.name || '',
+  });
   res.json({ ok: true, received: payload.length, upserted: products.length, total: nextItems.length });
 });
 

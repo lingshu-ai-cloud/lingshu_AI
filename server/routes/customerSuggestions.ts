@@ -7,13 +7,29 @@ import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence 
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
-import { sendTenantWhatsAppTemplate, sendTenantWhatsAppText } from '../whatsapp/send.js';
+import { sendTenantWhatsAppTemplate, sendTenantWhatsAppTextBatch } from '../whatsapp/send.js';
+import { requiresWhatsAppReconciliation } from '../integrations/whatsapp.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
+import {
+  beginOutboundOperation,
+  completeOutboundOperation,
+  markOutboundOperationFailed,
+  markOutboundOperationNeedsReconciliation,
+  outboundPayloadHash,
+  resolveOutboundIdempotencyKey,
+} from '../security/outboundOperations.js';
+import { safeProviderError } from '../security/providerError.js';
+import { registerWhatsAppOutboundMessages } from '../whatsapp/deliveryTracking.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
 
 const manualActiveUntil = new Map<string, number>();
+const WHATSAPP_OUTBOUND_OPERATION_COL = 'whatsapp_outbound_operations';
+
+function normalizedWhatsAppNumber(value: unknown): string {
+  return String(value || '').replace(/[^\d]/g, '');
+}
 
 const MESSAGE_TEMPLATES = [
   {
@@ -75,11 +91,12 @@ customerSuggestionsRouter.get('/', requireAuth, (req, res) => {
     res.json({ items: [], source });
     return;
   }
-  res.json({ items: getWhatsAppCustomers(tenantId), source: 'whatsapp', importStatus: getWhatsAppImportStatus() });
+  res.json({ items: getWhatsAppCustomers(tenantId), source: 'whatsapp', importStatus: getWhatsAppImportStatus(tenantId) });
 });
 
 customerSuggestionsRouter.get('/whatsapp/import-status', (_req, res) => {
-  res.json(getWhatsAppImportStatus());
+  const { tenantId } = res.locals as AuthLocals;
+  res.json(getWhatsAppImportStatus(tenantId));
 });
 
 customerSuggestionsRouter.get('/templates', (_req, res) => {
@@ -116,14 +133,14 @@ customerSuggestionsRouter.post('/:id/manual-active', (req, res) => {
   res.json({ ok: true, suspendedUntil: new Date(until).toISOString() });
 });
 
-customerSuggestionsRouter.patch('/:id', (req, res) => {
+customerSuggestionsRouter.patch('/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   if (!customerId) {
     res.status(400).json({ error: 'customer_id_required' });
     return;
   }
-  const customer = patchWhatsAppCustomer({
+  const customer = await patchWhatsAppCustomer({
     tenantId,
     customerId,
     patch: req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {},
@@ -172,6 +189,15 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'whatsapp_recipient_required', message: 'WhatsApp recipient is missing.' });
     return;
   }
+  const customer = getWhatsAppCustomers(tenantId).find(item => item.id === customerId);
+  if (!customer) {
+    res.status(404).json({ error: 'customer_not_found' });
+    return;
+  }
+  if (!normalizedWhatsAppNumber(customer.waNumber) || normalizedWhatsAppNumber(customer.waNumber) !== normalizedWhatsAppNumber(to)) {
+    res.status(409).json({ error: 'whatsapp_recipient_customer_mismatch' });
+    return;
+  }
   if (req.body?.auto === true) {
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
     if (!status.autoReplyReady) {
@@ -183,65 +209,233 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过24小时，请使用模板消息发送。' });
     return;
   }
+  const templateName = String(req.body?.templateName || '').trim();
+  const variables = Array.isArray(req.body?.variables) ? req.body.variables.map((item: unknown) => String(item || '')) : [];
+  const languageCode = String(req.body?.languageCode || 'en_US');
   if (mode === 'template') {
-    const templateName = String(req.body?.templateName || '').trim();
-    const variables = Array.isArray(req.body?.variables) ? req.body.variables.map((item: unknown) => String(item || '')) : [];
     if (!isTemplateApproved(templateName)) {
       res.status(409).json({ error: 'template_pending', message: '消息模板审核中，暂时不能发送超窗触达。' });
       return;
     }
+  } else if (mode !== 'free_text') {
+    res.status(400).json({ error: 'whatsapp_outbox_mode_invalid' });
+    return;
+  }
+  const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
+  if (req.body?.auto === true && suspendedUntil > Date.now()) {
+    res.status(409).json({ error: 'manual_active', message: '人工正在回复，AI 自动发送已挂起，只生成草稿。' });
+    return;
+  }
+
+  const payloadHash = outboundPayloadHash({ mode, customerId, to: normalizedWhatsAppNumber(to), body, templateName, variables, languageCode });
+  let idempotencyKey: string;
+  try {
+    idempotencyKey = resolveOutboundIdempotencyKey({
+      supplied: req.get('Idempotency-Key') || req.body?.idempotencyKey,
+      operationType: mode === 'template' ? 'whatsapp_template' : 'whatsapp_text',
+      tenantId,
+      targetId: customerId,
+      payloadHash,
+    });
+  } catch {
+    res.status(400).json({ error: 'idempotency_key_invalid' });
+    return;
+  }
+  const begun = await beginOutboundOperation({
+    collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+    tenantId,
+    idempotencyKey,
+    operationType: mode === 'template' ? 'whatsapp_template' : 'whatsapp_text',
+    targetId: customerId,
+    payloadHash,
+  });
+  if (begun.ok && begun.state === 'completed') {
+    const storedResult = begun.operation.result && typeof begun.operation.result === 'object'
+      ? begun.operation.result as Record<string, unknown>
+      : {};
+    res.json({ ok: true, ...storedResult, outboxId: begun.operation.id, idempotencyKey, replayed: true });
+    return;
+  }
+  if (!begun.ok) {
+    res.status(begun.reason === 'needs_reconciliation' ? 202 : 409).json({
+      ok: false,
+      error: begun.reason === 'payload_conflict' ? 'idempotency_key_conflict' : `whatsapp_outbound_${begun.reason}`,
+      status: begun.reason,
+      outboxId: begun.operation.id,
+      idempotencyKey,
+    });
+    return;
+  }
+
+  if (mode === 'template') {
+    let providerMessageId = '';
     try {
-      await sendTenantWhatsAppTemplate({
+      providerMessageId = await sendTenantWhatsAppTemplate({
         tenantId,
         to,
         templateName,
         variables,
-        languageCode: String(req.body?.languageCode || 'en_US'),
+        languageCode,
       });
     } catch (error) {
+      if (requiresWhatsAppReconciliation(error)) {
+        await markOutboundOperationNeedsReconciliation({
+          collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+          operation: begun.operation,
+          errorCode: error.code,
+          providerMessageIds: error.providerMessageIds,
+        }).catch(() => null);
+        res.status(202).json({
+          ok: false,
+          error: 'whatsapp_delivery_reconciliation_required',
+          status: 'needs_reconciliation',
+          message: '供应商返回结果不确定，请先在 WhatsApp 中核对送达状态，禁止直接重发。',
+          outboxId: begun.operation.id,
+          idempotencyKey,
+        });
+        return;
+      }
+      const safe = safeProviderError(error);
+      await markOutboundOperationFailed({ collection: WHATSAPP_OUTBOUND_OPERATION_COL, operation: begun.operation, errorCode: safe.code || safe.message }).catch(() => null);
       res.status(502).json({
         error: 'whatsapp_send_failed',
-        message: error instanceof Error ? error.message : 'WhatsApp send failed',
+        message: 'WhatsApp 拒绝了本次发送，请检查号码、模板和账号权限。',
+        idempotencyKey,
       });
       return;
     }
     const renderedBody = renderTemplate(templateName, variables) || body;
-    markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to });
+    try {
+      await markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to });
+    } catch {
+      await markOutboundOperationNeedsReconciliation({
+        collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+        operation: begun.operation,
+        errorCode: 'whatsapp_local_persistence_failed',
+        providerMessageIds: [providerMessageId],
+      }).catch(() => null);
+      res.status(202).json({
+        ok: false,
+        error: 'whatsapp_delivery_persistence_reconciliation_required',
+        status: 'needs_reconciliation',
+        providerMessageIds: [providerMessageId],
+        message: '消息已由 WhatsApp 接收，但本地业务记录未确认持久化；请先对账，禁止直接重发。',
+        outboxId: begun.operation.id,
+        idempotencyKey,
+      });
+      return;
+    }
+    const sentAt = new Date().toISOString();
+    try {
+      await registerWhatsAppOutboundMessages({ tenantId, operationId: begun.operation.id, providerMessageIds: [providerMessageId] });
+    } catch {
+      await markOutboundOperationNeedsReconciliation({ collection: WHATSAPP_OUTBOUND_OPERATION_COL, operation: begun.operation, errorCode: 'whatsapp_delivery_receipt_persistence_failed', providerMessageIds: [providerMessageId] }).catch(() => null);
+      res.status(202).json({ ok: false, error: 'whatsapp_delivery_persistence_reconciliation_required', status: 'needs_reconciliation', providerMessageIds: [providerMessageId], outboxId: begun.operation.id, idempotencyKey });
+      return;
+    }
+    const completed = await completeOutboundOperation({
+      collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+      operation: begun.operation,
+      providerMessageIds: [providerMessageId],
+      result: { status: 'sent', sentAt, renderedBody },
+    });
+    if (!completed) {
+      res.status(202).json({ ok: false, error: 'whatsapp_delivery_persistence_reconciliation_required', status: 'needs_reconciliation', providerMessageIds: [providerMessageId], outboxId: begun.operation.id, idempotencyKey });
+      return;
+    }
     await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
     res.json({
       ok: true,
-      outboxId: `tpl_${Date.now()}`,
+      outboxId: completed.id,
       status: 'sent',
-      sentAt: new Date().toISOString(),
+      sentAt,
       renderedBody,
+      idempotencyKey,
     });
     return;
-  }
-  const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
-  if (req.body?.auto === true) {
-    if (suspendedUntil > Date.now()) {
-      res.status(409).json({ error: 'manual_active', message: '人工正在回复，AI 自动发送已挂起，只生成草稿。' });
-      return;
-    }
   }
   let sentMessages: string[] = [];
+  let providerMessageIds: string[] = [];
   try {
-    sentMessages = await sendTenantWhatsAppText(tenantId, to, body);
+    const sentBatch = await sendTenantWhatsAppTextBatch(tenantId, to, body);
+    sentMessages = sentBatch.messages;
+    providerMessageIds = sentBatch.providerMessageIds;
   } catch (error) {
+    if (requiresWhatsAppReconciliation(error)) {
+      await markOutboundOperationNeedsReconciliation({
+        collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+        operation: begun.operation,
+        errorCode: error.code,
+        providerMessageIds: error.providerMessageIds,
+      }).catch(() => null);
+      res.status(202).json({
+        ok: false,
+        error: 'whatsapp_delivery_reconciliation_required',
+        status: 'needs_reconciliation',
+        message: '供应商返回结果不确定，请先在 WhatsApp 中核对送达状态，禁止直接重发。',
+        providerMessageIds: error.providerMessageIds,
+        sentMessageCount: error.sentMessages.length,
+        outboxId: begun.operation.id,
+        idempotencyKey,
+      });
+      return;
+    }
+    const safe = safeProviderError(error);
+    await markOutboundOperationFailed({ collection: WHATSAPP_OUTBOUND_OPERATION_COL, operation: begun.operation, errorCode: safe.code || safe.message }).catch(() => null);
     res.status(502).json({
       error: 'whatsapp_send_failed',
-      message: error instanceof Error ? error.message : 'WhatsApp send failed',
+      message: 'WhatsApp 拒绝了本次发送，请检查号码和账号权限。',
+      idempotencyKey,
     });
     return;
   }
-  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to });
+  try {
+    await markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to });
+  } catch {
+    await markOutboundOperationNeedsReconciliation({
+      collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+      operation: begun.operation,
+      errorCode: 'whatsapp_local_persistence_failed',
+      providerMessageIds,
+    }).catch(() => null);
+    res.status(202).json({
+      ok: false,
+      error: 'whatsapp_delivery_persistence_reconciliation_required',
+      status: 'needs_reconciliation',
+      providerMessageIds,
+      sentMessageCount: sentMessages.length,
+      message: '消息已由 WhatsApp 接收，但本地业务记录未确认持久化；请先对账，禁止直接重发。',
+      outboxId: begun.operation.id,
+      idempotencyKey,
+    });
+    return;
+  }
+  const sentAt = new Date().toISOString();
+  try {
+    await registerWhatsAppOutboundMessages({ tenantId, operationId: begun.operation.id, providerMessageIds });
+  } catch {
+    await markOutboundOperationNeedsReconciliation({ collection: WHATSAPP_OUTBOUND_OPERATION_COL, operation: begun.operation, errorCode: 'whatsapp_delivery_receipt_persistence_failed', providerMessageIds }).catch(() => null);
+    res.status(202).json({ ok: false, error: 'whatsapp_delivery_persistence_reconciliation_required', status: 'needs_reconciliation', providerMessageIds, outboxId: begun.operation.id, idempotencyKey });
+    return;
+  }
+  const completed = await completeOutboundOperation({
+    collection: WHATSAPP_OUTBOUND_OPERATION_COL,
+    operation: begun.operation,
+    providerMessageIds,
+    result: { status: 'sent', sentAt, messages: sentMessages },
+  });
+  if (!completed) {
+    res.status(202).json({ ok: false, error: 'whatsapp_delivery_persistence_reconciliation_required', status: 'needs_reconciliation', providerMessageIds, outboxId: begun.operation.id, idempotencyKey });
+    return;
+  }
   await maybeRecordStyleMemory(req, tenantId, customerId, body);
   res.json({
     ok: true,
-    outboxId: `out_${Date.now()}`,
+    outboxId: completed.id,
     status: 'sent',
-    sentAt: new Date().toISOString(),
+    sentAt,
     messages: sentMessages,
+    idempotencyKey,
   });
 });
 

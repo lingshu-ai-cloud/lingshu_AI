@@ -13,9 +13,8 @@ interface DeliveryApp {
   tenantId: string;
   platform: Platform;
   appId: string;
-  appSecret: string;
   appSecretSet: boolean;
-  appSecretLength: number;
+  appSecretMask: string;
   waConfigId: string;
   businessId: string;
   wabaId: string;
@@ -26,16 +25,17 @@ interface DeliveryApp {
   youtubeChannelId: string;
   webhookVerifyToken: string;
   wecomEncodingAesKeySet: boolean;
-  wecomEncodingAesKeyLength: number;
+  wecomEncodingAesKeyMask: string;
   webhookUrl: string;
   oauthRedirectUri: string;
   tokenType: 'user_60d' | 'system_user_permanent';
   accessTokenSet: boolean;
-  accessTokenLength: number;
+  accessTokenMask: string;
   tokenExpiresAt: string;
   status: Status;
   checklist: Record<string, boolean | string>;
   notes: string;
+  credentialState: 'ready' | 'reconnect_required';
 }
 
 interface TenantCard {
@@ -110,19 +110,9 @@ function keyOf(tenantId: string, platform: Platform) {
   return `${tenantId}:${platform}`;
 }
 
-function appValue(drafts: Draft, app: DeliveryApp, field: keyof DeliveryApp) {
+function appValue(drafts: Draft, app: DeliveryApp, field: keyof DeliveryApp | 'appSecret' | 'accessToken' | 'wecomEncodingAesKey') {
   const value = drafts[keyOf(app.tenantId, app.platform)]?.[field];
-  return typeof value === 'string' ? value : String(app[field] ?? '');
-}
-
-function savedSecretHint(length: number, fallback: string) {
-  return length > 0 ? `已保存 · ${length} 位` : fallback;
-}
-
-function savedSecretPlaceholder(length: number) {
-  if (length <= 0) return '已加密保存，留空则不修改';
-  const dots = '•'.repeat(Math.min(length, 48));
-  return `${dots}${length > 48 ? '…' : ''}（${length} 位）`;
+  return typeof value === 'string' ? value : String((app as unknown as Record<string, unknown>)[field] ?? '');
 }
 
 async function jsonFetch(url: string, init?: RequestInit) {
@@ -527,7 +517,7 @@ function PlatformWizard({
           {activeStep === 'metaApp' && (
             <div className="grid gap-3">
               <Field required label="App ID" hint="开发者后台首页" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="App Secret" hint="应用设置 > 基本" value={appValue(drafts, app, 'appSecret')} placeholder="填写 App Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="App Secret" hint={app.appSecretSet ? '已安全保存' : '应用设置 > 基本'} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? '已安全保存，留空即保留' : '填写 App Secret'} onChange={value => update({ appSecret: value })} />
               <Field label="Business ID" hint="BM 设置里可找到" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="privacy_domain_saved" label="隐私政策和域名已填" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -555,7 +545,7 @@ function PlatformWizard({
               <Field label="WABA ID" hint="WhatsApp Business Account" value={appValue(drafts, app, 'wabaId')} onChange={value => update({ wabaId: value })} />
               <Field required label="Phone Number ID" hint="号码详情页" value={appValue(drafts, app, 'phoneNumberId')} onChange={value => update({ phoneNumberId: value })} />
               <Field label="WhatsApp 真实手机号" hint="用于 wa.me 询盘追踪，如 971501234567" value={appValue(drafts, app, 'waPublicNumber')} onChange={value => update({ waPublicNumber: value })} />
-              <Field required completed={app.accessTokenSet} label="Access Token" hint={app.accessTokenSet ? savedSecretHint(app.accessTokenLength, '已保存') : '60天或永久 token'} secret placeholder={app.accessTokenSet ? savedSecretPlaceholder(app.accessTokenLength) : 'EAAB...'} onChange={value => update({ accessToken: value })} />
+              <Field required completed={app.accessTokenSet} label="Access Token" hint={app.accessTokenSet ? '已安全保存' : '60天或永久 token'} secret placeholder={app.accessTokenSet ? '已安全保存，留空即保留' : 'EAAB...'} onChange={value => update({ accessToken: value })} />
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1 text-xs font-bold text-text-secondary">
                   Token 类型
@@ -584,7 +574,7 @@ function PlatformWizard({
           {activeStep === 'wecomApp' && (
             <div className="grid gap-3">
               <Field required label="企业 ID / CorpID" hint="企业微信管理后台 > 我的企业" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="应用 Secret" hint="自建应用 Secret" value={appValue(drafts, app, 'appSecret')} placeholder="填写应用 Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="应用 Secret" hint={app.appSecretSet ? '已安全保存' : '自建应用 Secret'} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? '已安全保存，留空即保留' : '填写应用 Secret'} onChange={value => update({ appSecret: value })} />
               <Field required label="AgentId" hint="自建应用详情页" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="wecom_app_visible_range_set" label="应用可见范围已包含客户接待人员" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -599,7 +589,7 @@ function PlatformWizard({
                   <CopyLine label="Token" value={app.webhookVerifyToken} />
                 </div>
               </div>
-              <Field required completed={app.wecomEncodingAesKeySet} label="EncodingAESKey" hint={app.wecomEncodingAesKeySet ? savedSecretHint(app.wecomEncodingAesKeyLength, '已保存') : '企业微信后台随机生成'} secret placeholder={app.wecomEncodingAesKeySet ? savedSecretPlaceholder(app.wecomEncodingAesKeyLength) : '43 位 EncodingAESKey'} onChange={value => update({ wecomEncodingAesKey: value })} />
+              <Field required completed={app.wecomEncodingAesKeySet} label="EncodingAESKey" hint={app.wecomEncodingAesKeySet ? '已安全保存' : '企业微信后台随机生成'} secret placeholder={app.wecomEncodingAesKeySet ? '已安全保存，留空即保留' : '43 位 EncodingAESKey'} onChange={value => update({ wecomEncodingAesKey: value })} />
               <ChecklistButton app={app} id="wecom_callback_verified" label="企业微信后台 URL 验证通过" drafts={drafts} setDrafts={setDrafts} />
             </div>
           )}
@@ -618,7 +608,7 @@ function PlatformWizard({
           {activeStep === 'googleApp' && (
             <div className="grid gap-3">
               <Field required label="Client ID" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="Client Secret" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="Client Secret" hint={app.appSecretSet ? '已安全保存' : 'Google Cloud OAuth'} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? '已安全保存，留空即保留' : '填写 Client Secret'} onChange={value => update({ appSecret: value })} />
               <ChecklistButton app={app} id="google_consent_published" label="OAuth 同意屏幕已发布到生产" drafts={drafts} setDrafts={setDrafts} />
             </div>
           )}
@@ -633,7 +623,7 @@ function PlatformWizard({
           {activeStep === 'tiktokApp' && (
             <div className="grid gap-3">
               <Field required label="Client Key" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="Client Secret" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="Client Secret" hint={app.appSecretSet ? '已安全保存' : 'TikTok for Developers > Manage apps'} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? '已安全保存，留空即保留' : '填写 Client Secret'} onChange={value => update({ appSecret: value })} />
             </div>
           )}
 

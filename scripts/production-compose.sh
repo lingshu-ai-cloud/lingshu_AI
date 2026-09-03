@@ -10,4 +10,5 @@ if [ ! -r "$ENV_FILE" ]; then
 fi
 
 cd "$APP_DIR"
+export ENV_FILE_PATH="$ENV_FILE"
 exec docker compose --env-file "$ENV_FILE" "$@"

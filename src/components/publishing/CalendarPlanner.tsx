@@ -26,6 +26,23 @@ import { ContentQueuePanel, type PendingPlacement } from './ContentQueuePanel';
 import { PlatformBadge } from './PlatformBadge';
 import { localTimeValue, moveScheduleToDay, resolvePendingDrop, type PublishDeliveryMode } from './schedulePolicy';
 
+export type CalendarTikTokPublishOptions = {
+  privacyLevel?: string;
+  allowComment?: boolean;
+  allowDuet?: boolean;
+  allowStitch?: boolean;
+  brandContentToggle?: boolean;
+  brandOrganicToggle?: boolean;
+  isAigc?: boolean;
+  userConsent?: boolean;
+};
+
+export type CalendarPostStats = {
+  duration?: number;
+  tiktokPublishOptionsByAccount?: Record<string, CalendarTikTokPublishOptions>;
+  [key: string]: unknown;
+};
+
 export type CalendarPost = {
   id: string;
   platform: string;
@@ -36,6 +53,8 @@ export type CalendarPost = {
   coverUrl?: string;
   videoUrl?: string;
   duration?: number;
+  stats?: CalendarPostStats;
+  tiktokPublishOptionsByAccount?: Record<string, CalendarTikTokPublishOptions>;
   contentId?: string;
   firstComment?: string;
   videoPath?: string;
@@ -46,6 +65,8 @@ export type CalendarPost = {
   publishError?: string;
   publishAttempts?: number;
   nextPublishAttemptAt?: string;
+  publishRevision?: number;
+  reconciliationRequired?: boolean;
   inquiries: number;
   isRecycle?: boolean;
   platformPostId?: string;
@@ -516,10 +537,17 @@ export function CalendarPlanner({
       setInteractionMessage('新的发布时间必须晚于当前时间。');
       return;
     }
+    if (!Number.isInteger(current.publishRevision)) {
+      setInteractionMessage('日历记录缺少版本信息，请刷新后重试。');
+      return;
+    }
     const data = await api<{ item: CalendarPost }>(`/api/overseas/publishing/calendar/${postId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scheduledAt: target.toISOString() }),
+      body: JSON.stringify({
+        scheduledAt: target.toISOString(),
+        expectedRevision: current.publishRevision,
+      }),
     });
     setItems(previous => previous.map(item => item.id === postId ? data.item : item));
     setInteractionMessage(`已调整到 ${target.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}，原发布时间保持不变。`);

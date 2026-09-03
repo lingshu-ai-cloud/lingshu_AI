@@ -1,21 +1,34 @@
-FROM alpine:3.22
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS downloader
 
-ARG PB_VERSION=0.39.5
+ARG PB_VERSION=0.39.9
 ARG TARGETARCH
 
 RUN apk add --no-cache ca-certificates unzip wget \
   && case "${TARGETARCH:-amd64}" in amd64|arm64) ;; *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; esac \
-  && wget -O /tmp/pocketbase.zip "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_${TARGETARCH:-amd64}.zip" \
-  && mkdir -p /pb/pb_data /pb/pb_migrations /pb/pb_public \
-  && unzip /tmp/pocketbase.zip -d /pb \
-  && chmod +x /pb/pocketbase \
-  && rm /tmp/pocketbase.zip
+  && archive="pocketbase_${PB_VERSION}_linux_${TARGETARCH:-amd64}.zip" \
+  && wget -O "/tmp/${archive}" "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/${archive}" \
+  && wget -O /tmp/checksums.txt "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/checksums.txt" \
+  && cd /tmp \
+  && checksum_line="$(grep " ${archive}$" checksums.txt)" \
+  && printf '%s\n' "$checksum_line" | sha256sum -c - \
+  && unzip "/tmp/${archive}" -d /out \
+  && chmod 0755 /out/pocketbase
 
-COPY scripts/pocketbase-entrypoint.sh /usr/local/bin/pocketbase-entrypoint
-RUN chmod +x /usr/local/bin/pocketbase-entrypoint
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+
+RUN apk add --no-cache ca-certificates wget \
+  && addgroup -S -g 10001 pocketbase \
+  && adduser -S -D -H -u 10001 -G pocketbase pocketbase \
+  && mkdir -p /pb/pb_data /pb/pb_migrations /pb/pb_hooks /pb/pb_public \
+  && chown -R pocketbase:pocketbase /pb
+
+COPY --from=downloader /out/pocketbase /pb/pocketbase
+COPY --chown=pocketbase:pocketbase pb_migrations /pb/pb_migrations
+COPY --chown=pocketbase:pocketbase pb_hooks /pb/pb_hooks
+COPY --chown=pocketbase:pocketbase scripts/pocketbase-entrypoint.sh /usr/local/bin/pocketbase-entrypoint
+RUN chmod 0755 /usr/local/bin/pocketbase-entrypoint
 
 WORKDIR /pb
-
+USER pocketbase
 EXPOSE 8090
-
 CMD ["/usr/local/bin/pocketbase-entrypoint"]

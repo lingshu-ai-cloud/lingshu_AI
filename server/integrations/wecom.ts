@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import axios from 'axios';
+import { providerHttp as axios } from '../security/providerHttp.js';
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';

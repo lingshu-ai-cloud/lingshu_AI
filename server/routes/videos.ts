@@ -18,7 +18,7 @@ import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import { isDemoMode } from '../lib/demo.js';
 import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/videoAdminAlerts.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
-import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl } from '../lib/assetAccess.js';
+import { signAssetUrl } from '../lib/assetAccess.js';
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 
 export const videosRouter = Router();
@@ -1941,18 +1941,11 @@ videosRouter.get('/:id/media-url', async (req, res) => {
   res.json({ url: `/api/overseas/videos/${encodeURIComponent(req.params.id)}/media` });
 });
 
-/**
- * `<img>` 发不出 Authorization 头，只能带 asset session cookie，
- * 而 requireAdminUser 只认头部。跨租户封面对管理员可见，这里补上 cookie 回落。
- */
 async function isAdminForAssetRequest(req: Request): Promise<boolean> {
-  if (await requireAdminUser(req)) return true;
-  const cookieToken = cookieValue(req, ASSET_SESSION_COOKIE);
-  if (!cookieToken) return false;
-  const proxied = Object.create(req, {
-    headers: { value: { ...req.headers, authorization: `Bearer ${cookieToken}` } },
-  }) as Request;
-  return Boolean(await requireAdminUser(proxied));
+  // Cross-tenant media remains header-authenticated only. The short-lived
+  // asset session proves tenant identity but deliberately carries no business
+  // role and must never be promoted back into a bearer credential.
+  return Boolean(await requireAdminUser(req));
 }
 
 async function generateThumbnailFromStoredVideo(record: Record<string, unknown>): Promise<{ buf: Buffer; contentType: string } | null> {

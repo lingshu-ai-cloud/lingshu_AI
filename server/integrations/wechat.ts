@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import axios from 'axios';
+import { providerHttp as axios } from '../security/providerHttp.js';
 
 export interface WechatConfig {
   appId: string;

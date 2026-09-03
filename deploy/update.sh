@@ -1,25 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ ! -f .env.production ]; then
-  echo ".env.production is missing."
-  exit 1
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ $# -ne 1 || ! "$1" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Usage: $0 <exact-40-character-git-commit>" >&2
+  echo "Branch names, tags, short SHAs, and an unpinned git pull are not accepted." >&2
+  exit 2
 fi
 
-mkdir -p backups
-echo "==> Backing up PocketBase before update"
-docker compose --env-file .env.production stop pocketbase
-docker compose --env-file .env.production run --rm --no-deps pocketbase tar czf - -C /pb/pb_data . > "backups/pb_data_$(date +%F_%H%M%S).tar.gz"
-docker compose --env-file .env.production start pocketbase
+target_revision="$1"
+resolved_revision="$(git rev-parse --verify "${target_revision}^{commit}" 2>/dev/null || true)"
+[[ "$resolved_revision" == "$target_revision" ]] || {
+  echo "The exact target commit is not present in this checkout: $target_revision" >&2
+  exit 1
+}
 
-echo "==> Pulling latest code"
-git pull
+cat >&2 <<EOF
+deploy/update.sh is intentionally fail-closed and made no production changes.
 
-echo "==> Rebuilding and restarting"
-docker compose --env-file .env.production up -d --build
+Target revision validated: ${target_revision}
 
-echo "==> Syncing PocketBase schema and demo accounts"
-docker compose --env-file .env.production exec -T app npm run setup:pb
-docker compose --env-file .env.production exec -T app npm run demo:sync-accounts
+Use docs/production-readiness-runbook.md in an explicitly authorized change window:
+  1. AGE_RECIPIENT='age1...' BACKUP_DIR=/secure/lingshu-backups bash deploy/backup.sh
+  2. Check out the exact commit above without modifying .env.production or either external volume.
+  3. Run every quality, schema, PocketBase smoke, image-build, and restore-drill gate.
+  4. Review the migration and rollback plan, then obtain explicit deployment authorization.
 
-docker compose --env-file .env.production ps
+This legacy entry point never pulls code, switches revisions, builds images, runs migrations,
+syncs demo accounts, restarts services, or deploys.
+EOF
+exit 1

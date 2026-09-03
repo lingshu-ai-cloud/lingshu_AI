@@ -40,9 +40,51 @@ const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(m
 type ViewMode = TrafficViewMode;
 type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
 
+export type TikTokPrivacyLevel =
+  | 'PUBLIC_TO_EVERYONE'
+  | 'MUTUAL_FOLLOW_FRIENDS'
+  | 'FOLLOWER_OF_CREATOR'
+  | 'SELF_ONLY';
+
+export type TikTokCreatorInfo = {
+  username: string;
+  nickname: string;
+  avatarUrl: string;
+  privacyLevelOptions: TikTokPrivacyLevel[];
+  commentDisabled: boolean;
+  duetDisabled: boolean;
+  stitchDisabled: boolean;
+  maxVideoPostDurationSec: number;
+};
+
+export type TikTokPublishOptionsDraft = {
+  privacyLevel: TikTokPrivacyLevel | '';
+  allowComment: boolean;
+  allowDuet: boolean;
+  allowStitch: boolean;
+  commercialContent: boolean;
+  brandContentToggle: boolean;
+  brandOrganicToggle: boolean;
+  isAigc: boolean;
+  userConsent: boolean;
+};
+
+export type TikTokPublishOptionsPayload = Omit<TikTokPublishOptionsDraft, 'privacyLevel' | 'commercialContent'> & {
+  privacyLevel: TikTokPrivacyLevel;
+};
+
+type TikTokCreatorInfoState = {
+  status: 'loading' | 'ready' | 'error';
+  creator?: TikTokCreatorInfo;
+  audited?: boolean;
+  fetchedAt?: string;
+  error?: string;
+};
+
 type PublishDraftItem = {
   videoPath?: string;
   previewUrl?: string;
+  videoDurationSeconds?: number;
   title: string;
   description: string;
   ratio?: string;
@@ -73,7 +115,7 @@ type PlatformCopy = {
   firstComment?: string;
 };
 
-type PublishItemStatus = 'draft' | 'ready' | 'publishing' | 'scheduled' | 'published' | 'partial' | 'failed';
+type PublishItemStatus = 'draft' | 'ready' | 'publishing' | 'scheduled' | 'published' | 'partial' | 'failed' | 'needs_reconciliation';
 type DeliveryMode = PublishDeliveryMode;
 
 type PublishQueueItem = {
@@ -81,18 +123,24 @@ type PublishQueueItem = {
   selected: boolean;
   videoPath: string;
   previewUrl?: string;
+  videoDurationSeconds?: number;
   title: string;
   description: string;
   ratio?: string;
   sourceProjectId?: string;
   sourcePlatform?: PublishPlatform;
   targetAccountIds: string[];
+  tiktokPublishOptionsByAccount: Record<string, TikTokPublishOptionsDraft>;
   platformCopy: Record<string, PlatformCopy>;
   firstComment: string;
   trackWaLink: boolean;
   deliveryMode: DeliveryMode;
   scheduledAt: string;
   calendarPostIds?: string[];
+  calendarPostPlatforms?: Record<string, PublishPlatform>;
+  calendarPostRevisions?: Record<string, number>;
+  scheduleRevision: number;
+  directPublishRevisions: Record<string, number>;
   status: PublishItemStatus;
   completedTargets: number;
   error?: string;
@@ -125,6 +173,220 @@ const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; for
 
 const ALL_PUBLISH_PLATFORMS = Object.keys(PLATFORM_META) as PublishPlatform[];
 
+const TIKTOK_PRIVACY_LEVELS = new Set<TikTokPrivacyLevel>([
+  'PUBLIC_TO_EVERYONE',
+  'MUTUAL_FOLLOW_FRIENDS',
+  'FOLLOWER_OF_CREATOR',
+  'SELF_ONLY',
+]);
+
+const TIKTOK_PRIVACY_LABELS: Record<TikTokPrivacyLevel, string> = {
+  PUBLIC_TO_EVERYONE: '所有人',
+  MUTUAL_FOLLOW_FRIENDS: '互相关注的好友',
+  FOLLOWER_OF_CREATOR: '关注者',
+  SELF_ONLY: '仅自己',
+};
+
+export function createDefaultTikTokPublishOptions(): TikTokPublishOptionsDraft {
+  return {
+    privacyLevel: '',
+    allowComment: false,
+    allowDuet: false,
+    allowStitch: false,
+    commercialContent: false,
+    brandContentToggle: false,
+    brandOrganicToggle: false,
+    isAigc: false,
+    userConsent: false,
+  };
+}
+
+export function normalizeVideoDurationSeconds(value: unknown): number | undefined {
+  if (typeof value !== 'number') return undefined;
+  const duration = value;
+  if (!Number.isFinite(duration) || duration <= 0) return undefined;
+  return Number(duration.toFixed(3));
+}
+
+export function resetTikTokUserConsent(
+  optionsByAccount: Record<string, TikTokPublishOptionsDraft>,
+): Record<string, TikTokPublishOptionsDraft> {
+  return Object.fromEntries(Object.entries(optionsByAccount).map(([accountId, options]) => [accountId, {
+    ...options,
+    userConsent: false,
+  }]));
+}
+
+/**
+ * A music confirmation belongs to the bytes the user reviewed. Every caller
+ * that replaces or clears the video identity must use this fail-closed patch.
+ */
+export function replacePublishVideoIdentity(
+  videoPath: string,
+  optionsByAccount: Record<string, TikTokPublishOptionsDraft>,
+  videoDurationSeconds?: unknown,
+): Pick<PublishQueueItem, 'videoPath' | 'videoDurationSeconds' | 'tiktokPublishOptionsByAccount'> {
+  return {
+    videoPath,
+    videoDurationSeconds: normalizeVideoDurationSeconds(videoDurationSeconds),
+    tiktokPublishOptionsByAccount: resetTikTokUserConsent(optionsByAccount),
+  };
+}
+
+export function normalizeTikTokPublishOptions(value: unknown): TikTokPublishOptionsDraft {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return createDefaultTikTokPublishOptions();
+  const raw = value as Record<string, unknown>;
+  const privacyLevel = typeof raw.privacyLevel === 'string' && TIKTOK_PRIVACY_LEVELS.has(raw.privacyLevel as TikTokPrivacyLevel)
+    ? raw.privacyLevel as TikTokPrivacyLevel
+    : '';
+  const brandContentToggle = raw.brandContentToggle === true;
+  const brandOrganicToggle = raw.brandOrganicToggle === true;
+  return {
+    privacyLevel,
+    allowComment: raw.allowComment === true,
+    allowDuet: raw.allowDuet === true,
+    allowStitch: raw.allowStitch === true,
+    commercialContent: raw.commercialContent === true || brandContentToggle || brandOrganicToggle,
+    brandContentToggle,
+    brandOrganicToggle,
+    isAigc: raw.isAigc === true,
+    userConsent: raw.userConsent === true,
+  };
+}
+
+export function normalizeTikTokPublishOptionsByAccount(value: unknown): Record<string, TikTokPublishOptionsDraft> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([accountId]) => Boolean(accountId.trim()))
+    .map(([accountId, options]) => [accountId, normalizeTikTokPublishOptions(options)]));
+}
+
+export function validateTikTokPublishOptions(
+  value: TikTokPublishOptionsDraft | undefined,
+  creator: TikTokCreatorInfo | undefined,
+  videoDurationSeconds?: unknown,
+): string[] {
+  const options = value || createDefaultTikTokPublishOptions();
+  const errors: string[] = [];
+  if (!creator) return ['尚未读取 TikTok 创作者发布权限'];
+  const actualDurationSeconds = normalizeVideoDurationSeconds(videoDurationSeconds);
+  if (!actualDurationSeconds) errors.push('尚未读取视频实际时长，请等待素材 metadata 加载完成');
+  else if (actualDurationSeconds > creator.maxVideoPostDurationSec + 0.05) {
+    errors.push(`视频实际时长 ${actualDurationSeconds} 秒，超过该创作者允许的 ${creator.maxVideoPostDurationSec} 秒`);
+  }
+  if (!options.privacyLevel) errors.push('请选择 TikTok 可见范围');
+  else if (!creator.privacyLevelOptions.includes(options.privacyLevel)) errors.push('所选 TikTok 可见范围当前不可用');
+  if (creator.commentDisabled && options.allowComment) errors.push('该创作者已关闭评论');
+  if (creator.duetDisabled && options.allowDuet) errors.push('该创作者已关闭 Duet');
+  if (creator.stitchDisabled && options.allowStitch) errors.push('该创作者已关闭 Stitch');
+  if (options.commercialContent && !options.brandOrganicToggle && !options.brandContentToggle) {
+    errors.push('商业内容必须披露“自有品牌”或“第三方品牌”');
+  }
+  if (!options.commercialContent && (options.brandOrganicToggle || options.brandContentToggle)) {
+    errors.push('品牌披露必须先开启商业内容');
+  }
+  if (options.brandContentToggle && options.privacyLevel === 'SELF_ONLY') {
+    errors.push('第三方品牌合作内容不能设为仅自己可见');
+  }
+  if (!options.userConsent) errors.push('请明确同意 TikTok Music Usage Confirmation');
+  return errors;
+}
+
+export function tiktokPublishOptionsPayload(
+  value: TikTokPublishOptionsDraft | undefined,
+  creator: TikTokCreatorInfo | undefined,
+  videoDurationSeconds?: unknown,
+): TikTokPublishOptionsPayload {
+  const options = value || createDefaultTikTokPublishOptions();
+  const errors = validateTikTokPublishOptions(options, creator, videoDurationSeconds);
+  if (errors.length) throw new Error(errors.join('；'));
+  return {
+    privacyLevel: options.privacyLevel as TikTokPrivacyLevel,
+    allowComment: options.allowComment,
+    allowDuet: options.allowDuet,
+    allowStitch: options.allowStitch,
+    brandContentToggle: options.brandContentToggle,
+    brandOrganicToggle: options.brandOrganicToggle,
+    isAigc: options.isAigc,
+    userConsent: options.userConsent,
+  };
+}
+
+export function buildTikTokPublishOptionsByAccount(
+  accountIds: readonly string[],
+  optionsByAccount: Record<string, TikTokPublishOptionsDraft>,
+  creatorByAccount: Record<string, TikTokCreatorInfo | undefined>,
+  videoDurationSeconds?: unknown,
+): Record<string, TikTokPublishOptionsPayload> {
+  return Object.fromEntries(accountIds.map(accountId => [
+    accountId,
+    tiktokPublishOptionsPayload(optionsByAccount[accountId], creatorByAccount[accountId], videoDurationSeconds),
+  ]));
+}
+
+export function tiktokDirectPublishRequestOptions(
+  accountId: string,
+  optionsByAccount: Record<string, TikTokPublishOptionsDraft>,
+  creatorByAccount: Record<string, TikTokCreatorInfo | undefined>,
+  videoDurationSeconds?: unknown,
+): { tiktokPublishOptions: TikTokPublishOptionsPayload } {
+  return {
+    tiktokPublishOptions: tiktokPublishOptionsPayload(
+      optionsByAccount[accountId],
+      creatorByAccount[accountId],
+      videoDurationSeconds,
+    ),
+  };
+}
+
+export function tiktokCalendarPublishRequestOptions(
+  accountIds: readonly string[],
+  optionsByAccount: Record<string, TikTokPublishOptionsDraft>,
+  creatorByAccount: Record<string, TikTokCreatorInfo | undefined>,
+  videoDurationSeconds?: unknown,
+): { tiktokPublishOptionsByAccount: Record<string, TikTokPublishOptionsPayload> } {
+  return {
+    tiktokPublishOptionsByAccount: buildTikTokPublishOptionsByAccount(
+      accountIds,
+      optionsByAccount,
+      creatorByAccount,
+      videoDurationSeconds,
+    ),
+  };
+}
+
+function tiktokComplianceErrorsForItem(
+  item: PublishQueueItem,
+  targets: readonly PublishAccount[],
+  creatorInfoByAccount: Record<string, TikTokCreatorInfoState>,
+): string[] {
+  return targets.filter(account => account.platform === 'tiktok').flatMap(account => {
+    const state = creatorInfoByAccount[account.id];
+    if (state?.status === 'loading') return [`TikTok · ${account.title}: 正在读取创作者发布权限`];
+    if (state?.status === 'error') return [`TikTok · ${account.title}: ${state.error || '无法读取创作者发布权限'}`];
+    return validateTikTokPublishOptions(
+      item.tiktokPublishOptionsByAccount[account.id],
+      state?.creator,
+      item.videoDurationSeconds,
+    )
+      .map(message => `TikTok · ${account.title}: ${message}`);
+  });
+}
+
+function tiktokCalendarRequestFieldsForTargets(
+  item: PublishQueueItem,
+  targets: readonly PublishAccount[],
+  creatorInfoByAccount: Record<string, TikTokCreatorInfoState>,
+): { tiktokPublishOptionsByAccount: Record<string, TikTokPublishOptionsPayload> } {
+  const tiktokAccountIds = targets.filter(account => account.platform === 'tiktok').map(account => account.id);
+  return tiktokCalendarPublishRequestOptions(
+    tiktokAccountIds,
+    item.tiktokPublishOptionsByAccount,
+    Object.fromEntries(tiktokAccountIds.map(accountId => [accountId, creatorInfoByAccount[accountId]?.creator])),
+    item.videoDurationSeconds,
+  );
+}
+
 const TRAFFIC_MODE_META: Record<ViewMode, {
   icon: typeof Film;
   label: string;
@@ -140,8 +402,21 @@ const TRAFFIC_MODE_ORDER: ViewMode[] = ['materials', 'create', 'publish', 'accou
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers ?? {}) } });
-  const data = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
-  if (!response.ok) throw new Error(data.message || data.error || '请求失败');
+  const data = await response.json().catch(() => ({})) as T & {
+    error?: string;
+    message?: string;
+    outcomeUnknown?: boolean;
+    retrySafe?: boolean;
+    reconciliationRequired?: boolean;
+    reconciliationPersisted?: boolean;
+    trackingPostId?: string;
+    alreadyPublished?: boolean;
+    resolution?: string;
+  };
+  if (!response.ok) {
+    const message = data.message || data.error || '请求失败';
+    throw Object.assign(new Error(message), data, { message, responseStatus: response.status });
+  }
   return data;
 }
 
@@ -163,8 +438,34 @@ function publishItemId() {
     : `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function calendarIdempotencyKey(itemId: string, platform: PublishPlatform, scheduleRevision: number): string {
+  return `calendar:${itemId}:${platform}:v${Math.max(1, Math.floor(scheduleRevision || 1))}`;
+}
+
+export function isIgnorableCalendarDeleteError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object'
+    && Number((error as { responseStatus?: unknown }).responseStatus) === 404);
+}
+
+export async function cancelCalendarPostsBeforeReschedule(
+  postIds: readonly string[],
+  remove: (postId: string) => Promise<unknown>,
+): Promise<void> {
+  for (const postId of postIds) {
+    try {
+      await remove(postId);
+    } catch (error) {
+      if (isIgnorableCalendarDeleteError(error)) continue;
+      throw new Error(
+        `旧排期 ${postId} 未能确认取消，已停止创建新排期：${error instanceof Error ? error.message : '请检查待对账状态'}`,
+        { cause: error },
+      );
+    }
+  }
+}
+
 const PUBLISH_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
-const PUBLISH_ITEM_STATUSES = new Set<PublishItemStatus>(['draft', 'ready', 'publishing', 'scheduled', 'published', 'partial', 'failed']);
+const PUBLISH_ITEM_STATUSES = new Set<PublishItemStatus>(['draft', 'ready', 'publishing', 'scheduled', 'published', 'partial', 'failed', 'needs_reconciliation']);
 const PUBLISH_DELIVERY_MODES = new Set<DeliveryMode>(['now', 'flexible', 'schedule']);
 
 function storedString(value: unknown): string {
@@ -214,6 +515,7 @@ export function normalizeStoredPublishDraft(value: unknown): PublishDraft | null
     return {
       videoPath: storedOptionalString(record.videoPath),
       previewUrl: storedOptionalString(record.previewUrl),
+      videoDurationSeconds: normalizeVideoDurationSeconds(record.videoDurationSeconds ?? record.duration),
       title: storedString(record.title),
       description: storedString(record.description),
       ratio: storedOptionalString(record.ratio),
@@ -237,30 +539,53 @@ export function normalizeStoredPublishQueueItem(value: unknown): PublishQueueIte
   const status = typeof raw.status === 'string' && PUBLISH_ITEM_STATUSES.has(raw.status as PublishItemStatus)
     ? raw.status as PublishItemStatus
     : 'draft';
+  const restoredStatus: PublishItemStatus = status === 'publishing' ? 'failed' : status;
   const deliveryMode = typeof raw.deliveryMode === 'string' && PUBLISH_DELIVERY_MODES.has(raw.deliveryMode as DeliveryMode)
     ? raw.deliveryMode as DeliveryMode
     : 'now';
   const completedTargets = Number(raw.completedTargets);
+  const scheduleRevision = Number(raw.scheduleRevision);
+  const calendarPostPlatforms = raw.calendarPostPlatforms && typeof raw.calendarPostPlatforms === 'object' && !Array.isArray(raw.calendarPostPlatforms)
+    ? Object.fromEntries(Object.entries(raw.calendarPostPlatforms as Record<string, unknown>)
+      .flatMap(([postId, platform]) => {
+        const normalized = storedPlatform(platform);
+        return postId && normalized ? [[postId, normalized]] : [];
+      }))
+    : {};
+  const revisionMap = (value: unknown): Record<string, number> => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([id, rawRevision]) => {
+      const revision = Number(rawRevision);
+      return id && Number.isInteger(revision) && revision >= 0 ? [[id, revision]] : [];
+    }))
+    : {};
   return {
     id,
     selected: raw.selected === true,
     videoPath: storedString(raw.videoPath),
     previewUrl: storedOptionalString(raw.previewUrl),
+    videoDurationSeconds: normalizeVideoDurationSeconds(raw.videoDurationSeconds),
     title: storedString(raw.title),
     description: storedString(raw.description),
     ratio: storedOptionalString(raw.ratio),
     sourceProjectId: storedOptionalString(raw.sourceProjectId),
     sourcePlatform: storedPlatform(raw.sourcePlatform),
     targetAccountIds: storedStringArray(raw.targetAccountIds),
+    tiktokPublishOptionsByAccount: normalizeTikTokPublishOptionsByAccount(raw.tiktokPublishOptionsByAccount),
     platformCopy: normalizeStoredPlatformCopy(raw.platformCopy),
     firstComment: storedString(raw.firstComment),
     trackWaLink: raw.trackWaLink !== false,
     deliveryMode,
     scheduledAt: storedString(raw.scheduledAt),
     calendarPostIds: storedStringArray(raw.calendarPostIds),
-    status,
+    calendarPostPlatforms,
+    calendarPostRevisions: revisionMap(raw.calendarPostRevisions),
+    scheduleRevision: Number.isInteger(scheduleRevision) && scheduleRevision > 0 ? scheduleRevision : 1,
+    directPublishRevisions: revisionMap(raw.directPublishRevisions),
+    status: restoredStatus,
     completedTargets: Number.isFinite(completedTargets) ? Math.max(0, completedTargets) : 0,
-    error: storedOptionalString(raw.error),
+    error: storedOptionalString(raw.error) || (status === 'publishing'
+      ? '上次发布在等待平台结果时中断；请使用原请求键继续，系统会防止重复发布。'
+      : undefined),
   };
 }
 
@@ -274,6 +599,39 @@ function browserVideoUrl(value: string | undefined): string {
   if (/^(?:https?:\/\/|blob:|data:video\/)/i.test(candidate)) return candidate;
   if (/^\/(?:api\/|media\/|covers\/|generated\/)/i.test(candidate)) return candidate;
   return '';
+}
+
+function formatVideoDuration(value: unknown): string {
+  const duration = normalizeVideoDurationSeconds(value);
+  if (!duration) return '时长读取中';
+  if (duration < 60) return `${Number(duration.toFixed(1))} 秒`;
+  const minutes = Math.floor(duration / 60);
+  const seconds = Number((duration - minutes * 60).toFixed(1));
+  return `${minutes} 分 ${seconds} 秒`;
+}
+
+function probeUploadedFileDuration(file: File): Promise<number | undefined> {
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return Promise.resolve(undefined);
+  }
+  return new Promise(resolve => {
+    const video = document.createElement('video');
+    const source = URL.createObjectURL(file);
+    let settled = false;
+    const finish = (duration?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      video.removeAttribute('src');
+      URL.revokeObjectURL(source);
+      resolve(normalizeVideoDurationSeconds(duration));
+    };
+    const timeout = setTimeout(() => finish(), 15_000);
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => finish(video.duration);
+    video.onerror = () => finish();
+    video.src = source;
+  });
 }
 
 function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: string[] = []): PublishQueueItem {
@@ -295,18 +653,22 @@ function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: st
     selected: Boolean(videoPath.trim()),
     videoPath,
     previewUrl: storedOptionalString(draft?.previewUrl) || browserVideoUrl(videoPath),
+    videoDurationSeconds: normalizeVideoDurationSeconds(draft?.videoDurationSeconds),
     title,
     description,
     ratio: draft?.ratio,
     sourceProjectId: draft?.sourceProjectId,
     sourcePlatform,
     targetAccountIds,
+    tiktokPublishOptionsByAccount: {},
     platformCopy: initialCopy,
     firstComment: '',
     trackWaLink: true,
     deliveryMode: 'now',
     scheduledAt: '',
     status: 'draft',
+    scheduleRevision: 1,
+    directPublishRevisions: {},
     completedTargets: 0,
   };
 }
@@ -383,6 +745,7 @@ const PUBLISH_STATUS_META: Record<PublishItemStatus, { label: string; className:
   published: { label: '已完成', className: 'bg-emerald-50 text-emerald-700' },
   partial: { label: '部分失败', className: 'bg-amber-50 text-amber-700' },
   failed: { label: '发布失败', className: 'bg-red-50 text-red-700' },
+  needs_reconciliation: { label: '待人工对账', className: 'bg-orange-50 text-orange-800' },
 };
 
 export default function TrafficPage({
@@ -618,8 +981,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const [contentEditorMode, setContentEditorMode] = useState<'common' | 'platform'>('common');
   const [pendingTargetAccountIds, setPendingTargetAccountIds] = useState<string[]>([]);
+  const [tiktokCreatorInfoByAccount, setTikTokCreatorInfoByAccount] = useState<Record<string, TikTokCreatorInfoState>>({});
   const accountTargetsSeededRef = useRef(false);
   const pendingAccountTargetsSeededRef = useRef(false);
+  const tiktokCreatorRequestsRef = useRef(new Set<string>());
   const appliedDraftRef = useRef(JSON.stringify(draft || readStoredPublishDraft() || {}));
   const materializedVideoPathsRef = useRef(new Set<string>());
   const videoInputRef = useRef<HTMLInputElement | null>(null);
@@ -651,6 +1016,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     }));
   const selectedTargetAccountIds = activeItem?.targetAccountIds ?? pendingTargetAccountIds;
   const selectedConnectedAccounts = connectedAccounts.filter(account => selectedTargetAccountIds.includes(account.id));
+  const selectedTikTokAccounts = selectedConnectedAccounts.filter(account => account.platform === 'tiktok');
   const selectedPlatforms = Array.from(new Set(selectedConnectedAccounts.map(account => account.platform)));
   const visiblePlatforms = selectedPlatforms.length ? selectedPlatforms : ALL_PUBLISH_PLATFORMS;
   const connectedAccountIds = new Set(connectedAccounts.map(account => account.id));
@@ -667,6 +1033,13 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     item.targetAccountIds.some(id => connectedAccountIds.has(id)) &&
     ['ready', 'partial', 'failed'].includes(item.status)
   ));
+  const publishableTikTokComplianceErrors = publishableItems.flatMap(item => {
+    const targets = connectedAccounts.filter(account => item.targetAccountIds.includes(account.id));
+    return tiktokComplianceErrorsForItem(item, targets, tiktokCreatorInfoByAccount);
+  });
+  const activeTikTokComplianceErrors = activeItem
+    ? tiktokComplianceErrorsForItem(activeItem, selectedConnectedAccounts, tiktokCreatorInfoByAccount)
+    : [];
   const immediateItems = publishableItems.filter(item => item.deliveryMode === 'now');
   const scheduledItems = publishableItems.filter(item => item.deliveryMode === 'schedule' && Boolean(item.scheduledAt));
   const flexibleItems = items.filter(item => item.selected && item.deliveryMode === 'flexible' && ['ready', 'partial', 'failed'].includes(item.status));
@@ -677,6 +1050,103 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
 
   const updateItem = (id: string, patch: Partial<PublishQueueItem>) => {
     setItems(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const recordVideoDuration = (itemId: string, expectedVideoPath: string, value: unknown) => {
+    const videoDurationSeconds = normalizeVideoDurationSeconds(value);
+    if (!videoDurationSeconds) return;
+    setItems(previous => previous.map(item => (
+      item.id === itemId && item.videoPath === expectedVideoPath && item.videoDurationSeconds !== videoDurationSeconds
+        ? { ...item, videoDurationSeconds }
+        : item
+    )));
+  };
+
+  const loadTikTokCreatorInfo = async (accountId: string, force = false) => {
+    if (force) tiktokCreatorRequestsRef.current.delete(accountId);
+    if (tiktokCreatorRequestsRef.current.has(accountId)) return;
+    tiktokCreatorRequestsRef.current.add(accountId);
+    setTikTokCreatorInfoByAccount(previous => ({
+      ...previous,
+      [accountId]: { status: 'loading' },
+    }));
+    try {
+      const result = await fetchJson<{ creator: TikTokCreatorInfo; audited: boolean; fetchedAt: string }>(
+        `/api/overseas/social/accounts/${encodeURIComponent(accountId)}/tiktok/creator-info`,
+      );
+      setTikTokCreatorInfoByAccount(previous => ({
+        ...previous,
+        [accountId]: {
+          status: 'ready',
+          creator: result.creator,
+          audited: result.audited,
+          fetchedAt: result.fetchedAt,
+        },
+      }));
+      setItems(previous => previous.map(item => {
+        const existing = item.tiktokPublishOptionsByAccount[accountId];
+        if (!existing) return item;
+        const sanitized: TikTokPublishOptionsDraft = {
+          ...existing,
+          privacyLevel: existing.privacyLevel && result.creator.privacyLevelOptions.includes(existing.privacyLevel)
+            ? existing.privacyLevel
+            : '',
+          allowComment: result.creator.commentDisabled ? false : existing.allowComment,
+          allowDuet: result.creator.duetDisabled ? false : existing.allowDuet,
+          allowStitch: result.creator.stitchDisabled ? false : existing.allowStitch,
+        };
+        return {
+          ...item,
+          tiktokPublishOptionsByAccount: {
+            ...item.tiktokPublishOptionsByAccount,
+            [accountId]: sanitized,
+          },
+        };
+      }));
+    } catch (creatorError) {
+      tiktokCreatorRequestsRef.current.delete(accountId);
+      setTikTokCreatorInfoByAccount(previous => ({
+        ...previous,
+        [accountId]: {
+          status: 'error',
+          error: creatorError instanceof Error ? creatorError.message : '无法读取 TikTok 创作者发布权限',
+        },
+      }));
+    }
+  };
+
+  useEffect(() => {
+    const relevantTargetAccountIds = [
+      ...(activeItem?.targetAccountIds || pendingTargetAccountIds),
+      ...items
+        .filter(item => item.selected || ['ready', 'partial', 'failed'].includes(item.status))
+        .flatMap(item => item.targetAccountIds),
+    ];
+    const selectedTikTokAccountIds = new Set(relevantTargetAccountIds
+      .filter(accountId => accounts.some(account => account.id === accountId && account.platform === 'tiktok' && account.status === 'connected')));
+    for (const accountId of selectedTikTokAccountIds) {
+      if (!tiktokCreatorInfoByAccount[accountId]) void loadTikTokCreatorInfo(accountId);
+    }
+  }, [accounts, items, activeItem?.id, pendingTargetAccountIds, tiktokCreatorInfoByAccount]);
+
+  const persistItemPatchBeforeRequest = (id: string, patch: Partial<PublishQueueItem>) => {
+    setItems(previous => {
+      const next = previous.map(item => item.id === id ? { ...item, ...patch } : item);
+      try { localStorage.setItem(PUBLISH_QUEUE_STORAGE_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+      return next;
+    });
+  };
+
+  const deleteCalendarPost = (item: PublishQueueItem, postId: string) => {
+    const expectedRevision = item.calendarPostRevisions?.[postId];
+    if (!Number.isInteger(expectedRevision)) {
+      throw new Error(`日历记录 ${postId} 缺少版本信息，请刷新日历并重新打开。`);
+    }
+    return fetchJson(`/api/overseas/publishing/calendar/${postId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedRevision }),
+    });
   };
 
   useEffect(() => {
@@ -746,32 +1216,48 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     if (!activeItem.description.trim()) { setError('请填写发布文案'); return; }
     if (activeItem.calendarPostIds?.length) {
       if (!targets.length) { setError('日历内容需要至少选择一个发布平台账号'); return; }
+      const complianceErrors = tiktokComplianceErrorsForItem(activeItem, targets, tiktokCreatorInfoByAccount);
+      if (complianceErrors.length) { setError(complianceErrors[0]); return; }
       const calendarPlatform = activeItem.sourcePlatform || selectedPlatforms[0];
-      const platformTargets = calendarPlatform
-        ? targets.filter(account => account.platform === calendarPlatform)
-        : targets;
-      const copy = calendarPlatform ? activeItem.platformCopy[calendarPlatform] : undefined;
       setSavingContent(true);
       setError('');
       try {
-        await Promise.all(activeItem.calendarPostIds.map(postId => fetchJson(`/api/overseas/publishing/calendar/${postId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: calendarPlatform ? platformTitle(calendarPlatform, copy, activeItem.title.trim()) : activeItem.title.trim(),
-            description: calendarPlatform ? platformBody(calendarPlatform, copy, activeItem.description.trim()) : activeItem.description.trim(),
-            firstComment: copy?.firstComment || activeItem.firstComment,
-            videoPath: activeItem.videoPath.trim(),
-            targetAccountIds: platformTargets.map(account => account.id),
-            targetAccountLabels: platformTargets.map(account => account.handle || account.title),
-            trackWaLink: activeItem.trackWaLink,
-            ...(activeItem.deliveryMode === 'flexible' && activeItem.scheduledAt
-              ? { scheduledAt: new Date(activeItem.scheduledAt).toISOString() }
-              : {}),
-          }),
-        })));
+        const nextRevisions = { ...(activeItem.calendarPostRevisions || {}) };
+        for (const postId of activeItem.calendarPostIds) {
+          const mappedPlatform = activeItem.calendarPostPlatforms?.[postId]
+            || (activeItem.calendarPostIds?.length === 1 ? calendarPlatform : undefined);
+          if (!mappedPlatform) throw new Error('日历记录缺少平台绑定，请从日历重新打开后再编辑。');
+          const expectedRevision = nextRevisions[postId];
+          if (!Number.isInteger(expectedRevision)) throw new Error('日历记录缺少版本信息，请刷新日历并重新打开。');
+          const mappedTargets = targets.filter(account => account.platform === mappedPlatform);
+          if (!mappedTargets.length) throw new Error(`${PLATFORM_META[mappedPlatform].label} 没有可用的目标账号。`);
+          const mappedCopy = activeItem.platformCopy[mappedPlatform];
+          const result = await fetchJson<{ item: CalendarPost }>(`/api/overseas/publishing/calendar/${postId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              expectedRevision,
+              title: platformTitle(mappedPlatform, mappedCopy, activeItem.title.trim()),
+              description: platformBody(mappedPlatform, mappedCopy, activeItem.description.trim()),
+              firstComment: mappedCopy?.firstComment || activeItem.firstComment,
+              videoPath: activeItem.videoPath.trim(),
+              targetAccountIds: mappedTargets.map(account => account.id),
+              targetAccountLabels: mappedTargets.map(account => account.handle || account.title),
+              ...(mappedPlatform === 'tiktok'
+                ? tiktokCalendarRequestFieldsForTargets(activeItem, mappedTargets, tiktokCreatorInfoByAccount)
+                : {}),
+              trackWaLink: activeItem.trackWaLink,
+              ...(activeItem.deliveryMode === 'flexible' && activeItem.scheduledAt
+                ? { scheduledAt: new Date(activeItem.scheduledAt).toISOString() }
+                : {}),
+            }),
+          });
+          nextRevisions[postId] = Number(result.item.publishRevision || expectedRevision + 1);
+          persistItemPatchBeforeRequest(activeItem.id, { calendarPostRevisions: { ...nextRevisions } });
+        }
         updateItem(activeItem.id, {
           status: 'scheduled',
+          calendarPostRevisions: nextRevisions,
           error: undefined,
         });
         setCalendarRefreshKey(value => value + 1);
@@ -814,12 +1300,18 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) throw new Error('计划发布时间必须晚于当前时间');
     const targets = connectedAccounts.filter(account => item.targetAccountIds.includes(account.id));
     if (!targets.length) throw new Error('这条视频还没有选择可用的发布账号');
+    const complianceErrors = tiktokComplianceErrorsForItem(item, targets, tiktokCreatorInfoByAccount);
+    if (complianceErrors.length) throw new Error(complianceErrors[0]);
 
     const createdIds: string[] = [];
+    const calendarPostPlatforms: Record<string, PublishPlatform> = {};
+    const calendarPostRevisions: Record<string, number> = {};
     const failures: string[] = [];
-    for (const postId of item.calendarPostIds || []) {
-      try { await fetchJson(`/api/overseas/publishing/calendar/${postId}`, { method: 'DELETE' }); } catch { /* stale placeholder */ }
-    }
+    await cancelCalendarPostsBeforeReschedule(item.calendarPostIds || [], postId => (
+      deleteCalendarPost(item, postId)
+    ));
+    const scheduleRevision = Math.max(1, item.scheduleRevision || 1) + (item.calendarPostIds?.length ? 1 : 0);
+    persistItemPatchBeforeRequest(item.id, { scheduleRevision });
     const platforms = Array.from(new Set(targets.map(account => account.platform)));
     for (const platform of platforms) {
       const platformAccounts = targets.filter(account => account.platform === platform);
@@ -830,6 +1322,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             scheduledAt: scheduledAt.toISOString(),
+            idempotencyKey: calendarIdempotencyKey(item.id, platform, scheduleRevision),
             platform,
             title: platformTitle(platform, copy, item.title.trim()),
             description: platformBody(platform, copy, item.description.trim()),
@@ -838,11 +1331,16 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
             videoPath: item.videoPath.trim(),
             targetAccountIds: platformAccounts.map(account => account.id),
             targetAccountLabels: platformAccounts.map(account => account.handle || account.title),
+            ...(platform === 'tiktok'
+              ? tiktokCalendarRequestFieldsForTargets(item, platformAccounts, tiktokCreatorInfoByAccount)
+              : {}),
             trackWaLink: item.trackWaLink,
             scheduleLocked: item.deliveryMode === 'schedule',
           }),
         });
         createdIds.push(result.item.id);
+        calendarPostPlatforms[result.item.id] = platform;
+        calendarPostRevisions[result.item.id] = Number(result.item.publishRevision || 0);
       } catch (scheduleError) {
         failures.push(`${PLATFORM_META[platform].label}：${scheduleError instanceof Error ? scheduleError.message : '排期失败'}`);
       }
@@ -852,6 +1350,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       scheduledAt: dateTimeLocalValue(scheduledAt),
       status: failures.length ? (createdIds.length ? 'partial' : 'ready') : 'scheduled',
       calendarPostIds: createdIds.length ? createdIds : undefined,
+      calendarPostPlatforms: createdIds.length ? calendarPostPlatforms : undefined,
+      calendarPostRevisions: createdIds.length ? calendarPostRevisions : undefined,
+      scheduleRevision,
       completedTargets: failures.length ? createdIds.length : targets.length,
       error: failures.length ? failures.join('；') : undefined,
     });
@@ -862,6 +1363,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   };
 
   const openCalendarPost = (post: CalendarPost) => {
+    if (post.reconciliationRequired || post.status === 'needs_reconciliation') {
+      setError('这条发布的远端结果不确定，已禁止编辑、删除和直接重试。请到“数字员工 → 工作待办”按账号提交平台回执完成对账。');
+      setWorkspaceTab('publish');
+      return;
+    }
     if (post.platformPostId || post.status === 'published') {
       setError('这条内容已经发布，不能再次提交平台');
       setWorkspaceTab('publish');
@@ -873,8 +1379,19 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       return;
     }
     if (post.status === 'partial') {
-      void fetchJson<{ item: CalendarPost }>(`/api/overseas/publishing/calendar/${post.id}/retry`, { method: 'POST' })
-        .then(() => {
+      void fetchJson<{ item: CalendarPost }>(`/api/overseas/publishing/calendar/${post.id}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedRevision: post.publishRevision }),
+      })
+        .then(result => {
+          setItems(previous => previous.map(item => item.calendarPostIds?.includes(post.id) ? {
+            ...item,
+            calendarPostRevisions: {
+              ...(item.calendarPostRevisions || {}),
+              [post.id]: Number(result.item.publishRevision || Number(post.publishRevision || 0) + 1),
+            },
+          } : item));
           setNotice(`“${post.title}”会仅重试尚未成功的账号，已发布账号不会重复提交。`);
           setCalendarRefreshKey(value => value + 1);
         })
@@ -889,15 +1406,21 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     const patch: Partial<PublishQueueItem> = {
       videoPath: post.videoPath || '',
       previewUrl: post.videoPreviewUrl || post.videoUrl || browserVideoUrl(post.videoPath),
+      videoDurationSeconds: normalizeVideoDurationSeconds(post.duration ?? post.stats?.duration),
       title: post.title,
       description: post.description || '',
       sourcePlatform: post.platform in PLATFORM_META ? post.platform as PublishPlatform : undefined,
       targetAccountIds: targetAccountIds.length ? targetAccountIds : fallbackTargetIds,
+      tiktokPublishOptionsByAccount: normalizeTikTokPublishOptionsByAccount(
+        post.tiktokPublishOptionsByAccount ?? post.stats?.tiktokPublishOptionsByAccount,
+      ),
       firstComment: post.firstComment || '',
       trackWaLink: post.trackWaLink !== false,
       deliveryMode: post.scheduleLocked ? 'schedule' : 'flexible',
       scheduledAt: dateTimeLocalValue(new Date(post.publishedAt)),
       calendarPostIds: [post.id],
+      calendarPostPlatforms: post.platform in PLATFORM_META ? { [post.id]: post.platform as PublishPlatform } : {},
+      calendarPostRevisions: { [post.id]: Number(post.publishRevision || 0) },
       status: 'draft',
       completedTargets: 0,
       error: undefined,
@@ -980,17 +1503,31 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       .filter(videoPath => !materializedVideoPathsRef.current.has(videoPath));
     if (!pendingPaths.length) return;
     pendingPaths.forEach(videoPath => materializedVideoPathsRef.current.add(videoPath));
-    void fetchJson<{ videos?: Array<{ sourcePath: string; videoPath?: string; previewUrl?: string; error?: string }> }>('/api/overseas/publishing/local-videos/import-rendered', {
+    void fetchJson<{ videos?: Array<{ inputIndex: number; videoPath?: string; previewUrl?: string; error?: string }> }>('/api/overseas/publishing/local-videos/import-rendered', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoPaths: pendingPaths }),
     }).then(result => {
-      const imported = new Map((result.videos || []).map(video => [video.sourcePath, video]));
+      const imported = new Map((result.videos || [])
+        .filter(video => Number.isInteger(video.inputIndex) && video.inputIndex >= 0 && video.inputIndex < pendingPaths.length)
+        .map(video => [pendingPaths[video.inputIndex], video]));
       setItems(previous => previous.map(item => {
         const video = imported.get(item.videoPath.trim());
         if (!video) return item;
-        if (video.videoPath) return { ...item, videoPath: video.videoPath, previewUrl: video.previewUrl, selected: true, error: undefined };
-        return { ...item, videoPath: '', previewUrl: undefined, selected: false, error: '原成片文件已失效，请返回内容创作重新生成此版本。' };
+        if (video.videoPath) return {
+          ...item,
+          ...replacePublishVideoIdentity(video.videoPath, item.tiktokPublishOptionsByAccount),
+          previewUrl: video.previewUrl,
+          selected: true,
+          error: undefined,
+        };
+        return {
+          ...item,
+          ...replacePublishVideoIdentity('', item.tiktokPublishOptionsByAccount),
+          previewUrl: undefined,
+          selected: false,
+          error: '原成片文件已失效，请返回内容创作重新生成此版本。',
+        };
       }));
     }).catch(importError => {
       pendingPaths.forEach(videoPath => materializedVideoPathsRef.current.delete(videoPath));
@@ -1004,6 +1541,24 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     else next.add(accountId);
     if (activeItem) updateItem(activeItem.id, { targetAccountIds: Array.from(next), status: 'draft', error: undefined });
     else setPendingTargetAccountIds(Array.from(next));
+  };
+
+  const updateTikTokPublishOptions = (accountId: string, patch: Partial<TikTokPublishOptionsDraft>) => {
+    if (!activeItem) return;
+    const current = activeItem.tiktokPublishOptionsByAccount[accountId] || createDefaultTikTokPublishOptions();
+    const next = { ...current, ...patch };
+    if (patch.commercialContent === false) {
+      next.brandContentToggle = false;
+      next.brandOrganicToggle = false;
+    }
+    updateItem(activeItem.id, {
+      tiktokPublishOptionsByAccount: {
+        ...activeItem.tiktokPublishOptionsByAccount,
+        [accountId]: next,
+      },
+      status: 'draft',
+      error: undefined,
+    });
   };
 
   const togglePlatform = (platform: PublishPlatform) => {
@@ -1056,7 +1611,19 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       id: publishItemId(),
       platformCopy: { ...item.platformCopy },
       targetAccountIds: [...item.targetAccountIds],
+      tiktokPublishOptionsByAccount: Object.fromEntries(
+        Object.entries(item.tiktokPublishOptionsByAccount).map(([accountId, options]) => [accountId, {
+          ...options,
+          // Consent is a deliberate confirmation for one specific upload and
+          // must not silently carry to a duplicated video.
+          userConsent: false,
+        }]),
+      ),
       calendarPostIds: undefined,
+      calendarPostPlatforms: undefined,
+      calendarPostRevisions: undefined,
+      scheduleRevision: 1,
+      directPublishRevisions: {},
       status: 'draft',
       completedTargets: 0,
       error: undefined,
@@ -1089,6 +1656,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     const failures: string[] = [];
     for (const file of files) {
       try {
+        const durationPromise = probeUploadedFileDuration(file);
         const response = await fetch('/api/overseas/publishing/local-videos', {
           method: 'POST',
           headers: {
@@ -1100,9 +1668,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
         });
         const data = await response.json().catch(() => ({})) as { video?: { videoPath?: string; previewUrl?: string }; error?: string };
         if (!response.ok || !data.video?.videoPath) throw new Error(data.error || '视频接收失败');
+        const videoDurationSeconds = await durationPromise;
         additions.push(createPublishItem({
           videoPath: data.video.videoPath,
           previewUrl: data.video.previewUrl,
+          videoDurationSeconds,
           title: titleFromVideoPath(file.name),
           description: activeItem?.description || '',
           ratio: activeItem?.ratio,
@@ -1175,6 +1745,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       setError('请至少配置一条含视频路径、标题和发布账号的视频');
       return;
     }
+    if (publishableTikTokComplianceErrors.length) {
+      setError(publishableTikTokComplianceErrors[0]);
+      return;
+    }
     setError('');
     setPublishConfirmationOpen(true);
   };
@@ -1185,6 +1759,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       setError('没有可发布的内容，请重新检查视频、标题和账号');
       return;
     }
+    if (publishableTikTokComplianceErrors.length) {
+      setPublishConfirmationOpen(false);
+      setError(publishableTikTokComplianceErrors[0]);
+      return;
+    }
     setPublishConfirmationOpen(false);
     setPublishing(true);
     setNotice('');
@@ -1193,10 +1772,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
     let scheduledTargets = 0;
     let failedTargets = 0;
     let skippedItems = 0;
+    let reconciliationItems = 0;
 
     for (const item of items) {
       if (!item.selected) continue;
-      if (item.status === 'published' || item.status === 'scheduled') continue;
+      if (!['ready', 'partial', 'failed'].includes(item.status)) continue;
       if (item.deliveryMode === 'flexible') continue;
       const targets = connectedAccounts.filter(account => item.targetAccountIds.includes(account.id));
       if (!item.videoPath.trim() || !item.title.trim() || !targets.length) {
@@ -1206,6 +1786,12 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
           completedTargets: 0,
           error: !item.videoPath.trim() ? '缺少视频路径' : !item.title.trim() ? '缺少标题' : '未选择可用账号',
         });
+        continue;
+      }
+      const complianceErrors = tiktokComplianceErrorsForItem(item, targets, tiktokCreatorInfoByAccount);
+      if (complianceErrors.length) {
+        skippedItems += 1;
+        updateItem(item.id, { status: 'failed', completedTargets: 0, error: complianceErrors[0] });
         continue;
       }
       if (item.deliveryMode === 'schedule') {
@@ -1222,13 +1808,27 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
         updateItem(item.id, { status: 'publishing', completedTargets: 0, error: undefined });
         const itemFailures: string[] = [];
         const createdIds: string[] = [];
-        for (const postId of item.calendarPostIds || []) {
-          try {
-            await fetchJson(`/api/overseas/publishing/calendar/${postId}`, { method: 'DELETE' });
-          } catch {
-            // The previous placeholder may already have been removed; creating the new plan can continue.
-          }
+        const calendarPostPlatforms: Record<string, PublishPlatform> = {};
+        const calendarPostRevisions: Record<string, number> = {};
+        let deleteFailure = '';
+        try {
+          await cancelCalendarPostsBeforeReschedule(item.calendarPostIds || [], postId => (
+            deleteCalendarPost(item, postId)
+          ));
+        } catch (deleteError) {
+          deleteFailure = deleteError instanceof Error ? deleteError.message : '旧排期未能确认取消，已禁止创建新排期';
         }
+        if (deleteFailure) {
+          failedTargets += targets.length;
+          updateItem(item.id, {
+            status: 'failed', completedTargets: 0, error: deleteFailure,
+            calendarPostIds: item.calendarPostIds,
+            calendarPostPlatforms: item.calendarPostPlatforms,
+          });
+          continue;
+        }
+        const scheduleRevision = Math.max(1, item.scheduleRevision || 1) + (item.calendarPostIds?.length ? 1 : 0);
+        persistItemPatchBeforeRequest(item.id, { scheduleRevision });
         const platforms = Array.from(new Set(targets.map(account => account.platform)));
         for (const platform of platforms) {
           const platformAccounts = targets.filter(account => account.platform === platform);
@@ -1239,6 +1839,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 scheduledAt: new Date(scheduledTime).toISOString(),
+                idempotencyKey: calendarIdempotencyKey(item.id, platform, scheduleRevision),
                 platform,
                 title: platformTitle(platform, copy, item.title.trim()),
                 description: platformBody(platform, copy, item.description.trim()),
@@ -1247,11 +1848,16 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                 videoPath: item.videoPath.trim(),
                 targetAccountIds: platformAccounts.map(account => account.id),
                 targetAccountLabels: platformAccounts.map(account => account.handle || account.title),
+                ...(platform === 'tiktok'
+                  ? tiktokCalendarRequestFieldsForTargets(item, platformAccounts, tiktokCreatorInfoByAccount)
+                  : {}),
                 trackWaLink: item.trackWaLink,
                 scheduleLocked: true,
               }),
             });
             createdIds.push(result.item.id);
+            calendarPostPlatforms[result.item.id] = platform;
+            calendarPostRevisions[result.item.id] = Number(result.item.publishRevision || 0);
             scheduledTargets += platformAccounts.length;
           } catch (scheduleError) {
             failedTargets += platformAccounts.length;
@@ -1261,6 +1867,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
         updateItem(item.id, {
           status: itemFailures.length ? (createdIds.length ? 'partial' : 'failed') : 'scheduled',
           calendarPostIds: createdIds.length ? createdIds : item.calendarPostIds,
+          calendarPostPlatforms: createdIds.length ? calendarPostPlatforms : item.calendarPostPlatforms,
+          calendarPostRevisions: createdIds.length ? calendarPostRevisions : item.calendarPostRevisions,
+          scheduleRevision,
           completedTargets: targets.length,
           error: itemFailures.length ? itemFailures.join('；') : undefined,
         });
@@ -1269,9 +1878,12 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       updateItem(item.id, { status: 'publishing', completedTargets: 0, error: undefined });
       const itemFailures: string[] = [];
       let itemSuccesses = 0;
+      let itemNeedsReconciliation = false;
+      const directPublishRevisions = { ...item.directPublishRevisions };
       for (const account of targets) {
         const meta = PLATFORM_META[account.platform];
         const copy = item.platformCopy[account.platform];
+        const directRevision = Math.max(1, directPublishRevisions[account.id] || 1);
         try {
           const url = account.platform === 'youtube'
             ? `/api/overseas/youtube/accounts/${account.id}/upload`
@@ -1284,9 +1896,19 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
               title: platformTitle(account.platform, copy, item.title.trim()),
               description: platformBody(account.platform, copy, item.description.trim()),
               firstComment: copy?.firstComment || item.firstComment,
+              idempotencyKey: `direct:${item.id}:${account.id}:v${directRevision}`,
+              contentId: item.sourceProjectId || `queue:${item.id}`,
               trackWaLink: item.trackWaLink,
               privacyStatus: 'public',
               madeForKids: false,
+              ...(account.platform === 'tiktok'
+                ? tiktokDirectPublishRequestOptions(
+                  account.id,
+                  item.tiktokPublishOptionsByAccount,
+                  { [account.id]: tiktokCreatorInfoByAccount[account.id]?.creator },
+                  item.videoDurationSeconds,
+                )
+                : {}),
             }),
           });
           if (item.sourceProjectId) {
@@ -1305,28 +1927,52 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
           itemSuccesses += 1;
           successfulTargets += 1;
         } catch (e) {
-          failedTargets += 1;
-          itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}`);
+          const failure = e as Error & {
+            outcomeUnknown?: boolean;
+            reconciliationRequired?: boolean;
+            reconciliationPersisted?: boolean;
+            trackingPostId?: string;
+            alreadyPublished?: boolean;
+          };
+          if (failure.alreadyPublished === true) {
+            itemSuccesses += 1;
+            successfulTargets += 1;
+          } else if (failure.outcomeUnknown === true || failure.reconciliationRequired === true) {
+            failedTargets += 1;
+            itemNeedsReconciliation = true;
+            reconciliationItems += 1;
+            itemFailures.push(`${meta.label} · ${account.title}: 平台结果不确定，已锁定直接重试${failure.trackingPostId ? `（对账记录 ${failure.trackingPostId}）` : ''}。请到“数字员工 → 工作待办”逐账号核对。`);
+          } else {
+            failedTargets += 1;
+            itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}`);
+            directPublishRevisions[account.id] = directRevision + 1;
+            // Persist the next generation before the user can retry with
+            // corrected copy/options. Unknown outcomes deliberately retain the
+            // same key so the backend can reconcile instead of duplicating.
+            persistItemPatchBeforeRequest(item.id, { directPublishRevisions: { ...directPublishRevisions } });
+          }
         }
         updateItem(item.id, { completedTargets: itemSuccesses + itemFailures.length });
+        if (itemNeedsReconciliation) break;
       }
       updateItem(item.id, {
-        status: itemFailures.length ? (itemSuccesses ? 'partial' : 'failed') : 'published',
-        completedTargets: targets.length,
+        status: itemNeedsReconciliation ? 'needs_reconciliation' : itemFailures.length ? (itemSuccesses ? 'partial' : 'failed') : 'published',
+        completedTargets: itemNeedsReconciliation ? itemSuccesses + itemFailures.length : targets.length,
+        directPublishRevisions,
         error: itemFailures.length ? itemFailures.join('；') : undefined,
       });
       if (!itemFailures.length && itemSuccesses > 0 && item.calendarPostIds?.length) {
-        await Promise.all(item.calendarPostIds.map(postId =>
-          fetch(`/api/overseas/publishing/calendar/${postId}`, {
-            method: 'DELETE',
-            headers: authHeader(),
-          }).catch(() => undefined),
-        ));
+        try {
+          await cancelCalendarPostsBeforeReschedule(item.calendarPostIds, postId => deleteCalendarPost(item, postId));
+        } catch (cleanupError) {
+          setError(`平台已发布，但旧日历记录未能安全取消：${cleanupError instanceof Error ? cleanupError.message : '请刷新日历后处理'}`);
+        }
       }
     }
     setPublishing(false);
     setCalendarRefreshKey(value => value + 1);
-    if (failedTargets || skippedItems) setError(`${failedTargets} 个发布目标失败，${skippedItems} 条视频配置不完整；可在队列中查看并修改。`);
+    if (reconciliationItems) setError(`${reconciliationItems} 条发布结果不确定，已禁止直接重试；请到“数字员工 → 工作待办”逐账号完成对账。`);
+    else if (failedTargets || skippedItems) setError(`${failedTargets} 个发布目标失败，${skippedItems} 条视频配置不完整；可在队列中查看并修改。`);
     if (successfulTargets) setNotice(`已完成 ${successfulTargets} 个账号发布，每条发布均生成独立追踪码。`);
     if (scheduledTargets) setNotice(previous => `${previous ? `${previous} ` : ''}已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在设定时间自动发布到已选账号。`);
   };
@@ -1335,6 +1981,24 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
 
   return (
     <div className="px-6 pb-5 pt-3">
+      <div className="pointer-events-none fixed h-px w-px overflow-hidden opacity-0" aria-hidden="true">
+        {items.filter(item => (
+          !normalizeVideoDurationSeconds(item.videoDurationSeconds)
+          && Boolean(item.previewUrl || browserVideoUrl(item.videoPath))
+        )).map(item => {
+          const source = item.previewUrl || browserVideoUrl(item.videoPath);
+          return (
+            <video
+              key={`${item.id}:${item.videoPath}:${source}`}
+              src={source}
+              preload="metadata"
+              muted
+              playsInline
+              onLoadedMetadata={event => recordVideoDuration(item.id, item.videoPath, event.currentTarget.duration)}
+            />
+          );
+        })}
+      </div>
       <div className="mx-auto max-w-[1600px] space-y-4">
         <div className="flex justify-center">
           <div role="group" aria-label="发布工作区" className="grid w-full max-w-xl grid-cols-2 gap-1 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
@@ -1432,7 +2096,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                         <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${hasVideo ? status.className : 'bg-amber-50 text-amber-700'}`}>{hasVideo ? status.label : '未生成成片'}</span>
                       </div>
                       <p className="mt-1 truncate text-[11px] text-text-muted">
-                        {item.videoPath || '请返回内容创作生成该版本成片'} · {targetCount} 个账号 · {item.deliveryMode === 'now' ? '立即发布' : item.deliveryMode === 'flexible' ? '时间待定' : item.scheduledAt ? `定点 ${new Date(item.scheduledAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '待选定点时间'}
+                        {item.videoPath || '请返回内容创作生成该版本成片'} · {formatVideoDuration(item.videoDurationSeconds)} · {targetCount} 个账号 · {item.deliveryMode === 'now' ? '立即发布' : item.deliveryMode === 'flexible' ? '时间待定' : item.scheduledAt ? `定点 ${new Date(item.scheduledAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '待选定点时间'}
                       </p>
                       {item.error && <p className="mt-1 truncate text-[11px] font-semibold text-red-600" title={item.error}>{item.error}</p>}
                     </button>
@@ -1523,7 +2187,21 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
               <div className="mt-4 space-y-3">
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">素材文件</span>
-                  <input value={activeItem?.videoPath || ''} onChange={event => activeItem && updateItem(activeItem.id, { videoPath: event.target.value, status: 'draft', error: undefined })} placeholder="/Users/.../rendered-video.mp4" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <input
+                    value={activeItem?.videoPath || ''}
+                    onChange={event => {
+                      if (!activeItem) return;
+                      const videoPath = event.target.value;
+                      updateItem(activeItem.id, {
+                        ...replacePublishVideoIdentity(videoPath, activeItem.tiktokPublishOptionsByAccount),
+                        previewUrl: browserVideoUrl(videoPath) || undefined,
+                        status: 'draft',
+                        error: undefined,
+                      });
+                    }}
+                    placeholder="/Users/.../rendered-video.mp4"
+                    className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent"
+                  />
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">作品标题</span>
@@ -1680,6 +2358,169 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                       : '保存完整日期和时间，拖入日历后按这个唯一时间执行。'}
               </p>
             </div>
+            {selectedTikTokAccounts.length > 0 && (
+              <section className="mt-4 rounded-2xl border border-slate-300 bg-slate-50 p-3" aria-labelledby="tiktok-publish-settings-title">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 id="tiktok-publish-settings-title" className="flex items-center gap-1.5 text-xs font-black text-slate-900">
+                      <SocialPlatformIcon platform="tiktok" size={15} /> TikTok 发布披露
+                    </h4>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-600">每个创作者账号必须单独确认；系统不会预选可见范围、互动能力或音乐授权。</p>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {selectedTikTokAccounts.map(account => {
+                    const creatorState = tiktokCreatorInfoByAccount[account.id];
+                    const creator = creatorState?.creator;
+                    const options = activeItem?.tiktokPublishOptionsByAccount[account.id] || createDefaultTikTokPublishOptions();
+                    const complianceErrors = validateTikTokPublishOptions(options, creator, activeItem?.videoDurationSeconds);
+                    return (
+                      <div key={account.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-black text-slate-900">{account.title}</p>
+                            {creator && (
+                              <p className="mt-0.5 truncate text-[10px] text-slate-600">
+                                创作者：{creator.nickname}{creator.username ? `（@${creator.username}）` : ''}
+                              </p>
+                            )}
+                          </div>
+                          {creatorState?.status === 'ready' && (
+                            <button type="button" onClick={() => void loadTikTokCreatorInfo(account.id, true)} className="flex-shrink-0 text-[10px] font-bold text-accent hover:underline">
+                              刷新权限
+                            </button>
+                          )}
+                        </div>
+
+                        {(!creatorState || creatorState.status === 'loading') && (
+                          <div className="mt-3 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-[10px] text-slate-600">
+                            <Loader2 size={12} className="animate-spin" /> 正在读取 Creator Info…
+                          </div>
+                        )}
+                        {creatorState?.status === 'error' && (
+                          <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-2 text-[10px] text-red-700">
+                            <p>{creatorState.error || '无法读取创作者发布权限'}</p>
+                            <button type="button" onClick={() => void loadTikTokCreatorInfo(account.id, true)} className="mt-1 font-black underline">重新读取</button>
+                          </div>
+                        )}
+
+                        {creator && creatorState?.status === 'ready' && (
+                          <>
+                            <div className="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-[10px] leading-4 text-slate-700">
+                              <p className={activeItem?.videoDurationSeconds && activeItem.videoDurationSeconds > creator.maxVideoPostDurationSec + 0.05 ? 'font-bold text-red-700' : ''}>
+                                当前视频：{formatVideoDuration(activeItem?.videoDurationSeconds)} · 最长允许：{creator.maxVideoPostDurationSec} 秒
+                              </p>
+                              <p className="mt-0.5">API 客户端：{creatorState.audited ? '已通过公开发布审核' : '未通过公开发布审核'}</p>
+                              <p className="mt-0.5">可见范围：{creator.privacyLevelOptions.map(level => TIKTOK_PRIVACY_LABELS[level]).join('、') || '暂无可用范围'}</p>
+                              <p className="mt-0.5">账号限制：{[
+                                creator.commentDisabled ? '评论关闭' : '',
+                                creator.duetDisabled ? 'Duet 关闭' : '',
+                                creator.stitchDisabled ? 'Stitch 关闭' : '',
+                              ].filter(Boolean).join('、') || '未关闭互动能力'}</p>
+                            </div>
+
+                            <label className="mt-3 block">
+                              <span className="mb-1 block text-[10px] font-bold text-slate-700">可见范围（必选，不设默认值）</span>
+                              <select
+                                value={options.privacyLevel}
+                                onChange={event => updateTikTokPublishOptions(account.id, { privacyLevel: event.target.value as TikTokPrivacyLevel | '' })}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] outline-none focus:border-accent"
+                              >
+                                <option value="">请选择可见范围</option>
+                                {creator.privacyLevelOptions.map(level => <option key={level} value={level}>{TIKTOK_PRIVACY_LABELS[level]}</option>)}
+                              </select>
+                            </label>
+
+                            <fieldset className="mt-3">
+                              <legend className="text-[10px] font-bold text-slate-700">互动能力（默认关闭）</legend>
+                              <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                                {([
+                                  ['allowComment', '允许评论', creator.commentDisabled],
+                                  ['allowDuet', '允许 Duet', creator.duetDisabled],
+                                  ['allowStitch', '允许 Stitch', creator.stitchDisabled],
+                                ] as const).map(([field, label, disabled]) => (
+                                  <label key={field} className={`flex items-center gap-1.5 rounded-lg border px-2 py-2 text-[10px] ${disabled ? 'cursor-not-allowed border-slate-100 bg-slate-100 text-slate-400' : 'cursor-pointer border-slate-200 text-slate-700'}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={options[field]}
+                                      disabled={disabled}
+                                      onChange={event => updateTikTokPublishOptions(account.id, { [field]: event.target.checked })}
+                                      className="h-3.5 w-3.5 rounded border-slate-300 text-accent"
+                                    />
+                                    {label}
+                                  </label>
+                                ))}
+                              </div>
+                            </fieldset>
+
+                            <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-2.5">
+                              <label className="flex cursor-pointer items-start gap-2 text-[10px] font-black text-amber-900">
+                                <input
+                                  type="checkbox"
+                                  checked={options.commercialContent}
+                                  onChange={event => updateTikTokPublishOptions(account.id, { commercialContent: event.target.checked })}
+                                  className="mt-0.5 h-3.5 w-3.5 rounded border-amber-300 text-amber-600"
+                                />
+                                此视频包含商业推广内容
+                              </label>
+                              <p className="mt-1 text-[10px] leading-4 text-amber-800">开启后必须至少选择一种品牌关系，平台会展示对应披露标签。</p>
+                              <div className="mt-2 space-y-1.5 pl-5">
+                                <label className={`flex items-center gap-2 text-[10px] ${options.commercialContent ? 'cursor-pointer text-amber-900' : 'cursor-not-allowed text-amber-400'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={options.brandOrganicToggle}
+                                    disabled={!options.commercialContent}
+                                    onChange={event => updateTikTokPublishOptions(account.id, { brandOrganicToggle: event.target.checked })}
+                                    className="h-3.5 w-3.5 rounded border-amber-300 text-amber-600"
+                                  />
+                                  推广自有品牌或自己的业务
+                                </label>
+                                <label className={`flex items-center gap-2 text-[10px] ${options.commercialContent ? 'cursor-pointer text-amber-900' : 'cursor-not-allowed text-amber-400'}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={options.brandContentToggle}
+                                    disabled={!options.commercialContent}
+                                    onChange={event => updateTikTokPublishOptions(account.id, { brandContentToggle: event.target.checked })}
+                                    className="h-3.5 w-3.5 rounded border-amber-300 text-amber-600"
+                                  />
+                                  为第三方品牌进行付费或合作推广
+                                </label>
+                              </div>
+                            </div>
+
+                            <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 p-2.5 text-[10px] text-slate-700">
+                              <input
+                                type="checkbox"
+                                checked={options.isAigc}
+                                onChange={event => updateTikTokPublishOptions(account.id, { isAigc: event.target.checked })}
+                                className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-accent"
+                              />
+                              <span><strong className="block text-slate-900">AI 生成内容（AIGC）</strong>视频包含由 AI 生成或显著修改的画面、声音或人物。</span>
+                            </label>
+
+                            <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2.5 text-[10px] text-indigo-900">
+                              <input
+                                type="checkbox"
+                                checked={options.userConsent}
+                                onChange={event => updateTikTokPublishOptions(account.id, { userConsent: event.target.checked })}
+                                className="mt-0.5 h-3.5 w-3.5 rounded border-indigo-300 text-indigo-600"
+                              />
+                              <span><strong className="block">Music Usage Confirmation（必选）</strong>我确认已获得视频中音乐的必要使用权，并同意 TikTok Content Posting API 的音乐使用要求。</span>
+                            </label>
+
+                            {complianceErrors.length > 0 && (
+                              <ul className="mt-2 space-y-1 rounded-lg border border-red-100 bg-red-50 p-2 text-[10px] text-red-700">
+                                {complianceErrors.map(message => <li key={message}>• {message}</li>)}
+                              </ul>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
             <div id="publishing-video-preview" className="mt-4 scroll-mt-24 rounded-2xl border border-border bg-surface p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-text-primary">发布预览</span>
@@ -1694,6 +2535,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                       controls
                       playsInline
                       preload="metadata"
+                      onLoadedMetadata={event => {
+                        if (activeItem) recordVideoDuration(activeItem.id, activeItem.videoPath, event.currentTarget.duration);
+                      }}
                       className="h-full w-full object-contain"
                     />
                   ) : (
@@ -1720,18 +2564,14 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                 <li>队列：{items.length} 条视频，{immediateItems.length} 条立即发布，{flexibleItems.length} 条时间待定，{scheduledItems.length} 条定点排期</li>
                 <li>目标：{totalAssignments} 个账号任务，覆盖 {new Set(items.flatMap(item => connectedAccounts.filter(account => item.targetAccountIds.includes(account.id)).map(account => account.platform))).size} 个平台</li>
                 <li>当前视频追踪链接：{activeItem?.trackWaLink ? '开启' : '关闭'}</li>
+                {selectedTikTokAccounts.length > 0 && <li>TikTok 合规：{activeTikTokComplianceErrors.length ? `待补充 ${activeTikTokComplianceErrors.length} 项` : '已完成'}</li>}
               </ul>
             </div>
-            {selectedPlatforms.includes('tiktok') && (
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">
-                TikTok 正式公开发布前，还需按平台要求读取创作者信息，并让用户确认可见范围、评论、合拍和拼接选项；应用未通过审核时通常只能私密发布。
-              </div>
-            )}
 
             {notice && <div className="mt-4 flex items-start gap-2 rounded-xl border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700"><CheckCircle2 size={14} className="mt-0.5 flex-shrink-0" /><span>{notice}</span></div>}
             {error && <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600"><AlertCircle size={14} className="mt-0.5 flex-shrink-0" /><span>{error}</span></div>}
 
-            <button type="button" onClick={requestPublishConfirmation} disabled={publishing || loading || publishableItems.length === 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-bold text-white shadow-sm hover:brightness-95 disabled:opacity-50">
+            <button type="button" onClick={requestPublishConfirmation} disabled={publishing || loading || publishableItems.length === 0 || publishableTikTokComplianceErrors.length > 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-bold text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50">
               {publishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
               {publishing
                 ? '正在遍历账号群发...'

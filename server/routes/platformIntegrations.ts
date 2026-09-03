@@ -8,12 +8,13 @@ import {
 } from '../lib/tenantPlatformApps.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js';
+import { requireOrganizationAdmin } from './organizationAdminAccess.js';
 
 export const platformIntegrationsRouter = Router();
 
 const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'whatsapp'] as const;
 
-platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) => {
+platformIntegrationsRouter.get('/oauth-config', requireAuth, requireOrganizationAdmin, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const [google, meta, tiktok] = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
@@ -39,7 +40,7 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
   });
 });
 
-platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) => {
+platformIntegrationsRouter.put('/oauth-config', requireAuth, requireOrganizationAdmin, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
   const existing = await Promise.all([
@@ -54,6 +55,7 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
       appId: text(req.body?.metaSocialAppId),
       appSecret: text(req.body?.metaSocialAppSecret),
       waConfigId: text(req.body?.metaWhatsAppConfigId),
+      webhookVerifyToken: text(req.body?.metaWebhookVerifyToken),
     },
     { platform: 'tiktok' as const, appId: text(req.body?.tiktokClientKey), appSecret: text(req.body?.tiktokClientSecret) },
   ];
@@ -65,7 +67,7 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
   res.json({ ok: true });
 });
 
-platformIntegrationsRouter.delete('/oauth-config/:platform', requireAuth, async (req, res) => {
+platformIntegrationsRouter.delete('/oauth-config/:platform', requireAuth, requireOrganizationAdmin, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const platform = req.params.platform;
   if (!['google', 'meta', 'tiktok'].includes(platform)) {

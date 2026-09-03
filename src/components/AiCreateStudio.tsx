@@ -7269,7 +7269,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
     subtitlesOn, subMode, clipEdits, voiceoverMode, uploadedVoiceName, customVoiceId, customVoiceName, customVoiceUrl,
     ttsPreset, ttsEmotion, ttsEmotionIntensity, ttsSpeed, ttsPauseStyle, ttsPronunciationText, ttsLanguageSettings, voiceLangs, activeVoiceLang, voiceDrafts, voiceDraftStaleLangs, voiceoverStaleLangs,
-    voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang,
+    voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, renderOutputPath, renderOutputPreviewUrl, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang,
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
     posterDraft, posterJsonText, posterImageUrl,
@@ -7444,6 +7444,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (Array.isArray(s.voiceDraftStaleLangs)) setVoiceDraftStaleLangs(s.voiceDraftStaleLangs as string[]);
     if (s.languageRenderOutputs && typeof s.languageRenderOutputs === 'object') setLanguageRenderOutputs(s.languageRenderOutputs as typeof languageRenderOutputs);
     if (s.languageRenderVersions && typeof s.languageRenderVersions === 'object') setLanguageRenderVersions(s.languageRenderVersions as typeof languageRenderVersions);
+    if (typeof s.renderOutputPath === 'string') setRenderOutputPath(s.renderOutputPath || null);
+    if (typeof s.renderOutputPreviewUrl === 'string') setRenderOutputPreviewUrl(s.renderOutputPreviewUrl || null);
     if (s.storyboardVideoVersions && typeof s.storyboardVideoVersions === 'object') setStoryboardVideoVersions(s.storyboardVideoVersions as typeof storyboardVideoVersions);
     if (Array.isArray(s.productVideoVersions)) setProductVideoVersions(s.productVideoVersions as VideoGenerationVersion[]);
     if (typeof s.ttsPreset === 'string' && TTS_PRESETS.some(item => item.id === s.ttsPreset)) setTtsPreset(s.ttsPreset as TtsStyleOptions['preset']);

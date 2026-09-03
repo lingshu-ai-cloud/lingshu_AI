@@ -1,9 +1,8 @@
 /**
  * Sync demo/test accounts from data/demo-account-registry.json into PocketBase.
  *
- * This is idempotent: existing users are patched with the registry password and
- * a tenant is created when missing. It intentionally logs emails only, not
- * passwords.
+ * Passwords are accepted only from deployment secrets and are never written to
+ * the registry. Existing registry password fields are ignored and scrubbed.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +20,6 @@ const REGISTRY_FILE = path.join(__dirname, '..', 'data', 'demo-account-registry.
 
 type RegistryEntry = {
   email: string;
-  password: string;
   name?: string;
   role?: 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
   userId?: string;
@@ -104,7 +102,7 @@ async function patchTenant(token: string, tenantId: string, entry: RegistryEntry
   });
 }
 
-async function syncAccount(token: string, entry: RegistryEntry): Promise<{ email: string; action: string; userId: string; tenantId: string }> {
+async function syncAccount(token: string, entry: RegistryEntry, password: string): Promise<{ email: string; action: string; userId: string; tenantId: string }> {
   const email = entry.email.trim().toLowerCase();
   const existing = await findOne(token, 'users', `email = "${escapeFilterValue(email)}"`);
   let tenantId = String(existing?.tenantId || entry.tenantId || '');
@@ -126,8 +124,8 @@ async function syncAccount(token: string, entry: RegistryEntry): Promise<{ email
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...(entry.status !== 'admin' ? {
-          password: entry.password,
-          passwordConfirm: entry.password,
+          password,
+          passwordConfirm: password,
         } : {}),
         tenantId,
         emailVisibility: true,
@@ -143,8 +141,8 @@ async function syncAccount(token: string, entry: RegistryEntry): Promise<{ email
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       email,
-      password: entry.password,
-      passwordConfirm: entry.password,
+      password,
+      passwordConfirm: password,
       name: entry.name || email.split('@')[0],
       tenantId,
       role: entry.role || 'admin',
@@ -155,21 +153,36 @@ async function syncAccount(token: string, entry: RegistryEntry): Promise<{ email
 }
 
 async function main(): Promise<void> {
-  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8')) as Record<string, RegistryEntry>;
+  const rawRegistry = JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8')) as Record<string, RegistryEntry & { password?: unknown; rotationPassword?: unknown }>;
+  const registry = Object.fromEntries(Object.entries(rawRegistry).map(([key, value]) => {
+    const { password: _legacyPassword, rotationPassword: _legacyRotationPassword, ...safe } = value;
+    return [key, safe];
+  })) as Record<string, RegistryEntry>;
   const workbenchAdminEmail = String(process.env.WORKBENCH_ADMIN_EMAIL || '').trim().toLowerCase();
   const workbenchAdminPassword = String(process.env.WORKBENCH_ADMIN_PASSWORD || '');
+  let passwordSecrets: Record<string, string> = {};
+  try {
+    passwordSecrets = JSON.parse(String(process.env.DEMO_ACCOUNT_PASSWORDS_JSON || '{}')) as Record<string, string>;
+  } catch {
+    throw new Error('DEMO_ACCOUNT_PASSWORDS_JSON must be a JSON object keyed by email');
+  }
   const accounts = Object.values(registry)
-    .filter((entry) => entry.email && entry.password)
-    .map(entry => entry.status === 'admin' && entry.email.trim().toLowerCase() === workbenchAdminEmail && workbenchAdminPassword
-      ? { ...entry, password: workbenchAdminPassword }
-      : entry);
+    .filter((entry) => entry.email)
+    .map(entry => {
+      const email = entry.email.trim().toLowerCase();
+      const password = entry.status === 'admin' && email === workbenchAdminEmail
+        ? workbenchAdminPassword
+        : String(passwordSecrets[email] || '');
+      return { entry, password };
+    })
+    .filter(item => item.password.length >= 12);
   const token = await authToken();
 
   const nextRegistry = { ...registry };
   const summary = { created: 0, updated: 0, failed: 0 };
-  for (const entry of accounts) {
+  for (const { entry, password } of accounts) {
     try {
-      const result = await syncAccount(token, entry);
+      const result = await syncAccount(token, entry, password);
       summary[result.action as 'created' | 'updated'] += 1;
       nextRegistry[result.email] = {
         ...nextRegistry[result.email],

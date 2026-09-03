@@ -1,0 +1,7 @@
+# Keep the media downloader and PDF renderer reproducible. Regenerate with:
+#   python -m piptools compile --generate-hashes --resolver=backtracking requirements-runtime.in
+yt-dlp[curl-cffi,default]==2026.8.19
+reportlab==5.0.1
+# Keep Pillow explicit because it parses untrusted image inputs. The selected
+# release ships CPython 3.11 wheels for Bookworm's glibc on amd64 and arm64.
+pillow==12.3.0

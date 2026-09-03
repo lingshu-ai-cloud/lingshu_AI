@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { providerHttp as axios } from '../security/providerHttp.js';
 
 export interface TelegramConfig {
   botToken: string;

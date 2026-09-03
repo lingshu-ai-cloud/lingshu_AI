@@ -30,11 +30,8 @@ interface AdminOAuthConfig {
   };
   values: {
     youtubeOAuthClientId: string;
-    youtubeOAuthClientSecret: string;
     metaSocialAppId: string;
-    metaSocialAppSecret: string;
     tiktokClientKey: string;
-    tiktokClientSecret: string;
     advancedManualConnectEnabled: boolean;
   };
   secretSet: {
@@ -42,10 +39,10 @@ interface AdminOAuthConfig {
     metaSocialAppSecret: boolean;
     tiktokClientSecret: boolean;
   };
-  secretLength?: {
-    youtubeOAuthClientSecret: number;
-    metaSocialAppSecret: number;
-    tiktokClientSecret: number;
+  secretMask: {
+    youtubeOAuthClientSecret: string;
+    metaSocialAppSecret: string;
+    tiktokClientSecret: string;
   };
 }
 
@@ -72,11 +69,11 @@ const EMPTY_FORM: OAuthForm = {
 function formFromConfig(config: AdminOAuthConfig): OAuthForm {
   return {
     youtubeOAuthClientId: config.values.youtubeOAuthClientId,
-    youtubeOAuthClientSecret: config.values.youtubeOAuthClientSecret,
+    youtubeOAuthClientSecret: '',
     metaSocialAppId: config.values.metaSocialAppId,
-    metaSocialAppSecret: config.values.metaSocialAppSecret,
+    metaSocialAppSecret: '',
     tiktokClientKey: config.values.tiktokClientKey,
-    tiktokClientSecret: config.values.tiktokClientSecret,
+    tiktokClientSecret: '',
     advancedManualConnectEnabled: config.values.advancedManualConnectEnabled,
   };
 }
@@ -113,15 +110,19 @@ function CredentialField({
   label,
   value,
   required,
+  secret,
+  saved,
   onChange,
 }: {
   fieldName: string;
   label: string;
   value: string;
   required?: boolean;
+  secret?: boolean;
+  saved?: boolean;
   onChange: (value: string) => void;
 }) {
-  const isCompleted = Boolean(value.trim());
+  const isCompleted = Boolean(value.trim()) || saved;
 
   return (
     <label className="grid gap-1 text-[11px] font-bold text-text-secondary">
@@ -132,13 +133,13 @@ function CredentialField({
         </span>
         {isCompleted && (
           <span className="inline-flex items-center gap-1 whitespace-nowrap text-[10px] text-emerald-600">
-            <CheckCircle2 size={11} /> 填写完成
+            <CheckCircle2 size={11} /> {value.trim() ? '待保存' : '已安全保存'}
           </span>
         )}
       </span>
       <input
         name={fieldName}
-        type="text"
+        type={secret ? 'password' : 'text'}
         required={required}
         aria-required={required}
         autoComplete="off"
@@ -147,7 +148,7 @@ function CredentialField({
         data-form-type="other"
         value={value}
         onChange={event => onChange(event.target.value)}
-        placeholder={label}
+        placeholder={saved && secret ? '已安全保存，留空即保留' : label}
         className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-normal text-text-primary outline-none focus:border-emerald-400"
       />
     </label>
@@ -270,9 +271,9 @@ export default function AdminSocialAccountSetup() {
   }
 
   const oauthPanelsKey = config?.updatedAt || 'oauth-not-configured';
-  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim());
-  const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim());
-  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim());
+  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim() || config?.secretSet.youtubeOAuthClientSecret);
+  const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim() || config?.secretSet.metaSocialAppSecret);
+  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim() || config?.secretSet.tiktokClientSecret);
 
   return (
     <>
@@ -337,7 +338,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="YouTube / Google" disabled={!youtubeConfigured || clearing} onClick={() => setClearTarget('youtube')} />
                     </div>
                     <CredentialField required fieldName="youtube-oauth-client-id" label="Client ID" value={form.youtubeOAuthClientId} onChange={value => setField('youtubeOAuthClientId', value)} />
-                    <CredentialField required fieldName="youtube-oauth-client-secret" label="Client Secret" value={form.youtubeOAuthClientSecret} onChange={value => setField('youtubeOAuthClientSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.youtubeOAuthClientSecret} fieldName="youtube-oauth-client-secret" label="Client Secret" value={form.youtubeOAuthClientSecret} onChange={value => setField('youtubeOAuthClientSecret', value)} />
                     <CallbackLine label="Authorized redirect URI" value={config.callbacks.youtube} />
                   </div>
 
@@ -356,7 +357,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="Instagram / Facebook" disabled={!metaConfigured || clearing} onClick={() => setClearTarget('meta')} />
                     </div>
                     <CredentialField required fieldName="meta-social-app-id" label="App ID" value={form.metaSocialAppId} onChange={value => setField('metaSocialAppId', value)} />
-                    <CredentialField required fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.metaSocialAppSecret} fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
                     <CallbackLine label="Instagram redirect URI" value={config.callbacks.instagram} />
                     <CallbackLine label="Facebook redirect URI" value={config.callbacks.facebook} />
                   </div>
@@ -372,7 +373,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="TikTok" disabled={!tiktokConfigured || clearing} onClick={() => setClearTarget('tiktok')} />
                     </div>
                     <CredentialField required fieldName="tiktok-client-key" label="Client Key" value={form.tiktokClientKey} onChange={value => setField('tiktokClientKey', value)} />
-                    <CredentialField required fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.tiktokClientSecret} fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
                     <CallbackLine label="Redirect URI" value={config.callbacks.tiktok} />
                   </div>
                 </div>

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { getPbUrl, getPbAdminToken, pbCreate, pbDelete, pbGet, pbList, pbListStrict, pbPatch } from '../storage/pb.js';
-import { auth } from '../storage/index.js';
+import { auth, store } from '../storage/index.js';
 import { getTenantSubscription } from '../middleware/subscription.js';
 import { buildDemoStatus, isExpired } from '../lib/demo.js';
 import {
@@ -19,15 +19,16 @@ import {
   upsertDemoAccountRegistry,
 } from '../lib/demoAccounts.js';
 import {
-  activateLocalTenantInvite,
+  claimLocalTenantInvite,
+  finalizeLocalTenantInvite,
   findLocalTenantByInvite,
   findLocalTenantByRegistrationInvite,
   getLocalTenant,
-  updateLocalTenantRegisteredPassword,
+  releaseLocalTenantInviteClaim,
   type LocalTenantRecord,
 } from '../lib/localTenants.js';
-import { encryptRegistrationPassword } from '../lib/registrationCredentials.js';
 import { clearAssetSessionCookie } from '../lib/assetAccess.js';
+import { registerAuthSession, revokeAllAuthSessions, revokeAuthSession } from '../security/authSessions.js';
 
 /* ──────────────────────────────────────────────────────────────────────────
    账号 / 登录（基于 PocketBase）
@@ -65,7 +66,14 @@ interface LocalAccount extends LocalIdentity {
 }
 
 const ORGANIZATION_ROLES = new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator', 'customer_service']);
-const normalizedRole = (value: unknown): OrganizationRole => ORGANIZATION_ROLES.has(value as OrganizationRole) ? value as OrganizationRole : 'super_admin';
+/** Unknown legacy roles are display-only customer service, never administrators. */
+export const normalizeOrganizationRole = (value: unknown): OrganizationRole => ORGANIZATION_ROLES.has(value as OrganizationRole)
+  ? value as OrganizationRole
+  : 'customer_service';
+export const strictOrganizationRole = (value: unknown): OrganizationRole | null => ORGANIZATION_ROLES.has(value as OrganizationRole)
+  ? value as OrganizationRole
+  : null;
+const normalizedRole = normalizeOrganizationRole;
 
 interface LocalLoginResult {
   token: string;
@@ -104,7 +112,17 @@ function readLocalAccounts(): LocalAccount[] {
 
 function writeLocalAccounts(accounts: LocalAccount[]): void {
   fs.mkdirSync(path.dirname(LOCAL_ACCOUNTS_FILE), { recursive: true });
-  fs.writeFileSync(LOCAL_ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), 'utf8');
+  const temporary = `${LOCAL_ACCOUNTS_FILE}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(accounts, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(temporary, LOCAL_ACCOUNTS_FILE);
+}
+
+function deleteLocalAccount(userId: string, tenantId: string): boolean {
+  const accounts = readLocalAccounts();
+  const remaining = accounts.filter(account => account.userId !== userId || account.tenantId !== tenantId);
+  if (remaining.length === accounts.length) return false;
+  writeLocalAccounts(remaining);
+  return true;
 }
 
 function passwordHash(password: string, salt: string): Buffer {
@@ -188,6 +206,12 @@ async function pbLogin(identity: string, password: string): Promise<{ token: str
   }
 }
 
+async function persistLoginSession(login: { token: string; record: PbUser }): Promise<void> {
+  const tenantId = String(login.record.tenantId || '');
+  if (!tenantId) throw new Error('auth_session_tenant_missing');
+  await registerAuthSession({ token: login.token, userId: login.record.id, tenantId, dataStore: store });
+}
+
 function localLogin(email: string, password: string): LocalLoginResult | null {
   if (!isLocalDevFallbackEnabled()) return null;
   const normalizedEmail = String(email).trim().toLowerCase();
@@ -217,36 +241,9 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
       email: normalizedEmail,
       name: normalizedEmail.split('@')[0],
       tenantId: `local_tenant_admin_${localId(normalizedEmail)}`,
+      role: 'super_admin',
     };
     return { token: createLocalToken(record, 'admin'), record, accountType: 'admin', expiresAt: null };
-  }
-
-  const registryEntry = readDemoAccountRegistry()[normalizedEmail];
-  if (registryEntry?.password && registryEntry.password === password && registryEntry.status !== 'expired') {
-    const accountType = registryEntry.status === 'admin'
-      ? 'admin'
-      : registryEntry.status === 'customer'
-        ? 'customer'
-        : 'trial';
-    const tenantId = registryEntry.tenantId || `local_tenant_${accountType}_${localId(normalizedEmail)}`;
-    const record: PbUser = {
-      id: registryEntry.userId || `local_user_${accountType}_${localId(normalizedEmail)}`,
-      email: normalizedEmail,
-      name: normalizedEmail.split('@')[0],
-      tenantId,
-    };
-    if (accountType === 'admin' || accountType === 'customer') {
-      return { token: createLocalToken(record, accountType), record, accountType, expiresAt: null };
-    }
-    const expiresAt = registryEntry.expiresAt || trialExpiresAt();
-    upsertDemoAccountRegistry(normalizedEmail, {
-      userId: record.id,
-      tenantId,
-      activatedAt: registryEntry.activatedAt || new Date().toISOString(),
-      expiresAt,
-      status: 'trialing',
-    });
-    return { token: createLocalToken(record, accountType), record, accountType, expiresAt };
   }
 
   const allowedEmails = String(process.env.LOCAL_AUTH_EMAILS ?? '')
@@ -261,13 +258,13 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
     email: normalizedEmail,
     name: normalizedEmail.split('@')[0],
     tenantId: `local_tenant_${accountType}_${localId(normalizedEmail)}`,
+    role: 'super_admin',
   };
   if (accountType === 'admin') {
     return { token: createLocalToken(record, accountType), record, accountType, expiresAt: null };
   }
   const expiresAt = trialExpiresAt();
   upsertDemoAccountRegistry(normalizedEmail, {
-    password: configuredPassword,
     userId: record.id,
     tenantId: record.tenantId,
     activatedAt: new Date().toISOString(),
@@ -292,6 +289,7 @@ function localRegister(email: string, password: string, tenant: LocalTenantRecor
     email: normalizedEmail,
     name: tenant.companyName || tenant.name || normalizedEmail.split('@')[0],
     tenantId: tenant.id,
+    role: 'super_admin',
   };
   const salt = randomBytes(16).toString('hex');
   accounts.push({
@@ -323,9 +321,9 @@ export async function requestOrganizationRole(authorization: string | undefined,
 /** Least-privilege role lookup for security-sensitive enterprise governance writes. */
 export async function requestOrganizationRoleStrict(authorization: string | undefined, userId: string): Promise<OrganizationRole | null> {
   const local = parseLocalToken(authorization);
-  if (local) return ORGANIZATION_ROLES.has(local.role as OrganizationRole) ? local.role as OrganizationRole : null;
+  if (local) return strictOrganizationRole(local.role);
   const user = await pbGet('users', userId) as PbUser | null;
-  return ORGANIZATION_ROLES.has(user?.role as OrganizationRole) ? user!.role as OrganizationRole : null;
+  return strictOrganizationRole(user?.role);
 }
 
 function pbFilterValue(value: string): string {
@@ -358,6 +356,79 @@ async function tenantByUsedInviteCode(code: string): Promise<Record<string, unkn
   } catch {
     return null;
   }
+}
+
+async function tenantSuperAdmin(tenantId: string): Promise<Record<string, unknown> | null> {
+  const result = await pbListStrict<Record<string, unknown>>('users', {
+    perPage: 1,
+    filter: `tenantId = ${pbFilterValue(tenantId)} && role = "super_admin"`,
+  });
+  return result.items[0] ?? null;
+}
+
+const INVITE_CLAIM_TTL_MS = 10 * 60 * 1000;
+
+function remoteInviteClaimIsActive(tenant: Record<string, unknown>): boolean {
+  const token = String(tenant.registrationClaimToken || '');
+  const claimedAt = Date.parse(String(tenant.registrationClaimedAt || ''));
+  return Boolean(token) && Number.isFinite(claimedAt) && Date.now() - claimedAt < INVITE_CLAIM_TTL_MS;
+}
+
+async function claimRemoteTenantInvite(
+  tenant: Record<string, unknown>,
+  inviteCode: string,
+  email: string,
+): Promise<{ tenant: Record<string, unknown>; claimToken: string } | null> {
+  if (!tenant.id || remoteInviteClaimIsActive(tenant)) return null;
+  const claimToken = randomBytes(24).toString('base64url');
+  const currentClaimToken = String(tenant.registrationClaimToken || '');
+  const result = await store.compareAndSet<Record<string, unknown> & { id: string }>(
+    'tenants',
+    String(tenant.id),
+    { inviteCode, registrationClaimToken: currentClaimToken },
+    {
+      registrationClaimToken: claimToken,
+      registrationClaimedAt: new Date().toISOString(),
+      registrationClaimEmail: String(email).trim().toLowerCase(),
+    },
+  );
+  return result.ok ? { tenant: result.record, claimToken } : null;
+}
+
+async function releaseRemoteTenantInviteClaim(tenantId: string, inviteCode: string, claimToken: string): Promise<boolean> {
+  const result = await store.compareAndSet(
+    'tenants', tenantId, { inviteCode, registrationClaimToken: claimToken },
+    { registrationClaimToken: '', registrationClaimedAt: '', registrationClaimEmail: '' },
+  );
+  return result.ok;
+}
+
+async function finalizeRemoteTenantInvite(input: {
+  tenantId: string;
+  inviteCode: string;
+  claimToken: string;
+  email: string;
+  companyName: string;
+}): Promise<Record<string, unknown> | null> {
+  const result = await store.compareAndSet<Record<string, unknown> & { id: string }>(
+    'tenants', input.tenantId,
+    { inviteCode: input.inviteCode, registrationClaimToken: input.claimToken },
+    {
+      name: input.companyName || input.email.split('@')[0],
+      companyName: input.companyName,
+      inviteCode: '',
+      registrationInviteCode: input.inviteCode,
+      registrationClaimToken: '',
+      registrationClaimedAt: '',
+      registrationClaimEmail: '',
+      registeredEmail: input.email.trim().toLowerCase(),
+      registeredAt: new Date().toISOString(),
+      subscriptionStatus: 'active',
+      subscriptionPlan: 'customer',
+      subscriptionExpiresAt: '',
+    },
+  );
+  return result.ok ? result.record : null;
 }
 
 function publicTenant(t: Record<string, unknown> | null) {
@@ -417,15 +488,22 @@ authRouter.post('/register', async (req, res) => {
   }
 
   if (localInvitedTenant) {
-    const fallback = localRegister(String(email), String(password), localInvitedTenant);
+    const claim = claimLocalTenantInvite({ inviteCode: code, email: String(email) });
+    if (!claim) {
+      res.status(409).json({ error: '邀请码已被使用或正在注册，请联系管理员重新生成' });
+      return;
+    }
+    const fallback = localRegister(String(email), String(password), claim.tenant);
     if (fallback?.ok) {
-      const tenant = activateLocalTenantInvite({
+      const tenant = finalizeLocalTenantInvite({
         inviteCode: code,
         email: String(email),
-        password: String(password),
+        claimToken: claim.claimToken,
       });
       if (!tenant) {
-        res.status(409).json({ error: '邀请码已被使用，请联系管理员重新生成' });
+        deleteLocalAccount(String(fallback.record.id), String(fallback.record.tenantId));
+        releaseLocalTenantInviteClaim({ inviteCode: code, claimToken: claim.claimToken });
+        res.status(409).json({ error: '注册未完成，账号已回滚，请重试或联系管理员' });
         return;
       }
       res.json({
@@ -436,47 +514,117 @@ authRouter.post('/register', async (req, res) => {
       return;
     }
     if (fallback && !fallback.ok) {
+      releaseLocalTenantInviteClaim({ inviteCode: code, claimToken: claim.claimToken });
       res.status(409).json({ error: fallback.error });
       return;
     }
+    releaseLocalTenantInviteClaim({ inviteCode: code, claimToken: claim.claimToken });
     res.status(500).json({ error: '创建账号失败' }); return;
   }
 
-  const invitedCompanyName = String(invitedTenant!.companyName || invitedTenant!.name || '').trim();
+  let remoteClaim: { tenant: Record<string, unknown>; claimToken: string } | null = null;
+  try {
+    remoteClaim = await claimRemoteTenantInvite(invitedTenant!, code, String(email));
+  } catch (error) {
+    console.error('[auth] invite claim failed:', error instanceof Error ? error.message : error);
+    res.status(503).json({ error: '注册服务暂不可用，请稍后重试' });
+    return;
+  }
+  if (!remoteClaim) {
+    res.status(409).json({ error: '邀请码已被使用或正在注册，请联系管理员重新生成' });
+    return;
+  }
+  const invitedCompanyName = String(remoteClaim.tenant.companyName || remoteClaim.tenant.name || '').trim();
   let user: Record<string, unknown> | null = null;
   try {
     user = await pbCreate('users', {
       email, password, passwordConfirm: password,
-      name: invitedCompanyName, tenantId: invitedTenant!.id, role: 'super_admin', emailVisibility: true,
+      name: invitedCompanyName, tenantId: remoteClaim.tenant.id, role: 'super_admin', emailVisibility: true,
     });
   } catch {
     user = null;
   }
   if (!user) {
+    let existingSuperAdmin: Record<string, unknown> | null;
+    try {
+      existingSuperAdmin = await tenantSuperAdmin(String(remoteClaim.tenant.id));
+    } catch (error) {
+      console.error('[auth] user create outcome could not be reconciled; invite remains claimed:', error instanceof Error ? error.message : error);
+      res.status(503).json({ error: '注册结果待恢复，邀请码已安全锁定，请联系管理员' });
+      return;
+    }
+    if (existingSuperAdmin) {
+      await finalizeRemoteTenantInvite({
+        tenantId: String(remoteClaim.tenant.id),
+        inviteCode: code,
+        claimToken: remoteClaim.claimToken,
+        email: String(existingSuperAdmin.email || email),
+        companyName: invitedCompanyName,
+      }).catch(() => null);
+      res.status(409).json({ error: '该企业已完成注册，请直接登录或联系管理员' });
+      return;
+    }
+    const released = await releaseRemoteTenantInviteClaim(String(remoteClaim.tenant.id), code, remoteClaim.claimToken).catch(() => false);
+    if (!released) {
+      res.status(503).json({ error: '创建用户失败且邀请码仍被安全锁定，请联系管理员' });
+      return;
+    }
     res.status(400).json({ error: '创建用户失败（邮箱可能已被注册）' }); return;
   }
 
   const login = await pbLogin(email, password);
-  if (!login) { res.status(500).json({ error: '注册后自动登录失败' }); return; }
-  await pbPatch('tenants', String(invitedTenant!.id), {
-    name: invitedCompanyName || String(email).split('@')[0],
-    companyName: invitedCompanyName,
-    inviteCode: '',
-    registrationInviteCode: code,
-    registeredEmail: String(email).trim().toLowerCase(),
-    registeredPasswordCipher: encryptRegistrationPassword(String(password)),
-    registeredAt: new Date().toISOString(),
-    subscriptionStatus: 'active',
-    subscriptionPlan: 'customer',
-    subscriptionExpiresAt: null,
-  });
-  const tenant = await pbGet('tenants', String(invitedTenant!.id)) || {
-    ...invitedTenant,
-    inviteCode: '',
-    subscriptionStatus: 'active',
-    subscriptionPlan: 'customer',
-    subscriptionExpiresAt: null,
-  };
+  if (!login) {
+    const deleted = await pbDelete('users', String(user.id)).catch(() => false);
+    if (deleted) {
+      const released = await releaseRemoteTenantInviteClaim(String(remoteClaim.tenant.id), code, remoteClaim.claimToken).catch(() => false);
+      res.status(released ? 500 : 503).json({ error: released
+        ? '注册后自动登录失败，账号已回滚，请重试'
+        : '账号已回滚但邀请码仍被安全锁定，请联系管理员' });
+    } else {
+      console.error(`[auth] failed to roll back user ${String(user.id)}; invite ${code} remains claimed`);
+      res.status(503).json({ error: '注册状态待人工恢复，邀请码已安全锁定，请联系管理员' });
+    }
+    return;
+  }
+  let tenant: Record<string, unknown> | null = null;
+  try {
+    tenant = await finalizeRemoteTenantInvite({
+      tenantId: String(remoteClaim.tenant.id),
+      inviteCode: code,
+      claimToken: remoteClaim.claimToken,
+      email: String(email),
+      companyName: invitedCompanyName,
+    });
+  } catch (error) {
+    console.error('[auth] invite finalize failed:', error instanceof Error ? error.message : error);
+  }
+  if (!tenant) {
+    const currentTenant = await pbGet('tenants', String(remoteClaim.tenant.id)).catch(() => null);
+    const alreadyFinalized = currentTenant
+      && String(currentTenant.registrationInviteCode || '') === code
+      && String(currentTenant.registeredEmail || '').trim().toLowerCase() === String(email).trim().toLowerCase();
+    if (alreadyFinalized) tenant = currentTenant;
+    else {
+      const deleted = await pbDelete('users', String(user.id)).catch(() => false);
+      if (deleted) {
+        const released = await releaseRemoteTenantInviteClaim(String(remoteClaim.tenant.id), code, remoteClaim.claimToken).catch(() => false);
+        res.status(released ? 500 : 503).json({ error: released
+          ? '邀请码消费失败，账号已回滚，请重试'
+          : '账号已回滚但邀请码仍被安全锁定，请联系管理员' });
+      } else {
+        console.error(`[auth] failed to roll back user ${String(user.id)} after invite finalize failure; claim retained`);
+        res.status(503).json({ error: '注册状态待人工恢复，邀请码已安全锁定，请联系管理员' });
+      }
+      return;
+    }
+  }
+  try {
+    await persistLoginSession(login);
+  } catch (error) {
+    console.error('[auth] session persistence failed after registration:', error instanceof Error ? error.message : 'unknown_error');
+    res.status(503).json({ error: '登录会话暂不可用，请稍后重试' });
+    return;
+  }
   res.json({
     token: login.token,
     user: publicUser(login.record),
@@ -521,29 +669,16 @@ authRouter.post('/login', async (req, res) => {
     });
     return;
   }
+  try {
+    await persistLoginSession(login);
+  } catch (error) {
+    console.error('[auth] session persistence failed:', error instanceof Error ? error.message : 'unknown_error');
+    res.status(503).json({ error: '登录会话暂不可用，请稍后重试' });
+    return;
+  }
   let tenant = login.record.tenantId ? await pbGet('tenants', login.record.tenantId) : null;
   let subscription = login.record.tenantId ? await getTenantSubscription(login.record.tenantId) : null;
   const loginEmail = String(login.record.email ?? email).trim().toLowerCase();
-  if (
-    tenant
-    && String(tenant.subscriptionPlan || '').toLowerCase() === 'customer'
-    && String(tenant.registeredEmail || '').trim().toLowerCase() === loginEmail
-  ) {
-    void (async () => {
-      try {
-        const synced = await pbPatch('tenants', String(login.record.tenantId), {
-          registeredPasswordCipher: encryptRegistrationPassword(String(password)),
-        });
-        if (!synced) console.warn(`[auth] failed to sync verified customer credential for tenant ${login.record.tenantId}`);
-        const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-          entry.userId === login.record.id || entry.email === loginEmail
-        ));
-        if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(password) });
-      } catch (error) {
-        console.warn('[auth] verified customer credential sync failed:', error instanceof Error ? error.message : error);
-      }
-    })();
-  }
   if (isTrialAccount(subscription) && login.record.tenantId && !subscription?.expiresAt) {
     const activated = await activateTrialAccount(login.record.email ?? email, login.record.id, login.record.tenantId);
     tenant = await pbGet('tenants', login.record.tenantId);
@@ -688,11 +823,6 @@ authRouter.post('/change-password', async (req, res) => {
     const salt = randomBytes(16).toString('hex');
     accounts[index] = { ...accounts[index], salt, passwordHash: passwordHash(String(newPassword), salt).toString('hex') };
     writeLocalAccounts(accounts);
-    updateLocalTenantRegisteredPassword(local.tenantId, accounts[index].email, String(newPassword));
-    const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-      entry.userId === local.userId || entry.email === accounts[index].email
-    ));
-    if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(newPassword) });
     res.json({ ok: true });
     return;
   }
@@ -703,23 +833,6 @@ authRouter.post('/change-password', async (req, res) => {
   if (!verified || verified.record.id !== identity.userId) { res.status(400).json({ error: '当前密码不正确' }); return; }
   const updated = await pbPatch('users', identity.userId, { password: String(newPassword), passwordConfirm: String(passwordConfirm) });
   if (!updated) { res.status(500).json({ error: '密码更新失败，请稍后重试' }); return; }
-  const tenant = await pbGet('tenants', identity.tenantId);
-  if (
-    tenant
-    && String(tenant.registeredEmail || '').trim().toLowerCase() === user.email.trim().toLowerCase()
-  ) {
-    const synced = await pbPatch('tenants', identity.tenantId, {
-      registeredPasswordCipher: encryptRegistrationPassword(String(newPassword)),
-    });
-    if (!synced) {
-      res.status(500).json({ error: '登录密码已更新，但账号总控同步失败，请联系管理员' });
-      return;
-    }
-  }
-  const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-    entry.userId === identity.userId || entry.email === user.email!.trim().toLowerCase()
-  ));
-  if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(newPassword) });
   res.json({ ok: true });
 });
 
@@ -738,8 +851,9 @@ authRouter.get('/employees', async (req, res) => {
 
 authRouter.post('/employees', async (req, res) => {
   const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以添加成员' }); return; }
+  if (!identity) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  if (identity.supportAccess) { res.status(403).json({ error: 'support_access_read_only' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以添加成员' }); return; }
   const email = String(req.body?.email ?? '').trim().toLowerCase();
   const name = String(req.body?.name ?? '').trim();
   const password = String(req.body?.password ?? '');
@@ -762,8 +876,9 @@ authRouter.post('/employees', async (req, res) => {
 
 authRouter.patch('/employees/:employeeId/role', async (req, res) => {
   const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以调整角色' }); return; }
+  if (!identity) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  if (identity.supportAccess) { res.status(403).json({ error: 'support_access_read_only' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以调整角色' }); return; }
   if (req.params.employeeId === identity.userId) { res.status(400).json({ error: '不能修改当前超级管理员的角色' }); return; }
   const role = normalizedRole(req.body?.role);
   if (role === 'super_admin') { res.status(403).json({ error: '不能分配超级管理员角色' }); return; }
@@ -781,8 +896,9 @@ authRouter.patch('/employees/:employeeId/role', async (req, res) => {
 
 authRouter.delete('/employees/:employeeId', async (req, res) => {
   const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以移除成员' }); return; }
+  if (!identity) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  if (identity.supportAccess) { res.status(403).json({ error: 'support_access_read_only' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以移除成员' }); return; }
   if (req.params.employeeId === identity.userId) { res.status(400).json({ error: '不能删除当前登录账号' }); return; }
   if (parseLocalToken(req.headers.authorization)) {
     const accounts = readLocalAccounts();
@@ -806,7 +922,35 @@ authRouter.post('/guide-seen', async (req, res) => {
   res.json({ ok: true });
 });
 
-authRouter.post('/logout', (_req, res) => {
+authRouter.post('/logout', async (req, res) => {
+  const identity = await auth.verifyToken(req.headers.authorization);
+  if (!identity || identity.supportAccess) {
+    clearAssetSessionCookie(res);
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const revoked = await revokeAuthSession({ authHeader: req.headers.authorization, identity, dataStore: store });
   clearAssetSessionCookie(res);
+  if (!revoked) {
+    res.status(503).json({ error: 'logout_revocation_failed' });
+    return;
+  }
   res.json({ ok: true });
+});
+
+authRouter.post('/logout-all', async (req, res) => {
+  const identity = await auth.verifyToken(req.headers.authorization);
+  if (!identity || identity.supportAccess) {
+    clearAssetSessionCookie(res);
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  try {
+    await revokeAllAuthSessions({ identity, dataStore: store });
+    clearAssetSessionCookie(res);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('[auth] logout-all failed:', error instanceof Error ? error.message : 'unknown_error');
+    res.status(503).json({ error: 'logout_all_revocation_failed' });
+  }
 });

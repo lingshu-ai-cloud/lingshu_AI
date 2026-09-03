@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { decideAction, findActionRule, type AutonomyLevel } from '../autonomy/actionRules.js';
 import { guardOutbound } from '../autonomy/outboundGuard.js';
 import { prioritizeCustomer } from '../autonomy/prioritize.js';
@@ -12,10 +14,13 @@ import { assessBant, selectProgressionGoal, type BantAssessment, type Progressio
 import { automationFailureHandoff, evaluateHandoff, notifyCustomerHandoff, shouldRestrictToPublicInfo } from '../sales/handoff.js';
 import { advanceSpinStage, selectSpinGuidance, type SpinState, type SpinGuidance } from '../sales/spin.js';
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
-import { r2Upload } from '../storage/r2.js';
 import { store } from '../storage/index.js';
-import { sendTenantWhatsAppText } from './send.js';
+import { listAllRecords } from '../storage/pagination.js';
+import { metaGraphVersion, requiresWhatsAppReconciliation } from '../integrations/whatsapp.js';
+import { sendTenantWhatsAppTextBatch } from './send.js';
+import { processInboundExactlyOnce, type InboundReceiptOutcome } from './inboundReceipt.js';
 import { isRealWhatsAppNumber } from './customerVisibility.js';
+import { trackMetaWhatsAppStatuses } from './deliveryTracking.js';
 import {
   attributionSystemText,
   extractTrackCode,
@@ -35,6 +40,37 @@ const IMPORT_STATUS_FILE = path.join(DATA_DIR, 'whatsapp-import-status.json');
 const NIGHT_MODE_EVENTS_FILE = path.join(DATA_DIR, 'night-mode-events.json');
 const ENTERPRISE_FILE = path.join(DATA_DIR, 'enterprise.json');
 const BACKUP_ROOT = path.join(DATA_DIR, 'backups');
+const durableMirrorScope = new AsyncLocalStorage<Array<Promise<void>>>();
+
+function schedulePocketBaseMirror(label: 'customer' | 'interaction', work: Promise<void>): void {
+  const scope = durableMirrorScope.getStore();
+  if (scope) {
+    // Attach a rejection observer immediately so a fast datastore failure does
+    // not become an unhandled rejection before the scope reaches its barrier.
+    void work.catch(() => undefined);
+    scope.push(work);
+    return;
+  }
+  void work.catch(error => console.error(`[whatsapp-pb-${label}]`, error));
+}
+
+async function withDurableWhatsAppMirrors<T>(work: () => T | Promise<T>): Promise<T> {
+  const pending: Array<Promise<void>> = [];
+  return durableMirrorScope.run(pending, async () => {
+    let result: T | undefined;
+    let workFailure: unknown;
+    try {
+      result = await work();
+    } catch (error) {
+      workFailure = error;
+    }
+    const settled = await Promise.allSettled(pending);
+    const failed = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+    if (workFailure) throw workFailure;
+    if (failed) throw failed.reason;
+    return result as T;
+  });
+}
 
 type HandlingMode = 'ai_auto' | 'ai_draft' | 'human_needed';
 type CustomerStage = 'lead' | 'inquiry' | 'quoted' | 'won' | 'silent30' | 'silent60';
@@ -98,6 +134,7 @@ interface StoredCustomer {
   orders?: StoredCustomerOrder[];
   todoCompletedAt?: string;
   hasUnread?: boolean;
+  persistenceRevision?: number;
 }
 
 interface NightModeEvent {
@@ -177,67 +214,23 @@ function backupWhatsAppDataFiles(now = new Date()): void {
     if (!fs.existsSync(file)) continue;
     const target = path.join(backupDir, path.basename(file));
     if (fs.existsSync(target)) continue;
-    try { fs.copyFileSync(file, target); } catch (error) { console.error('[whatsapp-daily-backup]', file, error); }
+    try {
+      fs.copyFileSync(file, target);
+      fs.chmodSync(target, 0o600);
+    } catch (error) { console.error('[whatsapp-daily-backup]', file, error); }
   }
-}
-
-function r2BackupEnabled(): boolean {
-  return Boolean(
-    process.env.R2_ACCOUNT_ID?.trim()
-    && process.env.R2_ACCESS_KEY_ID?.trim()
-    && process.env.R2_SECRET_ACCESS_KEY?.trim()
-    && process.env.R2_BUCKET_NAME?.trim(),
-  );
-}
-
-function backupPrefix(): string {
-  return (process.env.R2_BACKUP_PREFIX || 'lingshu-backups').replace(/^\/+|\/+$/g, '');
-}
-
-function localBackupRetentionDays(): number {
-  const raw = Number(process.env.R2_BACKUP_LOCAL_RETENTION_DAYS || 7);
-  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 7;
-}
-
-function listFilesRecursive(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-    const full = path.join(dir, entry.name);
-    return entry.isDirectory() ? listFilesRecursive(full) : [full];
-  });
-}
-
-async function syncBackupsToR2(now = new Date()): Promise<void> {
-  if (!r2BackupEnabled()) {
-    console.warn('[whatsapp-backup-r2] skipped: R2 credentials are not configured');
-    return;
-  }
-  if (!fs.existsSync(BACKUP_ROOT)) return;
-
-  const dirs = fs.readdirSync(BACKUP_ROOT, { withFileTypes: true }).filter(entry => entry.isDirectory());
-  const prefix = backupPrefix();
-  for (const dir of dirs) {
-    const backupDir = path.join(BACKUP_ROOT, dir.name);
-    const files = listFilesRecursive(backupDir);
-    for (const file of files) {
-      const relative = path.relative(BACKUP_ROOT, file).split(path.sep).join('/');
-      await r2Upload({
-        key: `${prefix}/${relative}`,
-        body: fs.readFileSync(file),
-        contentType: 'application/json',
-      });
-    }
-  }
-
-  const cutoff = now.getTime() - localBackupRetentionDays() * 86_400_000;
-  for (const dir of dirs) {
-    const time = new Date(`${dir.name}T00:00:00.000Z`).getTime();
-    if (!Number.isFinite(time) || time >= cutoff) continue;
-    fs.rmSync(path.join(BACKUP_ROOT, dir.name), { recursive: true, force: true });
+  const raw = Number(process.env.WHATSAPP_LOCAL_BACKUP_RETENTION_DAYS || 7);
+  const retentionDays = Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 7;
+  const cutoff = now.getTime() - retentionDays * 86_400_000;
+  for (const entry of fs.readdirSync(BACKUP_ROOT, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const time = Date.parse(`${entry.name}T00:00:00.000Z`);
+    if (Number.isFinite(time) && time < cutoff) fs.rmSync(path.join(BACKUP_ROOT, entry.name), { recursive: true, force: true });
   }
 }
 
 async function mirrorCustomerToPocketBase(customer: StoredCustomer): Promise<void> {
+  const revision = Math.max(1, Math.floor(Number(customer.persistenceRevision || 1)));
   const payload = {
     tenant_id: customer.tenantId,
     customer_id: customer.id,
@@ -246,32 +239,40 @@ async function mirrorCustomerToPocketBase(customer: StoredCustomer): Promise<voi
     stage: customer.stage,
     last_active_at: customer.lastActiveAt,
     payload: JSON.stringify(customer),
+    persistence_revision: revision,
+    updated_at: customer.updatedAt,
   };
-  const existing = await store.list<{ id: string }>('whatsapp_customers', {
-    where: { tenant_id: customer.tenantId, customer_id: customer.id },
-    perPage: 1,
-  });
-  const id = existing.items[0]?.id;
-  if (id) await store.update('whatsapp_customers', id, payload);
-  else await store.create('whatsapp_customers', payload);
+  const claimed = await store.createIfAbsent<{
+    id: string;
+    persistence_revision?: number;
+  }>('whatsapp_customers', {
+    tenant_id: customer.tenantId,
+    customer_id: customer.id,
+  }, payload);
+  if (claimed.created) return;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const currentRevision = Math.max(0, Math.floor(Number(claimed.record.persistence_revision || 0)));
+    if (currentRevision >= revision) return;
+    const updated = await store.compareAndSet('whatsapp_customers', claimed.record.id, {
+      persistence_revision: currentRevision,
+    }, payload);
+    if (updated.ok) return;
+    if (updated.reason === 'not_found') throw new Error('whatsapp_customer_mirror_missing');
+    if (updated.current) claimed.record = updated.current as typeof claimed.record;
+  }
+  throw new Error('whatsapp_customer_mirror_conflict');
 }
 
 async function mirrorInteractionToPocketBase(interaction: StoredInteraction): Promise<void> {
-  const payload = {
+  await store.createIfAbsent('whatsapp_interactions', {
     tenant_id: interaction.tenantId,
     interaction_id: interaction.id,
+  }, {
     customer_id: interaction.customerId,
     wa_number: interaction.waNumber,
     timestamp: interaction.timestamp,
     payload: JSON.stringify(interaction),
-  };
-  const existing = await store.list<{ id: string }>('whatsapp_interactions', {
-    where: { tenant_id: interaction.tenantId, interaction_id: interaction.id },
-    perPage: 1,
   });
-  const id = existing.items[0]?.id;
-  if (id) await store.update('whatsapp_interactions', id, payload);
-  else await store.create('whatsapp_interactions', payload);
 }
 
 function customers(): StoredCustomer[] {
@@ -290,18 +291,39 @@ function writeInteractions(items: StoredInteraction[]): void {
   writeJson(INTERACTIONS_FILE, items);
 }
 
-function importStatus(): ImportStatus {
-  return readJson<ImportStatus>(IMPORT_STATUS_FILE, {
-    tenantId: 'local',
+type ImportStatusStore = { version: 1; tenants: Record<string, ImportStatus> };
+
+function readImportStatuses(): ImportStatusStore {
+  const parsed = readJson<ImportStatusStore | ImportStatus>(IMPORT_STATUS_FILE, { version: 1, tenants: {} });
+  if ('version' in parsed && parsed.version === 1 && parsed.tenants && typeof parsed.tenants === 'object') return parsed;
+  // One-time compatibility with the pre-isolation singleton file.
+  if ('tenantId' in parsed && text(parsed.tenantId)) {
+    const legacy = parsed as ImportStatus;
+    return { version: 1, tenants: { [legacy.tenantId]: legacy } };
+  }
+  return { version: 1, tenants: {} };
+}
+
+function importStatus(tenantId: string): ImportStatus {
+  const normalizedTenantId = text(tenantId);
+  if (!normalizedTenantId) throw new Error('tenant_id_required');
+  return readImportStatuses().tenants[normalizedTenantId] || {
+    tenantId: normalizedTenantId,
     status: 'idle',
     done: 0,
     total: 0,
     updatedAt: new Date(0).toISOString(),
-  });
+  };
 }
 
 function writeImportStatus(status: ImportStatus): void {
-  writeJson(IMPORT_STATUS_FILE, status);
+  const tenantId = text(status.tenantId);
+  if (!tenantId) throw new Error('tenant_id_required');
+  const current = readImportStatuses();
+  writeJson(IMPORT_STATUS_FILE, {
+    version: 1,
+    tenants: { ...current.tenants, [tenantId]: { ...status, tenantId } },
+  } satisfies ImportStatusStore);
 }
 
 function autonomyLevel(profile: EnterpriseProfile): AutonomyLevel {
@@ -520,12 +542,13 @@ export function recomputeWhatsAppCustomerStages(now = Date.now()): number {
         ? '\u5ba2\u6237\u5df2\u6c89\u9ed8\uff0cAI \u5df2\u51c6\u5907\u5524\u9192\u8ddf\u8fdb'
         : customer.handlingReason,
       updatedAt: new Date(now).toISOString(),
+      persistenceRevision: Math.max(0, Number(customer.persistenceRevision || 0)) + 1,
     };
   });
   if (changed > 0) {
     writeCustomers(next);
     for (const customer of next) {
-      void mirrorCustomerToPocketBase(customer).catch(error => console.error('[whatsapp-pb-customer]', error));
+      schedulePocketBaseMirror('customer', mirrorCustomerToPocketBase(customer));
     }
   }
   return changed;
@@ -538,15 +561,12 @@ function storedPayload<T>(value: unknown): T | null {
 }
 
 async function readAllPocketBaseRecords(collection: string): Promise<Array<Record<string, unknown>>> {
-  const items: Array<Record<string, unknown>> = [];
-  let page = 1;
-  while (page <= 50) {
-    const result = await store.list<Record<string, unknown>>(collection, { page, perPage: 100 });
-    items.push(...result.items);
-    if (page >= result.totalPages || result.items.length < 100) break;
-    page += 1;
-  }
-  return items;
+  return listAllRecords<{ id: string; [key: string]: unknown }>({
+    store,
+    collection,
+    pageSize: 500,
+    maxRecords: 250_000,
+  });
 }
 
 async function hydrateWhatsAppFromPocketBase(): Promise<void> {
@@ -556,17 +576,68 @@ async function hydrateWhatsAppFromPocketBase(): Promise<void> {
       readAllPocketBaseRecords('whatsapp_interactions'),
     ]);
     const remoteCustomers = customerRecords
-      .map(record => storedPayload<StoredCustomer>(record.payload))
-      .filter((item): item is StoredCustomer => Boolean(item?.id && item?.tenantId));
+      .flatMap<StoredCustomer>(record => {
+        const payload = storedPayload<StoredCustomer>(record.payload);
+        return payload ? [{
+          ...payload,
+          persistenceRevision: Math.max(
+            1,
+            Number(payload.persistenceRevision || 0),
+            Number(record.persistence_revision || 0),
+          ),
+          updatedAt: String(payload.updatedAt || record.updated_at || ''),
+        }] : [];
+      })
+      .filter(item => Boolean(item.id && item.tenantId));
     const remoteInteractions = interactionRecords
       .map(record => storedPayload<StoredInteraction>(record.payload))
       .filter((item): item is StoredInteraction => Boolean(item?.id && item?.tenantId));
-    if (remoteCustomers.length) writeCustomers(remoteCustomers);
-    if (remoteInteractions.length) writeInteractions(remoteInteractions);
-    if (remoteCustomers.length || remoteInteractions.length) {
-      console.log(`[whatsapp] hydrated ${remoteCustomers.length} customers and ${remoteInteractions.length} interactions from PocketBase`);
+    const mergedCustomers = new Map(remoteCustomers.map(item => [item.id, item]));
+    for (const local of customers()) {
+      const remote = mergedCustomers.get(local.id);
+      if (!remote) {
+        mergedCustomers.set(local.id, {
+          ...local,
+          persistenceRevision: Math.max(1, Number(local.persistenceRevision || 0)),
+        });
+        continue;
+      }
+      const localRevision = Math.max(0, Number(local.persistenceRevision || 0));
+      const remoteRevision = Math.max(0, Number(remote.persistenceRevision || 0));
+      const localUpdatedAt = Date.parse(String(local.updatedAt || '')) || 0;
+      const remoteUpdatedAt = Date.parse(String(remote.updatedAt || '')) || 0;
+      if (localRevision > remoteRevision || (localRevision === remoteRevision && localUpdatedAt > remoteUpdatedAt)) {
+        mergedCustomers.set(local.id, {
+          ...local,
+          persistenceRevision: localRevision === remoteRevision ? remoteRevision + 1 : localRevision,
+        });
+      }
+    }
+
+    const mergedInteractions = new Map<string, StoredInteraction>();
+    for (const item of [...remoteInteractions, ...interactions()]) {
+      const key = `${item.tenantId}:${item.metaMessageId || item.id}`;
+      if (!mergedInteractions.has(key)) mergedInteractions.set(key, item);
+    }
+    const nextCustomers = [...mergedCustomers.values()];
+    const nextInteractions = [...mergedInteractions.values()].sort((a, b) => a.timestamp - b.timestamp);
+    writeCustomers(nextCustomers);
+    writeInteractions(nextInteractions);
+
+    // Backfill/repair PocketBase before the server accepts traffic. This makes
+    // local JSON a recoverable cache while PocketBase remains the durable
+    // restart authority.
+    for (let offset = 0; offset < nextCustomers.length; offset += 25) {
+      await Promise.all(nextCustomers.slice(offset, offset + 25).map(mirrorCustomerToPocketBase));
+    }
+    for (let offset = 0; offset < nextInteractions.length; offset += 50) {
+      await Promise.all(nextInteractions.slice(offset, offset + 50).map(mirrorInteractionToPocketBase));
+    }
+    if (nextCustomers.length || nextInteractions.length) {
+      console.log(`[whatsapp] reconciled ${nextCustomers.length} customers and ${nextInteractions.length} interactions with PocketBase`);
     }
   } catch (error) {
+    if (process.env.NODE_ENV === 'production') throw error;
     console.warn('[whatsapp] using local snapshot:', error instanceof Error ? error.message : error);
   }
 }
@@ -576,7 +647,6 @@ export async function initWhatsAppCustomerMaintenance(): Promise<void> {
   const run = () => {
     try {
       backupWhatsAppDataFiles();
-      void syncBackupsToR2().catch(error => console.error('[whatsapp-backup-r2]', error));
       void distillSalesStyleProfile('local_tenant_default').catch(error => console.error('[style-memory:distill]', error));
       const changed = recomputeWhatsAppCustomerStages();
       if (changed > 0) console.log(`[whatsapp-maintenance] recomputed ${changed} customer stages`);
@@ -621,6 +691,7 @@ function upsertCustomer(input: { tenantId: string; waNumber: string; name?: stri
     stage: stageByTimestamp(lastActiveAt),
     lastActiveAt: Math.max(base.lastActiveAt, lastActiveAt),
     updatedAt: now,
+    persistenceRevision: Math.max(0, Number(base.persistenceRevision || 0)) + 1,
   };
   if (index >= 0) list[index] = next;
   else list.push(next);
@@ -631,7 +702,7 @@ function upsertCustomer(input: { tenantId: string; waNumber: string; name?: stri
       void incrementPostMetric(next.sourcePostId, 'deals').catch(error => console.error('[post-attribution:deal]', error));
     }
   }
-  void mirrorCustomerToPocketBase(next).catch(error => console.error('[whatsapp-pb-customer]', error));
+  schedulePocketBaseMirror('customer', mirrorCustomerToPocketBase(next));
   return next;
 }
 
@@ -644,43 +715,50 @@ function addInteraction(item: StoredInteraction): boolean {
   list.push(item);
   list.sort((a, b) => a.timestamp - b.timestamp);
   writeInteractions(list);
-  void mirrorInteractionToPocketBase(item).catch(error => console.error('[whatsapp-pb-interaction]', error));
+  schedulePocketBaseMirror('interaction', mirrorInteractionToPocketBase(item));
   return true;
 }
 
 export async function confirmCustomerSourceAttribution(input: { tenantId: string; customerId: string; postId: string }): Promise<StoredCustomer | null> {
-  const post = await findPostById(input.postId);
-  if (!post || post.tenant_id !== input.tenantId) return null;
-  const list = customers();
-  const index = list.findIndex(item => item.tenantId === input.tenantId && item.id === input.customerId);
-  if (index < 0) return null;
-  const existing = list[index];
-  const next: StoredCustomer = {
-    ...existing,
-    source: sourceFromPost(post),
-    sourcePostId: post.id,
-    sourceTrackCode: post.track_code,
-    sourcePostTitle: post.title,
-    sourcePostPlatform: post.platform,
-    softAttribution: undefined,
-    updatedAt: new Date().toISOString(),
-  };
-  list[index] = next;
-  writeCustomers(list);
-  await mirrorCustomerToPocketBase(next).catch(error => console.error('[whatsapp-pb-customer]', error));
-  await incrementPostMetric(post.id, 'inquiries').catch(error => console.error('[post-attribution:confirm]', error));
-  addInteraction({
-    id: `attr_${input.customerId}_${post.id}_${Date.now()}`,
-    tenantId: input.tenantId,
-    customerId: input.customerId,
-    waNumber: next.waNumber,
-    type: 'system',
-    body: attributionSystemText(post),
-    timestamp: Date.now(),
-    audit: { sourcePostId: post.id, trackCode: post.track_code, platform: post.platform, confirmed: true },
-    meta: { sourcePostId: post.id, trackCode: post.track_code, platform: post.platform, confirmed: true },
+  return withDurableWhatsAppMirrors(async () => {
+    const post = await findPostById(input.postId);
+    if (!post || post.tenant_id !== input.tenantId) return null;
+    const list = customers();
+    const index = list.findIndex(item => item.tenantId === input.tenantId && item.id === input.customerId);
+    if (index < 0) return null;
+    const existing = list[index];
+    if (existing.sourcePostId === post.id && !existing.softAttribution) {
+      await mirrorCustomerToPocketBase(existing);
+      return existing;
+    }
+    const next: StoredCustomer = {
+      ...existing,
+      source: sourceFromPost(post),
+      sourcePostId: post.id,
+      sourceTrackCode: post.track_code,
+      sourcePostTitle: post.title,
+      sourcePostPlatform: post.platform,
+      softAttribution: undefined,
+      updatedAt: new Date().toISOString(),
+      persistenceRevision: Math.max(0, Number(existing.persistenceRevision || 0)) + 1,
+    };
+    list[index] = next;
+    writeCustomers(list);
+    schedulePocketBaseMirror('customer', mirrorCustomerToPocketBase(next));
+    await incrementPostMetric(post.id, 'inquiries');
+    addInteraction({
+      id: `attr_${input.customerId}_${post.id}`,
+      tenantId: input.tenantId,
+      customerId: input.customerId,
+      waNumber: next.waNumber,
+      type: 'system',
+      body: attributionSystemText(post),
+      timestamp: Date.now(),
+      audit: { sourcePostId: post.id, trackCode: post.track_code, platform: post.platform, confirmed: true },
+      meta: { sourcePostId: post.id, trackCode: post.track_code, platform: post.platform, confirmed: true },
+    });
+    return next;
   });
-  return next;
 }
 
 function collectChanges(payload: any): any[] {
@@ -723,12 +801,19 @@ function messagesFromValue(value: any): IncomingMessage[] {
               ? '\u8868\u60c5\u6d88\u606f'
               : '';
     const mediaId = text(media?.id);
-    const mediaLink = mediaId ? `https://graph.facebook.com/v19.0/${mediaId}` : '';
+    const mediaLink = mediaId ? `https://graph.facebook.com/${metaGraphVersion()}/${encodeURIComponent(mediaId)}` : '';
     const body = text(message?.text?.body || message?.body || message?.message?.text)
       || (mediaType ? `[${mediaType}]${mediaLink ? ` ${mediaLink}` : ''}` : '');
     if (!waNumber || !body) return null;
     return {
-      id: text(message.id) || `${waNumber}-${timestamp(message.timestamp)}`,
+      id: text(message.id) || `synthetic_${createHash('sha256').update(JSON.stringify({
+        waNumber,
+        timestamp: timestamp(message.timestamp),
+        fromBusiness: Boolean(message.from_me || message.direction === 'outbound' || message.from_business),
+        body,
+        mediaId,
+        type: text(message.type),
+      })).digest('hex')}`,
       waNumber,
       name: contacts.get(waNumber),
       fromBusiness: Boolean(message.from_me || message.direction === 'outbound' || message.from_business),
@@ -833,7 +918,7 @@ function evaluateCustomerHandoff(customer: StoredCustomer, input: Parameters<typ
   });
 }
 
-async function handleInboundMessage(tenantId: string, message: IncomingMessage, options: { skipAutonomy?: boolean } = {}): Promise<void> {
+async function processInboundMessage(tenantId: string, message: IncomingMessage, options: { skipAutonomy?: boolean } = {}): Promise<void> {
   const existingCustomer = customers().find(item => item.tenantId === tenantId && item.id === customerId(tenantId, message.waNumber));
   let attributedPost: PostRecord | null = null;
   const attributionPatch: Partial<StoredCustomer> = {};
@@ -874,7 +959,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
       ...(!message.fromBusiness ? { hasUnread: true, todoCompletedAt: undefined } : {}),
     },
   });
-  addInteraction({
+  const interactionAdded = addInteraction({
     id: `${customer.id}-${message.id}`,
     tenantId,
     customerId: customer.id,
@@ -885,6 +970,9 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     timestamp: message.timestamp,
     audit: {},
   });
+  // Upgrade-safe defense for messages persisted before durable receipts were
+  // introduced. Do not repeat metrics, qualification, or outbound replies.
+  if (!interactionAdded) return;
   const conversationForQualification = recentConversationForCustomer(tenantId, customer.id);
   const qualification = assessBant({
     turns: conversationForQualification,
@@ -1070,7 +1158,8 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     let bridgeMessages: string[] = [];
     if (shouldAutoBridge) {
       try {
-        bridgeMessages = await sendTenantWhatsAppText(tenantId, message.waNumber, gapPlan.draft);
+        const bridgeBatch = await sendTenantWhatsAppTextBatch(tenantId, message.waNumber, gapPlan.draft);
+        bridgeMessages = bridgeBatch.messages;
         bridgeSent = true;
         const sentAt = Date.now();
         bridgeMessages.forEach((body, index) => addInteraction({
@@ -1093,10 +1182,27 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
             evidence: context.evidence,
             messageIndex: index,
             messageCount: bridgeMessages.length,
+            providerMessageId: bridgeBatch.providerMessageIds[index],
           },
         }));
-      } catch {
+      } catch (error) {
         bridgeSent = false;
+        if (requiresWhatsAppReconciliation(error)) {
+          addInteraction({
+            id: `${customer.id}-knowledge-gap-bridge-reconcile-${Date.now()}`,
+            tenantId,
+            customerId: customer.id,
+            waNumber: message.waNumber,
+            type: 'system',
+            body: 'WhatsApp 承接消息结果不确定，已停止自动重试并转人工对账。',
+            timestamp: Date.now(),
+            audit: {
+              reconciliationRequired: true,
+              providerMessageIds: error.providerMessageIds,
+              sentMessageCount: error.sentMessages.length,
+            },
+          });
+        }
       }
     }
     addInteraction({
@@ -1341,27 +1447,45 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     const guard = await guardOutbound(draft, { tenantId, customerId: customer.id, action });
     if (guard.allowed) {
       let sentMessages: string[] = [];
+      let providerMessageIds: string[] = [];
       try {
-        sentMessages = await sendTenantWhatsAppText(tenantId, message.waNumber, draft);
+        const sentBatch = await sendTenantWhatsAppTextBatch(tenantId, message.waNumber, draft);
+        sentMessages = sentBatch.messages;
+        providerMessageIds = sentBatch.providerMessageIds;
       } catch (error) {
+        const reconciliationRequired = requiresWhatsAppReconciliation(error);
+        const sendFailureCode = error instanceof Error ? error.message : 'whatsapp_send_failed';
         addInteraction({
           id: `${customer.id}-send-failed-${Date.now()}`,
           tenantId,
           customerId: customer.id,
           waNumber: message.waNumber,
           type: 'system',
-          body: `AI 自动回复发送失败，已降级为待确认草稿：${error instanceof Error ? error.message : 'WhatsApp send failed'}`,
+          body: reconciliationRequired
+            ? 'AI 自动回复结果不确定，已停止自动重试并转人工对账。'
+            : `AI 自动回复发送失败，已降级为待确认草稿：${sendFailureCode}`,
           timestamp: Date.now(),
-          audit: { action, risk: decision.rule.risk, autonomy, evidence: context.evidence, sendError: error instanceof Error ? error.message : String(error) },
+          audit: {
+            action,
+            risk: decision.rule.risk,
+            autonomy,
+            evidence: context.evidence,
+            sendErrorCode: sendFailureCode,
+            reconciliationRequired,
+            providerMessageIds: reconciliationRequired ? error.providerMessageIds : [],
+            sentMessageCount: reconciliationRequired ? error.sentMessages.length : 0,
+          },
         });
         upsertCustomer({
           tenantId,
           waNumber: message.waNumber,
           patch: {
-            handlingMode: 'ai_draft',
-            handlingReason: 'AI 自动回复未真正发出，需要你确认后重发',
-            pendingDraft: draft,
-            blockedAutoReplyReason: error instanceof Error ? error.message : 'WhatsApp send failed',
+            handlingMode: reconciliationRequired ? 'human_needed' : 'ai_draft',
+            handlingReason: reconciliationRequired
+              ? 'WhatsApp 返回结果不确定，需要先核对聊天记录，禁止直接重发'
+              : 'AI 自动回复未真正发出，需要你确认后重发',
+            pendingDraft: reconciliationRequired ? undefined : draft,
+            blockedAutoReplyReason: reconciliationRequired ? 'whatsapp_delivery_reconciliation_required' : sendFailureCode,
             knowledgeMissStreak: nextMissStreak,
           },
         });
@@ -1369,7 +1493,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
           tenantId,
           customer: handoffCustomerContext(customer),
           message: message.body,
-          decision: automationFailureHandoff(error instanceof Error ? error.message : 'WhatsApp send failed'),
+          decision: automationFailureHandoff(sendFailureCode),
         }).catch(() => undefined);
         return;
       }
@@ -1383,7 +1507,15 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
         body,
         timestamp: sentAt + index,
         autoSent: true,
-        audit: { action, risk: decision.rule.risk, autonomy, evidence: context.evidence, messageIndex: index, messageCount: sentMessages.length },
+        audit: {
+          action,
+          risk: decision.rule.risk,
+          autonomy,
+          evidence: context.evidence,
+          messageIndex: index,
+          messageCount: sentMessages.length,
+          providerMessageId: providerMessageIds[index],
+        },
       }));
       if (night.active) recordNightModeEvent({ tenantId, customerId: customer.id, kind: 'auto' });
       upsertCustomer({
@@ -1439,14 +1571,37 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
   });
 }
 
+async function handleInboundMessage(
+  tenantId: string,
+  message: IncomingMessage,
+  options: { skipAutonomy?: boolean } = {},
+): Promise<InboundReceiptOutcome> {
+  const result = await processInboundExactlyOnce({
+    store,
+    tenantId,
+    provider: 'meta_whatsapp',
+    messageId: message.id,
+    work: () => withDurableWhatsAppMirrors(() => processInboundMessage(tenantId, message, options)),
+  });
+  if (result.outcome === 'in_progress') {
+    // Force a provider retry while the first delivery is still active. Once
+    // that claim commits, the retry receives a durable duplicate success.
+    throw new Error('whatsapp_inbound_processing_in_progress');
+  }
+  return result.outcome;
+}
+
 export async function handleMetaWebhook(tenantId: string, payload: any): Promise<void> {
+  await trackMetaWhatsAppStatuses(tenantId, payload);
   const changes = collectChanges(payload);
   for (const change of changes) {
     const field = text(change?.field);
     const value = change?.value ?? {};
     if (field === 'smb_app_state_sync') {
       for (const contact of contactsFromValue(value)) {
-        upsertCustomer({ tenantId, waNumber: contact.waNumber, name: contact.name, patch: { handlingReason: '已从 WhatsApp Business App 同步联系人' } });
+        await withDurableWhatsAppMirrors(() => {
+          upsertCustomer({ tenantId, waNumber: contact.waNumber, name: contact.name, patch: { handlingReason: '已从 WhatsApp Business App 同步联系人' } });
+        });
       }
     }
     if (field === 'history') {
@@ -1468,17 +1623,18 @@ export async function handleMetaWebhook(tenantId: string, payload: any): Promise
   }
 }
 
-export function getWhatsAppImportStatus(): ImportStatus {
-  return importStatus();
+export function getWhatsAppImportStatus(tenantId: string): ImportStatus {
+  return importStatus(tenantId);
 }
 
-export function markWhatsAppHumanReply(input: { tenantId: string; customerId: string; body: string; messages?: string[]; waNumber?: string }): void {
-  const customer = customers().find(item => item.tenantId === input.tenantId && item.id === input.customerId);
-  const waNumber = input.waNumber || customer?.waNumber;
-  if (!customer || !waNumber) return;
-  const sentMessages = input.messages?.length ? input.messages : [input.body];
-  const baseTimestamp = Date.now();
-  sentMessages.forEach((body, index) => addInteraction({
+export async function markWhatsAppHumanReply(input: { tenantId: string; customerId: string; body: string; messages?: string[]; waNumber?: string }): Promise<void> {
+  await withDurableWhatsAppMirrors(() => {
+    const customer = customers().find(item => item.tenantId === input.tenantId && item.id === input.customerId);
+    const waNumber = input.waNumber || customer?.waNumber;
+    if (!customer || !waNumber) return;
+    const sentMessages = input.messages?.length ? input.messages : [input.body];
+    const baseTimestamp = Date.now();
+    sentMessages.forEach((body, index) => addInteraction({
       id: `${customer.id}-human-${baseTimestamp}-${index}`,
       tenantId: input.tenantId,
       customerId: customer.id,
@@ -1487,29 +1643,32 @@ export function markWhatsAppHumanReply(input: { tenantId: string; customerId: st
       body,
       timestamp: baseTimestamp + index,
       audit: { clearsKnowledgeMissStreak: true, messageIndex: index, messageCount: sentMessages.length },
-    }));
-  upsertCustomer({
-    tenantId: input.tenantId,
-    waNumber,
-    patch: {
-      handlingMode: 'ai_draft',
-      handlingReason: '人工已回复，AI 继续辅助跟进',
-      knowledgeMissStreak: 0,
-      fallbackCount: 0,
-      handoffDueAt: undefined,
-      blockedAutoReplyReason: undefined,
-      pendingDraft: undefined,
-      hasUnread: false,
-      todoCompletedAt: new Date().toISOString(),
-    },
+      }));
+    upsertCustomer({
+      tenantId: input.tenantId,
+      waNumber,
+      patch: {
+        handlingMode: 'ai_draft',
+        handlingReason: '人工已回复，AI 继续辅助跟进',
+        knowledgeMissStreak: 0,
+        fallbackCount: 0,
+        handoffDueAt: undefined,
+        blockedAutoReplyReason: undefined,
+        pendingDraft: undefined,
+        hasUnread: false,
+        todoCompletedAt: new Date().toISOString(),
+      },
+    });
   });
 }
 
-export function patchWhatsAppCustomer(input: {
+export async function patchWhatsAppCustomer(input: {
   tenantId: string;
   customerId: string;
   patch: Record<string, unknown>;
-}): StoredCustomer | null {
+}, dependencies: {
+  persist?: (customer: StoredCustomer) => Promise<void>;
+} = {}): Promise<StoredCustomer | null> {
   const list = customers();
   const index = list.findIndex(item => item.tenantId === input.tenantId && item.id === input.customerId && isRealWhatsAppNumber(item.waNumber));
   if (index < 0) return null;
@@ -1547,9 +1706,10 @@ export function patchWhatsAppCustomer(input: {
   }
 
   next.updatedAt = new Date().toISOString();
+  next.persistenceRevision = Math.max(0, Number(current.persistenceRevision || 0)) + 1;
   list[index] = next;
   writeCustomers(list);
-  void mirrorCustomerToPocketBase(next).catch(error => console.error('[whatsapp-pb-customer]', error));
+  await (dependencies.persist ?? mirrorCustomerToPocketBase)(next);
   return next;
 }
 

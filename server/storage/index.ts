@@ -15,4 +15,4 @@ export const store: DataStore = pbStore;
 export const auth: AuthProvider = pbAuth;
 
 export type { DataStore, AuthProvider } from './datastore.js';
-export type { ListQuery, ListResult, Identity, Where, Record_ } from './datastore.js';
+export type { AtomicCompareResult, ListQuery, ListResult, Identity, Where, Record_ } from './datastore.js';

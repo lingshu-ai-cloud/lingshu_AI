@@ -36,7 +36,6 @@ import {
 import { attachManualVideoUploadAndQueue, matchesCrawlRange, matchesVideoSearch } from './videos.js';
 import { listStyleAdoptionTrends } from '../knowledge/styleMemory.js';
 import {
-  decryptSecret,
   getTenantPlatformApp,
   listTenantPlatformApps,
   publicTenantPlatformApp,
@@ -45,18 +44,138 @@ import {
   type TenantPlatformAppRecord,
   type TenantPlatform,
 } from '../lib/tenantPlatformApps.js';
+import { tenantPlatformSecret } from '../security/platformCredentials.js';
 import { store } from '../storage/index.js';
-import axios from 'axios';
+import { providerHttp as axios } from '../security/providerHttp.js';
 import {
   createLocalInviteTenant,
   getLocalTenant,
   listLocalTenants,
   promoteLocalTrialTenant,
 } from '../lib/localTenants.js';
-import { decryptRegistrationPassword } from '../lib/registrationCredentials.js';
 import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js';
+import type { InboundReceipt } from '../whatsapp/inboundReceipt.js';
 
 export const adminRouter = Router();
+
+function publicInboundReceipt(record: InboundReceipt) {
+  return {
+    id: record.id,
+    tenantId: record.tenant_id,
+    provider: record.provider,
+    messageId: record.message_id,
+    status: record.status,
+    revision: Number(record.revision || 0),
+    receivedAt: record.received_at,
+    updatedAt: record.updated_at,
+    claimExpiresAt: record.claim_expires_at || null,
+    completedAt: record.completed_at || null,
+    errorCode: record.last_error_code || null,
+    reconciledAt: String(record.reconciled_at || '') || null,
+    reconciledBy: String(record.reconciled_by || '') || null,
+    reconciliationResolution: String(record.reconciliation_resolution || '') || null,
+    reconciliationNote: String(record.reconciliation_note || '') || null,
+  };
+}
+
+adminRouter.get('/webhook-reconciliation', async (req, res) => {
+  const admin = await requireAdminUser(req);
+  if (!admin) {
+    res.status(403).json({ error: 'admin_required' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  const status = bodyText(req.query.status) || 'needs_reconciliation';
+  if (!['processing', 'completed', 'needs_reconciliation'].includes(status)) {
+    res.status(400).json({ error: 'invalid_receipt_status' });
+    return;
+  }
+  const tenantId = bodyText(req.query.tenantId);
+  const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
+  const perPage = Math.max(1, Math.min(100, Math.floor(Number(req.query.perPage) || 50)));
+  const where: Record<string, string> = { status };
+  if (tenantId) where.tenant_id = tenantId;
+  const result = await store.list<InboundReceipt>('webhook_message_receipts', {
+    where,
+    sort: '-updated_at',
+    page,
+    perPage,
+  });
+  res.json({
+    items: result.items.map(publicInboundReceipt),
+    page: result.page,
+    perPage: result.perPage,
+    totalItems: result.totalItems,
+    totalPages: result.totalPages,
+  });
+});
+
+adminRouter.post('/webhook-reconciliation/:id/resolve', async (req, res) => {
+  const admin = await requireAdminUser(req);
+  if (!admin) {
+    res.status(403).json({ error: 'admin_required' });
+    return;
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  const receipt = await store.getById<InboundReceipt>('webhook_message_receipts', bodyText(req.params.id));
+  if (!receipt) {
+    res.status(404).json({ error: 'webhook_receipt_not_found' });
+    return;
+  }
+  const expectedRevision = Number(req.body?.expectedRevision);
+  const resolution = bodyText(req.body?.resolution);
+  const note = bodyText(req.body?.note);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    res.status(400).json({ error: 'expected_revision_required' });
+    return;
+  }
+  if (!['verified_processed', 'manually_repaired'].includes(resolution)) {
+    res.status(400).json({ error: 'invalid_reconciliation_resolution' });
+    return;
+  }
+  if (note.length < 3 || note.length > 2_000) {
+    res.status(400).json({ error: 'reconciliation_note_required' });
+    return;
+  }
+  if (receipt.status !== 'needs_reconciliation') {
+    res.status(409).json({ error: 'webhook_receipt_not_reconcilable', current: publicInboundReceipt(receipt) });
+    return;
+  }
+  const now = new Date().toISOString();
+  const resolved = await store.compareAndSet<InboundReceipt>(
+    'webhook_message_receipts',
+    receipt.id,
+    { status: 'needs_reconciliation', revision: expectedRevision },
+    {
+      status: 'completed',
+      revision: expectedRevision + 1,
+      completed_at: receipt.completed_at || now,
+      updated_at: now,
+      claim_expires_at: '',
+      reconciled_at: now,
+      reconciled_by: admin.userId,
+      reconciliation_resolution: resolution,
+      reconciliation_note: note,
+    },
+  );
+  if (!resolved.ok) {
+    res.status(409).json({
+      error: 'webhook_receipt_revision_conflict',
+      current: resolved.current ? publicInboundReceipt(resolved.current) : null,
+    });
+    return;
+  }
+  await writeAuditLog({
+    tenantId: receipt.tenant_id,
+    actorUserId: admin.userId,
+    actorEmail: admin.email,
+    action: 'whatsapp_webhook_receipt_reconciled',
+    targetType: 'webhook_message_receipt',
+    targetId: receipt.id,
+    metadata: { provider: receipt.provider, messageId: receipt.message_id, resolution, expectedRevision },
+  });
+  res.json({ ok: true, receipt: publicInboundReceipt(resolved.record) });
+});
 
 function trialDay(activatedAt?: string | null): number | null {
   if (!activatedAt) return null;
@@ -99,8 +218,9 @@ async function listAllPbRecords<T extends Record<string, unknown>>(collection: s
   let totalPages = 1;
   do {
     const result = await pbListStrict<T>(collection, { page, perPage: 500, sort });
+    if (result.totalItems > 250_000) throw new Error(`admin_record_scan_limit_exceeded:${collection}`);
     items.push(...result.items);
-    totalPages = Math.max(1, Math.min(100, result.totalPages || 1));
+    totalPages = Math.max(1, result.totalPages || 1);
     page += 1;
   } while (page <= totalPages);
   return items;
@@ -465,9 +585,8 @@ function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp
     tenantId,
     platform,
     appId: '',
-    appSecret: '',
     appSecretSet: false,
-    appSecretLength: 0,
+    appSecretMask: '',
     waConfigId: '',
     businessId: '',
     wabaId: '',
@@ -476,9 +595,9 @@ function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp
     pageId: '',
     igUserId: '',
     youtubeChannelId: '',
-    webhookVerifyToken: '',
+    webhookVerifyTokenSet: false,
     wecomEncodingAesKeySet: false,
-    wecomEncodingAesKeyLength: 0,
+    wecomEncodingAesKeyMask: '',
     webhookUrl: platform === 'meta' || platform === 'wecom' ? tenantWebhookUrl(req, tenantId, platform) : '',
     oauthRedirectUri: platform === 'google'
       ? `${getPublicOrigin(req)}/api/overseas/youtube/oauth/callback`
@@ -487,11 +606,12 @@ function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp
         : '',
     tokenType: 'user_60d',
     accessTokenSet: false,
-    accessTokenLength: 0,
+    accessTokenMask: '',
     tokenExpiresAt: '',
     status: 'pending',
     checklist: {},
     notes: '',
+    credentialState: 'ready',
   };
 }
 
@@ -499,10 +619,7 @@ function adminTenantPlatformApp(
   req: Parameters<typeof publicTenantPlatformApp>[0],
   app: TenantPlatformAppRecord,
 ) {
-  return {
-    ...publicTenantPlatformApp(req, app),
-    appSecret: decryptSecret(app.app_secret),
-  };
+  return publicTenantPlatformApp(req, app);
 }
 
 function publicDeliveryTenant(req: Parameters<typeof publicTenantPlatformApp>[0], tenant: Record<string, any>, apps: Awaited<ReturnType<typeof listTenantPlatformApps>>) {
@@ -568,7 +685,7 @@ function passedRecently(checklist: Record<string, any>, id: string) {
 
 function missingDeliveryRequirements(platform: TenantPlatform, app: any): string[] {
   const checklist = readChecklist(app);
-  const appSecret = decryptSecret(app?.app_secret);
+  const appSecret = app ? tenantPlatformSecret(app, 'app_secret') : '';
   const missing: string[] = [];
   if (!bodyText(app?.app_id)) missing.push(platform === 'wecom' ? '企业微信 CorpID' : platform === 'tiktok' ? 'TikTok Client Key' : 'App ID');
   if (!appSecret) missing.push(platform === 'wecom' ? '企业微信应用 Secret' : platform === 'tiktok' ? 'TikTok Client Secret' : 'App Secret');
@@ -585,8 +702,8 @@ function missingDeliveryRequirements(platform: TenantPlatform, app: any): string
     const googleTestIndex = missing.findIndex(item => item.includes('Google OAuth'));
     if (googleTestIndex >= 0) missing.splice(googleTestIndex, 1);
     if (!bodyText(app?.business_id)) missing.push('企业微信 AgentId');
-    if (!bodyText(app?.webhook_verify_token)) missing.push('企业微信回调 Token');
-    if (!decryptSecret(app?.wecom_encoding_aes_key)) missing.push('企业微信 EncodingAESKey');
+    if (!app || !tenantPlatformSecret(app, 'webhook_verify_token')) missing.push('企业微信回调 Token');
+    if (!app || !tenantPlatformSecret(app, 'wecom_encoding_aes_key')) missing.push('企业微信 EncodingAESKey');
     if (!passedRecently(checklist, 'wecom_callback_verified')) missing.push('企业微信回调最近自检通过');
     if (!passedRecently(checklist, 'wecom_message_test_passed')) missing.push('企业微信消息最近自检通过');
   }
@@ -603,11 +720,8 @@ function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEm
     callbacks: oauthCallbackUrls(req),
     values: {
       youtubeOAuthClientId: effective.youtubeOAuthClientId,
-      youtubeOAuthClientSecret: effective.youtubeOAuthClientSecret,
       metaSocialAppId: effective.metaSocialAppId,
-      metaSocialAppSecret: effective.metaSocialAppSecret,
       tiktokClientKey: effective.tiktokClientKey,
-      tiktokClientSecret: effective.tiktokClientSecret,
       advancedManualConnectEnabled: effective.advancedManualConnectEnabled,
     },
     secretSet: {
@@ -615,10 +729,10 @@ function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEm
       metaSocialAppSecret: Boolean(effective.metaSocialAppSecret),
       tiktokClientSecret: Boolean(effective.tiktokClientSecret),
     },
-    secretLength: {
-      youtubeOAuthClientSecret: effective.youtubeOAuthClientSecret.length,
-      metaSocialAppSecret: effective.metaSocialAppSecret.length,
-      tiktokClientSecret: effective.tiktokClientSecret.length,
+    secretMask: {
+      youtubeOAuthClientSecret: effective.youtubeOAuthClientSecret ? '********' : '',
+      metaSocialAppSecret: effective.metaSocialAppSecret ? '********' : '',
+      tiktokClientSecret: effective.tiktokClientSecret ? '********' : '',
     },
   };
 }
@@ -646,7 +760,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         email: entry.email,
         tenantId: String(entry.tenantId || ''),
         tenantName: String(tenant?.name || entry.email.split('@')[0] || entry.tenantId || ''),
-        password: entry.password,
         status: accountStage({ ...entry, expiresAt }),
         activatedAt,
         expiresAt,
@@ -661,7 +774,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         renderToday: usage.render,
         videoGenerationToday: usage.videoGeneration,
         rotatedAt: entry.rotatedAt ?? null,
-        rotationPassword: entry.rotationPassword ?? null,
       };
     }));
 
@@ -671,7 +783,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
     contactName: string;
     industry: string;
     emails: string[];
-    password: string;
     inviteCode: string;
     subscriptionPlan: string;
     subscriptionStatus: string;
@@ -688,17 +799,17 @@ adminRouter.get('/demo-accounts', async (req, res) => {
 
   try {
     const [tenants, users] = await Promise.all([
-      pbListStrict<Record<string, unknown>>('tenants', { perPage: 500, sort: '-createdAt' }),
-      pbListStrict<Record<string, unknown>>('users', { perPage: 500, sort: 'email' }),
+      listAllPbRecords<Record<string, unknown>>('tenants', '-createdAt'),
+      listAllPbRecords<Record<string, unknown>>('users', 'email'),
     ]);
     const trialTenantIds = new Set(trialAccounts.map(account => String(registry[account.email]?.tenantId || '')).filter(Boolean));
-    customerAccounts = tenants.items
+    customerAccounts = tenants
       .map(tenant => {
         const tenantId = String(tenant.id || tenant.tenantId || '');
         const subscriptionPlan = String(tenant.subscriptionPlan || '未设置');
         const subscriptionStatus = String(tenant.subscriptionStatus || '未设置');
         const registeredEmail = String(tenant.registeredEmail || '').trim().toLowerCase();
-        const tenantUsers = users.items.filter(user => String(user.tenantId || '') === tenantId);
+        const tenantUsers = users.filter(user => String(user.tenantId || '') === tenantId);
         const emails = tenantUsers
           .map(user => String(user.email || '').trim().toLowerCase())
           .filter(Boolean);
@@ -717,7 +828,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
           contactName: String(tenant.contactName || tenant.contact || ''),
           industry: String(tenant.industry || ''),
           emails: Array.from(new Set(emails)),
-          password: decryptRegistrationPassword(String(tenant.registeredPasswordCipher || '')) || promotedTrial?.password || '',
           inviteCode: String(tenant.registrationInviteCode || tenant.inviteCode || ''),
           subscriptionPlan,
           subscriptionStatus,
@@ -755,7 +865,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         contactName: tenant.contactName,
         industry: tenant.industry,
         emails,
-        password: decryptRegistrationPassword(tenant.registeredPasswordCipher) || promotedTrial?.password || '',
         inviteCode: tenant.registrationInviteCode || tenant.inviteCode,
         subscriptionPlan: tenant.subscriptionPlan,
         subscriptionStatus: tenant.subscriptionStatus,
@@ -803,7 +912,6 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
     || tenantId;
   const contactName = bodyText(req.body?.contactName || existingTenant?.contactName || existingTenant?.contact);
   const industry = bodyText(req.body?.industry || existingTenant?.industry);
-  const currentPassword = entry.rotationPassword || entry.password;
   const registeredAt = bodyText(existingTenant?.registeredAt || entry.activatedAt) || new Date().toISOString();
   const patch = {
     name: companyName,
@@ -830,7 +938,6 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
       contactName,
       industry,
       email: entry.email,
-      password: currentPassword,
       registeredAt,
     }) as unknown as Record<string, any>;
   }
@@ -843,10 +950,8 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
     status: 'customer',
     tenantId,
     userId: entry.userId,
-    password: currentPassword,
     expiresAt: null,
     rotatedAt: null,
-    rotationPassword: null,
   });
   await writeAuditLog({
     tenantId,
@@ -1050,7 +1155,7 @@ adminRouter.put('/oauth-config', async (req, res) => {
   if (patch.tiktokClientKey && tiktokSecret) disabledPlatforms.delete('tiktok');
   patch.disabledPlatforms = Array.from(disabledPlatforms);
 
-  writeOAuthConfig(patch);
+  writeOAuthConfig(patch, Number(stored.revision || 0));
   res.json(publicOAuthConfig(req, admin.email));
 });
 
@@ -1086,7 +1191,7 @@ adminRouter.delete('/oauth-config/:platform', async (req, res) => {
       patch.tiktokClientKey = '';
       patch.tiktokClientSecret = '';
     }
-    writeOAuthConfig(patch);
+    writeOAuthConfig(patch, Number(stored.revision || 0));
     res.json({
       ok: true,
       platform,
@@ -1109,16 +1214,16 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
   }
   res.setHeader('Cache-Control', 'no-store');
 
-  let tenants: { items: Record<string, any>[] } | undefined;
+  let tenants: Record<string, any>[] | undefined;
   let apps: TenantPlatformAppRecord[] | undefined;
   try {
     [tenants, apps] = await Promise.all([
-      pbListStrict<Record<string, any>>('tenants', { perPage: 200 }),
-      pbListStrict<TenantPlatformAppRecord>('tenant_platform_apps', { perPage: 500, sort: 'tenant_id' }).then(result => result.items),
+      listAllPbRecords<Record<string, any>>('tenants'),
+      listTenantPlatformApps(),
     ]);
   } catch (error) {
     if (process.env.NODE_ENV !== 'production') {
-      tenants = { items: listLocalTenants() as unknown as Record<string, any>[] };
+      tenants = listLocalTenants() as unknown as Record<string, any>[];
       apps = [];
     } else {
       const detail = error instanceof Error ? error.message : 'unknown_error';
@@ -1131,7 +1236,7 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
     return;
   }
   const tenantIds = new Set<string>([
-    ...tenants.items.map(item => String(item.id || item.tenantId || '')).filter(Boolean),
+    ...tenants.map(item => String(item.id || item.tenantId || '')).filter(Boolean),
     ...apps.map(app => app.tenant_id),
   ]);
 
@@ -1140,7 +1245,7 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
     tenants: Array.from(tenantIds)
       .filter(tenantId => tenantId !== admin.tenantId)
       .map(tenantId => {
-        const tenant = tenants.items.find(item => item.id === tenantId || item.tenantId === tenantId) || { id: tenantId, name: tenantId };
+        const tenant = tenants.find(item => item.id === tenantId || item.tenantId === tenantId) || { id: tenantId, name: tenantId };
         return publicDeliveryTenant(req, tenant, apps);
       }),
   });
@@ -1227,6 +1332,7 @@ adminRouter.put('/delivery/platform-apps/:tenantId/:platform', async (req, res) 
       pageId: bodyText(req.body?.pageId),
       igUserId: bodyText(req.body?.igUserId),
       youtubeChannelId: bodyText(req.body?.youtubeChannelId),
+      webhookVerifyToken: bodyText(req.body?.webhookVerifyToken),
       wecomEncodingAesKey: bodyText(req.body?.wecomEncodingAesKey),
       tokenType: req.body?.tokenType === 'system_user_permanent' ? 'system_user_permanent' : 'user_60d',
       accessToken: bodyText(req.body?.accessToken),
@@ -1290,8 +1396,8 @@ adminRouter.post('/delivery/platform-apps/:tenantId/:platform/test/:kind', async
   }
 
   const app = await getTenantPlatformApp(tenantId, platform);
-  const token = decryptSecret(app?.access_token);
-  const appSecret = decryptSecret(app?.app_secret);
+  const token = app ? tenantPlatformSecret(app, 'access_token') : '';
+  const appSecret = app ? tenantPlatformSecret(app, 'app_secret') : '';
   const markTestPassed = async (id: string) => {
     if (!app) return;
     await upsertTenantPlatformApp({
@@ -1350,7 +1456,7 @@ adminRouter.post('/delivery/platform-apps/:tenantId/:platform/test/:kind', async
     }
     if (kind === 'wecom_webhook') {
       if (platform !== 'wecom') throw new Error('企业微信回调自检仅适用于企业微信');
-      if (!app.app_id || !bodyText(app.webhook_verify_token) || !decryptSecret(app.wecom_encoding_aes_key)) {
+      if (!app.app_id || !tenantPlatformSecret(app, 'webhook_verify_token') || !tenantPlatformSecret(app, 'wecom_encoding_aes_key')) {
         throw new Error('请先录入 CorpID、回调 Token 和 EncodingAESKey');
       }
       await markTestPassed('wecom_callback_verified');

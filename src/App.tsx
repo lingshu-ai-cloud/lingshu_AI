@@ -24,8 +24,10 @@ const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
 const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
 const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.ScriptLibraryPage })));
+const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'));
 
 export type Page =
+  | 'digitalEmployees'
   | 'strategy'
   | 'traffic'
   | 'socialInspiration'
@@ -72,13 +74,13 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
-  social_operator: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
-  customer_service: new Set(['strategy', 'conversion', 'retention', 'orders', 'scheduled']),
+  super_admin: new Set(['digitalEmployees', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['digitalEmployees', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['digitalEmployees', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  customer_service: new Set(['digitalEmployees', 'strategy', 'conversion', 'retention', 'orders', 'scheduled']),
 };
 const ALL_PAGES: Page[] = [
-  'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
+  'digitalEmployees', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
   'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
   'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
 ];
@@ -112,8 +114,8 @@ const loadPage = (): Page => {
     const saved = localStorage.getItem('ow_page') as Page | null;
     if (saved && ALL_PAGES.includes(saved)) return saved;
     if (saved) localStorage.removeItem('ow_page');
-    return 'strategy';
-  } catch { return 'strategy'; }
+    return 'digitalEmployees';
+  } catch { return 'digitalEmployees'; }
 };
 
 function PageLoading() {
@@ -284,12 +286,12 @@ export default function App() {
     try { localStorage.setItem('ow_page', page); } catch { /* ignore */ }
   }, [page]);
   useEffect(() => {
-    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('strategy');
+    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('digitalEmployees');
   }, [page, session]);
   useEffect(() => {
     if (!session) return;
     const role = session.user.role || 'super_admin';
-    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('strategy');
+    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('digitalEmployees');
   }, [page, session]);
 
   // 每次对话推进都记录/更新会话历史
@@ -415,7 +417,7 @@ export default function App() {
     setConversation(null);
     setRestore(null);
     setKickoff(null);
-    setPage('strategy');
+    setPage('digitalEmployees');
   };
 
   if (isRegistrationEntry) {
@@ -497,6 +499,7 @@ export default function App() {
       </Suspense>
       <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
         <Suspense fallback={<PageLoading />}>
+          {page === 'digitalEmployees' && <DigitalEmployeePage />}
           {page === 'strategy' && (
             <StrategyPage
               onEnterConversation={enterConversation}

@@ -11,6 +11,7 @@
  * 避免用户拿到“字幕正常但没有声音”的静默成片。
  */
 const { spawn } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -33,24 +34,109 @@ const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i;
 /** 下载远端 url 到本地文件（桌面端与本机 express 同机，localhost 直连） */
 async function downloadTo(url, dest, options = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
-  const headers = options.assetOrigin && String(url).startsWith(options.assetOrigin)
-    ? options.assetHeaders || {}
-    : {};
-  let res;
+  const timeoutMs = Math.max(1, Math.min(10 * 60_000, finiteNumber(options.timeoutMs, 45_000)));
+  const maxBytes = Math.max(1, finiteNumber(options.maxBytes, 512 * 1024 * 1024));
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error('asset download timed out'));
+  }, timeoutMs);
+  const parentSignal = options.signal;
+  const abortFromParent = () => controller.abort(parentSignal.reason);
+  if (parentSignal) {
+    if (parentSignal.aborted) abortFromParent();
+    else parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+  const headers = (() => {
+    if (!options.assetOrigin) return {};
+    try {
+      return new URL(String(url)).origin === new URL(String(options.assetOrigin)).origin
+        ? options.assetHeaders || {}
+        : {};
+    } catch {
+      return {};
+    }
+  })();
+  let destinationHandle = null;
+  let createdDestination = false;
+  let completed = false;
   try {
-    res = await fetch(url, { headers, signal: controller.signal });
+    const parsed = new URL(String(url));
+    if (!['data:', 'http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error(`unsupported asset URL protocol: ${parsed.protocol}`);
+    }
+    const printableUrl = parsed.protocol === 'data:' ? `data:${String(url).slice(5).split(/[;,]/, 1)[0] || 'asset'};[redacted]` : `${parsed.origin}${parsed.pathname}`;
+    const res = await fetch(url, { headers, signal: controller.signal, redirect: 'error' });
+    if (!res.ok) throw new Error(`download ${printableUrl} -> ${res.status}`);
+    const declaredLength = Number(res.headers.get('content-length') || 0);
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new Error(`asset exceeds ${maxBytes} byte limit`);
+    }
+    if (!res.body) throw new Error(`download ${printableUrl} returned an empty body`);
+    destinationHandle = await fs.promises.open(dest, 'wx', 0o600);
+    createdDestination = true;
+    const reader = res.body.getReader();
+    let received = 0;
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      const chunk = Buffer.from(next.value);
+      received += chunk.length;
+      if (received > maxBytes) {
+        await reader.cancel('asset too large').catch(() => {});
+        throw new Error(`asset exceeds ${maxBytes} byte limit`);
+      }
+      let offset = 0;
+      while (offset < chunk.length) {
+        const written = await destinationHandle.write(chunk, offset, chunk.length - offset);
+        if (!written.bytesWritten) throw new Error('asset download write stalled');
+        offset += written.bytesWritten;
+      }
+    }
+    if (controller.signal.aborted) throw controller.signal.reason || new Error('asset download aborted');
+    completed = true;
+    return dest;
+  } catch (error) {
+    if (timedOut) throw new Error(`asset download timed out after ${timeoutMs}ms`);
+    throw error;
   } finally {
     clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abortFromParent);
+    await destinationHandle?.close().catch(() => {});
+    if (createdDestination && !completed) await fs.promises.rm(dest, { force: true }).catch(() => {});
   }
-  if (!res.ok) throw new Error(`download ${url} -> ${res.status}`);
-  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-  return dest;
 }
 
 function finiteNumber(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function safeJobId(value) {
+  const raw = String(value || '').trim() || `job-${Date.now()}`;
+  const clean = raw.replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 120) || 'job';
+  if (clean === raw && raw.length <= 120) return clean;
+  return `${clean.slice(0, 103)}-${createHash('sha256').update(raw).digest('hex').slice(0, 16)}`;
+}
+
+function safeAssetExtension(url, declaredType = '') {
+  const mime = String(url || '').match(/^data:([^;,]+)/i)?.[1]?.toLowerCase() || '';
+  const knownMimes = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+    'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/x-wav': 'wav',
+    'audio/ogg': 'ogg', 'audio/webm': 'webm',
+  };
+  if (knownMimes[mime]) return knownMimes[mime];
+  const rawExtension = (() => {
+    try { return path.extname(new URL(String(url)).pathname).slice(1).toLowerCase(); }
+    catch { return ''; }
+  })();
+  const allowed = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'mov', 'webm', 'mkv', 'avi', 'mp3', 'm4a', 'wav', 'ogg', 'aac']);
+  if (allowed.has(rawExtension)) return rawExtension === 'jpeg' ? 'jpg' : rawExtension;
+  if (String(declaredType).toLowerCase() === 'image') return 'png';
+  if (String(declaredType).toLowerCase() === 'video') return 'mp4';
+  return 'bin';
 }
 
 function assTime(sec) {
@@ -119,39 +205,71 @@ function cuesToAss(cues, width, height) {
  * @param {string} [outDir] 输出目录，默认 ~/Downloads/lingshu-ai-exports
  * @returns {Promise<{ok:boolean, outputPath?:string, error?:string}>}
  */
-async function composite(manifest, onProgress = () => {}, outDir) {
+async function composite(manifest, onProgress = () => {}, outDir, runtimeOptions = {}) {
   if (!ffmpegPath) {
     return { ok: false, error: 'ffmpeg-static binary not found（请先 npm install ffmpeg-static）' };
   }
 
   const spec = (manifest && manifest.spec) || {};
-  const duration = Math.max(1, Number(spec.duration) || 20);
+  const duration = Math.min(60 * 60, Math.max(1, finiteNumber(spec.duration, 20)));
   const [w, h] = resolution(spec.ratio);
-  const jobId = (manifest && manifest.jobId) || `job-${Date.now()}`;
-  const dir = outDir || path.join(os.homedir(), 'Downloads', 'lingshu-ai-exports');
+  const jobId = safeJobId(manifest && manifest.jobId);
+  const dir = path.resolve(outDir || path.join(os.homedir(), 'Downloads', 'lingshu-ai-exports'));
   fs.mkdirSync(dir, { recursive: true });
-  const outputPath = path.join(dir, `studio-${jobId}.mp4`);
+  const outputPath = path.resolve(dir, `studio-${jobId}.mp4`);
+  if (path.dirname(outputPath) !== dir) return { ok: false, error: 'invalid render output path' };
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-'));
   const downloadOptions = {
     assetOrigin: String(manifest && manifest.assetOrigin || ''),
     assetHeaders: manifest && manifest.assetHeaders && typeof manifest.assetHeaders === 'object' ? manifest.assetHeaders : {},
+    signal: runtimeOptions.signal,
+    timeoutMs: runtimeOptions.downloadTimeoutMs,
+    maxBytes: Math.max(1, finiteNumber(runtimeOptions.maxDownloadBytes, 512 * 1024 * 1024)),
   };
 
   try {
     // 1) 拉取真实素材片段与 BGM
-    const timeline = (manifest && manifest.timeline ? manifest.timeline : []).filter(t => t && t.url);
+    const rawTimeline = Array.isArray(manifest && manifest.timeline) ? manifest.timeline : [];
+    const maximumTimelineAssets = Math.max(1, Math.min(200, Math.floor(finiteNumber(runtimeOptions.maxTimelineAssets, 60))));
+    if (rawTimeline.length > maximumTimelineAssets) throw new Error(`timeline exceeds ${maximumTimelineAssets} asset limit`);
+    const requireTimelineAssets = Boolean(runtimeOptions.requireTimelineAssets || manifest && manifest.requireTimelineAssets);
+    if (requireTimelineAssets && rawTimeline.some(item => !item || (!item.url && !Buffer.isBuffer(item.bytes)))) {
+      throw new Error('required timeline asset URL or bytes missing');
+    }
+    const timeline = rawTimeline.filter(t => t && (t.url || Buffer.isBuffer(t.bytes)));
     const localClips = [];
+    const failedClips = [];
     for (let i = 0; i < timeline.length; i++) {
-      const u = timeline[i].url;
-      const ext = (u.split('?')[0].split('.').pop() || 'mp4').toLowerCase();
+      if (runtimeOptions.signal?.aborted) throw runtimeOptions.signal.reason || new Error('render aborted');
+      const u = timeline[i].url || '';
+      const declaredType = String(timeline[i].type || '').toLowerCase();
+      const dataMime = String(u).match(/^data:([^;,]+)/i)?.[1]?.toLowerCase() || '';
+      const ext = safeAssetExtension(u, declaredType);
       const dest = path.join(tmp, `clip${i}.${ext}`);
-      try { await downloadTo(u, dest, downloadOptions); localClips.push({ ...timeline[i], file: dest, image: IMAGE_RE.test(u) }); } catch { /* 跳过失败片段 */ }
+      try {
+        if (Buffer.isBuffer(timeline[i].bytes)) {
+          if (!timeline[i].bytes.length || timeline[i].bytes.length > downloadOptions.maxBytes) {
+            throw new Error('inline asset exceeds byte limit');
+          }
+          fs.writeFileSync(dest, timeline[i].bytes);
+        } else {
+          await downloadTo(u, dest, downloadOptions);
+        }
+        localClips.push({ ...timeline[i], bytes: undefined, file: dest, image: declaredType === 'image' || dataMime.startsWith('image/') || IMAGE_RE.test(u) });
+      }
+      catch (error) {
+        if (runtimeOptions.signal?.aborted) throw error;
+        failedClips.push({ index: i, error: String(error && error.message || error) });
+      }
+    }
+    if (requireTimelineAssets && failedClips.length) {
+      throw new Error(`required timeline assets failed: ${failedClips.map(item => `${item.index}:${item.error}`).join('; ').slice(0, 800)}`);
     }
 
     let bgmFile = null;
     const bgmUrl = manifest && manifest.bgm && manifest.bgm.url;
     if (bgmUrl) {
-      bgmFile = path.join(tmp, `bgm${path.extname(bgmUrl.split('?')[0]) || '.wav'}`);
+      bgmFile = path.join(tmp, `bgm.${safeAssetExtension(bgmUrl, 'audio')}`);
       try { await downloadTo(bgmUrl, bgmFile, downloadOptions); }
       catch (error) { throw new Error(`背景音乐读取失败：${error && error.message || error}`); }
     }
@@ -159,7 +277,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     let voFile = null;
     const voUrl = manifest && manifest.voiceover && manifest.voiceover.url;
     if (voUrl) {
-      voFile = path.join(tmp, `vo${path.extname(voUrl.split('?')[0]) || '.wav'}`);
+      voFile = path.join(tmp, `vo.${safeAssetExtension(voUrl, 'audio')}`);
       try { await downloadTo(voUrl, voFile, downloadOptions); }
       catch (error) { throw new Error(`口播配音读取失败：${error && error.message || error}`); }
     }
@@ -251,27 +369,42 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     return await new Promise(resolve => {
       // stdin 忽略（双保险防挂起）、stdout 忽略、只读 stderr 解析进度
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const abortRender = () => proc.kill('SIGKILL');
+      if (runtimeOptions.signal) {
+        if (runtimeOptions.signal.aborted) abortRender();
+        else runtimeOptions.signal.addEventListener('abort', abortRender, { once: true });
+      }
       let stderr = '';
+      let settled = false;
+      let timedOut = false;
       const maxRenderMs = Math.max(120_000, duration * 15_000);
-      const killTimer = setTimeout(() => proc.kill('SIGKILL'), maxRenderMs);
+      const killTimer = setTimeout(() => { timedOut = true; proc.kill('SIGKILL'); }, maxRenderMs);
+      const finish = result => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(killTimer);
+        runtimeOptions.signal?.removeEventListener('abort', abortRender);
+        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
+        resolve(result);
+      };
       proc.stderr.on('data', chunk => {
         const s = chunk.toString();
-        stderr += s;
+        stderr = (stderr + s).slice(-64 * 1024);
         const m = s.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
         if (m) {
           const secs = (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]);
           onProgress(Math.min(99, (secs / duration) * 100));
         }
       });
-      proc.on('error', err => resolve({ ok: false, error: String(err) }));
+      proc.on('error', err => finish({ ok: false, error: String(err) }));
       proc.on('close', code => {
-        clearTimeout(killTimer);
-        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
-        if (code === 0) {
+        if (runtimeOptions.signal?.aborted) {
+          finish({ ok: false, error: String(runtimeOptions.signal.reason && runtimeOptions.signal.reason.message || runtimeOptions.signal.reason || 'render aborted') });
+        } else if (code === 0) {
           onProgress(100);
-          resolve({ ok: true, outputPath });
+          finish({ ok: true, outputPath });
         } else {
-          resolve({ ok: false, error: code === null ? 'ffmpeg 合成超时，请缩短素材或重试' : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
+          finish({ ok: false, error: timedOut || code === null ? 'ffmpeg 合成超时，请缩短素材或重试' : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
         }
       });
     });
@@ -281,4 +414,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath };
+module.exports = { composite, resolution, ffmpegPath, downloadTo, safeJobId, safeAssetExtension };

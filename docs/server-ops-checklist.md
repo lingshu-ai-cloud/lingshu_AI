@@ -31,9 +31,9 @@ R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=overseas-assets
 R2_PUBLIC_URL=
-R2_BACKUP_PREFIX=lingshu-backups
-R2_BACKUP_LOCAL_RETENTION_DAYS=7
 ```
+
+R2 这里只承载业务素材。生产灾备必须使用 `scripts/backup-production-data.sh` 生成一致、加密的 `.age` 包，再将密文和 manifest 复制到独立私有备份桶；禁止上传客户/消息明文 JSON。
 
 短期止血清理命令：
 
@@ -100,7 +100,7 @@ free -h
 - 配磁盘告警：磁盘使用率 >85%。
 - 配 CPU 告警：CPU 连续 5 分钟 >70%。
 - 配公网流量告警。
-- 配外部拨测：UptimeRobot 免费版，5 分钟探测一次 `https://lingshu.site/api/overseas/health`，微信/邮件告警。
+- 配外部拨测：存活探测使用 `https://lingshu.site/api/overseas/livez`；生产流量与内部监控必须使用 `/api/overseas/readyz`，连续 503 立即告警。
 
 ## 6. 建议每周巡检
 

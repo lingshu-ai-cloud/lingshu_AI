@@ -46,7 +46,7 @@ assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen
 assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
 assert.match(assistantUi, /setAssistantTool\(null\); setPanelView\('chat'\); setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
 assert.match(assistantUi, /ASSISTANT_AUTO_RETRACT_MS = 5_000/, 'the conversation launcher must automatically retract after a short delay');
-assert.match(assistantUi, /const dockOnLeft = false/, 'all pages must share the same right-side assistant position');
+assert.match(assistantUi, /const dockOnLeft = assistantPosition \? assistantPosition\.x < viewport\.width \/ 2 : false/, 'assistant must default to the shared right-side position while preserving an explicit dragged position');
 assert.match(assistantUi, /const launcherAtEdge = mode === 'breathing' && launcherRetracted/, 'all pages must share the same auto-retract behavior');
 assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 assert.match(assistantUi, /data-global-assistant="edge-launcher"[\s\S]*?aria-label="唤出灵小枢智能助手"/, 'the retracted assistant must leave an accessible edge launcher');
@@ -104,7 +104,19 @@ const publicPlatformApp = tenantPlatformApps.slice(
 );
 assert.doesNotMatch(publicPlatformApp, /\bappSecret\s*:/, 'customer-facing platform app data must not expose plaintext app secrets');
 const adminRoutes = read('server/routes/admin.ts');
-assert.match(adminRoutes, /function adminTenantPlatformApp[\s\S]*?appSecret:\s*decryptSecret\(app\.app_secret\)/, 'admin delivery responses should expose decrypted app secrets for administrator verification');
+const adminPlatformSerializer = adminRoutes.slice(
+  adminRoutes.indexOf('function adminTenantPlatformApp'),
+  adminRoutes.indexOf('function publicDeliveryTenant'),
+);
+assert.match(adminPlatformSerializer, /publicTenantPlatformApp\(req, app\)/, 'admin delivery responses must use the same write-only serializer as tenants');
+assert.doesNotMatch(adminPlatformSerializer, /decrypt|app_secret|access_token|appSecret\s*:/, 'admin delivery responses must never decrypt or return platform credentials');
+const publicOAuthSerializer = adminRoutes.slice(
+  adminRoutes.indexOf('function publicOAuthConfig'),
+  adminRoutes.indexOf("adminRouter.get('/demo-accounts'"),
+);
+const publicOAuthValues = publicOAuthSerializer.slice(publicOAuthSerializer.indexOf('values:'), publicOAuthSerializer.indexOf('secretSet:'));
+assert.doesNotMatch(publicOAuthValues, /(youtubeOAuthClientSecret|metaSocialAppSecret|tiktokClientSecret)\s*:/, 'global OAuth responses must not return client secrets');
+assert.match(publicOAuthSerializer, /secretSet:[\s\S]*?secretMask:/, 'global OAuth responses may return only configured flags and fixed masks');
 assert.match(adminRoutes, /\['meta', 'google', 'tiktok', 'wecom'\]/, 'admin delivery cards must include TikTok for every tenant');
 assert.match(adminRoutes, /kind === 'tiktok'[\s\S]*?tiktok_test_passed/, 'admin delivery must provide a TikTok credential check');
 for (const route of ["'/oauth-config'", "'/delivery/platform-apps'"]) {
@@ -181,6 +193,16 @@ const serverIndex = read('server/index.ts');
 for (const prefix of ['media', 'bgm', 'tts', 'voice-samples', 'covers']) {
   assert.match(serverIndex, new RegExp(`app\\.use\\('/${prefix}', requireScopedAsset`), `${prefix} assets must use scoped access`);
 }
+
+const webhookRoutes = read('server/routes/webhooks.ts');
+assert.doesNotMatch(webhookRoutes, /console\.(?:log|info|warn|error)\([^\n]*req\.body/, 'webhook logs must not contain raw business payloads');
+assert.match(webhookRoutes, /if \(!Buffer\.isBuffer\(rawBody\)\)[\s\S]*?status\(400\)/, 'Meta signature verification must fail closed when exact request bytes are unavailable');
+assert.match(webhookRoutes, /post\('\/wecom\/:tenantId'[\s\S]*?status\(501\)/, 'unimplemented encrypted WeCom event ingest must fail closed');
+assert.match(
+  read('server/routes/digitalEmployees.ts'),
+  /listAllRecords<PostRecord>\(\{ store, collection: 'posts',[\s\S]*?tenant_id: tenantId/,
+  'digital employee work items must not hide old unresolved publishing holds behind a 500-record page',
+);
 
 const scheduler = read('server/routes/scheduler.ts');
 assert.match(scheduler, /findIndex\(t => t\.id === req\.params\.id && t\.tenantId === tenantId\)/, 'scheduled task updates must check tenant ownership');

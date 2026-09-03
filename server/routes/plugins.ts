@@ -4,9 +4,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { testShopify } from '../integrations/shopify.js';
 import { callLLM } from '../agents/llm.js';
+import type { AuthLocals } from '../middleware/auth.js';
+import { randomUUID } from 'node:crypto';
+import { decryptCredential, encryptCredential, isCredentialEnvelope } from '../security/credentialEnvelope.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(__dirname, '../../data/plugins.json');
+const DATA_ROOT = path.join(__dirname, '../../data/plugin-configs/tenants');
 
 export interface Plugin {
   id: string;
@@ -19,6 +22,11 @@ export interface Plugin {
   status: 'installed' | 'not_installed' | 'error';
   config: Record<string, string>;
   installedAt?: string;
+}
+
+interface StoredPlugin extends Omit<Plugin, 'config'> {
+  configCipher: string;
+  configKeys: string[];
 }
 
 const PLUGIN_CATALOG: Omit<Plugin, 'status' | 'config' | 'installedAt'>[] = [
@@ -40,66 +48,129 @@ async function fetchExchangeRates() {
   return { ...data, rates: data.rates, source: 'live' as const };
 }
 
-function load(): Plugin[] {
-  try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
-}
-function save(plugins: Plugin[]) {
-  fs.writeFileSync(DATA, JSON.stringify(plugins, null, 2));
+export function pluginTenantConfigFile(tenantId: string): string {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(tenantId)) throw new Error('invalid_tenant_id');
+  return path.join(DATA_ROOT, `${tenantId}.json`);
 }
 
-function mergeWithCatalog(installed: Plugin[]): (Plugin & { installed: boolean })[] {
+function pluginCredentialContext(tenantId: string, pluginKey: string) {
+  return { scope: 'plugin_config' as const, tenantId, recordId: pluginKey, platform: pluginKey, field: 'configCipher' };
+}
+
+function decodeConfig(tenantId: string, record: StoredPlugin): Record<string, string> {
+  const decrypted = decryptCredential(record.configCipher, pluginCredentialContext(tenantId, record.pluginKey));
+  if (!decrypted.ok) return {};
+  try {
+    const parsed = JSON.parse(decrypted.value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>)
+      .filter(([key, value]) => /^[a-zA-Z0-9_.-]{1,100}$/.test(key) && typeof value === 'string')
+      .map(([key, value]) => [key, String(value).slice(0, 20_000)]));
+  } catch { return {}; }
+}
+
+function load(tenantId: string): Plugin[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(pluginTenantConfigFile(tenantId), 'utf8')) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const record = value as StoredPlugin;
+      if (!record.id || !record.pluginKey || !isCredentialEnvelope(record.configCipher)) return [];
+      const { configCipher: _configCipher, configKeys: _configKeys, ...plugin } = record;
+      return [{ ...plugin, config: decodeConfig(tenantId, record) } as Plugin];
+    });
+  } catch { return []; }
+}
+
+function save(tenantId: string, plugins: Plugin[]) {
+  const file = pluginTenantConfigFile(tenantId);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const stored: StoredPlugin[] = plugins.map(({ config, ...plugin }) => ({
+    ...plugin,
+    configCipher: encryptCredential(JSON.stringify(config), pluginCredentialContext(tenantId, plugin.pluginKey)),
+    configKeys: Object.keys(config).sort(),
+  }));
+  const temporary = `${file}.${process.pid}-${randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(stored, null, 2), { mode: 0o600, flag: 'wx' });
+  fs.renameSync(temporary, file);
+  fs.chmodSync(file, 0o600);
+}
+
+export function pluginPublicView(plugin: Plugin): Plugin & { configuredFields: string[] } {
+  const configuredFields = Object.keys(plugin.config).sort();
+  return { ...plugin, config: Object.fromEntries(configuredFields.map(key => [key, ''])), configuredFields };
+}
+
+function mergeWithCatalog(installed: Plugin[]): Array<Plugin & { installed: boolean; configuredFields?: string[] }> {
   return PLUGIN_CATALOG.map(cat => {
     const inst = installed.find(p => p.pluginKey === cat.pluginKey);
     return inst
-      ? { ...inst, installed: true }
+      ? { ...pluginPublicView(inst), installed: true }
       : { ...cat, status: 'not_installed' as const, config: {}, installed: false };
   });
 }
 
 export const pluginsRouter = Router();
 
-pluginsRouter.get('/', (_req, res) => res.json(mergeWithCatalog(load())));
+pluginsRouter.get('/', (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  res.json(mergeWithCatalog(load(tenantId)));
+});
 
 pluginsRouter.post('/:key/install', (req: Request, res: Response) => {
-  const plugins = load();
+  const { tenantId } = res.locals as AuthLocals;
+  const plugins = load(tenantId);
   const cat = PLUGIN_CATALOG.find(p => p.pluginKey === req.params.key);
   if (!cat) { res.status(404).json({ error: 'unknown plugin' }); return; }
   if (plugins.find(p => p.pluginKey === req.params.key)) { res.status(409).json({ error: 'already installed' }); return; }
   const plugin: Plugin = { ...cat, status: 'installed', config: {}, installedAt: new Date().toISOString() };
   plugins.push(plugin);
-  save(plugins);
-  res.json(plugin);
+  save(tenantId, plugins);
+  res.json(pluginPublicView(plugin));
 });
 
 pluginsRouter.put('/:key/config', (req: Request, res: Response) => {
-  const plugins = load();
+  const { tenantId } = res.locals as AuthLocals;
+  const plugins = load(tenantId);
   const idx = plugins.findIndex(p => p.pluginKey === req.params.key);
   if (idx === -1) { res.status(404).json({ error: 'not installed' }); return; }
-  plugins[idx].config = { ...plugins[idx].config, ...req.body };
-  save(plugins);
-  res.json(plugins[idx]);
+  const patch = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+  const config = { ...plugins[idx].config };
+  for (const [key, value] of Object.entries(patch)) {
+    if (!/^[a-zA-Z0-9_.-]{1,100}$/.test(key) || ['__proto__', 'prototype', 'constructor'].includes(key)) continue;
+    if (value === null) { delete config[key]; continue; }
+    if (typeof value !== 'string' || !value.trim()) continue;
+    if (value.length > 20_000) { res.status(413).json({ error: 'plugin_config_value_too_large' }); return; }
+    config[key] = value.trim();
+  }
+  plugins[idx].config = config;
+  save(tenantId, plugins);
+  res.json(pluginPublicView(plugins[idx]));
 });
 
 pluginsRouter.delete('/:key', (req: Request, res: Response) => {
-  save(load().filter(p => p.pluginKey !== req.params.key));
+  const { tenantId } = res.locals as AuthLocals;
+  save(tenantId, load(tenantId).filter(p => p.pluginKey !== req.params.key));
   res.json({ ok: true });
 });
 
 pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
-  const plugin = load().find(p => p.pluginKey === req.params.key);
+  const { tenantId } = res.locals as AuthLocals;
+  const plugin = load(tenantId).find(p => p.pluginKey === req.params.key);
   if (!plugin) { res.status(404).json({ error: 'not installed' }); return; }
 
   try {
     switch (plugin.pluginKey) {
       case 'shopify': {
         const result = await testShopify(plugin.config as any);
-        updateStatus(plugin.id, result.ok ? 'installed' : 'error');
+        updateStatus(tenantId, plugin.id, result.ok ? 'installed' : 'error');
         res.json(result);
         break;
       }
       case 'exchangerate': {
         const data = await fetchExchangeRates();
-        updateStatus(plugin.id, 'installed');
+        updateStatus(tenantId, plugin.id, 'installed');
         res.json({
           ok: true,
           source: data.source,
@@ -110,7 +181,7 @@ pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
       }
       case 'translate':
         await callLLM('Reply with OK only.', { backend: 'qwen', systemPrompt: 'This is a connectivity check.' });
-        updateStatus(plugin.id, 'installed');
+        updateStatus(tenantId, plugin.id, 'installed');
         res.json({ ok: true, source: 'qwen', message: '千问翻译引擎连接成功' });
         break;
       case 'google_translate': {
@@ -120,7 +191,7 @@ pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q: 'hello', target: 'zh' }),
         });
         if (!response.ok) throw new Error(`Google Translate API ${response.status}`);
-        updateStatus(plugin.id, 'installed');
+        updateStatus(tenantId, plugin.id, 'installed');
         res.json({ ok: true, source: 'google', message: 'Google 翻译连接成功' });
         break;
       }
@@ -128,15 +199,15 @@ pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
         res.json({ ok: false, message: '该插件需要配置 API Key 后测试' });
     }
   } catch (err: any) {
-    updateStatus(plugin.id, 'error');
+    updateStatus(tenantId, plugin.id, 'error');
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-function updateStatus(id: string, status: Plugin['status']) {
-  const plugins = load();
+function updateStatus(tenantId: string, id: string, status: Plugin['status']) {
+  const plugins = load(tenantId);
   const idx = plugins.findIndex(p => p.id === id);
-  if (idx !== -1) { plugins[idx].status = status; save(plugins); }
+  if (idx !== -1) { plugins[idx].status = status; save(tenantId, plugins); }
 }
 
 // Exchange rate shortcut

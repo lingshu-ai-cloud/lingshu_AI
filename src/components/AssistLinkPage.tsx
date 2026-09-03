@@ -2,23 +2,28 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
 
 interface AssistLinkStatus {
-  token: string;
-  tenantId: string;
   platform: 'meta' | 'google' | 'tiktok';
   platformName: string;
   expiresAt: string;
   usedAt: string;
+  status: 'pending' | 'claimed' | 'consumed' | 'revoked';
   valid: boolean;
+  canStart: boolean;
 }
 
 function tokenFromPath() {
   const match = window.location.pathname.match(/^\/assist\/([^/?#]+)/);
-  return match ? decodeURIComponent(match[1]) : '';
+  const pathToken = match?.[1] && match[1] !== 'status' ? decodeURIComponent(match[1]) : '';
+  if (pathToken) return pathToken;
+  try {
+    return window.sessionStorage.getItem('lingshu.assist-link-token') || '';
+  } catch {
+    return '';
+  }
 }
 
 export default function AssistLinkPage() {
   const token = useMemo(() => tokenFromPath(), []);
-  const done = new URLSearchParams(window.location.search).get('done') === '1';
   const [status, setStatus] = useState<AssistLinkStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -30,13 +35,15 @@ export default function AssistLinkPage() {
       setLoading(true);
       setError('');
       try {
-        if (done && token) {
-          await fetch(`/api/assist-links/${encodeURIComponent(token)}/complete`, { method: 'POST' }).catch(() => {});
-        }
         const resp = await fetch(`/api/assist-links/${encodeURIComponent(token)}`);
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || 'invalid');
-        if (alive) setStatus(data);
+        if (alive) {
+          setStatus(data);
+          if (data.status === 'consumed') {
+            try { window.sessionStorage.removeItem('lingshu.assist-link-token'); } catch { /* unavailable */ }
+          }
+        }
       } catch {
         if (alive) setError('invalid');
       } finally {
@@ -45,12 +52,13 @@ export default function AssistLinkPage() {
     }
     void load();
     return () => { alive = false; };
-  }, [done, token]);
+  }, [token]);
 
   async function start() {
     setStarting(true);
     setError('');
     try {
+      try { window.sessionStorage.setItem('lingshu.assist-link-token', token); } catch { /* unavailable */ }
       const resp = await fetch(`/api/assist-links/${encodeURIComponent(token)}/start`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.url) throw new Error(data.error || 'start_failed');
@@ -61,8 +69,9 @@ export default function AssistLinkPage() {
     }
   }
 
-  const invalid = !token || error === 'invalid' || (status && !status.valid && !done);
-  const complete = done || Boolean(status?.usedAt);
+  const invalid = !token || error === 'invalid' || Boolean(status && !status.valid);
+  const complete = status?.status === 'consumed' && Boolean(status.usedAt);
+  const inProgress = status?.status === 'claimed' && !status.canStart;
 
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-950">
@@ -93,7 +102,9 @@ export default function AssistLinkPage() {
             <>
               <h1 className="mt-6 text-2xl font-black">授权连接你的 {status.platformName}</h1>
               <p className="mt-3 text-sm leading-6 text-slate-500">
-                这是灵枢顾问为你生成的一次性协助链接。点击下方按钮后，按平台提示确认授权即可。
+                {inProgress
+                  ? '授权流程正在进行中。完成平台授权后，此页面会显示连接结果。'
+                  : '这是灵枢顾问为你生成的一次性协助链接。点击下方按钮后，按平台提示确认授权即可。'}
               </p>
               {error === 'start_failed' && (
                 <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
@@ -103,11 +114,11 @@ export default function AssistLinkPage() {
               <button
                 type="button"
                 onClick={() => void start()}
-                disabled={starting}
+                disabled={starting || !status.canStart}
                 className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:opacity-60"
               >
                 {starting && <Loader2 size={16} className="animate-spin" />}
-                授权连接你的 {status.platformName}
+                {inProgress ? '等待授权完成' : `授权连接你的 ${status.platformName}`}
               </button>
               <p className="mt-4 text-xs text-slate-400">
                 链接 24 小时内有效，授权完成后会自动失效。

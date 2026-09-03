@@ -41,7 +41,8 @@ try {
   assert.equal(before.find(item => item.id === 'wa_tenant_a_12025550123')?.countryName, '未知');
   assert.equal(before.find(item => item.id === 'wa_tenant_a_12025550123')?.source, 'whatsapp');
 
-  const updated = patchWhatsAppCustomer({
+  const persist = async () => undefined;
+  const updated = await patchWhatsAppCustomer({
     tenantId: 'tenant_a',
     customerId: 'wa_tenant_a_971500000001',
     patch: {
@@ -49,7 +50,7 @@ try {
       pendingDraft: 'Let me confirm the exact lead time for you.',
       orders: [{ id: 'QA-001', total: 'US $120.00', status: 'paid', createdAt: '2026-07-30' }],
     },
-  });
+  }, { persist });
   assert.ok(updated);
   const after = getWhatsAppCustomers('tenant_a').find(item => item.id === 'wa_tenant_a_971500000001');
   assert.equal(after.language, '西语');
@@ -59,10 +60,10 @@ try {
   assert.equal(after.pendingDraft, 'Let me confirm the exact lead time for you.');
   assert.deepEqual(after.orders.map((item: any) => item.id), ['QA-001']);
 
-  patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_a_971500000001', patch: { pendingDraft: null } });
+  await patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_a_971500000001', patch: { pendingDraft: null } }, { persist });
   assert.equal(getWhatsAppCustomers('tenant_a').find(item => item.id === 'wa_tenant_a_971500000001')?.pendingDraft, undefined);
 
-  assert.equal(patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_b_971500000002', patch: { language: '法语' } }), null);
+  assert.equal(await patchWhatsAppCustomer({ tenantId: 'tenant_a', customerId: 'wa_tenant_b_971500000002', patch: { language: '法语' } }, { persist }), null);
   assert.equal(getWhatsAppCustomers('tenant_b')[0]?.language, '英语');
   console.log('WhatsApp customer profile persistence passed');
 } finally {

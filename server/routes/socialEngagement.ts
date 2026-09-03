@@ -2,9 +2,20 @@ import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
 import { guardOutbound } from '../autonomy/outboundGuard.js';
 import { getFacebookComments, getFacebookVideos, getInstagramComments, getInstagramMedia, replyToFacebookComment, replyToInstagramComment } from '../integrations/social.js';
-import { getMyVideoComments, replyToYouTubeComment, type YouTubeConfig } from '../integrations/youtube.js';
+import { getMyVideoComments, replyToYouTubeComment } from '../integrations/youtube.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { socialAccountCredentials, youtubeAccountCredentials } from '../security/platformCredentials.js';
+import { listAllRecords } from '../storage/pagination.js';
+import { safeProviderError } from '../security/providerError.js';
+import {
+  beginOutboundOperation,
+  completeOutboundOperation,
+  markOutboundOperationFailed,
+  markOutboundOperationNeedsReconciliation,
+  outboundPayloadHash,
+  resolveOutboundIdempotencyKey,
+} from '../security/outboundOperations.js';
 
 export const socialEngagementRouter = Router();
 socialEngagementRouter.use(requireAuth);
@@ -14,6 +25,7 @@ type Status = 'pending' | 'following' | 'converted' | 'ignored' | 'replied';
 type StoredTranslation = { text: string; sourceLanguage?: string; targetLanguage: 'zh'; sourceText: string };
 type StoredState = { id: string; tenantId: string; key: string; status: Status; analysis?: unknown; repliedAt?: string; replyId?: string; updatedAt: string };
 const STATE_COL = 'social_comment_states';
+const REPLY_OPERATION_COL = 'social_reply_operations';
 
 function graphVersion() { return process.env.META_GRAPH_VERSION?.trim() || 'v25.0'; }
 function cleanJson(raw: string) { return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''); }
@@ -72,15 +84,59 @@ async function analyze(text: string, platform: string, contentTitle = '') {
   } catch { return heuristic(text); }
 }
 
-async function states(tenantId: string) {
-  try { return (await store.list<StoredState>(STATE_COL, { where: { tenantId }, perPage: 500 })).items; } catch { return []; }
+export async function readSocialCommentStates(
+  tenantId: string,
+  dependencies: {
+    load?: () => Promise<StoredState[]>;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+) {
+  try {
+    if (dependencies.load) return await dependencies.load();
+    return await listAllRecords<StoredState & Record<string, unknown>>({
+      store,
+      collection: STATE_COL,
+      query: { where: { tenantId }, sort: '-updatedAt' },
+      pageSize: 500,
+      maxRecords: 50_000,
+    });
+  } catch (error) {
+    if ((dependencies.env ?? process.env).NODE_ENV === 'production') throw error;
+    return [];
+  }
 }
 
+const states = readSocialCommentStates;
+
 async function saveState(tenantId: string, stateKey: string, patch: Partial<StoredState>) {
-  const found = (await states(tenantId)).find(item => item.key === stateKey);
-  const data = { tenantId, key: stateKey, status: patch.status || found?.status || 'pending', analysis: patch.analysis ?? found?.analysis, repliedAt: patch.repliedAt ?? found?.repliedAt, replyId: patch.replyId ?? found?.replyId, updatedAt: new Date().toISOString() };
-  if (found) { await store.update(STATE_COL, found.id, data); return { ...found, ...data }; }
-  return await store.create<StoredState>(STATE_COL, data);
+  const initial = await store.createIfAbsent<StoredState & { revision?: number }>(STATE_COL, {
+    tenantId,
+    key: stateKey,
+  }, {
+    status: 'pending',
+    analysis: {},
+    repliedAt: '',
+    replyId: '',
+    updatedAt: new Date().toISOString(),
+    revision: 0,
+  });
+  let current = initial.record;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const revision = Number(current.revision || 0);
+    const data = {
+      status: patch.status || current.status || 'pending',
+      analysis: patch.analysis ?? current.analysis,
+      repliedAt: patch.repliedAt ?? current.repliedAt,
+      replyId: patch.replyId ?? current.replyId,
+      updatedAt: new Date().toISOString(),
+      revision: revision + 1,
+    };
+    const updated = await store.compareAndSet<StoredState & { revision?: number }>(STATE_COL, current.id, { revision }, data);
+    if (updated.ok) return updated.record;
+    if (!updated.current) break;
+    current = updated.current;
+  }
+  throw new Error('social_comment_state_write_conflict');
 }
 
 socialEngagementRouter.get('/comments', async (_req, res) => {
@@ -94,7 +150,8 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
   accounts.push(...ytAccounts.map((account: any) => ({ id: account.id, platform: 'youtube' as const, title: account.channelTitle || 'YouTube', handle: account.customUrl, status: account.status })));
   for (const account of ytAccounts.filter((item: any) => item.status === 'connected')) {
     try {
-      const config: YouTubeConfig = { clientId: account.clientId, clientSecret: account.clientSecret, refreshToken: account.refreshToken, accessToken: account.accessToken };
+      const credentials = await youtubeAccountCredentials(account);
+      const config = { clientId: account.clientId, ...credentials };
       const comments = await getMyVideoComments(config, 100, account.channelId);
       for (const comment of comments) {
         const stateKey = key('youtube', account.id, comment.id); const state = savedByKey.get(stateKey);
@@ -108,13 +165,14 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
   for (const account of socialAccounts.filter((item: any) => item.status === 'connected')) {
     if (account.platform === 'tiktok') { unavailable.push({ platform: 'tiktok', reason: 'TikTok 评论 API 权限尚未开放' }); continue; }
     try {
+      const { accessToken } = await socialAccountCredentials(account);
       const content = account.platform === 'facebook'
-        ? await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), 12)
-        : await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), 12);
+        ? await getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), 12)
+        : await getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), 12);
       for (const post of content) {
         const comments = account.platform === 'facebook'
-          ? await getFacebookComments(post.id, account.accessToken, graphVersion(), 30)
-          : await getInstagramComments(post.id, account.accessToken, graphVersion(), 30);
+          ? await getFacebookComments(post.id, accessToken, graphVersion(), 30)
+          : await getInstagramComments(post.id, accessToken, graphVersion(), 30);
         for (const comment of comments) {
           const stateKey = key(account.platform, account.id, comment.id); const state = savedByKey.get(stateKey);
           const translation = stateTranslation(state);
@@ -198,27 +256,90 @@ socialEngagementRouter.post('/comments/reply', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const platform = String(req.body?.platform || '') as Platform; const accountId = String(req.body?.accountId || ''); const commentId = String(req.body?.commentId || ''); const message = String(req.body?.message || '').trim();
   if (!accountId || !commentId || !message) { res.status(400).json({ error: 'reply_fields_required' }); return; }
+  if (!['youtube', 'facebook', 'instagram'].includes(platform)) { res.status(501).json({ error: 'platform_reply_unavailable', message: 'TikTok 评论回复需额外平台权限。' }); return; }
   const guard = await guardOutbound(message, { tenantId, action: 'social_comment_reply' });
   if (!guard.allowed) { res.status(409).json({ error: 'human_review_required', message: '回复涉及价格、交期或承诺，请人工修改后再发送。', rule: guard.matchedRule }); return; }
-  try {
-    let result: { id: string };
-    if (platform === 'youtube') {
+  let sendReply: () => Promise<{ id: string }>;
+  if (platform === 'youtube') {
     const account = await store.getById<any>('youtube_accounts', accountId);
     if (!account || account.tenantId !== tenantId) { res.status(404).json({ error: 'account_not_found' }); return; }
-    result = await replyToYouTubeComment({ clientId: account.clientId, clientSecret: account.clientSecret, refreshToken: account.refreshToken, accessToken: account.accessToken }, commentId, message);
-    } else if (platform === 'facebook' || platform === 'instagram') {
+    const credentials = await youtubeAccountCredentials(account);
+    sendReply = () => replyToYouTubeComment({ clientId: account.clientId, ...credentials }, commentId, message);
+  } else {
     const account = await store.getById<any>('social_accounts', accountId);
     if (!account || account.tenantId !== tenantId || account.platform !== platform) { res.status(404).json({ error: 'account_not_found' }); return; }
-    result = platform === 'facebook'
-      ? await replyToFacebookComment(commentId, account.accessToken, graphVersion(), message)
-      : await replyToInstagramComment(commentId, account.accessToken, graphVersion(), message);
-    } else { res.status(501).json({ error: 'platform_reply_unavailable', message: 'TikTok 评论回复需额外平台权限。' }); return; }
+    const { accessToken } = await socialAccountCredentials(account);
+    sendReply = () => platform === 'facebook'
+      ? replyToFacebookComment(commentId, accessToken, graphVersion(), message)
+      : replyToInstagramComment(commentId, accessToken, graphVersion(), message);
+  }
+
+  const payloadHash = outboundPayloadHash({ platform, accountId, commentId, message });
+  let idempotencyKey: string;
+  try {
+    idempotencyKey = resolveOutboundIdempotencyKey({
+      supplied: req.get('Idempotency-Key') || req.body?.idempotencyKey,
+      operationType: 'social_comment_reply',
+      tenantId,
+      targetId: `${platform}:${accountId}:${commentId}`,
+      payloadHash,
+    });
+  } catch {
+    res.status(400).json({ error: 'idempotency_key_invalid' });
+    return;
+  }
+  const begun = await beginOutboundOperation({
+    collection: REPLY_OPERATION_COL,
+    tenantId,
+    idempotencyKey,
+    operationType: 'social_comment_reply',
+    targetId: `${platform}:${accountId}:${commentId}`,
+    payloadHash,
+  });
+  if (begun.ok && begun.state === 'completed') {
+    const result = begun.operation.result && typeof begun.operation.result === 'object'
+      ? begun.operation.result as { replyId?: unknown }
+      : {};
+    res.json({ ok: true, replyId: String(result.replyId || ''), status: 'replied', idempotencyKey, replayed: true });
+    return;
+  }
+  if (!begun.ok) {
+    const status = begun.reason === 'needs_reconciliation' ? 202 : 409;
+    res.status(status).json({
+      error: begun.reason === 'payload_conflict' ? 'idempotency_key_conflict' : `social_reply_${begun.reason}`,
+      status: begun.reason,
+      idempotencyKey,
+    });
+    return;
+  }
+
+  try {
+    const result = await sendReply();
+    const completed = await completeOutboundOperation({
+      collection: REPLY_OPERATION_COL,
+      operation: begun.operation,
+      providerMessageIds: result.id ? [result.id] : [],
+      result: { replyId: result.id },
+    });
+    if (!completed) {
+      res.status(202).json({ error: 'social_reply_persistence_reconciliation_required', status: 'needs_reconciliation', idempotencyKey });
+      return;
+    }
     const stateKey = key(platform, accountId, commentId);
-    await saveState(tenantId, stateKey, { status: 'replied', repliedAt: new Date().toISOString(), replyId: result.id });
-    res.json({ ok: true, replyId: result.id, status: 'replied' });
-  } catch (error: any) {
-    const detail = error?.response?.data?.error?.message || error?.response?.data?.error || error?.message || '平台回复失败';
-    res.status(error?.response?.status || 502).json({ error: 'platform_reply_failed', message: String(detail) });
+    await saveState(tenantId, stateKey, { status: 'replied', repliedAt: new Date().toISOString(), replyId: result.id }).catch(error => {
+      console.error('[social-reply:state-sync-failed]', safeProviderError(error));
+    });
+    res.json({ ok: true, replyId: result.id, status: 'replied', idempotencyKey });
+  } catch (error: unknown) {
+    const safe = safeProviderError(error);
+    const definite = safe.status !== null && safe.status >= 400 && safe.status < 500 && ![408, 425, 429].includes(safe.status);
+    if (definite) {
+      await markOutboundOperationFailed({ collection: REPLY_OPERATION_COL, operation: begun.operation, errorCode: safe.code || `http_${safe.status}` }).catch(() => null);
+      res.status(502).json({ error: 'platform_reply_failed', message: '平台拒绝了本次回复，请检查账号权限或评论状态。', idempotencyKey });
+      return;
+    }
+    await markOutboundOperationNeedsReconciliation({ collection: REPLY_OPERATION_COL, operation: begun.operation, errorCode: safe.code || 'provider_outcome_unknown' }).catch(() => null);
+    res.status(202).json({ error: 'platform_reply_reconciliation_required', status: 'needs_reconciliation', idempotencyKey });
   }
 });
 

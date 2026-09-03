@@ -3,6 +3,7 @@
 node_modules
 dist
 backups
+restore
 pb_data
 pocketbase
 pocketbase.exe
@@ -17,20 +18,11 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Demo inspiration videos are committed under data/media and must be present in
-# the CloudBase Run image for /media/* preview URLs to work.
-data/bgm
-data/tts
-data/covers
-data/analysis-temp
-data/logs
-data/renders
-data/demo-usage.json
-data/crawler-ops-queue.json
-data/apify-video-usage.json
+# Runtime data can contain tenant media, drafts, tokens, and local fallback
+# records. It must never enter an image layer; production mounts /app/data from
+# an explicitly named volume.
+data
 
 *.bak.*
 *.tmp
 *.log
-*.gif
-*.png

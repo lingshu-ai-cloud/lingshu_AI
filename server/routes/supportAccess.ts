@@ -5,6 +5,7 @@ import {
   supportAccessDefaultAuthorized,
 } from '../lib/supportAccess.js';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { requireOrganizationAdmin } from './organizationAdminAccess.js';
 
 export const supportAccessRouter = Router();
 
@@ -20,7 +21,7 @@ supportAccessRouter.get('/settings', async (_req, res) => {
   res.json({ defaultAuthorized: supportAccessDefaultAuthorized(tenantId) });
 });
 
-supportAccessRouter.put('/settings', async (req, res) => {
+supportAccessRouter.put('/settings', requireOrganizationAdmin, async (req, res) => {
   const { tenantId, userId, supportAccess } = res.locals as AuthLocals;
   if (supportAccess) {
     res.status(403).json({ error: 'support_session_cannot_change_authorization' });

@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p backups
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT_DIR"
 
-echo "==> Backing up PocketBase data"
-docker compose --env-file .env.production stop pocketbase
-docker compose --env-file .env.production run --rm --no-deps pocketbase tar czf - -C /pb/pb_data . > "backups/pb_data_$(date +%F_%H%M%S).tar.gz"
-docker compose --env-file .env.production start pocketbase
+COMPOSE_ENV_FILE="${COMPOSE_ENV_FILE:-$ROOT_DIR/.env.production}"
+[[ "$COMPOSE_ENV_FILE" == /* ]] || COMPOSE_ENV_FILE="$ROOT_DIR/$COMPOSE_ENV_FILE"
+env_parent="$(dirname "$COMPOSE_ENV_FILE")"
+[[ -d "$env_parent" ]] || { echo "Compose env parent does not exist: $env_parent" >&2; exit 1; }
+COMPOSE_ENV_FILE="$(cd "$env_parent" && pwd -P)/$(basename "$COMPOSE_ENV_FILE")"
+[[ -f "$COMPOSE_ENV_FILE" && -r "$COMPOSE_ENV_FILE" && ! -L "$COMPOSE_ENV_FILE" ]] \
+  || { echo "Compose env file must be a readable regular non-symlink: $COMPOSE_ENV_FILE" >&2; exit 1; }
+[[ -n "${AGE_RECIPIENT:-}" ]] || {
+  echo "AGE_RECIPIENT is required; plaintext legacy backups are disabled." >&2
+  echo "Usage: AGE_RECIPIENT='age1...' BACKUP_DIR=/secure/lingshu-backups bash deploy/backup.sh" >&2
+  exit 1
+}
 
-echo "==> Backing up app data folder"
-tar czf "backups/app_data_$(date +%F_%H%M%S).tar.gz" data
-
-echo "Backup finished. Files are in ./backups"
+export COMPOSE_ENV_FILE
+exec "$ROOT_DIR/scripts/backup-production-data.sh"

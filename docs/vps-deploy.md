@@ -1,260 +1,132 @@
-# 单台 Ubuntu 服务器部署说明
+# 单机 Ubuntu 生产部署指南
 
-这份文档适合 Linux 小白照着做。目标是把整个工具部署到你自己的 Ubuntu 服务器上，让客户打开一个链接就能使用。
+> 这份文档是操作入口，完整门禁、备份、恢复和回滚以 [`production-readiness-runbook.md`](./production-readiness-runbook.md) 为准。构建、测试或准备代码都不等于获得了上线授权；只有在明确的变更窗口和上线授权下才能启动或更新生产服务。
 
-你的服务器：
+## 1. 架构与前置条件
 
-- 系统：Ubuntu
-- 配置：2 核 CPU、2GB 内存、40GB 磁盘
-- IPv4：`43.159.41.222`
+对外只需要一个应用域名，例如 `app.your-company.com`，DNS A/AAAA 记录指向服务器。
 
-这台机器可以跑早期演示和小规模客户使用。视频生成、爬虫、批量分析比较吃资源，前期不要开太高并发。
+- Caddy 公开 80/443，终止 TLS 并转发到应用。
+- 应用容器仅经 Caddy 接收业务流量。
+- PocketBase 不设置公网域名，只绑定宿主机 `127.0.0.1:8090` 和 Compose 私有网络。
+- PocketBase 数据和应用素材分别使用两个预先创建、明确命名的外部 Docker volume。
 
-## 你必须自己准备的东西
+建议至少 2 vCPU、4 GiB 内存，并为媒体渲染和备份保留充足磁盘。对视频生成或批量分析应单独做容量评估。
 
-下面这些我不能替你完成，需要你自己操作：
+## 2. 安装基础环境
 
-1. 一个域名，或者两个子域名。
-2. 把域名 DNS 解析到服务器 IP。
-3. 能登录服务器的账号和密码/密钥。
-4. 至少一个 AI 模型 Key，例如 Gemini API Key 或 DashScope API Key。
+在受控 Ubuntu 主机安装 Git、Docker Engine/Compose plugin、OpenSSL 和 `age`。不要在未审查的变更窗口中直接执行远程 `curl | sh`。`deploy/bootstrap-ubuntu.sh` 不会代为安装 Docker：如果未检测到已审核的 Docker Engine 和 Compose plugin，它会 fail closed 并指向 Docker 官方 apt 仓库流程。安装时必须核对签名 key fingerprint 并固定经批准的包版本。防火墙只需放行 SSH、80 和 443；不得放行 8090 公网入站。
 
-推荐准备两个子域名：
+## 3. 固定代码版本
 
-```text
-app.example.com  -> 给客户打开工具
-pb.example.com   -> 给你管理数据库后台
-```
-
-两个域名都添加 A 记录，指向：
-
-```text
-43.159.41.222
-```
-
-## 第 1 步：登录服务器
-
-在你电脑的终端里执行，把 `root` 换成你的服务器用户名：
+生产不使用漂移的分支头或 `git pull`。在变更评审中记录完整 40 位 commit SHA，然后在服务器上校验：
 
 ```bash
-ssh root@43.159.41.222
+git fetch --prune origin
+git checkout --detach <exact-40-character-commit>
+test "$(git rev-parse HEAD)" = "<exact-40-character-commit>"
+git status --short
 ```
 
-这一步是在进入服务器。后面的命令都在服务器里执行。
+工作树必须为空；`.env.production` 不得进入 Git。
 
-## 第 2 步：安装基础环境
-
-先安装一些基础工具、Docker 和防火墙规则：
+## 4. 生成并审核配置
 
 ```bash
-sudo apt update
-sudo apt install -y git ca-certificates curl ufw openssl
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-sudo ufw allow OpenSSH
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw --force enable
-```
-
-这一步在做三件事：
-
-- 安装 Git，用来拉取 GitHub 代码。
-- 安装 Docker，用来运行应用、PocketBase 和 HTTPS 入口。
-- 开放 80/443 端口，让客户可以通过网页访问。
-
-执行完后，退出服务器再重新登录：
-
-```bash
-exit
-ssh root@43.159.41.222
-```
-
-重新登录是为了让 Docker 权限生效。
-
-## 第 3 步：下载项目代码
-
-```bash
-git clone https://github.com/boooppppiiii-cloud/lingshu_AI.git
-cd lingshu_AI
-```
-
-这一步会把 GitHub 上的项目下载到服务器。
-
-如果提示目录已经存在，就进入已有目录：
-
-```bash
-cd lingshu_AI
-git pull
-```
-
-## 第 4 步：生成线上配置
-
-执行：
-
-```bash
+npm ci
 bash deploy/make-production-env.sh
 ```
 
-它会问你几个问题：
+生成器会：
 
-- 客户访问域名：填你的 `app.example.com`
-- PocketBase 管理域名：填你的 `pb.example.com`
-- PocketBase 管理邮箱：填你的邮箱
-- PocketBase 管理密码：可以自己填，也可以直接回车自动生成
-- Gemini / DashScope / Seedance Key：有就填，没有就先回车跳过
+- 要求真实 HTTPS 域名、PocketBase superuser 和独立的 Workbench 管理员；
+- 要求可用的文本 LLM 与 Studio TTS 凭证；
+- 为渲染、素材、OAuth 凭证、注册凭证、支持会话、爬虫 worker 和监控分别生成不复用的密钥；
+- 写入 Compose 强制的 `PB_DATA_VOLUME_NAME` 和 `APP_DATA_VOLUME_NAME`；
+- 默认关闭真实社媒发布，但保持持久化排期 worker 运行；
+- 用应用自身的 production validator 和 `docker compose config --quiet` 校验完整配置；
+- 以 0600 原子写入 `.env.production`，不启动、迁移或部署任何服务。
 
-这一步会生成 `.env.production`，里面保存线上密钥。不要把这个文件发给别人。
-其中 `TENANT_PLATFORM_APP_KEY` 用于加密每个租户的平台 App Secret 和 Token；脚本会自动生成。手动部署时可用 `openssl rand -base64 32` 生成，详见 `docs/tenant-platform-app-key.md`。
+若选择自动生成 PB/Workbench 密码，密码不会打印到终端，而是写入 0600 的 `.env.production.bootstrap-secrets`。这是一次性交付文件：立即转存到批准的密码管理器、核对后安全删除；未处理前生成器会拒绝再次运行。
 
-## 第 5 步：启动全部服务
+生成后由两人复核域名、邮箱、volume 名、LLM/TTS provider 和所有非空外部端点。不要把配置或 bootstrap secrets 贴到工单或聊天中。
+
+## 5. 创建外部数据卷
+
+使用 `.env.production` 中精确的两个名称创建卷：
+
+```bash
+docker volume create lingshu-production-pb-data
+docker volume create lingshu-production-app-data
+```
+
+如果你在生成器中选了其他名称，命令也必须使用完全相同的名称。不得指向 preview/test 卷或历史项目的默认卷。
+
+## 6. 上线前门禁
+
+在相同 commit 上完整执行 [`production-readiness-runbook.md`](./production-readiness-runbook.md) 的“上线门禁”，包括：
+
+- `npm ci`、TypeScript、全部已发现回归测试的防遗漏门禁、生产构建与依赖审计；
+- PocketBase 新库迁移、canonical schema、CAS 与 create-if-absent 并发冒烟测试；
+- Compose 配置展开和两个 Docker 镜像的本地构建；
+- 加密备份的隔离恢复演练和完整回滚方案。
+
+任一门禁失败都必须停止。
+
+## 7. 首次启动（仅在明确授权后）
+
+确认目标主机、域名、commit 和两个 volume 均与变更单一致后，才能在授权的变更窗口执行：
 
 ```bash
 bash deploy/start.sh
 ```
 
-这一步会启动三个服务：
+PocketBase 容器会先在私有数据卷上执行版本化迁移并创建/更新 superuser；应用容器随后运行 `setup:pb` 同步与校验 canonical schema，成功后才启动工作进程。不需要再手工创建 PocketBase 管理员或重复运行 schema setup。
 
-- `app`：你的工具本体
-- `pocketbase`：数据库和账号系统
-- `caddy`：自动 HTTPS 和域名转发
+## 8. 健康验证
 
-第一次启动会比较慢，因为服务器要下载镜像、安装依赖和构建前端。
-
-## 第 6 步：创建 PocketBase 管理员
-
-打开浏览器访问：
-
-```text
-https://你的PocketBase管理域名/_/
-```
-
-例如：
-
-```text
-https://pb.example.com/_/
-```
-
-第一次打开会要求创建管理员账号。这里要填写你刚才生成 `.env.production` 时使用的同一个邮箱和密码。
-
-## 第 7 步：初始化数据库表
-
-回到服务器终端，执行：
+外部存活拨测：
 
 ```bash
-docker compose --env-file .env.production exec app npm run setup:pb
+curl -fsS "https://app.your-company.com/api/overseas/livez"
 ```
 
-这一步会在 PocketBase 里创建项目需要的数据表。
-
-## 第 8 步：检查是否部署成功
-
-在浏览器打开：
-
-```text
-https://你的客户访问域名/api/overseas/health
-```
-
-正常会看到类似：
-
-```json
-{
-  "status": "ok",
-  "service": "overseas-marketing-agent"
-}
-```
-
-然后打开客户访问域名：
-
-```text
-https://你的客户访问域名
-```
-
-如果页面能打开，说明客户已经可以使用这个工具。
-
-## 常用命令
-
-查看服务状态：
+生产流量门禁（匿名响应只返回总体状态）：
 
 ```bash
-bash deploy/status.sh
+curl -fsS "https://app.your-company.com/api/overseas/readyz"
+docker compose --env-file .env.production exec -T app \
+  sh -c 'curl -fsS -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8788/api/overseas/readyz'
 ```
 
-查看全部服务：
+只有 `readyz` 为 `ready` 或明确可接受的 `degraded`、schema 无漂移、所有关键 worker 心跳正常时才能切入流量。`/api/overseas/health` 是旧客户端兼容接口，不能作为编排或上线成功标准。
+
+## 9. 私有 PocketBase 管理
+
+不得为 PocketBase 配置公网子域名。需要访问管理界面时，从受信任电脑建立临时 SSH 隧道：
 
 ```bash
-docker compose --env-file .env.production ps
+ssh -L 8090:127.0.0.1:8090 <user>@<server>
 ```
 
-查看主应用日志：
+然后只在本机打开 `http://127.0.0.1:8090/_/`。使用 `.env.production` 中的 PocketBase superuser 凭证，完成后立即关闭隧道。
+
+## 10. 备份、更新与回滚
+
+手工备份只使用加密一致性流程：
 
 ```bash
-docker compose --env-file .env.production logs -f app
+AGE_RECIPIENT='age1...' BACKUP_DIR=/secure/lingshu-backups bash deploy/backup.sh
 ```
 
-查看 PocketBase 日志：
+该流程同时停止 app/PocketBase 取得一致快照，覆盖两个外部卷，生成逐文件 checksum，用 `age` 加密，并在退出时恢复服务及等待 `readyz`。明文 tar 备份已禁用。
 
-```bash
-docker compose --env-file .env.production logs -f pocketbase
-```
+`deploy/update.sh` 是一个永不部署的 fail-closed 兼容入口：它只接受完整 40 位 commit，验证后打印当前运行手册并以非零退出，不会 `git pull`、切换代码、构建、迁移、同步 demo 账号、重启或部署。更新必须回到 [`production-readiness-runbook.md`](./production-readiness-runbook.md) 执行加密备份、固定 revision、门禁、变更授权和回滚流程。
 
-更新代码并重启：
+任何 migration/schema 失败、`readyz` 持续 503、worker 无心跳、outbox dead-letter 增长或发布出现重复/待对账异常，都必须停止切流并按运行手册回滚。
 
-```bash
-bash deploy/update.sh
-```
+## 11. 数据位置
 
-手动备份：
-
-```bash
-bash deploy/backup.sh
-```
-
-停止服务：
-
-```bash
-docker compose --env-file .env.production down
-```
-
-重新启动：
-
-```bash
-docker compose --env-file .env.production up -d
-```
-
-## 如果出错
-
-如果域名打不开，先检查：
-
-1. 域名 A 记录是否指向 `43.159.41.222`。
-2. 服务器安全组是否放行 80 和 443。
-3. 服务器防火墙是否放行 80 和 443。
-
-查看 Caddy HTTPS 日志：
-
-```bash
-docker compose --env-file .env.production logs -f caddy
-```
-
-如果页面能打开但功能报错，查看主应用日志：
-
-```bash
-docker compose --env-file .env.production logs -f app
-```
-
-如果登录、账号、数据表异常，查看 PocketBase 日志：
-
-```bash
-docker compose --env-file .env.production logs -f pocketbase
-```
-
-## 数据保存在哪里
-
-PocketBase 数据保存在 Docker volume 里。  
-应用上传或生成的素材保存在项目的 `data/` 目录里。
-
-建议你每次更新前都先备份：
-
-```bash
-bash deploy/backup.sh
-```
+- PocketBase：`PB_DATA_VOLUME_NAME` 指定的外部 Docker volume，容器内挂载为 `/pb/pb_data`。
+- 应用素材、音频、渲染结果和本地持久化状态：`APP_DATA_VOLUME_NAME` 指定的外部 Docker volume，容器内挂载为 `/app/data`。
+- 项目目录中的 `./data` 和 `./pb_data` 不是 Compose 生产数据源，不得用它们代替 volume 备份或恢复。

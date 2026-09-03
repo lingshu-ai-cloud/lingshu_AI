@@ -1,4 +1,5 @@
 import { store } from '../storage/index.js';
+import { listAllRecords } from '../storage/pagination.js';
 import { normalizeMetricValues, type MetricSnapshot, type MetricValues } from './aggregation.js';
 
 export const SOCIAL_METRICS_COLLECTION = 'social_metric_snapshots';
@@ -58,13 +59,15 @@ export async function saveSocialMetricSnapshot(input: SaveMetricSnapshotInput): 
 }
 
 export async function listSocialMetricSnapshots(tenantId: string, platform?: string): Promise<MetricSnapshot[]> {
-  const result = await store.list<StoredMetricSnapshot>(SOCIAL_METRICS_COLLECTION, {
-    where: { tenant_id: tenantId, ...(platform ? { platform } : {}) },
-    sort: 'captured_at',
-    page: 1,
-    perPage: 5000,
+  const records = await listAllRecords<StoredMetricSnapshot>({
+    store,
+    collection: SOCIAL_METRICS_COLLECTION,
+    query: {
+      where: { tenant_id: tenantId, ...(platform ? { platform } : {}) },
+      sort: 'captured_at',
+    },
   });
-  return result.items.map(item => ({
+  return records.map(item => ({
     id: item.id,
     platform: String(item.platform || ''),
     accountId: String(item.account_id || ''),

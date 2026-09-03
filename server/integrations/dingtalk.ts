@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { providerHttp as axios } from '../security/providerHttp.js';
 import crypto from 'crypto';
 
 export interface DingTalkConfig {

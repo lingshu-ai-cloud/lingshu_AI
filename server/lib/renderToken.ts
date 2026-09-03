@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { requireProductionSecret } from '../ops/productionConfig.js';
 
 /* ──────────────────────────────────────────────────────────────────────────
    渲染令牌 —— 服务器签发的短期 HMAC 令牌，授权客户端执行一次本地合成。
@@ -10,6 +11,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 const DEFAULT_TTL_SEC = 600; // 10 分钟
 
 function secret(): string {
+  if (process.env.NODE_ENV === 'production') return requireProductionSecret('RENDER_TOKEN_SECRET');
   return process.env.RENDER_TOKEN_SECRET || 'dev-insecure-render-secret-change-me';
 }
 

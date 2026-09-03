@@ -1,6 +1,6 @@
-import axios from 'axios';
 import fs from 'node:fs';
 import path from 'node:path';
+import { providerHttp as axios } from '../security/providerHttp.js';
 
 export interface YouTubeConfig {
   clientId: string;
@@ -49,12 +49,36 @@ export interface YouTubeUploadResult {
   url: string;
 }
 
+export interface YouTubeUploadTransportOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  onProviderOperationId?: (providerOperationId: string) => void | Promise<void>;
+}
+
 export interface YouTubeOAuthTokens {
   accessToken: string;
   refreshToken?: string;
   expiresIn?: number;
   scope?: string;
   tokenType?: string;
+}
+
+export function youtubeRefreshTokenRequest(
+  config: YouTubeConfig,
+  transport: YouTubeUploadTransportOptions = {},
+): { body: string; timeoutMs: number } {
+  if (!config.refreshToken) throw new Error('youtube_refresh_token_required');
+  return {
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      refresh_token: config.refreshToken,
+      grant_type: 'refresh_token',
+    }).toString(),
+    // Token refresh is a control-plane request, not the media upload; never
+    // let it consume the full multi-minute upload deadline.
+    timeoutMs: Math.min(30_000, Math.max(1_000, Number(transport.timeoutMs || 30_000))),
+  };
 }
 
 export interface YouTubeComment {
@@ -222,7 +246,13 @@ export async function getChannelIdByHandle(apiKey: string, handle: string): Prom
 /**
  * Get or refresh access token
  */
-export async function getAccessToken(config: YouTubeConfig): Promise<string> {
+export async function getAccessToken(
+  config: YouTubeConfig,
+  transport: YouTubeUploadTransportOptions = {},
+): Promise<string> {
+  if (transport.signal?.aborted) {
+    throw transport.signal.reason || Object.assign(new Error('upload_aborted'), { code: 'ERR_CANCELED' });
+  }
   // If we have a cached token and it hasn't expired, return it
   const cacheKey = tokenCacheKey(config);
   const cached = accessTokenCache.get(cacheKey);
@@ -238,12 +268,16 @@ export async function getAccessToken(config: YouTubeConfig): Promise<string> {
   // Refresh token
   if (config.refreshToken) {
     try {
-      const res = await axios.post(GOOGLE_AUTH_URL, {
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        refresh_token: config.refreshToken,
-        grant_type: 'refresh_token',
-      });
+      const refreshRequest = youtubeRefreshTokenRequest(config, transport);
+      const res = await axios.post(
+        GOOGLE_AUTH_URL,
+        refreshRequest.body,
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          signal: transport.signal,
+          timeout: refreshRequest.timeoutMs,
+        },
+      );
 
       accessTokenCache.set(cacheKey, {
         value: res.data.access_token,
@@ -292,7 +326,8 @@ export async function exchangeYouTubeOAuthCode(input: {
  */
 export async function uploadVideoToYouTube(
   config: YouTubeConfig,
-  input: YouTubeUploadInput
+  input: YouTubeUploadInput,
+  transport: YouTubeUploadTransportOptions = {},
 ): Promise<YouTubeUploadResult> {
   if (!input.title?.trim()) throw new Error('视频标题不能为空');
   if (!fs.existsSync(input.filePath)) throw new Error('成片文件不存在，请先重新合成');
@@ -300,7 +335,10 @@ export async function uploadVideoToYouTube(
   const stat = fs.statSync(input.filePath);
   if (!stat.isFile()) throw new Error('成片路径不是文件');
 
-  const token = await getAccessToken(config);
+  if (transport.signal?.aborted) throw transport.signal.reason || Object.assign(new Error('upload_aborted'), { code: 'ERR_CANCELED' });
+  const timeoutMs = Math.max(1_000, Number(transport.timeoutMs || 10 * 60_000));
+  const token = await getAccessToken(config, transport);
+  if (transport.signal?.aborted) throw transport.signal.reason || Object.assign(new Error('upload_aborted'), { code: 'ERR_CANCELED' });
   const mimeType = videoMimeType(input.filePath);
   const metadata = {
     snippet: {
@@ -328,25 +366,43 @@ export async function uploadVideoToYouTube(
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
+      signal: transport.signal,
+      timeout: timeoutMs,
     }
   );
 
   const uploadUrl = init.headers.location;
   if (!uploadUrl) throw new Error('YouTube 未返回上传地址');
+  // A resumable Location is the only provider handle available before the
+  // final video id. Persist it before streaming bytes; callers store it
+  // encrypted and expose only a digest reference.
+  await transport.onProviderOperationId?.(String(uploadUrl));
 
-  const uploaded = await axios.put(
-    uploadUrl,
-    fs.createReadStream(input.filePath),
-    {
+  const stream = fs.createReadStream(input.filePath);
+  const abortStream = () => stream.destroy(transport.signal?.reason instanceof Error
+    ? transport.signal.reason
+    : Object.assign(new Error('upload_aborted'), { code: 'ERR_CANCELED' }));
+  transport.signal?.addEventListener('abort', abortStream, { once: true });
+  let uploaded;
+  try {
+    uploaded = await axios.put(
+      uploadUrl,
+      stream,
+      {
       headers: {
         'Content-Type': mimeType,
         'Content-Length': String(stat.size),
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
-      timeout: 0,
-    }
-  );
+      timeout: timeoutMs,
+      signal: transport.signal,
+      },
+    );
+  } finally {
+    transport.signal?.removeEventListener('abort', abortStream);
+    if (!stream.destroyed) stream.destroy();
+  }
 
   const video = uploaded.data;
   const id = String(video.id ?? '');

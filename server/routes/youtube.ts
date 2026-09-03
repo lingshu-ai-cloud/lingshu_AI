@@ -1,7 +1,4 @@
 import { Router, type Request } from 'express';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import {
@@ -21,11 +18,38 @@ import {
 } from '../integrations/youtube.js';
 import {
   advancedManualConnectEnabled as readAdvancedManualConnectEnabled,
+  getPublicOrigin,
   getTenantAwareGoogleOAuthClient,
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
-import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import {
+  consumeAssistOAuthClaim,
+  recordAssistLinkAudit,
+  releaseAssistOAuthClaim,
+  validateAssistOAuthClaim,
+  type AssistOAuthClaim,
+} from '../lib/assistLinkCapability.js';
+import { classifyPlatformPublishFailure, platformPublishFailureContext, publishVideoToAccount } from '../publishing/platformPublisher.js';
+import {
+  publicPublishedVideo,
+  publicPublishHistoryRecord,
+  publicPublishTracking,
+} from '../publishing/publicPublication.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
+import { requirePublishingWriteAccess } from './publishingWriteAccess.js';
+import {
+  sealYouTubeAccountCredentials,
+  youtubeAccountCredentials,
+  type YouTubeCredentialRecord,
+} from '../security/platformCredentials.js';
+import { CREDENTIAL_ENVELOPE_VERSION } from '../security/credentialEnvelope.js';
+import { safeProviderError } from '../security/providerError.js';
+import { normalizeOAuthReturnTo, safeInlineJson, secureOAuthCallbackResponse } from '../security/oauthCallbackHtml.js';
+import {
+  consumeOAuthTransaction,
+  createOAuthTransaction,
+  revalidateOAuthActor,
+} from '../security/oauthTransactions.js';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -47,11 +71,11 @@ interface PendingOAuthState {
   tenantId: string;
   returnTo: string;
   expiresAt: number;
+  assist?: AssistOAuthClaim;
 }
 
-const pendingOAuthStates = new Map<string, PendingOAuthState>();
-
-interface YouTubeAccountRecord {
+interface YouTubeAccountRecord extends YouTubeCredentialRecord {
+  id: string;
   tenantId: string;
   userId: string;
   channelId: string;
@@ -59,9 +83,6 @@ interface YouTubeAccountRecord {
   channelDescription?: string;
   customUrl?: string;
   clientId: string;
-  clientSecret: string;
-  refreshToken: string;
-  accessToken?: string;
   subscriberCount: number;
   videoCount: number;
   viewCount: number;
@@ -72,6 +93,16 @@ interface YouTubeAccountRecord {
   status: 'connected' | 'error' | 'expired';
 }
 
+async function youtubeConfigForRecord(record: YouTubeAccountRecord): Promise<YouTubeConfig> {
+  const credentials = await youtubeAccountCredentials(record);
+  return {
+    clientId: record.clientId,
+    clientSecret: credentials.clientSecret,
+    refreshToken: credentials.refreshToken,
+    accessToken: credentials.accessToken,
+  };
+}
+
 async function getOAuthClient(tenantId?: string) {
   return getTenantAwareGoogleOAuthClient(tenantId);
 }
@@ -80,31 +111,19 @@ function advancedManualConnectEnabled() {
   return readAdvancedManualConnectEnabled();
 }
 
-function getPublicOrigin(req: Request) {
-  const configured = process.env.PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
-  if (configured && !configured.includes('your-domain.com')) return configured;
-
-  const forwardedProto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
-  const proto = forwardedProto || req.protocol || 'http';
-  const host = req.get('host') || `localhost:${process.env.PORT ?? 8788}`;
-  return `${proto}://${host}`;
-}
-
 function getYouTubeRedirectUri(req: Request) {
   return `${getPublicOrigin(req)}/api/overseas/youtube/oauth/callback`;
 }
 
-function normalizeReturnTo(value: unknown) {
-  if (typeof value !== 'string') return '/';
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return '/';
-  return trimmed.slice(0, 300);
-}
-
-function cleanupOAuthStates() {
-  const now = Date.now();
-  for (const [state, pending] of pendingOAuthStates) {
-    if (pending.expiresAt <= now) pendingOAuthStates.delete(state);
+async function releasePendingAssistClaim(pending: PendingOAuthState, reason: string): Promise<void> {
+  if (!pending.assist) return;
+  const released = await releaseAssistOAuthClaim({
+    tenantId: pending.tenantId,
+    oauthPlatform: 'youtube',
+    claim: pending.assist,
+  });
+  if (released.ok) {
+    await recordAssistLinkAudit(released.record, 'assist_link.released', { metadata: { reason } });
   }
 }
 
@@ -124,6 +143,8 @@ function callbackHtml(input: {
   returnTo: string;
   accountId?: string;
   channelTitle?: string;
+  targetOrigin: string;
+  nonce: string;
 }) {
   const payload = {
     source: 'overseas-workbench',
@@ -142,7 +163,7 @@ function callbackHtml(input: {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${htmlEscape(input.title)}</title>
-  <style>
+  <style nonce="${input.nonce}">
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }
     main { width: min(420px, calc(100vw - 32px)); padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08); }
     h1 { margin: 0 0 8px; font-size: 20px; }
@@ -156,12 +177,13 @@ function callbackHtml(input: {
     <p>${htmlEscape(input.message)}</p>
     <a href="${htmlEscape(fallbackUrl)}">返回应用</a>
   </main>
-  <script>
-    const payload = ${JSON.stringify(payload)};
-    const fallbackUrl = ${JSON.stringify(fallbackUrl)};
+  <script nonce="${input.nonce}">
+    const payload = ${safeInlineJson(payload)};
+    const fallbackUrl = ${safeInlineJson(fallbackUrl)};
+    const targetOrigin = ${safeInlineJson(input.targetOrigin)};
     try {
       if (window.opener && !window.opener.closed) {
-        window.opener.postMessage(payload, "*");
+        window.opener.postMessage(payload, targetOrigin);
         window.close();
       } else {
         setTimeout(() => window.location.replace(fallbackUrl), 900);
@@ -178,7 +200,7 @@ async function safeChannelAnalytics(config: YouTubeConfig, channelInfo: Awaited<
   try {
     return await getChannelAnalytics(config);
   } catch (error) {
-    console.warn('YouTube analytics unavailable during connect:', error);
+    console.warn('YouTube analytics unavailable during connect:', safeProviderError(error));
     return {
       isMonetized: false,
       totalSubscribers: channelInfo.subscriberCount,
@@ -210,7 +232,10 @@ async function upsertYouTubeAccount(input: {
   });
 
   const existingRecord = existing.items[0];
-  const refreshToken = input.refreshToken || existingRecord?.refreshToken || '';
+  const existingCredentials = existingRecord && !input.refreshToken
+    ? await youtubeAccountCredentials(existingRecord)
+    : null;
+  const refreshToken = input.refreshToken || existingCredentials?.refreshToken || '';
   if (!refreshToken) {
     throw new Error('Google 未返回长期授权，请重新连接并确认允许访问 YouTube');
   }
@@ -231,9 +256,6 @@ async function upsertYouTubeAccount(input: {
     channelDescription: channelInfo.description || '',
     customUrl: channelInfo.customUrl || '',
     clientId: input.clientId,
-    clientSecret: input.clientSecret,
-    refreshToken,
-    accessToken: input.accessToken || '',
     subscriberCount: channelInfo.subscriberCount,
     videoCount: channelInfo.videoCount,
     viewCount: channelInfo.viewCount,
@@ -243,22 +265,42 @@ async function upsertYouTubeAccount(input: {
     status: 'connected' as const,
   };
 
-  if (existingRecord) {
-    await store.update(COL, existingRecord.id, data);
-    return { ...existingRecord, ...data };
+  let target = existingRecord;
+  if (!target) {
+    const ensured = await store.createIfAbsent<YouTubeAccountRecord>(COL, {
+      tenantId: input.tenantId,
+      channelId: channelInfo.id,
+    }, {
+      ...data,
+      connectedAt: now,
+      credentialVersion: CREDENTIAL_ENVELOPE_VERSION,
+      credentialState: 'reconnect_required',
+      credentialRevision: 0,
+    });
+    target = ensured.record;
   }
 
-  const created = await store.create<YouTubeAccountRecord & { id: string }>(COL, {
-    ...data,
-    connectedAt: now,
-  });
-  if (!created) throw new Error('保存 YouTube 账号失败');
-  return created;
-}
-
-function normalizeVideoPath(input: string) {
-  const raw = input.trim();
-  return raw.startsWith('file://') ? fileURLToPath(raw) : path.resolve(raw);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const current = attempt === 0 ? target : await store.getById<YouTubeAccountRecord>(COL, target.id);
+    if (!current) throw new Error('保存 YouTube 账号失败');
+    const revision = Number(current.credentialRevision || 0);
+    const sealed = sealYouTubeAccountCredentials(current, {
+      clientSecret: input.clientSecret,
+      refreshToken,
+      accessToken: input.accessToken,
+    });
+    const expected: Record<string, string | number | boolean> = current.credentialRevision === undefined
+      ? { status: String(current.status || '') }
+      : { credentialRevision: revision };
+    const result = await store.compareAndSet<YouTubeAccountRecord>(COL, current.id, expected, {
+      ...data,
+      ...sealed,
+      credentialRevision: revision + 1,
+    });
+    if (result.ok) return result.record;
+    if (result.reason === 'not_found') throw new Error('保存 YouTube 账号失败');
+  }
+  throw new Error('youtube_account_write_conflict');
 }
 
 function readableYouTubeError(error: any) {
@@ -290,7 +332,7 @@ function readableYouTubeError(error: any) {
   if (error?.message === '保存 YouTube 账号失败') {
     return 'YouTube 账号验证成功，但保存到数据库失败。请确认 PocketBase 已创建 youtube_accounts 表。';
   }
-  return oauthDescription || apiMessage || error?.message || 'YouTube 请求失败';
+  return safeProviderError(error).message || 'YouTube 请求失败';
 }
 
 /**
@@ -298,19 +340,57 @@ function readableYouTubeError(error: any) {
  * Google redirects here after the customer approves YouTube access.
  */
 youtubeRouter.get('/oauth/callback', async (req, res) => {
+  const callbackNonce = secureOAuthCallbackResponse(res);
+  const targetOrigin = getPublicOrigin(req);
   const state = String(req.query.state ?? '');
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const oauthError = typeof req.query.error === 'string' ? req.query.error : '';
   const oauthErrorDescription = typeof req.query.error_description === 'string' ? req.query.error_description : '';
 
-  cleanupOAuthStates();
   const signedState = parseOAuthState(state);
-  const pending = pendingOAuthStates.get(state) || (signedState && signedState.platform === 'youtube' ? {
-    userId: signedState.userId,
-    tenantId: signedState.tenantId,
-    returnTo: signedState.returnTo,
-    expiresAt: signedState.expiresAt,
-  } : undefined);
+  const signedAssist = signedState?.assist
+    ? await validateAssistOAuthClaim({ tenantId: signedState.tenantId, oauthPlatform: 'youtube', claim: signedState.assist })
+    : null;
+  const signedStateValid = signedState
+    && signedState.platform === 'youtube'
+    && (!signedState.assist || signedAssist?.ok);
+  let pending: PendingOAuthState | undefined;
+  if (signedStateValid && signedState) {
+    if (signedState.assist) {
+      pending = {
+        userId: signedState.userId,
+        tenantId: signedState.tenantId,
+        returnTo: signedState.returnTo,
+        expiresAt: signedState.expiresAt,
+        assist: signedState.assist,
+      };
+    } else {
+      try {
+        const consumed = await consumeOAuthTransaction({
+          state,
+          expected: {
+            userId: signedState.userId,
+            tenantId: signedState.tenantId,
+            platform: 'youtube',
+            returnTo: signedState.returnTo,
+            expiresAt: signedState.expiresAt,
+          },
+        });
+        if (consumed.ok) pending = consumed.identity;
+      } catch (error) {
+        console.error('[youtube-oauth:transaction-consume-failed]', safeProviderError(error));
+        res.status(503).type('html').send(callbackHtml({
+          ok: false,
+          title: '授权状态暂不可用',
+          message: '系统暂时无法安全确认本次授权，请回到应用后重新连接。',
+          returnTo: signedState.returnTo,
+          targetOrigin,
+          nonce: callbackNonce,
+        }));
+        return;
+      }
+    }
+  }
   const returnTo = pending?.returnTo ?? '/';
 
   if (!pending) {
@@ -319,43 +399,72 @@ youtubeRouter.get('/oauth/callback', async (req, res) => {
       title: 'YouTube 授权已失效',
       message: '请回到系统里重新点击“连接 YouTube”。',
       returnTo,
+      targetOrigin,
+      nonce: callbackNonce,
     }));
     return;
   }
 
-  pendingOAuthStates.delete(state);
+  let actorValid = false;
+  try {
+    actorValid = await revalidateOAuthActor(pending);
+  } catch (error) {
+    console.error('[youtube-oauth:actor-revalidation-failed]', safeProviderError(error));
+  }
+  if (!actorValid) {
+    await releasePendingAssistClaim(pending, 'actor_access_revoked').catch(() => undefined);
+    res.status(403).type('html').send(callbackHtml({
+      ok: false,
+      title: '授权权限已变更',
+      message: '发起授权的成员已离开企业、切换企业或不再拥有账号连接权限。',
+      returnTo,
+      targetOrigin,
+      nonce: callbackNonce,
+    }));
+    return;
+  }
 
   if (oauthError) {
+    await releasePendingAssistClaim(pending, 'provider_denied');
     res.status(400).type('html').send(callbackHtml({
       ok: false,
       title: 'YouTube 授权未完成',
       message: oauthErrorDescription || oauthError,
       returnTo,
+      targetOrigin,
+      nonce: callbackNonce,
     }));
     return;
   }
 
   if (!code) {
+    await releasePendingAssistClaim(pending, 'authorization_code_missing');
     res.status(400).type('html').send(callbackHtml({
       ok: false,
       title: '缺少授权码',
       message: 'Google 没有返回授权码，请重新连接 YouTube。',
       returnTo,
+      targetOrigin,
+      nonce: callbackNonce,
     }));
     return;
   }
 
   const client = await getOAuthClient(pending.tenantId);
   if (!client) {
+    await releasePendingAssistClaim(pending, 'oauth_client_unavailable');
     res.status(503).type('html').send(callbackHtml({
       ok: false,
       title: 'YouTube 一键授权暂未开启',
       message: '请联系服务顾问配置平台应用和回调地址。',
       returnTo,
+      targetOrigin,
+      nonce: callbackNonce,
     }));
     return;
   }
 
+  let accountPersisted = false;
   try {
     const tokens = await exchangeYouTubeOAuthCode({
       clientId: client.clientId,
@@ -371,6 +480,20 @@ youtubeRouter.get('/oauth/callback', async (req, res) => {
       refreshToken: tokens.refreshToken,
       accessToken: tokens.accessToken,
     });
+    accountPersisted = true;
+
+    if (pending.assist) {
+      const consumed = await consumeAssistOAuthClaim({
+        tenantId: pending.tenantId,
+        oauthPlatform: 'youtube',
+        claim: pending.assist,
+        connectedAccountId: record.id,
+      });
+      if (!consumed.ok) throw new Error(`assist_link_consume_failed:${consumed.reason}`);
+      await recordAssistLinkAudit(consumed.record, 'assist_link.consumed', {
+        metadata: { connectedAccountId: record.id, connectedAccountCount: 1 },
+      });
+    }
 
     res.type('html').send(callbackHtml({
       ok: true,
@@ -379,19 +502,29 @@ youtubeRouter.get('/oauth/callback', async (req, res) => {
       returnTo,
       accountId: record.id,
       channelTitle: record.channelTitle,
+      targetOrigin,
+      nonce: callbackNonce,
     }));
   } catch (error: any) {
-    console.error('YouTube OAuth callback error:', error?.response?.data ?? error);
+    if (pending.assist && !accountPersisted) {
+      await releasePendingAssistClaim(pending, 'oauth_callback_failed').catch(releaseError => {
+        console.error('[assist-link:release-failed]', { linkId: pending.assist?.linkId, reason: String((releaseError as Error)?.message || releaseError) });
+      });
+    }
+    console.error('YouTube OAuth callback error:', safeProviderError(error));
     res.status(500).type('html').send(callbackHtml({
       ok: false,
       title: 'YouTube 连接失败',
       message: readableYouTubeError(error),
       returnTo,
+      targetOrigin,
+      nonce: callbackNonce,
     }));
   }
 });
 
 youtubeRouter.use(requireAuth);
+youtubeRouter.use(requirePublishingWriteAccess);
 
 /**
  * GET /youtube/oauth/status
@@ -422,19 +555,22 @@ youtubeRouter.post('/oauth/start', async (req, res) => {
     return;
   }
 
-  cleanupOAuthStates();
+  const returnTo = normalizeOAuthReturnTo(req.body?.returnTo);
+  const expiresAt = Date.now() + OAUTH_STATE_TTL_MS;
   const state = signOAuthState({
     userId,
     tenantId,
     platform: 'youtube',
-    returnTo: normalizeReturnTo(req.body?.returnTo),
+    returnTo,
+    expiresAt,
   });
-  pendingOAuthStates.set(state, {
-    userId,
-    tenantId,
-    returnTo: normalizeReturnTo(req.body?.returnTo),
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-  });
+  try {
+    await createOAuthTransaction({ state, userId, tenantId, platform: 'youtube', returnTo, expiresAt });
+  } catch (error) {
+    console.error('[youtube-oauth:transaction-create-failed]', safeProviderError(error));
+    res.status(503).json({ error: 'oauth_transaction_unavailable' });
+    return;
+  }
 
   const url = new URL(GOOGLE_OAUTH_URL);
   url.searchParams.set('client_id', client.clientId);
@@ -493,7 +629,7 @@ youtubeRouter.post('/connect', async (req, res) => {
       status: record.status,
     });
   } catch (error: any) {
-    console.error('YouTube connect error:', error?.response?.data ?? error?.message ?? error);
+    console.error('YouTube connect error:', safeProviderError(error));
     const status = error?.response?.status === 401 ? 401 : error?.response?.status === 403 ? 403 : 500;
     res.status(status).json({ error: readableYouTubeError(error) });
   }
@@ -592,17 +728,12 @@ youtubeRouter.get('/accounts/:id/channel-info', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const info = await getMyChannelInfo(config);
     res.json(info);
   } catch (error) {
-    console.error('Error fetching channel info:', error);
+    console.error('Error fetching channel info:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to fetch channel info' });
   }
 });
@@ -623,17 +754,12 @@ youtubeRouter.get('/accounts/:id/videos', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const videos = await getMyVideos(config, Number(maxResults));
     res.json({ videos });
   } catch (error) {
-    console.error('Error fetching videos:', error);
+    console.error('Error fetching videos:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to fetch videos' });
   }
 });
@@ -668,6 +794,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     ratio,
     language,
     contentId,
+    idempotencyKey,
     trackWaLink = true,
   } = req.body as {
     videoPath?: string;
@@ -681,6 +808,7 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     ratio?: string;
     language?: string;
     contentId?: string;
+    idempotencyKey?: string;
     trackWaLink?: boolean;
   };
 
@@ -688,30 +816,12 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'videoPath and title are required' });
     return;
   }
+  if (!idempotencyKey || !/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+    res.status(400).json({ error: 'valid idempotencyKey is required' });
+    return;
+  }
   if (!['private', 'unlisted', 'public'].includes(privacyStatus)) {
     res.status(400).json({ error: 'privacyStatus must be private, unlisted, or public' });
-    return;
-  }
-
-  const resolvedPath = normalizeVideoPath(videoPath);
-  const ext = path.extname(resolvedPath).toLowerCase();
-  if (!['.mp4', '.mov', '.webm', '.mkv', '.avi'].includes(ext)) {
-    res.status(400).json({ error: 'Only video files can be uploaded to YouTube' });
-    return;
-  }
-  if (!fs.existsSync(resolvedPath)) {
-    res.status(404).json({ error: 'Rendered video file not found, please render again' });
-    return;
-  }
-
-  const maxMb = Number(process.env.YOUTUBE_MAX_UPLOAD_MB ?? 2048);
-  const stat = fs.statSync(resolvedPath);
-  if (!stat.isFile()) {
-    res.status(400).json({ error: 'videoPath must point to a file' });
-    return;
-  }
-  if (stat.size > maxMb * 1024 * 1024) {
-    res.status(413).json({ error: `Video is larger than ${maxMb}MB` });
     return;
   }
 
@@ -731,13 +841,31 @@ youtubeRouter.post('/accounts/:id/upload', async (req, res) => {
       ratio,
       language,
       contentId,
+      idempotencyKey,
       trackWaLink,
     });
-    res.status(201).json({ ok: true, video: result.video, tracking: result.tracking, publishRecord: result.publishRecord });
+    res.status(201).json({
+      ok: true,
+      video: publicPublishedVideo(result.video),
+      tracking: publicPublishTracking(result.tracking),
+      publishRecord: publicPublishHistoryRecord(result.publishRecord, tenantId),
+    });
   } catch (error: any) {
-    console.error('YouTube upload error:', error?.response?.data ?? error);
+    console.error('YouTube upload error:', safeProviderError(error));
+    const classification = classifyPlatformPublishFailure(error);
+    const context = platformPublishFailureContext(error);
     const status = error?.statusCode || (error?.response?.status === 401 ? 401 : error?.response?.status === 403 ? 403 : 500);
-    res.status(status).json({ ok: false, error: readableYouTubeError(error) });
+    res.status(status).json({
+      ok: false,
+      error: readableYouTubeError(error),
+      outcomeUnknown: classification.outcomeUnknown,
+      retrySafe: classification.retrySafe,
+      reconciliationRequired: classification.outcomeUnknown,
+      reconciliationPersisted: context?.reconciliationPersisted === true,
+      trackingPostId: context?.trackingPostId || '',
+      alreadyPublished: classification.reason === 'already_published',
+      resolution: classification.outcomeUnknown ? 'verify_platform_before_retry' : 'correct_error_then_retry',
+    });
   }
 });
 
@@ -757,12 +885,7 @@ youtubeRouter.get('/accounts/:id/comments', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const comments = await getMyVideoComments(config, Number(maxResults), record.channelId);
     res.json({
@@ -770,7 +893,7 @@ youtubeRouter.get('/accounts/:id/comments', async (req, res) => {
       total: comments.length,
     });
   } catch (error) {
-    console.error('Error fetching comments:', error);
+    console.error('Error fetching comments:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to fetch comments' });
   }
 });
@@ -792,12 +915,7 @@ youtubeRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const comments = await getVideoComments(config, videoId, Number(maxResults));
     res.json({
@@ -806,7 +924,7 @@ youtubeRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
       total: comments.length,
     });
   } catch (error) {
-    console.error('Error fetching video comments:', error);
+    console.error('Error fetching video comments:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to fetch video comments' });
   }
 });
@@ -825,12 +943,7 @@ youtubeRouter.get('/accounts/:id/analytics', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : new Date().toISOString().slice(0, 10);
     const startDefault = new Date(`${endDate}T00:00:00.000Z`);
@@ -867,7 +980,7 @@ youtubeRouter.get('/accounts/:id/analytics', async (req, res) => {
     })));
     res.json({ ...analytics, fetchedAt: new Date().toISOString() });
   } catch (error) {
-    console.error('Error fetching analytics:', error);
+    console.error('Error fetching analytics:', safeProviderError(error));
     const status = (error as any)?.response?.status === 403 ? 403 : 500;
     res.status(status).json({
       error: status === 403
@@ -893,12 +1006,7 @@ youtubeRouter.get('/accounts/:id/super-chats', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const superChats = await getSuperChats(config, videoId as string);
     res.json({
@@ -906,7 +1014,7 @@ youtubeRouter.get('/accounts/:id/super-chats', async (req, res) => {
       total: superChats.length,
     });
   } catch (error) {
-    console.error('Error fetching super chats:', error);
+    console.error('Error fetching super chats:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to fetch super chats' });
   }
 });
@@ -941,7 +1049,7 @@ youtubeRouter.get('/public/comments', async (req, res) => {
     });
     res.json(result);
   } catch (error: any) {
-    console.error('Error fetching channel comments by API key:', error);
+    console.error('Error fetching channel comments by API key:', safeProviderError(error));
     const status = error?.response?.status || 500;
     res.status(status).json({ error: error?.response?.data?.error?.message || 'Failed to fetch comments' });
   }
@@ -969,7 +1077,7 @@ youtubeRouter.get('/public/video/:videoId/comments', async (req, res) => {
     });
     res.json(result);
   } catch (error: any) {
-    console.error('Error fetching video comments by API key:', error);
+    console.error('Error fetching video comments by API key:', safeProviderError(error));
     const status = error?.response?.status || 500;
     res.status(status).json({ error: error?.response?.data?.error?.message || 'Failed to fetch comments' });
   }
@@ -1000,7 +1108,7 @@ youtubeRouter.get('/public/resolve-handle', async (req, res) => {
     }
     res.json({ channelId, handle });
   } catch (error: any) {
-    console.error('Error resolving channel handle:', error);
+    console.error('Error resolving channel handle:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to resolve channel handle' });
   }
 });
@@ -1019,12 +1127,7 @@ youtubeRouter.post('/accounts/:id/sync', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = await youtubeConfigForRecord(record);
 
     const channelInfo = await getMyChannelInfo(config);
     const analytics = await safeChannelAnalytics(config, channelInfo);
@@ -1044,7 +1147,7 @@ youtubeRouter.post('/accounts/:id/sync', async (req, res) => {
 
     res.json({ ok: true, message: 'Sync triggered successfully', channelTitle: channelInfo.title });
   } catch (error) {
-    console.error('Error syncing YouTube account:', error);
+    console.error('Error syncing YouTube account:', safeProviderError(error));
     res.status(500).json({ error: 'Failed to sync YouTube account' });
   }
 });

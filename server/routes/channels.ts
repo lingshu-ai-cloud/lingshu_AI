@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { verifyWhatsAppWebhook, getPhoneNumberInfo } from '../integrations/whatsapp.js';
+import { verifyWhatsAppWebhook, getPhoneNumberInfo, requiresWhatsAppReconciliation } from '../integrations/whatsapp.js';
 import { getBotInfo, sendTelegramMessage } from '../integrations/telegram.js';
 import { testDingTalk } from '../integrations/dingtalk.js';
 import { testFeishu } from '../integrations/feishu.js';
@@ -13,6 +13,7 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { getTenantPlatformApp, type TenantPlatformAppRecord, type TenantPlatformStatus } from '../lib/tenantPlatformApps.js';
 import { store } from '../storage/index.js';
+import { socialAccountCredentials, youtubeAccountCredentials } from '../security/platformCredentials.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(__dirname, '../../data/channels.json');
@@ -77,14 +78,20 @@ channelsRouter.get('/status', requireAuth, async (req, res) => {
       where: { tenantId, status: 'connected' }, page: 1, perPage: 50,
     }).then(result => result.items).catch(() => []),
   ]);
-  const connectedSocialPlatforms = new Set(socialAccounts.map(account => String(account.platform || '')));
+  const usableYoutubeAccounts = (await Promise.all(youtubeAccounts.map(async account => {
+    try { await youtubeAccountCredentials(account as any); return account; } catch { return null; }
+  }))).filter(Boolean);
+  const usableSocialAccounts = (await Promise.all(socialAccounts.map(async account => {
+    try { await socialAccountCredentials(account as any); return account; } catch { return null; }
+  }))).filter((account): account is Record<string, unknown> => Boolean(account));
+  const connectedSocialPlatforms = new Set(usableSocialAccounts.map(account => String(account.platform || '')));
 
   res.json({
     isAdmin,
     channels: USER_CHANNELS.map(channel => {
       const app = platformApps[channel.platform];
       const hasConnectedAccount = channel.id === 'youtube'
-        ? youtubeAccounts.length > 0
+        ? usableYoutubeAccounts.length > 0
         : channel.id === 'facebook' || channel.id === 'instagram'
           ? connectedSocialPlatforms.has(channel.id)
           : false;
@@ -101,7 +108,22 @@ channelsRouter.get('/status', requireAuth, async (req, res) => {
   });
 });
 
-channelsRouter.get('/', (_req, res) => res.json(load()));
+// The JSON-backed channel API predates tenant isolation and stores reusable
+// credentials in one global file. Production uses tenant_platform_apps and
+// signed `/api/webhooks` instead; fail closed rather than exposing or sending
+// through another tenant's legacy connector.
+channelsRouter.use((_req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    res.status(410).json({ error: 'legacy_channel_api_disabled' });
+    return;
+  }
+  next();
+});
+
+channelsRouter.get('/', (_req, res) => res.json(load().map(channel => ({
+  ...channel,
+  config: Object.fromEntries(Object.keys(channel.config || {}).map(key => [key, ''])),
+}))));
 
 channelsRouter.post('/', (req: Request, res: Response) => {
   const channels = load();
@@ -219,6 +241,14 @@ channelsRouter.post('/:id/send', requireAuth, async (req: Request, res: Response
     if (idx !== -1) { channels[idx].stats.sent++; channels[idx].lastActivity = new Date().toISOString(); save(channels); }
     res.json({ ok: true });
   } catch (err: any) {
+    if (requiresWhatsAppReconciliation(err)) {
+      res.status(202).json({
+        ok: false,
+        error: 'whatsapp_delivery_reconciliation_required',
+        status: 'needs_reconciliation',
+      });
+      return;
+    }
     res.status(500).json({ ok: false, error: err.message });
   }
 });

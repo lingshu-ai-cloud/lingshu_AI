@@ -1,14 +1,16 @@
-import axios from 'axios';
+import { providerHttp as axios } from '../security/providerHttp.js';
 import { Router } from 'express';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import {
-  decryptSecret,
   getTenantPlatformApp,
   publicTenantPlatformApp,
   upsertTenantPlatformApp,
 } from '../lib/tenantPlatformApps.js';
+import { tenantPlatformSecret } from '../security/platformCredentials.js';
 import { getPhoneNumberInfo } from '../integrations/whatsapp.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { requireOrganizationAdmin } from './organizationAdminAccess.js';
+import { safeProviderError } from '../security/providerError.js';
 
 export const whatsappOAuthRouter = Router();
 
@@ -122,16 +124,16 @@ whatsappOAuthRouter.get('/config', requireAuth, async (req, res) => {
     tenantId,
     appId,
     configId,
-    configured: Boolean(appId && configId && decryptSecret(app?.app_secret)),
+    configured: Boolean(app && appId && configId && tenantPlatformSecret(app, 'app_secret')),
     missing: {
       appId: !appId,
-      appSecret: !decryptSecret(app?.app_secret),
+      appSecret: !app || !tenantPlatformSecret(app, 'app_secret'),
       configId: !configId,
     },
   });
 });
 
-whatsappOAuthRouter.post('/exchange', requireAuth, async (req, res) => {
+whatsappOAuthRouter.post('/exchange', requireAuth, requireOrganizationAdmin, async (req, res) => {
   const tenantId = await tenantForRequest(req, res);
   if (!tenantId) {
     res.status(403).json({ error: 'tenant_not_allowed' });
@@ -152,7 +154,7 @@ whatsappOAuthRouter.post('/exchange', requireAuth, async (req, res) => {
 
   const app = await getTenantPlatformApp(tenantId, 'meta');
   const appId = text(app?.app_id);
-  const appSecret = decryptSecret(app?.app_secret);
+  const appSecret = app ? tenantPlatformSecret(app, 'app_secret') : '';
   if (!appId || !appSecret) {
     res.status(409).json({ error: 'tenant_meta_app_not_configured' });
     return;
@@ -165,7 +167,7 @@ whatsappOAuthRouter.post('/exchange', requireAuth, async (req, res) => {
       const info = await getPhoneNumberInfo({
         phoneNumberId,
         accessToken: token.accessToken,
-        verifyToken: text(app?.webhook_verify_token),
+        verifyToken: '',
       });
       waPublicNumber = text(info?.display_phone_number || info?.phone_number || info?.verified_name).replace(/[^\d]/g, '');
     } catch (infoError) {
@@ -198,7 +200,7 @@ whatsappOAuthRouter.post('/exchange', requireAuth, async (req, res) => {
   } catch (error: any) {
     res.status(502).json({
       error: 'whatsapp_exchange_failed',
-      message: error?.response?.data?.error?.message || error?.message || 'WhatsApp exchange failed',
+      message: safeProviderError(error).message || 'WhatsApp exchange failed',
     });
   }
 });

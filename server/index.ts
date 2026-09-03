@@ -1,7 +1,10 @@
 import path from 'path';
+import { timingSafeEqual } from 'node:crypto';
+import 'express-async-errors';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { execFileSync, spawn } from 'child_process';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import dotenv from 'dotenv';
 import express from 'express';
 import compression from 'compression';
@@ -32,9 +35,10 @@ import { adminRouter } from './routes/admin.js';
 import { assistantThreadsRouter } from './routes/assistantThreads.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { isDemoMode, demoLimits } from './lib/demo.js';
-import { initTenantPlatformTokenMonitor } from './routes/tenantPlatformTokenMonitor.js';
+import { initTenantPlatformTokenMonitor, stopTenantPlatformTokenMonitor } from './routes/tenantPlatformTokenMonitor.js';
 import { assistLinksRouter } from './routes/assistLinks.js';
 import { initWhatsAppCustomerMaintenance } from './whatsapp/historyImport.js';
+import { inboundReceiptHealthCheck } from './whatsapp/inboundReceipt.js';
 import { whatsappOAuthRouter } from './routes/whatsappOAuth.js';
 import { publishingRouter } from './routes/publishing.js';
 import { initScheduledPublisher } from './publishing/scheduledPublisher.js';
@@ -45,25 +49,76 @@ import { requireScopedAsset, syncAssetSession } from './lib/assetAccess.js';
 import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
+import { digitalEmployeesRouter, startDigitalEmployeeWorker, stopDigitalEmployeeWorker } from './routes/digitalEmployees.js';
+import { initDigitalEmployeeOutboxWorker } from './digitalEmployees/outboxWorker.js';
+import {
+  registerCoreReadinessChecks,
+  registerHealthCheck,
+  runReadinessChecks,
+  setProcessDraining,
+} from './ops/health.js';
+import { renderPrometheusMetrics, requestTelemetry, structuredLog } from './ops/observability.js';
+import { fixedWindowRateLimit, securityHeaders } from './ops/httpSafety.js';
+import { assertProductionConfiguration, validateProductionConfiguration } from './ops/productionConfig.js';
+import { PbError } from './storage/pb.js';
+import { store } from './storage/index.js';
+import { apiAuthenticationBoundary, apiRoleBoundary } from './middleware/apiAccessPolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 // 跨版本共用的本机密钥配置。项目文件优先，统一配置只补齐缺失项。
 dotenv.config({ path: path.join(os.homedir(), '.config', 'lingshu-ai', '.env') });
 dotenv.config({ path: path.join(os.homedir(), '.config', 'lingshu-ai', '.env.local') });
-dotenv.config({ path: path.join(__dirname, '..', '.env.local'), override: true });
+// An orchestrator-selected production mode and its injected secrets are an
+// immutable trust boundary. A stale developer .env.local must never downgrade
+// NODE_ENV or replace production credentials before fail-fast validation.
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config({ path: path.join(__dirname, '..', '.env.local'), override: true });
+}
+const startupConfiguration = validateProductionConfiguration();
+if (!startupConfiguration.ok) {
+  structuredLog('error', 'production.configuration.invalid', { issues: startupConfiguration.issues });
+  // Fail before datastore bootstrapping, workers, listeners, or outbound
+  // provider probes. A permanently not-ready zombie container can otherwise
+  // keep acquiring leases or accumulating retries while orchestration waits.
+  assertProductionConfiguration();
+}
 await ensureLocalPocketBase();
 configureNetworkProxy();
+registerCoreReadinessChecks();
+registerHealthCheck('whatsapp-inbound-receipts', () => inboundReceiptHealthCheck({ store }), {
+  critical: false,
+  timeoutMs: 3_000,
+});
+registerHealthCheck('production-configuration', () => {
+  const result = validateProductionConfiguration();
+  return result.ok
+    ? { ok: true }
+    : { ok: false, message: 'production_configuration_invalid', details: { issues: result.issues } };
+}, { critical: true });
 try {
   await ensureDeliveryCollections();
   await ensureTrendVideoAnalysisCapacity();
   await backfillTrendVideoContentFormat();
 } catch (error) {
-  console.error('[pb-init] failed to ensure tenants / tenant_platform_apps collections:', error instanceof Error ? error.message : error);
+  structuredLog('error', 'pocketbase.bootstrap.failed', { error: error instanceof Error ? error.message : String(error) });
+  if (process.env.NODE_ENV === 'production') throw error;
+}
+if (process.env.NODE_ENV === 'production') {
+  const startupReadiness = await runReadinessChecks();
+  if (startupReadiness.status === 'not_ready') {
+    structuredLog('error', 'production.startup.readiness_failed', { checks: startupReadiness.checks });
+    throw new Error(`production startup readiness failed: ${startupReadiness.checks
+      .filter(check => check.critical && !check.ok)
+      .map(check => `${check.name}:${check.message || 'failed'}`)
+      .join(', ')}`);
+  }
 }
 
 const PORT = Number(process.env.PORT ?? 8788);
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', process.env.NODE_ENV === 'production' ? Number(process.env.TRUST_PROXY_HOPS ?? 1) : false);
 
 async function ensureLocalPocketBase(): Promise<void> {
   if (process.env.NODE_ENV === 'production' || process.env.PB_AUTO_START !== 'true') return;
@@ -151,7 +206,45 @@ function detectLocalProxy(): string {
   return '';
 }
 
-// 璺宠繃 SSE 娴佸紡鍝嶅簲锛坱ext/event-stream锛夛紝鍚﹀垯 gzip 缂撳啿浼氭嫋鎱㈤瀛?
+app.use(requestTelemetry);
+app.use(securityHeaders);
+
+function operationalTokenMatches(header: unknown): boolean {
+  const expected = Buffer.from(String(process.env.METRICS_TOKEN || '').trim());
+  const supplied = Buffer.from(String(header || '').replace(/^Bearer\s+/i, '').trim());
+  return Boolean(expected.length && expected.length === supplied.length && timingSafeEqual(expected, supplied));
+}
+
+const healthEndpointRateLimit = fixedWindowRateLimit({ name: 'health', limit: 120, windowMs: 60_000 });
+
+app.get('/api/overseas/livez', healthEndpointRateLimit, (_req, res) => {
+  res.json({ status: 'alive', service: 'overseas-marketing-agent', uptimeSeconds: Math.floor(process.uptime()) });
+});
+
+app.get('/api/overseas/readyz', healthEndpointRateLimit, async (req, res) => {
+  const snapshot = await runReadinessChecks();
+  const detailed = process.env.NODE_ENV !== 'production' || operationalTokenMatches(req.headers.authorization);
+  res.status(snapshot.status === 'not_ready' ? 503 : 200).json(detailed ? snapshot : { status: snapshot.status });
+});
+
+app.get('/api/overseas/metrics', healthEndpointRateLimit, (req, res) => {
+  if (process.env.NODE_ENV === 'production' && !operationalTokenMatches(req.headers.authorization)) {
+    res.status(401).json({ error: 'metrics_auth_required' });
+    return;
+  }
+  res.type('text/plain; version=0.0.4').send(renderPrometheusMetrics());
+});
+
+app.use('/api', fixedWindowRateLimit({
+  name: 'api',
+  limit: Math.max(60, Number(process.env.API_RATE_LIMIT_PER_MINUTE ?? 600) || 600),
+}));
+app.use('/api/overseas/auth', fixedWindowRateLimit({
+  name: 'auth',
+  limit: Math.max(5, Number(process.env.AUTH_RATE_LIMIT_PER_MINUTE ?? 30) || 30),
+}));
+
+// 跳过 SSE 流式响应，否则 gzip 缓冲会拖慢首字节。
 app.use(compression({
   filter: (req, res) => {
     if (res.getHeader('Content-Type') === 'text/event-stream') return false;
@@ -162,15 +255,29 @@ app.use(compression({
     return compression.filter(req, res);
   },
 }));
-// Supports base64-encoded admin/manual video uploads (鈮?0MB raw video).
-app.use(express.json({
-  limit: '120mb',
-  verify: (req, _res, buf) => {
-    (req as any).rawBody = Buffer.from(buf);
-  },
+// Authenticate and authorize before allocating large JSON bodies. Explicit
+// webhook/OAuth/service-token exceptions are decided from method + path only.
+app.use('/api', apiAuthenticationBoundary);
+app.use('/api', apiRoleBoundary);
+const captureRawBody = (req: IncomingMessage, _res: ServerResponse, buf: Buffer): void => {
+  (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+};
+// Signature verification needs exact bytes only for incoming provider
+// webhooks. Retaining a second copy of large media JSON would double memory.
+app.use('/api/webhooks', express.json({
+  limit: process.env.WEBHOOK_JSON_BODY_LIMIT || '1mb', verify: captureRawBody,
 }));
+// Large base64 payloads are confined to the legacy media ingestion surfaces.
+app.use(['/api/overseas/studio', '/api/overseas/videos'], express.json({
+  limit: process.env.MEDIA_JSON_BODY_LIMIT || '120mb',
+}));
+app.use('/api/overseas/enterprise', express.json({
+  limit: process.env.ENTERPRISE_JSON_BODY_LIMIT || '20mb',
+}));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use(syncAssetSession);
 
+// Backwards-compatible shallow health endpoint. Orchestrators must use readyz.
 app.get('/api/overseas/health', (_req, res) => {
   res.json({
     status: 'ok',
@@ -221,16 +328,37 @@ app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);
 app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
+app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const requestId = String((req as express.Request & { requestId?: string }).requestId || req.headers['x-request-id'] || 'unknown');
+  const candidate = error as { type?: string; status?: number; statusCode?: number };
+  const bodyTooLarge = candidate?.type === 'entity.too.large' || candidate?.status === 413;
+  const invalidJson = error instanceof SyntaxError && candidate?.status === 400;
+  const datastoreUnavailable = error instanceof PbError;
+  const status = bodyTooLarge ? 413 : invalidJson ? 400 : datastoreUnavailable ? 503 : 500;
+  structuredLog('error', 'http.request.failed', {
+    requestId, method: req.method, path: req.path, status,
+    errorCode: error instanceof PbError ? error.code : candidate?.type,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  if (!res.headersSent) res.status(status).json({
+    error: bodyTooLarge ? 'request_body_too_large' : invalidJson ? 'invalid_json' : datastoreUnavailable ? 'datastore_unavailable' : 'internal_error',
+    requestId,
+  });
+});
+
 await initScheduler();
-initScheduledPublisher();
+const scheduledPublisher = initScheduledPublisher();
 initCrawlerOpsWorker();
 initPocketBaseVideoBackfill();
 initCrawlWorkerCloudFallback();
 initTenantPlatformTokenMonitor();
 await initWhatsAppCustomerMaintenance();
+startDigitalEmployeeWorker();
+const digitalEmployeeOutboxWorker = initDigitalEmployeeOutboxWorker();
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');
@@ -277,6 +405,34 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  structuredLog('info', 'server.started', { address: `http://0.0.0.0:${PORT}`, nodeEnv: process.env.NODE_ENV || 'development' });
 });
+
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(signal, () => {
+    void (async () => {
+      setProcessDraining(true);
+      structuredLog('info', 'server.shutdown.started', { signal });
+      // Stop accepting new sockets immediately. Existing requests and all
+      // durable workers are allowed to drain within the common hard timeout.
+      const httpClosed = new Promise<Error | null>(resolve => {
+        server.close(error => resolve(error || null));
+      });
+      stopTenantPlatformTokenMonitor();
+      await Promise.allSettled([
+        stopDigitalEmployeeWorker(Math.max(1_000, Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS ?? 20_000) || 20_000)),
+        scheduledPublisher.stop(),
+        digitalEmployeeOutboxWorker.stop(),
+      ]);
+      const error = await httpClosed;
+      if (error) structuredLog('error', 'server.shutdown.failed', { signal, error: error.message });
+      else structuredLog('info', 'server.shutdown.completed', { signal });
+      process.exit(error ? 1 : 0);
+    })();
+    setTimeout(() => {
+      structuredLog('error', 'server.shutdown.timeout', { signal });
+      process.exit(1);
+    }, Math.max(1_000, Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS ?? 20_000) || 20_000)).unref();
+  });
+}

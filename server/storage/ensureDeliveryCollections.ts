@@ -2,7 +2,7 @@ import { adminFetch } from './pb.js';
 
 type FieldType = 'text' | 'select' | 'bool' | 'date' | 'autodate' | 'json' | 'number';
 
-interface FieldDef {
+export interface FieldDef {
   name: string;
   type: FieldType;
   required?: boolean;
@@ -26,16 +26,22 @@ const TENANTS_FIELDS: FieldDef[] = [
   { name: 'inviteCode', type: 'text' },
   { name: 'registrationInviteCode', type: 'text' },
   { name: 'registeredEmail', type: 'text' },
-  { name: 'registeredPasswordCipher', type: 'text' },
   { name: 'registeredAt', type: 'text' },
+  { name: 'registrationClaimToken', type: 'text' },
+  { name: 'registrationClaimedAt', type: 'text' },
+  { name: 'registrationClaimEmail', type: 'text' },
   { name: 'subscriptionStatus', type: 'text' },
   { name: 'subscriptionPlan', type: 'text' },
-  { name: 'subscriptionExpiresAt', type: 'date' },
+  // Existing installations and subscription.ts store this as an ISO string.
+  // Keep the runtime bootstrap type-compatible with setup-pb and migrations.
+  { name: 'subscriptionExpiresAt', type: 'text' },
 ];
 
 const TENANT_PLATFORM_APP_FIELDS: FieldDef[] = [
   { name: 'tenant_id', type: 'text', required: true },
-  { name: 'platform', type: 'select', required: true, values: ['meta', 'google', 'wecom'] },
+  // Platform identifiers predate the current supported-provider list and are
+  // intentionally text so legacy/forward-compatible values remain readable.
+  { name: 'platform', type: 'text', required: true },
   { name: 'app_id', type: 'text' },
   { name: 'app_secret', type: 'text' },
   { name: 'wa_config_id', type: 'text' },
@@ -48,12 +54,15 @@ const TENANT_PLATFORM_APP_FIELDS: FieldDef[] = [
   { name: 'youtube_channel_id', type: 'text' },
   { name: 'webhook_verify_token', type: 'text' },
   { name: 'wecom_encoding_aes_key', type: 'text' },
-  { name: 'token_type', type: 'select', values: ['user_60d', 'system_user_permanent'] },
+  { name: 'token_type', type: 'text' },
   { name: 'access_token', type: 'text' },
   { name: 'token_expires_at', type: 'text' },
-  { name: 'status', type: 'select', values: ['pending', 'configuring', 'waiting_customer', 'importing_history', 'verifying', 'active', 'needs_permanent_token', 'token_expired', 'error'] },
+  { name: 'status', type: 'text' },
   { name: 'last_checklist', type: 'json' },
   { name: 'notes', type: 'text' },
+  { name: 'credential_version', type: 'text' },
+  { name: 'credential_state', type: 'text' },
+  { name: 'credential_revision', type: 'number' },
 ];
 
 const POSTS_FIELDS: FieldDef[] = [
@@ -238,7 +247,13 @@ async function collectionExists(name: string): Promise<boolean> {
   throw new Error(`检查集合 ${name} 失败 (${res.status})${detail ? `: ${detail}` : ''}`);
 }
 
-async function createCollection(name: string, fields: FieldDef[]): Promise<void> {
+function rejectProductionSchemaMutation(detail: string): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(`PocketBase production schema drift: ${detail}; run setup:pb before starting the application`);
+  }
+}
+
+async function createCollection(name: string, fields: ReadonlyArray<FieldDef>): Promise<void> {
   const base = {
     name,
     type: 'base',
@@ -266,8 +281,9 @@ async function createCollection(name: string, fields: FieldDef[]): Promise<void>
   throw new Error(`创建集合 ${name} 失败：${lastDetail}`);
 }
 
-async function ensureCollection(name: string, fields: FieldDef[]): Promise<void> {
+async function ensureCollection(name: string, fields: ReadonlyArray<FieldDef>): Promise<void> {
   if (!await collectionExists(name)) {
+    rejectProductionSchemaMutation(`collection ${name} is missing`);
     await createCollection(name, fields);
     console.log(`[pb-init] created collection ${name}`);
     return;
@@ -286,6 +302,13 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
       return field.values!.some(value => !values.includes(value));
     });
   if (!missing.length && !selectUpdates.length) return;
+
+  rejectProductionSchemaMutation(
+    `collection ${name} requires ${[
+      ...missing.map(field => `field ${field.name}`),
+      ...selectUpdates.map(field => `select values for ${field.name}`),
+    ].join(', ')}`,
+  );
 
   const attempts = collection.fields
     ? [{
@@ -319,20 +342,29 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
   throw new Error(`更新集合 ${name} 失败：${lastDetail}`);
 }
 
+export const DELIVERY_COLLECTION_SPECS: ReadonlyArray<{
+  name: string;
+  fields: ReadonlyArray<FieldDef>;
+}> = [
+  { name: 'tenants', fields: TENANTS_FIELDS },
+  { name: 'tenant_platform_apps', fields: TENANT_PLATFORM_APP_FIELDS },
+  { name: 'posts', fields: POSTS_FIELDS },
+  { name: 'recycle_lists', fields: RECYCLE_LIST_FIELDS },
+  { name: 'posting_stats', fields: POSTING_STATS_FIELDS },
+  { name: 'style_memory', fields: STYLE_MEMORY_FIELDS },
+  { name: 'response_strategy_memory', fields: RESPONSE_STRATEGY_MEMORY_FIELDS },
+  { name: 'customer_memory', fields: CUSTOMER_MEMORY_FIELDS },
+  { name: 'agent_memory_audit', fields: AGENT_MEMORY_AUDIT_FIELDS },
+  { name: 'style_adoption_stats', fields: STYLE_ADOPTION_STATS_FIELDS },
+  { name: 'tenant_profiles', fields: TENANT_PROFILE_FIELDS },
+  { name: 'tenant_orders', fields: TENANT_ORDER_FIELDS },
+  { name: 'tenant_support_settings', fields: TENANT_SUPPORT_SETTINGS_FIELDS },
+];
+
 export async function ensureDeliveryCollections(): Promise<void> {
-  await ensureCollection('tenants', TENANTS_FIELDS);
-  await ensureCollection('tenant_platform_apps', TENANT_PLATFORM_APP_FIELDS);
-  await ensureCollection('posts', POSTS_FIELDS);
-  await ensureCollection('recycle_lists', RECYCLE_LIST_FIELDS);
-  await ensureCollection('posting_stats', POSTING_STATS_FIELDS);
-  await ensureCollection('style_memory', STYLE_MEMORY_FIELDS);
-  await ensureCollection('response_strategy_memory', RESPONSE_STRATEGY_MEMORY_FIELDS);
-  await ensureCollection('customer_memory', CUSTOMER_MEMORY_FIELDS);
-  await ensureCollection('agent_memory_audit', AGENT_MEMORY_AUDIT_FIELDS);
-  await ensureCollection('style_adoption_stats', STYLE_ADOPTION_STATS_FIELDS);
-  await ensureCollection('tenant_profiles', TENANT_PROFILE_FIELDS);
-  await ensureCollection('tenant_orders', TENANT_ORDER_FIELDS);
-  await ensureCollection('tenant_support_settings', TENANT_SUPPORT_SETTINGS_FIELDS);
+  for (const spec of DELIVERY_COLLECTION_SPECS) {
+    await ensureCollection(spec.name, spec.fields);
+  }
 }
 
 export async function ensureTrendVideoAnalysisCapacity(): Promise<void> {
@@ -349,6 +381,7 @@ export async function ensureTrendVideoAnalysisCapacity(): Promise<void> {
     const hasContentFormat = fields.some(field => field.name === 'contentFormat');
     const needsAnalysisExpansion = Boolean(analysis && Number(analysis.max || 0) < requiredMax);
     if (!needsAnalysisExpansion && hasContentFormat) return;
+    rejectProductionSchemaMutation('trend_videos requires contentFormat or expanded aiAnalysis capacity');
     const nextFields = fields
       .map(field => field.name === 'aiAnalysis' && needsAnalysisExpansion ? { ...field, max: requiredMax } : field)
       .concat(hasContentFormat ? [] : [newField({ name: 'contentFormat', type: 'select', values: ['video', 'image'] })]);
@@ -365,6 +398,7 @@ export async function ensureTrendVideoAnalysisCapacity(): Promise<void> {
   const hasContentFormat = schema.some(field => field.name === 'contentFormat');
   const needsAnalysisExpansion = Boolean(analysis && Number(analysis.options?.max || 0) < requiredMax);
   if (!needsAnalysisExpansion && hasContentFormat) return;
+  rejectProductionSchemaMutation('trend_videos requires contentFormat or expanded aiAnalysis capacity');
   const nextSchema = schema
     .map(field => field.name === 'aiAnalysis' && needsAnalysisExpansion ? { ...field, options: { ...(field.options ?? {}), max: requiredMax } } : field)
     .concat(hasContentFormat ? [] : [oldSchemaField({ name: 'contentFormat', type: 'select', values: ['video', 'image'] })]);

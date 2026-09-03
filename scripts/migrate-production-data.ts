@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-import { decryptRegistrationPassword } from '../server/lib/registrationCredentials.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -94,7 +93,6 @@ async function migrateTenant(token: string, tenant: LocalTenant): Promise<{ oldI
     inviteCode: String(tenant.inviteCode || ''),
     registrationInviteCode: invite,
     registeredEmail: email,
-    registeredPasswordCipher: String(tenant.registeredPasswordCipher || ''),
     registeredAt: String(tenant.registeredAt || ''),
     subscriptionStatus: String(tenant.subscriptionStatus || 'active'),
     subscriptionPlan: String(tenant.subscriptionPlan || 'customer'),
@@ -106,24 +104,14 @@ async function migrateTenant(token: string, tenant: LocalTenant): Promise<{ oldI
   if (!newId) throw new Error(`Tenant migration did not return an id: ${tenant.id}`);
 
   if (email) {
-    const password = decryptRegistrationPassword(tenant.registeredPasswordCipher);
     const existingUser = await findOne(token, 'users', `email = ${pbValue(email)}`);
-    if (!existingUser && !password) {
-      console.warn(`  ! ${email}: password cannot be decrypted; user creation skipped`);
-    } else if (apply && existingUser) {
+    if (!existingUser) {
+      console.warn(`  ! ${email}: user creation skipped; issue a one-time reset/invite instead of migrating a recoverable password`);
+    } else if (apply) {
       await request(token, `/api/collections/users/records/${existingUser.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: newId,
-          ...(password ? { password, passwordConfirm: password } : {}),
-        }),
-      });
-    } else if (apply) {
-      await request(token, '/api/collections/users/records', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, passwordConfirm: password, name: payload.companyName, tenantId: newId, emailVisibility: true }),
+        body: JSON.stringify({ tenantId: newId, role: 'super_admin' }),
       });
     }
   }

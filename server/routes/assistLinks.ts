@@ -1,32 +1,31 @@
-import crypto from 'node:crypto';
 import { Router, type Request } from 'express';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import {
+  getPublicOrigin,
   getTenantAwareGoogleOAuthClient,
   getTenantAwareMetaOAuthClient,
   getTenantAwareTikTokOAuthClient,
 } from '../lib/oauthConfig.js';
-import { signOAuthState, type TenantPlatform } from '../lib/tenantPlatformApps.js';
+import {
+  claimAssistLink,
+  findAssistLinkByRawToken,
+  generateAssistLinkToken,
+  oauthPlatformForAssistPlatform,
+  publicAssistLinkStatus,
+  recordAssistLinkAudit,
+  type AssistLinkRecord,
+  type AssistLinkPlatform,
+} from '../lib/assistLinkCapability.js';
+import { signOAuthState } from '../lib/tenantPlatformApps.js';
 import { store } from '../storage/index.js';
 
 export const assistLinksRouter = Router();
-
-interface AssistLinkRecord {
-  id: string;
-  token: string;
-  tenant_id: string;
-  platform: TenantPlatform;
-  expires_at: string;
-  used_at?: string;
-  created_by?: string;
-}
 
 const COL = 'assist_links';
 const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const META_AUTH_URL = 'https://www.facebook.com';
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const ASSIST_TTL_MS = 24 * 60 * 60 * 1000;
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const YOUTUBE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube.readonly',
@@ -57,48 +56,19 @@ function bodyText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function platformParam(value: unknown): TenantPlatform | null {
+function platformParam(value: unknown): AssistLinkPlatform | null {
   const platform = bodyText(value);
   return platform === 'meta' || platform === 'google' || platform === 'tiktok' ? platform : null;
-}
-
-function publicOrigin(req: Request) {
-  const configured = process.env.PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
-  if (configured && !configured.includes('your-domain.com')) return configured;
-  const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() || req.protocol || 'http';
-  const host = req.get('host') || `localhost:${process.env.PORT ?? 8788}`;
-  return `${proto}://${host}`;
 }
 
 function graphVersion() {
   return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
 }
 
-function platformName(platform: TenantPlatform) {
+function platformName(platform: AssistLinkPlatform) {
   if (platform === 'meta') return 'Meta / Facebook / Instagram';
   if (platform === 'google') return 'Google / YouTube';
   return 'TikTok';
-}
-
-function tokenExpired(record: AssistLinkRecord) {
-  return new Date(record.expires_at).getTime() <= Date.now();
-}
-
-function publicRecord(record: AssistLinkRecord) {
-  return {
-    token: record.token,
-    tenantId: record.tenant_id,
-    platform: record.platform,
-    platformName: platformName(record.platform),
-    expiresAt: record.expires_at,
-    usedAt: record.used_at || '',
-    valid: !record.used_at && !tokenExpired(record),
-  };
-}
-
-async function findByToken(token: string): Promise<AssistLinkRecord | null> {
-  const result = await store.list<AssistLinkRecord>(COL, { where: { token }, perPage: 1 });
-  return result.items[0] ?? null;
 }
 
 async function findTenantUserId(tenantId: string) {
@@ -120,66 +90,134 @@ assistLinksRouter.post('/admin/assist-links', async (req, res) => {
     return;
   }
 
-  const token = crypto.randomBytes(24).toString('base64url');
+  const token = generateAssistLinkToken();
   const expiresAt = new Date(Date.now() + ASSIST_TTL_MS).toISOString();
   const record = await store.create<AssistLinkRecord>(COL, {
-    token,
+    token_hash: token.tokenHash,
+    token_prefix: token.tokenPrefix,
+    token_last4: token.tokenLast4,
     tenant_id: tenantId,
     platform,
+    status: 'pending',
     expires_at: expiresAt,
     used_at: '',
+    claimed_at: '',
+    claim_expires_at: '',
+    claim_nonce_hash: '',
+    revoked_at: '',
     created_by: admin.userId,
+    revision: 0,
   });
   if (!record) {
     res.status(500).json({ error: 'assist_link_create_failed' });
     return;
   }
 
+  try {
+    await recordAssistLinkAudit(record, 'assist_link.created', { actorUserId: admin.userId, actorEmail: admin.email });
+  } catch (error) {
+    await store.compareAndSet(COL, record.id, { status: 'pending', revision: 0 }, {
+      status: 'revoked',
+      revoked_at: new Date().toISOString(),
+      revision: 1,
+    }).catch(() => undefined);
+    throw error;
+  }
+
+  // The raw capability appears exactly once: in this creation response URL.
+  // Only its digest and a non-sensitive display hint are persisted.
   res.json({
     ok: true,
-    link: `${publicOrigin(req)}/assist/${encodeURIComponent(token)}`,
-    ...publicRecord(record),
+    link: `${getPublicOrigin(req)}/assist/${encodeURIComponent(token.rawToken)}`,
+    tenantId,
+    ...publicAssistLinkStatus(record),
   });
 });
 
 assistLinksRouter.get('/assist-links/:token', async (req, res) => {
   const token = bodyText(req.params.token);
-  const record = token ? await findByToken(token) : null;
+  const record = token ? await findAssistLinkByRawToken(token) : null;
   if (!record) {
     res.status(404).json({ valid: false, error: 'not_found' });
     return;
   }
-  res.json(publicRecord(record));
+  res.json(publicAssistLinkStatus(record));
 });
 
 assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
   const token = bodyText(req.params.token);
-  const record = token ? await findByToken(token) : null;
-  if (!record || record.used_at || tokenExpired(record)) {
+  const record = token ? await findAssistLinkByRawToken(token) : null;
+  if (!record) {
     res.status(410).json({ error: 'assist_link_invalid_or_expired' });
     return;
   }
 
   const tenantId = record.tenant_id;
+  const oauthPlatform = oauthPlatformForAssistPlatform(record.platform);
+  const googleClient = record.platform === 'google' ? await getTenantAwareGoogleOAuthClient(tenantId) : null;
+  const tiktokClient = record.platform === 'tiktok' ? await getTenantAwareTikTokOAuthClient(tenantId) : null;
+  const metaClient = record.platform === 'meta' ? await getTenantAwareMetaOAuthClient(tenantId) : null;
+  if (record.platform === 'google' && !googleClient) {
+    res.status(503).json({ error: 'google_oauth_not_configured' });
+    return;
+  }
+  if (record.platform === 'tiktok' && !tiktokClient) {
+    res.status(503).json({ error: 'tiktok_oauth_not_configured' });
+    return;
+  }
+  if (record.platform === 'meta' && !metaClient) {
+    res.status(503).json({ error: 'meta_oauth_not_configured' });
+    return;
+  }
+
+  const claimed = await claimAssistLink(record);
+  if (!claimed.ok) {
+    if (claimed.reason === 'claim_in_progress' || claimed.reason === 'conflict') {
+      res.status(409).json({ error: 'assist_link_in_progress' });
+      return;
+    }
+    res.status(410).json({ error: 'assist_link_invalid_or_expired' });
+    return;
+  }
+
+  try {
+    await recordAssistLinkAudit(
+      claimed.record,
+      'assist_link.claimed',
+      { metadata: { reclaimedExpiredClaim: claimed.reclaimedExpiredClaim } },
+    );
+  } catch (error) {
+    await store.compareAndSet(COL, claimed.record.id, {
+      status: 'claimed',
+      revision: claimed.claim.revision,
+      claim_nonce_hash: claimed.record.claim_nonce_hash || '',
+    }, {
+      status: 'pending',
+      claimed_at: '',
+      claim_expires_at: '',
+      claim_nonce_hash: '',
+      revision: claimed.claim.revision + 1,
+    }).catch(() => undefined);
+    throw error;
+  }
+
   const userId = await findTenantUserId(tenantId);
-  const returnTo = `/assist/${encodeURIComponent(record.token)}?done=1`;
+  // The browser keeps the magic token in sessionStorage. OAuth state carries
+  // only the durable record id + a short-lived claim nonce, never the token.
+  const returnTo = '/assist/status?done=1';
   const oauthState = signOAuthState({
     userId,
     tenantId,
-    platform: record.platform === 'google' ? 'youtube' : record.platform === 'tiktok' ? 'tiktok' : 'facebook',
+    platform: oauthPlatform,
     returnTo,
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+    expiresAt: Date.parse(claimed.record.claim_expires_at || ''),
+    assist: claimed.claim,
   });
 
   if (record.platform === 'google') {
-    const client = await getTenantAwareGoogleOAuthClient(tenantId);
-    if (!client) {
-      res.status(503).json({ error: 'google_oauth_not_configured' });
-      return;
-    }
-    const redirectUri = `${publicOrigin(req)}/api/overseas/youtube/oauth/callback`;
+    const redirectUri = `${getPublicOrigin(req)}/api/overseas/youtube/oauth/callback`;
     const url = new URL(GOOGLE_OAUTH_URL);
-    url.searchParams.set('client_id', client.clientId);
+    url.searchParams.set('client_id', googleClient!.clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', YOUTUBE_OAUTH_SCOPES.join(' '));
@@ -192,14 +230,9 @@ assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
   }
 
   if (record.platform === 'tiktok') {
-    const client = await getTenantAwareTikTokOAuthClient(tenantId);
-    if (!client) {
-      res.status(503).json({ error: 'tiktok_oauth_not_configured' });
-      return;
-    }
-    const redirectUri = `${publicOrigin(req)}/api/overseas/social/oauth/tiktok/callback`;
+    const redirectUri = `${getPublicOrigin(req)}/api/overseas/social/oauth/tiktok/callback`;
     const url = new URL(TIKTOK_AUTH_URL);
-    url.searchParams.set('client_key', client.clientKey);
+    url.searchParams.set('client_key', tiktokClient!.clientKey);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('scope', TIKTOK_SCOPES.join(','));
@@ -208,14 +241,9 @@ assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
     return;
   }
 
-  const client = await getTenantAwareMetaOAuthClient(tenantId);
-  if (!client) {
-    res.status(503).json({ error: 'meta_oauth_not_configured' });
-    return;
-  }
-  const redirectUri = `${publicOrigin(req)}/api/overseas/social/oauth/facebook/callback`;
+  const redirectUri = `${getPublicOrigin(req)}/api/overseas/social/oauth/facebook/callback`;
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
-  url.searchParams.set('client_id', client.appId);
+  url.searchParams.set('client_id', metaClient!.appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', META_SCOPES.join(','));
@@ -225,15 +253,8 @@ assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
   res.json({ url: url.toString(), platform: record.platform, platformName: platformName(record.platform) });
 });
 
-assistLinksRouter.post('/assist-links/:token/complete', async (req, res) => {
-  const token = bodyText(req.params.token);
-  const record = token ? await findByToken(token) : null;
-  if (!record) {
-    res.status(404).json({ error: 'not_found' });
-    return;
-  }
-  if (!record.used_at) {
-    await store.update(COL, record.id, { used_at: new Date().toISOString() });
-  }
-  res.json({ ok: true });
+// Kept as an explicit tombstone for stale clients. Anonymous callers can no
+// longer mark a link complete; only a verified OAuth callback may consume it.
+assistLinksRouter.post('/assist-links/:token/complete', (_req: Request, res) => {
+  res.status(410).json({ error: 'assist_link_completion_is_callback_only' });
 });

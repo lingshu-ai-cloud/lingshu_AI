@@ -1,5 +1,11 @@
-import { decryptSecret, getTenantPlatformApp } from '../lib/tenantPlatformApps.js';
-import { sendWhatsAppTemplate, sendWhatsAppText, type WhatsAppConfig } from '../integrations/whatsapp.js';
+import { getTenantPlatformApp } from '../lib/tenantPlatformApps.js';
+import { tenantPlatformSecret } from '../security/platformCredentials.js';
+import {
+  sendWhatsAppTemplate,
+  sendWhatsAppText,
+  WhatsAppDeliveryError,
+  type WhatsAppConfig,
+} from '../integrations/whatsapp.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
 
 function text(value: unknown): string {
@@ -9,14 +15,13 @@ function text(value: unknown): string {
 export async function getTenantWhatsAppConfig(tenantId: string): Promise<WhatsAppConfig> {
   const app = await getTenantPlatformApp(tenantId, 'meta');
   const phoneNumberId = text(app?.phone_number_id);
-  const accessToken = decryptSecret(app?.access_token);
-  const verifyToken = text(app?.webhook_verify_token);
+  const accessToken = app ? tenantPlatformSecret(app, 'access_token') : '';
 
   if (!app || !phoneNumberId || !accessToken) {
     throw new Error('tenant_whatsapp_not_configured');
   }
 
-  return { phoneNumberId, accessToken, verifyToken };
+  return { phoneNumberId, accessToken, verifyToken: '' };
 }
 
 function pacingDelayMs(): number {
@@ -31,7 +36,12 @@ function wait(ms: number): Promise<void> {
   return ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-export async function sendTenantWhatsAppText(tenantId: string, to: string, body: string): Promise<string[]> {
+export type WhatsAppSentBatch = {
+  messages: string[];
+  providerMessageIds: string[];
+};
+
+export async function sendTenantWhatsAppTextBatch(tenantId: string, to: string, body: string): Promise<WhatsAppSentBatch> {
   const waNumber = text(to);
   const content = text(body);
   if (!waNumber || !content) throw new Error('whatsapp_to_and_body_required');
@@ -40,11 +50,29 @@ export async function sendTenantWhatsAppText(tenantId: string, to: string, body:
   const messages = plan.messages;
   if (!messages.length) throw new Error('whatsapp_body_required');
   if (plan.truncated) throw new Error('whatsapp_message_exceeds_three_bubbles');
+  const providerMessageIds: string[] = [];
   for (let index = 0; index < messages.length; index += 1) {
     if (index > 0) await wait(pacingDelayMs());
-    await sendWhatsAppText(config, waNumber, messages[index]);
+    try {
+      const receipt = await sendWhatsAppText(config, waNumber, messages[index]);
+      providerMessageIds.push(receipt.providerMessageId);
+    } catch (error) {
+      if (providerMessageIds.length > 0) {
+        throw new WhatsAppDeliveryError(
+          'whatsapp_partial_delivery_reconciliation_required',
+          'partial',
+          providerMessageIds,
+          messages.slice(0, providerMessageIds.length),
+        );
+      }
+      throw error;
+    }
   }
-  return messages;
+  return { messages, providerMessageIds };
+}
+
+export async function sendTenantWhatsAppText(tenantId: string, to: string, body: string): Promise<string[]> {
+  return (await sendTenantWhatsAppTextBatch(tenantId, to, body)).messages;
 }
 
 export async function sendTenantWhatsAppTemplate(input: {
@@ -53,7 +81,7 @@ export async function sendTenantWhatsAppTemplate(input: {
   templateName: string;
   languageCode?: string;
   variables?: string[];
-}): Promise<void> {
+}): Promise<string> {
   const to = text(input.to);
   const templateName = text(input.templateName);
   if (!to || !templateName) throw new Error('whatsapp_template_target_required');
@@ -66,5 +94,6 @@ export async function sendTenantWhatsAppTemplate(input: {
     : [];
 
   const config = await getTenantWhatsAppConfig(input.tenantId);
-  await sendWhatsAppTemplate(config, to, templateName, input.languageCode || 'en_US', components);
+  const receipt = await sendWhatsAppTemplate(config, to, templateName, input.languageCode || 'en_US', components);
+  return receipt.providerMessageId;
 }

@@ -42,10 +42,19 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
+import { publicPublishHistoryRecord } from '../publishing/publicPublication.js';
+import { publishingUploadDir, publishingVideoReference, resolveTenantPublishingVideo } from '../publishing/localVideoSecurity.js';
 import { groundedCaptionFallback, groundedCoverTitleFallbacks } from '../publishing/copyAdaptation.js';
 import { assessTransformation, commercialDigitalHumanGate, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
+import { RenderAssetPolicyError, validateRenderManifestAssets } from '../studio/renderAssetPolicy.js';
+import { resolveTenantRenderOutput } from '../studio/renderOutputPolicy.js';
+import {
+  downloadProviderAsset,
+  localStudioTtsFallbackAllowed,
+  readBoundedProviderResponse,
+} from '../studio/providerDownloadSecurity.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -75,12 +84,16 @@ function scopedStudioAssetUrl(prefix: string, file: string): string {
 }
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
-  composite: (manifest: unknown, onProgress?: (pct: number) => void, outDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
+  composite: (
+    manifest: unknown,
+    onProgress?: (pct: number) => void,
+    outDir?: string,
+    runtimeOptions?: { maxTimelineAssets?: number; maxDownloadBytes?: number; requireTimelineAssets?: boolean },
+  ) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
 
 function publishingRenderDir(tenantId: string): string {
-  const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
-  return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
+  return publishingUploadDir(tenantId);
 }
 
 function publishingRenderPreviewUrl(tenantId: string, outputPath: string): string {
@@ -3769,117 +3782,220 @@ interface RenderManifest {
   subtitles?: SubtitleSpec;
 }
 
-function absoluteAssetUrl(base: string, value?: string | null): string | null {
+function absoluteAssetUrl(base: string, value?: string | null, tenantId?: string): string | null {
   const raw = String(value || '').trim();
   if (!raw) return null;
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
-  return `${base}${raw.startsWith('/') ? raw : `/${raw}`}`;
+  if (raw.startsWith('data:')) return raw;
+  let parsed: URL;
+  try { parsed = new URL(raw, base); }
+  catch { throw new RenderAssetPolicyError('render_asset_url_invalid'); }
+  if (parsed.origin !== new URL(base).origin || !tenantId) return parsed.toString();
+  if (parsed.searchParams.has('assetToken') || /^\/(?:cloud-files|studio-media)\/[^/]+\/signed\//.test(parsed.pathname)) return parsed.toString();
+  const signedPath = /^\/(?:cloud-files|studio-media)\//.test(parsed.pathname)
+    ? signPathAssetUrl(parsed.pathname, tenantId, 24 * 60 * 60 * 1000)
+    : signAssetUrl(parsed.pathname, tenantId, 24 * 60 * 60 * 1000);
+  return `${base}${signedPath}`;
 }
 
-function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderManifest {
+async function buildManifest(jobId: string, spec: RenderSpec, base: string): Promise<RenderManifest> {
   // 选中素材按名称映射到素材库的真实 URL（已上传的给绝对地址，ffmpeg 可直接拉取）
   const tenantId = studioTenantContext.getStore();
-  const urlByName = new Map(loadMaterials()
-    .filter(m => m.scope === 'shared' || (tenantId && m.tenantId === tenantId))
-    .map(m => [m.name, m.url]));
+  const materialByName = new Map(loadMaterials()
+    .filter(m => !isReferenceOnlyMaterial(m) && (m.scope === 'shared' || (tenantId && m.tenantId === tenantId)))
+    .map(m => [m.name, m]));
+  const timeline = await Promise.all((spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name }))).map(async (item, index) => {
+    const material = materialByName.get(item.name);
+    const directUrl = 'url' in item && typeof item.url === 'string' ? item.url : undefined;
+    const sourceUrl = directUrl || (material?.objectKey ? await r2SignedGetUrl(material.objectKey, materialSignedUrlTtlSeconds()) : material?.url);
+    const resolvedUrl = absoluteAssetUrl(base, sourceUrl, tenantId);
+    return { index, ...item, url: resolvedUrl };
+  }));
+  const selectedBgm = spec.bgm && tenantId ? withRecommendedBgmNames(userBgms(tenantId)).find(track => track.id === spec.bgm) : null;
+  const selectedBgmUrl = selectedBgm?.objectKey
+    ? await r2SignedGetUrl(selectedBgm.objectKey, materialSignedUrlTtlSeconds())
+    : selectedBgm?.url;
+  const requestedDuration = Number(spec.duration);
+  const duration = Number.isFinite(requestedDuration) ? Math.max(1, Math.min(60 * 60, requestedDuration)) : 20;
+  const ratio = ['1:1', '16:9', '9:16'].includes(String(spec.ratio)) ? String(spec.ratio) : '9:16';
+  const bgmVol = Number(spec.bgmVol);
+  const voiceVol = Number(spec.voiceVol);
   return {
     jobId,
     spec: {
-      ratio: spec.ratio || '9:16',
-      duration: spec.duration ?? 20,
-      platform: spec.platform || 'tiktok',
-      language: spec.language || 'en',
-      bgmVol: spec.bgmVol ?? 35,
-      voiceVol: spec.voiceVol ?? 100,
+      ratio,
+      duration,
+      platform: String(spec.platform || 'tiktok').trim().slice(0, 30) || 'tiktok',
+      language: String(spec.language || 'en').trim().slice(0, 30) || 'en',
+      bgmVol: Number.isFinite(bgmVol) ? Math.max(0, Math.min(100, bgmVol)) : 35,
+      voiceVol: Number.isFinite(voiceVol) ? Math.max(0, Math.min(150, voiceVol)) : 100,
     },
     script: spec.script ?? '',
-    timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name }))).map((item, index) => {
-      const rel = urlByName.get(item.name);
-      const directUrl = 'url' in item && typeof item.url === 'string' ? item.url : undefined;
-      const resolvedUrl = absoluteAssetUrl(base, directUrl || rel);
-      return { index, ...item, url: resolvedUrl }; // 优先使用逐镜传入 URL，避免 AI/临时素材被名称映射覆盖
-    }),
-    voiceover: { voice: spec.voice ?? null, url: absoluteAssetUrl(base, spec.voiceoverUrl) },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl) },
-    bgm: (() => {
-      const track = spec.bgm && tenantId ? withRecommendedBgmNames(userBgms(tenantId)).find(t => t.id === spec.bgm) : null;
-      return { id: spec.bgm ?? null, url: track ? `${base}${track.url}` : null };
-    })(),
+    timeline,
+    voiceover: { voice: spec.voice ?? null, url: absoluteAssetUrl(base, spec.voiceoverUrl, tenantId) },
+    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl, tenantId) },
+    bgm: { id: spec.bgm ?? null, url: absoluteAssetUrl(base, selectedBgmUrl, tenantId) },
     subtitles: spec.subtitles && spec.subtitles.mode !== 'off' ? spec.subtitles : undefined,
+  };
+}
+
+function renderObjectStorageOrigin(): string | undefined {
+  const configured = String(process.env.OBJECT_STORAGE_ENDPOINT || '').trim();
+  if (configured) return configured;
+  const accountId = String(process.env.R2_ACCOUNT_ID || '').trim();
+  return accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined;
+}
+
+function renderObjectKeysForTenant(tenantId: string): Set<string> {
+  const keys = new Set<string>();
+  for (const material of loadMaterials()) {
+    if (isReferenceOnlyMaterial(material) || !(material.scope === 'shared' || material.tenantId === tenantId)) continue;
+    if (material.objectKey) keys.add(material.objectKey);
+    if (material.posterObjectKey) keys.add(material.posterObjectKey);
+  }
+  for (const track of userBgms(tenantId)) {
+    if (track.objectKey) keys.add(track.objectKey);
+  }
+  return keys;
+}
+
+const configuredLocalRenderConcurrency = Number(process.env.RENDER_MAX_CONCURRENT_JOBS || 2);
+const localRenderConcurrency = Number.isFinite(configuredLocalRenderConcurrency)
+  ? Math.max(1, Math.min(8, Math.floor(configuredLocalRenderConcurrency)))
+  : 2;
+let activeLocalRenders = 0;
+function claimLocalRenderSlot(): (() => void) | null {
+  if (activeLocalRenders >= localRenderConcurrency) return null;
+  activeLocalRenders += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeLocalRenders = Math.max(0, activeLocalRenders - 1);
   };
 }
 
 // POST /studio/render  Body: RenderSpec → { ok, token, expiresAt, manifest }
 studioRouter.post('/render', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'render')) return;
-  const spec = (req.body ?? {}) as RenderSpec;
-  const jobId = randomUUID();
-  const base = `${req.protocol}://${req.get('host')}`;
-  const manifest = buildManifest(jobId, spec, base);
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const spec = (req.body ?? {}) as RenderSpec;
+    const jobId = randomUUID();
+    const base = `${req.protocol}://${req.get('host')}`;
+    const manifest = await buildManifest(jobId, spec, base);
+    await validateRenderManifestAssets({
+      manifest,
+      origin: base,
+      tenantId,
+      objectStorageOrigin: renderObjectStorageOrigin(),
+      allowedObjectKeys: renderObjectKeysForTenant(tenantId),
+    });
+    const { token, payload } = signRenderToken({ jti: jobId, ratio: manifest.spec.ratio, duration: manifest.spec.duration });
 
-  const { token, payload } = signRenderToken({ jti: jobId, ratio: manifest.spec.ratio, duration: manifest.spec.duration });
-
-  res.status(201).json({
-    ok: true,
-    token,
-    expiresAt: new Date(payload.exp * 1000).toISOString(),
-    manifest,
-  });
+    res.status(201).json({
+      ok: true,
+      token,
+      expiresAt: new Date(payload.exp * 1000).toISOString(),
+      manifest,
+    });
+  } catch (error) {
+    if (error instanceof RenderAssetPolicyError) {
+      res.status(400).json({ ok: false, error: error.message, code: error.code });
+      return;
+    }
+    console.error('[studio-render] manifest authorization failed', error instanceof Error ? error.message : error);
+    res.status(500).json({ ok: false, error: '渲染授权清单生成失败' });
+  }
 });
 
 // POST /studio/render/local  Body: RenderManifest → { ok, outputPath }
 // 网页端兜底：没有 Electron 桥时，直接让本机后端调用同一套 ffmpeg 合成器导出 MP4。
 studioRouter.post('/render/local', async (req, res) => {
+  let releaseRenderSlot: (() => void) | null = null;
   try {
     const { tenantId } = res.locals as AuthLocals;
     const origin = `${req.protocol}://${req.get('host')}`;
+    await validateRenderManifestAssets({
+      manifest: req.body,
+      origin,
+      tenantId,
+      objectStorageOrigin: renderObjectStorageOrigin(),
+      allowedObjectKeys: renderObjectKeysForTenant(tenantId),
+    });
+    releaseRenderSlot = claimLocalRenderSlot();
+    if (!releaseRenderSlot) {
+      res.status(429).json({ ok: false, code: 'render_capacity_exhausted', error: '当前成片任务已达上限，请稍后重试。' });
+      return;
+    }
     const outputDir = publishingRenderDir(tenantId);
-    fs.mkdirSync(outputDir, { recursive: true });
+    fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
     const result = await composite({
       ...(req.body || {}),
+      jobId: randomUUID(),
       assetOrigin: origin,
       assetHeaders: {
         ...(req.get('authorization') ? { authorization: req.get('authorization') } : {}),
         ...(req.get('cookie') ? { cookie: req.get('cookie') } : {}),
       },
-    }, undefined, outputDir);
+    }, undefined, outputDir, { maxTimelineAssets: 60, requireTimelineAssets: true });
     if (!result.ok) {
       res.status(500).json({ ok: false, error: result.error || '本地 MP4 导出失败' });
       return;
     }
-    const outputPath = String(result.outputPath || '');
+    const output = resolveTenantRenderOutput(outputDir, String(result.outputPath || ''));
+    if (!output.ok) {
+      res.status(500).json({ ok: false, error: '本地 MP4 输出路径校验失败' });
+      return;
+    }
+    fs.chmodSync(output.filePath, 0o600);
+    const outputPath = output.filePath;
     res.json({
       ok: true,
-      outputPath,
+      outputPath: publishingVideoReference(tenantId, outputPath),
       previewUrl: outputPath ? publishingRenderPreviewUrl(tenantId, outputPath) : '',
     });
   } catch (err) {
+    if (err instanceof RenderAssetPolicyError) {
+      res.status(400).json({ ok: false, error: err.message, code: err.code });
+      return;
+    }
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : '本地 MP4 导出失败' });
+  } finally {
+    releaseRenderSlot?.();
   }
 });
 
 // POST /studio/render/open-output Body: { path }
 // 网页端无法直接打开 file:// 本地路径时，交给本机后端打开文件所在目录。
 studioRouter.post('/render/open-output', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const rawPath = String(req.body?.path || '').trim().replace(/^file:\/\//, '').replace(/^["']|["']$/g, '');
   if (!rawPath) {
     res.status(400).json({ ok: false, error: '缺少本地文件路径' });
     return;
   }
-  const filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(rawPath);
-  if (!fs.existsSync(filePath)) {
+  const realFilePath = resolveTenantPublishingVideo(tenantId, rawPath, { extensions: ['.mp4'] });
+  if (!realFilePath) {
     res.status(404).json({ ok: false, error: '本地成片文件不存在，请重新导出。' });
+    return;
+  }
+  const previewUrl = publishingRenderPreviewUrl(tenantId, realFilePath);
+  const headless = process.env.NODE_ENV === 'production'
+    || process.env.DISABLE_DESKTOP_OPEN_OUTPUT === 'true'
+    || (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY);
+  if (headless) {
+    res.status(409).json({ ok: false, code: 'open_output_unavailable', error: '当前运行环境不允许打开服务器文件管理器。', previewUrl });
     return;
   }
   try {
     if (process.platform === 'darwin') {
-      await execFileAsync('open', ['-R', filePath], 5000);
+      await execFileAsync('open', ['-R', realFilePath], 5000);
     } else if (process.platform === 'win32') {
-      await execFileAsync('explorer.exe', ['/select,', filePath], 5000);
+      await execFileAsync('explorer.exe', ['/select,', realFilePath], 5000);
     } else {
-      await execFileAsync('xdg-open', [path.dirname(filePath)], 5000);
+      await execFileAsync('xdg-open', [path.dirname(realFilePath)], 5000);
     }
-    res.json({ ok: true });
+    res.json({ ok: true, previewUrl });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err?.message || '打开本地文件夹失败' });
   }
@@ -5649,7 +5765,30 @@ function durationFromText(text: string): number {
   return Math.max(2, Math.min(60, Math.ceil(chars / 9)));
 }
 
-async function minimaxFetchJson(pathname: string, body: Record<string, unknown>, timeoutMs = 90_000): Promise<any> {
+function configuredStudioTtsBytes(name: string, fallback: number, minimum: number, maximum: number): number {
+  const candidate = Number(process.env[name]);
+  const value = Number.isFinite(candidate) ? candidate : fallback;
+  return Math.round(Math.max(minimum, Math.min(maximum, value)));
+}
+
+function studioTtsAudioMaxBytes(): number {
+  return configuredStudioTtsBytes('STUDIO_TTS_MAX_AUDIO_BYTES', 15 * 1024 * 1024, 1024, 64 * 1024 * 1024);
+}
+
+function studioTtsSubtitleMaxBytes(): number {
+  return configuredStudioTtsBytes('STUDIO_TTS_MAX_SUBTITLE_BYTES', 1024 * 1024, 1024, 5 * 1024 * 1024);
+}
+
+function providerHostSuffixes(name: string, fallback: string): string[] {
+  return String(process.env[name] || fallback).split(',').map(item => item.trim()).filter(Boolean);
+}
+
+async function minimaxFetchJson(
+  pathname: string,
+  body: Record<string, unknown>,
+  timeoutMs = 90_000,
+  maximumResponseBytes = 1024 * 1024,
+): Promise<any> {
   const apiKey = process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '';
   if (!apiKey) throw new Error('MINIMAX_API_KEY not set');
   const response = await fetch(minimaxEndpoint(pathname), {
@@ -5661,7 +5800,9 @@ async function minimaxFetchJson(pathname: string, body: Record<string, unknown>,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const json = await response.json().catch(() => ({}));
+  const responseBytes = await readBoundedProviderResponse(response, maximumResponseBytes);
+  let json: any = {};
+  try { json = JSON.parse(responseBytes.toString('utf8')); } catch { /* handled as provider failure below */ }
   if (!response.ok) throw new Error(`MiniMax HTTP ${response.status}: ${JSON.stringify(json).slice(0, 240)}`);
   const statusCode = Number(json?.base_resp?.status_code ?? 0);
   if (statusCode !== 0) {
@@ -5719,11 +5860,16 @@ function minimaxPronunciationDict(style: TtsStyleOptions): { tone: string[] } | 
 }
 
 async function minimaxSubtitleCues(url: unknown, duration: number): Promise<AlignedCue[]> {
-  if (!/^https?:\/\//i.test(String(url || ''))) return [];
+  if (!String(url || '').trim()) return [];
   try {
-    const response = await fetch(String(url), { signal: AbortSignal.timeout(15_000) });
-    if (!response.ok) return [];
-    const json = await response.json().catch(() => null) as any;
+    const downloaded = await downloadProviderAsset({
+      rawUrl: String(url),
+      allowedHostSuffixes: providerHostSuffixes('MINIMAX_TTS_ASSET_HOST_SUFFIXES', 'minimax.io,minimaxi.com,aliyuncs.com'),
+      maximumBytes: studioTtsSubtitleMaxBytes(),
+      allowedContentTypes: ['application/json', 'text/plain', 'application/octet-stream'],
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = JSON.parse(downloaded.bytes.toString('utf8')) as any;
     const rows = Array.isArray(json) ? json
       : [json?.subtitles, json?.subtitle, json?.sentences, json?.words, json?.data].find(Array.isArray) || [];
     const normalized = rows.map((row: any) => {
@@ -5774,7 +5920,13 @@ async function generateMinimaxTts(text: string, voiceId: string, language: strin
     subtitle_enable: true,
     subtitle_type: 'word',
   };
-  const json = await minimaxFetchJson('/v1/t2a_v2', payload, Number(process.env.MINIMAX_TTS_TIMEOUT_MS || 90_000));
+  const maximumAudioBytes = studioTtsAudioMaxBytes();
+  const json = await minimaxFetchJson(
+    '/v1/t2a_v2',
+    payload,
+    Number(process.env.MINIMAX_TTS_TIMEOUT_MS || 90_000),
+    maximumAudioBytes * 2 + 1024 * 1024,
+  );
   const audio = String(json?.data?.audio || '');
   const remoteUrl = outputFormat === 'url' && /^https?:\/\//i.test(audio) ? audio : '';
   const measuredDuration = Number(json?.extra_info?.audio_length || 0) / 1000;
@@ -5782,10 +5934,21 @@ async function generateMinimaxTts(text: string, voiceId: string, language: strin
     ? Math.max(1, Number(measuredDuration.toFixed(3)))
     : durationFromText(text);
   const cues = await minimaxSubtitleCues(json?.data?.subtitle_file, duration);
-  if (remoteUrl) return { url: remoteUrl, duration, source: 'minimax', ...(cues.length ? { cues, alignmentSource: 'minimax_native' as const } : {}) };
+  if (remoteUrl) {
+    const downloaded = await downloadProviderAsset({
+      rawUrl: remoteUrl,
+      allowedHostSuffixes: providerHostSuffixes('MINIMAX_TTS_ASSET_HOST_SUFFIXES', 'minimax.io,minimaxi.com,aliyuncs.com'),
+      maximumBytes: maximumAudioBytes,
+      allowedContentTypes: ['audio/', 'application/octet-stream'],
+      signal: AbortSignal.timeout(Number(process.env.MINIMAX_TTS_DOWNLOAD_TIMEOUT_MS || 60_000)),
+    });
+    const file = `${randomUUID()}.${format}`;
+    fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), downloaded.bytes);
+    return { url: scopedStudioAssetUrl('tts', file), duration, source: 'minimax', ...(cues.length ? { cues, alignmentSource: 'minimax_native' as const } : {}) };
+  }
 
   const buf = bufferFromMinimaxAudio(audio, outputFormat);
-  if (!buf?.length) throw new Error('MiniMax did not return audio data');
+  if (!buf?.length || buf.length > maximumAudioBytes) throw new Error('MiniMax did not return valid bounded audio data');
   const file = `${randomUUID()}.${format}`;
   fs.writeFileSync(path.join(scopedStudioAssetDir(TTS_ROOT), file), buf);
   return { url: scopedStudioAssetUrl('tts', file), duration, source: 'minimax', ...(cues.length ? { cues, alignmentSource: 'minimax_native' as const } : {}) };
@@ -6032,16 +6195,24 @@ async function generateQwenTts(text: string, voice: string, language: string): P
       },
     }),
     signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_TIMEOUT_MS || 90_000)),
+    redirect: 'error',
   });
-  const json = await response.json().catch(() => ({} as any)) as any;
+  const jsonBytes = await readBoundedProviderResponse(response, 1024 * 1024);
+  let json: any = {};
+  try { json = JSON.parse(jsonBytes.toString('utf8')); } catch { /* handled below */ }
   if (!response.ok || json?.code) {
     throw new Error(friendlyTtsProviderError(`${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`, 'DashScope 语音服务'));
   }
   const remoteUrl = String(json?.output?.audio?.url || '').trim();
-  if (!/^https?:\/\//i.test(remoteUrl)) throw new Error('Qwen TTS did not return an audio URL');
-  const audioResponse = await fetch(remoteUrl, { signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_DOWNLOAD_TIMEOUT_MS || 60_000)) });
-  if (!audioResponse.ok) throw new Error(`Qwen TTS audio download HTTP ${audioResponse.status}`);
-  const bytes = Buffer.from(await audioResponse.arrayBuffer());
+  if (!remoteUrl) throw new Error('Qwen TTS did not return an audio URL');
+  const downloaded = await downloadProviderAsset({
+    rawUrl: remoteUrl,
+    allowedHostSuffixes: providerHostSuffixes('DASHSCOPE_TTS_AUDIO_HOST_SUFFIXES', 'aliyuncs.com'),
+    maximumBytes: studioTtsAudioMaxBytes(),
+    allowedContentTypes: ['audio/', 'application/octet-stream'],
+    signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_DOWNLOAD_TIMEOUT_MS || 60_000)),
+  });
+  const bytes = downloaded.bytes;
   if (bytes.length < 1000) throw new Error('Qwen TTS returned empty audio');
   try { fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true }); } catch { /* ignore */ }
   const base = randomUUID();
@@ -6051,7 +6222,7 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   if (measuredDuration >= 0.5) {
     fs.writeFileSync(wavPath, bytes);
   } else {
-    const contentType = String(audioResponse.headers.get('content-type') || '').toLowerCase();
+    const contentType = downloaded.contentType;
     let sourceExt = '.bin';
     if (/mpeg|mp3/.test(contentType)) sourceExt = '.mp3';
     else if (/mp4|m4a/.test(contentType)) sourceExt = '.m4a';
@@ -6139,11 +6310,13 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
     aiError = [aiError, friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240)].filter(Boolean).join('；');
   }
 
-  const piper = await generatePiperTts(spoken, language);
-  if (piper) return { ok: true, ...piper, error: aiError };
+  if (localStudioTtsFallbackAllowed()) {
+    const piper = await generatePiperTts(spoken, language);
+    if (piper) return { ok: true, ...piper, error: aiError };
 
-  const local = await generateLocalSayTts(spoken, voice, language);
-  if (local) return { ok: true, ...local, error: aiError };
+    const local = await generateLocalSayTts(spoken, voice, language);
+    if (local) return { ok: true, ...local, error: aiError };
+  }
 
   return {
     ok: false,
@@ -6857,8 +7030,89 @@ interface StudioProject {
 
 type StoredStudioProject = StudioProject & { tenant_id: string };
 
+function clonedProjectSpec(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  try { return JSON.parse(JSON.stringify(value)) as Record<string, unknown>; }
+  catch { return {}; }
+}
+
+function normalizedProjectRenderPath(tenantId: string, value: unknown): string | null {
+  return resolveTenantPublishingVideo(tenantId, value, { extensions: ['.mp4'] });
+}
+
+function transformProjectRenderReferences(
+  rawSpec: unknown,
+  tenantId: string,
+  visibility: 'storage' | 'public',
+): Record<string, unknown> {
+  const spec = clonedProjectSpec(rawSpec);
+  const renderValue = (value: unknown): { path: string; previewUrl?: string } | null => {
+    const filePath = normalizedProjectRenderPath(tenantId, value);
+    if (!filePath) return null;
+    if (visibility === 'storage') return { path: filePath };
+    return {
+      path: publishingVideoReference(tenantId, filePath),
+      previewUrl: publishingRenderPreviewUrl(tenantId, filePath),
+    };
+  };
+  const transformEntry = (value: unknown): Record<string, unknown> | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const entry = { ...value as Record<string, unknown> };
+    const rendered = renderValue(entry.path);
+    if (rendered) {
+      entry.path = rendered.path;
+      if (rendered.previewUrl) entry.previewUrl = rendered.previewUrl;
+      else delete entry.previewUrl;
+    } else {
+      delete entry.path;
+      delete entry.previewUrl;
+    }
+    return entry;
+  };
+
+  const primary = renderValue(spec.renderOutputPath);
+  if (primary) {
+    spec.renderOutputPath = primary.path;
+    if (primary.previewUrl) spec.renderOutputPreviewUrl = primary.previewUrl;
+    else delete spec.renderOutputPreviewUrl;
+  } else {
+    delete spec.renderOutputPath;
+    delete spec.renderOutputPreviewUrl;
+  }
+
+  if (spec.languageRenderOutputs && typeof spec.languageRenderOutputs === 'object'
+    && !Array.isArray(spec.languageRenderOutputs)) {
+    spec.languageRenderOutputs = Object.fromEntries(Object.entries(spec.languageRenderOutputs)
+      .map(([key, entry]) => [key, transformEntry(entry)] as const)
+      .filter((entry): entry is readonly [string, Record<string, unknown>] => Boolean(entry[1])));
+  }
+  if (spec.languageRenderVersions && typeof spec.languageRenderVersions === 'object'
+    && !Array.isArray(spec.languageRenderVersions)) {
+    spec.languageRenderVersions = Object.fromEntries(Object.entries(spec.languageRenderVersions).map(([key, versions]) => [
+      key,
+      Array.isArray(versions) ? versions.map(transformEntry).filter(Boolean) : [],
+    ]));
+  }
+  return spec;
+}
+
 function projectFromRecord(record: any): StudioProject {
-  return { id: String(record.id), title: String(record.title || '未命名草稿'), status: record.status || 'draft', spec: record.spec || {}, thumbSeed: record.thumb_seed || undefined, createdAt: String(record.created_at || record.created || ''), updatedAt: String(record.updated_at || record.updated || '') };
+  let spec: Record<string, unknown> = {};
+  if (record.spec && typeof record.spec === 'object' && !Array.isArray(record.spec)) {
+    spec = { ...record.spec };
+  } else if (typeof record.spec === 'string') {
+    try {
+      const parsed = JSON.parse(record.spec) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) spec = { ...parsed as Record<string, unknown> };
+    } catch { /* A malformed legacy spec is returned as an empty editable project. */ }
+  }
+
+  const tenantId = String(record.tenant_id || '');
+  // Preview signatures are short-lived and host paths are private. Re-issue
+  // tenant-bound references when reading instead of returning stored paths.
+  spec = transformProjectRenderReferences(spec, tenantId, 'public');
+
+  return { id: String(record.id), title: String(record.title || '未命名草稿'), status: record.status || 'draft', spec, thumbSeed: record.thumb_seed || undefined, createdAt: String(record.created_at || record.created || ''), updatedAt: String(record.updated_at || record.updated || '') };
 }
 
 function loadProjects(): StudioProject[] {
@@ -6884,12 +7138,13 @@ studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { id, title, status = 'draft', spec = {}, thumbSeed } = req.body ?? {};
   const now = new Date().toISOString();
+  const storedSpec = transformProjectRenderReferences(spec, tenantId, 'storage');
 
   if (id) {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
-      await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
-      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }) });
+      await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec: storedSpec, thumb_seed: thumbSeed || '', updated_at: now });
+      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec: storedSpec, thumb_seed: thumbSeed, updated_at: now }) });
       return;
     }
   }
@@ -6898,12 +7153,12 @@ studioRouter.post('/projects', async (req, res) => {
     id: randomUUID(),
     title: title || '未命名草稿',
     status,
-    spec,
+    spec: storedSpec,
     thumbSeed,
     createdAt: now,
     updatedAt: now,
   };
-  const created = await store.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
+  const created = await store.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec: storedSpec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
   if (!created) { res.status(503).json({ ok: false, error: 'project storage unavailable' }); return; }
   res.status(201).json({ ok: true, project: projectFromRecord(created) });
 });
@@ -6987,7 +7242,8 @@ studioRouter.post('/variation-batches/:batchId/retry-failed', (req, res) => {
 const PUBLISH_LINKS_FILE = path.join(__dirname, '../../data/studio-publish-links.json');
 studioRouter.get('/publish-records', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  res.json(listPublishRecords(tenantId, req.query.accountId ? String(req.query.accountId) : undefined));
+  res.json(listPublishRecords(tenantId, req.query.accountId ? String(req.query.accountId) : undefined)
+    .map(record => publicPublishHistoryRecord(record, tenantId)));
 });
 studioRouter.post('/publish-recommendations', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;

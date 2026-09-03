@@ -17,17 +17,48 @@ import {
   getMetaPages,
   getTikTokUser,
   getTikTokVideos,
+  queryTikTokCreatorInfo,
+  tiktokDirectPostAudited,
   type SocialPlatform,
   type SocialUploadInput,
+  type TikTokPrivacyLevel,
+  type TikTokPublishOptions,
 } from '../integrations/social.js';
 import {
   advancedManualConnectEnabled as readAdvancedManualConnectEnabled,
+  getPublicOrigin,
   getTenantAwareMetaOAuthClient,
   getTenantAwareTikTokOAuthClient,
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
-import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { classifyPlatformPublishFailure, platformPublishFailureContext, publishVideoToAccount } from '../publishing/platformPublisher.js';
+import {
+  publicPublishedVideo,
+  publicPublishHistoryRecord,
+  publicPublishTracking,
+} from '../publishing/publicPublication.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
+import { requirePublishingWriteAccess } from './publishingWriteAccess.js';
+import {
+  sealSocialAccountCredentials,
+  socialAccountCredentials,
+  type SocialCredentialRecord,
+} from '../security/platformCredentials.js';
+import { CREDENTIAL_ENVELOPE_VERSION } from '../security/credentialEnvelope.js';
+import { normalizeOAuthReturnTo, safeInlineJson, secureOAuthCallbackResponse } from '../security/oauthCallbackHtml.js';
+import { safeProviderError } from '../security/providerError.js';
+import {
+  consumeOAuthTransaction,
+  createOAuthTransaction,
+  revalidateOAuthActor,
+} from '../security/oauthTransactions.js';
+import {
+  consumeAssistOAuthClaim,
+  recordAssistLinkAudit,
+  releaseAssistOAuthClaim,
+  validateAssistOAuthClaim,
+  type AssistOAuthClaim,
+} from '../lib/assistLinkCapability.js';
 
 const COL = 'social_accounts';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -58,9 +89,10 @@ interface PendingOAuthState {
   platform: SocialPlatform;
   returnTo: string;
   expiresAt: number;
+  assist?: AssistOAuthClaim;
 }
 
-interface SocialAccountRecord {
+interface SocialAccountRecord extends SocialCredentialRecord {
   id: string;
   tenantId: string;
   userId: string;
@@ -69,8 +101,6 @@ interface SocialAccountRecord {
   title: string;
   handle?: string;
   avatarUrl?: string;
-  accessToken: string;
-  refreshToken?: string;
   tokenExpiresAt?: string;
   scope?: string;
   parentPageId?: string;
@@ -83,8 +113,6 @@ interface SocialAccountRecord {
   lastSyncAt?: string;
   status: 'connected' | 'error' | 'expired';
 }
-
-const pendingOAuthStates = new Map<string, PendingOAuthState>();
 
 function graphVersion() {
   return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
@@ -106,29 +134,19 @@ function isPlatform(value: string): value is SocialPlatform {
   return value === 'tiktok' || value === 'instagram' || value === 'facebook';
 }
 
-function getPublicOrigin(req: Request) {
-  const configured = process.env.PUBLIC_BASE_URL?.trim().replace(/\/$/, '');
-  if (configured && !configured.includes('your-domain.com')) return configured;
-  const proto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() || req.protocol || 'http';
-  const host = req.get('host') || `localhost:${process.env.PORT ?? 8788}`;
-  return `${proto}://${host}`;
-}
-
 function redirectUri(req: Request, platform: SocialPlatform) {
   return `${getPublicOrigin(req)}/api/overseas/social/oauth/${platform}/callback`;
 }
 
-function normalizeReturnTo(value: unknown) {
-  if (typeof value !== 'string') return '/';
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return '/';
-  return trimmed.slice(0, 300);
-}
-
-function cleanupOAuthStates() {
-  const now = Date.now();
-  for (const [state, pending] of pendingOAuthStates) {
-    if (pending.expiresAt <= now) pendingOAuthStates.delete(state);
+async function releasePendingAssistClaim(pending: PendingOAuthState, reason: string): Promise<void> {
+  if (!pending.assist) return;
+  const released = await releaseAssistOAuthClaim({
+    tenantId: pending.tenantId,
+    oauthPlatform: pending.platform,
+    claim: pending.assist,
+  });
+  if (released.ok) {
+    await recordAssistLinkAudit(released.record, 'assist_link.released', { metadata: { reason } });
   }
 }
 
@@ -147,6 +165,8 @@ function callbackHtml(input: {
   message: string;
   returnTo: string;
   platform: SocialPlatform;
+  targetOrigin: string;
+  nonce: string;
 }) {
   const payload = {
     source: 'overseas-workbench',
@@ -163,7 +183,7 @@ function callbackHtml(input: {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${htmlEscape(input.title)}</title>
-  <style>
+  <style nonce="${input.nonce}">
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #0f172a; }
     main { width: min(420px, calc(100vw - 32px)); padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08); }
     h1 { margin: 0 0 8px; font-size: 20px; }
@@ -177,12 +197,13 @@ function callbackHtml(input: {
     <p>${htmlEscape(input.message)}</p>
     <a href="${htmlEscape(fallbackUrl)}">返回应用</a>
   </main>
-  <script>
-    const payload = ${JSON.stringify(payload)};
-    const fallbackUrl = ${JSON.stringify(fallbackUrl)};
+  <script nonce="${input.nonce}">
+    const payload = ${safeInlineJson(payload)};
+    const fallbackUrl = ${safeInlineJson(fallbackUrl)};
+    const targetOrigin = ${safeInlineJson(input.targetOrigin)};
     try {
       if (window.opener && !window.opener.closed) {
-        window.opener.postMessage(payload, "*");
+        window.opener.postMessage(payload, targetOrigin);
         window.close();
       } else {
         setTimeout(() => window.location.replace(fallbackUrl), 900);
@@ -225,7 +246,7 @@ function readableSocialError(error: any) {
     return 'Facebook 上传连接被中断。系统已改用更稳定的 Facebook 视频上传接口，请稍后重新发布一次。';
   }
   if (String(message || '').includes('R2 credentials')) return 'Instagram 发布本地视频需要先配置 R2 公网存储。';
-  return message || '社交平台请求失败';
+  return safeProviderError(error).message || '社交平台请求失败';
 }
 
 async function upsertSocialAccount(data: Omit<SocialAccountRecord, 'id' | 'connectedAt' | 'lastSyncAt' | 'status'>) {
@@ -234,19 +255,44 @@ async function upsertSocialAccount(data: Omit<SocialAccountRecord, 'id' | 'conne
     perPage: 1,
   });
   const now = new Date().toISOString();
+  const { accessToken, refreshToken, credentialVersion: _credentialVersion, credentialState: _credentialState, credentialRevision: _credentialRevision, ...publicData } = data;
   const payload = {
-    ...data,
+    ...publicData,
     connectedAt: existing.items[0]?.connectedAt || now,
     lastSyncAt: now,
     status: 'connected' as const,
   };
-  if (existing.items[0]) {
-    await store.update(COL, existing.items[0].id, payload);
-    return { ...existing.items[0], ...payload };
+  let target = existing.items[0];
+  if (!target) {
+    const ensured = await store.createIfAbsent<SocialAccountRecord>(COL, {
+      tenantId: data.tenantId,
+      platform: data.platform,
+      providerAccountId: data.providerAccountId,
+    }, {
+      ...payload,
+      credentialVersion: CREDENTIAL_ENVELOPE_VERSION,
+      credentialState: 'reconnect_required',
+      credentialRevision: 0,
+    });
+    target = ensured.record;
   }
-  const created = await store.create<SocialAccountRecord>(COL, payload);
-  if (!created) throw new Error('保存社交账号失败');
-  return created;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const current = attempt === 0 ? target : await store.getById<SocialAccountRecord>(COL, target.id);
+    if (!current) throw new Error('保存社交账号失败');
+    const revision = Number(current.credentialRevision || 0);
+    const expected: Record<string, string | number | boolean> = current.credentialRevision === undefined
+      ? { status: String(current.status || '') }
+      : { credentialRevision: revision };
+    const sealed = sealSocialAccountCredentials(current, { accessToken: accessToken || '', refreshToken });
+    const result = await store.compareAndSet<SocialAccountRecord>(COL, current.id, expected, {
+      ...payload,
+      ...sealed,
+      credentialRevision: revision + 1,
+    });
+    if (result.ok) return result.record;
+    if (result.reason === 'not_found') throw new Error('保存社交账号失败');
+  }
+  throw new Error('social_account_write_conflict');
 }
 
 function publicSocialAccount(a: SocialAccountRecord) {
@@ -346,7 +392,7 @@ async function connectTikTok(pending: PendingOAuthState, code: string, req: Requ
   if (!client) throw new Error('TikTok 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。');
   const tokens = await exchangeTikTokCode({ ...client, code, redirectUri: redirectUri(req, 'tiktok') });
   const user = await getTikTokUser(tokens.accessToken);
-  await upsertSocialAccount({
+  return upsertSocialAccount({
     tenantId: pending.tenantId,
     userId: pending.userId,
     platform: 'tiktok',
@@ -379,9 +425,10 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   });
   const pages = await getAvailableMetaPages(userToken);
   let saved = 0;
+  const accounts: SocialAccountRecord[] = [];
   for (const page of pages) {
     if (pending.platform === 'facebook') {
-      await upsertSocialAccount({
+      accounts.push(await upsertSocialAccount({
         tenantId: pending.tenantId,
         userId: pending.userId,
         platform: 'facebook',
@@ -399,11 +446,11 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
         videoCount: 0,
         viewCount: 0,
         likeCount: 0,
-      });
+      }));
       saved += 1;
     }
     if (pending.platform === 'instagram' && page.instagram) {
-      await upsertSocialAccount({
+      accounts.push(await upsertSocialAccount({
         tenantId: pending.tenantId,
         userId: pending.userId,
         platform: 'instagram',
@@ -421,7 +468,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
         videoCount: page.instagram.mediaCount || 0,
         viewCount: 0,
         likeCount: 0,
-      });
+      }));
       saved += 1;
     }
   }
@@ -436,43 +483,123 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
       ? `Meta 返回了 ${pages.length} 个 Page（${pageNames || '未命名'}），但这些 Page 没有返回已绑定的 Instagram 专业账号。请确认 IG 是专业账号，并在该 Page 的 Linked accounts 里绑定 Instagram 后重新授权。`
       : `Meta 返回了 ${pages.length} 个 Page，但没有可保存的 Page Access Token。请重新授权并确认 pages_show_list / pages_read_engagement 权限已授权。`);
   }
+  return accounts;
 }
 
 socialRouter.get('/oauth/:platform/callback', async (req, res) => {
+  const callbackNonce = secureOAuthCallbackResponse(res);
+  const targetOrigin = getPublicOrigin(req);
   const platform = String(req.params.platform);
   if (!isPlatform(platform)) {
     res.status(404).send('Unknown platform');
     return;
   }
-  cleanupOAuthStates();
   const state = String(req.query.state || '');
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const signedState = parseOAuthState(state);
-  const pending = pendingOAuthStates.get(state) || (signedState && signedState.platform === platform ? {
-    userId: signedState.userId,
-    tenantId: signedState.tenantId,
-    platform,
-    returnTo: signedState.returnTo,
-    expiresAt: signedState.expiresAt,
-  } : undefined);
+  const signedAssist = signedState?.assist
+    ? await validateAssistOAuthClaim({ tenantId: signedState.tenantId, oauthPlatform: platform, claim: signedState.assist })
+    : null;
+  const signedStateValid = signedState
+    && signedState.platform === platform
+    && (!signedState.assist || signedAssist?.ok);
+  let pending: PendingOAuthState | undefined;
+  if (signedStateValid && signedState) {
+    if (signedState.assist) {
+      pending = {
+        userId: signedState.userId,
+        tenantId: signedState.tenantId,
+        platform,
+        returnTo: signedState.returnTo,
+        expiresAt: signedState.expiresAt,
+        assist: signedState.assist,
+      };
+    } else {
+      try {
+        const consumed = await consumeOAuthTransaction({
+          state,
+          expected: {
+            userId: signedState.userId,
+            tenantId: signedState.tenantId,
+            platform,
+            returnTo: signedState.returnTo,
+            expiresAt: signedState.expiresAt,
+          },
+        });
+        if (consumed.ok) pending = { ...consumed.identity, platform };
+      } catch (error) {
+        console.error(`[${platform}-oauth:transaction-consume-failed]`, safeProviderError(error));
+        res.status(503).type('html').send(callbackHtml({
+          ok: false,
+          title: '授权状态暂不可用',
+          message: '系统暂时无法安全确认本次授权，请回到应用后重新连接。',
+          returnTo: signedState.returnTo,
+          platform,
+          targetOrigin,
+          nonce: callbackNonce,
+        }));
+        return;
+      }
+    }
+  }
   const returnTo = pending?.returnTo || '/';
   if (!pending || pending.platform !== platform) {
-    res.status(400).type('html').send(callbackHtml({ ok: false, title: '授权已失效', message: '请回到系统重新连接账号。', returnTo, platform }));
+    res.status(400).type('html').send(callbackHtml({ ok: false, title: '授权已失效', message: '请回到系统重新连接账号。', returnTo, platform, targetOrigin, nonce: callbackNonce }));
     return;
   }
-  pendingOAuthStates.delete(state);
+  let actorValid = false;
+  try {
+    actorValid = await revalidateOAuthActor(pending);
+  } catch (error) {
+    console.error(`[${platform}-oauth:actor-revalidation-failed]`, safeProviderError(error));
+  }
+  if (!actorValid) {
+    await releasePendingAssistClaim(pending, 'actor_access_revoked').catch(() => undefined);
+    res.status(403).type('html').send(callbackHtml({
+      ok: false,
+      title: '授权权限已变更',
+      message: '发起授权的成员已离开企业、切换企业或不再拥有账号连接权限。',
+      returnTo,
+      platform,
+      targetOrigin,
+      nonce: callbackNonce,
+    }));
+    return;
+  }
+  let accountPersisted = false;
   try {
     if (!code) throw new Error(String(req.query.error_description || req.query.error || '缺少授权码'));
-    if (platform === 'tiktok') await connectTikTok(pending, code, req);
-    else await connectMeta(pending, code, req);
-    res.type('html').send(callbackHtml({ ok: true, title: '账号已连接', message: '授权完成，可以关闭这个窗口。', returnTo, platform }));
+    const accounts = platform === 'tiktok'
+      ? [await connectTikTok(pending, code, req)]
+      : await connectMeta(pending, code, req);
+    accountPersisted = accounts.length > 0;
+    if (pending.assist) {
+      const consumed = await consumeAssistOAuthClaim({
+        tenantId: pending.tenantId,
+        oauthPlatform: platform,
+        claim: pending.assist,
+        connectedAccountId: accounts[0]?.id || '',
+        connectedAccountCount: accounts.length,
+      });
+      if (!consumed.ok) throw new Error(`assist_link_consume_failed:${consumed.reason}`);
+      await recordAssistLinkAudit(consumed.record, 'assist_link.consumed', {
+        metadata: { connectedAccountId: accounts[0]?.id || '', connectedAccountCount: accounts.length },
+      });
+    }
+    res.type('html').send(callbackHtml({ ok: true, title: '账号已连接', message: '授权完成，可以关闭这个窗口。', returnTo, platform, targetOrigin, nonce: callbackNonce }));
   } catch (error: any) {
-    console.error(`${platform} OAuth callback error:`, error?.response?.data ?? error?.message ?? error);
-    res.status(500).type('html').send(callbackHtml({ ok: false, title: '连接失败', message: readableSocialError(error), returnTo, platform }));
+    if (pending.assist && !accountPersisted) {
+      await releasePendingAssistClaim(pending, 'oauth_callback_failed').catch(releaseError => {
+        console.error('[assist-link:release-failed]', { linkId: pending.assist?.linkId, reason: String((releaseError as Error)?.message || releaseError) });
+      });
+    }
+    console.error(`${platform} OAuth callback error:`, safeProviderError(error));
+    res.status(500).type('html').send(callbackHtml({ ok: false, title: '连接失败', message: readableSocialError(error), returnTo, platform, targetOrigin, nonce: callbackNonce }));
   }
 });
 
 socialRouter.use(requireAuth);
+socialRouter.use(requirePublishingWriteAccess);
 
 socialRouter.get('/oauth/:platform/status', async (req, res) => {
   const platform = String(req.params.platform);
@@ -503,20 +630,22 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     res.status(503).json({ error: `${platform} 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。` });
     return;
   }
-  cleanupOAuthStates();
+  const returnTo = normalizeOAuthReturnTo(req.body?.returnTo);
+  const expiresAt = Date.now() + OAUTH_STATE_TTL_MS;
   const state = signOAuthState({
     userId,
     tenantId,
     platform,
-    returnTo: normalizeReturnTo(req.body?.returnTo),
+    returnTo,
+    expiresAt,
   });
-  pendingOAuthStates.set(state, {
-    userId,
-    tenantId,
-    platform,
-    returnTo: normalizeReturnTo(req.body?.returnTo),
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-  });
+  try {
+    await createOAuthTransaction({ state, userId, tenantId, platform, returnTo, expiresAt });
+  } catch (error) {
+    console.error(`[${platform}-oauth:transaction-create-failed]`, safeProviderError(error));
+    res.status(503).json({ error: 'oauth_transaction_unavailable' });
+    return;
+  }
 
   if (platform === 'tiktok') {
     const url = new URL(TIKTOK_AUTH_URL);
@@ -693,7 +822,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
     if (!account) throw new Error('Unsupported platform');
     res.status(201).json({ ok: true, account: publicSocialAccount(account) });
   } catch (error: any) {
-    console.error(`${platform} manual connect error:`, error?.response?.data ?? error?.message ?? error);
+    console.error(`${platform} manual connect error:`, safeProviderError(error));
     res.status(error?.response?.status || 500).json({ ok: false, error: readableSocialError(error) });
   }
 });
@@ -729,6 +858,51 @@ async function getAccount(req: Request, res: any) {
   return record;
 }
 
+function requestedTikTokPublishOptions(value: unknown): TikTokPublishOptions | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  return {
+    privacyLevel: String(source.privacyLevel || '') as TikTokPrivacyLevel,
+    allowComment: source.allowComment === true,
+    allowDuet: source.allowDuet === true,
+    allowStitch: source.allowStitch === true,
+    brandContentToggle: source.brandContentToggle === true,
+    brandOrganicToggle: source.brandOrganicToggle === true,
+    isAigc: source.isAigc === true,
+    userConsent: source.userConsent === true,
+  };
+}
+
+socialRouter.get('/accounts/:id/tiktok/creator-info', async (req, res) => {
+  const account = await getAccount(req, res);
+  if (!account) {
+    res.status(404).json({ error: 'Account not found' });
+    return;
+  }
+  if (account.platform !== 'tiktok' || account.status !== 'connected') {
+    res.status(400).json({ error: 'Connected TikTok account required' });
+    return;
+  }
+  try {
+    const { accessToken } = await socialAccountCredentials(account);
+    const creator = await queryTikTokCreatorInfo(accessToken);
+    const audited = tiktokDirectPostAudited();
+    res.json({
+      creator: {
+        ...creator,
+        privacyLevelOptions: audited
+          ? creator.privacyLevelOptions
+          : creator.privacyLevelOptions.filter(level => level === 'SELF_ONLY'),
+      },
+      audited,
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error('[tiktok-creator-info]', safeProviderError(error));
+    res.status(error?.statusCode || error?.response?.status || 502).json({ error: readableSocialError(error) });
+  }
+});
+
 function insightDateRange(req: Request) {
   const until = typeof req.query.until === 'string' ? req.query.until : new Date().toISOString().slice(0, 10);
   const sinceDefault = new Date(`${until}T00:00:00.000Z`);
@@ -761,9 +935,10 @@ socialRouter.get('/accounts/:id/insights', async (req, res) => {
     return;
   }
   try {
+    const { accessToken } = await socialAccountCredentials(account);
     const points = account.platform === 'facebook'
-      ? await getFacebookPageInsights(account.providerAccountId, account.accessToken, graphVersion(), range)
-      : await getInstagramAccountInsights(account.providerAccountId, account.accessToken, graphVersion(), range);
+      ? await getFacebookPageInsights(account.providerAccountId, accessToken, graphVersion(), range)
+      : await getInstagramAccountInsights(account.providerAccountId, accessToken, graphVersion(), range);
     const metricKeys: Record<string, 'views' | 'reach' | 'likes' | 'comments' | 'shares' | 'saves' | 'followers' | 'profileViews' | 'watchTimeMinutes'> = {
       page_impressions_unique: 'reach',
       page_video_views: 'views',
@@ -798,7 +973,7 @@ socialRouter.get('/accounts/:id/insights', async (req, res) => {
     })));
     res.json({ platform: account.platform, accountId: account.id, range, points, fetchedAt: new Date().toISOString() });
   } catch (error: any) {
-    console.error(`${account.platform} insights error:`, error?.response?.data ?? error?.message ?? error);
+    console.error(`${account.platform} insights error:`, safeProviderError(error));
     const apiCode = error?.response?.data?.error?.code;
     const status = error?.response?.status === 403 || apiCode === 10 || apiCode === 200 ? 403 : (error?.response?.status || 500);
     res.status(status).json({
@@ -819,10 +994,11 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
   }
   const maxResults = Number(req.query.maxResults ?? 25);
   try {
+    const { accessToken } = await socialAccountCredentials(account);
     let videos: unknown[] = [];
-    if (account.platform === 'tiktok') videos = await getTikTokVideos(account.accessToken, maxResults);
-    if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
+    if (account.platform === 'tiktok') videos = await getTikTokVideos(accessToken, maxResults);
+    if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), maxResults);
+    if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), maxResults);
     await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
       const metrics: Record<string, number> = {
         likes: Number(video.likeCount || 0),
@@ -844,7 +1020,7 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
     }));
     res.json({ videos });
   } catch (error: any) {
-    console.error(`${account.platform} videos error:`, error?.response?.data ?? error?.message ?? error);
+    console.error(`${account.platform} videos error:`, safeProviderError(error));
     res.status(error?.response?.status || 500).json({ error: readableSocialError(error) });
   }
 });
@@ -857,16 +1033,17 @@ socialRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
   }
   const maxResults = Number(req.query.maxResults ?? 50);
   try {
+    const { accessToken } = await socialAccountCredentials(account);
     let comments: unknown[] = [];
     if (account.platform === 'tiktok') {
       res.status(501).json({ error: 'TikTok 评论读取需要额外 API 权限，当前暂未开放' });
       return;
     }
-    if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, account.accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, account.accessToken, graphVersion(), maxResults);
+    if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, accessToken, graphVersion(), maxResults);
+    if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, accessToken, graphVersion(), maxResults);
     res.json({ comments, total: comments.length });
   } catch (error: any) {
-    console.error(`${account.platform} comments error:`, error?.response?.data ?? error?.message ?? error);
+    console.error(`${account.platform} comments error:`, safeProviderError(error));
     res.status(error?.response?.status || 500).json({ error: readableSocialError(error) });
   }
 });
@@ -881,9 +1058,13 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'Account is not connected' });
     return;
   }
-  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean };
+  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; idempotencyKey?: string; trackWaLink?: boolean };
   if (!body.title || (!body.videoPath && !body.videoUrl)) {
     res.status(400).json({ error: 'title and videoPath/videoUrl are required' });
+    return;
+  }
+  if (!body.idempotencyKey || !/^[A-Za-z0-9._:-]{8,200}$/.test(body.idempotencyKey)) {
+    res.status(400).json({ error: 'valid idempotencyKey is required' });
     return;
   }
   try {
@@ -896,17 +1077,36 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       title: body.title,
       description: body.description,
       privacyStatus: body.privacyStatus,
+      tiktokPublishOptions: requestedTikTokPublishOptions(body.tiktokPublishOptions),
       projectId: body.projectId,
       generationVersionId: body.generationVersionId,
       ratio: body.ratio,
       contentId: body.contentId,
       language: body.language,
+      idempotencyKey: body.idempotencyKey,
       trackWaLink: body.trackWaLink,
     });
-    res.status(201).json({ ok: true, video: result.video, tracking: result.tracking, publishRecord: result.publishRecord });
+    res.status(201).json({
+      ok: true,
+      video: publicPublishedVideo(result.video),
+      tracking: publicPublishTracking(result.tracking),
+      publishRecord: publicPublishHistoryRecord(result.publishRecord, account.tenantId),
+    });
   } catch (error: any) {
-    console.error(`${account.platform} upload error:`, error?.response?.data ?? error?.message ?? error);
+    console.error(`${account.platform} upload error:`, safeProviderError(error));
+    const classification = classifyPlatformPublishFailure(error);
+    const context = platformPublishFailureContext(error);
     const status = error?.statusCode || error?.response?.status || 500;
-    res.status(status).json({ ok: false, error: readableSocialError(error) });
+    res.status(status).json({
+      ok: false,
+      error: readableSocialError(error),
+      outcomeUnknown: classification.outcomeUnknown,
+      retrySafe: classification.retrySafe,
+      reconciliationRequired: classification.outcomeUnknown,
+      reconciliationPersisted: context?.reconciliationPersisted === true,
+      trackingPostId: context?.trackingPostId || '',
+      alreadyPublished: classification.reason === 'already_published',
+      resolution: classification.outcomeUnknown ? 'verify_platform_before_retry' : 'correct_error_then_retry',
+    });
   }
 });

@@ -580,8 +580,30 @@ function KnowledgeCard({
   );
 }
 
-interface ProductApiInfo { apiKey: string; tenantId: string; createdAt?: string; lastIngestedAt?: string; lastProductName?: string }
-interface ProductApiStatus { count: number; lastIngestedAt?: string; lastProductName?: string }
+interface ProductApiInfo {
+  apiKey?: string;
+  oneTimeSecret?: boolean;
+  tenantId: string;
+  configured: boolean;
+  rotationRequired: boolean;
+  keyPrefix?: string;
+  keyLast4?: string;
+  createdAt?: string;
+  rotatedAt?: string;
+  lastIngestedAt?: string;
+  lastProductName?: string;
+}
+interface ProductApiStatus {
+  count: number;
+  configured?: boolean;
+  rotationRequired?: boolean;
+  keyPrefix?: string;
+  keyLast4?: string;
+  createdAt?: string;
+  rotatedAt?: string;
+  lastIngestedAt?: string;
+  lastProductName?: string;
+}
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -732,8 +754,8 @@ export default function EnterprisePage() {
     const requestInit = { headers: authHeader(), signal: controller.signal };
     Promise.all([
       fetch('/api/overseas/enterprise/profile', requestInit).then(r => r.ok ? r.json() : Promise.reject(new Error(`企业资料加载失败（${r.status}）`))),
-      fetch('/api/overseas/enterprise/product-api', requestInit).then(r => r.json()).catch(() => null),
-      fetch('/api/overseas/enterprise/product-api/status', requestInit).then(r => r.json()).catch(() => ({ count: 0 })),
+      fetch('/api/overseas/enterprise/product-api', requestInit).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/overseas/enterprise/product-api/status', requestInit).then(r => r.ok ? r.json() : ({ count: 0 })).catch(() => ({ count: 0 })),
       fetch('/api/overseas/enterprise/faq/packs', requestInit).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' })),
     ])
       .then(([data, productApi, productApiStatus, packData]: [Partial<Profile>, ProductApiInfo | null, ProductApiStatus, { packs?: FaqPack[]; recommendedIndustry?: string }]) => {
@@ -1337,11 +1359,20 @@ export default function EnterprisePage() {
   }, [profile, loading, saving, hasUnsavedChanges]);
 
   const rotateProductApiKey = async () => {
-    const next = await fetch('/api/overseas/enterprise/product-api/rotate', {
-      method: 'POST',
-      headers: authHeader(),
-    }).then(r => r.json());
-    setApiInfo(next);
+    setProductImportMessage('');
+    setSaveError('');
+    try {
+      const response = await fetch('/api/overseas/enterprise/product-api/rotate', {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      const next = await response.json().catch(() => ({})) as ProductApiInfo & { error?: string; message?: string };
+      if (!response.ok) throw new Error(next.message || next.error || `密钥重置失败（${response.status}）`);
+      setApiInfo(next);
+      setProductImportMessage('新密钥仅显示本次，请立即复制并安全保存。旧密钥已失效。');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '密钥重置失败');
+    }
   };
 
   const importOrderCsv = async (file: File | null) => {
@@ -2370,19 +2401,29 @@ export default function EnterprisePage() {
                         }}
                       />
                     </label>
-                    <button type="button" onClick={rotateProductApiKey}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary">
+                    <button type="button" onClick={rotateProductApiKey} disabled={!apiInfo}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50">
                       重置Key
                     </button>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-white px-3 py-2 text-xs text-text-primary">{apiInfo?.apiKey || '正在生成...'}</code>
-                  <button type="button" onClick={() => apiInfo?.apiKey && navigator.clipboard?.writeText(apiInfo.apiKey)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-950 text-xs font-semibold text-white">
-                    <Copy size={12} />复制
+                  <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-white px-3 py-2 text-xs text-text-primary">
+                    {apiInfo?.apiKey
+                      || (apiInfo?.configured && apiInfo?.keyPrefix && apiInfo?.keyLast4 ? `${apiInfo?.keyPrefix}••••••••${apiInfo?.keyLast4}` : '')
+                      || (apiInfo?.rotationRequired ? '旧版明文密钥已撤销，请重置' : '')
+                      || '仅组织管理员可管理 API 密钥'}
+                  </code>
+                  <button type="button" disabled={!apiInfo?.apiKey} onClick={() => apiInfo?.apiKey && navigator.clipboard?.writeText(apiInfo.apiKey)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-950 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                    <Copy size={12} />{apiInfo?.apiKey ? '复制' : '已隐藏'}
                   </button>
                 </div>
+                {apiInfo?.apiKey
+                  ? <p className="mt-2 text-[11px] font-semibold text-amber-700">密钥仅显示本次；离开页面后无法再次查看，请立即安全保存。</p>
+                  : apiInfo?.configured
+                    ? <p className="mt-2 text-[11px] text-text-muted">服务端只保存密钥摘要。若密钥遗失，请重置；旧密钥会立即失效。</p>
+                    : null}
                 {productImportMessage && <p className="mt-2 text-[11px] font-semibold text-green-700">{productImportMessage}</p>}
                 <p className="mt-2 text-[11px] text-text-muted">已接入商品：{apiStatus.count}{apiStatus.lastIngestedAt ? ` · 最近接入 ${apiStatus.lastProductName || '商品'}` : ''}</p>
               </div>

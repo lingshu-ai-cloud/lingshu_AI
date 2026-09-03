@@ -38,6 +38,10 @@ data/backups/
 data/migration-tenant-id-map.json
 data/*backup*/
 data/*.backup-*.json
+# Production backup/restore artifacts must never be versioned. Restore output
+# is decrypted tenant data; encrypted backups belong in a separate fault domain.
+/backups/
+/restore/
 # Customer and operational data must never be versioned. Keep only seed templates in Git.
 data/demo-account-registry.json
 data/demo-account-registry.backup.json

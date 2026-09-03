@@ -1,11 +1,13 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { callLLM } from '../agents/llm.js';
+import { compareAndSetRecord } from '../digitalEmployees/reliableKernel.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
+import { writeAuditLog } from '../lib/auditLog.js';
 import { getBestTimeScores } from '../publishing/bestTime.js';
 import {
   PUBLISH_COPY_PLATFORMS,
@@ -15,11 +17,42 @@ import {
   type PublishCopyPlatform,
 } from '../publishing/copyAdaptation.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
+import {
+  activatePreparedScheduledPost,
+  createScheduledPost,
+  listTenantCalendarPosts,
+  schedulePayloadHash,
+  validateScheduledTikTokPublishOptions,
+  type SchedulePostInput,
+} from '../publishing/scheduleService.js';
+import { isDigitalEmployeePostStats } from '../publishing/postMutationPolicy.js';
+import {
+  PUBLISH_VIDEO_EXTENSIONS,
+  hasSupportedVideoContainerSignature,
+  normalizeApprovedPublicVideoUrl,
+  publishingUploadDir,
+  publishingVideoReference,
+  resolveTenantPublishingVideo,
+  tenantPublishingVideoSha256,
+} from '../publishing/localVideoSecurity.js';
+import { publicPublishingStats } from '../publishing/publicPublication.js';
 import { store } from '../storage/index.js';
+import { requestOrganizationRoleStrict } from './auth.js';
+import { RecordScanLimitError } from '../storage/pagination.js';
+import {
+  attachPublishContentFences,
+  durablePostContentFenceKeys,
+  publishContentFenceKey,
+  PublishContentFenceError,
+  releasePostContentFences,
+  releaseSpecificPostContentFences,
+  releasePublishContentReservations,
+  reservePublishContentFences,
+} from '../publishing/publishContentFence.js';
+import { withPublishQueueProjection } from '../publishing/publishQueueProjection.js';
 
 export const publishingRouter = Router();
-
-const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
+const MAX_CALENDAR_TARGET_ACCOUNTS = 100;
 
 interface RecycleListRecord {
   id: string;
@@ -56,6 +89,42 @@ function numberValue(value: unknown): number {
   return Number.isFinite(next) ? next : 0;
 }
 
+function requestExpectedRevision(req: Request): number | null {
+  const rawHeader = text(req.headers['if-match']).replace(/^W\//, '').replace(/^"|"$/g, '');
+  const raw = req.body?.expectedRevision ?? req.query.expectedRevision ?? (rawHeader || undefined);
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function requireExpectedRevision(req: Request, res: Response, post: PostRecord): number | null {
+  const expectedRevision = requestExpectedRevision(req);
+  if (expectedRevision === null) {
+    res.status(428).json({
+      error: 'expected_revision_required',
+      currentRevision: Number(post.publish_revision || 0),
+    });
+    return null;
+  }
+  if (expectedRevision !== Number(post.publish_revision || 0)) {
+    res.status(409).json({
+      error: 'calendar_post_revision_conflict',
+      currentRevision: Number(post.publish_revision || 0),
+    });
+    return null;
+  }
+  return expectedRevision;
+}
+
+async function cleanupMutationContentFences(
+  postId: string,
+  candidateFenceKeys: string[],
+  requireExecutable = false,
+): Promise<void> {
+  const current = await store.getById<PostRecord>('posts', postId);
+  const durableKeys = current ? durablePostContentFenceKeys(current, requireExecutable) : [];
+  await releaseSpecificPostContentFences(store, postId, candidateFenceKeys, durableKeys);
+}
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (value && typeof value === 'object') return value as T;
   if (typeof value === 'string') {
@@ -68,19 +137,8 @@ function parseJson<T>(value: unknown, fallback: T): T {
   return fallback;
 }
 
-function publishingUploadDir(tenantId: string): string {
-  const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
-  return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
-}
-
 function localPublishingVideo(tenantId: string, videoPath: unknown): string | null {
-  const requested = text(videoPath);
-  if (!requested) return null;
-  const uploadDir = publishingUploadDir(tenantId);
-  const resolved = path.resolve(requested);
-  if (!resolved.startsWith(`${uploadDir}${path.sep}`)) return null;
-  if (!PUBLISH_VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return null;
-  return resolved;
+  return resolveTenantPublishingVideo(tenantId, videoPath);
 }
 
 function publishingPreviewUrl(tenantId: string, videoPath: unknown): string {
@@ -91,10 +149,10 @@ function publishingPreviewUrl(tenantId: string, videoPath: unknown): string {
 }
 
 function publicPost(post: PostRecord) {
-  const stats = parseJson<Record<string, unknown>>(post.stats, {});
+  const durableStats = parseJson<Record<string, unknown>>(post.stats, {});
+  const stats = publicPublishingStats(post);
   return {
     id: post.id,
-    tenantId: post.tenant_id,
     contentId: text(post.content_id),
     platform: text(post.platform),
     platformPostId: text(post.platform_post_id),
@@ -109,8 +167,8 @@ function publicPost(post: PostRecord) {
     videoUrl: text(stats.videoUrl || stats.mediaUrl || stats.url),
     duration: numberValue(stats.duration),
     firstComment: text(stats.firstComment),
-    videoPath: text(stats.videoPath),
-    videoPreviewUrl: publishingPreviewUrl(post.tenant_id, stats.videoPath) || text(stats.videoPreviewUrl),
+    videoPath: publishingVideoReference(post.tenant_id, durableStats.videoPath),
+    videoPreviewUrl: publishingPreviewUrl(post.tenant_id, durableStats.videoPath) || text(stats.videoPreviewUrl),
     trackWaLink: stats.trackWaLink !== false,
     scheduleLocked: Boolean(stats.scheduleLocked),
     targetAccountIds: Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(String).map(text).filter(Boolean) : [],
@@ -119,9 +177,26 @@ function publicPost(post: PostRecord) {
     publishError: text(stats.publishError),
     publishAttempts: numberValue(stats.publishAttempts),
     nextPublishAttemptAt: text(stats.nextPublishAttemptAt),
+    publishRevision: Number(post.publish_revision || 0),
+    reconciliationRequired: post.reconciliation_required === true,
     isRecycle: Boolean(stats.isRecycle),
     inquiries: numberValue(post.inquiries),
     deals: numberValue(post.deals),
+  };
+}
+
+function publicPostingSchedule(item: Partial<PostingScheduleRecord>) {
+  const preset: PostingScheduleRecord['preset'] = item.preset === 'light' || item.preset === 'high'
+    ? item.preset
+    : 'standard';
+  return {
+    id: text(item.id),
+    platform: text(item.platform) || 'tiktok',
+    market: text(item.market) || 'global',
+    time_zone: text(item.time_zone) || 'UTC',
+    utc_offset: Math.max(-12, Math.min(14, numberValue(item.utc_offset))),
+    preset,
+    slots: normalizeScheduleSlots(item.slots, preset),
   };
 }
 
@@ -138,6 +213,30 @@ function hasPublishedTargets(post: PostRecord): boolean {
 function isPublishingPost(post: PostRecord): boolean {
   const stats = parseJson<Record<string, unknown>>(post.stats, {});
   return text(stats.status) === 'publishing';
+}
+
+async function validateTargetAccountBindings(
+  tenantId: string,
+  platform: string,
+  accountIds: string[],
+): Promise<boolean> {
+  if (!accountIds.length || accountIds.length > MAX_CALENDAR_TARGET_ACCOUNTS) return false;
+  const records = await Promise.all(accountIds.map(accountId => (
+    platform === 'youtube'
+      ? store.getById<Record<string, unknown> & { id: string }>('youtube_accounts', accountId)
+      : store.getById<Record<string, unknown> & { id: string }>('social_accounts', accountId)
+  )));
+  return records.every((record, index) => {
+    if (!record || record.id !== accountIds[index]) return false;
+    const recordTenantId = text(record.tenantId || record.tenant_id);
+    if (recordTenantId !== tenantId) return false;
+    return platform === 'youtube' || text(record.platform) === platform;
+  });
+}
+
+function scheduleContentDigest(videoSha256: string, _videoUrl: string): string {
+  if (/^[a-f0-9]{64}$/.test(videoSha256)) return videoSha256;
+  return '';
 }
 
 function presetSchedule(preset: PostingScheduleRecord['preset'] = 'standard'): Array<{ weekday: number; time: string }> {
@@ -189,6 +288,17 @@ function fallbackQueueSuggestion(input: {
 }
 
 publishingRouter.use(requireAuth);
+publishingRouter.use(async (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) { next(); return; }
+  const { userId, supportAccess } = res.locals as AuthLocals;
+  if (supportAccess) { res.status(403).json({ error: 'support_access_read_only' }); return; }
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) {
+    res.status(403).json({ error: 'publishing_write_forbidden' });
+    return;
+  }
+  next();
+});
 
 publishingRouter.get('/local-videos/:filename', (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -237,11 +347,12 @@ publishingRouter.post('/local-videos', async (req, res) => {
   try {
     await pipeline(req, limiter, fs.createWriteStream(outputPath));
     if (!receivedBytes) throw new Error('empty_video');
+    if (!hasSupportedVideoContainerSignature(outputPath)) throw new Error('invalid_video_container');
     res.status(201).json({
       ok: true,
       video: {
         name: originalName,
-        videoPath: outputPath,
+        videoPath: publishingVideoReference(tenantId, outputPath),
         previewUrl: publishingPreviewUrl(tenantId, outputPath),
         size: receivedBytes,
       },
@@ -249,7 +360,7 @@ publishingRouter.post('/local-videos', async (req, res) => {
   } catch (error: any) {
     try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
     const status = Number(error?.statusCode) || 400;
-    res.status(status).json({ error: error?.message === 'empty_video' ? '视频文件为空' : error?.message === 'video_too_large' ? '视频文件过大' : '视频接收失败' });
+    res.status(status).json({ error: error?.message === 'empty_video' ? '视频文件为空' : error?.message === 'video_too_large' ? '视频文件过大' : error?.message === 'invalid_video_container' ? '文件内容不是受支持的视频容器' : '视频接收失败' });
   }
 });
 
@@ -259,21 +370,43 @@ publishingRouter.post('/local-videos/import-rendered', (req, res) => {
   const outputDir = publishingUploadDir(tenantId);
   fs.mkdirSync(outputDir, { recursive: true });
   const requestedPaths: string[] = Array.isArray(req.body?.videoPaths) ? req.body.videoPaths.map(text).filter(Boolean).slice(0, 200) : [];
-  const videos = requestedPaths.map(sourcePath => {
+  const videos = requestedPaths.map((sourcePath, inputIndex) => {
+    const existingTenantVideo = resolveTenantPublishingVideo(tenantId, sourcePath);
+    if (existingTenantVideo) {
+      return {
+        inputIndex,
+        videoPath: publishingVideoReference(tenantId, existingTenantVideo),
+        previewUrl: publishingPreviewUrl(tenantId, existingTenantVideo),
+      };
+    }
+    // Production accepts only tenant-scoped opaque references or legacy paths
+    // that still resolve inside this tenant's upload root. The historical
+    // shared Downloads import is a local-development compatibility path and
+    // must never become a cross-tenant file oracle.
+    if (process.env.NODE_ENV === 'production') return { inputIndex, error: 'legacy_render_import_disabled' };
     const filename = path.basename(sourcePath);
     const ext = path.extname(filename).toLowerCase();
-    if (!PUBLISH_VIDEO_EXTENSIONS.has(ext)) return { sourcePath, error: 'unsupported_video' };
-    const targetPath = path.join(outputDir, filename);
-    if (!fs.existsSync(targetPath)) {
-      const resolvedSource = path.resolve(sourcePath);
-      if (!resolvedSource.startsWith(`${sourceRoot}${path.sep}`) || !fs.existsSync(resolvedSource) || !fs.statSync(resolvedSource).isFile()) {
-        return { sourcePath, error: 'video_not_found' };
-      }
-      fs.copyFileSync(resolvedSource, targetPath);
+    if (!PUBLISH_VIDEO_EXTENSIONS.has(ext)) return { inputIndex, error: 'unsupported_video' };
+    let resolvedSource = '';
+    let realSourceRoot = '';
+    try {
+      resolvedSource = fs.realpathSync(path.resolve(sourcePath));
+      realSourceRoot = fs.realpathSync(sourceRoot);
+    } catch {
+      return { inputIndex, error: 'video_not_found' };
     }
+    if (!resolvedSource.startsWith(`${realSourceRoot}${path.sep}`)
+      || fs.lstatSync(resolvedSource).isSymbolicLink()
+      || !fs.statSync(resolvedSource).isFile()
+      || !hasSupportedVideoContainerSignature(resolvedSource)) {
+      return { inputIndex, error: 'video_not_found' };
+    }
+    const targetPath = path.join(outputDir, `${randomUUID()}-${filename}`);
+    fs.copyFileSync(resolvedSource, targetPath, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(targetPath, 0o600);
     return {
-      sourcePath,
-      videoPath: targetPath,
+      inputIndex,
+      videoPath: publishingVideoReference(tenantId, targetPath),
       previewUrl: publishingPreviewUrl(tenantId, targetPath),
     };
   });
@@ -307,7 +440,7 @@ publishingRouter.get('/posting-schedule', async (req, res) => {
   });
   const item = result.items[0];
   res.json({
-    item: item || {
+    item: publicPostingSchedule(item || {
       id: '',
       tenant_id: tenantId,
       platform,
@@ -316,13 +449,13 @@ publishingRouter.get('/posting-schedule', async (req, res) => {
       utc_offset: 0,
       preset: 'standard',
       slots: presetSchedule('standard'),
-    },
+    }),
   });
 });
 
 publishingRouter.put('/posting-schedule', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const platform = text(req.body?.platform) || 'tiktok';
+  const platform = (text(req.body?.platform) || 'tiktok').toLowerCase();
   const requestedPreset = text(req.body?.preset);
   const preset: PostingScheduleRecord['preset'] = requestedPreset === 'light' || requestedPreset === 'high' ? requestedPreset : 'standard';
   const next = {
@@ -343,21 +476,31 @@ publishingRouter.put('/posting-schedule', async (req, res) => {
   if (existing) {
     await store.update('publishing_schedules', existing.id, next);
     const item = await store.getById<PostingScheduleRecord>('publishing_schedules', existing.id);
-    res.json({ item: item || { ...existing, ...next } });
+    res.json({ item: publicPostingSchedule(item || { ...existing, ...next }) });
     return;
   }
   const item = await store.create<PostingScheduleRecord>('publishing_schedules', next);
-  res.status(201).json({ item: item || { id: '', ...next } });
+  res.status(201).json({ item: publicPostingSchedule(item || { id: '', ...next }) });
 });
 
 publishingRouter.get('/calendar', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const from = Date.parse(text(req.query.from)) || Date.now() - 7 * 86_400_000;
   const to = Date.parse(text(req.query.to)) || Date.now() + 35 * 86_400_000;
-  const result = await store.list<PostRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500, sort: 'published_at' });
-  const items = result.items
+  let records: PostRecord[];
+  try {
+    records = await listTenantCalendarPosts(store, tenantId);
+  } catch (error) {
+    if (error instanceof RecordScanLimitError) {
+      res.status(503).json({ error: 'calendar_record_scan_limit_exceeded', message: '日历记录超过安全扫描上限，请联系管理员归档后重试。' });
+      return;
+    }
+    throw error;
+  }
+  const items = records
     .map(publicPost)
     .filter(item => {
+      if (item.stats.calendarHidden === true) return false;
       const time = Date.parse(item.publishedAt || '');
       return Number.isFinite(time) && time >= from && time <= to;
     });
@@ -369,75 +512,226 @@ publishingRouter.post('/calendar', async (req, res) => {
   const scheduledAt = text(req.body?.scheduledAt);
   const platform = text(req.body?.platform) || 'tiktok';
   const title = text(req.body?.title) || 'Untitled content';
+  const idempotencyKey = text(req.body?.idempotencyKey);
+  if (!/^[A-Za-z0-9._:-]{8,200}$/.test(idempotencyKey)) {
+    res.status(400).json({ error: 'valid_idempotency_key_required' });
+    return;
+  }
   if (!scheduledAt) {
     res.status(400).json({ error: 'scheduled_at_required' });
     return;
   }
-  const tracked = await createTrackedPostDraft(tenantId, {
-    contentId: text(req.body?.contentId),
-    platform,
-    title,
-    language: text(req.body?.language),
-    enabled: req.body?.trackWaLink !== false,
-  });
-  await store.update('posts', tracked.id, {
-    published_at: scheduledAt,
-    stats: {
-      status: 'scheduled',
-      coverUrl: text(req.body?.coverUrl),
-      description: text(req.body?.description),
-      firstComment: text(req.body?.firstComment),
-      videoPath: text(req.body?.videoPath),
+  const requestedVideoPath = text(req.body?.videoPath);
+  const videoPath = requestedVideoPath ? resolveTenantPublishingVideo(tenantId, requestedVideoPath) || '' : '';
+  if (requestedVideoPath && !videoPath) {
+    res.status(400).json({ error: 'video_path_outside_tenant_storage' });
+    return;
+  }
+  const requestedVideoUrl = text(req.body?.videoUrl);
+  const normalizedVideoUrl = requestedVideoUrl ? normalizeApprovedPublicVideoUrl(requestedVideoUrl) || '' : '';
+  if (requestedVideoUrl && !normalizedVideoUrl) {
+    res.status(400).json({ error: 'video_url_origin_not_allowed' });
+    return;
+  }
+  const videoUrl = videoPath ? '' : normalizedVideoUrl;
+  const targetAccountIds = Array.isArray(req.body?.targetAccountIds)
+    ? Array.from(new Set<string>(req.body.targetAccountIds.map(String).map(text).filter(Boolean)))
+    : [];
+  const targetAccountLabels = Array.isArray(req.body?.targetAccountLabels)
+    ? req.body.targetAccountLabels.map(String).map(text).filter(Boolean)
+    : [];
+  if (!targetAccountIds.length) {
+    res.status(400).json({ error: 'target_account_required' });
+    return;
+  }
+  if (targetAccountIds.length > MAX_CALENDAR_TARGET_ACCOUNTS) {
+    res.status(400).json({ error: 'target_account_limit_exceeded', limit: MAX_CALENDAR_TARGET_ACCOUNTS });
+    return;
+  }
+  if (!await validateTargetAccountBindings(tenantId, platform, targetAccountIds)) {
+    res.status(400).json({ error: 'target_accounts_do_not_match_tenant_platform' });
+    return;
+  }
+  let tiktokPublishOptionsByAccount;
+  try {
+    tiktokPublishOptionsByAccount = validateScheduledTikTokPublishOptions({
+      platform,
+      targetAccountIds,
+      value: req.body?.tiktokPublishOptionsByAccount,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'tiktok_publish_options_invalid' });
+    return;
+  }
+  const videoIdentity = videoPath ? await tenantPublishingVideoSha256(tenantId, videoPath) : null;
+  const videoSha256 = videoIdentity?.sha256 || '';
+  if (!videoIdentity) {
+    res.status(400).json({
+      error: 'immutable_local_video_required',
+      message: '生产发布必须先导入本地不可变视频并校验字节摘要，不能直接排期可变 URL。',
+    });
+    return;
+  }
+  const contentDigest = scheduleContentDigest(videoSha256, videoUrl);
+  if (!contentDigest) {
+    res.status(400).json({ error: 'publishing_content_digest_required' });
+    return;
+  }
+  const contentFenceKeys = targetAccountIds.map(accountId => publishContentFenceKey({
+    tenantId, platform, accountId, contentDigest,
+  })).sort();
+  let reservation;
+  let prepared: PostRecord | undefined;
+  try {
+    prepared = await createScheduledPost({
+      tenantId, contentId: text(req.body?.contentId), platform, title, scheduledAt, language: text(req.body?.language),
+      coverUrl: text(req.body?.coverUrl), description: text(req.body?.description), firstComment: text(req.body?.firstComment),
+      videoPath: videoIdentity?.filePath || videoPath, videoUrl, videoSha256, publishContentDigest: contentDigest,
+      contentFenceKeys,
+      ...(platform === 'tiktok' ? { tiktokPublishOptionsByAccount } : {}),
       trackWaLink: req.body?.trackWaLink !== false,
       scheduleLocked: req.body?.scheduleLocked === true,
-      targetAccountIds: Array.isArray(req.body?.targetAccountIds)
-        ? req.body.targetAccountIds.map(String).map(text).filter(Boolean)
-        : [],
-      targetAccountLabels: Array.isArray(req.body?.targetAccountLabels)
-        ? req.body.targetAccountLabels.map(String).map(text).filter(Boolean)
-        : [],
-      publishAttempts: 0,
-      publishResults: {},
-      publishError: '',
-      nextPublishAttemptAt: '',
-      warnings: [],
-    },
-  });
-  const saved = await store.getById<PostRecord>('posts', tracked.id);
-  res.status(201).json({ item: saved ? publicPost(saved) : publicPost(tracked) });
+      targetAccountIds, targetAccountLabels, source: 'manual', idempotencyKey,
+    });
+    reservation = await reservePublishContentFences({
+      dataStore: store,
+      tenantId,
+      platform,
+      accountIds: targetAccountIds,
+      contentDigest,
+      ownerKey: idempotencyKey,
+    });
+    await attachPublishContentFences(store, reservation.records, idempotencyKey, prepared.id);
+    const saved = await activatePreparedScheduledPost(prepared, store);
+    res.status(201).json({ item: publicPost(saved) });
+  } catch (error) {
+    if (reservation) {
+      if (prepared) {
+        await cleanupMutationContentFences(
+          prepared.id,
+          reservation.records.map(record => record.fence_key),
+          true,
+        ).catch(() => undefined);
+      }
+      await releasePublishContentReservations(store, reservation.createdIds, idempotencyKey).catch(() => undefined);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof PublishContentFenceError) {
+      res.status(409).json({ error: error.code, conflictingPostId: error.postId });
+      return;
+    }
+    if (['scheduled_post_idempotency_payload_conflict', 'scheduled_post_persistence_conflict'].includes(message)) {
+      res.status(409).json({ error: message });
+      return;
+    }
+    if (['scheduled_at_invalid', 'platform_required', 'target_account_required', 'video_path_outside_tenant_storage', 'video_url_origin_not_allowed',
+      'tiktok_publish_options_required', 'tiktok_privacy_level_required', 'tiktok_user_consent_required',
+      'tiktok_unaudited_self_only_required', 'tiktok_branded_content_private_invalid'].includes(message)) {
+      res.status(400).json({ error: message });
+      return;
+    }
+    throw error;
+  }
 });
 
 publishingRouter.post('/calendar/:id/retry', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId, userId } = res.locals as AuthLocals;
   const post = await store.getById<PostRecord>('posts', String(req.params.id));
   if (!post || post.tenant_id !== tenantId) {
     res.status(404).json({ error: 'post_not_found' });
     return;
   }
+  if (requireExpectedRevision(req, res, post) === null) return;
   const stats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (post.reconciliation_required === true || text(stats.status) === 'needs_reconciliation') {
+    res.status(409).json({
+      error: 'post_requires_reconciliation_before_retry',
+      message: '平台结果不确定，必须先按账号完成发布对账，不能直接重试。',
+    });
+    return;
+  }
+  if (isDigitalEmployeePostStats(stats)) {
+    res.status(409).json({
+      error: 'digital_employee_retry_requires_reconciliation',
+      message: '数字员工排期只能在人工对账确认全部账号均未发布后安全重试。',
+    });
+    return;
+  }
   if (!['failed', 'partial'].includes(text(stats.status))) {
     res.status(409).json({ error: 'post_is_not_retryable' });
     return;
   }
-  await store.update('posts', post.id, {
-    stats: {
-      ...stats,
-      status: 'failed',
-      publishAttempts: 0,
-      publishError: '',
-      nextPublishAttemptAt: new Date().toISOString(),
-      warnings: [],
-    },
+  await writeAuditLog({
+    tenantId,
+    actorUserId: userId,
+    action: 'publishing.calendar_retry_requested',
+    targetType: 'post',
+    targetId: post.id,
+    metadata: { publishRevision: Number(post.publish_revision || 0), priorStatus: text(stats.status) },
   });
-  const saved = await store.getById<PostRecord>('posts', post.id);
-  res.json({ item: saved ? publicPost(saved) : null });
+  const requestedAt = new Date().toISOString();
+  const retried = await compareAndSetRecord<PostRecord>({
+    store,
+    collection: 'posts',
+    id: post.id,
+    expected: {
+      publish_revision: Number(post.publish_revision || 0),
+      publish_lease_owner: post.publish_lease_owner || '',
+      publish_lease_expires_at: post.publish_lease_expires_at || '',
+    },
+    patch: withPublishQueueProjection(post, {
+      publish_revision: Number(post.publish_revision || 0) + 1,
+      publish_lease_owner: '',
+      publish_lease_expires_at: '',
+      reconciliation_required: false,
+      stats: {
+        ...stats,
+        status: 'failed',
+        publishAttempts: 0,
+        publishError: '',
+        nextPublishAttemptAt: requestedAt,
+        warnings: [],
+        manualRetryRequestedAt: requestedAt,
+        manualRetryRequestedBy: userId,
+      },
+    }),
+  });
+  if (!retried.ok) {
+    res.status(409).json({ error: 'calendar_post_retry_conflict' });
+    return;
+  }
+  await writeAuditLog({
+    tenantId,
+    actorUserId: userId,
+    action: 'publishing.calendar_retry_scheduled',
+    targetType: 'post',
+    targetId: post.id,
+    metadata: { publishRevision: Number(retried.record.publish_revision || 0), priorStatus: text(stats.status) },
+  });
+  res.json({ item: publicPost(retried.record) });
 });
 
 publishingRouter.delete('/calendar/:id', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId, userId } = res.locals as AuthLocals;
   const post = await store.getById<PostRecord>('posts', String(req.params.id));
   if (!post || post.tenant_id !== tenantId) {
     res.status(404).json({ error: 'post_not_found' });
+    return;
+  }
+  if (requireExpectedRevision(req, res, post) === null) return;
+  const stats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (post.reconciliation_required === true || text(stats.status) === 'needs_reconciliation') {
+    res.status(409).json({
+      error: 'publishing_reconciliation_required_before_cancel',
+      message: '平台结果不确定，必须先按账号完成发布对账，不能直接移除证据。',
+    });
+    return;
+  }
+  if (isDigitalEmployeePostStats(stats)) {
+    res.status(409).json({
+      error: 'digital_employee_schedule_cannot_be_deleted',
+      message: '数字员工排期保留为审批与对账证据；请在数字员工待办中完成对账或作废。',
+    });
     return;
   }
   if (hasPublishedTargets(post)) {
@@ -448,7 +742,56 @@ publishingRouter.delete('/calendar/:id', async (req, res) => {
     res.status(409).json({ error: 'publishing_post_cannot_be_removed' });
     return;
   }
-  await store.delete('posts', post.id);
+  await writeAuditLog({
+    tenantId,
+    actorUserId: userId,
+    action: 'publishing.calendar_cancel_requested',
+    targetType: 'post',
+    targetId: post.id,
+    metadata: { publishRevision: Number(post.publish_revision || 0) },
+  });
+  const now = new Date().toISOString();
+  const cancelled = await compareAndSetRecord<PostRecord>({
+    store,
+    collection: 'posts',
+    id: post.id,
+    expected: {
+      publish_revision: Number(post.publish_revision || 0),
+      publish_lease_owner: post.publish_lease_owner || '',
+      publish_lease_expires_at: post.publish_lease_expires_at || '',
+    },
+    patch: withPublishQueueProjection(post, {
+      published_at: '',
+      stats: {
+        ...stats,
+        status: 'cancelled',
+        calendarHidden: true,
+        cancelledAt: now,
+        cancelledBy: userId,
+        nextPublishAttemptAt: '',
+        publishError: '',
+        warnings: [],
+      },
+      publish_revision: Number(post.publish_revision || 0) + 1,
+      publish_lease_owner: '',
+      publish_lease_expires_at: '',
+    }),
+  });
+  if (!cancelled.ok) {
+    res.status(409).json({ error: 'calendar_post_cancel_conflict' });
+    return;
+  }
+  await releasePostContentFences(store, post.id).catch(error => {
+    throw Object.assign(new Error('calendar_content_fence_release_failed'), { cause: error });
+  });
+  await writeAuditLog({
+    tenantId,
+    actorUserId: userId,
+    action: 'publishing.calendar_cancelled',
+    targetType: 'post',
+    targetId: post.id,
+    metadata: { publishRevision: Number(cancelled.record.publish_revision || 0) },
+  });
   res.status(204).end();
 });
 
@@ -459,6 +802,15 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     res.status(404).json({ error: 'post_not_found' });
     return;
   }
+  if (requireExpectedRevision(req, res, post) === null) return;
+  const currentStats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (post.reconciliation_required === true || text(currentStats.status) === 'needs_reconciliation') {
+    res.status(409).json({
+      error: 'publishing_reconciliation_required_before_edit',
+      message: '平台结果不确定，必须先按账号完成发布对账，不能通过编辑重新排期。',
+    });
+    return;
+  }
   if (hasPublishedTargets(post)) {
     res.status(409).json({ error: 'published_post_cannot_be_rescheduled' });
     return;
@@ -467,7 +819,14 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     res.status(409).json({ error: 'publishing_post_cannot_be_rescheduled' });
     return;
   }
-  const currentStats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (currentStats.source === 'digital_employee') {
+    res.status(409).json({ error: 'digital_employee_schedule_requires_new_approval' });
+    return;
+  }
+  if (currentStats.directPublish === true) {
+    res.status(409).json({ error: 'direct_publish_post_cannot_be_rescheduled' });
+    return;
+  }
   const update: Record<string, unknown> = {};
   const stats = { ...currentStats };
   let changed = false;
@@ -493,9 +852,19 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     update.title = title;
     changed = true;
   }
-  for (const field of ['description', 'firstComment', 'coverUrl', 'videoPath'] as const) {
+  for (const field of ['description', 'firstComment', 'coverUrl'] as const) {
     if (!Object.prototype.hasOwnProperty.call(req.body || {}, field)) continue;
     stats[field] = text(req.body?.[field]);
+    changed = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'videoPath')) {
+    const requestedVideoPath = text(req.body?.videoPath);
+    const videoPath = requestedVideoPath ? resolveTenantPublishingVideo(tenantId, requestedVideoPath) || '' : '';
+    if (requestedVideoPath && !videoPath) {
+      res.status(400).json({ error: 'video_path_outside_tenant_storage' });
+      return;
+    }
+    stats.videoPath = videoPath;
     changed = true;
   }
   for (const field of ['targetAccountIds', 'targetAccountLabels'] as const) {
@@ -509,20 +878,161 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     stats.trackWaLink = req.body?.trackWaLink !== false;
     changed = true;
   }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'tiktokPublishOptionsByAccount')) {
+    stats.tiktokPublishOptionsByAccount = req.body?.tiktokPublishOptionsByAccount;
+    changed = true;
+  }
   if (!changed) {
     res.status(400).json({ error: 'calendar_update_required' });
     return;
   }
+  const finalVideoPath = text(stats.videoPath);
+  const finalVideoUrl = finalVideoPath ? '' : text(stats.videoUrl);
+  const videoIdentity = finalVideoPath ? await tenantPublishingVideoSha256(tenantId, finalVideoPath) : null;
+  if (!videoIdentity) {
+    res.status(400).json({ error: 'immutable_local_video_required' });
+    return;
+  }
+  const videoSha256 = videoIdentity?.sha256 || '';
+  const contentDigest = scheduleContentDigest(videoSha256, finalVideoUrl);
+  if (!contentDigest) {
+    res.status(400).json({ error: 'publishing_content_digest_required' });
+    return;
+  }
+  const targetAccountIds = Array.isArray(stats.targetAccountIds)
+    ? Array.from(new Set(stats.targetAccountIds.map(String).map(text).filter(Boolean)))
+    : [];
+  const targetAccountLabels = Array.isArray(stats.targetAccountLabels)
+    ? stats.targetAccountLabels.map(String).map(text).filter(Boolean)
+    : [];
+  if (!targetAccountIds.length) {
+    res.status(400).json({ error: 'target_account_required' });
+    return;
+  }
+  if (targetAccountIds.length > MAX_CALENDAR_TARGET_ACCOUNTS) {
+    res.status(400).json({ error: 'target_account_limit_exceeded', limit: MAX_CALENDAR_TARGET_ACCOUNTS });
+    return;
+  }
+  if (!await validateTargetAccountBindings(tenantId, post.platform, targetAccountIds)) {
+    res.status(400).json({ error: 'target_accounts_do_not_match_tenant_platform' });
+    return;
+  }
+  try {
+    const tiktokPublishOptionsByAccount = validateScheduledTikTokPublishOptions({
+      platform: post.platform,
+      targetAccountIds,
+      value: stats.tiktokPublishOptionsByAccount,
+    });
+    if (post.platform === 'tiktok') stats.tiktokPublishOptionsByAccount = tiktokPublishOptionsByAccount;
+    else delete stats.tiktokPublishOptionsByAccount;
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'tiktok_publish_options_invalid' });
+    return;
+  }
+  const ownerKey = text(post.digital_employee_idempotency_key) || `calendar-post:${post.id}`;
+  let reservation;
+  try {
+    reservation = await reservePublishContentFences({
+      dataStore: store,
+      tenantId,
+      platform: post.platform,
+      accountIds: targetAccountIds,
+      contentDigest,
+      ownerKey,
+    });
+  } catch (error) {
+    if (error instanceof PublishContentFenceError) {
+      res.status(409).json({ error: error.code, conflictingPostId: error.postId });
+      return;
+    }
+    throw error;
+  }
+  stats.videoPath = videoIdentity?.filePath || finalVideoPath;
+  stats.videoUrl = finalVideoUrl;
+  stats.videoSha256 = videoSha256;
+  stats.publishContentDigest = contentDigest;
+  stats.publishContentFenceKeys = reservation.records.map(record => record.fence_key).sort();
+  stats.targetAccountIds = targetAccountIds;
+  stats.targetAccountLabels = targetAccountLabels;
   stats.status = 'scheduled';
   stats.publishAttempts = 0;
   stats.publishResults = {};
   stats.publishError = '';
   stats.nextPublishAttemptAt = '';
   stats.warnings = [];
+  stats.scheduleRevision = Number(currentStats.scheduleRevision || 1) + 1;
+  const scheduledAt = text(update.published_at || post.published_at);
+  const finalTitle = text(update.title || post.title) || 'Untitled content';
+  stats.schedulePayloadHash = schedulePayloadHash({
+    tenantId,
+    contentId: text(post.content_id),
+    platform: post.platform,
+    title: finalTitle,
+    scheduledAt,
+    language: text(stats.language),
+    coverUrl: text(stats.coverUrl),
+    description: text(stats.description),
+    firstComment: text(stats.firstComment),
+    videoPath: text(stats.videoPath),
+    videoUrl: finalVideoUrl,
+    videoSha256,
+    publishContentDigest: contentDigest,
+    contentFenceKeys: stats.publishContentFenceKeys as string[],
+    ...(post.platform === 'tiktok' ? {
+      tiktokPublishOptionsByAccount: stats.tiktokPublishOptionsByAccount as SchedulePostInput['tiktokPublishOptionsByAccount'],
+    } : {}),
+    targetAccountIds,
+    targetAccountLabels,
+    trackWaLink: stats.trackWaLink !== false,
+    scheduleLocked: stats.scheduleLocked === true,
+    source: 'manual',
+  });
   update.stats = stats;
-  await store.update('posts', post.id, update);
-  const saved = await store.getById<PostRecord>('posts', post.id);
-  res.json({ item: saved ? publicPost(saved) : null });
+  update.publish_revision = Number(post.publish_revision || 0) + 1;
+  try {
+    // Link the new-content fences while the old revision is still the only
+    // executable payload. The following CAS is therefore the activation point.
+    await attachPublishContentFences(store, reservation.records, ownerKey, post.id);
+  } catch (error) {
+    await cleanupMutationContentFences(
+      post.id,
+      reservation.records.map(record => record.fence_key),
+      true,
+    ).catch(() => undefined);
+    await releasePublishContentReservations(store, reservation.createdIds, ownerKey).catch(() => undefined);
+    throw error;
+  }
+  const persisted = await compareAndSetRecord<PostRecord>({
+    store,
+    collection: 'posts',
+    id: post.id,
+    expected: {
+      publish_revision: Number(post.publish_revision || 0),
+      publish_lease_owner: post.publish_lease_owner || '',
+      publish_lease_expires_at: post.publish_lease_expires_at || '',
+      digital_employee_fence_revision: Number(post.digital_employee_fence_revision || 0),
+      reconciliation_required: false,
+    },
+    patch: withPublishQueueProjection(post, update),
+  });
+  if (!persisted.ok) {
+    await cleanupMutationContentFences(
+      post.id,
+      reservation.records.map(record => record.fence_key),
+      true,
+    ).catch(() => undefined);
+    await releasePublishContentReservations(store, reservation.createdIds, ownerKey).catch(() => undefined);
+    res.status(409).json({ error: 'calendar_post_update_conflict' });
+    return;
+  }
+  try {
+    await releasePostContentFences(store, post.id, reservation.records.map(record => record.fence_key));
+  } catch (error) {
+    // The new payload is fenced; retaining obsolete extra fences is safe and
+    // operationally visible, whereas rolling the post back would race workers.
+    throw error;
+  }
+  res.json({ item: publicPost(persisted.record) });
 });
 
 publishingRouter.post('/adapt-copy', async (req, res) => {

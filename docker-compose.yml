@@ -4,6 +4,20 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
+    mem_limit: ${APP_MEMORY_LIMIT:-2g}
+    mem_reservation: ${APP_MEMORY_RESERVATION:-512m}
+    cpus: ${APP_CPU_LIMIT:-2.0}
+    pids_limit: ${APP_PIDS_LIMIT:-512}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     env_file:
       - ${ENV_FILE_PATH:-.env.production}
     environment:
@@ -14,35 +28,62 @@ services:
       # channel acceptance tests. Manual scheduled-task runs are unaffected.
       CRAWLER_OPS_WORKER_ENABLED: "0"
       PB_VIDEO_BACKFILL_ENABLED: "false"
+      ENABLE_LOCAL_STORE_FALLBACK: "false"
+      DISABLE_LOCAL_AUTH_FALLBACK: "true"
     volumes:
-      - ./data:/app/data
+      - app_data:/app/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,uid=1000,gid=1000
+      - /home/node/.npm:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+      - /home/node/.cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000
     depends_on:
       pocketbase:
         condition: service_healthy
     expose:
       - "8788"
-    ports:
-      # The shared Caddy container reaches this bridge-only address. It is not
-      # bound to the server's public network interface.
-      - "172.17.0.1:${APP_HOST_PORT:-18788}:8788"
+    # The application is reachable only by Caddy over the private Compose
+    # network. Do not publish an implementation port on the host.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/readyz"]
       interval: 15s
       timeout: 5s
       retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
 
   pocketbase:
     build:
       context: .
       dockerfile: Dockerfile.pocketbase
       args:
-        PB_VERSION: ${PB_VERSION:-0.39.5}
+        PB_VERSION: ${PB_VERSION:-0.39.9}
     restart: unless-stopped
-    env_file:
-      - ${ENV_FILE_PATH:-.env.production}
+    stop_grace_period: 30s
+    mem_limit: ${PB_MEMORY_LIMIT:-768m}
+    mem_reservation: ${PB_MEMORY_RESERVATION:-256m}
+    cpus: ${PB_CPU_LIMIT:-1.0}
+    pids_limit: ${PB_PIDS_LIMIT:-256}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      PB_ADMIN_EMAIL: "${PB_ADMIN_EMAIL:?PB_ADMIN_EMAIL is required}"
+      PB_ADMIN_PASSWORD: "${PB_ADMIN_PASSWORD:?PB_ADMIN_PASSWORD is required}"
     volumes:
       - pb_data:/pb/pb_data
-      - ./pb_migrations:/pb/pb_migrations:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001
     expose:
       - "8090"
     # PocketBase remains private to the host. The Mac crawl worker reaches it
@@ -54,12 +95,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     restart: unless-stopped
-    env_file:
-      - ${ENV_FILE_PATH:-.env.production}
+    stop_grace_period: 30s
+    mem_limit: ${CADDY_MEMORY_LIMIT:-256m}
+    mem_reservation: ${CADDY_MEMORY_RESERVATION:-64m}
+    cpus: ${CADDY_CPU_LIMIT:-0.5}
+    pids_limit: ${CADDY_PIDS_LIMIT:-128}
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?APP_DOMAIN is required}"
     ports:
       - "80:80"
       - "443:443"
@@ -67,15 +130,19 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
     depends_on:
       app:
         condition: service_healthy
 
 volumes:
+  app_data:
+    external: true
+    name: ${APP_DATA_VOLUME_NAME:?APP_DATA_VOLUME_NAME must name an existing production volume}
   pb_data:
     external: true
-    # Keep the test environment attached to its original persistent dataset,
-    # even when the Compose project name or checkout directory changes.
-    name: ${PB_DATA_VOLUME_NAME:-lingshu-ai-cs-preview_preview_pb_data}
+    # No preview/test fallback is allowed for a production datastore.
+    name: ${PB_DATA_VOLUME_NAME:?PB_DATA_VOLUME_NAME must name an existing production volume}
   caddy_data:
   caddy_config:

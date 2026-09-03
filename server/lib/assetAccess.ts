@@ -5,6 +5,8 @@ import { auth } from '../storage/index.js';
 import type { Identity } from '../storage/datastore.js';
 
 export const ASSET_SESSION_COOKIE = 'lingshu_asset_session';
+const ASSET_SESSION_PREFIX = 'asset-v1.';
+const ASSET_SESSION_TTL_MS = 15 * 60_000;
 
 export function safeAssetTenantId(value: unknown): string {
   const tenantId = String(value || '').trim();
@@ -33,16 +35,63 @@ export function cookieValue(req: Request, key: string): string {
   return '';
 }
 
-export function setAssetSessionCookie(req: Request, res: Response): void {
-  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-  if (!token) return;
-  res.cookie(ASSET_SESSION_COOKIE, token, {
+function assetSessionSignature(body: string): string {
+  return createHmac('sha256', assetTokenSecret()).update(`session:${body}`).digest('base64url');
+}
+
+function encodeAssetSession(identity: Identity): string {
+  const now = Date.now();
+  const supportExpiry = identity.supportAccess?.expiresAt ? Date.parse(identity.supportAccess.expiresAt) : Number.POSITIVE_INFINITY;
+  const expiresAt = Math.min(now + ASSET_SESSION_TTL_MS, Number.isFinite(supportExpiry) ? supportExpiry : now + ASSET_SESSION_TTL_MS);
+  const body = Buffer.from(JSON.stringify({
+    userId: identity.userId,
+    tenantId: safeAssetTenantId(identity.tenantId),
+    issuedAt: now,
+    expiresAt,
+    ...(identity.supportAccess ? { supportAccess: identity.supportAccess } : {}),
+  }), 'utf8').toString('base64url');
+  return `${ASSET_SESSION_PREFIX}${body}.${assetSessionSignature(body)}`;
+}
+
+function decodeAssetSession(token: string): Identity | null {
+  if (!token.startsWith(ASSET_SESSION_PREFIX)) return null;
+  const [body, supplied, ...extra] = token.slice(ASSET_SESSION_PREFIX.length).split('.');
+  if (!body || !supplied || extra.length) return null;
+  const expected = assetSessionSignature(body);
+  const actualBuffer = Buffer.from(supplied);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Identity & { issuedAt?: number; expiresAt?: number };
+    const now = Date.now();
+    if (!payload.userId || !payload.tenantId || !Number.isSafeInteger(payload.issuedAt)
+      || !Number.isSafeInteger(payload.expiresAt) || payload.issuedAt! > now + 60_000
+      || payload.expiresAt! <= now || payload.expiresAt! - payload.issuedAt! > ASSET_SESSION_TTL_MS) return null;
+    return { userId: String(payload.userId), tenantId: safeAssetTenantId(payload.tenantId), supportAccess: payload.supportAccess };
+  } catch {
+    return null;
+  }
+}
+
+export async function setAssetSessionCookie(req: Request, res: Response): Promise<void> {
+  if (!req.headers.authorization) return;
+  const identity = await auth.verifyToken(req.headers.authorization);
+  if (!identity) return;
+  res.cookie(ASSET_SESSION_COOKIE, encodeAssetSession(identity), {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: ASSET_SESSION_TTL_MS,
     path: '/',
   });
+}
+
+export function isExplicitAssetRequest(method: string, originalUrl: string): boolean {
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  const pathname = new URL(originalUrl || '/', 'http://local').pathname;
+  return /^\/(?:media|bgm|tts|voice-samples|covers|cloud-files|studio-media)(?:\/|$)/.test(pathname)
+    || /^\/api\/overseas\/videos\/[^/]+\/(?:media|thumbnail|image\/[^/]+)$/.test(pathname)
+    || /^\/api\/overseas\/digital-employees\/artifacts\/[^/]+\/video$/.test(pathname);
 }
 
 export function clearAssetSessionCookie(res: Response): void {
@@ -97,14 +146,25 @@ export function verifyAssetToken(token: unknown, pathname: string): { tenantId: 
 }
 
 export async function assetIdentity(req: Request): Promise<Identity | null> {
-  const cookieToken = cookieValue(req, ASSET_SESSION_COOKIE);
-  const authorization = req.headers.authorization || (cookieToken ? `Bearer ${cookieToken}` : undefined);
-  return auth.verifyToken(authorization);
+  if (!isExplicitAssetRequest(req.method, req.originalUrl || req.url)) return null;
+  if (req.headers.authorization) return auth.verifyToken(req.headers.authorization);
+  return decodeAssetSession(cookieValue(req, ASSET_SESSION_COOKIE));
 }
 
-export function syncAssetSession(req: Request, res: Response, next: NextFunction): void {
-  if (req.headers.authorization) setAssetSessionCookie(req, res);
-  next();
+export async function syncAssetSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (req.headers.authorization) await setAssetSessionCookie(req, res);
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+export function allowLegacyUnscopedAsset(identity: Identity | null): boolean {
+  // Legacy root files have no ownership metadata. They remain a local-dev
+  // compatibility aid only; production must migrate them into shared/ or an
+  // explicit tenants/<tenantId>/ prefix before they can be served.
+  return process.env.NODE_ENV !== 'production' && Boolean(identity);
 }
 
 export async function requireScopedAsset(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -117,10 +177,7 @@ export async function requireScopedAsset(req: Request, res: Response, next: Next
     return;
   }
   const segments = req.path.split('/').filter(Boolean);
-  // Existing pre-isolation assets have no tenant metadata. Keep them available
-  // only to authenticated users as legacy shared assets; all new writes use
-  // shared/ or tenants/<tenantId>/ paths.
-  if ((identity || signed) && segments.length === 1) {
+  if (segments.length === 1 && allowLegacyUnscopedAsset(identity)) {
     next();
     return;
   }

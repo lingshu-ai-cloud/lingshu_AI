@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'node:crypto';
 import type { Request } from 'express';
 import { auth } from '../storage/index.js';
 import { pbGet, pbPatch } from '../storage/pb.js';
@@ -12,12 +13,14 @@ const USAGE_FILE = path.join(__dirname, '../../data/demo-usage.json');
 
 export interface DemoAccountRegistryEntry {
   email: string;
-  password: string;
+  /** @deprecated Read compatibility only; registry writes always discard it. */
+  password?: string;
   userId?: string;
   tenantId?: string;
   activatedAt?: string | null;
   expiresAt?: string | null;
   rotatedAt?: string | null;
+  /** @deprecated Read compatibility only; registry writes always discard it. */
   rotationPassword?: string | null;
   guidePending?: boolean;
   guideResetAt?: string | null;
@@ -112,17 +115,27 @@ export function isAllowedDemoAccount(email: string): boolean {
 }
 
 export function readDemoAccountRegistry(): DemoAccountRegistry {
-  const registry = readStoredRegistry();
-  for (const email of allowedDemoAccounts()) {
-    registry[email] ??= { email, password: '', status: 'available' };
+  const stored = readStoredRegistry() as Record<string, DemoAccountRegistryEntry & { password?: unknown; rotationPassword?: unknown }>;
+  const registry: DemoAccountRegistry = {};
+  let containedLegacySecret = false;
+  for (const [key, entry] of Object.entries(stored)) {
+    const { password: _password, rotationPassword: _rotationPassword, ...safeEntry } = entry;
+    containedLegacySecret ||= _password !== undefined || _rotationPassword !== undefined;
+    registry[norm(key)] = { ...safeEntry, email: norm(safeEntry.email || key) };
   }
+  for (const email of allowedDemoAccounts()) {
+    registry[email] ??= { email, status: 'available' };
+  }
+  if (containedLegacySecret) writeRegistry(registry);
   return registry;
 }
 
 export function upsertDemoAccountRegistry(email: string, patch: Partial<DemoAccountRegistryEntry>): DemoAccountRegistryEntry {
   const key = norm(email);
   const registry = readDemoAccountRegistry();
-  const next = { status: 'available' as const, ...registry[key], ...patch, email: key, password: patch.password ?? registry[key]?.password ?? '' };
+  const { password: _password, rotationPassword: _rotationPassword, ...safePatch } = patch;
+  const { password: _storedPassword, rotationPassword: _storedRotationPassword, ...safeExisting } = registry[key] ?? { email: key };
+  const next = { status: 'available' as const, ...safeExisting, ...safePatch, email: key };
   registry[key] = next;
   writeRegistry(registry);
   return next;
@@ -196,23 +209,19 @@ export function consumeDemoGuide(email: string): void {
   writeRegistry(registry);
 }
 
-function expiredPassword(email: string): string {
-  const local = norm(email).split('@')[0].replace(/[^a-z0-9]/g, '').slice(-6) || 'demo';
-  return `Off@${local}#${new Date().getFullYear()}`;
-}
-
 export async function rotateExpiredTrialPassword(user: { id?: string; email?: string } | null, reason = 'trial_expired'): Promise<void> {
   if (!user?.id || !user.email) return;
   const entry = readDemoAccountRegistry()[norm(user.email)];
   if (entry?.rotatedAt) return;
 
-  const password = expiredPassword(user.email);
+  // Rotation deliberately produces an unrecoverable credential. Expired demo
+  // users must go through the normal reset/re-provisioning flow.
+  const password = `${randomBytes(24).toString('base64url')}!Aa1`;
   const ok = await pbPatch('users', user.id, { password, passwordConfirm: password });
   if (!ok) return;
   upsertDemoAccountRegistry(user.email, {
     userId: user.id,
     rotatedAt: new Date().toISOString(),
-    rotationPassword: password,
     status: 'expired',
   });
   void reason;
@@ -244,13 +253,17 @@ export async function requireAdminUser(req: Request): Promise<{ userId: string; 
     user = null;
   }
   const registry = readDemoAccountRegistry();
-  const registryEntry = Object.values(registry).find(entry =>
-    entry.userId === id.userId ||
-    entry.tenantId === id.tenantId ||
-    `local_user_${localId(entry.email)}` === id.userId ||
-    `local_tenant_${localId(entry.email)}` === id.tenantId
-  );
-  const email = norm(String(user?.email ?? registryEntry?.email ?? localTokenEmail(req.headers.authorization)));
+  const exactUserEntry = Object.values(registry).find(entry => entry.userId === id.userId);
+  const tokenEmail = localTokenEmail(req.headers.authorization);
+  const localEntry = tokenEmail
+    && `local_user_${localId(tokenEmail)}` === id.userId
+    && `local_tenant_${localId(tokenEmail)}` === id.tenantId
+    ? registry[tokenEmail]
+    : undefined;
+  // A tenant id is not an administrator credential. If PocketBase user lookup
+  // fails, only an exact user-id registry binding (or the exact dev-only local
+  // identity tuple already accepted by AuthProvider) may supply an email.
+  const email = norm(String(user?.email ?? exactUserEntry?.email ?? localEntry?.email ?? ''));
   if (!isAdminEmail(email)) return null;
   return { ...id, email };
 }

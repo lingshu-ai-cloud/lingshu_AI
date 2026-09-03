@@ -115,9 +115,32 @@ const BUSINESS_DYNAMICS_CACHE_MS = 6 * 60 * 60 * 1000;
 function load(): ScheduledTask[] {
   try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
 }
-function save(tasks: ScheduledTask[]) {
+function writeTaskSnapshot(tasks: ScheduledTask[]): void {
   fs.mkdirSync(path.dirname(DATA), { recursive: true });
-  fs.writeFileSync(DATA, JSON.stringify(tasks, null, 2));
+  const temporary = `${DATA}.${process.pid}.${randomUUID()}.tmp`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(temporary, 'wx', 0o600);
+    fs.writeFileSync(descriptor, JSON.stringify(tasks, null, 2));
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, DATA);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try { fs.unlinkSync(temporary); } catch { /* already renamed or never created */ }
+  }
+}
+
+async function save(tasks: ScheduledTask[]): Promise<void> {
+  if (process.env.NODE_ENV === 'production') {
+    // PocketBase is authoritative in production. Never acknowledge a local
+    // snapshot that failed to become durable in the shared datastore.
+    await mirrorTasksToPocketBase(tasks);
+    writeTaskSnapshot(tasks);
+    return;
+  }
+  writeTaskSnapshot(tasks);
   void mirrorTasksToPocketBase(tasks).catch(error => {
     console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error);
   });
@@ -194,11 +217,11 @@ async function mirrorTasksToPocketBase(tasks: ScheduledTask[]): Promise<void> {
 async function hydrateTasksFromPocketBase(): Promise<ScheduledTask[]> {
   try {
     const remote = (await allRemoteTasks()).map(taskFromRecord).filter((task): task is ScheduledTask => Boolean(task));
-    if (!remote.length) return load();
-    fs.mkdirSync(path.dirname(DATA), { recursive: true });
-    fs.writeFileSync(DATA, JSON.stringify(remote, null, 2));
+    if (!remote.length && process.env.NODE_ENV !== 'production') return load();
+    writeTaskSnapshot(remote);
     return remote;
   } catch (error) {
+    if (process.env.NODE_ENV === 'production') throw error;
     console.warn('[scheduler] using local task snapshot:', error instanceof Error ? error.message : error);
     return load();
   }
@@ -1182,7 +1205,7 @@ export async function reconcileScheduledCrawlBatch(requestedBy: string): Promise
   const idx = tasks.findIndex(task => task.id === taskId && task.lastResult?.includes(`队列批次：${requestedBy}`));
   if (idx === -1) return; // A newer run already owns the visible result.
   tasks[idx].lastResult = resultText;
-  save(tasks);
+  await save(tasks);
 }
 
 async function executeTask(task: ScheduledTask): Promise<string> {
@@ -1210,7 +1233,7 @@ async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'cat
     if (idx !== -1) {
       tasks[idx].lastRun = new Date().toISOString();
       tasks[idx].lastResult = result;
-      save(tasks);
+      await save(tasks);
       const workerBatch = /队列批次：(scheduler:.+:run:[^:\s]+)/.exec(result)?.[1];
       if (workerBatch) await reconcileScheduledCrawlBatch(workerBatch);
     }
@@ -1345,7 +1368,7 @@ schedulerRouter.get('/:id/export-pdf', async (req: Request, res: Response) => {
   }
 });
 
-schedulerRouter.post('/', (req: Request, res: Response) => {
+schedulerRouter.post('/', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const tasks = load();
   const isCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(req.body.taskType);
@@ -1374,12 +1397,12 @@ schedulerRouter.post('/', (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   };
   tasks.push(task);
-  save(tasks);
+  await save(tasks);
   scheduleTask(task);
   res.json(task);
 });
 
-schedulerRouter.put('/:id', (req: Request, res: Response) => {
+schedulerRouter.put('/:id', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const tasks = load();
   const idx = tasks.findIndex(t => t.id === req.params.id && t.tenantId === tenantId);
@@ -1409,18 +1432,18 @@ schedulerRouter.put('/:id', (req: Request, res: Response) => {
     cronLabel: req.body.cronLabel ?? current.cronLabel,
     config: nextIsCrawler ? { ...nextConfig, tenantId } : nextConfig,
   };
-  save(tasks);
+  await save(tasks);
   scheduleTask(tasks[idx]);
   res.json(tasks[idx]);
 });
 
-schedulerRouter.delete('/:id', (req: Request, res: Response) => {
+schedulerRouter.delete('/:id', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const task = findTenantTask(req.params.id, tenantId);
   if (!task) { res.status(404).json({ error: 'not found' }); return; }
   activeJobs.get(req.params.id)?.stop();
   activeJobs.delete(req.params.id);
-  save(load().filter(t => !(t.id === req.params.id && t.tenantId === tenantId)));
+  await save(load().filter(t => !(t.id === req.params.id && t.tenantId === tenantId)));
   res.json({ ok: true });
 });
 
@@ -1434,13 +1457,13 @@ schedulerRouter.post('/:id/run', async (req: Request, res: Response) => {
 });
 
 // Toggle enabled
-schedulerRouter.post('/:id/toggle', (req: Request, res: Response) => {
+schedulerRouter.post('/:id/toggle', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const tasks = load();
   const idx = tasks.findIndex(t => t.id === req.params.id && t.tenantId === tenantId);
   if (idx === -1) { res.status(404).json({ error: 'not found' }); return; }
   tasks[idx].enabled = !tasks[idx].enabled;
-  save(tasks);
+  await save(tasks);
   scheduleTask(tasks[idx]);
   res.json(tasks[idx]);
 });
