@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
+import { crawlerMediaUrls, isPlaybackResolver } from '../lib/inspirationMedia';
 import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
 import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
@@ -132,6 +133,8 @@ interface GeminiVideoAnalysis {
 }
 
 interface VideoAnalysisPayload {
+  videoObjectKey?: string;
+  thumbnailObjectKey?: string;
   source?: string;
   contentFormat?: ContentFormat;
   views?: string;
@@ -1379,26 +1382,37 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
 
 function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, hoverPlay = false, onReady, onError }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: () => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [retry, setRetry] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const load = async () => {
-    if (playbackUrl || loading) return playbackUrl;
-    setLoading(true);
-    try {
-      const response = await fetch(apiUrl, { headers: authHeader() });
-      if (!response.ok) throw new Error(String(response.status));
-      const next = String(((await response.json()) as { url?: string }).url || '');
-      setPlaybackUrl(next);
-      return next;
-    } catch { return ''; } finally { setLoading(false); }
-  };
-  useEffect(() => { setPlaybackUrl(''); if (autoPlay) void load(); }, [apiUrl, autoPlay]);
+  const [hovered, setHovered] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setPlaybackUrl('');
+    setLoadError('');
+    if (!isPlaybackResolver(apiUrl)) {
+      setPlaybackUrl(apiUrl);
+      return () => controller.abort();
+    }
+    if (!autoPlay && !controls && !hovered) return () => controller.abort();
+    void fetch(apiUrl, { headers: authHeader(), signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json() as { url?: string };
+        if (!data.url) throw new Error('未返回视频地址');
+        if (!controller.signal.aborted) setPlaybackUrl(data.url);
+      })
+      .catch(error => { if (!controller.signal.aborted) setLoadError(`视频加载失败（${error instanceof Error ? error.message : '网络异常'}），请重试`); });
+    return () => controller.abort();
+  }, [apiUrl, autoPlay, controls, hovered, retry]);
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
+  useEffect(() => { if (hoverPlay && hovered && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [hoverPlay, hovered, playbackUrl]);
+  if (controls && loadError) return <div role="alert" className="p-8 text-center text-white"><p>{loadError}</p><button type="button" className="mt-3 rounded border px-3 py-2" onClick={() => setRetry(value => value + 1)}>重新加载</button></div>;
   return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload="metadata" className={className}
     onLoadedData={onReady}
     onCanPlay={onReady}
-    onError={onError}
-    onMouseEnter={async () => { if (!hoverPlay) return; await load(); setTimeout(() => void videoRef.current?.play().catch(() => {}), 0); }}
+    onError={() => { if (playbackUrl) setLoadError('视频无法播放，请重试或通过原站打开'); onError?.(); }}
+    onMouseEnter={() => { if (!hoverPlay) return; setHovered(true); void videoRef.current?.play().catch(() => {}); }}
     onMouseLeave={() => { if (!hoverPlay || !videoRef.current) return; videoRef.current.pause(); videoRef.current.currentTime = 0; }} />;
 }
 
@@ -2619,6 +2633,7 @@ interface CrawlerRecord {
   platform?: Exclude<Platform, 'all'>;
   title?: string;
   thumbnailUrl?: string;
+  thumbnailFile?: string;
   duration?: number;
   sourceUrl?: string;
   tags?: string;
@@ -2666,7 +2681,7 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
       const trend: TrendVideo['trend'] = record.status === 'analyzed' ? 'hot' : record.status === 'failed' ? 'stable' : 'rising';
       const title = record.title || 'Untitled crawled video';
       const tags = parseRecordTags(record.tags);
-      const recordThumbnail = record.thumbnailUrl || (record.videoFileId ? `/api/overseas/videos/${record.id}/thumbnail` : '');
+      const media = crawlerMediaUrls(record, analysis);
       if (!analysis.gemini && analysis.contentFormat !== 'image') {
         analysis = {
           ...analysis,
@@ -2680,13 +2695,13 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
         recordId: record.id,
         platform: record.platform,
         title,
-        thumbnail: recordThumbnail,
+        thumbnail: media.thumbnail,
         duration: Number(record.duration || 0),
         tags,
         views,
         trend,
         // videoFileId 本身就是 PocketBase 文件存在的权威凭据；不要再依赖可缺失的迁移标记。
-        videoUrl: record.videoFileId ? `/api/overseas/videos/${record.id}/media-url` : undefined,
+        videoUrl: media.videoUrl,
         sourceUrl: record.sourceUrl,
         status: record.status,
         aiAnalysis: analysis,
