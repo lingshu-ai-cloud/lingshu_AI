@@ -931,6 +931,10 @@ export interface Material {
   motionClipCount?: number;
   supportedGestures?: string[];
   productionReady?: boolean;
+  providerBindings?: {
+    heygen?: { avatarId: string; voiceId: string; supportedEngines?: Array<'avatar_v' | 'avatar_iv'> };
+    local?: { assetId?: string };
+  };
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
@@ -996,6 +1000,10 @@ export interface DigitalHumanCapabilities {
   output: { ratio: '9:16'; container: 'mp4' };
   qualityGateRequired: boolean;
   maxConcurrentJobs: number;
+  providerPolicy?: {
+    quality: { provider: 'heygen'; configured: boolean; enginePreference: Array<'avatar_v' | 'avatar_iv'>; silentLocalFallback: false };
+    fast: { provider: 'local'; configured: boolean };
+  };
   worker?: {
     online: boolean;
     ready: boolean;
@@ -1036,6 +1044,9 @@ export interface CreateDigitalHumanJobRequest {
   performancePlan?: import('./digitalHumanPerformance').DigitalHumanPerformancePlan;
   motionClipIds?: string[];
   pipelineVersion?: string;
+  voiceStrategy?: 'smart' | 'brand' | 'person';
+  timelineComposition?: 'all_digital' | 'mixed';
+  allShotsUseSamePerson?: boolean;
 }
 
 export type DigitalHumanShotBatchVariant = Pick<CreateDigitalHumanJobRequest,
@@ -1058,6 +1069,9 @@ export interface CreateDigitalHumanShotBatchRequest {
   mode: 'fast' | 'quality';
   usagePurpose?: DigitalHumanUsagePurpose;
   consentConfirmed: boolean;
+  voiceStrategy?: 'smart' | 'brand' | 'person';
+  timelineComposition?: 'all_digital' | 'mixed';
+  allShotsUseSamePerson?: boolean;
   variants: DigitalHumanShotBatchVariant[];
 }
 
@@ -1097,6 +1111,12 @@ export interface DigitalHumanJob {
   mode: 'fast' | 'quality';
   usagePurpose: DigitalHumanUsagePurpose;
   provider: string;
+  providerEngine?: 'avatar_v' | 'avatar_iv' | 'local';
+  providerRoutingReason?: string;
+  estimatedCostCredits?: number;
+  voiceStrategy?: 'smart' | 'brand' | 'person';
+  resolvedVoiceStrategy?: 'brand' | 'person';
+  voiceRoutingReason?: string;
   status: 'queued' | 'submitting' | 'processing' | 'quality_check' | 'review' | 'completed' | 'failed' | 'cancelled';
   stage: string;
   progress: number;

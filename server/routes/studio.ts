@@ -47,6 +47,15 @@ import {
 import { normalizeDigitalHumanResultSha256 } from '../lib/digitalHumanResultTransfer.js';
 import { buildDigitalHumanProviderJobPayload, type DigitalHumanProviderJobPayload } from '../lib/digitalHumanJobPayload.js';
 import {
+  DigitalHumanProviderConfigurationError,
+  HeyGenV3Provider,
+  LocalDirectProvider,
+  parseDigitalHumanProviderBinding,
+  selectDigitalHumanProvider,
+  type DigitalHumanProviderSelection,
+} from '../lib/digitalHumanProvider.js';
+import { resolveDigitalHumanVoicePolicy } from '../lib/digitalHumanVoicePolicy.js';
+import {
   DigitalHumanWorkerPresenceRegistry,
   parseDigitalHumanWorkerHealthReport,
 } from '../lib/digitalHumanWorkerPresence.js';
@@ -2130,7 +2139,9 @@ studioRouter.get('/digital-human/worker/claim', requireDigitalHumanWorker, async
       const now = Date.now();
       const maxAttempts = digitalHumanWorkerMaxAttempts();
       const candidate = recoverExpiredDigitalHumanWorkerJobs(now)
-        .filter(job => workerPrincipalAllowsTenant(principal, job.tenantId) && workerJobClaimable(job, now, maxAttempts))
+        .filter(job => job.provider === 'local-worker'
+          && workerPrincipalAllowsTenant(principal, job.tenantId)
+          && workerJobClaimable(job, now, maxAttempts))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
       if (!candidate) return undefined;
       const leaseId = createWorkerLeaseId();
@@ -5464,6 +5475,10 @@ interface Material {
   rightsUsageScope?: string[];
   rightsSourceUrl?: string;
   productionReady?: boolean;
+  providerBindings?: {
+    heygen?: { avatarId: string; voiceId: string; supportedEngines?: Array<'avatar_v' | 'avatar_iv'> };
+    local?: { assetId?: string };
+  };
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
@@ -5609,6 +5624,14 @@ interface DigitalHumanJob {
   consentConfirmed: boolean;
   commercialRightsStatus: 'cleared';
   provider: string;
+  providerEngine?: 'avatar_v' | 'avatar_iv' | 'local';
+  providerExternalAvatarId?: string;
+  providerExternalVoiceId?: string;
+  providerRoutingReason?: string;
+  estimatedCostCredits?: number;
+  voiceStrategy?: 'smart' | 'brand' | 'person';
+  resolvedVoiceStrategy?: 'brand' | 'person';
+  voiceRoutingReason?: string;
   providerTaskId?: string;
   workerId?: string;
   workerLeaseId?: string;
@@ -5747,7 +5770,36 @@ function digitalHumanConfig() {
   const provider = String(process.env.DIGITAL_HUMAN_PROVIDER || 'latentsync').trim() || 'latentsync';
   const timeoutMs = Math.max(10_000, Number(process.env.DIGITAL_HUMAN_API_TIMEOUT_MS || 30_000));
   const pullWorkerEnabled = process.env.DIGITAL_HUMAN_PULL_WORKER_ENABLED === 'true';
-  return { baseUrl, apiKey, provider, timeoutMs, pullWorkerEnabled };
+  const heygenApiKey = String(process.env.HEYGEN_API_KEY || '').trim();
+  const heygenBaseUrl = String(process.env.HEYGEN_API_BASE_URL || 'https://api.heygen.com').trim().replace(/\/+$/, '');
+  return { baseUrl, apiKey, provider, timeoutMs, pullWorkerEnabled, heygenApiKey, heygenBaseUrl };
+}
+
+function digitalHumanProviderSelection(
+  mode: DigitalHumanMode,
+  avatar: Material,
+  durationSeconds?: number,
+): DigitalHumanProviderSelection {
+  const config = digitalHumanConfig();
+  // Existing integration fixtures exercise the legacy local transport. Tests
+  // for the new router opt in explicitly; production always uses strict routing.
+  if (process.env.NODE_ENV === 'test' && process.env.DIGITAL_HUMAN_PROVIDER_ROUTING_ENABLED !== 'true') {
+    return {
+      provider: config.pullWorkerEnabled ? 'local-worker' : 'local-direct', engine: 'local',
+      routingReason: 'legacy_test_fixture',
+    };
+  }
+  const worker = config.pullWorkerEnabled
+    ? digitalHumanWorkerPresence.snapshot(Date.now(), digitalHumanWorkerOnlineTtlMs(), digitalHumanWorkerPreflightOptions())
+    : undefined;
+  return selectDigitalHumanProvider({
+    mode,
+    binding: parseDigitalHumanProviderBinding(avatar.providerBindings),
+    heygenApiKey: config.heygenApiKey,
+    localPullWorkerReady: worker?.ready === true,
+    localDirectConfigured: Boolean(config.baseUrl),
+    durationSeconds,
+  });
 }
 
 function digitalHumanProviderHeaders(): Record<string, string> {
@@ -5762,7 +5814,7 @@ async function digitalHumanFetch(url: string, init?: RequestInit): Promise<globa
   finally { clearTimeout(timer); }
 }
 
-function safeProviderOutputUrl(value: unknown): string {
+function safeProviderOutputUrl(value: unknown, providerId?: string): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
   let output: URL;
@@ -5774,6 +5826,7 @@ function safeProviderOutputUrl(value: unknown): string {
     provider.host,
     ...String(process.env.DIGITAL_HUMAN_OUTPUT_HOSTS || '').split(',').map(item => item.trim()).filter(Boolean),
   ]);
+  if (providerId === 'heygen' && output.protocol === 'https:' && (output.hostname === 'heygen.com' || output.hostname.endsWith('.heygen.com'))) return output.toString();
   return allowed.has(output.host) ? output.toString() : '';
 }
 
@@ -5807,6 +5860,13 @@ function verifiedDigitalHumanSourceFingerprint(job: DigitalHumanJob, materials =
     pipelineVersion,
     mode: job.mode,
     usagePurpose,
+    provider: {
+      id: job.provider,
+      engine: job.providerEngine || 'local',
+      avatarId: job.providerExternalAvatarId,
+      voiceId: job.providerExternalVoiceId,
+    },
+    voiceStrategy: job.voiceStrategy || 'smart',
   });
   if (recomputed !== job.canonicalInputSignature) return undefined;
   return shotDigitalHumanSourceFingerprint({
@@ -5834,6 +5894,8 @@ function publicDigitalHumanJob(job: DigitalHumanJob, materials?: Material[]) {
     resultLeaseId: _resultLeaseId,
     uploadedResultSha256: _uploadedResultSha256,
     uploadedResultSize: _uploadedResultSize,
+    providerExternalAvatarId: _providerExternalAvatarId,
+    providerExternalVoiceId: _providerExternalVoiceId,
     ...safe
   } = job;
   return {
@@ -5908,7 +5970,7 @@ async function digitalHumanProviderPayloadForJob(
 }
 
 async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: string, providerQuality?: DigitalHumanQualityReport): Promise<DigitalHumanJob> {
-  const response = await digitalHumanFetch(outputUrl, { headers: digitalHumanProviderHeaders() });
+  const response = await digitalHumanFetch(outputUrl, { headers: job.provider === 'heygen' ? {} : digitalHumanProviderHeaders() });
   if (!response.ok) throw new Error(`数字人成片下载失败（${response.status}）`);
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (contentType && !contentType.startsWith('video/') && contentType !== 'application/octet-stream') throw new Error('数字人服务返回的不是视频');
@@ -6050,32 +6112,43 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
     let job = loadDigitalHumanJobs().find(item => item.id === jobId);
     if (!job) throw new Error('digital human job not found');
     if (['completed', 'review', 'failed', 'cancelled'].includes(job.status)) return job;
-    const { baseUrl, pullWorkerEnabled } = digitalHumanConfig();
-    if (pullWorkerEnabled) return job;
-    if (!baseUrl) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'configuration', errorCode: 'PROVIDER_NOT_CONFIGURED', errorMessage: '数字人推理服务尚未配置。' });
+    const config = digitalHumanConfig();
+    if (job.provider === 'local-worker') return job;
+    const provider = job.provider === 'heygen'
+      ? new HeyGenV3Provider({ apiKey: config.heygenApiKey, baseUrl: config.heygenBaseUrl, timeoutMs: config.timeoutMs })
+      : new LocalDirectProvider({ baseUrl: config.baseUrl, apiKey: config.apiKey, timeoutMs: config.timeoutMs });
+    if (job.provider === 'local-direct' && !config.baseUrl) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'configuration', errorCode: 'PROVIDER_NOT_CONFIGURED', errorMessage: '本地数字人直连服务尚未配置。' });
 
     if (!job.providerTaskId) {
       if (!req) return job;
       const providerPayload = await digitalHumanProviderPayloadForJob(req, job, 'direct');
-      const response = await digitalHumanFetch(`${baseUrl}/v1/jobs`, {
-        method: 'POST', headers: digitalHumanProviderHeaders(), body: JSON.stringify(providerPayload),
+      const submitted = await provider.submit({
+        externalJobId: job.id,
+        script: job.scriptSnapshot,
+        language: job.language,
+        title: `Lingshu ${job.projectId || job.id} ${job.storyboardSlotId || ''}`.trim(),
+        selection: {
+          provider: job.provider as DigitalHumanProviderSelection['provider'],
+          engine: job.providerEngine || (job.provider === 'heygen' ? 'avatar_iv' : 'local'),
+          externalAvatarId: job.providerExternalAvatarId,
+          externalVoiceId: job.providerExternalVoiceId,
+          estimatedCostCredits: job.estimatedCostCredits,
+          routingReason: job.providerRoutingReason || 'persisted_job',
+        },
+        localPayload: providerPayload,
       });
-      const payload = await response.json().catch(() => ({})) as any;
-      if (!response.ok || !payload.id) throw new Error(String(payload.error || `数字人服务提交失败（${response.status}）`));
-      job = updateDigitalHumanJob(job.id, { providerTaskId: String(payload.id), status: 'processing', stage: String(payload.stage || 'inference'), progress: Math.max(1, Math.min(95, Number(payload.progress) || 5)) });
+      job = updateDigitalHumanJob(job.id, { providerTaskId: submitted.id, status: 'processing', stage: submitted.stage || 'inference', progress: Math.max(1, Math.min(95, Number(submitted.progress) || 5)) });
     }
 
-    const response = await digitalHumanFetch(`${baseUrl}/v1/jobs/${encodeURIComponent(job.providerTaskId!)}`, { headers: digitalHumanProviderHeaders() });
-    const payload = await response.json().catch(() => ({})) as any;
-    if (!response.ok) throw new Error(String(payload.error || `数字人服务查询失败（${response.status}）`));
-    const providerStatus = String(payload.status || 'processing');
-    if (providerStatus === 'failed') return updateDigitalHumanJob(job.id, { status: 'failed', stage: String(payload.stage || 'inference'), progress: Math.max(0, Math.min(99, Number(payload.progress) || job.progress)), errorCode: String(payload.errorCode || 'PROVIDER_FAILED'), errorMessage: String(payload.error || '数字人生成失败') });
+    const payload = await provider.get(job.providerTaskId!);
+    const providerStatus = payload.status;
+    if (providerStatus === 'failed') return updateDigitalHumanJob(job.id, { status: 'failed', stage: payload.stage || 'inference', progress: Math.max(0, Math.min(99, Number(payload.progress) || job.progress)), errorCode: payload.errorCode || 'PROVIDER_FAILED', errorMessage: payload.errorMessage || '数字人生成失败' });
     if (providerStatus === 'cancelled') return updateDigitalHumanJob(job.id, { status: 'cancelled', stage: 'cancelled', progress: job.progress });
-    if (providerStatus !== 'completed') return updateDigitalHumanJob(job.id, { status: providerStatus === 'quality_check' ? 'quality_check' : 'processing', stage: String(payload.stage || 'inference'), progress: Math.max(job.progress, Math.min(95, Number(payload.progress) || job.progress)) });
+    if (providerStatus !== 'completed') return updateDigitalHumanJob(job.id, { status: providerStatus === 'quality_check' ? 'quality_check' : 'processing', stage: payload.stage || 'inference', progress: Math.max(job.progress, Math.min(95, Number(payload.progress) || job.progress)) });
 
-    const outputUrl = safeProviderOutputUrl(payload.outputUrl);
+    const outputUrl = safeProviderOutputUrl(payload.outputUrl, job.provider);
     if (!outputUrl) throw new Error('数字人服务返回了不受信任的输出地址');
-    return finalizeDigitalHumanOutput(job, outputUrl, payload.quality as DigitalHumanQualityReport);
+    return finalizeDigitalHumanOutput(job, outputUrl, (payload.raw as any)?.quality as DigitalHumanQualityReport);
   })().catch(error => {
     const current = loadDigitalHumanJobs().find(item => item.id === jobId);
     if (current && (error instanceof DigitalHumanFinalizationFenceError || ['completed', 'review', 'failed', 'cancelled'].includes(current.status) || current.cancelRequested)) {
@@ -6092,8 +6165,7 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
 // are submitted synchronously by their POST request; only already-submitted jobs
 // are safe to recover here because their signed inputs are no longer needed.
 const digitalHumanRecoveryTimer = setInterval(() => {
-  if (!digitalHumanConfig().baseUrl || digitalHumanConfig().pullWorkerEnabled) return;
-  for (const job of loadDigitalHumanJobs().filter(item => item.providerTaskId && ['processing', 'quality_check'].includes(item.status)).slice(0, 20)) {
+  for (const job of loadDigitalHumanJobs().filter(item => item.providerTaskId && item.provider !== 'local-worker' && ['processing', 'quality_check'].includes(item.status)).slice(0, 20)) {
     void refreshDigitalHumanJob(job.id);
   }
 }, 15_000);
@@ -6119,15 +6191,23 @@ function digitalHumanCapabilities() {
   const worker = config.pullWorkerEnabled
     ? digitalHumanWorkerPresence.snapshot(Date.now(), digitalHumanWorkerOnlineTtlMs(), digitalHumanWorkerPreflightOptions())
     : undefined;
-  const available = config.pullWorkerEnabled ? worker?.ready === true : Boolean(config.baseUrl);
+  // Preserve the established Pull Worker preflight contract while allowing
+  // quality-mode cloud availability to be reported independently.
+  const legacyLocalAvailable = config.pullWorkerEnabled ? worker?.ready === true : Boolean(config.baseUrl);
+  const localAvailable = legacyLocalAvailable || Boolean(config.baseUrl);
+  const available = Boolean(config.heygenApiKey) || localAvailable;
   const unavailableReason = available
     ? undefined
-    : config.pullWorkerEnabled
-      ? worker?.online ? `本地数字人 GPU Worker 预检未通过：${worker.preflight.failures.join('；')}` : '本地数字人 GPU Worker 离线或心跳已超时'
-      : '数字人 GPU 推理服务尚未配置';
+    : `数字人 Provider 尚未配置：高质量模式缺少 HEYGEN_API_KEY；${config.pullWorkerEnabled
+      ? worker?.online ? `本地 Worker 预检未通过：${worker.preflight.failures.join('；')}` : '本地 Worker 离线或心跳已超时'
+      : '极速模式缺少本地 Worker 或 DIGITAL_HUMAN_API_URL'}`;
   return {
     available,
-    provider: config.provider,
+    provider: config.heygenApiKey ? 'auto' : config.provider,
+    providerPolicy: {
+      quality: { provider: 'heygen', configured: Boolean(config.heygenApiKey), enginePreference: ['avatar_v', 'avatar_iv'], silentLocalFallback: false },
+      fast: { provider: 'local', configured: localAvailable },
+    },
     pipelineVersion: DIGITAL_HUMAN_PIPELINE_VERSION,
     modes: [
       { id: 'fast', label: '极速模式' },
@@ -6269,6 +6349,32 @@ studioRouter.post('/digital-human/job-batches', async (req, res) => {
 
   const motionByRequestedId = new Map<string, Material>();
   motionClipIdUnion.forEach((id, index) => motionByRequestedId.set(id, motionMaterials[index]!));
+  const mode: DigitalHumanMode = req.body?.mode === 'fast' ? 'fast' : 'quality';
+  let providerSelection: DigitalHumanProviderSelection;
+  try {
+    providerSelection = digitalHumanProviderSelection(mode, avatar, Math.max(...variants.map(item => item.audioEndSeconds - item.audioStartSeconds)));
+  } catch (error) {
+    const failure = error instanceof DigitalHumanProviderConfigurationError ? error : undefined;
+    res.status(503).json({ ok: false, error: error instanceof Error ? error.message : '数字人 Provider 配置无效', code: failure?.code || 'PROVIDER_NOT_CONFIGURED', missing: failure?.missing || [] });
+    return;
+  }
+  let voiceDecision;
+  try {
+    voiceDecision = resolveDigitalHumanVoicePolicy({
+      requested: req.body?.voiceStrategy,
+      allShotsUseSamePerson: req.body?.allShotsUseSamePerson !== false,
+      mixedWithLocalMaterial: req.body?.timelineComposition === 'mixed',
+      personVoiceAvailable: Boolean(providerSelection.externalVoiceId),
+      personVoiceAuthorized: avatar.rightsStatus === 'commercial_cleared',
+      brandVoiceAvailable: variants.every(item => Boolean(item.voiceoverUrl)),
+    });
+  } catch (error) {
+    res.status(422).json({ ok: false, error: error instanceof Error ? error.message : '声音策略无法执行', code: 'VOICE_STRATEGY_UNAVAILABLE' }); return;
+  }
+  const { requested: voiceStrategy, resolved: resolvedVoiceStrategy, reason: voiceRoutingReason } = voiceDecision;
+  if (providerSelection.provider === 'heygen' && resolvedVoiceStrategy === 'brand') {
+    res.status(422).json({ ok: false, error: '当前高质量 Provider 不支持外部主音轨驱动；请改用“跟随人物声音”，或等待音频驱动 Provider 接入。', code: 'PROVIDER_EXTERNAL_AUDIO_UNSUPPORTED' }); return;
+  }
   const canonicalSignatures = new Set<string>();
   for (const variant of variants) {
     const canonicalInputSignature = digitalHumanCanonicalInputSignature({
@@ -6283,8 +6389,10 @@ studioRouter.post('/digital-human/job-batches', async (req, res) => {
       performancePlan: variant.performancePlan,
       motionAssets: (variant.motionClipIds || []).map(id => digitalHumanInputAssetIdentity(motionByRequestedId.get(id)!)),
       pipelineVersion: variant.pipelineVersion,
-      mode: req.body?.mode === 'fast' ? 'fast' : 'quality',
+      mode,
       usagePurpose,
+      provider: { id: providerSelection.provider, engine: providerSelection.engine, avatarId: providerSelection.externalAvatarId, voiceId: providerSelection.externalVoiceId },
+      voiceStrategy,
     });
     const sourceFingerprint = shotDigitalHumanSourceFingerprint({
       slotId: storyboardSlotId,
@@ -6308,7 +6416,6 @@ studioRouter.post('/digital-human/job-batches', async (req, res) => {
     variant.performanceSignature = canonicalInputSignature;
   }
 
-  const mode: DigitalHumanMode = req.body?.mode === 'fast' ? 'fast' : 'quality';
   const persistedJobs = loadDigitalHumanJobs();
   const reusableJobs = new Map<string, DigitalHumanJob>();
   let migratedReusableJob = false;
@@ -6349,7 +6456,13 @@ studioRouter.post('/digital-human/job-batches', async (req, res) => {
     mode, usagePurpose, consentConfirmed: true,
     performancePlanVersion: variant.performancePlanVersion, performancePlan: variant.performancePlan,
     motionClipIds: variant.motionClipIds, pipelineVersion: variant.pipelineVersion,
-    commercialRightsStatus: 'cleared', provider: digitalHumanConfig().provider,
+    commercialRightsStatus: 'cleared', provider: providerSelection.provider,
+    providerEngine: providerSelection.engine,
+    providerExternalAvatarId: providerSelection.externalAvatarId,
+    providerExternalVoiceId: providerSelection.externalVoiceId,
+    providerRoutingReason: providerSelection.routingReason,
+    estimatedCostCredits: providerSelection.estimatedCostCredits,
+    voiceStrategy, resolvedVoiceStrategy, voiceRoutingReason,
     status: 'queued', stage: 'queued', progress: 0, workerAttemptCount: 0, cancelRequested: false,
     versionNumber: siblingCount + index + 1,
     createdAt: now, updatedAt: now,
@@ -6361,9 +6474,7 @@ studioRouter.post('/digital-human/job-batches', async (req, res) => {
   // This is the atomic boundary: one synchronous replace publishes every new
   // language child, or none of them. Provider/Worker work starts afterwards.
   if (createdJobs.length || migratedReusableJob) persistDigitalHumanJobs([...persistedJobs, ...createdJobs]);
-  if (!digitalHumanConfig().pullWorkerEnabled) {
-    for (const job of createdJobs) void refreshDigitalHumanJob(job.id, req);
-  }
+  for (const job of createdJobs) void refreshDigitalHumanJob(job.id, req);
   const batch = {
     id: batchId, projectId, storyboardSlotId, avatarMaterialId,
     languages: variants.map(item => item.language),
@@ -6407,6 +6518,30 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
   if (storyboardSlotId && (!Number.isFinite(audioStartSeconds) || !Number.isFinite(audioEndSeconds) || Number(audioStartSeconds) < 0 || Number(audioEndSeconds) <= Number(audioStartSeconds) || Number(audioEndSeconds) - Number(audioStartSeconds) > 30)) {
     res.status(400).json({ ok: false, error: '分镜音频区间无效', code: 'INVALID_AUDIO_SEGMENT' }); return;
   }
+  let providerSelection: DigitalHumanProviderSelection;
+  try {
+    providerSelection = digitalHumanProviderSelection(mode, avatar, storyboardSlotId ? Number(audioEndSeconds) - Number(audioStartSeconds) : undefined);
+  } catch (error) {
+    const failure = error instanceof DigitalHumanProviderConfigurationError ? error : undefined;
+    res.status(503).json({ ok: false, error: error instanceof Error ? error.message : '数字人 Provider 配置无效', code: failure?.code || 'PROVIDER_NOT_CONFIGURED', missing: failure?.missing || [] });
+    return;
+  }
+  let voiceDecision;
+  try {
+    voiceDecision = resolveDigitalHumanVoicePolicy({
+      requested: req.body?.voiceStrategy,
+      allShotsUseSamePerson: req.body?.allShotsUseSamePerson !== false,
+      mixedWithLocalMaterial: req.body?.timelineComposition === 'mixed',
+      personVoiceAvailable: Boolean(providerSelection.externalVoiceId),
+      personVoiceAuthorized: avatar.rightsStatus === 'commercial_cleared',
+      brandVoiceAvailable: Boolean(voiceoverUrl),
+    });
+  } catch (error) {
+    res.status(422).json({ ok: false, error: error instanceof Error ? error.message : '声音策略无法执行', code: 'VOICE_STRATEGY_UNAVAILABLE' }); return;
+  }
+  if (providerSelection.provider === 'heygen' && voiceDecision.resolved === 'brand') {
+    res.status(422).json({ ok: false, error: '当前高质量 Provider 不支持外部主音轨驱动；请改用“跟随人物声音”，或等待音频驱动 Provider 接入。', code: 'PROVIDER_EXTERNAL_AUDIO_UNSUPPORTED' }); return;
+  }
   // req.body.inputSignature is intentionally ignored; only server-normalized
   // fields participate in task identity and reuse.
   const performancePlanVersion = req.body?.performancePlanVersion === 'performance-v1' ? 'performance-v1' as const : undefined;
@@ -6438,6 +6573,8 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
     performancePlanVersion, performancePlan,
     motionAssets: motionMaterials.map(item => digitalHumanInputAssetIdentity(item!)),
     pipelineVersion, mode, usagePurpose,
+    provider: { id: providerSelection.provider, engine: providerSelection.engine, avatarId: providerSelection.externalAvatarId, voiceId: providerSelection.externalVoiceId },
+    voiceStrategy: voiceDecision.requested,
   });
   const sourceFingerprint = shotDigitalHumanSourceFingerprint({
     slotId: storyboardSlotId || '',
@@ -6481,13 +6618,21 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
     avatarMaterialId, avatarName: avatar.name,
     voiceoverUrl, scriptSnapshot, language, mode, usagePurpose, consentConfirmed: true,
     performancePlanVersion, performancePlan, motionClipIds, pipelineVersion,
-    commercialRightsStatus: 'cleared', provider: digitalHumanConfig().provider,
+    commercialRightsStatus: 'cleared', provider: providerSelection.provider,
+    providerEngine: providerSelection.engine,
+    providerExternalAvatarId: providerSelection.externalAvatarId,
+    providerExternalVoiceId: providerSelection.externalVoiceId,
+    providerRoutingReason: providerSelection.routingReason,
+    estimatedCostCredits: providerSelection.estimatedCostCredits,
+    voiceStrategy: voiceDecision.requested,
+    resolvedVoiceStrategy: voiceDecision.resolved,
+    voiceRoutingReason: voiceDecision.reason,
     status: 'queued', stage: 'queued', progress: 0, workerAttemptCount: 0, cancelRequested: false,
     versionNumber: siblings.length + 1,
     createdAt: now, updatedAt: now,
   };
   persistDigitalHumanJobs([...persistedJobs, job]);
-  if (!digitalHumanConfig().pullWorkerEnabled) void refreshDigitalHumanJob(job.id, req);
+  if (job.provider !== 'local-worker') void refreshDigitalHumanJob(job.id, req);
   res.status(202).json({ ok: true, job: publicDigitalHumanJob(job) });
 });
 
@@ -6495,7 +6640,7 @@ studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   let job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
-  if (!digitalHumanConfig().pullWorkerEnabled && ['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
+  if (job.provider !== 'local-worker' && ['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
   const outputMaterial = job.outputMaterialId ? loadMaterials().find(item => item.id === job!.outputMaterialId && item.tenantId === tenantId) : undefined;
   res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
 });
@@ -6521,7 +6666,7 @@ studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
     versionNumber: source.versionNumber + 1, createdAt: now, updatedAt: now,
   };
   const jobs = loadDigitalHumanJobs(); jobs.push(retry); persistDigitalHumanJobs(jobs);
-  if (!digitalHumanConfig().pullWorkerEnabled) void refreshDigitalHumanJob(retry.id, req);
+  if (retry.provider !== 'local-worker') void refreshDigitalHumanJob(retry.id, req);
   res.status(202).json({ ok: true, job: publicDigitalHumanJob(retry) });
 });
 
@@ -6530,10 +6675,14 @@ studioRouter.post('/digital-human/jobs/:id/cancel', async (req, res) => {
   const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
   if (['completed', 'failed', 'review', 'cancelled'].includes(job.status)) { res.status(409).json({ ok: false, error: '该任务当前不可取消' }); return; }
-  if (!digitalHumanConfig().pullWorkerEnabled && job.providerTaskId && digitalHumanConfig().baseUrl) {
-    void digitalHumanFetch(`${digitalHumanConfig().baseUrl}/v1/jobs/${encodeURIComponent(job.providerTaskId)}/cancel`, { method: 'POST', headers: digitalHumanProviderHeaders() }).catch(() => undefined);
+  if (job.providerTaskId && job.provider !== 'local-worker') {
+    const config = digitalHumanConfig();
+    const provider = job.provider === 'heygen'
+      ? new HeyGenV3Provider({ apiKey: config.heygenApiKey, baseUrl: config.heygenBaseUrl, timeoutMs: config.timeoutMs })
+      : new LocalDirectProvider({ baseUrl: config.baseUrl, apiKey: config.apiKey, timeoutMs: config.timeoutMs });
+    void provider.cancel(job.providerTaskId).catch(() => undefined);
   }
-  const hasPullLease = digitalHumanConfig().pullWorkerEnabled && Boolean(job.workerId && job.workerLeaseId);
+  const hasPullLease = job.provider === 'local-worker' && Boolean(job.workerId && job.workerLeaseId);
   const cancelled = updateDigitalHumanJob(job.id, {
     status: 'cancelled', stage: hasPullLease ? 'cancel_requested' : 'cancelled', cancelRequested: hasPullLease,
     errorCode: undefined, errorMessage: undefined,
@@ -6692,12 +6841,16 @@ studioRouter.get('/digital-human/avatars', async (req, res) => {
     && candidate.avatarId === (item.avatarId || item.id)
     && digitalHumanAssetSupportsUsage(candidate, previewPurpose)
     && (candidate.scope === 'shared' || candidate.tenantId === tenantId));
+  const usableProviderFor = (item: Material) => {
+    const binding = parseDigitalHumanProviderBinding(item.providerBindings);
+    return Boolean(binding.heygen?.avatarId && binding.heygen?.voiceId);
+  };
   const avatars = materials
     .filter(item => isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || item.tenantId === tenantId))
-    .filter(item => includeUnready || (digitalHumanAssetSupportsUsage(item, previewPurpose) && usableMotionFor(item)))
+    .filter(item => includeUnready || (digitalHumanAssetSupportsUsage(item, previewPurpose) && (usableMotionFor(item) || usableProviderFor(item))))
     .sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
   const configuredId = loadDigitalHumanAvatarPreferences()[tenantId]?.preferredAvatarMaterialId;
-  const usableAvatars = avatars.filter(item => digitalHumanAssetSupportsUsage(item, previewPurpose) && usableMotionFor(item));
+  const usableAvatars = avatars.filter(item => digitalHumanAssetSupportsUsage(item, previewPurpose) && (usableMotionFor(item) || usableProviderFor(item)));
   const preferredAvatarMaterialId = usableAvatars.some(item => item.id === configuredId) ? configuredId : (usableAvatars[0]?.id || '');
   const items = await Promise.all(avatars.map(async item => {
     const motionClips = materials.filter(candidate => candidate.assetRole === 'avatar_motion_clip'
@@ -6707,7 +6860,7 @@ studioRouter.get('/digital-human/avatars', async (req, res) => {
       ...(await materialResponse(item, tenantId)),
       motionClipCount: motionClips.length,
       supportedGestures: [...new Set(motionClips.map(candidate => String(candidate.motionClip?.gesture || '')).filter(Boolean))],
-      productionReady: digitalHumanAssetSupportsUsage(item, previewPurpose) && motionClips.some(candidate => digitalHumanAssetSupportsUsage(candidate, previewPurpose)),
+      productionReady: digitalHumanAssetSupportsUsage(item, previewPurpose) && (motionClips.some(candidate => digitalHumanAssetSupportsUsage(candidate, previewPurpose)) || usableProviderFor(item)),
     };
   }));
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
@@ -6721,10 +6874,12 @@ studioRouter.patch('/digital-human/avatars/preferred', (req, res) => {
   const preferred = materials.find(item => item.id === preferredAvatarMaterialId && isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || item.tenantId === tenantId));
   const allowed = Boolean(preferred
     && digitalHumanAssetSupportsUsage(preferred, 'internal_preview')
-    && materials.some(item => item.assetRole === 'avatar_motion_clip'
+    && (parseDigitalHumanProviderBinding(preferred.providerBindings).heygen?.avatarId
+      && parseDigitalHumanProviderBinding(preferred.providerBindings).heygen?.voiceId
+      || materials.some(item => item.assetRole === 'avatar_motion_clip'
       && item.avatarId === (preferred.avatarId || preferred.id)
       && digitalHumanAssetSupportsUsage(item, 'internal_preview')
-      && (item.scope === 'shared' || item.tenantId === tenantId)));
+      && (item.scope === 'shared' || item.tenantId === tenantId))));
   if (!allowed) { res.status(404).json({ ok: false, error: '人物资产不存在或无权使用' }); return; }
   const preferences = loadDigitalHumanAvatarPreferences();
   preferences[tenantId] = { preferredAvatarMaterialId, updatedAt: new Date().toISOString() };
@@ -6783,7 +6938,7 @@ function isMockMaterial(m: Material): boolean {
 studioRouter.post('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, scope = 'own', usage, sourceType, sourceUrl,
-    assetRole: requestedAssetRole, rightsStatus: requestedRightsStatus, rightsUsageScope, rightsSourceUrl, avatarId, avatarVersion, motionClip } = req.body ?? {};
+    assetRole: requestedAssetRole, rightsStatus: requestedRightsStatus, rightsUsageScope, rightsSourceUrl, avatarId, avatarVersion, motionClip, providerBindings } = req.body ?? {};
   if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
   if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }
   const validAssetRoles = new Set(['avatar_master', 'avatar_motion_clip', 'generated_clip']);
@@ -6894,6 +7049,7 @@ studioRouter.post('/materials', async (req, res) => {
     avatarVersion: Math.max(1, Math.round(Number(avatarVersion) || 1)),
     sourceHash,
     motionClip: normalizedMotionClip,
+    providerBindings: assetRole === 'avatar_master' ? parseDigitalHumanProviderBinding(providerBindings) : undefined,
     rightsUsageScope: normalizedRightsUsageScope.length ? normalizedRightsUsageScope : undefined,
     rightsSourceUrl: String(rightsSourceUrl || '').trim().slice(0, 2000) || undefined,
     productionReady: folder === 'presenter'
@@ -7161,6 +7317,15 @@ studioRouter.patch('/materials/:id', async (req, res) => {
   if (!name) { res.status(400).json({ ok: false, error: 'Material name is required' }); return; }
   material.name = name;
   if ('tags' in (req.body || {})) material.tags = String(req.body?.tags ?? '').trim().slice(0, 500);
+  if ('providerBindings' in (req.body || {})) {
+    if (!isDigitalHumanAvatarMaster(material)) { res.status(400).json({ ok: false, error: '只有人物主资产可以绑定数字人 Provider' }); return; }
+    const binding = parseDigitalHumanProviderBinding(req.body?.providerBindings);
+    const heygen = binding.heygen;
+    if (heygen && Boolean(heygen.avatarId) !== Boolean(heygen.voiceId)) {
+      res.status(400).json({ ok: false, error: '人物外部绑定必须同时提供 avatarId 和 voiceId' }); return;
+    }
+    material.providerBindings = binding;
+  }
   persistMaterials(list);
   res.json({ ok: true, material: await materialResponse(material, tenantId) });
 });

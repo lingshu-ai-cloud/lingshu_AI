@@ -26,6 +26,13 @@ export interface DigitalHumanInputSignatureFields {
   pipelineVersion: string;
   mode: string;
   usagePurpose: string;
+  provider?: {
+    id: string;
+    engine: string;
+    avatarId?: string;
+    voiceId?: string;
+  };
+  voiceStrategy?: string;
 }
 
 type CanonicalValue = null | boolean | number | string | CanonicalValue[] | { [key: string]: CanonicalValue };
@@ -91,12 +98,19 @@ export function digitalHumanCanonicalInputSignature(fields: DigitalHumanInputSig
       version: normalizedText(fields.performancePlanVersion),
     },
     pipelineVersion: normalizedText(fields.pipelineVersion),
+    provider: fields.provider ? {
+      avatarId: normalizedText(fields.provider.avatarId),
+      engine: normalizedText(fields.provider.engine).toLowerCase(),
+      id: normalizedText(fields.provider.id).toLowerCase(),
+      voiceId: normalizedText(fields.provider.voiceId),
+    } : null,
     projectId: normalizedText(fields.projectId),
     schemaVersion: DIGITAL_HUMAN_INPUT_SIGNATURE_VERSION,
     script: normalizedText(fields.script),
     storyboardSlotId: normalizedText(fields.storyboardSlotId),
     tenantId: normalizedText(fields.tenantId),
     usagePurpose: normalizedText(fields.usagePurpose).toLowerCase(),
+    voiceStrategy: normalizedText(fields.voiceStrategy || 'smart').toLowerCase(),
   };
   const digest = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   return `${DIGITAL_HUMAN_INPUT_SIGNATURE_VERSION}:${digest}`;

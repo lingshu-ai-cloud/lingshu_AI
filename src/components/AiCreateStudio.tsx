@@ -446,6 +446,7 @@ interface Clip {
   motionClip?: Material['motionClip'];
   productionReady?: boolean;
   rightsStatus?: Material['rightsStatus'];
+  providerBindings?: Material['providerBindings'];
   industry?: string;
   shotFunction?: string;
   applicability?: string;
@@ -3598,6 +3599,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [digitalHumanLoading, setDigitalHumanLoading] = useState(false);
   const [digitalHumanNotice, setDigitalHumanNotice] = useState('');
   const [digitalHumanMode, setDigitalHumanMode] = useState<'fast' | 'quality'>('quality');
+  const [digitalHumanVoiceStrategy, setDigitalHumanVoiceStrategy] = useState<'smart' | 'brand' | 'person'>('smart');
   const [digitalHumanConsent, setDigitalHumanConsent] = useState(false);
   const [digitalHumanCapabilities, setDigitalHumanCapabilities] = useState<DigitalHumanCapabilities | null>(null);
   const [digitalHumanJob, setDigitalHumanJob] = useState<DigitalHumanJob | null>(null);
@@ -6774,6 +6776,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         script: activeSpokenScript,
         language: activeVoiceLang,
         mode: digitalHumanMode,
+        voiceStrategy: digitalHumanVoiceStrategy,
         usagePurpose: 'internal_preview',
         consentConfirmed: digitalHumanConsent,
         performancePlanVersion: 'performance-v1',
@@ -6973,6 +6976,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         storyboardSlotId: slot.id,
         avatarMaterialId,
         mode: 'quality',
+        voiceStrategy: digitalHumanVoiceStrategy,
+        timelineComposition: Object.values(shotMediaModes).some(value => value === 'material') ? 'mixed' : 'all_digital',
+        allShotsUseSamePerson: new Set(Object.values(shotPreferredAvatarIds).filter(Boolean)).size <= 1,
         usagePurpose: 'internal_preview',
         consentConfirmed: true,
         ...prepared.request,
@@ -7043,6 +7049,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         storyboardSlotId: slot.id,
         avatarMaterialId,
         mode: 'quality',
+        voiceStrategy: digitalHumanVoiceStrategy,
+        timelineComposition: Object.values(shotMediaModes).some(value => value === 'material') ? 'mixed' : 'all_digital',
+        allShotsUseSamePerson: new Set(Object.values(shotPreferredAvatarIds).filter(Boolean)).size <= 1,
         usagePurpose: 'internal_preview',
         consentConfirmed: true,
         variants: prepared.map(item => item.request),
@@ -7101,7 +7110,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       && item.assetRole === 'avatar_master'
       && item.productionReady === true
       && item.rightsStatus === 'commercial_cleared'
-      && hasMotionPack(item.id);
+      && (hasMotionPack(item.id) || Boolean(item.providerBindings?.heygen?.avatarId && item.providerBindings?.heygen?.voiceId));
     const preferredAvatarId = shotPreferredAvatarIds[slot.id] || shotDigitalHumanBindings[digitalHumanLanguageKey(slot.id, activeVoiceLang)]?.avatarMaterialId || preferredDigitalHumanAvatarId;
     const avatar = materials.find(item => item.id === preferredAvatarId && eligibleAvatar(item))
       || materials.find(item => item.id === preferredDigitalHumanAvatarId && eligibleAvatar(item))
@@ -12834,6 +12843,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     </div>
                   </div>
                   {activeShotMediaMode === 'digital' && <>
+                  <div className="mb-3 rounded-xl border border-border bg-surface-2 p-2.5">
+                    <p className="text-[9px] font-black text-text-primary">全片声音</p>
+                    <p className="mt-0.5 text-[8px] text-text-muted">整条成片只使用一个主声音源。</p>
+                    <div className="mt-2 grid grid-cols-3 gap-1">
+                      {([
+                        { id: 'smart' as const, label: '智能选择' },
+                        { id: 'brand' as const, label: '固定品牌声音' },
+                        { id: 'person' as const, label: '跟随人物声音' },
+                      ]).map(option => <button key={option.id} type="button" onClick={() => setDigitalHumanVoiceStrategy(option.id)} className={`rounded-md border px-1.5 py-2 text-[8px] font-black ${digitalHumanVoiceStrategy === option.id ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-border bg-white text-text-muted'}`}>{option.label}</button>)}
+                    </div>
+                  </div>
                   <div className="flex items-center justify-between gap-2">
                     <div><p className="text-[10px] font-black text-text-primary">人物口播 · 数字人</p><p className="mt-0.5 text-[9px] text-text-muted">已自动选用默认人物、当前分镜口播与配音；质检通过后自动回填。</p></div>
                     {activeShotDigitalHuman && <span className={`rounded-full px-2 py-1 text-[9px] font-black ${activeShotDigitalHuman.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : ['failed', 'review', 'stale'].includes(activeShotDigitalHuman.status) ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'}`}>{activeShotDigitalHuman.status === 'completed' ? '已完成' : activeShotDigitalHuman.status === 'review' ? '待复核' : activeShotDigitalHuman.status === 'stale' ? '需重生成' : activeShotDigitalHuman.status === 'failed' ? '生成失败' : '后台生成中'}</span>}
