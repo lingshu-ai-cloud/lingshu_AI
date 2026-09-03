@@ -31,6 +31,14 @@ on:
         description: Version expected after rollback
         required: true
         type: string
+      expected_current_sha:
+        description: Current immutable commit SHA observed when this rollback was authorized
+        required: true
+        type: string
+      source_ref:
+        description: Recorded source branch of the rollback target
+        required: true
+        type: string
       rollback_of_request_id:
         description: Original release-console request ID
         required: true
@@ -80,12 +88,22 @@ jobs:
       - name: Validate immutable rollback version
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
           if [[ ! "$EXPECTED_VERSION" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Rollback version must be a full lowercase 40-character Git commit SHA." >&2
             exit 1
           fi
+          if [[ ! "$EXPECTED_CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_current_sha must be a full lowercase 40-character Git commit SHA." >&2
+            exit 1
+          fi
+          git check-ref-format --branch "$SOURCE_REF" >/dev/null || {
+            echo "source_ref is not a valid Git branch name." >&2
+            exit 1
+          }
 
       - name: Consume release-console authorization
         env:
@@ -97,6 +115,8 @@ jobs:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_OPERATION: ${{ inputs.operation }}
           RELEASE_VERSION: ${{ inputs.version }}
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
           : "${CONSOLE_URL:?RELEASE_CONSOLE_URL secret is required}"
@@ -113,6 +133,8 @@ jobs:
             environment: process.env.TARGET_ENVIRONMENT,
             operation: process.env.RELEASE_OPERATION,
             version: process.env.RELEASE_VERSION,
+            expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA,
+            sourceRef: process.env.SOURCE_REF,
           };
           process.stdout.write(JSON.stringify(payload));
           NODE
@@ -147,6 +169,8 @@ jobs:
 
       - name: Sign in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -156,16 +180,34 @@ jobs:
         env:
           DEPLOY_ACTOR: ${{ github.actor }}
           DEPLOY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash deploy/release.sh rollback internal "${{ inputs.version }}"
+          EXPECTED_CURRENT_SHA: ${{ inputs.expected_current_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          ROLLBACK_VERSION: ${{ inputs.version }}
+          DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config
+        run: sudo --preserve-env=DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"
+
+      - name: Report verified post-rollback inventory
+        env:
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal
 
       - name: Record rollback in job summary
+        env:
+          RELEASE_REQUEST_ID: ${{ inputs.release_request_id }}
+          ORIGINAL_REQUEST_ID: ${{ inputs.rollback_of_request_id }}
+          ROLLBACK_VERSION: ${{ inputs.version }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          RUNNER_NAME: ${{ runner.name }}
         run: |
           echo "### Rollback complete" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Release request: ${{ inputs.release_request_id }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Original request: ${{ inputs.rollback_of_request_id }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Expected version: ${{ inputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Environment: ${{ inputs.environment }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Runner: ${{ runner.name }}" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Release request: $RELEASE_REQUEST_ID" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Original request: $ORIGINAL_REQUEST_ID" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Expected version: $ROLLBACK_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Source branch: $SOURCE_REF" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Environment: $TARGET_ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "- Runner: $RUNNER_NAME" >> "$GITHUB_STEP_SUMMARY"
 
   report:
     name: Report execution result

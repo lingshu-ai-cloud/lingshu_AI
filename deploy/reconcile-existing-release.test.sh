@@ -5,6 +5,8 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 reconcile="$root/deploy/reconcile-existing-release.sh"
 report="$root/deploy/report-environment-inventory.sh"
 workflow="$root/.github/workflows/reconcile-internal-baseline.yml"
+deploy_workflow="$root/.github/workflows/deploy-environment.yml"
+rollback_workflow="$root/.github/workflows/rollback-environment.yml"
 fixture="$(mktemp -d)"
 trap 'rm -rf -- "$fixture"' EXIT
 
@@ -31,11 +33,36 @@ grep -Fq '[[ "$environment" == "internal" ]]' "$reconcile"
 grep -Fq '[[ "$environment" == "internal" ]]' "$report"
 grep -Fq 'Running app does not match the recorded baseline image.' "$report"
 grep -Fq 'Running PocketBase does not match the recorded baseline image.' "$report"
+grep -Fq 'expected_current_sha:' "$deploy_workflow"
+grep -Fq 'source_ref:' "$deploy_workflow"
+grep -Fq 'expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA' "$deploy_workflow"
+grep -Fq 'sourceRef: process.env.SOURCE_REF' "$deploy_workflow"
+grep -Fq 'git merge-base --is-ancestor "$IMAGE_SHA" refs/remotes/origin/release-source' "$deploy_workflow"
+grep -Fq 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$deploy_workflow"
+[[ "$(grep -Fc 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$deploy_workflow")" == "2" ]]
+grep -Fq 'sudo --preserve-env=APP_IMAGE,POCKETBASE_IMAGE,DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh deploy internal "${{ needs.validate.outputs.image_sha }}" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$deploy_workflow"
+grep -Fq 'expected_current_sha:' "$rollback_workflow"
+grep -Fq 'source_ref:' "$rollback_workflow"
+grep -Fq 'expectedCurrentVersion: process.env.EXPECTED_CURRENT_SHA' "$rollback_workflow"
+grep -Fq 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$rollback_workflow"
+[[ "$(grep -Fc 'DOCKER_CONFIG: ${{ runner.temp }}/lingshu-docker-config' "$rollback_workflow")" == "2" ]]
+grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR,DEPLOY_RUN_URL,DOCKER_CONFIG bash deploy/release.sh rollback internal "$ROLLBACK_VERSION" "$EXPECTED_CURRENT_SHA" "$SOURCE_REF"' "$rollback_workflow"
+grep -Fq 'Report verified post-deployment inventory' "$deploy_workflow"
+grep -Fq 'Report verified post-rollback inventory' "$rollback_workflow"
+grep -Fq 'sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal' "$deploy_workflow"
+grep -Fq 'sudo --preserve-env=RELEASE_CONSOLE_URL,RELEASE_INVENTORY_WEBHOOK_SECRET bash deploy/report-environment-inventory.sh internal' "$rollback_workflow"
+grep -Fq 'sudo --preserve-env=DEPLOY_ACTOR bash deploy/reconcile-existing-release.sh' "$workflow"
+grep -Fq 'flock -n 9' "$report"
+grep -Fq 'RELEASE_CONSOLE_URL must use HTTPS.' "$report"
+grep -Fq 'RELEASE_CONSOLE_URL must not contain whitespace.' "$report"
+grep -Fq 'chmod 600 "$auth_header_file"' "$report"
+grep -Fq -- '--header "@$auth_header_file"' "$report"
 
 mkdir -p "$fixture/bin" "$fixture/compose" "$fixture/deploy"
 touch "$fixture/compose/docker-compose.yml" "$fixture/deploy/compose.release.yml"
 export MOCK_DOCKER_LOG="$fixture/docker.log"
 export MOCK_INVENTORY_PAYLOAD="$fixture/inventory.json"
+export MOCK_CURL_LOG="$fixture/curl.log"
 
 cat > "$fixture/bin/docker" <<'MOCK_DOCKER'
 #!/usr/bin/env bash
@@ -58,7 +85,9 @@ if [[ "${1:-}" == "inspect" ]]; then
   target="${4:-}"
   case "$format" in
     *State.Health*) echo healthy ;;
-    '{{.Image}}') [[ "$target" == app-container ]] && echo sha256:app || echo sha256:pb ;;
+    '{{.Image}}') [[ "$target" == app-container ]] \
+      && echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      || echo sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
     *'.Type "bind"'*) echo ;;
     *'/app/data'*) echo /srv/internal/data ;;
     *'/pb/pb_data'*) echo internal_pb_data ;;
@@ -71,7 +100,13 @@ if [[ "${1:-}" == "inspect" ]]; then
 fi
 if [[ "${1:-}" == "image" && "${2:-}" == "tag" ]]; then exit 0; fi
 if [[ "${1:-}" == "image" && "${2:-}" == "inspect" ]]; then
-  [[ "${@: -1}" == *app:* ]] && echo sha256:app || echo sha256:pb
+  if [[ "$*" == *org.opencontainers.image.revision* ]]; then
+    echo "${MOCK_IMAGE_REVISION:-}"
+  else
+    [[ "${@: -1}" == *app:* ]] \
+      && echo sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      || echo sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  fi
   exit 0
 fi
 echo "unhandled docker call: $*" >&2
@@ -82,15 +117,20 @@ cat > "$fixture/bin/curl" <<'MOCK_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
 args=("$@")
+printf '%q ' "$@" >> "$MOCK_CURL_LOG"
+printf '\n' >> "$MOCK_CURL_LOG"
 for ((index=0; index<${#args[@]}; index++)); do
   if [[ "${args[$index]}" == "--data-binary" ]]; then
     printf '%s' "${args[$((index+1))]}" > "$MOCK_INVENTORY_PAYLOAD"
+  fi
+  if [[ "${args[$index]}" == "--output" ]]; then
+    printf '<!doctype html><html><body>internal</body></html>\n' > "${args[$((index+1))]}"
   fi
 done
 MOCK_CURL
 cat > "$fixture/bin/flock" <<'MOCK_FLOCK'
 #!/usr/bin/env bash
-exit 0
+exit "${MOCK_FLOCK_EXIT:-0}"
 MOCK_FLOCK
 chmod +x "$fixture/bin/docker" "$fixture/bin/curl" "$fixture/bin/flock"
 
@@ -98,15 +138,24 @@ mkdir -p "$fixture/deploy/reconciliation-archive"
 printf 'DEPLOYED_COMMIT=stale\n' > "$fixture/deploy/.release.env"
 printf 'DEPLOYED_COMMIT=older\n' > "$fixture/deploy/.previous-release.env"
 
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  bash "$reconcile" internal fixture-project "$fixture/compose" \
+  f0dde18b1137cea535c1de2052bdbbd84f8a6b91 'bad..branch' 2>/dev/null; then
+  echo "Reconciliation unexpectedly accepted an invalid Git branch name." >&2
+  exit 1
+fi
+
 PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
   DEPLOY_ACTOR=test-suite APP_HOST_PORT=18788 \
   bash "$reconcile" internal fixture-project "$fixture/compose" \
   f0dde18b1137cea535c1de2052bdbbd84f8a6b91 \
-  codex/test-baseline >/dev/null
+  'codex/吴小姐大改全ui后3-客服agent+状态判定' >/dev/null
 
 grep -Fq 'DEPLOYED_COMMIT=f0dde18b1137cea535c1de2052bdbbd84f8a6b91' "$fixture/deploy/.release.env"
-grep -Fq 'BASELINE_APP_IMAGE_ID=sha256:app' "$fixture/deploy/.release.env"
-grep -Fq 'BASELINE_POCKETBASE_IMAGE_ID=sha256:pb' "$fixture/deploy/.release.env"
+grep -Fq 'DEPLOYED_BRANCH=codex/吴小姐大改全ui后3-客服agent+状态判定' "$fixture/deploy/.release.env"
+grep -Fq 'IMAGE_SOURCE=local-baseline' "$fixture/deploy/.release.env"
+grep -Fq 'BASELINE_APP_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$fixture/deploy/.release.env"
+grep -Fq 'BASELINE_POCKETBASE_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$fixture/deploy/.release.env"
 [[ ! -e "$fixture/deploy/.previous-release.env" ]]
 [[ "$(find "$fixture/deploy/reconciliation-archive" -type f | wc -l | tr -d ' ')" == "2" ]]
 if grep -Eq ' compose .* (stop|start|restart|up|down|kill|rm) ' "$MOCK_DOCKER_LOG"; then
@@ -117,8 +166,24 @@ fi
 PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
   RELEASE_CONSOLE_URL=https://ops.example.test \
   RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
-  PUBLIC_SMOKE_URL=https://internal.example.test/api/health \
   bash "$report" internal >/dev/null
+
+grep -Fq 'http://127.0.0.1:18788/api/overseas/health' "$MOCK_CURL_LOG"
+grep -Fq 'http://127.0.0.1:18788/' "$MOCK_CURL_LOG"
+grep -Fq 'http://127.0.0.1:8090/api/health' "$MOCK_CURL_LOG"
+! grep -Fq 'test-secret' "$MOCK_CURL_LOG"
+
+curl_calls_before_locked_report="$(wc -l < "$MOCK_CURL_LOG" | tr -d ' ')"
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  MOCK_FLOCK_EXIT=1 \
+  RELEASE_CONSOLE_URL=https://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null 2>&1; then
+  echo "Inventory reporting unexpectedly ignored the deployment lock." >&2
+  exit 1
+fi
+curl_calls_after_locked_report="$(wc -l < "$MOCK_CURL_LOG" | tr -d ' ')"
+[[ "$curl_calls_after_locked_report" == "$curl_calls_before_locked_report" ]]
 
 node - "$MOCK_INVENTORY_PAYLOAD" <<'NODE'
 const fs = require('node:fs');
@@ -130,5 +195,57 @@ if (payload.sourceKnown !== true || payload.rollbackBaselineVerified !== true ||
 }
 if (payload.serverUniqueCodeCount !== 0) throw new Error('unexpected runtime code mounts');
 NODE
+
+registry_rollback_sha="dddddddddddddddddddddddddddddddddddddddd"
+cat > "$fixture/deploy/.previous-release.env" <<EOF
+DEPLOY_ENV=internal
+DEPLOYED_COMMIT=${registry_rollback_sha}
+DEPLOYED_BRANCH=main
+IMAGE_SOURCE=registry
+IMAGE_TAG=sha-${registry_rollback_sha}
+APP_IMAGE=ghcr.io/example/app
+POCKETBASE_IMAGE=ghcr.io/example/pocketbase
+REGISTRY_APP_IMAGE_ID=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+REGISTRY_POCKETBASE_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  MOCK_IMAGE_REVISION="$registry_rollback_sha" \
+  RELEASE_CONSOLE_URL=https://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null
+
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  MOCK_IMAGE_REVISION=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+  RELEASE_CONSOLE_URL=https://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null 2>&1; then
+  echo "Inventory reporting unexpectedly accepted a drifting registry rollback tag." >&2
+  exit 1
+fi
+
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  RELEASE_CONSOLE_URL=http://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null 2>&1; then
+  echo "Inventory reporting unexpectedly accepted a plaintext HTTP endpoint." >&2
+  exit 1
+fi
+
+cat > "$fixture/deploy/.previous-release.env" <<'EOF'
+DEPLOY_ENV=internal
+DEPLOYED_COMMIT=not-a-commit
+DEPLOYED_BRANCH=main
+IMAGE_SOURCE=registry
+IMAGE_TAG=sha-invalid
+APP_IMAGE=ghcr.io/example/app
+POCKETBASE_IMAGE=ghcr.io/example/pocketbase
+EOF
+if PATH="$fixture/bin:$PATH" DEPLOY_ROOT="$fixture/deploy" \
+  RELEASE_CONSOLE_URL=https://ops.example.test \
+  RELEASE_INVENTORY_WEBHOOK_SECRET=test-secret \
+  bash "$report" internal >/dev/null 2>&1; then
+  echo "Inventory reporting unexpectedly accepted an invalid previous-release baseline." >&2
+  exit 1
+fi
 
 echo "Internal-only reconciliation safety checks passed."
