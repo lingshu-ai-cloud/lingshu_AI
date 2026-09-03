@@ -14,6 +14,8 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { Readable, Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -30,22 +32,104 @@ function resolution(ratio) {
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i;
 
-/** 下载远端 url 到本地文件（桌面端与本机 express 同机，localhost 直连） */
+const DEFAULT_VIDEO_MAX_BYTES = 512 * 1024 * 1024;
+const DEFAULT_AUDIO_MAX_BYTES = 128 * 1024 * 1024;
+const DEFAULT_IMAGE_MAX_BYTES = 32 * 1024 * 1024;
+const ABSOLUTE_ASSET_MAX_BYTES = 1024 * 1024 * 1024;
+
+function safeOrigin(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password) return '';
+    return parsed.origin;
+  } catch {
+    return '';
+  }
+}
+
+function safeAssetLabel(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return 'invalid asset URL';
+  }
+}
+
+function assetHeadersFor(origin, assetOrigin, supplied) {
+  if (!assetOrigin || origin !== assetOrigin || !supplied || typeof supplied !== 'object') return {};
+  const output = {};
+  for (const name of ['authorization', 'cookie']) {
+    const value = supplied[name] ?? supplied[name[0].toUpperCase() + name.slice(1)];
+    if (typeof value === 'string' && value.length > 0 && value.length <= 8192) output[name] = value;
+  }
+  return output;
+}
+
+function downloadByteLimit(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_VIDEO_MAX_BYTES;
+  return Math.max(1, Math.min(ABSOLUTE_ASSET_MAX_BYTES, Math.floor(parsed)));
+}
+
+/**
+ * Download one server-authorized asset without leaking credentials across origins.
+ * Redirects are handled manually so every hop is checked before a request is sent.
+ */
 async function downloadTo(url, dest, options = {}) {
+  const assetOrigin = safeOrigin(options.assetOrigin);
+  const allowedOrigins = new Set([
+    assetOrigin,
+    ...(Array.isArray(options.allowedAssetOrigins) ? options.allowedAssetOrigins.map(safeOrigin) : []),
+  ].filter(Boolean));
+  if (!assetOrigin || !allowedOrigins.size) throw new Error('render asset origin is missing');
+  const byteLimit = downloadByteLimit(options.maxBytes);
+  let current;
+  try { current = new URL(String(url)); } catch { throw new Error('render asset URL is invalid'); }
+  if (!/^https?:$/.test(current.protocol) || current.username || current.password) throw new Error('render asset URL protocol or credentials are not allowed');
+  let res = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
-  const headers = options.assetOrigin && String(url).startsWith(options.assetOrigin)
-    ? options.assetHeaders || {}
-    : {};
-  let res;
   try {
-    res = await fetch(url, { headers, signal: controller.signal });
+    for (let redirect = 0; redirect <= 3; redirect++) {
+      if (!allowedOrigins.has(current.origin)) throw new Error(`render asset origin is not authorized: ${current.origin}`);
+      res = await fetch(current, {
+        headers: assetHeadersFor(current.origin, assetOrigin, options.assetHeaders),
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+      if (![301, 302, 303, 307, 308].includes(res.status)) break;
+      const location = res.headers.get('location');
+      if (!location || redirect === 3) throw new Error('render asset redirect is invalid or too deep');
+      current = new URL(location, current);
+      if (!/^https?:$/.test(current.protocol) || current.username || current.password) throw new Error('render asset redirect protocol or credentials are not allowed');
+    }
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new Error(`download ${url} -> ${res.status}`);
-  fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-  return dest;
+  if (!res || !res.ok || !res.body) throw new Error(`download ${safeAssetLabel(current)} -> ${res ? res.status : 'no response'}`);
+  const declaredBytes = Number(res.headers.get('content-length') || 0);
+  if (Number.isFinite(declaredBytes) && declaredBytes > byteLimit) throw new Error(`render asset exceeds ${byteLimit} byte limit`);
+
+  let receivedBytes = 0;
+  const limiter = new Transform({
+    transform(chunk, _encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > byteLimit) callback(new Error(`render asset exceeds ${byteLimit} byte limit`));
+      else callback(null, chunk);
+    },
+  });
+  const bodyTimer = setTimeout(() => controller.abort(), 45_000);
+  try {
+    await pipeline(Readable.fromWeb(res.body), limiter, fs.createWriteStream(dest, { flags: 'w' }));
+    if (receivedBytes <= 0) throw new Error('render asset is empty');
+    return dest;
+  } catch (error) {
+    try { fs.rmSync(dest, { force: true }); } catch { /* best effort */ }
+    throw error;
+  } finally {
+    clearTimeout(bodyTimer);
+  }
 }
 
 function finiteNumber(value, fallback) {
@@ -55,10 +139,11 @@ function finiteNumber(value, fallback) {
 
 function assTime(sec) {
   const n = Math.max(0, Number(sec) || 0);
-  const h = Math.floor(n / 3600);
-  const m = Math.floor((n % 3600) / 60);
-  const s = Math.floor(n % 60);
-  const cs = Math.floor((n - Math.floor(n)) * 100);
+  const totalCs = Math.round(n * 100);
+  const h = Math.floor(totalCs / 360000);
+  const m = Math.floor((totalCs % 360000) / 6000);
+  const s = Math.floor((totalCs % 6000) / 100);
+  const cs = totalCs % 100;
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
 }
 
@@ -78,7 +163,65 @@ function filterPath(value) {
     .replace(/,/g, '\\,');
 }
 
-function cuesToAss(cues, width, height) {
+const AI_DISCLOSURE_LABEL = 'AI生成 · 非真人代言';
+const AI_DISCLOSURE_PROVIDER = 'lingshu-digital-human';
+
+function sanitizeMetadataValue(value, fallback, maxLength = 180) {
+  const clean = candidate => String(candidate == null ? '' : candidate)
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+  return clean(value) || clean(fallback);
+}
+
+function isDigitalHumanTimelineItem(item) {
+  return Boolean(item && (
+    item.digitalHumanGenerated === true
+    || item.sourceType === 'digital-human'
+    || item.assetRole === 'generated_clip'
+  ));
+}
+
+/**
+ * 渲染器做最后一道披露判定：既接受服务器给出的明确标记，也根据时间线来源兜底，
+ * 避免中间层遗漏 aiDisclosure 导致数字人成片无标识。
+ */
+function resolveAiDisclosure(manifest) {
+  const supplied = manifest && manifest.aiDisclosure && typeof manifest.aiDisclosure === 'object'
+    ? manifest.aiDisclosure
+    : null;
+  const explicitlyRequired = Boolean(
+    supplied
+    && supplied.required === true
+    && supplied.containsDigitalHuman === true
+  );
+  const inferredFromTimeline = (Array.isArray(manifest && manifest.timeline) ? manifest.timeline : [])
+    .some(isDigitalHumanTimelineItem);
+  if (!explicitlyRequired && !inferredFromTimeline) return null;
+
+  // 只在完整、明确的披露对象上接受上游内容 ID / provider；来源兜底时使用本机可审计默认值。
+  const source = explicitlyRequired ? supplied : {};
+  const safeJobId = sanitizeMetadataValue(manifest && manifest.jobId, 'unknown-job', 96);
+  const contentId = sanitizeMetadataValue(
+    source.contentId || source.content_id,
+    `lingshu-render:${safeJobId}`,
+  );
+  const provider = sanitizeMetadataValue(source.provider, AI_DISCLOSURE_PROVIDER, 96);
+  return {
+    required: true,
+    containsDigitalHuman: true,
+    label: AI_DISCLOSURE_LABEL,
+    contentId,
+    provider,
+  };
+}
+
+function aiDisclosureFontSize(width, height) {
+  return Math.ceil(Math.min(width, height) * 0.05);
+}
+
+function cuesToAss(cues, width, height, aiDisclosure, duration) {
   const valid = (Array.isArray(cues) ? cues : [])
     .map(cue => ({
       start: Math.max(0, Number(cue && cue.start) || 0),
@@ -86,13 +229,20 @@ function cuesToAss(cues, width, height) {
       text: assText(cue && cue.text),
     }))
     .filter(cue => cue.text && cue.end > cue.start);
-  if (!valid.length) return '';
+  const showAiDisclosure = Boolean(aiDisclosure);
+  if (!valid.length && !showAiDisclosure) return '';
 
   const fontSize = Math.max(34, Math.round(width / 22));
   const marginV = Math.round(height / 3);
   const events = valid.map(cue =>
     `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${cue.text}`
   );
+  const disclosureStyle = showAiDisclosure
+    ? [`Style: AIGenerated,Arial Unicode MS,${aiDisclosureFontSize(width, height)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H70000000,-1,0,0,0,100,100,0,0,3,2,0,9,0,${Math.ceil(Math.min(width, height) * 0.035)},${Math.ceil(Math.min(width, height) * 0.035)},1`]
+    : [];
+  const disclosureEvents = showAiDisclosure
+    ? [`Dialogue: 10,${assTime(0)},${assTime(Math.max(0.1, finiteNumber(duration, 0.1)))},AIGenerated,,0,0,0,,${AI_DISCLOSURE_LABEL}`]
+    : [];
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -104,10 +254,12 @@ function cuesToAss(cues, width, height) {
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     `Style: Default,Arial Unicode MS,${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,4,1,2,80,80,${marginV},1`,
+    ...disclosureStyle,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     ...events,
+    ...disclosureEvents,
     '',
   ].join('\n');
 }
@@ -127,32 +279,41 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   const spec = (manifest && manifest.spec) || {};
   const duration = Math.max(1, Number(spec.duration) || 20);
   const [w, h] = resolution(spec.ratio);
-  const jobId = (manifest && manifest.jobId) || `job-${Date.now()}`;
+  const jobId = String((manifest && manifest.jobId) || `job-${Date.now()}`)
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .slice(0, 120) || `job-${Date.now()}`;
+  const aiDisclosure = resolveAiDisclosure(manifest);
   const dir = outDir || path.join(os.homedir(), 'Downloads', 'lingshu-ai-exports');
   fs.mkdirSync(dir, { recursive: true });
   const outputPath = path.join(dir, `studio-${jobId}.mp4`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-'));
   const downloadOptions = {
     assetOrigin: String(manifest && manifest.assetOrigin || ''),
+    allowedAssetOrigins: Array.isArray(manifest && manifest.allowedAssetOrigins) ? manifest.allowedAssetOrigins : [],
     assetHeaders: manifest && manifest.assetHeaders && typeof manifest.assetHeaders === 'object' ? manifest.assetHeaders : {},
   };
 
   try {
     // 1) 拉取真实素材片段与 BGM
-    const timeline = (manifest && manifest.timeline ? manifest.timeline : []).filter(t => t && t.url);
+    const requestedTimeline = Array.isArray(manifest && manifest.timeline) ? manifest.timeline.filter(Boolean) : [];
+    if (requestedTimeline.some(item => !item.url)) throw new Error('渲染清单包含缺少 URL 的必需画面素材');
+    const timeline = requestedTimeline;
     const localClips = [];
     for (let i = 0; i < timeline.length; i++) {
       const u = timeline[i].url;
-      const ext = (u.split('?')[0].split('.').pop() || 'mp4').toLowerCase();
+      const rawExt = (() => { try { return path.extname(new URL(u).pathname).slice(1).toLowerCase(); } catch { return ''; } })();
+      const ext = /^(?:jpe?g|png|webp|gif|bmp|svg|mp4|mov|webm|mkv|avi)$/.test(rawExt) ? rawExt : 'bin';
       const dest = path.join(tmp, `clip${i}.${ext}`);
-      try { await downloadTo(u, dest, downloadOptions); localClips.push({ ...timeline[i], file: dest, image: IMAGE_RE.test(u) }); } catch { /* 跳过失败片段 */ }
+      const image = timeline[i].type === 'image' || IMAGE_RE.test(u);
+      await downloadTo(u, dest, { ...downloadOptions, maxBytes: image ? DEFAULT_IMAGE_MAX_BYTES : DEFAULT_VIDEO_MAX_BYTES });
+      localClips.push({ ...timeline[i], file: dest, image });
     }
 
     let bgmFile = null;
     const bgmUrl = manifest && manifest.bgm && manifest.bgm.url;
     if (bgmUrl) {
       bgmFile = path.join(tmp, `bgm${path.extname(bgmUrl.split('?')[0]) || '.wav'}`);
-      try { await downloadTo(bgmUrl, bgmFile, downloadOptions); }
+      try { await downloadTo(bgmUrl, bgmFile, { ...downloadOptions, maxBytes: DEFAULT_AUDIO_MAX_BYTES }); }
       catch (error) { throw new Error(`背景音乐读取失败：${error && error.message || error}`); }
     }
 
@@ -160,7 +321,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const voUrl = manifest && manifest.voiceover && manifest.voiceover.url;
     if (voUrl) {
       voFile = path.join(tmp, `vo${path.extname(voUrl.split('?')[0]) || '.wav'}`);
-      try { await downloadTo(voUrl, voFile, downloadOptions); }
+      try { await downloadTo(voUrl, voFile, { ...downloadOptions, maxBytes: DEFAULT_AUDIO_MAX_BYTES }); }
       catch (error) { throw new Error(`口播配音读取失败：${error && error.message || error}`); }
     }
 
@@ -210,7 +371,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const subtitleCues = manifest && manifest.subtitles && manifest.subtitles.mode !== 'off'
       ? manifest.subtitles.cues
       : [];
-    const ass = cuesToAss(subtitleCues, w, h);
+    const ass = cuesToAss(subtitleCues, w, h, aiDisclosure, duration);
     if (ass) {
       const assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
@@ -241,7 +402,23 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0',
       '-c:a', 'aac', '-b:a', '128k',
       '-avoid_negative_ts', 'make_zero',
-      '-movflags', '+faststart',
+    );
+    if (aiDisclosure) {
+      const comment = sanitizeMetadataValue(
+        `AI-generated content; label=${AI_DISCLOSURE_LABEL}; content_id=${aiDisclosure.contentId}; provider=${aiDisclosure.provider}`,
+        'AI-generated content',
+        512,
+      );
+      args.push(
+        '-metadata', 'ai_generated=true',
+        '-metadata', 'contains_digital_human=true',
+        '-metadata', `content_id=${aiDisclosure.contentId}`,
+        '-metadata', `provider=${aiDisclosure.provider}`,
+        '-metadata', `comment=${comment}`,
+      );
+    }
+    args.push(
+      '-movflags', aiDisclosure ? '+faststart+use_metadata_tags' : '+faststart',
       '-y', outputPath,
     );
 
@@ -271,14 +448,26 @@ async function composite(manifest, onProgress = () => {}, outDir) {
           onProgress(100);
           resolve({ ok: true, outputPath });
         } else {
+          try { fs.rmSync(outputPath, { force: true }); } catch { /* remove partial output */ }
           resolve({ ok: false, error: code === null ? 'ffmpeg 合成超时，请缩短素材或重试' : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
         }
       });
     });
   } catch (err) {
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
+    try { fs.rmSync(outputPath, { force: true }); } catch { /* remove partial output */ }
     return { ok: false, error: String(err && err.message || err) };
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath };
+module.exports = {
+  composite,
+  downloadTo,
+  resolution,
+  ffmpegPath,
+  aiDisclosureFontSize,
+  cuesToAss,
+  isDigitalHumanTimelineItem,
+  resolveAiDisclosure,
+  sanitizeMetadataValue,
+};

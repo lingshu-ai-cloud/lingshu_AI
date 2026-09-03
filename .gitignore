@@ -30,6 +30,10 @@ data/studio-video-versions.json
 data/digital-human-jobs.json
 data/digital-human-avatar-preferences.json
 data/digital-human-worker/
+data/digital-human-v2/
+data/publishing-uploads/
+data/render-authorizations.json
+data/studio-render-jobs.json
 data/crawler-ops-queue.json
 data/apify-video-usage.json
 data/video-admin-alerts.json
@@ -61,3 +65,5 @@ data/daily-briefing-queue.json
 logs/
 output/
 tmp/
+scripts/__pycache__/
+/tmp-*

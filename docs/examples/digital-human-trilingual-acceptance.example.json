@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "digital-human-trilingual-acceptance-v1",
+  "items": [
+    {
+      "language": "zh",
+      "video": "../../data/digital-human-v2/final/realestate-zh.mp4",
+      "performanceManifest": "../../data/digital-human-v2/final/realestate-zh.performance.json",
+      "digitalHumanSegments": [
+        { "start": 0, "end": 3.6 },
+        { "start": 5.1, "end": 8.8 },
+        { "start": 11.2, "end": 15 }
+      ],
+      "chromaKey": "no"
+    },
+    {
+      "language": "en",
+      "video": "../../data/digital-human-v2/final/realestate-en.mp4",
+      "performanceManifest": "../../data/digital-human-v2/final/realestate-en.performance.json",
+      "digitalHumanSegments": [
+        { "start": 0, "end": 3.4 },
+        { "start": 4.9, "end": 8.6 },
+        { "start": 11, "end": 15 }
+      ],
+      "chromaKey": "no"
+    },
+    {
+      "language": "es",
+      "video": "../../data/digital-human-v2/final/realestate-es.mp4",
+      "performanceManifest": "../../data/digital-human-v2/final/realestate-es.performance.json",
+      "digitalHumanSegments": [
+        { "start": 0, "end": 3.8 },
+        { "start": 5.3, "end": 9.1 },
+        { "start": 11.4, "end": 15 }
+      ],
+      "chromaKey": "no"
+    }
+  ]
+}

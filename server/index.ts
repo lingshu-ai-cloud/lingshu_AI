@@ -46,6 +46,7 @@ import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
 import { salesOperationsRouter } from './routes/salesOperations.js';
+import { authenticateDigitalHumanWorker } from './lib/digitalHumanWorkerAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -164,6 +165,22 @@ app.use(compression({
   },
 }));
 // Supports base64-encoded admin/manual video uploads (鈮?0MB raw video).
+// Authenticate the pull-worker ingress before any large body parser runs. This
+// prevents an unauthenticated request from allocating the global 120 MB JSON
+// budget. JSON control messages are intentionally tiny; result uploads remain
+// streaming application/octet-stream bodies handled by the studio route.
+const digitalHumanWorkerIngress = '/api/overseas/studio/digital-human/worker';
+app.use(digitalHumanWorkerIngress, (req, res, next) => {
+  const principal = authenticateDigitalHumanWorker(req.headers.authorization);
+  if (!principal) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(401).json({ ok: false, error: 'worker unauthorized' });
+    return;
+  }
+  res.locals.digitalHumanWorkerPrincipal = principal;
+  next();
+});
+app.use(digitalHumanWorkerIngress, express.json({ limit: '64kb' }));
 app.use(express.json({
   limit: '120mb',
   verify: (req, _res, buf) => {

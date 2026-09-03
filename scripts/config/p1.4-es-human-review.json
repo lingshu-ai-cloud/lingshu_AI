@@ -1,0 +1,16 @@
+{
+  "reviewer": "Codex visual and provenance audit",
+  "reviewedAt": "2026-09-03T15:09:03+08:00",
+  "doubleMouth": {
+    "decision": "approved",
+    "note": "16-point face contact sheet shows one stable mouth region without duplicate lips or face overlays."
+  },
+  "complexHands": {
+    "decision": "approved",
+    "note": "Opening-palm, two-hand explanation and CTA samples show no visible extra, fused or broken fingers at delivery scale."
+  },
+  "voiceMatch": {
+    "decision": "approved",
+    "note": "The bound Qwen male presenter voice matches the adult Asian male avatar; Spanish language and voice binding provenance are unchanged through render."
+  }
+}

@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { callLLM } from '../agents/llm.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
+import { findStudioRenderJobByOutput, studioRenderOutputIsDownloadable } from '../lib/studioRenderJobStore.js';
 import { getBestTimeScores } from '../publishing/bestTime.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
@@ -73,7 +74,10 @@ function parseJson<T>(value: unknown, fallback: T): T {
 
 function publishingUploadDir(tenantId: string): string {
   const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
-  return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
+  const root = process.env.NODE_ENV === 'test' && String(process.env.STUDIO_PUBLISHING_RENDER_DIR || '').trim()
+    ? path.resolve(String(process.env.STUDIO_PUBLISHING_RENDER_DIR))
+    : path.resolve(process.cwd(), 'data', 'publishing-uploads');
+  return path.join(root, tenantFolder);
 }
 
 function localPublishingVideo(tenantId: string, videoPath: unknown): string | null {
@@ -239,6 +243,11 @@ publishingRouter.get('/local-videos/:filename', (req, res) => {
   const filePath = localPublishingVideo(tenantId, path.join(publishingUploadDir(tenantId), filename));
   if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     res.status(404).json({ error: 'video_not_found' });
+    return;
+  }
+  const renderJob = findStudioRenderJobByOutput(filename, tenantId);
+  if (!studioRenderOutputIsDownloadable(renderJob)) {
+    res.status(409).json({ error: 'render_not_downloadable' });
     return;
   }
   res.setHeader('Cache-Control', 'private, max-age=300');

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "digital-human-p1-motion-profile-v1",
+  "profileId": "real-estate-cta-emphasis-cta-continuous-v2",
+  "avatarMaterialId": "avatar-pexels-8048481-v1",
+  "languages": {
+    "zh": {
+      "slot-1": {
+        "motionProfileId": "cta-hook-continuous-v2",
+        "gesture": "cta",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-cta-v1"
+        ]
+      },
+      "slot-2": {
+        "motionProfileId": "emphasis-framework-continuous-v2",
+        "gesture": "emphasis",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-emphasis-v1"
+        ]
+      },
+      "slot-4": {
+        "motionProfileId": "cta-close-continuous-v2",
+        "gesture": "cta",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-cta-v1"
+        ]
+      }
+    },
+    "en": {
+      "slot-1": {
+        "motionProfileId": "cta-hook-continuous-v2",
+        "gesture": "cta",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-cta-v1"
+        ]
+      },
+      "slot-2": {
+        "motionProfileId": "emphasis-framework-continuous-v2",
+        "gesture": "emphasis",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-emphasis-v1"
+        ]
+      },
+      "slot-4": {
+        "motionProfileId": "cta-close-continuous-v2",
+        "gesture": "cta",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-cta-v1"
+        ]
+      }
+    },
+    "es": {
+      "slot-1": {
+        "motionProfileId": "cta-hook-continuous-v2",
+        "gesture": "cta",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-cta-v1"
+        ]
+      },
+      "slot-2": {
+        "motionProfileId": "emphasis-framework-continuous-v2",
+        "gesture": "emphasis",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-emphasis-v1"
+        ]
+      },
+      "slot-4": {
+        "motionProfileId": "cta-close-continuous-v2",
+        "gesture": "cta",
+        "beatStrategy": "single_continuous_clip",
+        "motionClipIds": [
+          "avatar-pexels-8048481-v1-cta-v1"
+        ]
+      }
+    }
+  }
+}

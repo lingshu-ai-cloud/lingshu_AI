@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import {
+  allocateProductStoryboardDurations,
   applySafeStoryboardSpeechFallback,
   buildSafeCloneStoryboard,
   clearStoryboardSpeech,
   ctaSemanticallySatisfied,
   dedupeStoryboardFieldLines,
+  deterministicStandardRealEstateTranslation,
   ensureSelectedProductNamesInScript,
   ensureStoryboardPrimaryCta,
   fitStoryboardSpeech,
   fitSpeechToShot,
   isPackagingOnlyProductInfo,
   isNonBlockingScriptQualityIssue,
+  mergeVoiceDraftSpecForSave,
   normalizeCompleteTimestampTranslation,
   normalizeTimestampTranslationValue,
   normalizeStoryboardFieldLines,
@@ -28,6 +31,15 @@ import {
   voiceoverLineNeedsLanguageRepair,
 } from './studio.js';
 
+const exactFifteenSecondAllocation = allocateProductStoryboardDurations([
+  '改善置业，别只看总价。',
+  '通勤、预算和空间要一起比较。',
+  '房源条件逐项核实，判断才更稳。',
+  '私信领取户型预算对比。',
+], 15);
+assert.equal(exactFifteenSecondAllocation.reduce((sum, value) => sum + value, 0), 15);
+assert.equal(exactFifteenSecondAllocation.length, 4);
+
 const compact = '[0-3s] 素材：瓶身 环境：桌面 景别：特写 运镜：推进 构图：居中 镜头功能：钩子 画面：旋出膏体 配乐：轻快 台词：买家先看膏体。 字幕：旧字幕';
 const normalized = normalizeStoryboardFieldLines(compact);
 assert.match(normalized, /^\[0-3s\]\n素材：瓶身\n环境：桌面/m);
@@ -39,6 +51,8 @@ assert.match(deduped, /^素材：瓶身$/m);
 const restored = restoreProductStoryboardBoundaries('[0-3s]\n环境：桌面\n台词：第一句\n字幕：第一句\n环境：展台\n台词：第二句\n字幕：第二句\n[6-9s]\n环境：仓库\n台词：第三句\n字幕：第三句');
 assert.equal((restored.match(/^\[[^\]]+\]$/gm) || []).length, 3);
 assert.equal((restored.match(/^环境[：:]/gm) || []).length, 3);
+const restoredToFifteen = restoreProductStoryboardBoundaries('[0-3s]\n环境：桌面\n台词：改善置业，别只看总价。\n字幕：改善置业，别只看总价。\n环境：展台\n台词：通勤预算空间一起比较。\n字幕：通勤预算空间一起比较。\n[6-9s]\n环境：仓库\n台词：私信领取对比。\n字幕：私信领取对比。', 15);
+assert.match(restoredToFifteen, /^\[[\d.]+-15s\]/m);
 
 const indented = `  [0-3s]
 环境：桌面
@@ -396,6 +410,57 @@ assert.equal(
   '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
   'a numbered line response must not be rejected just because timestamps were omitted',
 );
+assert.equal(
+  normalizeTimestampTranslationValue('[0-3s] 你好', { lines: [] }, 'en'),
+  '',
+  'empty JSON must not be rebuilt into a spoken JSON artifact',
+);
+
+const standardRealEstateSource = '[0-3s] 改善置业，别只看总价。\n[3-6.7s] 预算、通勤、空间三项一起比较。\n[6.7-10.6s] 房源条件逐项核实，判断才更稳。\n[10.6-15s] 私信领取三类户型与预算对比清单';
+assert.equal(
+  deterministicStandardRealEstateTranslation(standardRealEstateSource, 'en'),
+  "[0-3s] Upgrading homes? Don't compare price alone.\n[3-6.7s] Compare budget, commute, and usable space.\n[6.7-10.6s] Verify every property detail before deciding.\n[10.6-15s] Message us for the three-layout budget checklist.",
+  'the reviewed real-estate fallback must preserve every exact source timestamp',
+);
+assert.match(deterministicStandardRealEstateTranslation(standardRealEstateSource, 'es'), /^\[0-3s\] ¿Buscas mejorar vivienda\?/);
+assert.equal(
+  deterministicStandardRealEstateTranslation('[0-3s] 任意房地产文案\n[3-6s] 另一句\n[6-10s] 第三句\n[10-15s] 私信', 'en'),
+  '',
+  'generic real-estate text must never receive a fabricated offline translation',
+);
+assert.equal(deterministicStandardRealEstateTranslation(standardRealEstateSource, 'fr'), '', 'only reviewed en/es variants are eligible');
+
+const acceptedApiDraft = mergeVoiceDraftSpecForSave(
+  {
+    voiceLangs: ['zh', 'en', 'es'],
+    voiceDrafts: { zh: '原文', es: 'old es' },
+    voiceDraftStaleLangs: ['en', 'es'],
+  },
+  {
+    voiceLangs: ['zh', 'en', 'es'],
+    voiceDrafts: { zh: '原文', en: 'reviewed en', es: 'reviewed es' },
+    voiceDraftStaleLangs: ['en', 'es'],
+    voiceDraftFailedLangs: ['en'],
+  },
+);
+assert.deepEqual(acceptedApiDraft.voiceDraftStaleLangs, [], 'new manual/API drafts clear only their obsolete stale markers');
+assert.deepEqual(acceptedApiDraft.voiceDraftFailedLangs, [], 'new manual/API drafts clear only their obsolete failure markers');
+
+const protectedFromOldAutosave = mergeVoiceDraftSpecForSave(
+  acceptedApiDraft,
+  {
+    voiceLangs: ['zh', 'en', 'es'],
+    voiceDrafts: { zh: '原文', es: 'old es' },
+    voiceDraftStaleLangs: ['en', 'es'],
+    voiceDraftFailedLangs: ['en'],
+  },
+);
+assert.deepEqual(
+  protectedFromOldAutosave.voiceDrafts,
+  { zh: '原文', en: 'reviewed en', es: 'reviewed es' },
+  'an unresolved stale browser snapshot must not erase newer reviewed/API drafts',
+);
+assert.deepEqual(protectedFromOldAutosave.voiceDraftStaleLangs, []);
 
 assert.equal(voiceoverLineNeedsLanguageRepair('Buyers, how do you judge this risk?', 'en'), false);
 assert.equal(voiceoverLineNeedsLanguageRepair('发送工件、节拍或缺陷样本，预约一次英文方案诊断。', 'en'), true);

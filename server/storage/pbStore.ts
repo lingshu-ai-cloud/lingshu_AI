@@ -31,7 +31,12 @@ import { verifySupportAccessToken } from '../lib/supportAccess.js';
 
 const LOCAL_AUTH_PREFIX = 'local-demo.';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_STORE_DIR = path.join(__dirname, '../../data/local-store');
+const DEFAULT_LOCAL_STORE_DIR = path.join(__dirname, '../../data/local-store');
+
+function localStoreDir(): string {
+  const testOverride = process.env.NODE_ENV === 'test' ? String(process.env.LINGSHU_LOCAL_STORE_DIR || '').trim() : '';
+  return testOverride ? path.resolve(testOverride) : DEFAULT_LOCAL_STORE_DIR;
+}
 
 function isLocalDevFallbackEnabled(): boolean {
   return process.env.NODE_ENV !== 'production' && process.env.DISABLE_LOCAL_AUTH_FALLBACK !== 'true';
@@ -50,7 +55,7 @@ function parseLocalToken(authHeader: string | undefined): Identity | null {
 }
 
 function localCollectionPath(collection: string): string {
-  return path.join(LOCAL_STORE_DIR, `${collection.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+  return path.join(localStoreDir(), `${collection.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
 }
 
 function readLocalCollection<T = Record_>(collection: string): T[] {
@@ -64,7 +69,7 @@ function readLocalCollection<T = Record_>(collection: string): T[] {
 }
 
 function writeLocalCollection(collection: string, records: unknown[]): void {
-  fs.mkdirSync(LOCAL_STORE_DIR, { recursive: true });
+  fs.mkdirSync(localStoreDir(), { recursive: true });
   const file = localCollectionPath(collection);
   fs.writeFileSync(file, JSON.stringify(records, null, 2), { encoding: 'utf8', mode: 0o600 });
   try {

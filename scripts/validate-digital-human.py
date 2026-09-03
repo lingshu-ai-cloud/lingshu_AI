@@ -20,6 +20,34 @@ import numpy as np
 import soundfile as sf
 
 
+MOUTH_JUMP_P95_MAXIMUM = 0.085
+MOUTH_SHARPNESS_MEDIAN_MINIMUM = 25.0
+MOUTH_JUMP_FAILURE_CODE = "mouth_jump_excessive_frame_to_frame"
+MOUTH_SHARPNESS_FAILURE_CODE = "mouth_sharpness_below_minimum"
+
+
+def evaluate_mouth_quality(
+    mouth_jump_p95: float,
+    mouth_jump_max: float,
+    mouth_sharpness_median: float,
+) -> tuple[dict, list[str], list[str]]:
+    """Return rounded report values while enforcing the unrounded measurements."""
+    reported = {
+        "mouth_jump_p95": round(float(mouth_jump_p95), 4),
+        "mouth_jump_max": round(float(mouth_jump_max), 4),
+        "mouth_sharpness_median": round(float(mouth_sharpness_median), 2),
+    }
+    failures = []
+    failure_codes = []
+    if mouth_jump_p95 > MOUTH_JUMP_P95_MAXIMUM:
+        failures.append("mouth motion contains excessive frame-to-frame jumps")
+        failure_codes.append(MOUTH_JUMP_FAILURE_CODE)
+    if mouth_sharpness_median < MOUTH_SHARPNESS_MEDIAN_MINIMUM:
+        failures.append("mouth region is excessively blurred")
+        failure_codes.append(MOUTH_SHARPNESS_FAILURE_CODE)
+    return reported, failures, failure_codes
+
+
 def probe(path: str) -> dict:
     result = subprocess.run(
         [
@@ -139,6 +167,14 @@ def analyze(video_path: str, audio_path: str) -> tuple[dict, list[str]]:
     sharp = np.asarray(mouth_sharpness, dtype=np.float64)
     sharp = sharp[~np.isnan(sharp)]
     jumps = np.abs(np.diff(openness))
+    raw_mouth_jump_p95 = float(np.percentile(jumps, 95)) if len(jumps) else 0.0
+    raw_mouth_jump_max = float(jumps.max()) if len(jumps) else 0.0
+    raw_mouth_sharpness_median = float(np.median(sharp)) if len(sharp) else 0.0
+    mouth_metrics, mouth_failures, mouth_failure_codes = evaluate_mouth_quality(
+        raw_mouth_jump_p95,
+        raw_mouth_jump_max,
+        raw_mouth_sharpness_median,
+    )
     metrics = {
         "passed": False,
         "video_codec": video_stream.get("codec_name"),
@@ -152,9 +188,7 @@ def analyze(video_path: str, audio_path: str) -> tuple[dict, list[str]]:
         "frame_count": total,
         "face_detection_rate": round(detected / max(total, 1), 4),
         "mouth_openness_std": round(float(openness.std()), 4),
-        "mouth_jump_p95": round(float(np.percentile(jumps, 95)) if len(jumps) else 0.0, 4),
-        "mouth_jump_max": round(float(jumps.max()) if len(jumps) else 0.0, 4),
-        "mouth_sharpness_median": round(float(np.median(sharp)) if len(sharp) else 0.0, 2),
+        **mouth_metrics,
         "activity_alignment_lag_frames": int(best_lag),
         "activity_alignment_lag_ms": round(best_lag * 1000.0 / max(fps, 1.0), 1),
         "av_activity_correlation": round(best_correlation, 4),
@@ -171,15 +205,13 @@ def analyze(video_path: str, audio_path: str) -> tuple[dict, list[str]]:
         failures.append("face tracking success is below 98%")
     if metrics["mouth_openness_std"] < 0.012:
         failures.append("mouth motion is too static")
-    if metrics["mouth_jump_p95"] > 0.085:
-        failures.append("mouth motion contains excessive frame-to-frame jumps")
-    if metrics["mouth_sharpness_median"] < 25.0:
-        failures.append("mouth region is excessively blurred")
+    failures.extend(mouth_failures)
     # This envelope correlation is diagnostic only: different phonemes can
     # produce low energy/opening correlation even when timing is correct.
     # Official SyncNet confidence and offset are enforced in the next gate.
     metrics["passed"] = not failures
     metrics["failures"] = failures
+    metrics["failure_codes"] = mouth_failure_codes
     return metrics, failures
 
 

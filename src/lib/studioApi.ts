@@ -1,5 +1,7 @@
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
+import type { RenderAiDisclosure } from './renderAiDisclosure';
+import { DIGITAL_HUMAN_PIPELINE_VERSION } from './digitalHumanPipeline';
 
 async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortSignal): Promise<T & { source?: string }> {
   const retryablePaths = new Set(['script', 'translate', 'translate/batch', 'tts', 'tts/batch']);
@@ -14,8 +16,16 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         signal,
       });
       if (r.status === 402 || r.status === 429) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(formatDemoQuotaError(j));
+        const j = await r.json().catch(() => ({})) as Record<string, unknown>;
+        const isQuotaResponse = r.status === 402
+          || Boolean(j.quota)
+          || /^demo_(?:expired|token_quota_exceeded|quota_exceeded)$/.test(String(j.error || ''));
+        if (isQuotaResponse) throw new Error(formatDemoQuotaError(j));
+        const message = String(j.error || j.message || `HTTP ${r.status}`);
+        if (message === 'digital_human_concurrency_limit') {
+          throw new Error('数字人任务队列正忙，系统会在前一个任务完成后继续生成。');
+        }
+        throw new Error(message);
       }
       if (!r.ok) {
         const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string };
@@ -194,12 +204,18 @@ export interface SubtitleSpec {
 }
 
 export interface RenderSpec {
+  sourceProjectId?: string;
   materials: string[];
   timeline?: {
+    clipId?: string;
     name: string;
     url?: string;
     type?: 'video' | 'image' | 'audio';
     poster?: string;
+    folder?: string;
+    sourceType?: string;
+    assetRole?: Material['assetRole'];
+    digitalHumanGenerated?: boolean;
     trimStart?: number;
     trimEnd?: number;
     speed?: number;
@@ -225,12 +241,25 @@ export interface RenderSpec {
 
 export interface RenderManifest {
   jobId: string;
+  sourceProjectId?: string;
+  /** Server-controlled origin used by the native renderer for exact-origin checks. */
+  assetOrigin?: string;
+  allowedAssetOrigins?: string[];
+  /** Attached by this API client after /render succeeds; never trusted as manifest data. */
+  authorizationToken?: string;
   spec: { ratio: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
   script: string;
   timeline: {
     index: number;
+    clipId?: string;
     name: string;
     url: string | null;
+    type?: 'video' | 'image' | 'audio';
+    poster?: string;
+    folder?: string;
+    sourceType?: string;
+    assetRole?: Material['assetRole'];
+    digitalHumanGenerated?: boolean;
     trimStart?: number;
     trimEnd?: number;
     speed?: number;
@@ -242,12 +271,23 @@ export interface RenderManifest {
   cover: { id: string | null; title: string; url: string | null };
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
+  aiDisclosure?: RenderAiDisclosure;
 }
 
 export interface RenderAuthorization {
-  token: string | null;        // 短期签名令牌；离线兜底为 null
-  expiresAt: string | null;
+  token: string;               // 服务端签发的短期渲染令牌
+  expiresAt: string;
   manifest: RenderManifest;
+}
+
+export type TrilingualRenderLanguage = 'zh' | 'en' | 'es';
+export interface TrilingualRenderBatchAuthorization {
+  ok: true;
+  batchKey: string;
+  batchFingerprint: string;
+  sourceProjectId: string;
+  reused: boolean;
+  authorizations: Array<RenderAuthorization & { language: TrilingualRenderLanguage }>;
 }
 
 /* 桌面客户端（Electron）注入的本机 ffmpeg 合成桥；纯网页里为 undefined */
@@ -265,31 +305,6 @@ declare global {
 /** 取桌面端本机合成桥（仅 Electron 客户端有） */
 export function getDesktopRender(): DesktopRenderBridge | undefined {
   return typeof window !== 'undefined' ? window.desktopRender : undefined;
-}
-
-/** 离线 / 未授权时的本地兜底 manifest，桥接服务端 buildManifest 的结构 */
-function localManifest(spec: RenderSpec): RenderManifest {
-  return {
-    jobId: `local-${Date.now()}`,
-    spec: {
-      ratio: spec.ratio || '9:16',
-      duration: spec.duration ?? 20,
-      platform: spec.platform || 'tiktok',
-      language: spec.language || 'en',
-      bgmVol: spec.bgmVol ?? 35,
-      voiceVol: spec.voiceVol ?? 100,
-    },
-    script: spec.script ?? '',
-    timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name })))
-      .map((item, index) => {
-        const candidateUrl = Reflect.get(item, 'url');
-        return { index, ...item, url: typeof candidateUrl === 'string' ? candidateUrl : null };
-      }),
-    voiceover: { voice: spec.voice ?? null, url: spec.voiceoverUrl ?? null },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: spec.coverUrl ?? null },
-    bgm: { id: spec.bgm ?? null, url: null },
-    subtitles: spec.subtitles,
-  };
 }
 
 export interface StudioProject {
@@ -585,9 +600,18 @@ export const studioApi = {
 
   // 文本翻译（默认译成简体中文，供用户确认外语文案）
   translate: (b: { text: string; target?: string; source?: string }, options?: { signal?: AbortSignal }) =>
-    post<{ ok: boolean; text: string; error?: string }>('translate', b, { ok: false, text: '' }, options?.signal),
+    post<{ ok: boolean; source?: 'ai' | 'deterministic' | 'fallback' | 'noop'; text: string; warning?: string; error?: string }>('translate', b, { ok: false, text: '' }, options?.signal),
   translateBatch: (b: { text: string; targets: string[]; source?: string }, options?: { signal?: AbortSignal }) =>
-    post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }, options?.signal),
+    post<{
+      ok: boolean;
+      source?: 'ai' | 'mixed' | 'deterministic' | 'partial' | 'noop';
+      translations: Record<string, string>;
+      translationSources?: Record<string, 'ai' | 'deterministic'>;
+      missingLanguages?: string[];
+      fallbackLanguages?: string[];
+      warning?: string;
+      error?: string;
+    }>('translate/batch', b, { ok: false, translations: {} }, options?.signal),
 
   // Seedance 视频生成
   seedanceVideo: (b: {
@@ -633,28 +657,70 @@ export const studioApi = {
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(spec),
       });
-      if (r.status === 402 || r.status === 429) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error === 'demo_expired' ? '试用已到期，请联系服务顾问开通或延长试用。' : '今日视频预览额度已用完，请明天再试或联系服务顾问开通更多额度。');
+      const data = await r.json().catch(() => ({})) as Partial<RenderAuthorization> & { error?: string; message?: string; quota?: unknown };
+      if (!r.ok) {
+        const quotaError = r.status === 402
+          || Boolean(data.quota)
+          || /^demo_(?:expired|token_quota_exceeded|quota_exceeded)$/.test(String(data.error || ''));
+        throw new Error(quotaError ? formatDemoQuotaError(data as Record<string, unknown>) : String(data.error || data.message || `渲染授权失败（${r.status}）`));
       }
-      if (!r.ok) throw new Error(String(r.status));
-      return (await r.json()) as RenderAuthorization;
+      if (!data.token || !data.expiresAt || !data.manifest?.jobId) throw new Error('服务端未返回完整的渲染授权。');
+      return {
+        ...data,
+        token: data.token,
+        expiresAt: data.expiresAt,
+        // Electron 仍接收原 manifest；纯网页 renderLocal 只提取令牌和 jobId，
+        // 服务端会从冻结快照重建真正的渲染输入。
+        manifest: { ...data.manifest, authorizationToken: data.token },
+      } as RenderAuthorization & { source?: string };
     } catch (err: any) {
-      if (String(err?.message || '').includes('Demo')) throw err;
-      return { source: 'local', token: null, expiresAt: null, manifest: localManifest(spec) };
+      throw new Error(err?.message || '无法取得渲染授权，请检查网络或服务后重试。');
     }
   },
 
-  renderLocal: async (manifest: RenderManifest): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+  renderTrilingualBatch: async (input: {
+    batchKey: string;
+    sourceProjectId: string;
+    renders: Array<{ language: TrilingualRenderLanguage; spec: RenderSpec }>;
+  }): Promise<TrilingualRenderBatchAuthorization> => {
+    const r = await fetch('/api/overseas/studio/render/authorizations/trilingual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify(input),
+    });
+    const data = await r.json().catch(() => ({})) as Partial<TrilingualRenderBatchAuthorization> & { error?: string };
+    if (!r.ok) throw new Error(String(data.error || `三语成片授权失败（${r.status}）`));
+    if (!data.ok || !data.batchKey || !data.batchFingerprint || data.authorizations?.length !== 3) {
+      throw new Error('服务端未返回完整的三语成片授权。');
+    }
+    const authorization = data as TrilingualRenderBatchAuthorization;
+    const languages = new Set(authorization.authorizations.map(item => item.language));
+    if (languages.size !== 3 || !['zh', 'en', 'es'].every(language => languages.has(language as TrilingualRenderLanguage))
+      || authorization.sourceProjectId !== input.sourceProjectId) {
+      throw new Error('三语成片授权的项目或语言绑定不完整。');
+    }
+    return {
+      ...authorization,
+      authorizations: authorization.authorizations.map(item => ({
+        ...item,
+        manifest: { ...item.manifest, authorizationToken: item.token },
+      })),
+    };
+  },
+
+  renderLocal: async (manifest: RenderManifest): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; downloadUrl?: string; error?: string }> => {
     try {
+      const renderToken = String(manifest.authorizationToken || '').trim();
+      if (!renderToken || !manifest.jobId) throw new Error('缺少服务端签发的渲染授权，请重新导出。');
       const r = await fetch('/api/overseas/studio/render/local', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify(manifest),
+        headers: { 'Content-Type': 'application/json', 'X-Render-Token': renderToken, ...authHeader() },
+        // 不回传浏览器可篡改的 URL/字幕/时间轴，只引用服务器冻结的 job。
+        body: JSON.stringify({ jobId: manifest.jobId }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || String(r.status));
-      return data as { ok: boolean; outputPath?: string; previewUrl?: string; error?: string };
+      return data as { ok: boolean; outputPath?: string; previewUrl?: string; downloadUrl?: string; error?: string };
     } catch (err: any) {
       return { ok: false, error: err?.message || '本地 MP4 导出失败' };
     }
@@ -669,6 +735,20 @@ export const studioApi = {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) return { ok: false, error: data?.error || `打开本地文件夹失败（${r.status}）` };
+      const rawDownloadUrl = String(data?.downloadUrl || '');
+      if (rawDownloadUrl && typeof window !== 'undefined' && typeof document !== 'undefined') {
+        const url = new URL(rawDownloadUrl, window.location.href);
+        if (url.origin !== window.location.origin || !url.pathname.includes('/render/download/')) {
+          return { ok: false, error: '服务端返回了无效的成片下载地址。' };
+        }
+        const anchor = document.createElement('a');
+        anchor.href = url.href;
+        anchor.download = '';
+        anchor.rel = 'noopener';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
       return data as { ok: boolean; error?: string };
     } catch (err: any) {
       return { ok: false, error: err?.message || '打开本地文件夹失败' };
@@ -712,7 +792,7 @@ export const studioApi = {
       return [];
     }
   },
-  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
+  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string; sourceUrl?: string; assetRole?: Material['assetRole']; rightsStatus?: Material['rightsStatus']; rightsUsageScope?: Material['rightsUsageScope']; rightsSourceUrl?: string; avatarId?: string; avatarVersion?: number; motionClip?: Material['motionClip'] }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   analyzeMaterialSegments: (id: string) =>
     post<{ ok: boolean; material?: Material; segments?: MaterialSegment[]; error?: string }>(`materials/${id}/analyze-segments`, {}, { ok: false, error: '片段分析失败' }),
@@ -741,11 +821,12 @@ export const studioApi = {
   deleteMaterial: (id: string) => del(`materials/${id}`),
 
   digitalHumanCapabilities: () => get<DigitalHumanCapabilities>('digital-human/capabilities', {
-    available: false, provider: 'unconfigured', modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],
+    available: false, provider: 'unconfigured', pipelineVersion: DIGITAL_HUMAN_PIPELINE_VERSION,
+    modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],
     output: { ratio: '9:16', container: 'mp4' }, qualityGateRequired: true, maxConcurrentJobs: 2,
     unavailableReason: '无法连接数字人服务',
   }),
-  listDigitalHumanAvatars: () => get<{ items: Material[]; preferredAvatarMaterialId: string }>('digital-human/avatars', { items: [], preferredAvatarMaterialId: '' }),
+  listDigitalHumanAvatars: (includeUnready = false) => get<{ items: Material[]; preferredAvatarMaterialId: string }>(`digital-human/avatars${includeUnready ? '?includeUnready=1' : ''}`, { items: [], preferredAvatarMaterialId: '' }),
   setPreferredDigitalHumanAvatar: async (preferredAvatarMaterialId: string): Promise<{ ok: boolean; preferredAvatarMaterialId?: string; error?: string }> => {
     try {
       const response = await fetch('/api/overseas/studio/digital-human/avatars/preferred', {
@@ -756,13 +837,18 @@ export const studioApi = {
       return await response.json();
     } catch { return { ok: false, error: '首选人物保存失败' }; }
   },
-  createDigitalHumanJob: (body: { projectId?: string; storyboardSlotId?: string; audioStartSeconds?: number; audioEndSeconds?: number; inputSignature?: string; avatarMaterialId: string; voiceoverUrl: string; script: string; language: string; mode: 'fast' | 'quality'; consentConfirmed: boolean }) =>
+  createDigitalHumanJob: (body: CreateDigitalHumanJobRequest) =>
     post<{ ok: boolean; job?: DigitalHumanJob; error?: string; code?: string; reused?: boolean }>('digital-human/jobs', body, { ok: false, error: '数字人任务提交失败' }),
+  createDigitalHumanShotBatch: (body: CreateDigitalHumanShotBatchRequest) =>
+    post<{ ok: boolean; batch?: DigitalHumanJobBatch; jobs?: DigitalHumanJob[]; error?: string; code?: string }>('digital-human/job-batches', body, { ok: false, error: '数字人多语言任务提交失败' }),
   getDigitalHumanJob: (id: string) =>
     get<{ ok: boolean; job?: DigitalHumanJob; outputMaterial?: Material; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}`, { ok: false, error: '数字人任务查询失败' }),
-  listDigitalHumanJobs: async (projectId?: string): Promise<DigitalHumanJob[]> => {
+  listDigitalHumanJobs: async (projectId?: string, storyboardSlotId?: string): Promise<DigitalHumanJob[]> => {
     try {
-      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      const params = new URLSearchParams();
+      if (projectId) params.set('projectId', projectId);
+      if (storyboardSlotId) params.set('storyboardSlotId', storyboardSlotId);
+      const query = params.size ? `?${params.toString()}` : '';
       const response = await fetch(`/api/overseas/studio/digital-human/jobs${query}`, { headers: authHeader(), cache: 'no-store' });
       if (!response.ok) return [];
       const payload = await response.json();
@@ -834,8 +920,17 @@ export interface Material {
   canManage?: boolean;
   sourceType?: string;
   sourceUrl?: string;
-  assetRole?: 'avatar_master' | 'generated_clip';
-  rightsStatus?: 'internal_test' | 'commercial_cleared';
+  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip';
+  rightsStatus?: 'internal_test' | 'commercial_cleared' | 'restricted';
+  avatarId?: string;
+  avatarVersion?: number;
+  sourceHash?: string;
+  motionClip?: import('./digitalHumanPerformance').AvatarMotionClip;
+  rightsUsageScope?: Array<'internal_preview' | 'customer_delivery' | 'paid_media' | 'organic_social'>;
+  rightsSourceUrl?: string;
+  motionClipCount?: number;
+  supportedGestures?: string[];
+  productionReady?: boolean;
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
@@ -896,10 +991,17 @@ export interface MaterialSegment {
 export interface DigitalHumanCapabilities {
   available: boolean;
   provider: string;
+  pipelineVersion: string;
   modes: Array<{ id: 'fast' | 'quality'; label: string }>;
   output: { ratio: '9:16'; container: 'mp4' };
   qualityGateRequired: boolean;
   maxConcurrentJobs: number;
+  worker?: {
+    online: boolean;
+    ready: boolean;
+    lastSeenAt?: string;
+    preflight: { ready: boolean; failures: string[]; [key: string]: unknown };
+  };
   unavailableReason?: string;
 }
 
@@ -916,18 +1018,84 @@ export interface DigitalHumanQualityReport {
   notes?: string[];
 }
 
+export interface CreateDigitalHumanJobRequest {
+  projectId: string;
+  storyboardSlotId?: string;
+  audioStartSeconds?: number;
+  audioEndSeconds?: number;
+  /** Legacy request hint; the server ignores it and recomputes authoritative identity. */
+  inputSignature?: string;
+  avatarMaterialId: string;
+  voiceoverUrl: string;
+  script: string;
+  language: string;
+  mode: 'fast' | 'quality';
+  usagePurpose?: DigitalHumanUsagePurpose;
+  consentConfirmed: boolean;
+  performancePlanVersion?: 'performance-v1';
+  performancePlan?: import('./digitalHumanPerformance').DigitalHumanPerformancePlan;
+  motionClipIds?: string[];
+  pipelineVersion?: string;
+}
+
+export type DigitalHumanShotBatchVariant = Pick<CreateDigitalHumanJobRequest,
+  | 'audioStartSeconds'
+  | 'audioEndSeconds'
+  | 'inputSignature'
+  | 'voiceoverUrl'
+  | 'script'
+  | 'language'
+  | 'performancePlanVersion'
+  | 'performancePlan'
+  | 'motionClipIds'
+  | 'pipelineVersion'
+>;
+
+export interface CreateDigitalHumanShotBatchRequest {
+  projectId: string;
+  storyboardSlotId: string;
+  avatarMaterialId: string;
+  mode: 'fast' | 'quality';
+  usagePurpose?: DigitalHumanUsagePurpose;
+  consentConfirmed: boolean;
+  variants: DigitalHumanShotBatchVariant[];
+}
+
+export interface DigitalHumanJobBatch {
+  id: string;
+  projectId?: string;
+  storyboardSlotId: string;
+  avatarMaterialId: string;
+  languages: string[];
+  jobIds: string[];
+  createdJobIds: string[];
+  reusedJobIds: string[];
+  createdAt: string;
+}
+
 export interface DigitalHumanJob {
   id: string;
+  batchId?: string;
   projectId?: string;
   storyboardSlotId?: string;
   audioStartSeconds?: number;
   audioEndSeconds?: number;
+  /** Server-canonical complete input identity. */
   inputSignature?: string;
+  /** Stable editor-controlled source identity, excluding performance policy. */
+  sourceFingerprint?: string;
+  /** Auditable performance-plan/profile correlation signature. */
+  performanceSignature?: string;
+  performancePlanVersion?: 'performance-v1';
+  performancePlan?: import('./digitalHumanPerformance').DigitalHumanPerformancePlan;
+  motionClipIds?: string[];
+  pipelineVersion?: string;
   avatarMaterialId: string;
   avatarName: string;
   scriptSnapshot: string;
   language: string;
   mode: 'fast' | 'quality';
+  usagePurpose: DigitalHumanUsagePurpose;
   provider: string;
   status: 'queued' | 'submitting' | 'processing' | 'quality_check' | 'review' | 'completed' | 'failed' | 'cancelled';
   stage: string;
@@ -943,3 +1111,5 @@ export interface DigitalHumanJob {
   updatedAt: string;
   completedAt?: string;
 }
+
+export type DigitalHumanUsagePurpose = 'internal_preview' | 'customer_delivery' | 'paid_media' | 'organic_social';

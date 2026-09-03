@@ -6,7 +6,10 @@ import { auth } from '../storage/index.js';
 import { getTenantSubscription, type Subscription } from '../middleware/subscription.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USAGE_FILE = path.join(__dirname, '../../data/demo-usage.json');
+function usageFile(): string {
+  const configured = String(process.env.DEMO_USAGE_FILE || '').trim();
+  return configured ? path.resolve(configured) : path.join(__dirname, '../../data/demo-usage.json');
+}
 
 export type DemoQuotaKind = 'aiChat' | 'generation' | 'render' | 'videoGeneration';
 
@@ -26,6 +29,8 @@ export interface DemoUsageDay {
   render: number;
   videoGeneration: number;
   tokens: number;
+  /** Idempotent, atomic reservations used by the exactly-three render API. */
+  renderBatchReservations?: Record<string, number>;
 }
 
 export interface DemoStatus {
@@ -85,15 +90,34 @@ function todayKey(): string {
 
 function readUsage(): UsageStore {
   try {
-    return JSON.parse(fs.readFileSync(USAGE_FILE, 'utf8')) as UsageStore;
-  } catch {
-    return {};
+    const parsed = JSON.parse(fs.readFileSync(usageFile(), 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('demo usage store must contain an object');
+    return parsed as UsageStore;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw error;
   }
 }
 
 function writeUsage(store: UsageStore): void {
-  fs.mkdirSync(path.dirname(USAGE_FILE), { recursive: true });
-  fs.writeFileSync(USAGE_FILE, JSON.stringify(store, null, 2), 'utf8');
+  const file = usageFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(store, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+let quotaMutationTail: Promise<void> = Promise.resolve();
+
+async function serializeQuotaMutation<T>(operation: () => T | Promise<T>): Promise<T> {
+  const pending = quotaMutationTail.then(operation, operation);
+  quotaMutationTail = pending.then(() => undefined, () => undefined);
+  return pending;
 }
 
 async function identityKey(req: Request): Promise<string> {
@@ -221,39 +245,131 @@ export async function consumeDemoQuota(req: Request, res: Response, kind: DemoQu
   const key = id?.tenantId ? `tenant:${id.tenantId}` : await identityKey(req);
   const tokenKey = id?.userId ? `user:${id.userId}` : key;
   const day = todayKey();
-  const store = readUsage();
-  const usage = { ...emptyUsage(), ...(store[key]?.[day] ?? {}) };
-  const tokenUsage = { ...emptyUsage(), ...(store[tokenKey]?.[day] ?? {}) };
-  const limits = demoLimits();
-  const used = kind === 'videoGeneration' ? totalVideoGenerationUsage(store, key) : usage[kind];
-  if (quotaEnforced && used >= limitFor(kind, limits)) {
+  const outcome = await serializeQuotaMutation(() => {
+    const store = readUsage();
+    const usage = { ...emptyUsage(), ...(store[key]?.[day] ?? {}) };
+    const tokenUsage = { ...emptyUsage(), ...(store[tokenKey]?.[day] ?? {}) };
+    const limits = demoLimits();
+    const used = kind === 'videoGeneration' ? totalVideoGenerationUsage(store, key) : usage[kind];
+    if (quotaEnforced && used >= limitFor(kind, limits)) return { kind: 'quota' as const };
+
+    const tokenCost = kind === 'render' ? 0 : estimateRequestTokens(req, kind);
+    const usedTokensToday = tokenUsage.tokens ?? 0;
+    const usedTokensTotal = totalTokenUsage(store, tokenKey);
+    if (quotaEnforced && (usedTokensToday + tokenCost > limits.tokenDaily || usedTokensTotal + tokenCost > limits.tokenTotal)) {
+      return { kind: 'tokens' as const, tokenCost };
+    }
+
+    usage[kind] += 1;
+    tokenUsage.tokens = usedTokensToday + tokenCost;
+    if (tokenKey === key) {
+      store[key] = { ...(store[key] ?? {}), [day]: { ...usage, tokens: tokenUsage.tokens } };
+    } else {
+      store[key] = { ...(store[key] ?? {}), [day]: usage };
+      store[tokenKey] = { ...(store[tokenKey] ?? {}), [day]: tokenUsage };
+    }
+    writeUsage(store);
+    return { kind: 'consumed' as const };
+  });
+  if (outcome.kind === 'quota') {
     res.status(429).json({ error: 'demo_quota_exceeded', quota: kind, demo: await buildDemoStatus(req, id?.tenantId, sub?.expiresAt) });
     return false;
   }
-
-  const tokenCost = kind === 'render' ? 0 : estimateRequestTokens(req, kind);
-  const usedTokensToday = tokenUsage.tokens ?? 0;
-  const usedTokensTotal = totalTokenUsage(store, tokenKey);
-  if (quotaEnforced && (usedTokensToday + tokenCost > limits.tokenDaily || usedTokensTotal + tokenCost > limits.tokenTotal)) {
+  if (outcome.kind === 'tokens') {
     res.status(429).json({
       error: 'demo_token_quota_exceeded',
       quota: 'tokens',
-      tokenCost,
+      tokenCost: outcome.tokenCost,
       demo: await buildDemoStatus(req, id?.tenantId, sub?.expiresAt),
     });
     return false;
   }
-
-  usage[kind] += 1;
-  tokenUsage.tokens = usedTokensToday + tokenCost;
-  if (tokenKey === key) {
-    store[key] = { ...(store[key] ?? {}), [day]: { ...usage, tokens: tokenUsage.tokens } };
-  } else {
-    store[key] = { ...(store[key] ?? {}), [day]: usage };
-    store[tokenKey] = { ...(store[tokenKey] ?? {}), [day]: tokenUsage };
-  }
-  writeUsage(store);
   return true;
+}
+
+export interface DemoRenderBatchQuotaReservation {
+  ok: boolean;
+  reused: boolean;
+  charged: number;
+}
+
+/**
+ * Reserve an entire render batch in one usage-file mutation. A reused batch key
+ * never consumes quota twice. Admin and non-trial accounts retain their current
+ * unlimited behavior while still using the render authorization idempotency
+ * record maintained by the caller.
+ */
+export async function reserveDemoRenderBatchQuota(
+  req: Request,
+  res: Response,
+  batchKey: string,
+  count = 3,
+): Promise<DemoRenderBatchQuotaReservation> {
+  const normalizedBatchKey = String(batchKey || '').trim();
+  if (!normalizedBatchKey || !Number.isInteger(count) || count < 1) {
+    res.status(400).json({ error: 'invalid_render_batch_reservation' });
+    return { ok: false, reused: false, charged: 0 };
+  }
+  const id = await auth.verifyToken(req.headers.authorization);
+  const sub = id?.tenantId ? await getTenantSubscription(id.tenantId) : null;
+  if (isAdminSubscription(sub)) return { ok: true, reused: false, charged: 0 };
+  const quotaEnforced = isDemoMode() || isTrialSubscription(sub);
+  if (!quotaEnforced) return { ok: true, reused: false, charged: 0 };
+  if (sub?.expiresAt && isExpired(sub.expiresAt)) {
+    res.status(402).json({ error: 'demo_expired', demo: await buildDemoStatus(req, id?.tenantId, sub.expiresAt) });
+    return { ok: false, reused: false, charged: 0 };
+  }
+
+  const key = id?.tenantId ? `tenant:${id.tenantId}` : await identityKey(req);
+  const day = todayKey();
+  const outcome = await serializeQuotaMutation(() => {
+    const store = readUsage();
+    const usage = { ...emptyUsage(), ...(store[key]?.[day] ?? {}) };
+    const reservations = { ...(usage.renderBatchReservations || {}) };
+    const previous = reservations[normalizedBatchKey];
+    if (previous !== undefined) {
+      return previous === count
+        ? { kind: 'reused' as const }
+        : { kind: 'conflict' as const };
+    }
+    const limit = demoLimits().renderDaily;
+    if (usage.render + count > limit) return { kind: 'quota' as const };
+    reservations[normalizedBatchKey] = count;
+    usage.render += count;
+    usage.renderBatchReservations = reservations;
+    store[key] = { ...(store[key] ?? {}), [day]: usage };
+    writeUsage(store);
+    return { kind: 'charged' as const };
+  });
+  if (outcome.kind === 'conflict') {
+    res.status(409).json({ error: 'render_batch_reservation_conflict' });
+    return { ok: false, reused: false, charged: 0 };
+  }
+  if (outcome.kind === 'quota') {
+    res.status(429).json({ error: 'demo_quota_exceeded', quota: 'render', demo: await buildDemoStatus(req, id?.tenantId, sub?.expiresAt) });
+    return { ok: false, reused: false, charged: 0 };
+  }
+  return { ok: true, reused: outcome.kind === 'reused', charged: outcome.kind === 'charged' ? count : 0 };
+}
+
+/** Best-effort rollback for a synchronous authorization persistence failure. */
+export async function rollbackDemoRenderBatchQuota(req: Request, batchKey: string, count = 3): Promise<void> {
+  const id = await auth.verifyToken(req.headers.authorization);
+  const sub = id?.tenantId ? await getTenantSubscription(id.tenantId) : null;
+  if (isAdminSubscription(sub) || !(isDemoMode() || isTrialSubscription(sub))) return;
+  const key = id?.tenantId ? `tenant:${id.tenantId}` : await identityKey(req);
+  const day = todayKey();
+  await serializeQuotaMutation(() => {
+    const store = readUsage();
+    const usage = { ...emptyUsage(), ...(store[key]?.[day] ?? {}) };
+    const reservations = { ...(usage.renderBatchReservations || {}) };
+    if (reservations[batchKey] !== count) return;
+    delete reservations[batchKey];
+    usage.render = Math.max(0, usage.render - count);
+    usage.renderBatchReservations = reservations;
+    store[key] = { ...(store[key] ?? {}), [day]: usage };
+    writeUsage(store);
+  });
 }
 
 export function resetDemoUsage(): void {
