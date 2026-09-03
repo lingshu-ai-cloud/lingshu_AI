@@ -135,49 +135,125 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
-      - name: Smoke-check published image
-        env:
-          RELEASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-${{ matrix.name }}:sha-${{ needs.verify.outputs.source_sha }}
-          IMAGE_NAME: ${{ matrix.name }}
-        run: |
-          set -euo pipefail
-          container_name="release-smoke-${IMAGE_NAME}-${GITHUB_RUN_ID}"
-          docker rm -f "$container_name" >/dev/null 2>&1 || true
-          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
-
-          if [[ "$IMAGE_NAME" == "app" ]]; then
-            host_port=18788
-            container_port=8788
-            health_path=/api/overseas/health
-          else
-            host_port=18090
-            container_port=8090
-            health_path=/api/health
-          fi
-
-          docker pull "$RELEASE_IMAGE"
-          docker run --detach \
-            --name "$container_name" \
-            --publish "127.0.0.1:${host_port}:${container_port}" \
-            "$RELEASE_IMAGE" >/dev/null
-
-          for attempt in $(seq 1 24); do
-            if curl --fail --silent --show-error \
-              --max-time 5 \
-              "http://127.0.0.1:${host_port}${health_path}" >/dev/null; then
-              echo "Published ${IMAGE_NAME} image passed its health check."
-              exit 0
-            fi
-            sleep 5
-          done
-
-          docker logs "$container_name" >&2 || true
-          echo "Published ${IMAGE_NAME} image failed its health check." >&2
-          exit 1
-
       - name: Record image in job summary
         run: |
           echo "### Published image" >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
           echo "ghcr.io/${{ github.repository_owner }}/lingshu-ai-${{ matrix.name }}:sha-${{ needs.verify.outputs.source_sha }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    name: Smoke-check published release pair
+    if: github.event_name != 'pull_request'
+    needs:
+      - verify
+      - publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify immutable image identities
+        env:
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ needs.verify.outputs.source_sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for image in "$APP_IMAGE" "$POCKETBASE_IMAGE"; do
+            docker pull "$image"
+            revision="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "$image")"
+            if [[ "$revision" != "$SOURCE_SHA" ]]; then
+              echo "Published image revision does not match the immutable source commit." >&2
+              exit 1
+            fi
+          done
+
+      - name: Smoke-check application, HTML, and PocketBase together
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ needs.verify.outputs.source_sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          app_container="release-pair-app-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          pocketbase_container="release-pair-pocketbase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_network="release-pair-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_admin_email="release-pair-smoke@example.invalid"
+          smoke_admin_password="release-pair-smoke-password-2026"
+          cleanup() {
+            docker rm -f "$app_container" "$pocketbase_container" >/dev/null 2>&1 || true
+            docker network rm "$smoke_network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+
+          docker network create "$smoke_network" >/dev/null
+          docker run --detach \
+            --name "$pocketbase_container" \
+            --network "$smoke_network" \
+            --publish 127.0.0.1:18090:8090 \
+            --env "PB_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
+            "$POCKETBASE_IMAGE" >/dev/null
+
+          wait_for_url() {
+            local label="$1"
+            local url="$2"
+            local output="$3"
+            local container="$4"
+            for attempt in $(seq 1 36); do
+              if curl --fail --silent --show-error --max-time 5 \
+                --output "$output" "$url"; then
+                echo "$label is ready."
+                return 0
+              fi
+              sleep 3
+            done
+            docker logs "$container" >&2 || true
+            echo "$label did not become ready." >&2
+            return 1
+          }
+
+          wait_for_url \
+            "PocketBase API" \
+            "http://127.0.0.1:18090/api/health" \
+            "$RUNNER_TEMP/pocketbase-health.json" \
+            "$pocketbase_container"
+          jq --exit-status '.code == 200' "$RUNNER_TEMP/pocketbase-health.json" >/dev/null
+
+          docker run --detach \
+            --name "$app_container" \
+            --network "$smoke_network" \
+            --publish 127.0.0.1:18788:8788 \
+            --env "PB_URL=http://${pocketbase_container}:8090" \
+            --env "PB_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
+            --env "WORKBENCH_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "WORKBENCH_ADMIN_PASSWORD=$smoke_admin_password" \
+            "$APP_IMAGE" >/dev/null
+
+          wait_for_url \
+            "Application API" \
+            "http://127.0.0.1:18788/api/overseas/health" \
+            "$RUNNER_TEMP/app-health.json" \
+            "$app_container"
+          jq --exit-status 'type == "object"' "$RUNNER_TEMP/app-health.json" >/dev/null
+
+          curl --fail --silent --show-error --location --max-time 10 \
+            --dump-header "$RUNNER_TEMP/app-html.headers" \
+            --output "$RUNNER_TEMP/app.html" \
+            "http://127.0.0.1:18788/"
+          tr -d '\r' < "$RUNNER_TEMP/app-html.headers" \
+            | grep --ignore-case --quiet '^content-type:.*text/html'
+          grep --ignore-case --extended-regexp --quiet '<(!doctype|html)' \
+            "$RUNNER_TEMP/app.html"
