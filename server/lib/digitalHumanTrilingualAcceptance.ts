@@ -343,6 +343,8 @@ export function buildDigitalHumanAcceptanceItemResult(input: {
       observedDistinctGestureCount: finiteNumber(gateInput.observedDistinctGestureCount),
       observedExpressionChangeCount: finiteNumber(gateInput.observedExpressionChangeCount),
       observedAdjacentRepeatedActions: finiteNumber(gateInput.observedAdjacentRepeatedActions),
+      observedGlobalRepeatedActions: finiteNumber(gateInput.observedGlobalRepeatedActions),
+      observedGlobalRepeatedExpressions: finiteNumber(gateInput.observedGlobalRepeatedExpressions),
       maximumNonMouthStaticSeconds: finiteNumber(gateInput.maximumNonMouthStaticSeconds),
       observedSceneOrCompositionCount: finiteNumber(gateInput.observedSceneOrCompositionCount),
       actionAlignmentMaxMs: finiteNumber(gateInput.actionAlignmentMaxMs),

@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
-export const DIGITAL_HUMAN_TRUSTED_ACCEPTANCE_SCHEMA = 'digital-human-server-acceptance-v1' as const;
+export const DIGITAL_HUMAN_TRUSTED_ACCEPTANCE_SCHEMA = 'digital-human-server-acceptance-v2' as const;
 export const DIGITAL_HUMAN_TRUSTED_ACCEPTANCE_LANGUAGES = ['zh', 'en', 'es'] as const;
 export type DigitalHumanTrustedAcceptanceLanguage = typeof DIGITAL_HUMAN_TRUSTED_ACCEPTANCE_LANGUAGES[number];
 
@@ -13,6 +13,7 @@ export interface DigitalHumanHumanReviewRecord {
   doubleMouth: 'approved' | 'rejected';
   complexHands: 'approved' | 'rejected';
   voiceMatch: 'approved' | 'rejected';
+  performanceContinuity: 'approved' | 'rejected';
   notes?: string;
 }
 
@@ -101,6 +102,7 @@ export function validateDigitalHumanHumanReview(input: {
   const doubleMouth = decision(source.doubleMouth);
   const complexHands = decision(source.complexHands);
   const voiceMatch = decision(source.voiceMatch);
+  const performanceContinuity = decision(source.performanceContinuity);
   if (!reviewer) failures.push('人工复核缺少 reviewer');
   if (!reviewerId) failures.push('人工复核缺少可审计 reviewerId');
   if (input.authenticatedReviewerId && reviewerId !== input.authenticatedReviewerId) failures.push('人工复核 reviewerId 与当前认证账号不一致');
@@ -111,7 +113,7 @@ export function validateDigitalHumanHumanReview(input: {
   }
   if (!reviewSha || !expectedSha || reviewSha !== expectedSha) failures.push('人工复核未绑定当前输出 SHA256');
   if (!sourceJobId || sourceJobId !== input.sourceJobId) failures.push('人工复核未绑定当前渲染任务');
-  if (!doubleMouth || !complexHands || !voiceMatch) failures.push('人工复核必须分别判定双嘴、复杂手部和声音匹配');
+  if (!doubleMouth || !complexHands || !voiceMatch || !performanceContinuity) failures.push('人工复核必须分别判定双嘴、复杂手部、声音匹配和全片表演连续性');
   if (failures.length) return { valid: false, failures };
   return {
     valid: true,
@@ -121,6 +123,7 @@ export function validateDigitalHumanHumanReview(input: {
       doubleMouth: doubleMouth as 'approved' | 'rejected',
       complexHands: complexHands as 'approved' | 'rejected',
       voiceMatch: voiceMatch as 'approved' | 'rejected',
+      performanceContinuity: performanceContinuity as 'approved' | 'rejected',
       ...(text(source.notes, 2000) ? { notes: text(source.notes, 2000) } : {}),
     },
   };
@@ -210,7 +213,8 @@ export function buildDigitalHumanTrustedAcceptance(input: {
       ? { present: true, valid: true, review: reviewResult.review }
       : { present: Object.keys(record(job.humanReview)).length > 0, valid: false, failures: reviewResult.valid ? ['人工复核缺少服务端签名或签名无效'] : reviewResult.failures };
     const review = reviewResult.valid && reviewAttested ? reviewResult.review : undefined;
-    const manualPassed = Boolean(review && review.doubleMouth === 'approved' && review.complexHands === 'approved' && review.voiceMatch === 'approved');
+    const manualPassed = Boolean(review && review.doubleMouth === 'approved' && review.complexHands === 'approved'
+      && review.voiceMatch === 'approved' && review.performanceContinuity === 'approved');
     return {
       language,
       jobId: job.jobId,

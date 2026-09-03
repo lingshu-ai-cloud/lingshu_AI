@@ -49,6 +49,12 @@ export interface AvatarMotionClip {
   rightsStatus: 'internal_test' | 'commercial_cleared' | 'restricted';
   version: number;
   sourceHash: string;
+  /** Hash and interval of the uncut performance master. Required by P1.5 orchestration. */
+  originSourceHash?: string;
+  originStartMs?: number;
+  originEndMs?: number;
+  /** Semantic phases visibly contained in this continuous source interval. */
+  performanceClasses?: Array<'opening' | 'explanation' | 'emphasis' | 'pointing' | 'closing'>;
 }
 
 const normalizeSegments = (script: string): string[] => {

@@ -103,7 +103,7 @@ async function fetchTrustedServerAcceptance(args: { serverBatchId: string; baseU
     ? payload.acceptance as Record<string, unknown> : {};
   const summary = acceptance.summary && typeof acceptance.summary === 'object' && !Array.isArray(acceptance.summary)
     ? acceptance.summary as Record<string, unknown> : {};
-  if (acceptance.schemaVersion !== 'digital-human-server-acceptance-v1'
+  if (acceptance.schemaVersion !== 'digital-human-server-acceptance-v2'
     || acceptance.trust !== 'server_attested'
     || acceptance.productUse !== 'release_acceptance'
     || acceptance.batchId !== args.serverBatchId

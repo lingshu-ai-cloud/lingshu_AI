@@ -112,7 +112,7 @@ try {
   const reviewedAt = new Date().toISOString();
   const reviews = records.map(item => ({
     language: item.language, reviewer: 'QA reviewer', reviewedAt, outputSha256: item.outputSha256,
-    doubleMouth: 'approved', complexHands: 'approved', voiceMatch: 'approved',
+    doubleMouth: 'approved', complexHands: 'approved', voiceMatch: 'approved', performanceContinuity: 'approved',
   }));
   const reviewResponse = await fetch(`${base}/reviews`, { method: 'PUT', headers, body: JSON.stringify({ reviews }) });
   const reviewed = await reviewResponse.json() as any;

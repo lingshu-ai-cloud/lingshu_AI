@@ -86,15 +86,19 @@ const avatar: Material = {
   avatarVersion: 1,
 };
 
-function motionMaterial(gesture: AvatarMotionClip['gesture'], index: number): Material {
+function motionMaterial(
+  gesture: AvatarMotionClip['gesture'], index: number, startMs: number, endMs: number,
+  performanceClasses: NonNullable<AvatarMotionClip['performanceClasses']>,
+): Material {
   const clip: AvatarMotionClip = {
     id: `motion-clip-${index}`, avatarId: avatar.id, materialId: `motion-material-${index}`,
     gesture, emotion: gesture === 'cta' ? 'friendly' : 'confident', intensity: 0.6,
-    shotSize: 'medium', gaze: 'camera', safeStartMs: 0, safeEndMs: 3000,
-    rightsStatus: 'commercial_cleared', version: 1, sourceHash: `hash-${index}`,
+    shotSize: 'medium', gaze: 'camera', safeStartMs: 0, safeEndMs: endMs - startMs,
+    rightsStatus: 'commercial_cleared', version: 2, sourceHash: `hash-${index}`,
+    originSourceHash: 'continuous-master-hash', originStartMs: startMs, originEndMs: endMs, performanceClasses,
   };
   return {
-    id: clip.materialId, name: String(gesture), folder: 'presenter', type: 'video', duration: 3,
+    id: clip.materialId, name: String(gesture), folder: 'presenter', type: 'video', duration: (endMs - startMs) / 1000,
     url: `/media/${clip.materialId}.mp4`, assetRole: 'avatar_motion_clip', avatarId: avatar.id,
     rightsStatus: 'commercial_cleared', rightsUsageScope: ['internal_preview'], productionReady: true, motionClip: clip,
   };
@@ -104,13 +108,18 @@ const broll: Material = {
   id: 'broll-1', name: 'B-roll', folder: 'scene', type: 'video', duration: 8,
   width: 1080, height: 1350, url: '/media/broll.mp4', scope: 'own', sourceType: 'licensed-stock',
 };
-const materials = [avatar, broll, motionMaterial('open_palm', 1), motionMaterial('emphasis', 2), motionMaterial('point_right', 3), motionMaterial('cta', 4)];
+const materials = [
+  avatar, broll,
+  motionMaterial('open_palm', 1, 0, 3000, ['opening']),
+  motionMaterial('emphasis', 2, 3000, 6700, ['explanation', 'emphasis']),
+  motionMaterial('point_right', 3, 6700, 11100, ['pointing', 'closing']),
+];
 
 function rawProfile(profileId = 'fixture-profile-v1') {
   const languageProfile = () => ({
-    'slot-1': { motionProfileId: 'cta-hook-v1', gesture: 'cta', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-4'] },
+    'slot-1': { motionProfileId: 'opening-v2', gesture: 'open_palm', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-1'] },
     'slot-2': { motionProfileId: 'emphasis-framework-v1', gesture: 'emphasis', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-2'] },
-    'slot-4': { motionProfileId: 'cta-close-v1', gesture: 'cta', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-4'] },
+    'slot-4': { motionProfileId: 'point-close-v2', gesture: 'point_right', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-3'] },
   });
   return {
     schemaVersion: PERFORMANCE_PROFILE_SCHEMA_VERSION,
@@ -124,9 +133,9 @@ const performanceProfile = parsePerformanceProfile(rawProfile());
 const checkedInProfile = loadPerformanceProfile(DEFAULT_PERFORMANCE_PROFILE_PATH);
 assert.equal(checkedInProfile.avatarMaterialId, 'avatar-pexels-8048481-v1');
 for (const language of REQUIRED_LANGUAGES) {
-  assert.equal(checkedInProfile.languages[language]['slot-1'].gesture, 'cta');
+  assert.equal(checkedInProfile.languages[language]['slot-1'].gesture, 'open_palm');
   assert.equal(checkedInProfile.languages[language]['slot-2'].gesture, 'emphasis');
-  assert.equal(checkedInProfile.languages[language]['slot-4'].gesture, 'cta');
+  assert.equal(checkedInProfile.languages[language]['slot-4'].gesture, 'point_right');
   assert.ok((['slot-1', 'slot-2', 'slot-4'] as const).every(slot => checkedInProfile.languages[language][slot].beatStrategy === 'single_continuous_clip'));
   assert.ok((['slot-1', 'slot-2', 'slot-4'] as const).every(slot => checkedInProfile.languages[language][slot].motionClipIds.length === 1));
 }
@@ -140,16 +149,25 @@ assert.throws(() => parseCliOptions(['--base-url', 'https://example.com'], {}), 
 assert.equal(parseCliOptions([], {}).performanceProfilePath, DEFAULT_PERFORMANCE_PROFILE_PATH);
 assert.throws(() => parsePerformanceProfile({ ...rawProfile(), languages: { zh: rawProfile().languages.zh, en: rawProfile().languages.en } }), /exactly/);
 const repeatedGesture = structuredClone(rawProfile());
-repeatedGesture.languages.zh['slot-2'] = { motionProfileId: 'bad-repeat-v1', gesture: 'cta', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-4'] };
+repeatedGesture.languages.zh['slot-2'] = { motionProfileId: 'bad-repeat-v1', gesture: 'open_palm', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-1'] };
 assert.throws(() => parsePerformanceProfile(repeatedGesture), /adjacent digital slots cannot repeat/);
 const resettingMultiClip = structuredClone(rawProfile());
-resettingMultiClip.languages.en['slot-1'].motionClipIds = ['motion-clip-4', 'motion-clip-4'];
+resettingMultiClip.languages.en['slot-1'].motionClipIds = ['motion-clip-1', 'motion-clip-1'];
 assert.throws(() => parsePerformanceProfile(resettingMultiClip), /exactly one motionClipId/);
 const missingStrategy = structuredClone(rawProfile()) as any;
 delete missingStrategy.languages.es['slot-4'].beatStrategy;
 assert.throws(() => parsePerformanceProfile(missingStrategy), /must contain exactly/);
 
 const plan = buildPreparedPlan({ project, materials, performanceProfile, avatarId: avatar.id, performanceRevision: 0 });
+const overlappingMaterials = structuredClone(materials);
+overlappingMaterials.find(item => item.id === 'motion-material-3')!.motionClip!.originStartMs = 6500;
+assert.throws(() => buildPreparedPlan({ project, materials: overlappingMaterials, performanceProfile }), /overlapping source intervals/);
+const resettingMaterials = structuredClone(materials);
+resettingMaterials.find(item => item.id === 'motion-material-3')!.motionClip!.originStartMs = 7000;
+assert.throws(() => buildPreparedPlan({ project, materials: resettingMaterials, performanceProfile }), /source trajectory resets/);
+const incompletePack = structuredClone(materials);
+incompletePack.find(item => item.id === 'motion-material-3')!.motionClip!.performanceClasses = ['pointing'];
+assert.throws(() => buildPreparedPlan({ project, materials: incompletePack, performanceProfile }), /missing visible phases: closing/);
 assert.equal(plan.variants.length, 9);
 assert.equal(plan.batches.length, 3);
 assert.ok(plan.batches.every(batch => batch.variants.length === 3));
@@ -165,7 +183,7 @@ assert.deepEqual([...new Set(plan.variants.filter(item => item.slotId === 'slot-
 assert.ok(plan.variants.every(variant => variant.avatarMaterialId === avatar.id), 'all nine tasks must use one identity');
 for (const language of REQUIRED_LANGUAGES) {
   const gestures = ['slot-1', 'slot-2', 'slot-4'].map(slotId => plan.variants.find(item => item.language === language && item.slotId === slotId)!.request.performancePlan.orchestrationProfile.gesture);
-  assert.deepEqual(gestures, ['cta', 'emphasis', 'cta']);
+  assert.deepEqual(gestures, ['open_palm', 'emphasis', 'point_right']);
   assert.notEqual(gestures[0], gestures[1]);
   assert.notEqual(gestures[1], gestures[2]);
 }
@@ -198,8 +216,8 @@ const alternatePlan = buildPreparedPlan({ project, materials, performanceProfile
 assert.notEqual(alternatePlan.variants[0]!.inputSignature, plan.variants[0]!.inputSignature, 'profile fingerprint must distinguish client signatures');
 assert.equal(alternatePlan.variants[0]!.sourceFingerprint, plan.variants[0]!.sourceFingerprint, 'performance profile changes must not make an unchanged business source stale');
 const wrongMotionProfile = structuredClone(rawProfile());
-wrongMotionProfile.languages.zh['slot-1'] = { motionProfileId: 'wrong-motion-v1', gesture: 'cta', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-2'] };
-assert.throws(() => buildPreparedPlan({ project, materials, performanceProfile: parsePerformanceProfile(wrongMotionProfile) }), /expects cta/);
+wrongMotionProfile.languages.zh['slot-1'] = { motionProfileId: 'wrong-motion-v1', gesture: 'open_palm', beatStrategy: 'single_continuous_clip', motionClipIds: ['motion-clip-2'] };
+assert.throws(() => buildPreparedPlan({ project, materials, performanceProfile: parsePerformanceProfile(wrongMotionProfile) }), /same motion clip cannot be reused/);
 assert.throws(() => buildPreparedPlan({ project, materials, performanceProfile, avatarId: 'another-avatar' }), /conflicts with profile avatar/);
 
 const jobs: DigitalHumanJob[] = plan.variants.map((variant, index) => {

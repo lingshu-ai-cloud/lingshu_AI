@@ -1,4 +1,4 @@
-export const DIGITAL_HUMAN_PERFORMANCE_SCHEMA_V2 = 'digital-human-performance-observation-v2' as const;
+export const DIGITAL_HUMAN_PERFORMANCE_SCHEMA_V2 = 'digital-human-performance-observation-v3' as const;
 
 export type ReviewDecision = 'approved' | 'rejected' | 'pending';
 export type ObservationStatus = 'passed' | 'failed' | 'unavailable';
@@ -24,6 +24,8 @@ export interface PerformanceQualityInput {
   observedDistinctGestureCount: number;
   observedExpressionChangeCount: number;
   observedAdjacentRepeatedActions: number;
+  observedGlobalRepeatedActions: number;
+  observedGlobalRepeatedExpressions: number;
   maximumNonMouthStaticSeconds: number;
   observedSceneOrCompositionCount: number;
   observedActionChangeCount: number;
@@ -59,7 +61,7 @@ export interface PerformanceGateResult {
   humanReviewReasons: string[];
   warnings: string[];
   checks: PerformanceGateCheck[];
-  gateVersion: 'performance-gate-v2';
+  gateVersion: 'performance-gate-v3';
 }
 
 export const DIGITAL_HUMAN_PERFORMANCE_THRESHOLDS = Object.freeze({
@@ -86,6 +88,8 @@ const REQUIRED_NUMERIC_FIELDS = [
   'observedDistinctGestureCount',
   'observedExpressionChangeCount',
   'observedAdjacentRepeatedActions',
+  'observedGlobalRepeatedActions',
+  'observedGlobalRepeatedExpressions',
   'maximumNonMouthStaticSeconds',
   'observedSceneOrCompositionCount',
   'observedActionChangeCount',
@@ -157,6 +161,8 @@ export function digitalHumanPerformanceGate(input: PerformanceQualityInput): Per
     check('gestures', input.observedDistinctGestureCount >= 2, '实测明确不同的手势少于2种');
     check('expression', input.observedExpressionChangeCount >= 1, '未实测到自然可见的非嘴部表情变化');
     check('adjacent_actions', input.observedAdjacentRepeatedActions === 0, '相邻分镜实测为重复动作');
+    check('global_actions', input.observedGlobalRepeatedActions === 0, '全片人物分镜存在跨场景重复动作轨迹');
+    check('global_expressions', input.observedGlobalRepeatedExpressions === 0, '全片人物分镜存在跨场景重复表情轨迹');
     check(
       'static_span',
       input.maximumNonMouthStaticSeconds <= threshold.maximumNonMouthStaticSeconds,
@@ -239,6 +245,6 @@ export function digitalHumanPerformanceGate(input: PerformanceQualityInput): Per
     humanReviewReasons,
     warnings: ['语义段落数与关键词时间仅来自编排清单；动作和画面指标来自成片实测'],
     checks,
-    gateVersion: 'performance-gate-v2',
+    gateVersion: 'performance-gate-v3',
   };
 }

@@ -18,9 +18,9 @@ from typing import Any, Sequence
 import cv2
 import numpy as np
 
-SCHEMA_VERSION = "digital-human-performance-observation-v2"
-GATE_VERSION = "performance-gate-v2"
-VALIDATOR_VERSION = "2.0.0"
+SCHEMA_VERSION = "digital-human-performance-observation-v3"
+GATE_VERSION = "performance-gate-v3"
+VALIDATOR_VERSION = "3.0.0"
 SAMPLE_FPS = 8.0
 MAX_STATIC_SECONDS = 4.0
 MAX_ALIGNMENT_MS = 900
@@ -334,7 +334,7 @@ def median_vectors_by_beat(records: Sequence[dict[str, Any]], beat_count: int) -
     return output
 
 
-def trajectory_vectors_by_beat(records: Sequence[dict[str, Any]], beat_count: int) -> list[np.ndarray | None]:
+def trajectory_vectors_by_beat(records: Sequence[dict[str, Any]], beat_count: int, signature_key: str = "action_signature") -> list[np.ndarray | None]:
     """Describe the observed gesture over time instead of reducing it to one pose.
 
     Two shots can share a neutral median pose while containing clearly different
@@ -344,9 +344,9 @@ def trajectory_vectors_by_beat(records: Sequence[dict[str, Any]], beat_count: in
     """
     output: list[np.ndarray | None] = []
     for index in range(beat_count):
-        vectors = [record["action_signature"] for record in records
+        vectors = [record[signature_key] for record in records
                    if record["beat_index"] == index and record["presenter_expected"]
-                   and record["action_signature"] is not None]
+                   and record[signature_key] is not None]
         if len(vectors) < 3:
             output.append(None)
             continue
@@ -361,6 +361,51 @@ def trajectory_vectors_by_beat(records: Sequence[dict[str, Any]], beat_count: in
         direction = end - start
         output.append(np.concatenate((median, movement_range, direction)).astype(np.float32))
     return output
+
+
+def trajectory_series_similarity(
+    records: Sequence[dict[str, Any]], left_index: int, right_index: int, signature_key: str,
+    sample_count: int = 12,
+) -> float | None:
+    """Time-normalized correlation of two performed trajectories.
+
+    Absolute facial geometry is intentionally removed per feature. This makes
+    the signal sensitive to a replayed eyebrow/head/hand movement rather than
+    merely to the same person's neutral face.
+    """
+    series: list[np.ndarray] = []
+    for beat in (left_index, right_index):
+        vectors = [record[signature_key] for record in records
+                   if record["beat_index"] == beat and record["presenter_expected"]
+                   and record[signature_key] is not None]
+        if len(vectors) < 4:
+            return None
+        stack = np.stack(vectors).astype(np.float64)
+        source_x = np.linspace(0.0, 1.0, len(stack))
+        target_x = np.linspace(0.0, 1.0, sample_count)
+        normalized = np.full((sample_count, stack.shape[1]), np.nan, dtype=np.float64)
+        for column in range(stack.shape[1]):
+            values = stack[:, column]
+            valid = np.isfinite(values)
+            if np.count_nonzero(valid) >= 3:
+                normalized[:, column] = np.interp(target_x, source_x[valid], values[valid])
+        series.append(normalized)
+    shared = np.all(np.isfinite(series[0]), axis=0) & np.all(np.isfinite(series[1]), axis=0)
+    if np.count_nonzero(shared) < 2:
+        return None
+    left = series[0][:, shared]
+    right = series[1][:, shared]
+    left = left - np.mean(left, axis=0, keepdims=True)
+    right = right - np.mean(right, axis=0, keepdims=True)
+    left_scale = np.std(left, axis=0, keepdims=True)
+    right_scale = np.std(right, axis=0, keepdims=True)
+    active = (left_scale[0] > 1e-6) & (right_scale[0] > 1e-6)
+    if np.count_nonzero(active) < 2:
+        return None
+    left = (left[:, active] / left_scale[:, active]).reshape(-1)
+    right = (right[:, active] / right_scale[:, active]).reshape(-1)
+    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+    return float(np.dot(left, right) / denominator) if denominator > 1e-8 else None
 
 
 def evaluate_gate_input(gate_input: dict[str, Any]) -> dict[str, Any]:
@@ -378,6 +423,7 @@ def evaluate_gate_input(gate_input: dict[str, Any]) -> dict[str, Any]:
         "durationSeconds", "semanticBeatCount", "sampledFrameCount", "sceneSampleCount",
         "presenterExpectedSampleCount", "presenterDetectedSampleCount", "poseSampleCount",
         "observedDistinctGestureCount", "observedExpressionChangeCount", "observedAdjacentRepeatedActions",
+        "observedGlobalRepeatedActions", "observedGlobalRepeatedExpressions",
         "maximumNonMouthStaticSeconds", "observedSceneOrCompositionCount", "observedActionChangeCount",
         "observedActionPeakCount", "actionAlignmentObservationCount", "multipleFaceRate",
         "missingPresenterFaceRate", "identityGeometryOutlierRate", "freezeSegments",
@@ -397,6 +443,8 @@ def evaluate_gate_input(gate_input: dict[str, Any]) -> dict[str, Any]:
         check("gestures", gate_input["observedDistinctGestureCount"] >= 2, "实测明确不同的手势少于2种")
         check("expression", gate_input["observedExpressionChangeCount"] >= 1, "未实测到自然可见的非嘴部表情变化")
         check("adjacent_actions", gate_input["observedAdjacentRepeatedActions"] == 0, "相邻分镜实测为重复动作")
+        check("global_actions", gate_input["observedGlobalRepeatedActions"] == 0, "全片人物分镜存在跨场景重复动作轨迹")
+        check("global_expressions", gate_input["observedGlobalRepeatedExpressions"] == 0, "全片人物分镜存在跨场景重复表情轨迹")
         check("static_span", gate_input["maximumNonMouthStaticSeconds"] <= MAX_STATIC_SECONDS, "连续非嘴部静止超过4秒")
         check("composition", gate_input["observedSceneOrCompositionCount"] >= 2, "实测场景或构图少于2种")
         check("action_changes", gate_input["observedActionChangeCount"] >= 1, "未实测到明确动作状态变化")
@@ -595,6 +643,7 @@ def analyze(video_path: str, manifest_path: str, chroma_override: str = "auto", 
 
     beat_vectors = median_vectors_by_beat(records, len(beats))
     trajectory_vectors = trajectory_vectors_by_beat(records, len(beats))
+    expression_trajectory_vectors = trajectory_vectors_by_beat(records, len(beats), "expression_signature")
     distinct_gestures = cluster_observed_states([vector for vector in beat_vectors if vector is not None])
     adjacent_repeats = action_changes = 0
     beat_distances: list[float | None] = []
@@ -606,6 +655,25 @@ def analyze(video_path: str, manifest_path: str, chroma_override: str = "auto", 
         beat_distances.append(distance)
         adjacent_repeats += int(distance is not None and distance < 0.10)
         action_changes += int(distance is not None and distance >= 0.13)
+
+    # Compare every presenter beat, not only neighboring timeline beats. A
+    # B-roll insert must not hide that the same source performance was replayed
+    # before and after it.
+    global_action_repeats = 0
+    global_expression_repeats = 0
+    global_action_distances: list[dict[str, Any]] = []
+    global_expression_distances: list[dict[str, Any]] = []
+    presenter_indices = [index for index in range(len(beats)) if presenter_expected(beats, index)]
+    for left_position, left_index in enumerate(presenter_indices):
+        for right_index in presenter_indices[left_position + 1:]:
+            action_distance = nan_rms_distance(trajectory_vectors[left_index], trajectory_vectors[right_index])
+            expression_distance = nan_rms_distance(expression_trajectory_vectors[left_index], expression_trajectory_vectors[right_index])
+            action_similarity = trajectory_series_similarity(records, left_index, right_index, "action_signature")
+            expression_similarity = trajectory_series_similarity(records, left_index, right_index, "expression_signature")
+            global_action_distances.append({"leftBeatIndex": left_index, "rightBeatIndex": right_index, "distance": rounded(action_distance), "trajectoryCorrelation": rounded(action_similarity)})
+            global_expression_distances.append({"leftBeatIndex": left_index, "rightBeatIndex": right_index, "distance": rounded(expression_distance), "trajectoryCorrelation": rounded(expression_similarity)})
+            global_action_repeats += int(action_similarity is not None and action_similarity >= 0.92)
+            global_expression_repeats += int(expression_similarity is not None and expression_similarity >= 0.92)
 
     action_strengths = [0.0 if cut_flags[index] or not record["presenter_expected"] else record["action_strength"] for index, record in enumerate(records)]
     action_peaks, action_threshold = find_action_peaks(timestamps, action_strengths)
@@ -675,6 +743,8 @@ def analyze(video_path: str, manifest_path: str, chroma_override: str = "auto", 
         "presenterExpectedSampleCount": len(expected_records), "presenterDetectedSampleCount": len(detected_records),
         "poseSampleCount": pose_samples, "observedDistinctGestureCount": distinct_gestures,
         "observedExpressionChangeCount": expression_changes, "observedAdjacentRepeatedActions": adjacent_repeats,
+        "observedGlobalRepeatedActions": global_action_repeats,
+        "observedGlobalRepeatedExpressions": global_expression_repeats,
         "maximumNonMouthStaticSeconds": round(maximum_static, 3), "observedSceneOrCompositionCount": observed_compositions,
         "observedActionChangeCount": action_changes, "observedActionPeakCount": len(action_peaks),
         "actionAlignmentObservationCount": len(alignment), "actionAlignmentMaxMs": max(alignment) if alignment else None,
@@ -693,7 +763,7 @@ def analyze(video_path: str, manifest_path: str, chroma_override: str = "auto", 
         "measurement_coverage": {"sample_rate_fps": round(fps / sample_step, 5), "sampled_frames": len(records), "presenter_expected_samples": len(expected_records), "presenter_detected_samples": len(detected_records), "pose_detected_samples": pose_samples, "identity_geometry_samples": len(identities), "expression_samples": len(expressions), "green_edge_samples": len(green_rates)},
         "observations": {
             "scene_change_count": len(scene_changes), "scene_change_timestamps_ms": [int(round(value * 1000)) for value in scene_changes], "scene_change_score_p95": rounded(float(np.percentile(scene_scores, 95)) if scene_scores else None), "face_composition_shift_count": face_composition_shifts, "observed_scene_or_composition_count": observed_compositions,
-            "observed_distinct_gesture_count": distinct_gestures, "beat_state_distances": [rounded(value) for value in beat_distances], "observed_action_change_count": action_changes, "observed_action_peak_count": len(action_peaks), "observed_action_peak_timestamps_ms": [int(round(value * 1000)) for value in action_peaks], "action_peak_threshold": round(action_threshold, 5), "action_alignment_by_beat": peaks_by_beat,
+            "observed_distinct_gesture_count": distinct_gestures, "beat_state_distances": [rounded(value) for value in beat_distances], "global_action_pair_distances": global_action_distances, "global_expression_pair_distances": global_expression_distances, "observed_global_repeated_actions": global_action_repeats, "observed_global_repeated_expressions": global_expression_repeats, "observed_action_change_count": action_changes, "observed_action_peak_count": len(action_peaks), "observed_action_peak_timestamps_ms": [int(round(value * 1000)) for value in action_peaks], "action_peak_threshold": round(action_threshold, 5), "action_alignment_by_beat": peaks_by_beat,
             "observed_expression_change_count": expression_changes, "non_mouth_expression_range": round(expression_range, 5), "maximum_non_mouth_static_seconds": round(maximum_static, 3), "non_mouth_motion_score_p50": rounded(float(np.percentile([r["non_mouth_score"] for r in records], 50)) if records else None), "non_mouth_motion_score_p95": rounded(float(np.percentile([r["non_mouth_score"] for r in records], 95)) if records else None),
             "multiple_face_rate": round(multiple_face_rate, 5), "missing_presenter_face_rate": round(missing_face_rate, 5),
             "identity_proxy": {"method": "aligned_facemesh_geometry_non_expression_landmarks", "status": identity_status, "distance_p95": rounded(identity_distance_p95), "outlier_rate": round(identity_outlier_rate, 5), "limitation": "geometry proxy is not a face-recognition identity embedding"},

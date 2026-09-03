@@ -330,6 +330,43 @@ export function loadPerformanceProfile(filename: string): PerformanceProfile {
   return parsePerformanceProfile(parsed);
 }
 
+const REQUIRED_PERFORMANCE_CLASSES = ['opening', 'explanation', 'emphasis', 'pointing', 'closing'] as const;
+
+/**
+ * Fail closed when a film would replay or overlap source performance. The
+ * source intervals must progress continuously even when B-roll separates two
+ * presenter shots; B-roll is an edit, not permission to reset the actor.
+ */
+export function assertContinuousUniqueMotionSequence(
+  language: Language,
+  profile: PerformanceProfile,
+  materialByMotionId: Map<string, Material>,
+): void {
+  const ids = REQUIRED_DIGITAL_SLOTS.flatMap(slotId => profile.languages[language][slotId].motionClipIds);
+  if (new Set(ids).size !== ids.length) throw new Error(`${language}: the same motion clip cannot be reused within one film`);
+  const intervals = ids.map((id, index) => {
+    const clip = materialByMotionId.get(id)?.motionClip;
+    if (!clip) throw new Error(`${language}: motion clip ${id} is unavailable`);
+    if (!clip.originSourceHash || !Number.isFinite(clip.originStartMs) || !Number.isFinite(clip.originEndMs)
+      || Number(clip.originEndMs) <= Number(clip.originStartMs)) {
+      throw new Error(`${language}: motion clip ${id} lacks auditable master-source interval metadata`);
+    }
+    return { id, slotId: REQUIRED_DIGITAL_SLOTS[index]!, clip, start: Number(clip.originStartMs), end: Number(clip.originEndMs) };
+  });
+  if (new Set(intervals.map(item => item.clip.originSourceHash)).size !== 1) {
+    throw new Error(`${language}: presenter shots must come from one continuous performance master`);
+  }
+  for (let index = 1; index < intervals.length; index += 1) {
+    const previous = intervals[index - 1]!;
+    const current = intervals[index]!;
+    if (current.start < previous.end) throw new Error(`${language}: ${previous.id} and ${current.id} use overlapping source intervals`);
+    if (current.start - previous.end > 120) throw new Error(`${language}: presenter source trajectory resets between ${previous.slotId} and ${current.slotId}`);
+  }
+  const classes = new Set(intervals.flatMap(item => item.clip.performanceClasses || []));
+  const missing = REQUIRED_PERFORMANCE_CLASSES.filter(item => !classes.has(item));
+  if (missing.length) throw new Error(`${language}: performance pack is missing visible phases: ${missing.join(', ')}`);
+}
+
 export interface SingleContinuousBeatAudit {
   originalBeatCount: number;
   mergeRule: 'highest_intensity_then_earliest;action_peak=duration_intensity_weighted_mean';
@@ -661,6 +698,9 @@ export function buildPreparedPlan(input: {
     materialByMotionId.set(item.id, item);
     if (item.motionClip?.id) materialByMotionId.set(item.motionClip.id, item);
   });
+  for (const language of REQUIRED_LANGUAGES) {
+    assertContinuousUniqueMotionSequence(language, performanceProfile, materialByMotionId);
+  }
 
   const voiceDrafts = plainRecord(spec.voiceDrafts);
   const voiceByLanguage = Object.fromEntries(REQUIRED_LANGUAGES.map(language => [language, voiceForLanguage(spec, language)])) as Record<Language, VoiceAudio>;
@@ -698,6 +738,9 @@ export function buildPreparedPlan(input: {
         if (!motionMaterial?.motionClip) throw new Error(`Profile motion ${motionId} has no authorized material; no automatic fallback is allowed`);
         if (motionMaterial.motionClip.gesture !== profileSelection.gesture) {
           throw new Error(`${language}/${slot.id} expects ${profileSelection.gesture}, but ${motionId} is ${motionMaterial.motionClip.gesture}`);
+        }
+        if (motionMaterial.duration + 0.08 < speech.end - speech.start) {
+          throw new Error(`${language}/${slot.id} motion interval is shorter than speech; looping is forbidden`);
         }
       }
       const merged = mergePerformancePlanToSingleContinuousClip(generatedPerformancePlan, profileSelection);

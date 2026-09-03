@@ -64,6 +64,25 @@ class PerformanceObserverFixtureTests(unittest.TestCase):
         records = [{"beat_index": 0, "presenter_expected": False, "action_signature": vector} for _ in range(4)]
         self.assertIsNone(validator.trajectory_vectors_by_beat(records, 1)[0])
 
+    def test_series_similarity_detects_replayed_dynamics_not_same_resting_pose(self):
+        records = []
+        time = np.linspace(0.0, 1.0, 18)
+        replay = np.stack((np.sin(time * np.pi * 2), np.cos(time * np.pi * 2), time), axis=1).astype(np.float32)
+        different = np.stack((time, np.sin(time * np.pi), np.cos(time * np.pi * 3)), axis=1).astype(np.float32)
+        for beat, sequence in enumerate((replay, different, replay.copy())):
+            for vector in sequence:
+                records.append({
+                    "beat_index": beat,
+                    "presenter_expected": True,
+                    "action_signature": vector,
+                })
+        replay_similarity = validator.trajectory_series_similarity(records, 0, 2, "action_signature")
+        different_similarity = validator.trajectory_series_similarity(records, 0, 1, "action_signature")
+        self.assertIsNotNone(replay_similarity)
+        self.assertIsNotNone(different_similarity)
+        self.assertGreater(replay_similarity, 0.99)
+        self.assertLess(different_similarity, 0.80)
+
     def test_gradual_camera_crop_counts_as_observed_composition(self):
         records = []
         for index in range(12):
@@ -99,6 +118,8 @@ class PerformanceObserverFixtureTests(unittest.TestCase):
             "observedDistinctGestureCount": 3,
             "observedExpressionChangeCount": 1,
             "observedAdjacentRepeatedActions": 0,
+            "observedGlobalRepeatedActions": 0,
+            "observedGlobalRepeatedExpressions": 0,
             "maximumNonMouthStaticSeconds": 2.5,
             "observedSceneOrCompositionCount": 3,
             "observedActionChangeCount": 2,

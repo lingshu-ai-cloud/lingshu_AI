@@ -20,9 +20,11 @@ type MotionDefinition = {
   name: string;
   start: number;
   duration: number;
-  gesture: 'open_palm' | 'emphasis' | 'cta';
+  playbackRate: number;
+  gesture: 'open_palm' | 'emphasis' | 'point_right' | 'cta';
   emotion: 'concerned' | 'confident' | 'friendly';
   intensity: number;
+  performanceClasses: Array<'opening' | 'explanation' | 'emphasis' | 'pointing' | 'closing'>;
 };
 
 type AvatarProfile = {
@@ -46,9 +48,9 @@ const profiles: Record<AvatarProfile['key'], AvatarProfile> = {
     directDownload: 'https://videos.pexels.com/video-files/6548010/6548010-uhd_2160_3840_24fps.mp4',
     duration: 10.01,
     motions: [
-      { id: 'motion-pexels-6548010-open-palm-v1', name: '亚洲男性人物IP·开放讲解', start: 0, duration: 4.8, gesture: 'open_palm', emotion: 'concerned', intensity: 0.56 },
-      { id: 'motion-pexels-6548010-emphasis-v1', name: '亚洲男性人物IP·强调转笑', start: 2.6, duration: 4.8, gesture: 'emphasis', emotion: 'confident', intensity: 0.66 },
-      { id: 'motion-pexels-6548010-cta-v1', name: '亚洲男性人物IP·指向CTA', start: 5.2, duration: 4.8, gesture: 'cta', emotion: 'friendly', intensity: 0.7 },
+      { id: 'motion-pexels-6548010-opening-v2', name: '亚洲男性人物IP·开场提问', start: 0, duration: 3.2, playbackRate: 0.8, gesture: 'open_palm', emotion: 'concerned', intensity: 0.56, performanceClasses: ['opening'] },
+      { id: 'motion-pexels-6548010-explain-v2', name: '亚洲男性人物IP·讲解与强调', start: 3.2, duration: 3.4, playbackRate: 0.8, gesture: 'emphasis', emotion: 'confident', intensity: 0.66, performanceClasses: ['explanation', 'emphasis'] },
+      { id: 'motion-pexels-6548010-close-v2', name: '亚洲男性人物IP·指向收尾', start: 6.6, duration: 3.4, playbackRate: 0.8, gesture: 'point_right', emotion: 'friendly', intensity: 0.7, performanceClasses: ['pointing', 'closing'] },
     ],
   },
   '8048481': {
@@ -60,9 +62,9 @@ const profiles: Record<AvatarProfile['key'], AvatarProfile> = {
     directDownload: 'https://videos.pexels.com/video-files/8048481/8048481-hd_1080_1920_25fps.mp4',
     duration: 12.08,
     motions: [
-      { id: 'motion-pexels-8048481-open-palm-v1', name: '亚洲男性人物IP·开放手势', start: 0, duration: 4.8, gesture: 'open_palm', emotion: 'concerned', intensity: 0.48 },
-      { id: 'motion-pexels-8048481-emphasis-v1', name: '亚洲男性人物IP·双手强调', start: 7.2, duration: 4.8, gesture: 'emphasis', emotion: 'confident', intensity: 0.6 },
-      { id: 'motion-pexels-8048481-cta-v1', name: '亚洲男性人物IP·微笑CTA', start: 3.2, duration: 4.8, gesture: 'cta', emotion: 'friendly', intensity: 0.58 },
+      { id: 'motion-pexels-8048481-opening-v2', name: '亚洲男性人物IP·开场提问', start: 0, duration: 3.84, playbackRate: 0.96, gesture: 'open_palm', emotion: 'concerned', intensity: 0.48, performanceClasses: ['opening'] },
+      { id: 'motion-pexels-8048481-explain-v2', name: '亚洲男性人物IP·讲解与强调', start: 3.84, duration: 4.12, playbackRate: 0.96, gesture: 'emphasis', emotion: 'confident', intensity: 0.6, performanceClasses: ['explanation', 'emphasis'] },
+      { id: 'motion-pexels-8048481-close-v2', name: '亚洲男性人物IP·指向微笑收尾', start: 7.96, duration: 4.12, playbackRate: 0.96, gesture: 'point_right', emotion: 'friendly', intensity: 0.64, performanceClasses: ['pointing', 'closing'] },
     ],
   },
 };
@@ -96,13 +98,13 @@ function sizeLabel(bytes: number) {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function renderClip(id: string, start?: number, duration?: number) {
+function renderClip(id: string, start?: number, duration?: number, playbackRate = 1) {
   const videoPath = path.join(mediaDir, `${id}.mp4`);
   const posterPath = path.join(mediaDir, `${id}.poster.jpg`);
   const trim = start === undefined ? [] : ['-ss', String(start), '-t', String(duration)];
   runFfmpeg([
     ...trim, '-i', source, '-map', '0:v:0', '-an',
-    '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=25',
+    '-vf', `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,setpts=PTS/${playbackRate},fps=25`,
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', videoPath,
   ]);
   runFfmpeg(['-ss', '1', '-i', videoPath, '-frames:v', '1', '-q:v', '2', posterPath]);
@@ -129,21 +131,25 @@ if (!fs.existsSync(ffmpeg)) throw new Error(`ffmpeg-static not found: ${ffmpeg}`
 fs.mkdirSync(mediaDir, { recursive: true });
 
 const masterFiles = renderClip(avatarId);
+const originSourceHash = sha256(source);
 const records: Array<Record<string, unknown>> = [{
   ...baseRecord(avatarId, avatarName, masterFiles.videoPath, masterFiles.posterPath, profile.duration),
   assetRole: 'avatar_master',
 }];
 
 for (const motion of profile.motions) {
-  const files = renderClip(motion.id, motion.start, motion.duration);
-  const record = baseRecord(motion.id, motion.name, files.videoPath, files.posterPath, motion.duration);
+  const files = renderClip(motion.id, motion.start, motion.duration, motion.playbackRate);
+  const renderedDuration = motion.duration / motion.playbackRate;
+  const record = baseRecord(motion.id, motion.name, files.videoPath, files.posterPath, renderedDuration);
   records.push({
     ...record,
     assetRole: 'avatar_motion_clip',
     motionClip: {
-      id: `${avatarId}-${motion.gesture}-v1`, version: 1, safeStartMs: 0, safeEndMs: Math.round(motion.duration * 1000),
+      id: `${avatarId}-${motion.id.split('-').at(-2)}-v2`, version: 2, safeStartMs: 0, safeEndMs: Math.round(motion.duration * 1000),
       sourceHash: record.sourceHash, gaze: 'camera', rightsStatus: 'commercial_cleared', avatarId,
       gesture: motion.gesture, intensity: motion.intensity, emotion: motion.emotion, materialId: motion.id, shotSize: 'medium',
+      originSourceHash, originStartMs: Math.round(motion.start * 1000), originEndMs: Math.round((motion.start + motion.duration) * 1000),
+      performanceClasses: motion.performanceClasses,
     },
   });
 }
@@ -151,7 +157,7 @@ for (const motion of profile.motions) {
 const existing = JSON.parse(fs.readFileSync(materialsPath, 'utf8')) as Array<Record<string, unknown>>;
 const recordIds = new Set(records.map(item => String(item.id)));
 const nextMaterials = existing
-  .filter(item => !recordIds.has(String(item.id)))
+  .filter(item => !recordIds.has(String(item.id)) && !(item.assetRole === 'avatar_motion_clip' && item.avatarId === avatarId))
   .map(item => item.sourceType === 'ai-generated-synthetic-avatar'
     ? { ...item, productionReady: false, qualityHoldReason: '静态姿势缩放素材，未通过V2连续动作门禁' }
     : item)

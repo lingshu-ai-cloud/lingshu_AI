@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "digital-human-performance-manifest-v1",
+  "language": "en",
+  "chromaKeyExpected": false,
+  "beats": [
+    { "startMs": 0, "endMs": 3500, "sourceType": "digital_human", "keywordText": "price", "keywordPeakMs": 1733 },
+    { "startMs": 3500, "endMs": 7640, "sourceType": "digital_human" },
+    { "startMs": 7640, "endMs": 11330, "sourceType": "broll", "presenterExpected": false },
+    { "startMs": 11330, "endMs": 15000, "sourceType": "digital_human", "keywordText": "budget checklist", "keywordPeakMs": 13600 }
+  ]
+}

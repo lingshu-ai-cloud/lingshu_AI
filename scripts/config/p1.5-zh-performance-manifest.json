@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "digital-human-performance-manifest-v1",
+  "language": "zh",
+  "chromaKeyExpected": false,
+  "beats": [
+    { "startMs": 0, "endMs": 2950, "sourceType": "digital_human", "keywordText": "别只看总价", "keywordPeakMs": 1733 },
+    { "startMs": 2950, "endMs": 7230, "sourceType": "digital_human", "keywordText": "通勤", "keywordPeakMs": 3467 },
+    { "startMs": 7230, "endMs": 11250, "sourceType": "broll", "presenterExpected": false },
+    { "startMs": 11250, "endMs": 15000, "sourceType": "digital_human", "keywordText": "预算对比清单", "keywordPeakMs": 13467 }
+  ]
+}

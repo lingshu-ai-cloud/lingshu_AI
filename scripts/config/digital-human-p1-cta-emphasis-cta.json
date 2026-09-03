@@ -1,83 +1,83 @@
 {
   "schemaVersion": "digital-human-p1-motion-profile-v1",
-  "profileId": "real-estate-cta-emphasis-cta-continuous-v2",
+  "profileId": "real-estate-opening-explain-close-continuous-v3",
   "avatarMaterialId": "avatar-pexels-8048481-v1",
   "languages": {
     "zh": {
       "slot-1": {
-        "motionProfileId": "cta-hook-continuous-v2",
-        "gesture": "cta",
+        "motionProfileId": "opening-question-continuous-v3",
+        "gesture": "open_palm",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-cta-v1"
+          "avatar-pexels-8048481-v1-opening-v2"
         ]
       },
       "slot-2": {
-        "motionProfileId": "emphasis-framework-continuous-v2",
+        "motionProfileId": "explanation-emphasis-continuous-v3",
         "gesture": "emphasis",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-emphasis-v1"
+          "avatar-pexels-8048481-v1-explain-v2"
         ]
       },
       "slot-4": {
-        "motionProfileId": "cta-close-continuous-v2",
-        "gesture": "cta",
+        "motionProfileId": "pointing-smile-close-continuous-v3",
+        "gesture": "point_right",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-cta-v1"
+          "avatar-pexels-8048481-v1-close-v2"
         ]
       }
     },
     "en": {
       "slot-1": {
-        "motionProfileId": "cta-hook-continuous-v2",
-        "gesture": "cta",
+        "motionProfileId": "opening-question-continuous-v3",
+        "gesture": "open_palm",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-cta-v1"
+          "avatar-pexels-8048481-v1-opening-v2"
         ]
       },
       "slot-2": {
-        "motionProfileId": "emphasis-framework-continuous-v2",
+        "motionProfileId": "explanation-emphasis-continuous-v3",
         "gesture": "emphasis",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-emphasis-v1"
+          "avatar-pexels-8048481-v1-explain-v2"
         ]
       },
       "slot-4": {
-        "motionProfileId": "cta-close-continuous-v2",
-        "gesture": "cta",
+        "motionProfileId": "pointing-smile-close-continuous-v3",
+        "gesture": "point_right",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-cta-v1"
+          "avatar-pexels-8048481-v1-close-v2"
         ]
       }
     },
     "es": {
       "slot-1": {
-        "motionProfileId": "cta-hook-continuous-v2",
-        "gesture": "cta",
+        "motionProfileId": "opening-question-continuous-v3",
+        "gesture": "open_palm",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-cta-v1"
+          "avatar-pexels-8048481-v1-opening-v2"
         ]
       },
       "slot-2": {
-        "motionProfileId": "emphasis-framework-continuous-v2",
+        "motionProfileId": "explanation-emphasis-continuous-v3",
         "gesture": "emphasis",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-emphasis-v1"
+          "avatar-pexels-8048481-v1-explain-v2"
         ]
       },
       "slot-4": {
-        "motionProfileId": "cta-close-continuous-v2",
-        "gesture": "cta",
+        "motionProfileId": "pointing-smile-close-continuous-v3",
+        "gesture": "point_right",
         "beatStrategy": "single_continuous_clip",
         "motionClipIds": [
-          "avatar-pexels-8048481-v1-cta-v1"
+          "avatar-pexels-8048481-v1-close-v2"
         ]
       }
     }

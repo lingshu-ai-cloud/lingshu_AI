@@ -20,6 +20,8 @@ function validInput(overrides: Partial<PerformanceQualityInput> = {}): Performan
     observedDistinctGestureCount: 3,
     observedExpressionChangeCount: 1,
     observedAdjacentRepeatedActions: 0,
+    observedGlobalRepeatedActions: 0,
+    observedGlobalRepeatedExpressions: 0,
     maximumNonMouthStaticSeconds: 3.2,
     observedSceneOrCompositionCount: 3,
     observedActionChangeCount: 2,
@@ -46,7 +48,7 @@ assert.equal(valid.passed, true);
 assert.equal(valid.automatedPassed, true);
 assert.equal(valid.requiresHumanReview, false);
 assert.equal(valid.validationStatus, 'passed');
-assert.equal(valid.gateVersion, 'performance-gate-v2');
+assert.equal(valid.gateVersion, 'performance-gate-v3');
 assert.ok(valid.checks.every((check) => check.status === 'passed'));
 assert.equal(valid.checks.find((check) => check.id === 'semantic_beats')?.source, 'manifest_time_anchor');
 
@@ -81,6 +83,8 @@ const invalidMeasurements = digitalHumanPerformanceGate(validInput({
   observedDistinctGestureCount: 1,
   observedExpressionChangeCount: 0,
   observedAdjacentRepeatedActions: 1,
+  observedGlobalRepeatedActions: 1,
+  observedGlobalRepeatedExpressions: 1,
   maximumNonMouthStaticSeconds: 4.1,
   observedSceneOrCompositionCount: 1,
   observedActionChangeCount: 0,

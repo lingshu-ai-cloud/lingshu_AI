@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "digital-human-performance-manifest-v1",
+  "language": "es",
+  "chromaKeyExpected": false,
+  "beats": [
+    { "startMs": 0, "endMs": 3980, "sourceType": "digital_human", "keywordText": "precio", "keywordPeakMs": 2267 },
+    { "startMs": 3980, "endMs": 7200, "sourceType": "digital_human", "keywordText": "acceso", "keywordPeakMs": 4533 },
+    { "startMs": 7200, "endMs": 10760, "sourceType": "broll", "presenterExpected": false },
+    { "startMs": 10760, "endMs": 15000, "sourceType": "digital_human", "keywordText": "planos y presupuestos", "keywordPeakMs": 13067 }
+  ]
+}

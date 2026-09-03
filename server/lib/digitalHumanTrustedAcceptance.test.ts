@@ -12,6 +12,7 @@ const review = (language: string, jobId: string) => ({
   reviewer: 'QA reviewer', reviewerId: 'qa-user', reviewedAt: '2026-09-03T07:55:00.000Z',
   outputSha256: language.repeat(64).slice(0, 64).replace(/[^a-f0-9]/g, 'a'), sourceJobId: jobId,
   doubleMouth: 'approved' as const, complexHands: 'approved' as const, voiceMatch: 'approved' as const,
+  performanceContinuity: 'approved' as const,
 });
 const job = (language: 'zh' | 'en' | 'es', withReview = true) => {
   const jobId = `job-${language}`;
