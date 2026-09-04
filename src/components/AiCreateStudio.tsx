@@ -2751,7 +2751,9 @@ function looksLikeOnScreenOnlyText(value: string): boolean {
   if (/^[A-Z][A-Z0-9_-]{2,}(?:-\d+)?(?:资料|认证|报价|PDF)$/i.test(text)) return true;
   if (/^[A-Z0-9_-]{2,}[\u4e00-\u9fff]{1,10}(?:\d+款?)?$/i.test(text)) return true;
   if (/^\d+(?:\.\d+)?\s*(?:资料|认证|报价|PDF)$/i.test(text)) return true;
-  if (/^(?:[\d.]+|[A-Z0-9_-]+|PDF|CPNP|MOQ|OEM|ODM)+$/i.test(text)) return true;
+  // One character class: nested overlapping repetitions freeze the browser
+  // on long product identifiers followed by non-ASCII text or punctuation.
+  if (/^[A-Z0-9_.-]+$/i.test(text)) return true;
   if (/^(?:按压即发|绵密不塌|现货|秒回PDF|含报价|含认证|非打样|即订即发)$/i.test(text)) return true;
   return false;
 }
@@ -2898,8 +2900,10 @@ function parseTimestampedVoiceover(value: string): Array<{ time: string; text: s
 function formatVoiceoverWithTimestamps(value: string): string {
   const parsed = parseTimestampedVoiceover(value).filter(item => !isNonSpeechSfx(item.text));
   if (parsed.length) return parsed.map(item => `${item.time} ${item.text}`).join('\n');
+  // An explicit silent storyboard must not fall back to its production notes.
+  if (hasStoryboardFieldLabels(String(value || '').split(/\n+/))) return '';
   const fallback = cleanVoiceoverLine(value);
-  return isNonSpeechSfx(fallback) ? '' : fallback;
+  return isNonSpeechSfx(fallback) || looksLikeProductionInstruction(fallback) ? '' : fallback;
 }
 
 function stripCloneAnalysisSummary(value: string): string {
