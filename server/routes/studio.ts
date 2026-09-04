@@ -155,6 +155,7 @@ import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
 import { commercialDigitalHumanGate } from '../lib/digitalHumanQualityGate.js';
+import { validateHeygenOutput } from '../lib/heygenOutputValidation.js';
 import {
   generateLocalQwenTts,
   localQwenTtsCapability,
@@ -5981,6 +5982,10 @@ async function finalizeDigitalHumanFile(
   // Validation can take long enough for a user to cancel or for a Worker lease
   // to expire. Never commit using the stale object captured before validation.
   job = assertDigitalHumanFinalizationCurrent(job.id, transfer);
+  if (job.provider === 'heygen') {
+    providerQuality = await validateHeygenOutput(sourcePath, job.mode);
+    job = assertDigitalHumanFinalizationCurrent(job.id, transfer);
+  }
   const p1LocalWorkerResult = job.pipelineVersion === DIGITAL_HUMAN_PIPELINE_VERSION
     && (Boolean(transfer)
       || /musetalk|local/i.test(job.provider)
@@ -6019,6 +6024,11 @@ async function finalizeDigitalHumanFile(
     ...commercialGate.failures,
   ])];
   if (gateFailures.length > 0) {
+    if (job.provider === 'heygen') {
+      // Keep paid output private for revalidation; it must not become a publishable material.
+      fs.mkdirSync(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, { recursive: true });
+      fs.copyFileSync(sourcePath, path.join(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, `${job.id}.review.mp4`));
+    }
     return updateDigitalHumanJob(job.id, {
       status: 'review', stage: 'quality_review', progress: 100,
       qualityReport: {

@@ -30,6 +30,7 @@ data/studio-video-versions.json
 data/digital-human-jobs.json
 data/digital-human-avatar-preferences.json
 data/digital-human-worker/
+data/heygen-live-*/
 data/digital-human-v2/
 data/publishing-uploads/
 data/acceptance-materials/
