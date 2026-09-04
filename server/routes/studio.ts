@@ -5826,7 +5826,10 @@ function safeProviderOutputUrl(value: unknown, providerId?: string): string {
     provider.host,
     ...String(process.env.DIGITAL_HUMAN_OUTPUT_HOSTS || '').split(',').map(item => item.trim()).filter(Boolean),
   ]);
-  if (providerId === 'heygen' && output.protocol === 'https:' && (output.hostname === 'heygen.com' || output.hostname.endsWith('.heygen.com'))) return output.toString();
+  if (providerId === 'heygen' && output.protocol === 'https:' && (
+    output.hostname === 'heygen.com' || output.hostname.endsWith('.heygen.com')
+    || output.hostname === 'heygen.ai' || output.hostname.endsWith('.heygen.ai')
+  )) return output.toString();
   return allowed.has(output.host) ? output.toString() : '';
 }
 

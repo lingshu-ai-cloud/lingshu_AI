@@ -145,11 +145,26 @@ export class HeyGenV3Provider implements DigitalHumanProvider {
   async submit(input: DigitalHumanProviderSubmitInput): Promise<DigitalHumanProviderTask> {
     const { selection } = input;
     if (!selection.externalAvatarId || !selection.externalVoiceId) throw new Error('HeyGen avatar_id/voice_id 未绑定');
+    // Validate the binding against the v3 Looks catalogue before spending
+    // credits. Legacy v2 avatar ids may look valid but cannot render on v3.
+    const lookPayload = await this.request(`/v3/avatars/looks/${encodeURIComponent(selection.externalAvatarId)}`);
+    const look = lookPayload.data || {};
+    const supported = Array.isArray(look.supported_api_engines) ? look.supported_api_engines.map(String) : [];
+    const requestedEngine = selection.engine === 'avatar_v' ? 'avatar_v' : 'avatar_iv';
+    const engine = supported.includes(requestedEngine)
+      ? requestedEngine
+      : supported.includes('avatar_v') ? 'avatar_v'
+        : supported.includes('avatar_iv') ? 'avatar_iv' : undefined;
+    if (!engine) throw new DigitalHumanProviderConfigurationError(
+      'HEYGEN_AVATAR_ENGINE_UNSUPPORTED',
+      '人物绑定不是可用于 HeyGen v3 的 Avatar Look，或未开放 Avatar IV/V。',
+      ['providerBindings.heygen.avatarId(v3 look id)'],
+    );
     const payload = await this.request('/v3/videos', { method: 'POST', body: JSON.stringify({
       type: 'avatar', avatar_id: selection.externalAvatarId, voice_id: selection.externalVoiceId,
       script: input.script, title: input.title || `Lingshu ${input.externalJobId}`,
       resolution: '1080p', aspect_ratio: '9:16', output_format: 'mp4',
-      engine: { type: selection.engine },
+      engine: { type: engine },
     }) });
     const id = String(payload.data?.video_id || '').trim();
     if (!id) throw new Error('HeyGen 创建响应缺少 data.video_id');

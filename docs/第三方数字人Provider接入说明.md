@@ -60,3 +60,11 @@ HEYGEN_API_BASE_URL=https://api.heygen.com
 ```
 
 并为至少一个已商业授权的人物主资产保存 `providerBindings.heygen.avatarId`、`voiceId` 和实际支持的引擎列表。密钥只配置在服务器环境变量，不进入网页、人物资产 JSON、日志或 Git。
+
+## 2026-09-04 真实联调记录
+
+- 已使用真实账户完成：鉴权 → v3 Looks/声音读取 → Avatar V 提交 → 状态轮询 → CDN 下载 → 9:16 后处理 → 媒体及视觉质检。
+- 为节省额度只创建一个 15.36 秒任务，后续修复与验证均复用该成片。
+- 首次用 v2 公共人物 ID 请求 v3 时，真实接口返回“不支持 Avatar IV/V”。已在适配器提交前增加 `GET /v3/avatars/looks/{id}` 校验和引擎协商，避免无效任务消耗额度。
+- 真实输出域名为 `files2.heygen.ai`。已将 HTTPS `heygen.ai` 子域加入严格输出白名单；仍不接受任意第三方下载地址。
+- 技术验收成片：`output/灵枢_数字人全链路联调_房地产15秒.mp4`。密钥与带签名下载 URL 均未写入 Git，临时 URL 在下载后删除。
