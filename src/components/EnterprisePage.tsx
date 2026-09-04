@@ -1,4 +1,6 @@
 import { useState, useEffect, useId, useRef } from 'react';
+import { personSetupLabels } from '../lib/personAssetPolicy';
+import PersonAuthorizationDialog from './PersonAuthorizationDialog';
 import { motion } from 'motion/react';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, Copy, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, Users, Star, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
@@ -691,6 +693,7 @@ export default function EnterprisePage() {
   const [personAssetsLoading, setPersonAssetsLoading] = useState(true);
   const [personAssetsUploading, setPersonAssetsUploading] = useState(false);
   const [personAssetsMessage, setPersonAssetsMessage] = useState('');
+  const [authorizingPerson, setAuthorizingPerson] = useState<Material | null>(null);
   const [personRightsConfirmed, setPersonRightsConfirmed] = useState(false);
   const [personRightsSourceUrl, setPersonRightsSourceUrl] = useState('');
   const [motionUploadAvatarId, setMotionUploadAvatarId] = useState('');
@@ -721,8 +724,8 @@ export default function EnterprisePage() {
   const productStatusAbortRef = useRef<AbortController | null>(null);
   const hasUnsavedChanges = profileLoaded && !loading && persistedProfileRef.current !== profileSnapshot(profile);
 
-  const reloadPersonAssets = async () => {
-    setPersonAssetsLoading(true);
+  const reloadPersonAssets = async (silent = false) => {
+    if (!silent) setPersonAssetsLoading(true);
     const result = await studioApi.listDigitalHumanAvatars(true);
     setPersonAssets(result.items);
     setPreferredPersonAssetId(result.preferredAvatarMaterialId);
@@ -731,6 +734,16 @@ export default function EnterprisePage() {
   };
 
   useEffect(() => { void reloadPersonAssets(); }, []);
+  useEffect(() => {
+    let cancelled = false; let busy = false;
+    const timer = window.setInterval(async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try { if (!cancelled) await reloadPersonAssets(true); }
+      finally { busy = false; }
+    }, 15000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     if (window.sessionStorage.getItem('lingshu:enterprise-focus') !== 'language-settings') return;
@@ -1489,22 +1502,21 @@ export default function EnterprisePage() {
 
   const uploadPersonAssets = async (files: FileList | null) => {
     if (!files?.length) return;
-    if (!personRightsConfirmed) { setPersonAssetsMessage('请先确认人物、声音与动作素材已取得商业使用授权。'); return; }
     const videos = Array.from(files).filter(file => file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name));
     if (!videos.length) { setPersonAssetsMessage('请选择 MP4、MOV 或 WebM 视频。'); return; }
     setPersonAssetsUploading(true);
     setPersonAssetsMessage('');
     let uploaded = 0;
+    let firstUploaded: Material | undefined;
     try {
       for (const file of videos) {
+        if (file.size > 110 * 1024 * 1024) { setPersonAssetsMessage(`${file.name} 超过110MB，请压缩后上传。`); continue; }
         const dataBase64 = (await fileToDataUrl(file)).replace(/^data:[^,]+,/, '');
         const result = await studioApi.uploadMaterial({
           name: file.name, folder: 'presenter', type: 'video', dataBase64, mimeType: file.type || 'video/mp4', sourceType: 'digital-human-avatar',
-          assetRole: 'avatar_master', rightsStatus: 'commercial_cleared',
-          rightsUsageScope: ['internal_preview', 'customer_delivery', 'paid_media', 'organic_social'],
-          rightsSourceUrl: personRightsSourceUrl.trim() || 'enterprise-user-attestation',
+          assetRole: 'avatar_master', rightsStatus: 'internal_test', rightsUsageScope: ['internal_preview'],
         });
-        if (result.ok && result.material) uploaded += 1;
+        if (result.ok && result.material) {uploaded += 1; firstUploaded ||= result.material;}
       }
       const refreshed = await reloadPersonAssets();
       const firstProductionReady = refreshed.items.find(item => item.productionReady === true);
@@ -1512,7 +1524,8 @@ export default function EnterprisePage() {
         const saved = await studioApi.setPreferredDigitalHumanAvatar(firstProductionReady.id);
         if (saved.ok) setPreferredPersonAssetId(firstProductionReady.id);
       }
-      setPersonAssetsMessage(uploaded === videos.length ? `已上传 ${uploaded} 个人物资产` : `成功上传 ${uploaded}/${videos.length} 个视频`);
+      setPersonAssetsMessage(`已上传 ${uploaded}/${videos.length} 个母片，请分别完成站内本人授权。`);
+      if (firstUploaded) setAuthorizingPerson(firstUploaded);
     } finally {
       setPersonAssetsUploading(false);
     }
@@ -1975,18 +1988,22 @@ export default function EnterprisePage() {
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
                 <div>
                   <p className="text-sm font-black text-text-primary">新增人物 IP</p>
-                  <p className="mt-1 text-xs font-semibold text-text-muted">先上传人物母片，再为人物补充自然讲解、强调、指向和 CTA 等表演片段。</p>
+                  <p className="mt-1 text-xs font-semibold text-text-muted">1 上传真人母片 → 2 在灵枢内由本人阅读说明并录制授权 → 3 提交后后台准备。全程无需跳转站外，完成后可设为首选。</p>
+                  <p className="mt-2 text-xs text-text-muted">普通口播视频或已有数字人成片：在「灵感中心→我的素材」添加，仅用于剪辑，不会成为可训练的人物。真人母片建议1080p、单人居中清晰讲话，15–600秒、110MB以内。</p>
                 </div>
-                <label className={`inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white ${personAssetsUploading || !personRightsConfirmed ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-emerald-700'}`}>
+                <label className={`inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white ${personAssetsUploading ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-emerald-700'}`}>
                   {personAssetsUploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
                   {personAssetsUploading ? '正在上传' : '上传人物母片'}
-                  <input type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple disabled={personAssetsUploading || !personRightsConfirmed} className="hidden" onChange={event => { void uploadPersonAssets(event.currentTarget.files); event.currentTarget.value = ''; }} />
+                  <input type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple disabled={personAssetsUploading} className="hidden" onChange={event => { void uploadPersonAssets(event.currentTarget.files); event.currentTarget.value = ''; }} />
                 </label>
-                <div className="w-full border-t border-emerald-100 pt-3">
+                <details className="w-full border-t border-emerald-100 pt-3"><summary className="mb-2 text-xs">本地动作素材授权（可选，不影响云端人物创建）</summary>
                   <label className="flex items-start gap-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={personRightsConfirmed} onChange={event => setPersonRightsConfirmed(event.target.checked)} className="mt-0.5 accent-emerald-600" /><span>我确认已取得人物肖像、声音、动作素材及商业传播授权，并同意保存本次授权快照。</span></label>
                   <input value={personRightsSourceUrl} onChange={event => setPersonRightsSourceUrl(event.target.value)} placeholder="授权凭证地址（选填；测试可留空并记录企业确认）" className="mt-2 h-9 w-full rounded-lg border border-emerald-200 bg-white px-3 text-xs outline-none focus:border-emerald-500" />
-                </div>
+                </details>
               </div>
+              {authorizingPerson && <PersonAuthorizationDialog key={authorizingPerson.id} asset={authorizingPerson} onClose={() => setAuthorizingPerson(null)} onComplete={state => {
+                setPersonAssetsMessage(`人物状态：${personSetupLabels[state] || '待核实'}`); void reloadPersonAssets(true);
+              }} />}
               {personAssetsMessage && <p className="mt-3 text-xs font-bold text-emerald-700">{personAssetsMessage}</p>}
               {personAssetsLoading ? (
                 <div className="flex h-36 items-center justify-center text-sm font-bold text-text-muted"><Loader2 size={18} className="mr-2 animate-spin" />正在加载人物资产</div>
@@ -1994,7 +2011,7 @@ export default function EnterprisePage() {
                 <div className="mt-4 rounded-xl border border-dashed border-border px-4 py-10 text-center">
                   <Users size={28} className="mx-auto text-text-muted" />
                   <p className="mt-3 text-sm font-black text-text-primary">还没有人物资产</p>
-                  <p className="mt-1 text-xs text-text-muted">上传第一条人物视频后，系统会自动将它设为首选人物。</p>
+                  <p className="mt-1 text-xs text-text-muted">真人母片建议1080p、人物居中、单人清晰讲话，15–600秒、110MB以内。热门视频或已有数字人成片只可作为普通剪辑素材，上传不等于授权或训练完成。</p>
                 </div>
               ) : (
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -2010,11 +2027,20 @@ export default function EnterprisePage() {
                           <p className="truncate text-sm font-black text-text-primary" title={asset.name}>{asset.name}</p>
                           <p className="mt-1 text-[11px] font-semibold text-text-muted">{asset.duration ? `${asset.duration.toFixed(1)} 秒 · ` : ''}{asset.size}</p>
                           <div className="mt-2 flex flex-wrap gap-1.5">
-                            <span className={`rounded-full px-2 py-1 text-[10px] font-black ${asset.rightsStatus === 'commercial_cleared' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{asset.rightsStatus === 'commercial_cleared' ? '商业授权有效' : '仅内部测试'}</span>
+                            <span className={`rounded-full px-2 py-1 text-[10px] font-black ${asset.rightsStatus === 'commercial_cleared' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{asset.sourceType === 'platform-person' ? '仅内部预览 · 发布前核验用途' : asset.rightsStatus === 'commercial_cleared' ? '企业已确认素材权利' : '授权待确认'}</span>
                             <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600">动作 {asset.motionClipCount || 0} 个</span>
-                            <span className={`rounded-full px-2 py-1 text-[10px] font-black ${asset.productionReady ? 'bg-sky-50 text-sky-700' : 'bg-rose-50 text-rose-700'}`}>{asset.productionReady ? '可正式生产' : '待补表演包'}</span>
+                            <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-black text-sky-700">{asset.sourceType === 'platform-person' ? '平台人物 · 内部预览' : asset.personSetup ? (personSetupLabels[asset.personSetup.state] || '待处理') : '真人母片 · 尚未创建'}</span>
                           </div>
-                          <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2">
+                          {asset.scope !== 'shared' && <div className="mt-3 flex flex-wrap gap-2">
+                            {(!asset.personSetup || ['consent_required', 'submitting'].includes(asset.personSetup.state)) && <button className="text-xs font-bold text-emerald-700" onClick={() => setAuthorizingPerson(asset)}>继续本人授权</button>}
+                            {asset.personSetup && asset.personSetup.state !== 'submitting' && <button className="text-xs text-emerald-700" onClick={async () => {
+                              const result = await studioApi.setupPerson(asset.id, 'status');
+                              setPersonAssetsMessage(result.ok ? `人物状态：${personSetupLabels[result.state || ''] || '处理中'}` : result.error || '状态查询未完成');
+                              await reloadPersonAssets();
+                            }}>刷新状态</button>}
+                            {asset.personSetup?.state === 'failed' && <p className="text-xs text-amber-700">创建未通过，请核对母片及本人授权。不会自动重新创建或扣费。</p>}
+                          </div>}
+                          {asset.scope !== 'shared' && <details className="mt-3 rounded-lg border border-border bg-surface-2 p-2"><summary className="text-xs">本地模式动作素材（可选）</summary>
                             <div className="flex gap-2">
                               <select value={motionGesture} onChange={event => setMotionGesture(event.target.value as typeof motionGesture)} className="min-w-0 flex-1 rounded-md border border-border bg-white px-2 py-1.5 text-[10px] font-bold text-text-secondary">
                                 <option value="idle">自然讲解</option><option value="open_palm">开放手势</option><option value="emphasis">重点强调</option><option value="point_right">指向展示</option><option value="count_three">三点计数</option><option value="cta">行动号召</option>
@@ -2025,9 +2051,9 @@ export default function EnterprisePage() {
                               </label>
                             </div>
                             <p className="mt-1.5 text-[9px] leading-4 text-text-muted">每次上传前选择该批视频的动作类型；建议每个片段 3–8 秒、人物居中、首尾姿态稳定。</p>
-                          </div>
+                          </details>}
                           <button type="button" disabled={preferred || asset.productionReady !== true} onClick={() => { void selectPreferredPersonAsset(asset.id); }} className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-black ${preferred ? 'cursor-default bg-emerald-50 text-emerald-700' : asset.productionReady !== true ? 'cursor-not-allowed bg-slate-100 text-slate-400' : 'border border-border bg-white text-text-secondary hover:border-emerald-300 hover:text-emerald-700'}`}>
-                            {preferred ? '当前首选' : asset.productionReady === true ? '设为首选人物' : '补齐表演包后可设为首选'}
+                            {preferred ? '当前首选' : asset.productionReady === true ? '设为首选人物' : '人物准备完成后可设首选'}
                           </button>
                         </div>
                       </article>

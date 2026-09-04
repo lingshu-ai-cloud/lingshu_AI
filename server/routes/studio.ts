@@ -8,6 +8,7 @@ import { execFile, spawn } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import ffmpegStatic from 'ffmpeg-static';
+import { PERSON_CONSENT_VERSION, PERSON_CONSENT_MAX_BYTES, PERSON_CONSENT_STATEMENT, PERSON_CONSENT_NOTICE } from '../../src/lib/personConsentPolicy.js';
 import { callLLM } from '../agents/llm.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
 import { auth, store } from '../storage/index.js';
@@ -5375,7 +5376,9 @@ const MATERIALS_FILE = process.env.NODE_ENV === 'test' && String(process.env.STU
   ? path.resolve(String(process.env.STUDIO_MATERIALS_FILE))
   : path.join(__dirname, '../../data/materials.json');
 const VIDEO_VERSIONS_FILE = path.join(__dirname, '../../data/studio-video-versions.json');
-const DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE = path.join(__dirname, '../../data/digital-human-avatar-preferences.json');
+const DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE = process.env.NODE_ENV === 'test' && process.env.DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE
+  ? path.resolve(process.env.DIGITAL_HUMAN_AVATAR_PREFERENCES_FILE)
+  : path.join(__dirname, '../../data/digital-human-avatar-preferences.json');
 
 interface DigitalHumanAvatarPreference {
   preferredAvatarMaterialId: string;
@@ -5447,6 +5450,9 @@ function appendVideoVersion(input: Omit<VideoGenerationVersion, 'id' | 'versionN
 }
 
 interface Material {
+  personSetup?: { requestId: string; groupId?: string; lookId?: string; state: string; updatedAt: string;
+    authorization?: { version: string; sha256: string; actorId: string; confirmedAt: string; requestId: string; assetId?: string; submissionStartedAt?: string; submittedAt?: string } };
+  cloudPersonReady?: boolean;
   id: string;
   name: string;
   folder: string;
@@ -5466,7 +5472,7 @@ interface Material {
   usage?: MaterialUsage;   // editable=可剪辑；reference_only=仅供对标分析，禁止进入公共下载库
   sourceType?: string;
   sourceUrl?: string;
-  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip';
+  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip' | 'reference_clip';
   rightsStatus?: 'internal_test' | 'commercial_cleared' | 'restricted';
   avatarId?: string;
   avatarVersion?: number;
@@ -5492,8 +5498,7 @@ interface Material {
 
 function isDigitalHumanAvatarMaster(item: Material): boolean {
   return item.folder === 'presenter' && item.type === 'video'
-    && item.assetRole !== 'avatar_motion_clip'
-    && item.assetRole !== 'generated_clip'
+    && item.assetRole === 'avatar_master'
     && item.sourceType !== 'digital-human'
     && item.sourceType !== 'codex-thread-generated';
 }
@@ -5772,7 +5777,8 @@ function digitalHumanConfig() {
   const pullWorkerEnabled = process.env.DIGITAL_HUMAN_PULL_WORKER_ENABLED === 'true';
   const heygenApiKey = String(process.env.HEYGEN_API_KEY || '').trim();
   const heygenBaseUrl = String(process.env.HEYGEN_API_BASE_URL || 'https://api.heygen.com').trim().replace(/\/+$/, '');
-  return { baseUrl, apiKey, provider, timeoutMs, pullWorkerEnabled, heygenApiKey, heygenBaseUrl };
+  const computeTarget = String(process.env.DIGITAL_HUMAN_COMPUTE_TARGET || 'auto').trim();
+  return { baseUrl, apiKey, provider, timeoutMs, pullWorkerEnabled, heygenApiKey, heygenBaseUrl, computeTarget };
 }
 
 function digitalHumanProviderSelection(
@@ -5783,7 +5789,7 @@ function digitalHumanProviderSelection(
   const config = digitalHumanConfig();
   // Existing integration fixtures exercise the legacy local transport. Tests
   // for the new router opt in explicitly; production always uses strict routing.
-  if (process.env.NODE_ENV === 'test' && process.env.DIGITAL_HUMAN_PROVIDER_ROUTING_ENABLED !== 'true') {
+  if (process.env.NODE_ENV === 'test' && config.computeTarget === 'auto' && process.env.DIGITAL_HUMAN_PROVIDER_ROUTING_ENABLED !== 'true') {
     return {
       provider: config.pullWorkerEnabled ? 'local-worker' : 'local-direct', engine: 'local',
       routingReason: 'legacy_test_fixture',
@@ -5792,8 +5798,12 @@ function digitalHumanProviderSelection(
   const worker = config.pullWorkerEnabled
     ? digitalHumanWorkerPresence.snapshot(Date.now(), digitalHumanWorkerOnlineTtlMs(), digitalHumanWorkerPreflightOptions())
     : undefined;
+  if (config.computeTarget === 'local-pull' && avatar.sourceType === 'platform-person') {
+    throw new DigitalHumanProviderConfigurationError('LOCAL_AVATAR_REQUIRED', '该人物仅支持云端生成，请选择具备本地母片和动作素材的人物资产。');
+  }
   return selectDigitalHumanProvider({
     mode,
+    computeTarget: config.computeTarget,
     binding: parseDigitalHumanProviderBinding(avatar.providerBindings),
     heygenApiKey: config.heygenApiKey,
     localPullWorkerReady: worker?.ready === true,
@@ -6124,7 +6134,16 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
 
     if (!job.providerTaskId) {
       if (!req) return job;
-      const providerPayload = await digitalHumanProviderPayloadForJob(req, job, 'direct');
+      // Cloud characters are trained identities, not downloadable mother videos.
+      // Revalidate identity/rights at dispatch, without requiring a preview URL.
+      if (job.provider === 'heygen') {
+        const avatar = loadMaterials().find(item => item.id === job!.avatarMaterialId && isDigitalHumanAvatarMaster(item)
+          && (item.scope === 'shared' || item.tenantId === job!.tenantId));
+        if (!avatar || !digitalHumanAssetSupportsUsage(avatar, job.usagePurpose || 'internal_preview')
+          || avatar.providerBindings?.heygen?.avatarId !== job.providerExternalAvatarId
+          || avatar.providerBindings?.heygen?.voiceId !== job.providerExternalVoiceId) throw new Error('所选人物或授权已发生变化，请重新确认后生成');
+      }
+      const providerPayload = job.provider === 'heygen' ? undefined : await digitalHumanProviderPayloadForJob(req, job, 'direct');
       const submitted = await provider.submit({
         externalJobId: job.id,
         script: job.scriptSnapshot,
@@ -6198,18 +6217,23 @@ function digitalHumanCapabilities() {
   // quality-mode cloud availability to be reported independently.
   const legacyLocalAvailable = config.pullWorkerEnabled ? worker?.ready === true : Boolean(config.baseUrl);
   const localAvailable = legacyLocalAvailable || Boolean(config.baseUrl);
-  const available = Boolean(config.heygenApiKey) || localAvailable;
+  const localOnly = config.computeTarget === 'local-pull';
+  const validTarget = ['auto', 'local-pull'].includes(config.computeTarget);
+  const available = validTarget && (localOnly ? worker?.ready === true : Boolean(config.heygenApiKey) || localAvailable);
   const unavailableReason = available
     ? undefined
+    : !validTarget ? '数字人执行位置配置无效'
+    : localOnly ? '本地 GPU Worker 离线或预检未通过；不会切换到云端服务。'
     : `数字人 Provider 尚未配置：高质量模式缺少 HEYGEN_API_KEY；${config.pullWorkerEnabled
       ? worker?.online ? `本地 Worker 预检未通过：${worker.preflight.failures.join('；')}` : '本地 Worker 离线或心跳已超时'
       : '极速模式缺少本地 Worker 或 DIGITAL_HUMAN_API_URL'}`;
   return {
     available,
-    provider: config.heygenApiKey ? 'auto' : config.provider,
+    computeTarget: config.computeTarget,
+    provider: localOnly ? 'local-worker' : config.heygenApiKey ? 'auto' : config.provider,
     providerPolicy: {
-      quality: { provider: 'heygen', configured: Boolean(config.heygenApiKey), enginePreference: ['avatar_v', 'avatar_iv'], silentLocalFallback: false },
-      fast: { provider: 'local', configured: localAvailable },
+      quality: { provider: localOnly ? 'local-worker' : 'heygen', configured: localOnly ? available : validTarget && Boolean(config.heygenApiKey), enginePreference: localOnly ? ['local'] : ['avatar_v', 'avatar_iv'], silentLocalFallback: false },
+      fast: { provider: localOnly ? 'local-worker' : 'local', configured: localOnly ? available : validTarget && localAvailable },
     },
     pipelineVersion: DIGITAL_HUMAN_PIPELINE_VERSION,
     modes: [
@@ -6729,7 +6753,12 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
     poster: segment.posterObjectKey ? await signedMaterialObjectUrl(segment.posterObjectKey) : segment.poster,
     posterObjectKey: undefined,
   })));
-  return { ...material, url: url || material.url, poster, segments, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  return { ...material,
+    cloudPersonReady: Boolean(material.providerBindings?.heygen?.avatarId && material.providerBindings?.heygen?.voiceId
+      && (!material.personSetup || material.personSetup.state === 'ready')),
+    providerBindings: undefined,
+    personSetup: material.personSetup ? {requestId: '', state: material.personSetup.state, updatedAt: material.personSetup.updatedAt} : undefined,
+    url: url || material.url, poster, segments, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
 }
 
 // Video generation history. A groupKey identifies one logical output slot
@@ -6835,7 +6864,32 @@ studioRouter.get('/materials', async (req, res) => {
 });
 
 // 企业人物资产库：只暴露已授权的 presenter 视频，并持久化租户级首选人物。
+let platformPeopleSync: Promise<void> | undefined;
+let platformPeopleSyncAt = 0;
+async function ensurePlatformPeople() {
+  if (digitalHumanConfig().computeTarget !== 'auto') return;
+  if (platformPeopleSync) return platformPeopleSync;
+  if (!digitalHumanConfig().heygenApiKey || Date.now() - platformPeopleSyncAt < 300_000) return;
+  platformPeopleSync = (async () => {
+    platformPeopleSyncAt = Date.now();
+    const config = digitalHumanConfig();
+    const looks = await new HeyGenV3Provider({apiKey: config.heygenApiKey, baseUrl: config.heygenBaseUrl}).publicPeople();
+    const list = loadMaterials();
+    for (const look of looks.slice(0, 8)) {
+      const id = `platform-person-${look.id}`;
+      const material: Material = {id, name: `平台人物 · ${look.name}`, folder: 'presenter', type: 'video', duration: 0, size: '', file: '', url: look.preview_video_url || '', poster: look.preview_image_url || '', scope: 'shared', sourceType: 'platform-person', assetRole: 'avatar_master', avatarId: id, avatarVersion: 1,
+        productionReady: true, rightsStatus: 'commercial_cleared', rightsUsageScope: ['internal_preview'], rightsSourceUrl: 'https://www.heygen.com/terms', createdAt: new Date().toISOString(),
+        providerBindings: parseDigitalHumanProviderBinding({heygen: {avatarId: look.id, voiceId: look.default_voice_id, supportedEngines: look.supported_api_engines}})};
+      const index = list.findIndex(item => item.id === id);
+      if (index < 0) list.push(material);
+      else list[index] = {...material, createdAt: list[index].createdAt};
+    }
+    persistMaterials(list);
+  })().catch(() => { console.warn('[platform-people] catalogue unavailable'); }).finally(() => { platformPeopleSync = undefined; });
+  return platformPeopleSync;
+}
 studioRouter.get('/digital-human/avatars', async (req, res) => {
+  await ensurePlatformPeople();
   const { tenantId } = res.locals as AuthLocals;
   const includeUnready = req.query.includeUnready === '1';
   const materials = loadMaterials();
@@ -6845,16 +6899,21 @@ studioRouter.get('/digital-human/avatars', async (req, res) => {
     && digitalHumanAssetSupportsUsage(candidate, previewPurpose)
     && (candidate.scope === 'shared' || candidate.tenantId === tenantId));
   const usableProviderFor = (item: Material) => {
+    if (digitalHumanConfig().computeTarget !== 'auto') return false;
+    if (item.personSetup && item.personSetup.state !== 'ready') return false;
     const binding = parseDigitalHumanProviderBinding(item.providerBindings);
     return Boolean(binding.heygen?.avatarId && binding.heygen?.voiceId);
   };
   const avatars = materials
     .filter(item => isDigitalHumanAvatarMaster(item) && (item.scope === 'shared' || item.tenantId === tenantId))
+    .filter(item => digitalHumanConfig().computeTarget === 'auto' || item.sourceType !== 'platform-person')
     .filter(item => includeUnready || (digitalHumanAssetSupportsUsage(item, previewPurpose) && (usableMotionFor(item) || usableProviderFor(item))))
     .sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
   const configuredId = loadDigitalHumanAvatarPreferences()[tenantId]?.preferredAvatarMaterialId;
   const usableAvatars = avatars.filter(item => digitalHumanAssetSupportsUsage(item, previewPurpose) && (usableMotionFor(item) || usableProviderFor(item)));
-  const preferredAvatarMaterialId = usableAvatars.some(item => item.id === configuredId) ? configuredId : (usableAvatars[0]?.id || '');
+  // A revoked or still-preparing enterprise preference must not silently
+  // become another person's face. The client offers an explicit replacement.
+  const preferredAvatarMaterialId = configuredId || usableAvatars.find(item => item.sourceType === 'platform-person')?.id || usableAvatars[0]?.id || '';
   const items = await Promise.all(avatars.map(async item => {
     const motionClips = materials.filter(candidate => candidate.assetRole === 'avatar_motion_clip'
       && candidate.avatarId === (item.avatarId || item.id)
@@ -6868,6 +6927,184 @@ studioRouter.get('/digital-human/avatars', async (req, res) => {
   }));
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   res.json({ items, preferredAvatarMaterialId });
+});
+
+const personSetupLocks = new Set<string>();
+async function refreshPersonSetup(id: string, tenantId: string, provider: HeyGenV3Provider) {
+  const asset = loadMaterials().find(m => m.id === id && m.tenantId === tenantId && m.scope === 'own');
+  if (!asset?.personSetup?.groupId) throw new Error('人物尚未创建');
+  const snapshot = asset.personSetup;
+  const status = await provider.personStatus(snapshot.groupId!, snapshot.lookId || '');
+  const list = loadMaterials();
+  const current = list.find(m => m.id === id && m.tenantId === tenantId && m.personSetup?.groupId === snapshot.groupId);
+  if (!current) throw new Error('人物已删除或发生变化');
+  const state = status.state === 'consent_required' && status.consentStatus === 'pending' && snapshot.authorization?.submissionStartedAt
+    ? snapshot.authorization.submittedAt ? 'consent_review' : 'consent_submission_unknown'
+    : status.state;
+  current.personSetup = {...snapshot, lookId: status.look?.id || snapshot.lookId, state, updatedAt: new Date().toISOString()};
+  if (snapshot.authorization?.submissionStartedAt && status.ready) {
+    // Recover a provider-accepted submission even if its HTTP acknowledgement
+    // was lost. Only provider approval can promote this audited consent.
+    current.productionReady = true;
+    current.rightsStatus = 'commercial_cleared';
+    current.rightsUsageScope = ['internal_preview', 'customer_delivery', 'paid_media', 'organic_social'];
+    current.rightsSourceUrl = `lingshu-subject-consent:${snapshot.authorization.version}`;
+  }
+  current.providerBindings = {...current.providerBindings, heygen: status.ready
+    ? parseDigitalHumanProviderBinding({heygen: {avatarId: status.look.id, voiceId: status.look.default_voice_id, supportedEngines: status.look.supported_api_engines}}).heygen
+    : undefined};
+  persistMaterials(list);
+  return state;
+}
+
+// Read-only status synchronization continues when the browser is closed.
+// Never create a paid avatar, request consent, or regenerate from this timer.
+let personStatusSyncRunning = false;
+const personStatusTimer = setInterval(() => {
+  if (personStatusSyncRunning || !digitalHumanConfig().heygenApiKey) return;
+  personStatusSyncRunning = true;
+  void (async () => {
+    const config = digitalHumanConfig();
+    const provider = new HeyGenV3Provider({apiKey: config.heygenApiKey, baseUrl: config.heygenBaseUrl});
+    const pending = loadMaterials().filter(m => m.scope === 'own' && m.tenantId && m.personSetup?.groupId
+      && ['consent_required', 'consent_review', 'consent_submission_unknown', 'training'].includes(m.personSetup.state)
+      && Date.now() - Date.parse(m.personSetup.updatedAt) >= 55_000).slice(0, 20);
+    for (const asset of pending) {
+      if (personSetupLocks.has(asset.id)) continue;
+      personSetupLocks.add(asset.id);
+      try { await refreshPersonSetup(asset.id, asset.tenantId!, provider); }
+      catch { /* retain the last state; a read failure is not a failed training */ }
+      finally { personSetupLocks.delete(asset.id); }
+    }
+  })().catch(() => { console.warn('[person-setup] status synchronization unavailable'); }).finally(() => { personStatusSyncRunning = false; });
+}, 60_000);
+personStatusTimer.unref();
+
+function personOnboardingCapability() {
+  const available = Boolean(digitalHumanConfig().heygenApiKey) && process.env.HEYGEN_CONSENT_VIDEO_UPLOAD_ENABLED === 'true';
+  return {available, reason: available ? undefined : '本站尚未开通站内本人验证通道。可先保存母片或使用平台人物；开通后在灵枢内继续，不需要跳转站外。',
+    consentVersion: PERSON_CONSENT_VERSION, statement: PERSON_CONSENT_STATEMENT, notice: PERSON_CONSENT_NOTICE, maxVideoBytes: PERSON_CONSENT_MAX_BYTES};
+}
+studioRouter.get('/digital-human/person-onboarding', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store'); res.json(personOnboardingCapability());
+});
+
+async function consentVideoValid(bytes: Buffer): Promise<boolean> {
+  return new Promise(resolve => {
+    const child = spawn(String(ffmpegStatic), ['-hide_banner', '-i', 'pipe:0', '-t', '121', '-f', 'null', '-'], {windowsHide: true});
+    let log = ''; let expired = false;
+    const timer = setTimeout(() => { expired = true; child.kill(); }, 30_000);
+    child.stderr.on('data', chunk => { log = (log + String(chunk)).slice(-60000); });
+    child.stdin.on('error', () => {});
+    child.on('error', () => {clearTimeout(timer); resolve(false);});
+    child.on('close', code => {
+      clearTimeout(timer);
+      const timestamps = [...log.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)];
+      const measured = timestamps.at(-1);
+      const seconds = measured ? +measured[1] * 3600 + +measured[2] * 60 + +measured[3] : 0;
+      resolve(!expired && code === 0 && seconds >= 3 && seconds <= 120 && /Video:/.test(log) && /Audio:/.test(log));
+    });
+    child.stdin.end(bytes);
+  });
+}
+
+studioRouter.post('/digital-human/avatars/:id/setup', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const id = req.params.id;
+  if (!['submit_in_app', 'status'].includes(req.body?.action)) { res.status(400).json({ok: false, error: '请使用灵枢内的本人授权流程，站外授权入口已停用'}); return; }
+  const asset = loadMaterials().find(m => m.id === id && m.tenantId === tenantId && m.scope === 'own' && isDigitalHumanAvatarMaster(m));
+  if (!asset) { res.status(404).json({ ok: false, error: '人物资产不存在' }); return; }
+  if (personSetupLocks.has(id)) { res.status(409).json({ ok: false, error: '人物正在处理中' }); return; }
+  personSetupLocks.add(id);
+  const save = (setup: NonNullable<Material['personSetup']>, binding?: Material['providerBindings']) => {
+    const list = loadMaterials(); const current = list.find(m => m.id === id && m.tenantId === tenantId);
+    if (!current) throw new Error('人物资产已移除');
+    current.personSetup = setup;
+    if (binding) current.providerBindings = binding;
+    persistMaterials(list);
+  };
+  try {
+    if (req.body.action === 'status') {
+      if (!asset.personSetup?.groupId) { res.json({ok: true, state: asset.personSetup?.state || 'consent_required'}); return; }
+      const config = digitalHumanConfig();
+      res.json({ok: true, state: await refreshPersonSetup(id, tenantId, new HeyGenV3Provider({apiKey: config.heygenApiKey, baseUrl: config.heygenBaseUrl}))}); return;
+    }
+    if (!personOnboardingCapability().available) { res.status(503).json({ok: false, code: 'IN_APP_CONSENT_UNAVAILABLE', error: personOnboardingCapability().reason}); return; }
+    const consent = req.body.consent;
+    if (consent?.subjectConfirmed !== true || consent?.processingConfirmed !== true || consent?.version !== PERSON_CONSENT_VERSION) {
+      res.status(422).json({ok: false, error: '请由出镜本人阅读并确认当前授权说明及视频处理方式'}); return;
+    }
+    const encoded = String(consent.dataBase64 || '');
+    if (!['video/mp4', 'video/webm'].includes(consent.mimeType) || !encoded || encoded.length > Math.ceil(PERSON_CONSENT_MAX_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+      res.status(422).json({ok: false, error: '请提供20MB以内的MP4或WebM本人授权视频'}); return;
+    }
+    const consentBytes = Buffer.from(encoded, 'base64');
+    if (!consentBytes.length || consentBytes.length > PERSON_CONSENT_MAX_BYTES || !await consentVideoValid(consentBytes)) {
+      res.status(422).json({ok: false, error: '授权视频预检失败：需要3–120秒、含画面和声音且可正常播放的视频'}); return;
+    }
+    const sha256 = createHash('sha256').update(consentBytes).digest('hex');
+    const authorization = asset.personSetup?.authorization;
+    if (authorization && authorization.sha256 !== sha256) { res.status(409).json({ok: false, error: '已有授权提交正在处理，请先刷新状态，不能覆盖原授权记录'}); return; }
+    if (authorization && !authorization.submissionStartedAt && Date.now() - Date.parse(authorization.confirmedAt) >= 23 * 60 * 60_000) {
+      res.status(409).json({ok: false, error: '上次授权上传结果已超过核对窗口，请联系管理员核对，不会重复上传或计费。'}); return;
+    }
+    const config = digitalHumanConfig();
+    const provider = new HeyGenV3Provider({ apiKey: config.heygenApiKey, baseUrl: config.heygenBaseUrl });
+    let setup = asset.personSetup;
+    if (setup?.authorization?.submissionStartedAt && setup.groupId) {
+      const state = await refreshPersonSetup(id, tenantId, provider);
+      if (state === 'consent_submission_unknown') { res.status(409).json({ok: false, state, error: '上次提交结果待核实，已停止重复提交。请稍后刷新状态或联系管理员核对。'}); return; }
+      res.json({ok: true, state}); return;
+    }
+    if (setup?.state === 'ready') { res.json({ok: true, state: 'ready'}); return; }
+    if (!setup?.groupId) {
+      if (setup?.requestId && Date.now() - Date.parse(setup.updatedAt) >= 23 * 60 * 60_000) {
+        res.status(409).json({ok: false, error: '上次创建结果待人工核对，已停止重复提交，避免超过幂等窗口后重复计费。'}); return;
+      }
+      if (asset.sourceType !== 'digital-human-avatar') { res.status(422).json({ ok: false, error: '请从企业真人母片入口上传本人素材，普通素材和生成视频不可直接训练' }); return; }
+      const file = path.resolve(MEDIA_DIR, asset.file);
+      if (!asset.objectKey && (!file.startsWith(path.resolve(MEDIA_DIR) + path.sep) || !fs.existsSync(file))) throw new Error('人物源文件不可用');
+      const cloud = asset.objectKey ? await r2Download(asset.objectKey) : undefined;
+      const bytes = asset.objectKey ? cloud?.buf : fs.readFileSync(file);
+      if (!bytes?.length || bytes.length > 110 * 1024 * 1024) throw new Error('人物视频不可用或超过110MB');
+      const metadata = await new Promise<string>(resolve => {
+        const child = spawn(String(ffmpegStatic), ['-hide_banner', '-i', 'pipe:0', '-f', 'null', '-t', '0', '-'], {windowsHide: true});
+        let log = ''; const timer = setTimeout(() => child.kill(), 30000);
+        child.stderr.on('data', chunk => { log = (log + String(chunk)).slice(-40000); });
+        child.stdin.on('error', () => {}); child.on('error', () => { clearTimeout(timer); resolve(''); });
+        child.on('close', () => { clearTimeout(timer); resolve(log); }); child.stdin.end(bytes);
+      });
+      const measured = metadata.match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/);
+      const seconds = measured ? +measured[1] * 3600 + +measured[2] * 60 + +measured[3] : 0;
+      if (seconds < 15 || seconds > 600 || !/Video:/.test(metadata) || !/Audio:/.test(metadata)) {
+        res.status(422).json({ok: false, error: '母片预检未通过：需要15–600秒且带清晰人声的有效视频；请上传可解码的MP4/MOV文件。'}); return;
+      }
+      setup = { ...setup, requestId: setup?.requestId || randomUUID(), state: 'submitting', updatedAt: setup?.updatedAt || new Date().toISOString() };
+      save(setup);
+      const result = await provider.createPerson(asset.name, bytes.toString('base64'), cloud?.contentType || materialAssetContentType(file, ''), setup.requestId);
+      setup = { ...setup, ...result, state: 'consent_required' }; save(setup);
+    }
+    setup.authorization = setup.authorization || {version: PERSON_CONSENT_VERSION, sha256, actorId: userId, confirmedAt: new Date().toISOString(), requestId: randomUUID()};
+    save(setup);
+    if (!setup.authorization.assetId) {
+      setup.authorization.assetId = await provider.uploadPersonConsent(consentBytes, consent.mimeType, setup.authorization.requestId);
+      save(setup);
+    }
+    setup.authorization.submissionStartedAt = new Date().toISOString();
+    setup.state = 'consent_submission_unknown'; save(setup);
+    await provider.submitPersonConsent(setup.groupId!, setup.authorization.assetId, setup.authorization.requestId);
+    setup.authorization.submittedAt = new Date().toISOString(); setup.state = 'consent_review'; save(setup);
+    const updated = loadMaterials(); const current = updated.find(item => item.id === id && item.tenantId === tenantId)!;
+    current.rightsStatus = 'commercial_cleared';
+    current.rightsUsageScope = ['internal_preview', 'customer_delivery', 'paid_media', 'organic_social'];
+    current.rightsSourceUrl = `lingshu-subject-consent:${PERSON_CONSENT_VERSION}`;
+    persistMaterials(updated);
+    const state = await refreshPersonSetup(id, tenantId, provider);
+    res.json({ ok: true, state });
+  } catch (error) {
+    console.warn('[person-setup]', id, error instanceof DigitalHumanProviderConfigurationError ? error.code : 'SETUP_FAILED');
+    res.status(502).json({ ok: false, error: '站内人物提交未完成，请先刷新状态或联系管理员核对站内验证权限；不会自动重交或跳转站外。' });
+  } finally { personSetupLocks.delete(id); }
 });
 
 studioRouter.patch('/digital-human/avatars/preferred', (req, res) => {
@@ -6944,9 +7181,11 @@ studioRouter.post('/materials', async (req, res) => {
     assetRole: requestedAssetRole, rightsStatus: requestedRightsStatus, rightsUsageScope, rightsSourceUrl, avatarId, avatarVersion, motionClip, providerBindings } = req.body ?? {};
   if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
   if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }
-  const validAssetRoles = new Set(['avatar_master', 'avatar_motion_clip', 'generated_clip']);
+  const validAssetRoles = new Set(['avatar_master', 'avatar_motion_clip', 'generated_clip', 'reference_clip']);
   const assetRole = folder === 'presenter'
-    ? (validAssetRoles.has(String(requestedAssetRole)) ? String(requestedAssetRole) as Material['assetRole'] : (sourceType === 'digital-human' || sourceType === 'codex-thread-generated' ? 'generated_clip' : 'avatar_master'))
+    ? (sourceType === 'digital-human' || sourceType === 'codex-thread-generated' ? 'generated_clip'
+      : validAssetRoles.has(String(requestedAssetRole)) ? String(requestedAssetRole) as Material['assetRole']
+      : sourceType === 'digital-human-avatar' ? 'avatar_master' : 'reference_clip')
     : undefined;
   if (assetRole === 'avatar_motion_clip' && (!String(avatarId || '').trim() || !motionClip || typeof motionClip !== 'object')) {
     res.status(400).json({ ok: false, error: '人物动作片段必须关联人物并包含动作标签' }); return;
@@ -7052,7 +7291,9 @@ studioRouter.post('/materials', async (req, res) => {
     avatarVersion: Math.max(1, Math.round(Number(avatarVersion) || 1)),
     sourceHash,
     motionClip: normalizedMotionClip,
-    providerBindings: assetRole === 'avatar_master' ? parseDigitalHumanProviderBinding(providerBindings) : undefined,
+    // Enterprise cloud bindings are issued only after provider-side consent
+    // and training, never accepted from an upload form.
+    providerBindings: assetRole === 'avatar_master' ? {local: parseDigitalHumanProviderBinding(providerBindings).local} : undefined,
     rightsUsageScope: normalizedRightsUsageScope.length ? normalizedRightsUsageScope : undefined,
     rightsSourceUrl: String(rightsSourceUrl || '').trim().slice(0, 2000) || undefined,
     productionReady: folder === 'presenter'
@@ -7271,7 +7512,7 @@ studioRouter.post('/materials/:id/classify', async (req, res) => {
 });
 
 // PATCH /studio/materials/:id/segments/:segmentId — 人工修正并确认 AI 片段标签。
-studioRouter.patch('/materials/:id/segments/:segmentId', (req, res) => {
+studioRouter.patch('/materials/:id/segments/:segmentId', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const list = loadMaterials();
   const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId);
@@ -7284,7 +7525,7 @@ studioRouter.patch('/materials/:id/segments/:segmentId', (req, res) => {
   segment.duration = +(segment.end - segment.start).toFixed(2);
   if (segment.manualConfirmed) segment.needsReview = false;
   persistMaterials(list);
-  res.json({ ok: true, material, segment });
+  res.json({ ok: true, material: await materialResponse(material, tenantId), segment });
 });
 
 studioRouter.patch('/materials/:id/pin', async (req, res) => {
@@ -7304,7 +7545,7 @@ studioRouter.patch('/materials/:id/pin', async (req, res) => {
   if (!material) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
   material.pinned = pinned;
   persistMaterials(list);
-  res.json({ ok: true, material });
+  res.json({ ok: true, material: await materialResponse(material, tenantId) });
 });
 
 
@@ -7321,13 +7562,7 @@ studioRouter.patch('/materials/:id', async (req, res) => {
   material.name = name;
   if ('tags' in (req.body || {})) material.tags = String(req.body?.tags ?? '').trim().slice(0, 500);
   if ('providerBindings' in (req.body || {})) {
-    if (!isDigitalHumanAvatarMaster(material)) { res.status(400).json({ ok: false, error: '只有人物主资产可以绑定数字人 Provider' }); return; }
-    const binding = parseDigitalHumanProviderBinding(req.body?.providerBindings);
-    const heygen = binding.heygen;
-    if (heygen && Boolean(heygen.avatarId) !== Boolean(heygen.voiceId)) {
-      res.status(400).json({ ok: false, error: '人物外部绑定必须同时提供 avatarId 和 voiceId' }); return;
-    }
-    material.providerBindings = binding;
+    res.status(400).json({ok: false, error: '人物身份由平台目录或本人授权流程创建，不支持手工修改外部绑定'}); return;
   }
   persistMaterials(list);
   res.json({ ok: true, material: await materialResponse(material, tenantId) });

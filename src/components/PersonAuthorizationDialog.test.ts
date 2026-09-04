@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const dialog = readFileSync(new URL('./PersonAuthorizationDialog.tsx', import.meta.url), 'utf8');
+const enterprise = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
+const policy = readFileSync(new URL('../lib/personConsentPolicy.ts', import.meta.url), 'utf8');
+assert.match(enterprise, /setAuthorizingPerson\(firstUploaded\)/, '上传后进入站内第二步');
+assert.doesNotMatch(enterprise, /personConsentLink|consentUrl|获取本人授权链接|复制链接交给本人/, '旧站外入口应完全移除');
+assert.doesNotMatch(dialog, /window\.open|<iframe|target="_blank"/, '不得用跳转或隐蔽嵌入代替站内录制');
+assert.match(dialog, /getUserMedia\(\{audio: true/);
+assert.match(dialog, /track\.stop\(\)/, '关闭/录制停止时释放摄像头');
+assert.match(dialog, /URL\.revokeObjectURL/, '清理本地视频预览引用');
+assert.match(dialog, /if \(!alive\.current\) \{captured\.getTracks/, '延迟授权返回后卸载也不得留下摄像头');
+assert.match(dialog, /!video \|\| !confirmed \|\| !capability\?\.available/, '不应仅凭复选框提交');
+assert.match(dialog, /consent_review.*training.*ready/, '只有已接受的准备状态才显示提交成功');
+assert.match(policy, /受托.*HeyGen/, '应在本站说明受托处理方，不能隐瞒视频处理方式');
+console.log('in-app consent UI contract tests passed');

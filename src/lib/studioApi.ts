@@ -820,6 +820,9 @@ export const studioApi = {
   },
   deleteMaterial: (id: string) => del(`materials/${id}`),
 
+  personOnboarding: () => get<import('./personConsentPolicy').PersonOnboardingCapability>('digital-human/person-onboarding', {available: false, reason: '暂时无法连接人物准备服务，请稍后重试', consentVersion: '', statement: '', notice: '', maxVideoBytes: 0}),
+  setupPerson: (id: string, action: 'status') => post<{ok: boolean; state?: string; error?: string}>(`digital-human/avatars/${encodeURIComponent(id)}/setup`, {action}, {ok: false}),
+  submitPersonInApp: (id: string, consent: {dataBase64: string; mimeType: string; version: string; subjectConfirmed: boolean; processingConfirmed: boolean}) => post<{ok: boolean; state?: string; error?: string; code?: string}>(`digital-human/avatars/${encodeURIComponent(id)}/setup`, {action: 'submit_in_app', consent}, {ok: false, error: '提交未完成，请勿重复提交，先刷新人物状态'}),
   digitalHumanCapabilities: () => get<DigitalHumanCapabilities>('digital-human/capabilities', {
     available: false, provider: 'unconfigured', pipelineVersion: DIGITAL_HUMAN_PIPELINE_VERSION,
     modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],
@@ -903,6 +906,8 @@ export interface CoverStyle {
 }
 
 export interface Material {
+  personSetup?: {state: string; updatedAt: string};
+  cloudPersonReady?: boolean;
   id: string;
   name: string;
   folder: string;
@@ -920,7 +925,7 @@ export interface Material {
   canManage?: boolean;
   sourceType?: string;
   sourceUrl?: string;
-  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip';
+  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip' | 'reference_clip';
   rightsStatus?: 'internal_test' | 'commercial_cleared' | 'restricted';
   avatarId?: string;
   avatarVersion?: number;

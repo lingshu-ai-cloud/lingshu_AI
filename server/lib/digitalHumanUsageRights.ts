@@ -11,6 +11,7 @@ type DigitalHumanRightsAsset = {
   productionReady?: boolean;
   rightsStatus?: string;
   rightsUsageScope?: readonly unknown[];
+  personSetup?: { state: string };
 };
 
 const purposeSet = new Set<string>(DIGITAL_HUMAN_USAGE_PURPOSES);
@@ -34,6 +35,7 @@ export function digitalHumanAssetSupportsUsage(
   purpose: DigitalHumanUsagePurpose,
 ): boolean {
   return asset.productionReady === true
+    && (!asset.personSetup || asset.personSetup.state === 'ready')
     && asset.rightsStatus === 'commercial_cleared'
     && normalizeDigitalHumanRightsUsageScope(asset.rightsUsageScope).includes(purpose);
 }

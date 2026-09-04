@@ -47,12 +47,24 @@ export function parseDigitalHumanProviderBinding(value: unknown): DigitalHumanPr
 
 export function selectDigitalHumanProvider(input: {
   mode: 'fast' | 'quality';
+  computeTarget?: string;
   binding?: DigitalHumanProviderBinding;
   heygenApiKey?: string;
   localPullWorkerReady: boolean;
   localDirectConfigured: boolean;
   durationSeconds?: number;
 }): DigitalHumanProviderSelection {
+  const computeTarget = input.computeTarget || 'auto';
+  if (!['auto', 'local-pull'].includes(computeTarget)) {
+    throw new DigitalHumanProviderConfigurationError('INVALID_COMPUTE_TARGET', '数字人执行位置配置无效', ['DIGITAL_HUMAN_COMPUTE_TARGET']);
+  }
+  if (computeTarget === 'local-pull') {
+    if (!input.localPullWorkerReady) {
+      throw new DigitalHumanProviderConfigurationError('LOCAL_WORKER_UNAVAILABLE', '本地 GPU Worker 离线或预检未通过；不会切换到云端服务。', ['DIGITAL_HUMAN_PULL_WORKER_ENABLED/Worker']);
+    }
+    // Execution placement must not downgrade the requested quality mode.
+    return { provider: 'local-worker', engine: 'local', routingReason: `${input.mode}_mode_explicit_local_pull` };
+  }
   if (input.mode === 'quality') {
     const heygen = input.binding?.heygen;
     const missing: string[] = [];
@@ -136,10 +148,53 @@ export class HeyGenV3Provider implements DigitalHumanProvider {
       const response = await this.fetchImpl(`${(this.config.baseUrl || 'https://api.heygen.com').replace(/\/+$/, '')}${path}`, {
         ...init,
         signal: controller.signal,
-        headers: { 'content-type': 'application/json', 'x-api-key': this.config.apiKey, ...(init.headers || {}) },
+        headers: { ...(init.body instanceof FormData ? {} : {'content-type': 'application/json'}), 'x-api-key': this.config.apiKey, ...(init.headers || {}) },
       });
       return await jsonResponse(response);
     } finally { clearTimeout(timer); }
+  }
+
+  async createPerson(name: string, data: string, mediaType: string, requestId: string) {
+    const result = await this.request('/v3/avatars', { method: 'POST', headers: { 'Idempotency-Key': requestId }, body: JSON.stringify({ type: 'digital_twin', name, file: { type: 'base64', media_type: mediaType, data } }) });
+    const groupId = String(result.data?.avatar_group?.id || result.data?.avatar_item?.group_id || '');
+    if (!groupId) throw new Error('人物创建响应缺少身份标识，请人工核对，勿重复创建');
+    return { groupId, lookId: String(result.data?.avatar_item?.id || '') };
+  }
+
+  async personStatus(groupId: string, lookId: string) {
+    const group = (await this.request(`/v3/avatars/${encodeURIComponent(groupId)}`)).data;
+    const look = lookId ? (await this.request(`/v3/avatars/looks/${encodeURIComponent(lookId)}`)).data
+      : (await this.request(`/v3/avatars/looks?group_id=${encodeURIComponent(groupId)}`)).data?.[0];
+    const ready = group?.status !== 'failed' && group?.consent_status === 'approved' && look?.status === 'completed'
+      && Boolean(look.default_voice_id) && look.supported_api_engines?.some((e: string) => ['avatar_v', 'avatar_iv'].includes(e));
+    return { ready, consentStatus: group?.consent_status as string | undefined, state: ready ? 'ready' : group?.status === 'failed' || look?.status === 'failed' ? 'failed' : group?.consent_status !== 'approved' ? 'consent_required' : 'training', look };
+  }
+
+  async publicPeople() {
+    const result = await this.request('/v3/avatars/looks?ownership=public');
+    return (Array.isArray(result.data) ? result.data : []).filter((look: any) => look.id && look.status === 'completed' && look.default_voice_id && look.supported_api_engines?.some((engine: string) => ['avatar_v', 'avatar_iv'].includes(engine)));
+  }
+
+  async uploadPersonConsent(bytes: Uint8Array, mimeType: string, requestId: string) {
+    const body = new FormData();
+    body.append('file', new Blob([new Uint8Array(bytes)], {type: mimeType}), mimeType === 'video/webm' ? 'consent.webm' : 'consent.mp4');
+    const result = await this.request('/v3/assets', {method: 'POST', headers: {'Idempotency-Key': requestId}, body});
+    const id = String(result.data?.asset_id || '');
+    if (!id) throw new Error('授权视频上传响应无效');
+    return id;
+  }
+
+  async submitPersonConsent(groupId: string, assetId: string, requestId: string) {
+    const result = await this.request(`/v3/avatars/${encodeURIComponent(groupId)}/consent`, {
+      method: 'POST', headers: {'Idempotency-Key': requestId},
+      body: JSON.stringify({consent_video: {type: 'asset_id', asset_id: assetId}}),
+    });
+    // Level 2 returns a group, not a hosted consent URL. Never silently fall
+    // back to a redirect/iframe when the account lacks enterprise access.
+    if (result.data?.url || !result.data?.avatar_group || result.data.avatar_group.id !== groupId) {
+      throw new DigitalHumanProviderConfigurationError('IN_APP_CONSENT_UNAVAILABLE', '站内授权提交未获服务方确认', []);
+    }
+    return result.data.avatar_group.consent_status as string | undefined;
   }
 
   async submit(input: DigitalHumanProviderSubmitInput): Promise<DigitalHumanProviderTask> {

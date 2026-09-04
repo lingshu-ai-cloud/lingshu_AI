@@ -5,7 +5,7 @@ export const RENDER_AI_DISCLOSURE_PROVIDER = 'lingshu-digital-human' as const;
 export interface RenderTimelineProvenance {
   digitalHumanGenerated?: boolean;
   sourceType?: string;
-  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip';
+  assetRole?: 'avatar_master' | 'avatar_motion_clip' | 'generated_clip' | 'reference_clip';
   folder?: string;
 }
 

@@ -54,7 +54,7 @@ const activeMaterialCandidates = section(
 const avatarLibrary = section(
   studio,
   '  const digitalHumanAvatars = materials.filter(item => (',
-  '  const activeDigitalHumanAvatar = digitalHumanAvatars.find',
+  '  const explicitlySelectedPerson =',
   '人物 IP 资产库',
 );
 const currentVoiceDraftLayout = section(
@@ -167,7 +167,7 @@ assert.match(route, /avatar\.productionReady !== true[\s\S]{0,220}AVATAR_NOT_PRO
 assert.match(route, /AVATAR_USAGE_NOT_CLEARED/, '人物授权范围不覆盖请求用途时必须阻止生产');
 assert.match(route, /digital-human\/avatars\/preferred[\s\S]{0,1000}digitalHumanAssetSupportsUsage\(preferred, 'internal_preview'\)/, '首选人物不得绕过严格生产和内部预览授权门禁');
 assert.match(studio, /usagePurpose: 'internal_preview'/, '现有创作界面必须明确标记本轮为内部预览');
-assert.match(route, /item\.assetRole !== 'avatar_motion_clip'/, '人物资产列表不得把动作片段误当成独立人物');
+assert.match(route, /function isDigitalHumanAvatarMaster[\s\S]{0,250}item\.assetRole === 'avatar_master'/, '人物列表仅接受母片身份，不能包含动作、普通素材或生成片');
 assert.ok((studio.match(/pipelineVersion: DIGITAL_HUMAN_PIPELINE_VERSION/g) || []).length >= 5,
   '前端创建、源指纹和旧 binding 兼容必须共用P1版本常量');
 assert.doesNotMatch(studio, /digital-human-v2-p0/, '前端不得继续生成P0缓存身份');

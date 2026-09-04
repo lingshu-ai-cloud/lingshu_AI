@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { personIsReady, selectPerson } from '../lib/personAssetPolicy';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send,
@@ -447,6 +448,8 @@ interface Clip {
   productionReady?: boolean;
   rightsStatus?: Material['rightsStatus'];
   providerBindings?: Material['providerBindings'];
+  personSetup?: Material['personSetup'];
+  cloudPersonReady?: boolean;
   industry?: string;
   shotFunction?: string;
   applicability?: string;
@@ -6887,7 +6890,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const avatar = materials.find(item => item.id === avatarMaterialId && item.folder === 'presenter' && item.type === 'video');
     const speech = digitalHumanSpeechForSlot(slot, language);
     const { text: spokenText, slotIndex, languageVoiceover } = speech;
-    if (!avatar || avatar.productionReady !== true) throw new Error('请选择人物资产库中授权有效且表演包完整的人物。');
+    if (!avatar || avatar.productionReady !== true || (avatar.personSetup && avatar.personSetup.state !== 'ready')) throw new Error('所选人物尚未准备完成。请等待本人授权与人物准备，或主动更换人物。');
     if (!languageVoiceover.url) throw new Error(`${LANGS.find(item => item.code === language)?.label || language}口播音频尚未就绪。`);
     if (!spokenText) throw new Error('当前分镜没有可驱动数字人的口播内容。');
     if (digitalHumanCapabilities?.available === false) throw new Error(digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用。');
@@ -7110,13 +7113,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       && item.assetRole === 'avatar_master'
       && item.productionReady === true
       && item.rightsStatus === 'commercial_cleared'
-      && (hasMotionPack(item.id) || Boolean(item.providerBindings?.heygen?.avatarId && item.providerBindings?.heygen?.voiceId));
+      && (!item.personSetup || item.personSetup.state === 'ready')
+      && (hasMotionPack(item.id) || personIsReady(item));
     const preferredAvatarId = shotPreferredAvatarIds[slot.id] || shotDigitalHumanBindings[digitalHumanLanguageKey(slot.id, activeVoiceLang)]?.avatarMaterialId || preferredDigitalHumanAvatarId;
-    const avatar = materials.find(item => item.id === preferredAvatarId && eligibleAvatar(item))
-      || materials.find(item => item.id === preferredDigitalHumanAvatarId && eligibleAvatar(item))
-      || materials.find(eligibleAvatar);
+    const avatar = selectPerson(materials, preferredAvatarId, preferredDigitalHumanAvatarId, eligibleAvatar);
     if (!avatar) {
-      setDigitalHumanNotice('已选择数字人口播。企业知识库暂无可生产的人物 IP，请先补齐人物授权、预检和表演包。');
+      setDigitalHumanNotice('所选或首选人物暂不可用，已保留选择。请等待人物准备完成，或点击更换人物；系统不会自动换成其他人。');
       return;
     }
     const readyLanguages = renderScriptLanguages();
@@ -7142,10 +7144,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       && item.assetRole === 'avatar_master'
       && item.productionReady === true
       && item.rightsStatus === 'commercial_cleared'
-      && hasMotionPack(item.id);
-    const preferredAvatarId = shotPreferredAvatarIds[pendingSlot.id] || preferredDigitalHumanAvatarId;
-    const avatar = materials.find(item => item.id === preferredAvatarId && eligibleAvatar(item))
-      || materials.find(eligibleAvatar);
+      && (!item.personSetup || item.personSetup.state === 'ready')
+      && (hasMotionPack(item.id) || personIsReady(item));
+    const preferredAvatarId = shotPreferredAvatarIds[pendingSlot.id] || shotDigitalHumanBindings[digitalHumanLanguageKey(pendingSlot.id, activeVoiceLang)]?.avatarMaterialId;
+    const avatar = selectPerson(materials, preferredAvatarId, preferredDigitalHumanAvatarId, eligibleAvatar);
     if (!avatar) return;
     void generateDigitalHumanBatchForShot(pendingSlot, avatar.id, readyLanguages);
     // The batch helper writes every submitting binding synchronously before
@@ -7182,7 +7184,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   useEffect(() => {
     let cancelled = false;
     void studioApi.digitalHumanCapabilities().then(value => { if (!cancelled) setDigitalHumanCapabilities(value); });
-    void studioApi.listDigitalHumanAvatars().then(value => {
+    void studioApi.listDigitalHumanAvatars(true).then(value => {
       if (cancelled) return;
       setPreferredDigitalHumanAvatarId(value.preferredAvatarMaterialId);
       setMaterials(current => {
@@ -7257,8 +7259,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   useEffect(() => {
     let cancelled = false;
     const refreshCapabilities = () => {
+      if (document.hidden) return;
       void studioApi.digitalHumanCapabilities().then(value => {
         if (!cancelled) setDigitalHumanCapabilities(value);
+      });
+      void studioApi.listDigitalHumanAvatars(true).then(value => {
+        if (cancelled) return;
+        setPreferredDigitalHumanAvatarId(value.preferredAvatarMaterialId);
+        setMaterials(current => [...current.filter(item => item.assetRole !== 'avatar_master'), ...value.items] as Clip[]);
       });
     };
     const timer = window.setInterval(refreshCapabilities, 10_000);
@@ -11948,13 +11956,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     && item.type === 'video'
     && item.assetRole === 'avatar_master'
     && item.productionReady === true
+    && (!item.personSetup || item.personSetup.state === 'ready')
     && item.rightsStatus === 'commercial_cleared'
-    && avatarIdsWithMotionPack.has(item.id)
-  )).slice(0, 12);
-  const activeDigitalHumanAvatar = digitalHumanAvatars.find(item => item.id === shotPreferredAvatarIds[activeWorkbenchSlot?.id || ''])
-    || digitalHumanAvatars.find(item => item.id === activeShotDigitalHuman?.avatarMaterialId)
-    || digitalHumanAvatars.find(item => item.id === preferredDigitalHumanAvatarId)
-    || digitalHumanAvatars[0];
+    && (avatarIdsWithMotionPack.has(item.id) || personIsReady(item))
+  ));
+  const explicitlySelectedPerson = shotPreferredAvatarIds[activeWorkbenchSlot?.id || ''] || activeShotDigitalHuman?.avatarMaterialId;
+  const activeDigitalHumanAvatar = selectPerson(digitalHumanAvatars, explicitlySelectedPerson, preferredDigitalHumanAvatarId, () => true);
   const activeWorkbenchClip = activeWorkbenchSlot
     ? materialById.get(storyboardAssignmentIdForMode(activeWorkbenchSlot.id, activeVoiceLang, storyboardAssignments, shotMediaModes) || '')
     : previewClip || selectedClips[0];
@@ -12900,7 +12907,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       )}
                     </>
                   ) : (
-                    <p className="mt-2 w-full rounded-lg border border-dashed border-border px-2 py-3 text-center text-[9px] text-text-muted">人物资产库暂无已启用 IP，请到人物资产库统一新增或启用。</p>
+                    <div className="mt-2 rounded-lg border border-dashed border-border p-3 text-[9px] text-text-muted"><p>所选企业人物尚未就绪或已不可用，已保留选择。可到企业知识库完成授权和准备，或主动更换平台人物。</p>{digitalHumanAvatars.filter(a => a.sourceType === 'platform-person').map(a => <button key={a.id} className="mt-2 mr-2 text-blue-700" onClick={() => { setShotPreferredAvatarIds(current => ({...current, [activeWorkbenchSlot.id]: a.id})); void generateDigitalHumanBatchForShot(activeWorkbenchSlot, a.id, renderScriptLanguages()); }}>使用{a.name}</button>)}</div>
                   )}
                   {digitalHumanCapabilities?.available === false && <p className="mt-2 rounded-lg bg-amber-50 px-2 py-2 text-[9px] text-amber-700">已选择数字人，但当前不能开始生成：{digitalHumanCapabilities.unavailableReason || '数字人服务暂不可用'}</p>}
                   {activeShotDigitalHuman?.error && <p className="mt-2 text-[9px] leading-4 text-red-600">{activeShotDigitalHuman.error}</p>}
