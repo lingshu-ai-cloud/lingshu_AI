@@ -88,7 +88,7 @@ assert.match(studio, /const assignments = \{ \.\.\.storyboardAssignments, \.\.\.
 assert.match(studio, /preset: binding\.performancePreset \|\| 'commerce'/, '完成任务的签名校验必须保留表现预设');
 assert.match(studio, /variationSeed: binding\.performanceRevision \|\| 0/, '完成任务的签名校验必须保留表现修订版本');
 assert.match(studio, /if \(!outputOnly\) \{\s*setStepIdx/, '后台批量合成不得强制跳转预览页');
-assert.match(studio, /existing\.inputSignature === combination\.inputSignature/, '旧成片只能在完整输入签名一致时复用');
+assert.match(studio, /renderSignaturesMatch\(existing\.inputSignature, combination\.inputSignature\)/, '旧成片只能在完整内容输入签名一致时复用（忽略临时访问签名轮换）');
 assert.match(studio, /人物口播 · 数字人/, '入口应位于现有素材匹配区域');
 assert.doesNotMatch(studio, /新增数字人创作步骤/, '不得增加新的创作步骤');
 

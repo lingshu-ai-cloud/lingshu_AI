@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { renderAssetIdentity, renderSignaturesMatch } from '../lib/renderInputIdentity';
 
 // Execute the actual component helpers in a bounded VM: a regression must
 // fail quickly rather than freeze the test runner just like the browser.
@@ -85,3 +86,31 @@ for (const language of ['zh', 'en', 'fr', 'zh']) {
   assert.equal(JSON.stringify(vm.runInContext(memoScript, renderContext)), JSON.stringify(originalSlots), 'preview language must preserve render source boundaries');
 }
 console.log('render source stability across language switches passed');
+
+const savedRender = {
+  renderPipelineVersion: 'v1', script: 'Hello',
+  voiceoverUrl: '/voiceovers/tenant/audio.mp3?assetToken=old',
+  timeline: [{ clipId: 'material-1', url: '/studio-media/material-1/signed/old.token/media.mp4', trimEnd: 7.3, sourceType: 'licensed_upload' }],
+  cues: [{ text: 'Hello', start: 0, end: 4 }], ratio: '9:16',
+};
+const refreshedRender = JSON.parse(JSON.stringify(savedRender));
+refreshedRender.voiceoverUrl = '/voiceovers/tenant/audio.mp3?assetToken=new';
+refreshedRender.timeline[0].url = '/studio-media/material-1/signed/new.token/media.mp4';
+assert.ok(renderSignaturesMatch(JSON.stringify(savedRender), JSON.stringify(refreshedRender)), 'refresh preserves already-generated historical outputs');
+for (const mutate of [
+  (s: typeof savedRender) => { s.script = 'Changed'; },
+  (s: typeof savedRender) => { s.timeline[0].trimEnd = 6; },
+  (s: typeof savedRender) => { s.timeline[0].url = '/studio-media/material-2/signed/new.token/media.mp4'; },
+  (s: typeof savedRender) => { s.voiceoverUrl = '/voiceovers/tenant/new.mp3?assetToken=new'; },
+  (s: typeof savedRender) => { s.cues[0].text = 'Changed'; },
+  (s: typeof savedRender) => { s.ratio = '16:9'; },
+]) {
+  const changed = JSON.parse(JSON.stringify(refreshedRender));
+  mutate(changed);
+  assert.equal(renderSignaturesMatch(JSON.stringify(savedRender), JSON.stringify(changed)), false, 'real edits still invalidate outputs');
+}
+assert.notEqual(renderAssetIdentity('https://one.test/a'), renderAssetIdentity('https://two.test/a'));
+assert.notEqual(renderAssetIdentity('/media/a?v=1'), renderAssetIdentity('/media/a?v=2'));
+assert.equal(renderAssetIdentity('https://bucket.test/a?X-Amz-Signature=old&X-Amz-Date=old&versionId=v1'), 'https://bucket.test/a?versionId=v1');
+assert.equal(renderSignaturesMatch(undefined, '{}'), false);
+console.log('render signature refresh and genuine-edit regressions passed');

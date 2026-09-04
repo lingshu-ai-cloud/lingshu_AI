@@ -21,6 +21,7 @@ import {
 import { performancePlanFingerprint, planDigitalHumanPerformance, selectMotionClips, type AvatarMotionClip } from '../lib/digitalHumanPerformance';
 import { mergeGeneratedVoiceDraft, orderedVoiceLanguages, primaryVoiceDraft, requestedVoiceDraftsReady, validProjectVoiceoverLanguages, voiceDraftLanguagesNeedingTranslation } from '../lib/voiceDraftState';
 import { RENDER_AI_DISCLOSURE_PIPELINE_VERSION } from '../lib/renderAiDisclosure';
+import { renderSignaturesMatch } from '../lib/renderInputIdentity';
 import { DIGITAL_HUMAN_PIPELINE_VERSION } from '../lib/digitalHumanPipeline';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
@@ -5227,7 +5228,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     try {
       for (const combination of combinations) {
         const existing = languageRenderOutputs[combination.key];
-        if (existing?.status === 'done' && existing.path && existing.inputSignature === combination.inputSignature) continue;
+        if (existing?.status === 'done' && existing.path && renderSignaturesMatch(existing.inputSignature, combination.inputSignature)) continue;
         const { key, code, bgmId } = combination;
         const audio = voiceoverForLanguage(code);
         setActiveRenderCombinationKey(key);
@@ -6518,9 +6519,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const seenPaths = new Set<string>();
 
     return buildRenderableVideoVersions().map(({ plan, planIndex, code, languageIndex, bgmId, key, inputSignature }) => {
-      const latestDone = (languageRenderVersions[key] || []).find(item => item.status === 'done' && item.path && item.inputSignature === inputSignature);
+      const latestDone = (languageRenderVersions[key] || []).find(item => item.status === 'done' && item.path && renderSignaturesMatch(item.inputSignature, inputSignature));
       const storedOutput = languageRenderOutputs[key];
-      const output = storedOutput?.inputSignature === inputSignature ? storedOutput : undefined;
+      const output = renderSignaturesMatch(storedOutput?.inputSignature, inputSignature) ? storedOutput : undefined;
       const path = (output?.status === 'done' ? output.path : '')
         || latestDone?.path
         || (key === activeRenderCombinationKey ? renderOutputPath : '');
@@ -11768,8 +11769,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             script: versionScript,
             materials: planTimeline.map(item => item.name),
             bgm: bgms.find(item => item.id === bgmId)?.name || '无配乐',
-            output: languageRenderOutputs[key]?.inputSignature === inputSignature ? languageRenderOutputs[key] : undefined,
-            generations: (languageRenderVersions[key] || []).filter(item => item.inputSignature === inputSignature),
+            output: renderSignaturesMatch(languageRenderOutputs[key]?.inputSignature, inputSignature) ? languageRenderOutputs[key] : undefined,
+            generations: (languageRenderVersions[key] || []).filter(item => renderSignaturesMatch(item.inputSignature, inputSignature)),
           }));
         const fallbackActiveKey = renderCombinationKey(activeAssemblyId, activeVoiceLang, bgm);
         const activeOutputVersion = outputVersions.find(item => item.key === activeRenderCombinationKey)
@@ -12317,7 +12318,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const currentRenderableVideoVersions = buildRenderableVideoVersions();
   const currentRenderOutputFor = (version: typeof currentRenderableVideoVersions[number]) => {
     const output = languageRenderOutputs[version.key];
-    return output?.inputSignature === version.inputSignature ? output : undefined;
+    return renderSignaturesMatch(output?.inputSignature, version.inputSignature) ? output : undefined;
   };
   const workbenchHasFormalVideo = currentRenderableVideoVersions.length > 0
     && currentRenderableVideoVersions.every(version => {
