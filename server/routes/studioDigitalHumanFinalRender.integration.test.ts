@@ -22,16 +22,19 @@ const digitalHumanJobsFile = path.join(root, 'digital-human-jobs.json');
 const renderJobsFile = path.join(root, 'render-jobs.json');
 fs.mkdirSync(mediaDir, { recursive: true });
 
-function makeVideo(filename: string, source: string): void {
+function makeVideo(filename: string, source: string, durationSeconds = 1.2): void {
   execFileSync(String(ffmpegStatic), [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', source,
-    '-t', '1.2', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-y',
+    '-t', String(durationSeconds), '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-y',
     path.join(mediaDir, filename),
   ], { windowsHide: true, stdio: 'pipe' });
 }
 
-makeVideo('dynamic.mp4', 'testsrc2=size=360x640:rate=30');
-makeVideo('black.mp4', 'color=c=black:size=360x640:rate=30');
+// The frozen digital-human interval below is 12 seconds. Its physical source
+// must match that interval: a 1.2-second file with a fabricated 12-second
+// material duration leaves missing video frames in Linux FFmpeg renders.
+makeVideo('dynamic.mp4', 'testsrc2=size=360x640:rate=30', 12);
+makeVideo('black.mp4', 'color=c=black:size=360x640:rate=30', 12);
 
 const material = (id: string, file: string, sourceType: string, duration = 1.2) => ({
   id,
