@@ -29,10 +29,13 @@ const ffmpeg = String(ffmpegStatic);
 const run = (args: string[]) => execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args], { timeout: 30_000 });
 try {
   const source = path.join(root, 'three-scenes.mp4');
-  run(['-f', 'lavfi', '-i', 'color=red:s=160x160:r=10:d=1', '-f', 'lavfi', '-i', 'color=green:s=160x160:r=10:d=1',
-    '-f', 'lavfi', '-i', 'color=blue:s=160x160:r=10:d=1', '-filter_complex', '[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]', '-map', '[v]', '-y', source]);
+  // Some FFmpeg builds report a zero duration for the final decoded frame.
+  // Keep the conservative production probe and provide real footage headroom;
+  // the three one-second output segments still sample distinct source scenes.
+  run(['-f', 'lavfi', '-i', 'color=red:s=160x160:r=10:d=1.1', '-f', 'lavfi', '-i', 'color=green:s=160x160:r=10:d=1.1',
+    '-f', 'lavfi', '-i', 'color=blue:s=160x160:r=10:d=1.1', '-filter_complex', '[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]', '-map', '[v]', '-y', source]);
   const assets = await resolveSourceDurations(Array(3).fill({ ...video('source', 999), localPath: source }));
-  assert.ok(Math.abs(assets[0]!.duration - 3) < 0.15, 'real video duration overrides stale metadata');
+  assert.ok(Math.abs(assets[0]!.duration - 3.3) < 0.15, 'real video duration overrides stale metadata');
   const plan = planVideoSourceSegments(assets, [1, 1, 1]);
   assert.deepEqual(plan.gaps, []);
   const aliasPlan = planVideoSourceSegments([{ ...assets[0]!, id: 'alias-a' }, { ...assets[0]!, id: 'alias-b' }], [2, 2]);
