@@ -7,7 +7,8 @@ import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence 
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppCustomerSalesState, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
-import { sendTenantWhatsAppTemplate, sendTenantWhatsAppText } from '../whatsapp/send.js';
+import { sendTenantWhatsAppTemplateWithReceipt, sendTenantWhatsAppTextWithReceipts } from '../whatsapp/send.js';
+import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { recordPilotEvent } from '../sales/pilotMetrics.js';
 import { whatsappWindowState } from '../sales/whatsappWindow.js';
@@ -186,7 +187,8 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       return;
     }
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
-    if (!status.autoReplyReady) {
+    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
+    if (!status.autoReplyReady || !messagingAuthorization.inboundAutoSendAllowed) {
       res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
       return;
     }
@@ -203,12 +205,24 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       return;
     }
     try {
-      await sendTenantWhatsAppTemplate({
+      const receipt = await sendTenantWhatsAppTemplateWithReceipt({
         tenantId,
         to,
         templateName,
         variables,
         languageCode: String(req.body?.languageCode || 'en_US'),
+      });
+      if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
+      const renderedBody = renderTemplate(templateName, variables) || body;
+      markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to, providerReceipts: [receipt] });
+      await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
+      res.json({
+        ok: true,
+        outboxId: receipt.messageId,
+        providerMessageIds: [receipt.messageId],
+        status: 'sent',
+        sentAt: new Date().toISOString(),
+        renderedBody,
       });
     } catch (error) {
       res.status(502).json({
@@ -217,20 +231,10 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       });
       return;
     }
-    const renderedBody = renderTemplate(templateName, variables) || body;
-    markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to });
-    await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
     const templatePilotAt = Date.now();
     const templateEdited = Boolean(req.body?.styleMemory?.edited);
     recordPilotEvent({ id: `pilot-send:${customerId}:${templatePilotAt}`, tenantId, customerId, type: templateEdited ? 'draft_edited' : 'draft_adopted', occurredAt: new Date(templatePilotAt).toISOString(), metadata: { mode: 'template' } });
     if (templateEdited) recordPilotEvent({ id: `pilot-edit-reason:${customerId}:${templatePilotAt}`, tenantId, customerId, type: 'edit_reason_recorded', occurredAt: new Date(templatePilotAt).toISOString(), metadata: { reason: String(req.body?.styleMemory?.interventionType || 'human_edit') } });
-    res.json({
-      ok: true,
-      outboxId: `tpl_${Date.now()}`,
-      status: 'sent',
-      sentAt: new Date().toISOString(),
-      renderedBody,
-    });
     return;
   }
   const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
@@ -241,8 +245,12 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     }
   }
   let sentMessages: string[] = [];
+  let providerReceipts: Array<{ messageId: string; recipientId: string; raw: Record<string, unknown> }> = [];
   try {
-    sentMessages = await sendTenantWhatsAppText(tenantId, to, body);
+    const delivered = await sendTenantWhatsAppTextWithReceipts(tenantId, to, body);
+    if (!delivered.receipts.length || delivered.receipts.some(receipt => !receipt.messageId)) throw new Error('whatsapp_provider_message_id_missing');
+    sentMessages = delivered.messages;
+    providerReceipts = delivered.receipts;
   } catch (error) {
     res.status(502).json({
       error: 'whatsapp_send_failed',
@@ -250,7 +258,7 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     });
     return;
   }
-  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to });
+  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to, providerReceipts });
   await maybeRecordStyleMemory(req, tenantId, customerId, body);
   const freeTextPilotAt = Date.now();
   const freeTextEdited = Boolean(req.body?.styleMemory?.edited);
@@ -258,7 +266,8 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   if (freeTextEdited) recordPilotEvent({ id: `pilot-edit-reason:${customerId}:${freeTextPilotAt}`, tenantId, customerId, type: 'edit_reason_recorded', occurredAt: new Date(freeTextPilotAt).toISOString(), metadata: { reason: String(req.body?.styleMemory?.interventionType || 'human_edit') } });
   res.json({
     ok: true,
-    outboxId: `out_${Date.now()}`,
+    outboxId: providerReceipts[0]?.messageId,
+    providerMessageIds: providerReceipts.map(receipt => receipt.messageId),
     status: 'sent',
     sentAt: new Date().toISOString(),
     messages: sentMessages,

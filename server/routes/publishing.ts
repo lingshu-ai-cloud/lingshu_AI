@@ -72,6 +72,36 @@ function parseJson<T>(value: unknown, fallback: T): T {
   return fallback;
 }
 
+interface WorkflowTaskAttributionRecord {
+  id: string;
+  tenant_id: string;
+  run_id: string;
+  task_key: string;
+}
+
+async function verifiedWorkflowAttribution(
+  tenantId: string,
+  body: Record<string, unknown>,
+): Promise<{ runId: string; taskId: string; taskKey: string } | null> {
+  const runId = text(body.workflowRunId);
+  const taskId = text(body.workflowTaskId);
+  const requestedTaskKey = text(body.workflowTaskKey);
+  if (!runId && !taskId && !requestedTaskKey) return { runId: '', taskId: '', taskKey: '' };
+  if (!runId || !taskId) return null;
+  try {
+    const task = await store.getById<WorkflowTaskAttributionRecord>('workflow_tasks', taskId);
+    if (
+      !task ||
+      task.tenant_id !== tenantId ||
+      text(task.run_id) !== runId ||
+      (requestedTaskKey && text(task.task_key) !== requestedTaskKey)
+    ) return null;
+    return { runId, taskId, taskKey: text(task.task_key) };
+  } catch {
+    return null;
+  }
+}
+
 function publishingUploadDir(tenantId: string): string {
   const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
   const root = process.env.NODE_ENV === 'test' && String(process.env.STUDIO_PUBLISHING_RENDER_DIR || '').trim()
@@ -126,6 +156,9 @@ function publicPost(post: PostRecord) {
     publishError: text(stats.publishError),
     publishAttempts: numberValue(stats.publishAttempts),
     nextPublishAttemptAt: text(stats.nextPublishAttemptAt),
+    workflowRunId: text(stats.workflowRunId),
+    workflowTaskId: text(stats.workflowTaskId),
+    workflowTaskKey: text(stats.workflowTaskKey),
     isRecycle: Boolean(stats.isRecycle),
     inquiries: numberValue(post.inquiries),
     deals: numberValue(post.deals),
@@ -425,6 +458,17 @@ publishingRouter.post('/calendar', async (req, res) => {
     res.status(400).json({ error: 'scheduled_at_required' });
     return;
   }
+  const workflowAttribution = await verifiedWorkflowAttribution(
+    tenantId,
+    (req.body || {}) as Record<string, unknown>,
+  );
+  if (!workflowAttribution) {
+    res.status(400).json({
+      error: 'invalid_workflow_context',
+      message: '数字员工任务归属已失效，请从执行中心重新进入该任务。',
+    });
+    return;
+  }
   const tracked = await createTrackedPostDraft(tenantId, {
     contentId: text(req.body?.contentId),
     platform,
@@ -453,6 +497,9 @@ publishingRouter.post('/calendar', async (req, res) => {
       publishError: '',
       nextPublishAttemptAt: '',
       warnings: [],
+      workflowRunId: workflowAttribution.runId,
+      workflowTaskId: workflowAttribution.taskId,
+      workflowTaskKey: workflowAttribution.taskKey,
     },
   });
   const saved = await store.getById<PostRecord>('posts', tracked.id);
@@ -566,6 +613,40 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     return;
   }
   stats.status = 'scheduled';
+  const workflowRunId = text(currentStats.workflowRunId);
+  const workflowApprovalId = text(currentStats.approvalId);
+  const workflowApprovalTaskId = text(currentStats.workflowTaskId);
+  if (workflowRunId && workflowApprovalId && workflowApprovalTaskId) {
+    stats.status = 'awaiting_reapproval';
+    stats.approvedContentHash = '';
+    stats.realPublishingAuthorized = false;
+    const invalidatedAt = new Date().toISOString();
+    const approval = await store.getById<any>('approval_requests', workflowApprovalId);
+    if (approval?.tenant_id === tenantId && approval.status !== 'superseded') {
+      await store.update('approval_requests', workflowApprovalId, {
+        status: 'superseded',
+        decision_note: '发布内容、账号或排期已修改，原审批自动失效。',
+        decided_at: invalidatedAt,
+      });
+    }
+    const approvalTask = await store.getById<any>('workflow_tasks', workflowApprovalTaskId);
+    if (approvalTask?.tenant_id === tenantId && approvalTask.run_id === workflowRunId) {
+      await store.update('workflow_tasks', workflowApprovalTaskId, {
+        status: 'waiting_external',
+        task_version: Number(approvalTask.task_version || 1) + 1,
+        blocked_reason: '发布内容已修改，需要重新完成质量检查并发起审批。',
+        updated_at: invalidatedAt,
+      });
+      const run = await store.getById<any>('workflow_runs', workflowRunId);
+      if (run?.tenant_id === tenantId) {
+        await store.update('workflow_runs', workflowRunId, {
+          status: 'waiting_external',
+          current_controller: 'human',
+          pause_reason: '发布内容已修改，等待重新审批。',
+        });
+      }
+    }
+  }
   stats.publishAttempts = 0;
   stats.publishResults = {};
   stats.publishError = '';

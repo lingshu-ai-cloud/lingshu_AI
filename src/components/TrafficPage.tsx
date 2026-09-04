@@ -40,6 +40,63 @@ const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(m
 type ViewMode = TrafficViewMode;
 type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
 
+export type DigitalEmployeeWorkflowContext = {
+  runId: string;
+  taskId: string;
+  taskKey: string;
+  preview?: boolean;
+};
+
+const DIGITAL_EMPLOYEE_CONTEXT_TTL = 15 * 60 * 1000;
+
+export function parseDigitalEmployeeWorkflowContext(
+  raw: string,
+  now = Date.now(),
+): DigitalEmployeeWorkflowContext | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      page?: string;
+      runId?: string;
+      taskId?: string;
+      workflowRunId?: string;
+      workflowTaskId?: string;
+      issuedAt?: number;
+      businessRef?: { taskKey?: string; preview?: boolean };
+    };
+    const runId = String(parsed.workflowRunId || parsed.runId || '').trim();
+    const taskId = String(parsed.workflowTaskId || parsed.taskId || '').trim();
+    const preview = parsed.businessRef?.preview === true;
+    if (
+      parsed.page !== 'smartAssets' ||
+      (!preview && (!runId || !taskId)) ||
+      (preview && !String(parsed.businessRef?.taskKey || '').trim()) ||
+      !Number.isFinite(parsed.issuedAt) ||
+      now - Number(parsed.issuedAt) > DIGITAL_EMPLOYEE_CONTEXT_TTL
+    ) return null;
+    return {
+      runId,
+      taskId,
+      taskKey: String(parsed.businessRef?.taskKey || ''),
+      ...(preview ? { preview: true } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function consumeDigitalEmployeeWorkflowContext(): DigitalEmployeeWorkflowContext | null {
+  try {
+    const raw = sessionStorage.getItem('digitalEmployee.businessDeepLink');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { page?: string };
+    if (parsed.page !== 'smartAssets') return null;
+    sessionStorage.removeItem('digitalEmployee.businessDeepLink');
+    return parseDigitalEmployeeWorkflowContext(raw);
+  } catch {
+    return null;
+  }
+}
+
 type PublishDraftItem = {
   videoPath?: string;
   previewUrl?: string;
@@ -48,6 +105,9 @@ type PublishDraftItem = {
   ratio?: string;
   sourceProjectId?: string;
   platform?: PublishPlatform;
+  workflowRunId?: string;
+  workflowTaskId?: string;
+  workflowTaskKey?: string;
 };
 
 type PublishDraft = PublishDraftItem & {
@@ -86,6 +146,9 @@ type PublishQueueItem = {
   ratio?: string;
   sourceProjectId?: string;
   sourcePlatform?: PublishPlatform;
+  workflowRunId?: string;
+  workflowTaskId?: string;
+  workflowTaskKey?: string;
   targetAccountIds: string[];
   platformCopy: Record<string, PlatformCopy>;
   firstComment: string;
@@ -114,6 +177,9 @@ interface Props {
   visibleModes?: ViewMode[];
   pageTitle?: string;
   openProjectsSignal?: number;
+  /** Isolates browser-only draft/queue state between tenants on a shared browser. */
+  storageScope?: string;
+  workflowContextSignal?: DigitalEmployeeWorkflowContext | null;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -161,6 +227,114 @@ function publishItemId() {
     : `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+const PUBLISH_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
+const PUBLISH_ITEM_STATUSES = new Set<PublishItemStatus>(['draft', 'ready', 'publishing', 'scheduled', 'published', 'partial', 'failed']);
+const PUBLISH_DELIVERY_MODES = new Set<DeliveryMode>(['now', 'flexible', 'schedule']);
+
+function storedString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function storedOptionalString(value: unknown): string | undefined {
+  const normalized = storedString(value);
+  return normalized || undefined;
+}
+
+function storedStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+    : [];
+}
+
+function storedPlatform(value: unknown): PublishPlatform | undefined {
+  return typeof value === 'string' && PUBLISH_PLATFORMS.has(value as PublishPlatform)
+    ? value as PublishPlatform
+    : undefined;
+}
+
+function normalizeStoredPlatformCopy(value: unknown): Record<string, PlatformCopy> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([platform, rawCopy]) => {
+    if (!rawCopy || typeof rawCopy !== 'object' || Array.isArray(rawCopy)) return [];
+    const copy = rawCopy as Record<string, unknown>;
+    return [[platform, {
+      title: storedOptionalString(copy.title),
+      description: storedOptionalString(copy.description),
+      caption: storedOptionalString(copy.caption),
+      text: storedOptionalString(copy.text),
+      tags: storedStringArray(copy.tags),
+      hashtags: storedStringArray(copy.hashtags),
+      firstComment: storedOptionalString(copy.firstComment),
+    } satisfies PlatformCopy]];
+  }));
+}
+
+export function normalizeStoredPublishDraft(value: unknown): PublishDraft | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const normalizeItem = (item: unknown): PublishDraftItem | null => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const record = item as Record<string, unknown>;
+    return {
+      videoPath: storedOptionalString(record.videoPath),
+      previewUrl: storedOptionalString(record.previewUrl),
+      title: storedString(record.title),
+      description: storedString(record.description),
+      ratio: storedOptionalString(record.ratio),
+      sourceProjectId: storedOptionalString(record.sourceProjectId),
+      platform: storedPlatform(record.platform),
+      workflowRunId: storedOptionalString(record.workflowRunId),
+      workflowTaskId: storedOptionalString(record.workflowTaskId),
+      workflowTaskKey: storedOptionalString(record.workflowTaskKey),
+    };
+  };
+  const base = normalizeItem(raw);
+  if (!base) return null;
+  const items = Array.isArray(raw.items)
+    ? raw.items.map(normalizeItem).filter((item): item is PublishDraftItem => Boolean(item))
+    : [];
+  return items.length ? { ...base, items } : base;
+}
+
+export function normalizeStoredPublishQueueItem(value: unknown): PublishQueueItem | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const id = storedString(raw.id).trim();
+  if (!id) return null;
+  const status = typeof raw.status === 'string' && PUBLISH_ITEM_STATUSES.has(raw.status as PublishItemStatus)
+    ? raw.status as PublishItemStatus
+    : 'draft';
+  const deliveryMode = typeof raw.deliveryMode === 'string' && PUBLISH_DELIVERY_MODES.has(raw.deliveryMode as DeliveryMode)
+    ? raw.deliveryMode as DeliveryMode
+    : 'now';
+  const completedTargets = Number(raw.completedTargets);
+  return {
+    id,
+    selected: raw.selected === true,
+    videoPath: storedString(raw.videoPath),
+    previewUrl: storedOptionalString(raw.previewUrl),
+    title: storedString(raw.title),
+    description: storedString(raw.description),
+    ratio: storedOptionalString(raw.ratio),
+    sourceProjectId: storedOptionalString(raw.sourceProjectId),
+    sourcePlatform: storedPlatform(raw.sourcePlatform),
+    workflowRunId: storedOptionalString(raw.workflowRunId),
+    workflowTaskId: storedOptionalString(raw.workflowTaskId),
+    workflowTaskKey: storedOptionalString(raw.workflowTaskKey),
+    targetAccountIds: storedStringArray(raw.targetAccountIds),
+    platformCopy: normalizeStoredPlatformCopy(raw.platformCopy),
+    firstComment: storedString(raw.firstComment),
+    trackWaLink: raw.trackWaLink !== false,
+    deliveryMode,
+    scheduledAt: storedString(raw.scheduledAt),
+    calendarPostIds: storedStringArray(raw.calendarPostIds),
+    status,
+    completedTargets: Number.isFinite(completedTargets) ? Math.max(0, completedTargets) : 0,
+    error: storedOptionalString(raw.error),
+  };
+}
+
+
 function titleFromVideoPath(videoPath: string) {
   const filename = videoPath.trim().split(/[\\/]/).pop() || '';
   return filename.replace(/\.(mp4|mov|webm|mkv|avi)$/i, '') || '未命名视频';
@@ -173,7 +347,7 @@ function browserVideoUrl(value: string | undefined): string {
   return '';
 }
 
-function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: string[] = []): PublishQueueItem {
+function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: string[] = [], workflowContext?: DigitalEmployeeWorkflowContext | null): PublishQueueItem {
   const sourcePlatform = draft?.platform;
   const initialCopy: Record<string, PlatformCopy> = sourcePlatform
     ? {
@@ -194,6 +368,9 @@ function createPublishItem(draft?: PublishDraftItem | null, targetAccountIds: st
     ratio: draft?.ratio,
     sourceProjectId: draft?.sourceProjectId,
     sourcePlatform,
+    workflowRunId: draft?.workflowRunId || workflowContext?.runId,
+    workflowTaskId: draft?.workflowTaskId || workflowContext?.taskId,
+    workflowTaskKey: draft?.workflowTaskKey || workflowContext?.taskKey,
     targetAccountIds,
     platformCopy: initialCopy,
     firstComment: '',
@@ -212,11 +389,15 @@ function expandPublishDraft(draft?: PublishDraft | null): PublishDraftItem[] {
   return items.map(item => ({ ...base, ...item }));
 }
 
-function createPublishItems(draft?: PublishDraft | null, targetAccountIds: string[] = []): PublishQueueItem[] {
+function createPublishItems(
+  draft?: PublishDraft | null,
+  targetAccountIds: string[] = [],
+  workflowContext?: DigitalEmployeeWorkflowContext | null,
+): PublishQueueItem[] {
   const drafts = expandPublishDraft(draft).filter(item => Boolean(item.videoPath?.trim()));
   return drafts.length
-    ? drafts.map(item => createPublishItem(item, targetAccountIds))
-    : draft ? [] : [createPublishItem(null, targetAccountIds)];
+    ? drafts.map(item => createPublishItem(item, targetAccountIds, workflowContext))
+    : draft ? [] : [createPublishItem(null, targetAccountIds, workflowContext)];
 }
 
 function mergePublishItems(previous: PublishQueueItem[], additions: PublishQueueItem[]): PublishQueueItem[] {
@@ -248,9 +429,14 @@ function nextScheduleValue(): string {
   return dateTimeLocalValue(next);
 }
 
-function readStoredPublishDraft(): PublishDraft | null {
+export function publishStorageKey(base: string, storageScope?: string): string {
+  const scope = String(storageScope || '').trim();
+  return scope ? `${base}:${encodeURIComponent(scope)}` : base;
+}
+
+function readStoredPublishDraft(storageScope?: string): PublishDraft | null {
   try {
-    return JSON.parse(localStorage.getItem('ow_publish_draft') || 'null') as PublishDraft | null;
+    return normalizeStoredPublishDraft(JSON.parse(localStorage.getItem(publishStorageKey('ow_publish_draft', storageScope)) || 'null'));
   } catch {
     return null;
   }
@@ -258,11 +444,11 @@ function readStoredPublishDraft(): PublishDraft | null {
 
 const PUBLISH_QUEUE_STORAGE_KEY = 'ow_publish_queue';
 
-function readStoredPublishQueue(): PublishQueueItem[] {
+function readStoredPublishQueue(storageScope?: string): PublishQueueItem[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(PUBLISH_QUEUE_STORAGE_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(publishStorageKey(PUBLISH_QUEUE_STORAGE_KEY, storageScope)) || '[]');
     return Array.isArray(parsed)
-      ? parsed.filter(item => item && typeof item === 'object' && typeof item.id === 'string') as PublishQueueItem[]
+      ? parsed.map(normalizeStoredPublishQueueItem).filter((item): item is PublishQueueItem => Boolean(item))
       : [];
   } catch {
     return [];
@@ -290,6 +476,8 @@ export default function TrafficPage({
   visibleModes,
   pageTitle = '我的社媒',
   openProjectsSignal = 0,
+  storageScope,
+  workflowContextSignal,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (initialView) return initialView;
@@ -303,12 +491,17 @@ export default function TrafficPage({
   });
   const [studioMounted, setStudioMounted] = useState(() => initialView === 'create');
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
+  const [workflowContext, setWorkflowContext] = useState<DigitalEmployeeWorkflowContext | null>(consumeDigitalEmployeeWorkflowContext);
   const studioRootRef = useRef<HTMLDivElement | null>(null);
   const modeItems = TRAFFIC_MODE_ORDER
     .filter(mode => !visibleModes || visibleModes.includes(mode))
     .map(mode => ({ mode, ...TRAFFIC_MODE_META[mode] }));
   const currentModeLabel = TRAFFIC_MODE_META[viewMode].label;
   const showCreateShortcut = initialView === 'materials' && showModeTabs === false && Boolean(onNavigate);
+
+  useEffect(() => {
+    setWorkflowContext(workflowContextSignal || null);
+  }, [workflowContextSignal]);
 
   useEffect(() => {
     try { localStorage.setItem('lingshu:traffic:view-mode', viewMode); } catch { /* ignore */ }
@@ -330,11 +523,19 @@ export default function TrafficPage({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ page?: Page; view?: ViewMode; studioPanel?: 'projects' }>).detail;
+      const detail = (event as CustomEvent<{ page?: Page; view?: ViewMode; studioPanel?: 'projects'; runId?: string; taskId?: string; workflowRunId?: string; workflowTaskId?: string; businessRef?: { taskKey?: string } }>).detail;
       if (detail?.page === 'traffic' && detail.view) {
         setViewMode(current => resolveNavigationEventViewMode(current, detail.view!));
       }
       if (detail?.page === 'smartAssets' && (detail.view === 'create' || detail.view === 'publish')) {
+        const runId = String(detail.workflowRunId || detail.runId || '').trim();
+        const taskId = String(detail.workflowTaskId || detail.taskId || '').trim();
+        if (runId && taskId) {
+          setWorkflowContext({ runId, taskId, taskKey: String(detail.businessRef?.taskKey || '') });
+          try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); } catch { /* optional handoff cache */ }
+        } else {
+          setWorkflowContext(null);
+        }
         if (detail.studioPanel !== 'projects') {
           studioRootRef.current
             ?.querySelector<HTMLButtonElement>('button[aria-label="关闭我的创作"]')
@@ -387,7 +588,7 @@ export default function TrafficPage({
 
   const handleGoPublish = (draft: PublishDraft) => {
     setPublishDraft(draft);
-    try { localStorage.setItem('ow_publish_draft', JSON.stringify(draft)); } catch { /* ignore */ }
+    try { localStorage.setItem(publishStorageKey('ow_publish_draft', storageScope), JSON.stringify(draft)); } catch { /* ignore */ }
     setViewMode('publish');
   };
 
@@ -395,7 +596,7 @@ export default function TrafficPage({
     try {
       localStorage.setItem('ow_publish_return_to_preview', JSON.stringify({
         at: Date.now(),
-        projectId: projectId || publishDraft?.sourceProjectId || readStoredPublishDraft()?.sourceProjectId || '',
+        projectId: projectId || publishDraft?.sourceProjectId || readStoredPublishDraft(storageScope)?.sourceProjectId || '',
       }));
     } catch { /* ignore */ }
     setViewMode('create');
@@ -464,7 +665,7 @@ export default function TrafficPage({
       <main className="relative min-h-0 flex-1 overflow-hidden">
         {(studioMounted || viewMode === 'create') && (
           <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-            <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} />
+            <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={workflowContext || undefined} publishStorageScope={storageScope} />
           </div>
         )}
         <AnimatePresence mode="wait">
@@ -479,7 +680,7 @@ export default function TrafficPage({
             </motion.div>
           ) : viewMode === 'create' ? null : viewMode === 'publish' ? (
             <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-              <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} />
+              <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />
             </motion.div>
           ) : (
             <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
@@ -492,13 +693,18 @@ export default function TrafficPage({
   );
 }
 
-function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNavigate?: (p: Page) => void; draft?: PublishDraft | null; onReturnToPreview?: (projectId?: string) => void }) {
-  const [workspaceTab, setWorkspaceTab] = useState<'schedule' | 'publish'>(() => draft || readStoredPublishDraft() ? 'publish' : 'schedule');
+function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowContext, storageScope }: { onNavigate?: (p: Page) => void; draft?: PublishDraft | null; onReturnToPreview?: (projectId?: string) => void; workflowContext?: DigitalEmployeeWorkflowContext; storageScope?: string }) {
+  const [workspaceTab, setWorkspaceTab] = useState<'schedule' | 'publish'>(() => draft || readStoredPublishDraft(storageScope) ? 'publish' : 'schedule');
   const [accounts, setAccounts] = useState<PublishAccount[]>([]);
   const [items, setItems] = useState<PublishQueueItem[]>(() => {
-    const incoming = createPublishItems(draft || readStoredPublishDraft());
-    const stored = readStoredPublishQueue();
-    return incoming.length ? mergePublishItems(stored, incoming) : stored.length ? stored : [createPublishItem(null)];
+    // A direct Digital Employee handoff must not adopt an arbitrary draft left
+    // in localStorage by an earlier manual session.
+    const incomingDraft = draft || (workflowContext ? null : readStoredPublishDraft(storageScope));
+    const incoming = createPublishItems(incomingDraft, [], workflowContext);
+    const stored = readStoredPublishQueue(storageScope);
+    if (incomingDraft && incoming.length) return mergePublishItems(stored, incoming);
+    if (workflowContext) return [createPublishItem(null, [], workflowContext), ...stored];
+    return stored.length ? stored : [createPublishItem(null)];
   });
   const [activeItemId, setActiveItemId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -514,10 +720,32 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   const [pendingTargetAccountIds, setPendingTargetAccountIds] = useState<string[]>([]);
   const accountTargetsSeededRef = useRef(false);
   const pendingAccountTargetsSeededRef = useRef(false);
-  const appliedDraftRef = useRef(JSON.stringify(draft || readStoredPublishDraft() || {}));
+  const appliedDraftRef = useRef(JSON.stringify(draft || readStoredPublishDraft(storageScope) || {}));
   const materializedVideoPathsRef = useRef(new Set<string>());
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const publishSettingsRef = useRef<HTMLElement | null>(null);
+  const handledWorkflowContextRef = useRef(
+    workflowContext ? `${workflowContext.runId}:${workflowContext.taskId}` : '',
+  );
+
+  useEffect(() => {
+    const key = workflowContext
+      ? `${workflowContext.runId}:${workflowContext.taskId}`
+      : '';
+    if (!key || handledWorkflowContextRef.current === key) return;
+    handledWorkflowContextRef.current = key;
+    const attributedItem = createPublishItem(null, [], workflowContext);
+    setItems((current) => {
+      const existing = current.find(
+        (item) => item.workflowRunId === workflowContext!.runId
+          && item.workflowTaskId === workflowContext!.taskId,
+      );
+      setActiveItemId(existing?.id || attributedItem.id);
+      return existing ? current : [attributedItem, ...current];
+    });
+    setWorkspaceTab('publish');
+    setNotice('已从数字员工执行中心进入；新内容将单独归属当前任务，原有队列不受影响。');
+  }, [workflowContext]);
 
   const connectedAccounts = accounts.filter(account => account.status === 'connected');
   const activeItem = items.find(item => item.id === activeItemId) || items[0] || null;
@@ -573,8 +801,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   };
 
   useEffect(() => {
-    try { localStorage.setItem(PUBLISH_QUEUE_STORAGE_KEY, JSON.stringify(items)); } catch { /* storage unavailable */ }
-  }, [items]);
+    try { localStorage.setItem(publishStorageKey(PUBLISH_QUEUE_STORAGE_KEY, storageScope), JSON.stringify(items)); } catch { /* storage unavailable */ }
+  }, [items, storageScope]);
 
   const selectedQueueItems = items.filter(item => item.selected);
   const selectableQueueItems = items.filter(item => item.videoPath.trim());
@@ -733,6 +961,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
             targetAccountLabels: platformAccounts.map(account => account.handle || account.title),
             trackWaLink: item.trackWaLink,
             scheduleLocked: item.deliveryMode === 'schedule',
+            workflowRunId: item.workflowRunId || '',
+            workflowTaskId: item.workflowTaskId || '',
+            workflowTaskKey: item.workflowTaskKey || '',
           }),
         });
         createdIds.push(result.item.id);
@@ -755,6 +986,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   };
 
   const openCalendarPost = (post: CalendarPost) => {
+    if (post.status === 'awaiting_reapproval') {
+      setError('这条内容或排期已经变更，原审批已失效；请返回经营驾驶舱重新发起审批。');
+      setWorkspaceTab('schedule');
+      return;
+    }
     if (post.platformPostId || post.status === 'published') {
       setError('这条内容已经发布，不能再次提交平台');
       setWorkspaceTab('publish');
@@ -785,6 +1021,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
       title: post.title,
       description: post.description || '',
       sourcePlatform: post.platform in PLATFORM_META ? post.platform as PublishPlatform : undefined,
+      workflowRunId: post.workflowRunId,
+      workflowTaskId: post.workflowTaskId,
+      workflowTaskKey: post.workflowTaskKey,
       targetAccountIds: targetAccountIds.length ? targetAccountIds : fallbackTargetIds,
       firstComment: post.firstComment || '',
       trackWaLink: post.trackWaLink !== false,
@@ -961,7 +1200,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
   const removePublishItem = (id: string) => {
     setItems(prev => {
       if (prev.length === 1) {
-        const replacement = createPublishItem(null, connectedAccounts.map(account => account.id));
+        const replacement = createPublishItem(null, connectedAccounts.map(account => account.id), workflowContext);
         setActiveItemId(replacement.id);
         return [replacement];
       }
@@ -1000,6 +1239,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
           description: activeItem?.description || '',
           ratio: activeItem?.ratio,
           platform: activeItem?.sourcePlatform,
+          workflowRunId: activeItem?.workflowRunId,
+          workflowTaskId: activeItem?.workflowTaskId,
+          workflowTaskKey: activeItem?.workflowTaskKey,
         }, targetAccountIds));
       } catch (uploadError) {
         failures.push(`${file.name}: ${uploadError instanceof Error ? uploadError.message : '添加失败'}`);
@@ -1127,6 +1369,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
                 targetAccountLabels: platformAccounts.map(account => account.handle || account.title),
                 trackWaLink: item.trackWaLink,
                 scheduleLocked: true,
+                workflowRunId: item.workflowRunId || '',
+                workflowTaskId: item.workflowTaskId || '',
+                workflowTaskKey: item.workflowTaskKey || '',
               }),
             });
             createdIds.push(result.item.id);
@@ -1485,7 +1730,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview }: { onNaviga
               <h3 className="text-sm font-bold text-text-primary">发布设置</h3>
               <button
                 type="button"
-                onClick={() => onReturnToPreview?.(activeItem?.sourceProjectId || draft?.sourceProjectId || readStoredPublishDraft()?.sourceProjectId)}
+                onClick={() => onReturnToPreview?.(activeItem?.sourceProjectId || draft?.sourceProjectId || readStoredPublishDraft(storageScope)?.sourceProjectId)}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary hover:border-accent hover:text-accent"
               >
                 <ChevronLeft size={12} /> 返回成片预览

@@ -436,7 +436,7 @@ interface Clip {
   height?: number;
   aspectRatio?: number;
   size: string;
-  url?: string;     // 真实素材的可访问地址（mock 占位素材无此字段）
+  url?: string;     // 真实素材的可访问地址；缺少时只展示“预览不可用”状态。
   poster?: string;  // 封面帧画面（视频抽帧 / 图片自身）
   scope?: 'shared' | 'own'; // 公共库 / 我的（缺省按 own）
   usage?: 'editable' | 'reference_only';
@@ -521,6 +521,61 @@ interface StoryboardAssembly {
 }
 
 type StudioPublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
+export type StudioWorkflowContext = { runId: string; taskId: string; taskKey?: string; preview?: boolean };
+
+export function studioWorkflowContextFromSpec(spec: Record<string, unknown>): StudioWorkflowContext | null {
+  const runId = typeof spec.workflowRunId === 'string' ? spec.workflowRunId.trim() : '';
+  const taskId = typeof spec.workflowTaskId === 'string' ? spec.workflowTaskId.trim() : '';
+  if (!runId || !taskId) return null;
+  return {
+    runId,
+    taskId,
+    taskKey: typeof spec.workflowTaskKey === 'string' ? spec.workflowTaskKey.trim() : '',
+  };
+}
+
+export function resolveStudioWorkflowProjectEntry(
+  projects: StudioProject[],
+  context: StudioWorkflowContext,
+): { projects: StudioProject[]; project: StudioProject | null; openList: boolean } {
+  const matches = projects.filter(project => {
+    const projectContext = studioWorkflowContextFromSpec(project.spec);
+    return projectContext?.runId === context.runId && projectContext.taskId === context.taskId;
+  });
+  return {
+    projects: matches,
+    project: matches.length === 1 ? matches[0] : null,
+    openList: matches.length !== 1,
+  };
+}
+
+/**
+ * Silent autosave may update a persisted project, but it must not manufacture
+ * an empty project merely because Studio is mounted in the background.
+ * Enterprise defaults (product, audience, tone, platform) are intentionally
+ * not sufficient: they are loaded without a user or worker creating content.
+ */
+export function studioSpecHasMeaningfulContent(spec: Record<string, unknown>): boolean {
+  const hasText = (key: string) => typeof spec[key] === 'string' && Boolean(String(spec[key]).trim());
+  const hasArray = (key: string) => Array.isArray(spec[key]) && (spec[key] as unknown[]).length > 0;
+  const hasObject = (key: string) => Boolean(
+    spec[key] && typeof spec[key] === 'object' && Object.keys(spec[key] as Record<string, unknown>).length > 0,
+  );
+  return [
+    'script', 'caption', 'posterJsonText', 'posterImageUrl', 'voiceoverUrl', 'coverTitle',
+  ].some(hasText)
+    || ['selected', 'materialSnapshots', 'modeScripts', 'productVideoVersions'].some(hasArray)
+    || ['videoKickoff', 'posterDraft', 'languageRenderOutputs', 'storyboardVideoVersions'].some(hasObject);
+}
+
+function withoutStudioWorkflowContext(spec: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...spec };
+  delete next.workflowRunId;
+  delete next.workflowTaskId;
+  delete next.workflowTaskKey;
+  return next;
+}
+
 type StudioPublishItem = {
   videoPath?: string;
   previewUrl?: string;
@@ -529,6 +584,9 @@ type StudioPublishItem = {
   ratio: string;
   sourceProjectId?: string;
   platform?: StudioPublishPlatform;
+  workflowRunId?: string;
+  workflowTaskId?: string;
+  workflowTaskKey?: string;
 };
 type StudioPublishPayload = StudioPublishItem & { items?: StudioPublishItem[] };
 
@@ -1185,6 +1243,39 @@ const VIDEO_MODE_DRAFT_TITLES: Record<ModeCard['id'], string> = {
 };
 const draftTitleForMode = (mode: ModeCard['id'], sourceTitle = '') =>
   `${VIDEO_MODE_DRAFT_TITLES[mode]}${sourceTitle.trim() ? ` · ${sourceTitle.trim()}` : ''}`;
+
+export type StudioScriptGenerationValidation = {
+  ok: boolean;
+  code?: 'language_required' | 'product_required' | 'material_required' | 'reference_required' | 'duration_invalid';
+  message?: string;
+};
+
+export function validateStudioScriptGenerationInput(input: {
+  mode: ModeCard['id'];
+  language: string;
+  productInfo: string;
+  productLabel: string;
+  selectedMaterialCount: number;
+  hasReferenceAnalysis: boolean;
+  duration: number;
+}): StudioScriptGenerationValidation {
+  if (!input.language.trim()) return { ok: false, code: 'language_required', message: '企业中心尚未配置首选输出语言或主要业务语言，请先完成语言配置。' };
+  if (!Number.isFinite(input.duration) || input.duration <= 0) return { ok: false, code: 'duration_invalid', message: '请先设置大于 0 秒的成片时长。' };
+  if (!input.productInfo.trim() || !input.productLabel.trim()) return { ok: false, code: 'product_required', message: '请先在第一步选择企业中心产品，再生成脚本。' };
+  if (input.mode === 'material' && input.selectedMaterialCount <= 0) return { ok: false, code: 'material_required', message: '请先明确选择本次要使用的真实视频或图片，脚本才会按画面生成。' };
+  if (input.mode === 'clone' && !input.hasReferenceAnalysis) return { ok: false, code: 'reference_required', message: '当前草稿缺少真实对标逐镜分析，请返回灵感中心完成全片分析后再生成。' };
+  return { ok: true };
+}
+
+export function studioAgentSourceLabel(source?: string): string {
+  const normalized = String(source || '').trim();
+  if (normalized === 'inspiration_analysis') return '社媒内容 Agent · 爆款视频分析';
+  if (normalized === 'inspiration_image_post') return '社媒内容 Agent · 爆款图文分析';
+  if (normalized === 'material_library' || normalized === 'material_segment_analysis') return '社媒内容 Agent · 素材库';
+  if (normalized === 'seedance_video') return '社媒内容 Agent · AI 视频生成';
+  if (normalized === 'agent_memory' || normalized === 'content_memory_recommendation') return '数字员工 · 内容策略任务';
+  return normalized ? `Agent 任务 · ${normalized}` : '人工进入内容工作台';
+}
 const RATIOS = ['9:16', '1:1', '16:9'];
 const POSTER_RATIOS = ['1:1', '4:5'];
 const LANGS = [
@@ -1338,6 +1429,7 @@ interface VideoKickoff {
   scriptType?: 'voiceover' | 'storyboard';
   language?: string;
   productInfo?: string;
+  actionContext?: { source?: string; recommendation?: string; workflowRunId?: string; workflowTaskId?: string };
   referenceAnalysis?: {
     title?: string;
     visualStyle?: string;
@@ -3023,17 +3115,8 @@ async function runVoiceTranslationWithTimeout<T>(
   }
 }
 
-const SAMPLE_SCRIPT = `[开场 · 0-3s]
-先别划走，这就是最近客户一直在问的那款产品。
-
-[主体 · 3-15s]
-工厂直供，品质稳定，支持快速打样和跨境发货。无论你要做私标包装还是小批量测款，都可以快速开始。
-
-[引导 · 15-20s]
-想要样品、报价或定制方案，直接留言告诉我你的目标市场。`;
-
-/* ── 缩略图占位 ────────────────────────────────────────────────────────── */
-function Thumb({ seed, label, ratio = 'aspect-video', src }: { seed: string; label?: string; ratio?: string; src?: string }) {
+/* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
+function Thumb({ seed: _seed, label, ratio = 'aspect-video', src }: { seed: string; label?: string; ratio?: string; src?: string }) {
   const fallbackSrc = src;
   if (fallbackSrc) {
     return (
@@ -3045,12 +3128,12 @@ function Thumb({ seed, label, ratio = 'aspect-video', src }: { seed: string; lab
       </div>
     );
   }
-  const hue = (seed.charCodeAt(0) * 47 + (seed.charCodeAt(1) ?? 0) * 13) % 360;
   return (
-    <div className={`relative w-full ${ratio} overflow-hidden rounded-lg`}
-      style={{ background: `linear-gradient(135deg, hsl(${hue} 55% 88%), hsl(${(hue + 40) % 360} 55% 78%))` }}>
-      <div className="absolute inset-0 opacity-[0.12]"
-        style={{ backgroundImage: `repeating-linear-gradient(45deg,#000 0,#000 1px,transparent 0,transparent 10px)` }} />
+    <div className={`relative flex w-full ${ratio} items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-100 text-slate-400`}>
+      <div className="flex flex-col items-center gap-1">
+        <ImageIcon size={20} aria-hidden="true" />
+        <span className="text-[9px] font-semibold">预览不可用</span>
+      </div>
       {label && (
         <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold text-white bg-black/45">
           {label}
@@ -3434,7 +3517,7 @@ function VariationChipEditor({
   );
 }
 
-export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0 }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number } = {}) {
+export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string } = {}) {
   const [stepIdx, setStepIdx] = useState(0);
   const [activeStoryboardSlotId, setActiveStoryboardSlotId] = useState('');
   const [canvasView, setCanvasView] = useState<'reference' | 'creation'>('creation');
@@ -3870,7 +3953,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   }, [productSelectMode, selectedProductIds]);
 
-  // 成片预览：网页端顺序播放选中的真实视频片段（mock 占位素材无 url，不可播放）
+  // 成片预览：网页端只顺序播放带可访问地址的真实视频片段。
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
   const [previewNote, setPreviewNote] = useState(false);
   const [previewVideoReady, setPreviewVideoReady] = useState(false);
@@ -3896,11 +3979,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   // 草稿 / 作品
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectWorkflowContext, setProjectWorkflowContext] = useState<StudioWorkflowContext | null>(workflowContext || null);
   const generationSessionId = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const [storyboardVideoVersions, setStoryboardVideoVersions] = useState<Record<string, VideoGenerationVersion[]>>({});
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
   const [showProjects, setShowProjects] = useState(false);
+  const [workflowProjectSelectionPending, setWorkflowProjectSelectionPending] = useState(
+    () => workflowContext?.taskKey === 'content_production',
+  );
   const projectsPanelWasOpenRef = useRef(false);
   const handledOpenProjectsSignalRef = useRef(0);
   const [projects, setProjects] = useState<StudioProject[]>([]);
@@ -3914,6 +4001,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [sourceDraftCheckPending, setSourceDraftCheckPending] = useState(true);
   const [existingSourceDraftPrompt, setExistingSourceDraftPrompt] = useState<ExistingSourceDraftPrompt | null>(null);
   const referenceVoice = useMemo(() => referenceVoiceProfile(videoKickoff), [videoKickoff]);
+
+  useEffect(() => {
+    if (!workflowContext) {
+      if (!projectId) setProjectWorkflowContext(null);
+      setWorkflowProjectSelectionPending(false);
+      return;
+    }
+    const isSameTask = projectWorkflowContext?.runId === workflowContext.runId
+      && projectWorkflowContext?.taskId === workflowContext.taskId;
+    if (isSameTask) return;
+    // A fresh Digital Employee handoff starts a new attributed draft. It must
+    // never relabel an unrelated project that happened to be open in Studio.
+    setProjectId(null);
+    setProjectWorkflowContext(workflowContext);
+    if (workflowContext.taskKey === 'content_production') {
+      setProjects([]);
+      setShowProjects(true);
+      setWorkflowProjectSelectionPending(true);
+    }
+  }, [workflowContext]);
 
   useEffect(() => {
     if (showProjects) {
@@ -5468,7 +5575,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setModeNotice('企业中心尚未配置首选输出语言或主要业务语言，请先完成企业中心语言配置。');
       return false;
     }
-    if (productScriptAbortRef.current) return false;
+    if (productScriptAbortRef.current) {
+      setModeNotice('产品脚本已在生成中，请等待当前任务完成；如需改参数，请先等待本轮结束。');
+      return false;
+    }
     const controller = new AbortController();
     productScriptAbortRef.current = controller;
     const requestId = ++scriptTaskRequestRef.current;
@@ -5598,13 +5708,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [activeModeScriptId, mode, modeScripts]);
 
   const generateTimestampScriptsForMode = async () => {
-    if (!selectedScriptLanguage) {
-      setModeNotice('企业中心尚未配置首选输出语言或主要业务语言，请先完成企业中心语言配置。');
-      return false;
-    }
-    if (mode !== 'clone' && (!activeProductInfo.trim() || !activeProductLabel)) {
-      setModeNotice('请先在第一步选择企业中心产品，再生成整篇脚本。');
-      setStepIdx(0);
+    const validation = validateStudioScriptGenerationInput({
+      mode,
+      language: selectedScriptLanguage,
+      productInfo: activeProductInfo,
+      productLabel: activeProductLabel,
+      selectedMaterialCount: selectedVisualClips.length,
+      hasReferenceAnalysis: Boolean(videoKickoff?.referenceAnalysis?.details?.length),
+      duration,
+    });
+    if (!validation.ok) {
+      setModeNotice(`已停止生成：${validation.message}`);
+      if (validation.code === 'product_required') setStepIdx(0);
+      if (validation.code === 'material_required') setShowSetupMaterialPicker(true);
       return false;
     }
     if (mode === 'material') {
@@ -5613,8 +5729,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (mode === 'product') {
       return await generateFromProductInfo();
     }
+    // Retain an explicit guard here as well as the shared validator so the
+    // clone branch is statically narrowed before reading its reference data.
     if (!videoKickoff?.referenceAnalysis?.details?.length) {
-      setModeNotice('已停止生成：当前草稿没有真实对标逐镜分析。请返回灵感中心完成全片精确分析后再生成脚本。');
+      setModeNotice('已停止生成：当前草稿缺少真实对标逐镜分析，请返回灵感中心完成全片分析后再生成。');
       return false;
     }
     if (hasIncompleteReferenceAnalysis(videoKickoff)) {
@@ -6411,6 +6529,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ratio,
         sourceProjectId: projectId || undefined,
         platform: publishPlatform,
+        workflowRunId: projectWorkflowContext?.runId,
+        workflowTaskId: projectWorkflowContext?.taskId,
+        workflowTaskKey: projectWorkflowContext?.taskKey,
       };
     }).filter(Boolean) as StudioPublishItem[];
   };
@@ -6425,6 +6546,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       ratio,
       sourceProjectId: projectId || undefined,
       platform: platform as StudioPublishPlatform,
+      workflowRunId: projectWorkflowContext?.runId,
+      workflowTaskId: projectWorkflowContext?.taskId,
+      workflowTaskKey: projectWorkflowContext?.taskKey,
     };
     return items.length ? { ...fallback, items } : fallback;
   };
@@ -6434,14 +6558,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const payload = buildPublishPayload();
       const publishableItems = payload.items?.length ? payload.items : [payload];
       if (publishableItems.some(item => Boolean(item.videoPath?.trim()))) {
-        localStorage.setItem('ow_publish_draft', JSON.stringify(payload));
+        localStorage.setItem(publishStorageScope ? `ow_publish_draft:${encodeURIComponent(publishStorageScope)}` : 'ow_publish_draft', JSON.stringify(payload));
       } else {
-        localStorage.removeItem('ow_publish_draft');
+        localStorage.removeItem(publishStorageScope ? `ow_publish_draft:${encodeURIComponent(publishStorageScope)}` : 'ow_publish_draft');
       }
     } catch { /* ignore */ }
     // Keep the top-level publish tab in sync with the latest generated combinations.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRenderCombinationKey, activeVoiceLang, assemblyBgms, bgm, caption, contentPlanVersions, languageRenderOutputs, languageRenderVersions, materialVersionBgms, platform, projectId, projectTitle, ratio, renderOutputPath, renderOutputPreviewUrl, voiceDrafts, voiceLangs, voiceoverAudios, voiceoverMode, voiceoverUrl]);
+  }, [activeRenderCombinationKey, activeVoiceLang, assemblyBgms, bgm, caption, contentPlanVersions, languageRenderOutputs, languageRenderVersions, materialVersionBgms, platform, projectId, projectTitle, publishStorageScope, ratio, renderOutputPath, renderOutputPreviewUrl, voiceDrafts, voiceLangs, voiceoverAudios, voiceoverMode, voiceoverUrl]);
 
   const goPublishCurrentWork = () => {
     const payload = buildPublishPayload();
@@ -7996,6 +8120,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }));
   const collectSpec = () => ({
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
+    workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
     activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
     videoKickoff,
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, cooperationRoute, sellingPoints, tone,
@@ -8012,6 +8137,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   });
 
   const applySpec = (s: Record<string, unknown>) => {
+    setProjectWorkflowContext(studioWorkflowContextFromSpec(s));
     studioSpecEpochRef.current += 1;
     scriptTaskRequestRef.current += 1;
     productScriptAbortRef.current?.abort();
@@ -8276,11 +8402,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, []);
 
   const saveProject = async (
-    status: 'draft' | 'published' | 'template' = 'draft',
+    status: 'draft' | 'ready_for_approval' | 'published' | 'template' = 'draft',
     options: { silent?: boolean } = {},
   ) => {
     const silent = options.silent === true;
     if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return;
+    if (silent && workflowProjectSelectionPending) return;
     if (silent && (
       modeActionLoading || scriptLoading || materialSelectLoading || coverLoading
       || rendering || batchRenderingLangs || posterLoading || captionLoading
@@ -8289,6 +8416,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (!silent) alert('多语字幕或配音仍在生成，请等待完成后再保存草稿。');
       return;
     }
+    const nextSpec = collectSpec();
+    if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return;
     if (silent && autosaveInFlightRef.current) return;
     if (silent) {
       autosaveInFlightRef.current = true;
@@ -8300,7 +8429,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         id: status === 'template' ? undefined : projectId ?? undefined,
         title: projectTitle.trim() || '未命名草稿',
         status,
-        spec: collectSpec(),
+        spec: nextSpec,
         thumbSeed: cover,
       });
       if (project?.id && status !== 'template') {
@@ -8350,6 +8479,22 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const openProjects = async () => {
     setShowProjects(true);
     const [nextProjects, nextBatches] = await Promise.all([studioApi.listProjects(), studioApi.listVariationBatches()]);
+    if (workflowContext?.taskKey === 'content_production') {
+      const entry = resolveStudioWorkflowProjectEntry(nextProjects, workflowContext);
+      setProjects(entry.projects);
+      setVariationBatches([]);
+      if (entry.project) {
+        setWorkflowProjectSelectionPending(false);
+        loadProject(entry.project);
+        setModeNotice(`已打开当前任务的内容项目“${entry.project.title}”。`);
+      } else {
+        setWorkflowProjectSelectionPending(true);
+        setModeNotice(entry.projects.length
+          ? `当前任务共有 ${entry.projects.length} 个内容项目，请选择要查看的项目。`
+          : '当前任务尚未创建可用的内容项目。');
+      }
+      return;
+    }
     setProjects(nextProjects); setVariationBatches(nextBatches);
   };
   useEffect(() => {
@@ -8403,7 +8548,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   const loadProject = (p: StudioProject) => {
-    applySpec(p.spec);
+    applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
+    setWorkflowProjectSelectionPending(false);
     setProjectId(p.status === 'template' ? null : p.id);
     setProjectTitle(p.status === 'template' ? `${p.title} · 副本` : p.title);
     autoGen.current = true; // 载入已有脚本，别再自动覆盖
@@ -8415,6 +8561,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   useEffect(() => {
+    if (workflowContext) {
+      try { localStorage.removeItem(STUDIO_OPEN_PROJECT_KEY); } catch { /* ignore */ }
+      return;
+    }
     let raw = '';
     try {
       raw = localStorage.getItem(STUDIO_OPEN_PROJECT_KEY) || sessionStorage.getItem(STUDIO_ACTIVE_PROJECT_KEY) || '';
@@ -8443,7 +8593,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     } catch {
       // Ignore malformed navigation payloads from older local builds.
     }
-  }, []);
+  }, [workflowContext?.runId, workflowContext?.taskId]);
 
   const reuseProject = async (p: StudioProject) => {
     if (voiceDraftLoading || ttsLoading || savingProj) return;
@@ -8451,7 +8601,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     try {
       const baseTitle = p.title.replace(/\s*·\s*复用\s*\d*$/, '').trim() || '历史作品集';
       const nextTitle = `${baseTitle} · 复用`;
-      const clonedSpec = JSON.parse(JSON.stringify(p.spec || {})) as Record<string, unknown>;
+      const clonedSpec = withoutStudioWorkflowContext(
+        JSON.parse(JSON.stringify(p.spec || {})) as Record<string, unknown>,
+      );
       const saved = await studioApi.saveProject({
         title: nextTitle,
         status: 'draft',
@@ -8525,6 +8677,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setProjects(await studioApi.listProjects());
     if (projectId === id) {
       setProjectId(null);
+      setProjectWorkflowContext(null);
       try { sessionStorage.removeItem(STUDIO_ACTIVE_PROJECT_KEY); } catch { /* ignore */ }
     }
   };
@@ -8588,8 +8741,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       setModeNotice('');
                     }
                     setMode(m.id);
-                    const sourceTitle = videoKickoff?.video?.title || videoKickoff?.generatedVideo?.title || '';
-                    setProjectTitle(contentMode === 'video' ? draftTitleForMode(m.id, sourceTitle) : m.title);
                   }}
                     className={`min-h-[62px] w-full min-w-0 overflow-hidden px-1 py-2.5 text-left transition ${on ? 'bg-emerald-50/60' : 'hover:bg-surface-2/70'}`}>
                     <div className="flex items-center gap-3">
@@ -9597,7 +9748,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         className="card !rounded-xl overflow-hidden text-left relative group"
                         style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
                         <div className="relative">
-                          {/* 真实素材显示实际预览，mock 用渐变占位 */}
+	                          {/* 真实素材显示实际预览；来源不可访问时明确显示不可预览。 */}
                           {c.url
                             ? <RealThumb clip={c} onSourceError={() => { void refreshMaterialSource(c.id); }} />
                             : <Thumb seed={c.id} src={c.poster} label={c.type === 'image' ? 'IMG' : `0:${String(c.duration).padStart(2, '0')}`} />}
@@ -12325,6 +12476,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ? !workbenchHasFormalVideo || rendering || batchRenderingLangs
         : !canNext;
   const activeLanguageLabel = LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang;
+  const workflowTaskLabel: Record<string, string> = {
+    content_mode_routing: '选择内容生产路径',
+    content_production: '脚本、素材与成片生产',
+    content_quality_gate: '内容质量门',
+    content_release_approval: '内容发布审批',
+    publishing_calendar: '发布日历',
+    platform_publish: '平台发布',
+  };
+  const agentSourceContext = projectWorkflowContext?.taskKey
+    ? `${projectWorkflowContext.preview ? '计划预览' : '内容 Agent'} · ${workflowTaskLabel[projectWorkflowContext.taskKey] || projectWorkflowContext.taskKey}`
+    : studioAgentSourceLabel(videoKickoff?.actionContext?.source || videoKickoff?.source);
+  const focusProductContext = activeProductLabel || '待选择企业产品';
   const activeSlotTime = activeWorkbenchSlot && activeWorkbenchSlot.end > activeWorkbenchSlot.start
     ? `${activeWorkbenchSlot.start.toFixed(1)}s–${activeWorkbenchSlot.end.toFixed(1)}s`
     : '';
@@ -12569,7 +12732,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               title="已确认内容"
               description="只显示会影响本次生成的输入"
               items={[
-                { id: 'product', label: '产品', value: activeProductLabel, emptyLabel: '待选择' },
+                { id: 'agent-source', label: 'Agent 来源', value: agentSourceContext },
+                { id: 'product', label: '焦点产品', value: activeProductLabel, emptyLabel: '待选择' },
                 { id: 'theme', label: '主题', value: activeVideoTheme.title },
                 { id: 'audience', label: '目标受众', value: audience.trim(), emptyLabel: '待填写' },
                 { id: 'route', label: '合作路线', value: cooperationRoute, emptyLabel: '待选择' },
@@ -12591,6 +12755,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         propertyDescription={workbenchPropertyDescription}
         propertyPanel={(
           <div className="space-y-4">
+            <section aria-label="Agent 任务上下文" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">Agent 任务上下文</p>
+              <dl className="mt-2 space-y-1.5 text-[10px] leading-4">
+                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">来源</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
+                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">焦点产品</dt><dd className="min-w-0 break-words font-bold text-text-primary">{focusProductContext}</dd></div>
+              </dl>
+            </section>
             {contentMode === 'video' && step === 'mode' && (
               <section className={`rounded-xl border p-3 ${setupReadiness.status === 'ready' ? 'border-emerald-200 bg-emerald-50/60' : setupReadiness.status === 'adjustable' ? 'border-amber-200 bg-amber-50/60' : 'border-red-200 bg-red-50/60'}`}>
                 <div className="flex items-start justify-between gap-2">
@@ -13187,6 +13358,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             batches={variationBatches}
             materials={materials}
             currentId={projectId}
+            workflowContext={workflowContext?.taskKey === 'content_production' ? workflowContext : undefined}
             onClose={() => setShowProjects(false)}
             onLoad={loadProject}
             onDelete={removeProject}
@@ -13201,11 +13373,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 }
 
 /* ── 我的作品 / 草稿 浮层 ─────────────────────────────────────────────── */
-function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onLoad, onDelete, onReview, onReuseProject, onReuse }: {
+function ProjectsOverlay({ projects, batches, materials, currentId, workflowContext, onClose, onLoad, onDelete, onReview, onReuseProject, onReuse }: {
   projects: StudioProject[];
   batches: VariationBatch[];
   materials: Clip[];
   currentId: string | null;
+  workflowContext?: StudioWorkflowContext;
   onClose: () => void;
   onLoad: (p: StudioProject) => void;
   onDelete: (id: string) => void;
@@ -13214,7 +13387,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onL
   onReuse: (batch: VariationBatch) => void;
 }) {
   const drafts = projects.filter(p => p.status === 'draft');
-  const works = projects.filter(p => p.status === 'published');
+  const works = projects.filter(p => p.status === 'ready_for_approval' || p.status === 'published');
 
   const Section = ({ title, items }: { title: string; items: StudioProject[] }) => (
     <div className="mb-5">
@@ -13274,7 +13447,10 @@ function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onL
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
             <FolderOpen size={15} style={{ color: TRAFFIC_GREEN }} />
-            <span className="text-sm font-bold text-text-primary">我的创作</span>
+            <div>
+              <span className="text-sm font-bold text-text-primary">{workflowContext ? '当前任务的内容项目' : '我的创作'}</span>
+              {workflowContext && <p className="mt-0.5 text-[10px] text-text-muted">仅显示本次运行与任务关联的项目</p>}
+            </div>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭我的创作" title="关闭" className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
             <X size={15} />
@@ -13284,13 +13460,13 @@ function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onL
           {drafts.length === 0 && works.length === 0 && batches.length === 0 ? (
             <div className="text-center py-12">
               <FolderOpen size={28} className="mx-auto text-text-muted mb-3 opacity-30" />
-              <p className="text-sm text-text-muted">还没有保存任何草稿或作品</p>
-              <p className="text-xs text-text-muted mt-1">开始创作后会自动保存，也可在顶部手动保存</p>
+              <p className="text-sm text-text-muted">{workflowContext ? '当前任务尚未创建内容项目' : '还没有保存任何草稿或作品'}</p>
+              <p className="text-xs text-text-muted mt-1">{workflowContext ? '请返回执行中心查看任务状态或重试任务' : '开始创作后会自动保存，也可在顶部手动保存'}</p>
             </div>
           ) : (
             <>
               <Section title="作品集草稿" items={drafts} />
-              <Section title="已发布作品集" items={works} />
+              <Section title="已完成 / 待审核作品" items={works} />
               {batches.length > 0 && (
                 <div className="mb-5">
                   <p className="mb-2 text-xs font-semibold text-text-secondary">裂变批次 · {batches.length}</p>
@@ -13298,7 +13474,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, onClose, onL
                     {batches.map(batch => (
                       <div key={batch.id} className="rounded-xl border border-border bg-surface-2 p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <div><p className="text-xs font-bold text-text-primary">{batch.title}</p><p className="mt-0.5 text-[10px] text-text-muted">{batch.items.length} 条 · 预算上限 ¥{batch.estimatedCostCny} · {batch.status}</p></div>
+                          <div><p className="text-xs font-bold text-text-primary">{batch.title}</p><p className="mt-0.5 text-[10px] text-text-muted">{batch.items.length} 条 · 预计生成成本 ¥{batch.estimatedCostCny} · {batch.status}</p></div>
                           <div className="flex shrink-0 items-center gap-1.5">
                             <button type="button" onClick={() => void onReuse(batch)}
                               className="flex items-center gap-1 rounded-md border border-accent/25 bg-white px-2 py-1 text-[10px] font-bold text-accent transition hover:bg-accent/10">

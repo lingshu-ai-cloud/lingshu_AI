@@ -179,6 +179,8 @@ export interface TimelineEvent {
     editedByHuman?: boolean;
     originalDraft?: string;
     memoryApplied?: string[];
+    providerMessageId?: string;
+    providerRecipientId?: string;
   };
 }
 

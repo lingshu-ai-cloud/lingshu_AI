@@ -50,6 +50,9 @@ export type CalendarPost = {
   isRecycle?: boolean;
   platformPostId?: string;
   scheduleLocked?: boolean;
+  workflowRunId?: string;
+  workflowTaskId?: string;
+  workflowTaskKey?: string;
 };
 
 export type PendingPublishContent = {
@@ -154,6 +157,12 @@ function statusMeta(item: CalendarPost): { label: string; className: string; Ico
   }
   if (item.status === 'partial') {
     return { label: '部分发布', className: 'border-orange-200 bg-orange-50 text-orange-700', Icon: Flag };
+  }
+  if (item.status === 'awaiting_manual_publish') {
+    return { label: '待人工发布', className: 'border-blue-200 bg-blue-50 text-blue-700', Icon: Clock };
+  }
+  if (item.status === 'awaiting_reapproval') {
+    return { label: '内容变更·待重审', className: 'border-red-200 bg-red-50 text-red-700', Icon: Flag };
   }
   return { label: item.status || '草稿', className: 'border-slate-200 bg-slate-50 text-slate-600', Icon: Clock };
 }

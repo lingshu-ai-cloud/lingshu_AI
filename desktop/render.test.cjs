@@ -9,6 +9,8 @@ const {
   aiDisclosureFontSize,
   composite,
   cuesToAss,
+  subtitlePages,
+  normalizeSubtitleCues,
   downloadTo,
   ffmpegPath,
   resolveAiDisclosure,
@@ -53,6 +55,18 @@ function changedPixelCount(a, b) {
 
 async function main() {
   assert.ok(ffmpegPath, 'ffmpeg-static is required');
+  const longSubtitle = '工业激光清洁设备适用于金属表面处理，可用于多种生产场景，具体规格、工艺方案和合作条件请联系确认。';
+  const pages = subtitlePages(longSubtitle);
+  assert.ok(pages.length >= 2, 'long subtitles must be split into multiple timed pages');
+  assert.ok(pages.every(page => page.length <= 2), 'every subtitle page must contain no more than two lines');
+  assert.ok(pages.flat().every(line => Array.from(line).length <= 16), 'Chinese subtitle lines must remain inside the mobile safe width');
+  const normalizedCues = normalizeSubtitleCues([{ start: 0, end: 4, text: longSubtitle }]);
+  assert.equal(normalizedCues[0].start, 0);
+  assert.equal(normalizedCues.at(-1).end, 4);
+  assert.ok(normalizedCues.every(cue => (cue.text.match(/\\N/g) || []).length <= 1));
+  const ass = cuesToAss([{ start: 0, end: 4, text: longSubtitle }], 1080, 1920);
+  assert.match(ass, /\\N/, 'ASS output must contain an explicit safe line break');
+  assert.match(ass, /WrapStyle: 0/, 'ASS output must permit renderer wrapping as a final safety net');
   assert.ok(aiDisclosureFontSize(1080, 1920) >= 1080 * 0.05, 'AI label must be at least 5% of the short edge');
   assert.ok(resolveAiDisclosure({
     jobId: 'explicit',

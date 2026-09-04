@@ -32,6 +32,7 @@ data/digital-human-avatar-preferences.json
 data/digital-human-worker/
 data/digital-human-v2/
 data/publishing-uploads/
+data/acceptance-materials/
 data/render-authorizations.json
 data/studio-render-jobs.json
 data/crawler-ops-queue.json

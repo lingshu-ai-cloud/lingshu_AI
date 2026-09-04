@@ -37,6 +37,15 @@ export interface ScheduledTask {
   createdAt: string;
 }
 
+export type ScheduledExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline';
+
+export interface ScheduledRunOutcome {
+  taskId: string;
+  state: ScheduledExecutionState;
+  result: string;
+  lastRun?: string;
+}
+
 interface HolidayInfo {
   date: string;
   name: string;
@@ -742,6 +751,31 @@ function renderTaskReportPdf(payload: Record<string, unknown>): Promise<Buffer> 
 const activeJobs = new Map<string, CronJob>();
 const runningTaskIds = new Set<string>();
 
+/**
+ * Converts the human-readable task report into the small public state machine
+ * used by both the scheduler UI and digital-employee approval hand-offs.
+ */
+export function scheduledExecutionState(
+  result: string | undefined,
+  options: { running?: boolean; workerOnline?: boolean } = {},
+): ScheduledExecutionState {
+  const text = String(result || '').trim();
+  if (options.running || /任务正在执行|执行状态：[^\n]*执行中\s*[1-9]/.test(text)) return 'running';
+  const queued = /执行状态：已排队|执行状态：处理中|等待\s*(?:Mac\s*)?(?:本地\s*)?Worker|等待\/处理中/.test(text);
+  if (queued && options.workerOnline === false) return 'worker_offline';
+  if (queued) return 'queued';
+  if (/执行状态：(?:执行成功|部分成功)|任务执行完成|采集已结束|已完成/.test(text)) return 'succeeded';
+  if (/执行状态：执行失败|执行失败[:：]|任务均执行失败|全部失败/.test(text)) return 'failed';
+  return 'idle';
+}
+
+function taskWithExecutionState(task: ScheduledTask): ScheduledTask & { executionState: ScheduledExecutionState } {
+  return {
+    ...task,
+    executionState: scheduledExecutionState(task.lastResult, { running: runningTaskIds.has(task.id) }),
+  };
+}
+
 async function executeTrendReport(task: ScheduledTask): Promise<string> {
   const enterpriseCtx = await getEnterpriseCtx(task);
   const messages = [{ role: 'user' as const, content: '生成今日TikTok跨境电商爆款趋势简报，包括：热门品类、热门话题标签、建议借势策略，控制在300字以内' }];
@@ -953,7 +987,7 @@ function splitConfigList(value: string | undefined, fallback: string[]): string[
 function normalizeCrawlerLimit(value: unknown): string {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '5';
-  return String(Math.max(1, Math.min(10, Math.round(numeric))));
+  return String(Math.max(1, Math.min(50, Math.round(numeric))));
 }
 
 function resolveCrawlerPlatform(raw: unknown, fallback = 'youtube'): string {
@@ -986,7 +1020,7 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const platforms = splitConfigList(task.config.platforms, ['youtube'])
     .filter((platform): platform is Platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
   const displayedKeywords = new Set<string>();
-  const limit = Math.max(1, Math.min(10, Number(task.config.limit || 5) || 5));
+  const limit = Math.max(1, Math.min(50, Number(task.config.limit || 5) || 5));
   const { dateFrom, dateTo } = beijingDateRange(task.config.dateWindowDays);
   const lines: string[] = [];
   let imported = 0;
@@ -1221,6 +1255,26 @@ async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'cat
   }
 }
 
+/**
+ * Public in-process entry point for an approved weekly plan to launch its first
+ * scheduled action immediately. Tenant ownership is checked before execution.
+ */
+export async function runScheduledTaskNow(input: {
+  tenantId: string;
+  taskId: string;
+}): Promise<ScheduledRunOutcome> {
+  const task = findTenantTask(input.taskId, input.tenantId);
+  if (!task) throw new Error('scheduled_task_not_found');
+  const result = await executeAndPersistTask(task, 'manual');
+  const refreshed = findTenantTask(input.taskId, input.tenantId);
+  return {
+    taskId: input.taskId,
+    state: scheduledExecutionState(result),
+    result,
+    lastRun: refreshed?.lastRun,
+  };
+}
+
 function latestMissedRun(task: ScheduledTask, now = new Date()): Date | null {
   const parts = task.cronExpr.trim().split(/\s+/);
   if (parts.length !== 5 || parts[2] !== '*' || parts[3] !== '*') return null;
@@ -1262,6 +1316,82 @@ function scheduleTask(task: ScheduledTask) {
   activeJobs.set(task.id, job);
 }
 
+export function ensureDigitalEmployeeSocialCollectionTask(input: {
+  tenantId: string;
+  workflowRunId: string;
+  workflowTaskId: string;
+  keywords: string;
+  cronExpr?: string;
+  cronLabel?: string;
+  platforms?: string[];
+  limit?: number;
+  dateWindowDays?: number;
+  dedupeWindowDays?: number;
+}): { task: ScheduledTask; created: boolean; updated: boolean } {
+  const tasks = load();
+  const exact = tasks.find(task => (
+    task.tenantId === input.tenantId &&
+    task.config.workflowTaskId === input.workflowTaskId
+  ));
+  const cronExpr = String(input.cronExpr || '0 1 * * *');
+  if (!cron.validate(cronExpr)) throw new Error('invalid_social_collection_schedule');
+  const platforms = (input.platforms || ['youtube'])
+    .map(platform => String(platform).toLowerCase())
+    .filter(platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
+  const config = {
+    tenantId: input.tenantId,
+    platforms: [...new Set(platforms.length ? platforms : ['youtube'])].join(','),
+    keywords: String(input.keywords || 'industry trends'),
+    limit: normalizeCrawlerLimit(input.limit ?? 20),
+    dateWindowDays: String(Math.max(1, Math.min(30, Number(input.dateWindowDays || 7)))),
+    dedupeWindowDays: String(Math.max(1, Math.min(365, Number(input.dedupeWindowDays || 30)))),
+    workflowRunId: input.workflowRunId,
+    workflowTaskId: input.workflowTaskId,
+    managedBy: 'digital_employee',
+  };
+  // One tenant has one managed collector. A new weekly run rebinds the same
+  // scheduler instead of leaving an additional enabled cron job behind.
+  const existing = exact || tasks.find(task => (
+    task.tenantId === input.tenantId &&
+    task.taskType === 'video_keyword_crawl' &&
+    (task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_'))
+  ));
+  if (existing) {
+    const next: ScheduledTask = {
+      ...existing,
+      name: '数字员工 · 社媒内容采集',
+      cronExpr,
+      cronLabel: input.cronLabel || '每天 01:00（北京时间）',
+      enabled: true,
+      config,
+    };
+    const changed = JSON.stringify({ cronExpr: existing.cronExpr, cronLabel: existing.cronLabel, enabled: existing.enabled, config: existing.config })
+      !== JSON.stringify({ cronExpr: next.cronExpr, cronLabel: next.cronLabel, enabled: next.enabled, config: next.config });
+    if (changed) {
+      tasks[tasks.findIndex(task => task.id === existing.id)] = next;
+      save(tasks);
+      scheduleTask(next);
+    }
+    return { task: changed ? next : existing, created: false, updated: changed };
+  }
+  const task: ScheduledTask = {
+    id: `task_de_${input.workflowTaskId}`,
+    name: '数字员工 · 每日社媒爆款采集',
+    category: 'automation',
+    taskType: 'video_keyword_crawl',
+    cronExpr,
+    cronLabel: input.cronLabel || '每天 01:00（北京时间）',
+    enabled: true,
+    config,
+    tenantId: input.tenantId,
+    createdAt: new Date().toISOString(),
+  };
+  tasks.push(task);
+  save(tasks);
+  scheduleTask(task);
+  return { task, created: true, updated: false };
+}
+
 // Boot: restore active tasks
 export async function initScheduler() {
   const tasks = (await hydrateTasksFromPocketBase()).filter(t => t.enabled && t.tenantId);
@@ -1280,7 +1410,7 @@ schedulerRouter.use(requireAuth);
 
 schedulerRouter.get('/', (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  res.json(tenantTasks(tenantId));
+  res.json(tenantTasks(tenantId).map(taskWithExecutionState));
 });
 
 schedulerRouter.get('/video-stats', async (_req, res) => {
@@ -1294,7 +1424,7 @@ schedulerRouter.get('/video-stats', async (_req, res) => {
     stats = { total: 0, byPlatform: {}, byStatus: {}, ops: { workerEnabled: false } };
   }
   res.json({
-    tasks,
+    tasks: tasks.map(taskWithExecutionState),
     stats,
   });
 });
@@ -1427,10 +1557,17 @@ schedulerRouter.delete('/:id', (req: Request, res: Response) => {
 // Run immediately
 schedulerRouter.post('/:id/run', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
-  const task = findTenantTask(req.params.id, tenantId);
-  if (!task) { res.status(404).json({ error: 'not found' }); return; }
-  const result = await executeAndPersistTask(task, 'manual');
-  res.json({ ok: true, result });
+  try {
+    const outcome = await runScheduledTaskNow({ tenantId, taskId: req.params.id });
+    res.json({ ok: true, ...outcome });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'scheduled_task_not_found') {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    console.error('[scheduler] immediate task run failed:', error);
+    res.status(500).json({ error: 'task_run_failed', message: '任务启动失败，请稍后重试。' });
+  }
 });
 
 // Toggle enabled

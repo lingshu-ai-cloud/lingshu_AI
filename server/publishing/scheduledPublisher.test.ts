@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { isScheduledPostDue, scheduledRetryDelay } from './scheduledPublisher.js';
+import { isScheduledPostDue, runScheduledPublishingCycle, scheduledRetryDelay } from './scheduledPublisher.js';
 import type { PostRecord } from './waLink.js';
+import { store } from '../storage/index.js';
 
 const now = Date.parse('2026-07-29T10:00:00.000Z');
 
@@ -17,6 +18,16 @@ function post(status: string, overrides: Partial<PostRecord> = {}, stats: Record
 }
 
 assert.equal(isScheduledPostDue(post('scheduled'), now), true, 'an overdue scheduled post should run');
+assert.equal(
+  isScheduledPostDue(post('scheduled', {}, { workflowRunId: 'run-1', realPublishingAuthorized: false }), now),
+  false,
+  'a digital-employee post without explicit real-publishing consent must never run',
+);
+assert.equal(
+  isScheduledPostDue(post('scheduled', {}, { workflowRunId: 'run-1', realPublishingAuthorized: true }), now),
+  true,
+  'an approved digital-employee post may run only with frozen real-publishing consent',
+);
 assert.equal(
   isScheduledPostDue(post('scheduled', { published_at: '2026-07-29T11:00:00.000Z' }), now),
   false,
@@ -49,5 +60,54 @@ assert.equal(scheduledRetryDelay(1), 60_000);
 assert.equal(scheduledRetryDelay(2), 300_000);
 assert.equal(scheduledRetryDelay(3), 900_000);
 assert.equal(scheduledRetryDelay(99), 900_000);
+
+const run = { id: 'run-1', tenant_id: 'tenant-1', status: 'running' };
+let current = post('scheduled', {}, { workflowRunId: run.id, realPublishingAuthorized: true, targetAccountIds: ['account-1', 'account-2'], videoPath: '/mock-owned-video.mp4' });
+const original = { list: store.list, getById: store.getById, update: store.update };
+let calls = 0;
+let pauseAfterFirstReceipt = false;
+store.list = (async () => ({ items: [current], totalItems: 1, totalPages: 1, page: 1, perPage: 500 })) as typeof store.list;
+store.getById = (async (collection: string, id: string) => collection === 'workflow_runs' && id === run.id ? run : null) as typeof store.getById;
+store.update = (async (_collection: string, _id: string, patch: Record<string, unknown>) => {
+  Object.assign(current, patch);
+  const results = (current.stats as Record<string, unknown>).publishResults as Record<string, unknown> | undefined;
+  if (pauseAfterFirstReceipt && results?.['account-1']) run.status = 'paused';
+  return true;
+}) as typeof store.update;
+const dependencies = {
+  publish: async () => {
+    calls += 1;
+    return { video: {}, tracking: current, publishRecord: null, platformPostId: `provider-post-${calls}` };
+  },
+  finalize: async (_id: string, patch: { stats?: Record<string, unknown> }) => { Object.assign(current, patch); },
+};
+try {
+  for (const status of ['paused', 'cancelled', 'waiting_human', 'failed', 'succeeded']) {
+    run.status = status;
+    await runScheduledPublishingCycle(now, dependencies);
+    assert.equal(calls, 0, `${status} runs must never publish`);
+    assert.equal((current.stats as Record<string, unknown>).publishAttempts, 0);
+  }
+  run.status = 'running';
+  run.tenant_id = 'other-tenant';
+  await runScheduledPublishingCycle(now, dependencies);
+  assert.equal(calls, 0, 'cross-tenant run references must fail closed');
+  run.tenant_id = 'tenant-1';
+  pauseAfterFirstReceipt = true;
+  await runScheduledPublishingCycle(now, dependencies);
+  assert.equal(calls, 1, 'a pause after the first account must prevent the second account publishing');
+  const pausedStats = current.stats as Record<string, any>;
+  assert.equal(pausedStats.publishResults['account-1'].platformPostId, 'provider-post-1', 'preserve already accepted provider receipts');
+  assert.equal(pausedStats.workflowBlockedReason, 'workflow_run_paused');
+  pauseAfterFirstReceipt = false;
+  run.status = 'running';
+  await runScheduledPublishingCycle(now, dependencies);
+  assert.equal(calls, 2, 'resume must publish only the remaining account, not duplicate the first');
+  assert.equal((current.stats as Record<string, unknown>).status, 'published');
+} finally {
+  store.list = original.list;
+  store.getById = original.getById;
+  store.update = original.update;
+}
 
 console.log('scheduledPublisher passed');

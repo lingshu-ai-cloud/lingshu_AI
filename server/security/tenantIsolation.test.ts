@@ -46,7 +46,7 @@ assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen
 assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
 assert.match(assistantUi, /setAssistantTool\(null\); setPanelView\('chat'\); setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
 assert.match(assistantUi, /ASSISTANT_AUTO_RETRACT_MS = 5_000/, 'the conversation launcher must automatically retract after a short delay');
-assert.match(assistantUi, /const dockOnLeft = false/, 'all pages must share the same right-side assistant position');
+assert.match(assistantUi, /const dockOnLeft = assistantPosition \? assistantPosition\.x < viewport\.width \/ 2 : false/, 'all pages must default to the right and share the same persisted draggable assistant position');
 assert.match(assistantUi, /const launcherAtEdge = mode === 'breathing' && launcherRetracted/, 'all pages must share the same auto-retract behavior');
 assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 assert.match(assistantUi, /data-global-assistant="edge-launcher"[\s\S]*?aria-label="唤出灵小枢智能助手"/, 'the retracted assistant must leave an accessible edge launcher');
@@ -144,6 +144,13 @@ assert.match(read('pb_migrations/1784800000_expand_tiktok_tenant_apps.js'), /\^\
 
 const videos = read('server/routes/videos.ts');
 assert.match(videos, /const \{ tenantId \} = res\.locals as AuthLocals/, 'video routes must resolve tenant from auth locals');
+assert.match(videos, /get\('\/ops\/queue'[\s\S]*?crawlerOpsRecordIdsForTenant\(tenantId\)[\s\S]*?filterCrawlerOpsTasksForRecordIds/, 'crawler ops queue must only expose tasks backed by current-tenant videos');
+assert.match(videos, /get\('\/ops\/stats'[\s\S]*?crawlerOpsRecordIdsForTenant\(tenantId\)[\s\S]*?crawlerOpsStats\(tenantId, visibleRecordIds\)/, 'crawler ops stats must only aggregate current-tenant tasks');
+assert.match(videos, /post\('\/ops\/run-once'[\s\S]*?runCrawlerOpsWorkerOnce\(\{ tenantId \}\)/, 'an HTTP worker tick must be tenant scoped');
+assert.match(videos, /post\('\/ops\/:taskId\/resolve'[\s\S]*?store\.getById<Record<string, unknown>>\(COL, task\.recordId\)[\s\S]*?record\.tenantId[\s\S]*?tenantId/, 'crawler ops resolution must verify the backing video belongs to the authenticated tenant');
+assert.match(videos, /runCrawlerOpsWorkerOnce\(options: \{ recoverInterrupted\?: boolean; tenantId\?: string \}/, 'the worker must accept an optional tenant without removing global background mode');
+assert.match(videos, /enqueueOpsTasksFromRecords\(options\.recoverInterrupted === true, tenantId, maxAttempts\)[\s\S]*?pendingCrawlerOpsTasks\(maxAttempts, visibleRecordIds\)/, 'tenant-scoped worker ticks must constrain both enqueue and candidate selection');
+assert.match(videos, /patch\('\/:id\/reanalyze'[\s\S]*?resetCrawlerOpsTaskForExplicitRetry/, 'an explicit tenant-scoped reanalysis must reset its own exhausted ops task before retrying');
 
 for (const route of ['agentChat', 'strategy', 'draftReply', 'studio']) {
   const source = read(`server/routes/${route}.ts`);

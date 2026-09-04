@@ -38,6 +38,9 @@ import { generatePosterImage, imageExt, type ReferenceImage } from '../lib/image
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
 import { createLinkedAbort } from '../lib/abort.js';
+import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
+import { numericClaimIsProductionParameter, normalizeNumericEvidenceText, productInfoSupportsNumericClaim } from '../lib/studioScriptQualityV2.js';
+import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import {
   createWorkerLeaseId,
   workerAttemptCount,
@@ -700,64 +703,17 @@ export function stripStoryboardReferenceLeaks(
     .trim();
 }
 
-function productSupportsNumericClaim(claim: string, productInfo: string): boolean {
-  // Product fields can contain non-breaking or zero-width separators copied
-  // from rich text. They render as `50g` in the UI but previously prevented
-  // the closed-world checker from finding the same `50g` claim.
-  const normalizeNumericEvidence = (value: string) => String(value)
-    .normalize('NFKC')
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const source = normalizeNumericEvidence(productInfo);
-  const normalizedClaim = normalizeNumericEvidence(claim);
-  if (source.toLowerCase().includes(normalizedClaim.toLowerCase())) return true;
-  const parsed = normalizedClaim.match(/(\d+(?:\.\d+)?)\s*(瓶|ml|毫升|kg|g|克|斤|cm|厘米|mm|毫米|天|day|days|秒|%|个|pcs|件|箱|元|美元)/i);
-  if (!parsed) return false;
-  const value = parsed[1];
-  const unit = parsed[2].toLowerCase();
-  const equivalents: Record<string, string[]> = {
-    ml: ['ml', '毫升'], 毫升: ['ml', '毫升'],
-    kg: ['kg', '千克', '公斤'], g: ['g', '克'], 克: ['g', '克'],
-    cm: ['cm', '厘米'], 厘米: ['cm', '厘米'], mm: ['mm', '毫米'], 毫米: ['mm', '毫米'],
-    day: ['day', 'days', '天'], days: ['day', 'days', '天'], 天: ['day', 'days', '天'],
-    pcs: ['pcs?', 'pieces?', '个', '件'], 个: ['pcs?', 'pieces?', '个', '件'], 件: ['pcs?', 'pieces?', '个', '件'],
-    瓶: ['瓶', 'bottles?'], 箱: ['箱', 'cartons?', 'boxes?'],
-    秒: ['秒', 's', 'sec(?:ond)?s?'],
-    '%': ['%', 'percent'],
-  };
-  if (unit === '美元') {
-    return [
-      `\\$\\s*${value}`,
-      `(?:usd|us\\$)\\s*${value}`,
-      `${value}\\s*(?:usd|us\\$|美元)`,
-    ].some(pattern => new RegExp(pattern, 'i').test(source));
-  }
-  if (unit === '元') {
-    return [
-      `[¥￥]\\s*${value}`,
-      `(?:rmb|cny)\\s*${value}`,
-      `${value}\\s*(?:rmb|cny|元)`,
-    ].some(pattern => new RegExp(pattern, 'i').test(source));
-  }
-  const candidates = equivalents[unit] || [unit];
-  if (candidates.some(candidate => new RegExp(`${value.replace('.', '\\.')}\\s*${candidate}`, 'i').test(source))) return true;
-  // 结构化产品资料有时把单位放在字段名里，例如“起订量：50”“价格(USD)：20”。
-  if (['pcs', '个', '件', '瓶', '箱'].includes(unit)) {
-    return new RegExp(`(?:起订量|MOQ)[^\\n]{0,30}\\b${value}\\b`, 'i').test(source);
-  }
-  return false;
-}
-
 export function unsupportedNumericClaims(candidate: string, productInfo: string): string[] {
-  const pattern = /\d+(?:\.\d+)?\s*(?:瓶|ml|ML|毫升|kg|KG|g|克|斤|cm|厘米|mm|毫米|天|day|days|Days|%|个|pcs|件|箱|元|美元)/g;
-  return [...new Set(Array.from(candidate.matchAll(pattern))
+  const normalizedCandidate = normalizeNumericEvidenceText(candidate);
+  const pattern = /\d+(?:\.\d+)?\s*(?:瓶|bottles?|ml|毫升|kg|千克|公斤|g|克|斤|cm|厘米|mm|毫米|天|day|days|秒|seconds?|secs?|%|percent|个|pcs?|pieces?|件|箱|cartons?|boxes?|元|美元|usd|rmb|cny)/gi;
+  return [...new Set(Array.from(normalizedCandidate.matchAll(pattern))
     .filter(match => {
       const claim = match[0];
-      if (productSupportsNumericClaim(claim, productInfo)) return false;
-      const start = candidate.lastIndexOf('\n', match.index ?? 0) + 1;
-      const end = candidate.indexOf('\n', match.index ?? 0);
-      const line = candidate.slice(start, end < 0 ? candidate.length : end).trim();
+      if (productInfoSupportsNumericClaim(claim, productInfo)) return false;
+      const start = normalizedCandidate.lastIndexOf('\n', match.index ?? 0) + 1;
+      const end = normalizedCandidate.indexOf('\n', match.index ?? 0);
+      const line = normalizedCandidate.slice(start, end < 0 ? normalizedCandidate.length : end).trim();
+      if (numericClaimIsProductionParameter(claim, line)) return false;
       if (/%$/.test(claim)) {
         return !/^(?:运镜|构图|环境|景别)[：:]/.test(line);
       }
@@ -1756,7 +1712,7 @@ export function repairMaterialScript(script: string, productInfo: string, materi
   let repaired = dedupeStoryboardFieldLines(normalizeStoryboardFieldLines(script));
   const unsupportedNumbers = Array.from(repaired.matchAll(/\d+(?:\.\d+)?\s*(?:瓶|ml|ML|毫升|kg|KG|g|克|斤|cm|厘米|mm|毫米|天|day|days|Days|秒|%|个|pcs|件|箱|元|美元)/g))
     .map(match => match[0])
-    .filter(claim => !productSupportsNumericClaim(claim, productInfo));
+    .filter(claim => !productInfoSupportsNumericClaim(claim, productInfo));
   for (const claim of unsupportedNumbers) repaired = repaired.replaceAll(claim, '');
   const evidence = `${productInfo}\n${materialsText}`.toLowerCase();
   const unsupportedEffects: Array<[RegExp, string[], string]> = [
@@ -4342,7 +4298,7 @@ studioRouter.post('/insight', async (req, res) => {
   const { scope = 'traffic', metrics = {} } = req.body ?? {};
   const prompt = `你是跨境电商社媒操盘手。根据以下「${scope}」当期数据（JSON），给运营一句中文洞察 + 2-3 条可执行建议。
 数据：${JSON.stringify(metrics)}
-只返回 JSON：{ "summary": string（一句话核心结论，≤40 字）, "actions": string[]（2-3 条，每条≤18 字，动词开头，具体到内容方向/平台/语言/投流） }`;
+只返回 JSON：{ "summary": string（一句话核心结论，≤40 字）, "actions": string[]（2-3 条，每条≤18 字，动词开头，具体到内容方向/平台/语言/发布节奏） }`;
   try {
     const text = await callLLM(prompt, { backend: 'qwen', systemPrompt: await enterpriseCtx() || undefined });
     const obj = extractJSON<{ summary: string; actions: string[] }>(text);
@@ -6850,6 +6806,7 @@ studioRouter.get('/materials', async (req, res) => {
     }),
     ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
   ] as Material[];
+  list = list.filter(m => !isSyntheticMaterial(m as unknown as Record<string, unknown>));
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
@@ -7170,8 +7127,7 @@ studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
 function isMockMaterial(m: Material): boolean {
   return (m.scope ?? 'own') === 'shared'
     || /^sh-/.test(m.id)
-    || /^示例[·・]/.test(m.name)
-    || m.folder === 'sample';
+    || isSyntheticMaterial(m as unknown as Record<string, unknown>);
 }
 
 // POST /studio/materials  Body: { name, folder?, type, duration?, dataBase64, mimeType?, scope? } → 上传单个文件
@@ -8947,6 +8903,45 @@ async function persistTtsResult<T extends { url?: string }>(result: T, tenantId:
   return { ...result, url: await persistPrivateStudioAsset('tts', tenantId, filePath) };
 }
 
+/**
+ * Trusted in-process entry point used by the digital-employee content worker.
+ * It deliberately returns the tenant-scoped local file path as well as the
+ * public URL so the background renderer does not need to forge an HTTP user
+ * session. No publishing side effect happens here.
+ */
+export async function synthesizeStudioVoiceForAutomation(input: {
+  tenantId: string;
+  text: string;
+  language?: string;
+  voice?: string;
+  targetDuration?: number;
+}): Promise<{
+  ok: boolean;
+  source?: string;
+  url?: string;
+  localPath?: string;
+  duration?: number;
+  text?: string;
+  error?: string;
+}> {
+  return studioTenantContext.run(input.tenantId, async () => {
+    const language = String(input.language || 'zh');
+    const spoken = await repairVoiceoverTargetLanguage(String(input.text || '').trim(), language);
+    if (!spoken) return { ok: false, source: 'empty', error: 'no spoken text' };
+    const generated = await generateFittedTts(spoken, String(input.voice || 'v1'), language, {
+      preset: 'natural',
+      targetDuration: Math.max(1, Math.min(180, Number(input.targetDuration || 20))),
+    });
+    const persisted = await persistTtsResult(generated, input.tenantId);
+    const fileName = persisted.url ? path.basename(new URL(persisted.url, 'http://local').pathname) : '';
+    const localPath = fileName ? path.join(tenantAssetDir(TTS_ROOT, input.tenantId), fileName) : '';
+    return {
+      ...persisted,
+      ...(localPath && fs.existsSync(localPath) ? { localPath } : {}),
+    };
+  });
+}
+
 // POST /studio/tts  Body: { script?, text?, voice?, language? } → { ok, url, duration }
 studioRouter.post('/tts', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -9390,7 +9385,7 @@ const PROJECTS_FILE = path.join(__dirname, '../../data/studio-projects.json');
 interface StudioProject {
   id: string;
   title: string;
-  status: 'draft' | 'published' | 'template';
+  status: 'draft' | 'ready_for_approval' | 'published' | 'template';
   spec: Record<string, unknown>;
   thumbSeed?: string;
   createdAt: string;
@@ -9507,7 +9502,11 @@ studioRouter.post('/projects', async (req, res) => {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
       const nextSpec = mergeVoiceDraftSpecForSave(existing.spec, spec);
+      const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(nextSpec || {})
+        || String(existing.title || '') !== String(title ?? existing.title ?? '')
+        || String(existing.status || '') !== String(status || '');
       await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec: nextSpec, thumb_seed: thumbSeed || '', updated_at: now });
+      if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
       res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec: nextSpec, thumb_seed: thumbSeed, updated_at: now }) });
       return;
     }

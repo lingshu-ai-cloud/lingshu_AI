@@ -543,7 +543,7 @@ export default function StrategyDataBoard({
 
         <div className="min-h-[520px] border-t border-border" id={tab === 'traffic' ? 'social-real-data' : undefined}>
           {tab === 'traffic' ? (
-            <TrafficDataBoard windowDays={windowDays} onOpenAccounts={() => openWorkspaceView('accountManagement', 'accounts')} enableWorkspaceSnapshot={includeMockCustomers} />
+            <TrafficDataBoard windowDays={windowDays} onOpenAccounts={() => openWorkspaceView('accountManagement', 'accounts')} />
           ) : tab === 'inquiry' ? (
             <InquiryDataBoard windowDays={windowDays} includeMockCustomers={includeMockCustomers} mockCustomerScope={mockCustomerScope} />
           ) : (

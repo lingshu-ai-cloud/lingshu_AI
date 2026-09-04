@@ -26,8 +26,12 @@ const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
 const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
 const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.ScriptLibraryPage })));
+const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'));
+const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
 
 export type Page =
+  | 'digitalEmployees'
+  | 'agentMonitor'
   | 'strategy'
   | 'traffic'
   | 'socialInspiration'
@@ -76,13 +80,13 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
-  social_operator: new Set(['strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
-  customer_service: new Set(['strategy', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'scheduled']),
+  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'scheduled']),
 };
 const ALL_PAGES: Page[] = [
-  'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
+  'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
   'conversion', 'retention', 'orders', 'salesQuality', 'salesPilot', 'enterprise', 'agentMemory', 'plugins',
   'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
 ];
@@ -116,9 +120,12 @@ const loadPage = (): Page => {
     const saved = localStorage.getItem('ow_page') as Page | null;
     if (saved && ALL_PAGES.includes(saved)) return saved;
     if (saved) localStorage.removeItem('ow_page');
-    return 'strategy';
-  } catch { return 'strategy'; }
+    return 'digitalEmployees';
+  } catch { return 'digitalEmployees'; }
 };
+
+const pagePreferenceScope = (session: AuthSession) =>
+  `${session.tenant?.id || session.user.tenantId}:${session.user.id}`;
 
 function PageLoading() {
   return (
@@ -209,6 +216,7 @@ export default function App() {
   const [scriptPanelOpen, setScriptPanelOpen] = useState(false);
   const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>('create');
   const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
+  const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean } | null>(null);
 
   useEffect(() => {
     if (page === 'smartAssets') setSmartAssetsMounted(true);
@@ -288,12 +296,12 @@ export default function App() {
     try { localStorage.setItem('ow_page', page); } catch { /* ignore */ }
   }, [page]);
   useEffect(() => {
-    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('strategy');
+    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('digitalEmployees');
   }, [page, session]);
   useEffect(() => {
     if (!session) return;
     const role = session.user.role || 'super_admin';
-    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('strategy');
+    if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('digitalEmployees');
   }, [page, session]);
 
   // 每次对话推进都记录/更新会话历史
@@ -355,6 +363,7 @@ export default function App() {
     setConversation(null); setRestore(null); setKickoff(null);
     activeIdRef.current = null; setActiveConvId(null);
     if (p === 'smartAssets') {
+      setSmartAssetsWorkflowContext(null);
       setSmartAssetsView('create');
       try {
         if (localStorage.getItem('ow_video_kickoff') || localStorage.getItem('ow_seedance_kickoff')) {
@@ -373,6 +382,9 @@ export default function App() {
         page?: Page;
         view?: 'create' | 'publish';
         studioPanel?: 'projects';
+        workflowRunId?: string;
+        workflowTaskId?: string;
+        businessRef?: { taskKey?: string; preview?: boolean };
       }>).detail;
       const nextPage = detail?.page;
       if (!nextPage || !ALL_PAGES.includes(nextPage)) return;
@@ -380,6 +392,13 @@ export default function App() {
       if (nextPage === 'smartAssets') {
         setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
+        const runId = String(detail.workflowRunId || '').trim();
+        const taskId = String(detail.workflowTaskId || '').trim();
+        const taskKey = String(detail.businessRef?.taskKey || '').trim();
+        const preview = detail.businessRef?.preview === true;
+        if ((runId && taskId) || (preview && taskKey)) {
+          setSmartAssetsWorkflowContext({ runId, taskId, taskKey, ...(preview ? { preview: true } : {}) });
+        }
       }
     };
     window.addEventListener('lingshu:navigate', handler);
@@ -392,6 +411,18 @@ export default function App() {
     if (isRegistrationEntry) {
       window.history.replaceState(null, '', '/');
     }
+    // `ow_page` is browser-wide. Never carry the previous account's last page
+    // into a newly authenticated tenant; a new customer must enter through the
+    // operating cockpit and its first-time setup.
+    try {
+      const nextScope = pagePreferenceScope(s);
+      const previousScope = localStorage.getItem('ow_page_scope');
+      if (previousScope !== nextScope) {
+        localStorage.setItem('ow_page_scope', nextScope);
+        localStorage.setItem('ow_page', 'digitalEmployees');
+        setPage('digitalEmployees');
+      }
+    } catch { /* ignore browser persistence failures */ }
     setDemoProgressScope(progressScopeFor(s));
     setSession(s);
     showBusinessDiagnosisFor(s);
@@ -419,7 +450,7 @@ export default function App() {
     setConversation(null);
     setRestore(null);
     setKickoff(null);
-    setPage('strategy');
+    setPage('digitalEmployees');
   };
 
   if (isRegistrationEntry) {
@@ -458,7 +489,7 @@ export default function App() {
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={scriptPanelOpen} onAction={startAgentTask}>
       <AnimatePresence>
-        {businessDiagnosisDocked && !businessDiagnosisOpen && (
+        {page !== 'agentMonitor' && businessDiagnosisDocked && !businessDiagnosisOpen && (
           <motion.button
             type="button"
             layoutId="business-diagnosis-surface"
@@ -493,7 +524,7 @@ export default function App() {
           page={page}
           restore={restore}
           kickoff={kickoff}
-          suppressForRightSidebar={scriptPanelOpen || conversation !== null}
+          suppressForRightSidebar={scriptPanelOpen || conversation !== null || page === 'agentMonitor'}
           onKickoffConsumed={() => setKickoff(null)}
           onAction={startAgentTask}
           onSessionRefresh={() => void refreshSession()}
@@ -501,6 +532,8 @@ export default function App() {
       </Suspense>
       <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
         <Suspense fallback={<PageLoading />}>
+          {page === 'digitalEmployees' && <DigitalEmployeePage onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
+          {page === 'agentMonitor' && <AgentMonitorPage onBack={() => handleNavigate('digitalEmployees')} />}
           {page === 'strategy' && (
             <StrategyPage
               onEnterConversation={enterConversation}
@@ -511,7 +544,7 @@ export default function App() {
               onAction={startAgentTask}
               onNavigate={handleNavigate}
               onSessionRefresh={() => void refreshSession()}
-              includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
+              includeMockCustomers={false}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
@@ -528,6 +561,7 @@ export default function App() {
               onScriptPanelOpen={() => setScriptPanelOpen(true)}
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               onSessionRefresh={() => void refreshSession()}
+              storageScope={session.tenant?.id || session.user.tenantId}
             />
           )}
           {page === 'socialInspiration' && (
@@ -542,6 +576,7 @@ export default function App() {
               initialView="materials"
               showModeTabs={false}
               pageTitle="灵感中心"
+              storageScope={session.tenant?.id || session.user.tenantId}
             />
           )}
           {(page === 'smartAssets' || smartAssetsMounted) && (
@@ -558,6 +593,8 @@ export default function App() {
                 showModeTabs={false}
                 openProjectsSignal={openProjectsSignal}
                 pageTitle="内容创作"
+                storageScope={session.tenant?.id || session.user.tenantId}
+                workflowContextSignal={smartAssetsWorkflowContext}
               />
             </div>
           )}
@@ -571,6 +608,7 @@ export default function App() {
               initialView="accounts"
               showModeTabs={false}
               pageTitle="账号管理"
+              storageScope={session.tenant?.id || session.user.tenantId}
             />
           )}
           {page === 'scriptLibrary' && <ScriptLibraryPage />}
@@ -583,8 +621,8 @@ export default function App() {
               kickoff={kickoffFor('conversion')}
               onAction={startAgentTask}
               onSessionRefresh={() => void refreshSession()}
-              isDemo={Boolean(session.demo?.enabled)}
-              includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
+              isDemo={false}
+              includeMockCustomers={false}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
@@ -594,7 +632,7 @@ export default function App() {
           {page === 'enterprise' && <EnterprisePage />}
           {page === 'agentMemory' && (
             <AgentMemoryPage
-              includeMockCustomers={isAdminSession(session) || isExternalCustomerServiceDemoSession(session) || isLocalCustomerReplyLab()}
+              includeMockCustomers={false}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}

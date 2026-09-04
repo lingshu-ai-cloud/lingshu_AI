@@ -155,6 +155,83 @@ function assText(value) {
     .trim();
 }
 
+function subtitleUnit(char) {
+  if (/\s/.test(char)) return 0.35;
+  if (/[\x00-\xff]/.test(char)) return 0.55;
+  return 1;
+}
+
+function subtitleUnits(value) {
+  return Array.from(String(value || '')).reduce((sum, char) => sum + subtitleUnit(char), 0);
+}
+
+/**
+ * Break a subtitle into mobile-safe pages. Each page contains at most two
+ * lines, and every line is constrained by visual width rather than JS string
+ * length so Chinese and Latin copy behave consistently.
+ */
+function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
+  const source = assText(value);
+  if (!source) return [];
+  const chars = Array.from(source);
+  const lines = [];
+  let line = '';
+  let units = 0;
+  let lastSoftBreak = -1;
+  const flush = () => {
+    const next = line.trim();
+    if (next) lines.push(next);
+    line = '';
+    units = 0;
+    lastSoftBreak = -1;
+  };
+  for (const char of chars) {
+    const nextUnits = units + subtitleUnit(char);
+    if (line && nextUnits > maxUnitsPerLine) {
+      if (lastSoftBreak >= Math.ceil(line.length * 0.45)) {
+        const head = line.slice(0, lastSoftBreak + 1).trim();
+        const tail = line.slice(lastSoftBreak + 1).trimStart();
+        if (head) lines.push(head);
+        line = tail;
+        units = subtitleUnits(tail);
+      } else {
+        flush();
+      }
+    }
+    line += char;
+    units += subtitleUnit(char);
+    if (/[\s，。！？；：、,.!?;:]/.test(char)) lastSoftBreak = line.length - 1;
+  }
+  flush();
+  const pages = [];
+  for (let index = 0; index < lines.length; index += maxLines) {
+    pages.push(lines.slice(index, index + maxLines));
+  }
+  return pages;
+}
+
+function normalizeSubtitleCues(cues, options = {}) {
+  const maxUnitsPerLine = Math.max(8, finiteNumber(options.maxUnitsPerLine, 15));
+  const maxLines = Math.max(1, Math.min(2, Math.round(finiteNumber(options.maxLines, 2))));
+  return (Array.isArray(cues) ? cues : []).flatMap(cue => {
+    const start = Math.max(0, Number(cue && cue.start) || 0);
+    const end = Math.max(0, Number(cue && cue.end) || 0);
+    const pages = subtitlePages(cue && cue.text, maxUnitsPerLine, maxLines);
+    if (!pages.length || end <= start) return [];
+    const weights = pages.map(page => Math.max(1, subtitleUnits(page.join(''))));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    let cursor = start;
+    return pages.map((page, index) => {
+      const pageEnd = index === pages.length - 1
+        ? end
+        : cursor + (end - start) * weights[index] / totalWeight;
+      const normalized = { start: cursor, end: pageEnd, text: page.join('\\N') };
+      cursor = pageEnd;
+      return normalized;
+    });
+  });
+}
+
 function filterPath(value) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -222,7 +299,7 @@ function aiDisclosureFontSize(width, height) {
 }
 
 function cuesToAss(cues, width, height, aiDisclosure, duration) {
-  const valid = (Array.isArray(cues) ? cues : [])
+  const valid = normalizeSubtitleCues(cues)
     .map(cue => ({
       start: Math.max(0, Number(cue && cue.start) || 0),
       end: Math.max(0, Number(cue && cue.end) || 0),
@@ -248,7 +325,7 @@ function cuesToAss(cues, width, height, aiDisclosure, duration) {
     'ScriptType: v4.00+',
     `PlayResX: ${width}`,
     `PlayResY: ${height}`,
-    'WrapStyle: 2',
+    'WrapStyle: 0',
     'ScaledBorderAndShadow: yes',
     '',
     '[V4+ Styles]',
@@ -297,6 +374,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     // 1) 拉取真实素材片段与 BGM
     const requestedTimeline = Array.isArray(manifest && manifest.timeline) ? manifest.timeline.filter(Boolean) : [];
     if (requestedTimeline.some(item => !item.url)) throw new Error('渲染清单包含缺少 URL 的必需画面素材');
+    if (manifest.requireVisualAssets && !requestedTimeline.length) throw new Error('渲染清单缺少必需画面素材');
     const timeline = requestedTimeline;
     const localClips = [];
     for (let i = 0; i < timeline.length; i++) {
@@ -345,11 +423,24 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         const rawTrimEnd = finiteNumber(c.trimEnd, trimStart + target);
         const trimEnd = Math.max(trimStart + 0.1, rawTrimEnd);
         const speed = Math.min(4, Math.max(0.25, finiteNumber(c.speed, 1)));
-        // 所有素材统一铺满目标画幅，避免横竖素材混用时出现黑边和画面尺寸跳变。
+        // Without a trusted focal anchor, preserve the entire source on top of
+        // a blurred fill. Blind center-cropping is especially destructive when
+        // a landscape factory/product shot is rendered to a 9:16 canvas.
+        const padding = manifest.requireVisualAssets ? '' : `tpad=stop_mode=clone:stop_duration=${target.toFixed(3)},`;
         const source = c.image
           ? `[${i}:v]trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`
-          : `[${i}:v]trim=start=${trimStart.toFixed(3)}:end=${trimEnd.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},tpad=stop_mode=clone:stop_duration=${target.toFixed(3)},trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`;
-        filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
+          : `[${i}:v]trim=start=${trimStart.toFixed(3)}:end=${trimEnd.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},${padding}trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`;
+        const focusX = Math.max(0, Math.min(1, finiteNumber(c.focusX, 0.5)));
+        const focusY = Math.max(0, Math.min(1, finiteNumber(c.focusY, 0.5)));
+        const trustedFocus = c.cropMode === 'cover' || (c.cropMode === 'smart' && Number.isFinite(Number(c.focusX)) && Number.isFinite(Number(c.focusY)));
+        if (trustedFocus) {
+          filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:(iw-ow)*${focusX.toFixed(4)}:(ih-oh)*${focusY.toFixed(4)},setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
+        } else {
+          filters.push(`${source},split=2[bg${i}raw][fg${i}raw]`);
+          filters.push(`[bg${i}raw]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=20:2[bg${i}]`);
+          filters.push(`[fg${i}raw]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg${i}]`);
+          filters.push(`[bg${i}][fg${i}]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
+        }
       });
       filters.push(`${localClips.map((_, i) => `[v${i}]`).join('')}concat=n=${n}:v=1:a=0[vcat]`);
       vlabel = '[vcat]';
@@ -467,6 +558,8 @@ module.exports = {
   ffmpegPath,
   aiDisclosureFontSize,
   cuesToAss,
+  subtitlePages,
+  normalizeSubtitleCues,
   isDigitalHumanTimelineItem,
   resolveAiDisclosure,
   sanitizeMetadataValue,

@@ -7,12 +7,30 @@ export interface WhatsAppConfig {
   webhookUrl?: string;
 }
 
-export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text: string): Promise<void> {
-  await axios.post(
+export interface WhatsAppSendReceipt {
+  messageId: string;
+  recipientId: string;
+  raw: Record<string, unknown>;
+}
+
+function sendReceipt(data: unknown): WhatsAppSendReceipt {
+  const raw = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const messages = Array.isArray(raw.messages) ? raw.messages as Array<Record<string, unknown>> : [];
+  const contacts = Array.isArray(raw.contacts) ? raw.contacts as Array<Record<string, unknown>> : [];
+  return {
+    messageId: String(messages[0]?.id || ''),
+    recipientId: String(contacts[0]?.wa_id || ''),
+    raw,
+  };
+}
+
+export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text: string): Promise<WhatsAppSendReceipt> {
+  const response = await axios.post(
     `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
     { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } },
     { headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' } }
   );
+  return sendReceipt(response.data);
 }
 
 export async function sendWhatsAppTemplate(
@@ -21,8 +39,8 @@ export async function sendWhatsAppTemplate(
   templateName: string,
   languageCode: string,
   components: object[] = []
-): Promise<void> {
-  await axios.post(
+): Promise<WhatsAppSendReceipt> {
+  const response = await axios.post(
     `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
     {
       messaging_product: 'whatsapp',
@@ -32,6 +50,7 @@ export async function sendWhatsAppTemplate(
     },
     { headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' } }
   );
+  return sendReceipt(response.data);
 }
 
 export function verifyWhatsAppWebhook(

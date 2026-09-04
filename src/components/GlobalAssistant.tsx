@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowLeft,
@@ -47,6 +55,11 @@ const GUIDE_COOLDOWN_MS = 45_000;
 const GUIDE_VISIBLE_MS = 6_000;
 const ASSISTANT_AUTO_RETRACT_MS = 5_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
+const ASSISTANT_POSITION_KEY = 'lingshu-global-assistant-position-v1';
+const ASSISTANT_LAUNCHER_WIDTH = 60;
+const ASSISTANT_LAUNCHER_HEIGHT = 72;
+const ASSISTANT_VIEWPORT_GAP = 8;
+const ASSISTANT_DRAG_THRESHOLD = 6;
 
 type AssistantPerformance = { phase: string; message?: string };
 type AssistantSpeech = { id: number; message: string };
@@ -64,6 +77,33 @@ type GuideMemory = {
   seen: string[];
   lastShownAt: number;
 };
+
+type AssistantPosition = { x: number; y: number };
+
+function clampAssistantPosition(position: AssistantPosition, viewportWidth: number, viewportHeight: number): AssistantPosition {
+  const maxX = Math.max(ASSISTANT_VIEWPORT_GAP, viewportWidth - ASSISTANT_LAUNCHER_WIDTH - ASSISTANT_VIEWPORT_GAP);
+  const maxY = Math.max(ASSISTANT_VIEWPORT_GAP, viewportHeight - ASSISTANT_LAUNCHER_HEIGHT - ASSISTANT_VIEWPORT_GAP);
+  return {
+    x: Math.min(maxX, Math.max(ASSISTANT_VIEWPORT_GAP, position.x)),
+    y: Math.min(maxY, Math.max(ASSISTANT_VIEWPORT_GAP, position.y)),
+  };
+}
+
+function clampViewportStart(preferred: number, size: number, viewportSize: number, gap: number): number {
+  const maxStart = Math.max(gap, viewportSize - size - gap);
+  return Math.min(maxStart, Math.max(gap, preferred));
+}
+
+function readAssistantPosition(): AssistantPosition | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ASSISTANT_POSITION_KEY) || 'null') as Partial<AssistantPosition> | null;
+    if (!parsed || !Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return null;
+    return clampAssistantPosition({ x: Number(parsed.x), y: Number(parsed.y) }, window.innerWidth, window.innerHeight);
+  } catch {
+    return null;
+  }
+}
 
 interface Props {
   page: Page;
@@ -182,6 +222,8 @@ function pageKey(page: Page) {
 type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
 
 const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
+  digitalEmployees: 'excited',
+  agentMonitor: 'thinking',
   strategy: 'happy',
   traffic: 'excited',
   socialInspiration: 'excited',
@@ -213,7 +255,7 @@ const LAUNCHER_MASCOT_CROP_LEFT: Record<AssistantExpression, number> = {
 
 function AssistantLauncherMascot({ expression }: { expression: AssistantExpression }) {
   return (
-    <span className="relative block h-[72px] w-[60px] overflow-hidden" aria-hidden="true">
+    <span className="pointer-events-none relative block h-[72px] w-[60px] select-none overflow-hidden" aria-hidden="true">
       <AnimatePresence initial={false} mode="wait">
         <motion.span
           key={expression}
@@ -226,7 +268,8 @@ function AssistantLauncherMascot({ expression }: { expression: AssistantExpressi
           <img
             src="/lingshu-expressions-body-transparent.png"
             alt=""
-            className="absolute top-[-36px] h-auto max-w-none drop-shadow-[0_5px_8px_rgba(52,196,113,0.14)]"
+            draggable={false}
+            className="pointer-events-none absolute top-[-36px] h-auto max-w-none select-none drop-shadow-[0_5px_8px_rgba(52,196,113,0.14)]"
             style={{ left: LAUNCHER_MASCOT_CROP_LEFT[expression], width: 329 }}
           />
         </motion.span>
@@ -420,8 +463,29 @@ export default function GlobalAssistant({
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
+  const [assistantPosition, setAssistantPosition] = useState<AssistantPosition | null>(readAssistantPosition);
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window === 'undefined' ? 1440 : window.innerWidth,
+    height: typeof window === 'undefined' ? 900 : window.innerHeight,
+  }));
+  const [launcherDragging, setLauncherDragging] = useState(false);
   const longPressRef = useRef<number | null>(null);
   const longPressedRef = useRef(false);
+  const launcherDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+  const nativeLauncherDragRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const suppressLauncherClickRef = useRef(false);
   const featureGuideTimerRef = useRef<number | null>(null);
   const featureGuideHoverTimerRef = useRef<number | null>(null);
   const speechTimerRef = useRef<number | null>(null);
@@ -456,8 +520,30 @@ export default function GlobalAssistant({
   const panelTitle = assistantTool === 'knowledge-intake' ? '灵小枢 · 快速采集' : isCustomerTodoView ? '今日待办' : activeAgentLabel;
   const panelSubtitle = assistantTool === 'knowledge-intake' ? '当前：智能客服规范' : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
   const radius = 110;
-  const dockOnLeft = false;
-  const launcherAtEdge = mode === 'breathing' && launcherRetracted;
+  const dockOnLeft = assistantPosition ? assistantPosition.x < viewport.width / 2 : false;
+  const dockOnTop = assistantPosition ? assistantPosition.y + ASSISTANT_LAUNCHER_HEIGHT / 2 < viewport.height / 2 : false;
+  const launcherAtEdge = mode === 'breathing' && launcherRetracted && !assistantPosition;
+  const assistantPanelHeight = assistantPosition
+    ? Math.max(120, Math.min(720, dockOnTop
+      ? viewport.height - assistantPosition.y - ASSISTANT_LAUNCHER_HEIGHT - 16
+      : assistantPosition.y - 16))
+    : Math.min(720, viewport.height - 112);
+  const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
+  const positionedPopupLeft = (popupWidth: number, gap = 8) => {
+    if (!assistantPosition) return undefined;
+    const preferredViewportLeft = dockOnLeft
+      ? assistantPosition.x + 72
+      : assistantPosition.x - 12 - popupWidth;
+    return clampViewportStart(preferredViewportLeft, popupWidth, viewport.width, gap) - assistantPosition.x;
+  };
+  const positionedPanelLeft = assistantPosition
+    ? clampViewportStart(
+      dockOnLeft ? assistantPosition.x : assistantPosition.x + ASSISTANT_LAUNCHER_WIDTH - assistantPanelWidth,
+      assistantPanelWidth,
+      viewport.width,
+      16,
+    ) - assistantPosition.x
+    : undefined;
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
@@ -844,7 +930,20 @@ export default function GlobalAssistant({
     return () => window.clearTimeout(timer);
   }, [activeAgent, activeThread.draftInput, activeThread.messages, activeThread.scrollPosition, activeThread.unreadCount, mode, persistThread]);
 
-  const handlePointerDown = () => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const rootRect = assistantRootRef.current?.getBoundingClientRect();
+    if (!rootRect) return;
+    if (event.pointerType !== 'mouse') {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      launcherDragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: rootRect.left,
+        originY: rootRect.top,
+        moved: false,
+      };
+    }
     if (longPressRef.current) window.clearTimeout(longPressRef.current);
     longPressedRef.current = false;
     longPressRef.current = window.setTimeout(() => {
@@ -853,12 +952,102 @@ export default function GlobalAssistant({
     }, 300);
   };
 
-  const handlePointerUp = () => {
+  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(deltaX, deltaY) < ASSISTANT_DRAG_THRESHOLD) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      longPressedRef.current = false;
+      if (longPressRef.current) window.clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+      setLauncherDragging(true);
+      setLauncherRetracted(false);
+      setMode('breathing');
+    }
+    setAssistantPosition(clampAssistantPosition(
+      { x: drag.originX + deltaX, y: drag.originY + deltaY },
+      viewport.width,
+      viewport.height,
+    ));
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = launcherDragRef.current;
+    if (drag?.pointerId === event.pointerId) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (drag.moved) {
+        const next = clampAssistantPosition(
+          { x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY },
+          viewport.width,
+          viewport.height,
+        );
+        setAssistantPosition(next);
+        window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
+        suppressLauncherClickRef.current = true;
+      }
+      launcherDragRef.current = null;
+    }
     if (longPressRef.current) window.clearTimeout(longPressRef.current);
     longPressRef.current = null;
+    setLauncherDragging(false);
+  };
+
+  const handleNativeDragStart = (event: ReactDragEvent<HTMLButtonElement>) => {
+    const rootRect = assistantRootRef.current?.getBoundingClientRect();
+    if (!rootRect) {
+      event.preventDefault();
+      return;
+    }
+    if (longPressRef.current) window.clearTimeout(longPressRef.current);
+    longPressRef.current = null;
+    longPressedRef.current = false;
+    nativeLauncherDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: rootRect.left,
+      originY: rootRect.top,
+    };
+    event.dataTransfer.effectAllowed = 'move';
+    setLauncherDragging(true);
+    setLauncherRetracted(false);
+    setMode('breathing');
+  };
+
+  const handleNativeDrag = (event: ReactDragEvent<HTMLButtonElement>) => {
+    const drag = nativeLauncherDragRef.current;
+    if (!drag || (event.clientX === 0 && event.clientY === 0)) return;
+    setAssistantPosition(clampAssistantPosition(
+      { x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY },
+      viewport.width,
+      viewport.height,
+    ));
+  };
+
+  const handleNativeDragEnd = (event: ReactDragEvent<HTMLButtonElement>) => {
+    const drag = nativeLauncherDragRef.current;
+    if (!drag) return;
+    const next = event.clientX === 0 && event.clientY === 0
+      ? assistantPosition ?? clampAssistantPosition({ x: drag.originX, y: drag.originY }, viewport.width, viewport.height)
+      : clampAssistantPosition(
+        { x: drag.originX + event.clientX - drag.startX, y: drag.originY + event.clientY - drag.startY },
+        viewport.width,
+        viewport.height,
+      );
+    setAssistantPosition(next);
+    window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
+    nativeLauncherDragRef.current = null;
+    suppressLauncherClickRef.current = true;
+    setLauncherDragging(false);
   };
 
   const handleLauncherClick = () => {
+    if (suppressLauncherClickRef.current) {
+      suppressLauncherClickRef.current = false;
+      return;
+    }
     if (longPressedRef.current) {
       longPressedRef.current = false;
       return;
@@ -891,19 +1080,40 @@ export default function GlobalAssistant({
   }, [page]);
 
   useEffect(() => {
-    if (mode !== 'breathing' || (performance && !performanceHidden)) {
+    const handleResize = () => {
+      const nextViewport = { width: window.innerWidth, height: window.innerHeight };
+      setViewport(nextViewport);
+      setAssistantPosition(current => {
+        if (!current) return null;
+        const next = clampAssistantPosition(current, nextViewport.width, nextViewport.height);
+        window.localStorage.setItem(ASSISTANT_POSITION_KEY, JSON.stringify(next));
+        return next;
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (assistantPosition || mode !== 'breathing' || (performance && !performanceHidden)) {
       setLauncherRetracted(false);
       return;
     }
     if (launcherRetracted) return;
     const timer = window.setTimeout(() => setLauncherRetracted(true), ASSISTANT_AUTO_RETRACT_MS);
     return () => window.clearTimeout(timer);
-  }, [launcherRetracted, mode, page, performance, performanceHidden]);
+  }, [assistantPosition, launcherRetracted, mode, page, performance, performanceHidden]);
 
   if (suppressForRightSidebar) return null;
 
   return (
-    <div ref={assistantRootRef} data-global-assistant="root" className={`fixed bottom-5 z-[75] transition-[left,right] duration-300 ${dockOnLeft ? 'left-4 lg:left-[292px]' : launcherAtEdge ? 'right-0' : 'right-5'}`}>
+    <div
+      ref={assistantRootRef}
+      data-global-assistant="root"
+      data-lingshu-assistant-dragged={assistantPosition ? 'true' : 'false'}
+      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom] duration-300'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
+      style={assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : undefined}
+    >
       {mode === 'expanded' && (
         <button
           type="button"
@@ -920,7 +1130,8 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 10, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 7, scale: 0.96 }}
-            className="absolute bottom-1 right-[72px] z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
+            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)] ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
             <button
               type="button"
@@ -934,7 +1145,7 @@ export default function GlobalAssistant({
             <p className="pr-6 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢陪你等</p>
             <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{performanceMessage}</p>
             <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-emerald-500"/><span className="h-1 w-3 animate-pulse rounded-full bg-emerald-300 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-emerald-200 [animation-delay:320ms]"/></div>
-            <span className="absolute -right-2 bottom-6 h-4 w-4 rotate-45 border-r border-t border-emerald-200 bg-white" />
+            <span className={`absolute h-4 w-4 rotate-45 border-emerald-200 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -947,11 +1158,12 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
-            className="absolute bottom-1 right-[72px] z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)]"
+            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)] ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢</p>
             <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{speechBubble.message}</p>
-            <span className="absolute -right-2 bottom-6 h-4 w-4 rotate-45 border-r border-t border-emerald-200 bg-white" />
+            <span className={`absolute h-4 w-4 rotate-45 border-emerald-200 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -964,7 +1176,8 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
-            className={`absolute bottom-1 z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-100 bg-white p-3 shadow-[0_16px_42px_rgba(15,23,42,0.16)] ${dockOnLeft ? 'left-[72px]' : 'right-[72px]'}`}
+            className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-100 bg-white p-3 shadow-[0_16px_42px_rgba(15,23,42,0.16)] ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            style={assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : undefined}
           >
             <button type="button" onClick={() => setFeatureGuide(null)} className="absolute right-2.5 top-2.5 rounded-lg p-1 text-text-muted hover:bg-surface-2" aria-label="关闭用法提示">
               <X size={13} />
@@ -984,7 +1197,7 @@ export default function GlobalAssistant({
             >
               问问灵小枢 →
             </button>
-            <span className={`absolute bottom-6 h-4 w-4 rotate-45 border-emerald-100 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'}`} />
+            <span className={`absolute h-4 w-4 rotate-45 border-emerald-100 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -997,7 +1210,7 @@ export default function GlobalAssistant({
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 4 }}
             onClick={openCurrentPageAgent}
-            className={`absolute bottom-5 z-10 whitespace-nowrap rounded-full border border-emerald-100 bg-white/95 px-3 py-1.5 text-[11px] font-black text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50 ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'}`}
+            className={`absolute z-10 whitespace-nowrap rounded-full border border-emerald-100 bg-white/95 px-3 py-1.5 text-[11px] font-black text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50 ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
           >
             要补资料？点我
           </motion.button>
@@ -1007,25 +1220,25 @@ export default function GlobalAssistant({
       <AnimatePresence>
         {mode === 'expanded' && (
           <motion.div
-            className={`pointer-events-none absolute bottom-0 z-10 h-52 w-52 ${dockOnLeft ? 'left-0' : 'right-0'}`}
+            className={`pointer-events-none absolute z-10 h-52 w-52 ${dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-0' : 'bottom-0'}`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className={`absolute bottom-6 h-36 w-36 rounded-full border border-dashed border-text-muted/40 ${dockOnLeft ? 'left-6' : 'right-6'}`} />
-            <div className={`absolute bottom-6 h-24 w-24 rounded-full border border-dashed border-text-muted/30 ${dockOnLeft ? 'left-6' : 'right-6'}`} />
+            <div className={`absolute h-36 w-36 rounded-full border border-dashed border-text-muted/40 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <div className={`absolute h-24 w-24 rounded-full border border-dashed border-text-muted/30 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
             {SKILL_AGENTS.map((agent, index) => {
               const Icon = agent.Icon;
               const unread = threads[agent.id].unreadCount;
               const x = (dockOnLeft ? -agent.position.x : agent.position.x) * radius;
-              const y = agent.position.y * radius;
+              const y = (dockOnTop ? -agent.position.y : agent.position.y) * radius;
               return (
                 <motion.button
                   key={agent.id}
                   type="button"
                   title={AGENT_DISPLAY_NAME[agent.id]}
                   onClick={() => openAgent(agent.id)}
-                  className={`group pointer-events-auto absolute bottom-2 flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.14)] ${dockOnLeft ? 'left-2' : 'right-2'}`}
+                  className={`group pointer-events-auto absolute flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.14)] ${dockOnLeft ? 'left-2' : 'right-2'} ${dockOnTop ? 'top-2' : 'bottom-2'}`}
                   style={{ borderColor: agent.color, color: agent.color, backgroundColor: agent.bg }}
                   initial={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
                   animate={{ x, y, opacity: 1, scale: 1 }}
@@ -1053,7 +1266,8 @@ export default function GlobalAssistant({
             animate={mode === 'chat' ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: 18, scale: 0.96 }}
             exit={{ opacity: 0, y: 18, scale: 0.96 }}
             transition={reduceMotion ? { duration: 0.16 } : { type: 'spring', stiffness: 240, damping: 24 }}
-            className={`absolute bottom-14 z-10 flex h-[min(720px,calc(100vh-112px))] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl ${dockOnLeft ? 'left-0' : 'right-0'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            className={`absolute z-10 flex max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            style={{ height: assistantPanelHeight, ...(assistantPosition ? { left: positionedPanelLeft } : {}) }}
           >
             <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
               <div className="flex min-w-0 items-center gap-2">
@@ -1242,17 +1456,22 @@ export default function GlobalAssistant({
         <div className="relative z-10 h-[72px] w-[60px]">
           <motion.button
             type="button"
+            draggable
             data-global-assistant="launcher"
             onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onDragStartCapture={handleNativeDragStart}
+            onDragCapture={handleNativeDrag}
+            onDragEndCapture={handleNativeDragEnd}
             onClick={handleLauncherClick}
-            className="absolute inset-0 flex items-center justify-center rounded-2xl bg-transparent outline-none transition-transform hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-[#6FDBA1] focus-visible:ring-offset-2"
+            className={`absolute inset-0 flex touch-none items-center justify-center rounded-2xl bg-transparent outline-none transition-transform focus-visible:ring-2 focus-visible:ring-[#6FDBA1] focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab hover:-translate-y-0.5'}`}
             animate={performance && !reduceMotion
               ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
               : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
             transition={{ duration: performance ? 1.55 : 2.4, ease: 'easeInOut', repeat: (performance || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
-            title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[orbitIdForAgent(pageContext.agent)]}` : '展开灵枢助手'}
+            title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[orbitIdForAgent(pageContext.agent)]}` : '拖动可移动，点击可展开灵枢助手'}
           >
             <AssistantLauncherMascot expression={assistantExpression} />
             {pendingCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-black text-white">{pendingBadge}</span>}

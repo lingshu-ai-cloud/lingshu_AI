@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { authHeader } from '../lib/auth';
-import { createMockCustomers } from '../mocks/customerProfiles';
 import type { CustomerProfile, TimelineEvent } from '../types/customer';
 
 const MOCK_STORAGE_KEY = 'lingshu:mock-customer-conversations:v5';
@@ -14,7 +13,9 @@ function mockStorageKey(scope: string): string {
   return `${MOCK_STORAGE_KEY}:${scope || 'admin'}`;
 }
 
-function storedMockCustomers(storageKey: string): CustomerProfile[] {
+async function storedMockCustomers(storageKey: string): Promise<CustomerProfile[]> {
+  if (!import.meta.env.DEV) return [];
+  const { createMockCustomers } = await import('../mocks/customerProfiles');
   const scope = storageKey.slice(`${MOCK_STORAGE_KEY}:`.length);
   const seededCustomers = () => createMockCustomers(scope);
   try {
@@ -108,10 +109,13 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
         const items = Array.isArray(data?.items) ? data.items : [];
         if (!alive) return;
         const liveCustomers = items.map((item: CustomerProfile) => cloneCustomer({ ...item, isReal: true, isMock: false }));
+        const storedMocks = includeMockCustomers && scopedMockStorageKey
+          ? await storedMockCustomers(scopedMockStorageKey)
+          : [];
         setCustomers(current => {
           if (!includeMockCustomers) return liveCustomers;
           const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
-          return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMockCustomers(scopedMockStorageKey!))];
+          return [...liveCustomers, ...(existingMocks.length ? existingMocks : storedMocks)];
         });
       } finally {
         window.clearTimeout(timeout);
@@ -124,10 +128,13 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
       try {
         await loadLiveCustomers();
       } catch {
+        const storedMocks = includeMockCustomers && scopedMockStorageKey
+          ? await storedMockCustomers(scopedMockStorageKey)
+          : [];
         if (alive) setCustomers(current => {
           if (!includeMockCustomers) return [];
           const existingMocks = current.filter(customer => customer.isMock).map(cloneCustomer);
-          return existingMocks.length ? existingMocks : storedMockCustomers(scopedMockStorageKey!);
+          return existingMocks.length ? existingMocks : storedMocks;
         });
       } finally {
         if (alive) setLoading(false);

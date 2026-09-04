@@ -310,7 +310,7 @@ export function getDesktopRender(): DesktopRenderBridge | undefined {
 export interface StudioProject {
   id: string;
   title: string;
-  status: 'draft' | 'published' | 'template';
+  status: 'draft' | 'ready_for_approval' | 'published' | 'template';
   spec: Record<string, unknown>;
   thumbSeed?: string;
   createdAt: string;
@@ -766,7 +766,7 @@ export const studioApi = {
       return [];
     }
   },
-  saveProject: (b: { id?: string; title: string; status: 'draft' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string }) =>
+  saveProject: (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string }) =>
     post<{ ok: boolean; project: StudioProject }>('projects', b, { ok: false, project: null as unknown as StudioProject }),
   deleteProject: (id: string) => del(`projects/${id}`),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>

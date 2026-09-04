@@ -23,12 +23,31 @@ export type StudioScriptQualityV2Result = {
   materialCoverage: MaterialCoverage;
 };
 
+const PRODUCT_FACT_CLAIM_GROUPS: string[][] = [
+  ['高纯度', '高纯', '纯度', 'high purity', 'purity'],
+  ['符合美国市场基础合规要求', '符合美国市场合规要求', '美国市场合规', 'us market compliance', 'us compliant'],
+  ['合规要求', '合规标准', '基础合规', 'regulatory requirements', 'compliance requirements'],
+  ['通过认证', '获得认证', '认证齐全', 'certified'],
+];
+
 const MATERIAL_VISUAL_FACT_GROUPS: string[][] = [
   ['展会', '展馆', '展台', '观众', 'imtex', 'exhibition', 'trade show'],
   ['展板', '标识', 'logo', 'brand mark'],
   ['屏幕', '界面', '检测结果', '识别结果', 'dashboard', 'interface', 'inspection result'],
   ['正在运行', '实时运行', '运转中', 'running live', 'in operation'],
   ['划伤', '字符识别', 'scratch detection', 'ocr'],
+  ...PRODUCT_FACT_CLAIM_GROUPS,
+];
+
+// These details can only be asserted when the selected footage/image itself
+// proves them. A product MOQ or contact email in structured enterprise data
+// does not prove that the text, QR code or VI is visible in the asset.
+const STRICT_MATERIAL_VISUAL_FACT_GROUPS: string[][] = [
+  ['二维码', 'qr code'],
+  ['邮箱', '电子邮件', 'email address', 'e-mail address'],
+  ['for sensitive skin'],
+  ['标签已有', '标签印有', '标签显示', '标签上有', '标签文字', '标签字样', '瓶身印有', '包装印有', 'label reads', 'printed on label'],
+  ['品牌vi', 'vi标识', 'vi 标识', 'vi字样', 'vi 字样', 'visual identity'],
 ];
 
 const BUSINESS_ROLE_TERMS = [
@@ -45,13 +64,75 @@ function normalized(value: unknown): string {
   return String(value || '').trim().toLowerCase().replace(/[\s,，、/]+/g, ' ');
 }
 
+export function normalizeNumericEvidenceText(value: unknown): string {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u00A0\t\f\v ]+/g, ' ')
+    .trim();
+}
+
+const NUMERIC_FACT_PATTERN = /(\d+(?:\.\d+)?)\s*(瓶|bottles?|ml|毫升|kg|千克|公斤|g|克|斤|cm|厘米|mm|毫米|天|day|days|秒|seconds?|secs?|s\b|帧|frames?|fps|%|percent|个|pcs?|pieces?|件|箱|cartons?|boxes?|元|美元|usd|rmb|cny)/gi;
+
+export function numericClaimIsProductionParameter(claim: string, line: string): boolean {
+  const normalizedClaim = normalizeNumericEvidenceText(claim).toLowerCase();
+  if (!/(?:秒|seconds?|secs?|s|帧|frames?|fps)$/.test(normalizedClaim)) return false;
+  const normalizedLine = String(line || '').trim();
+  if (/^\[\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—]\s*\d+(?:\.\d+)?\s*(?:s|秒)?\s*\]$/i.test(normalizedLine)) return true;
+  const field = normalizedLine.match(/^([^:：]{1,12})[:：]/)?.[1] || '';
+  if (!/^(?:时间轴|时长|剪辑|转场|配乐|音效|镜头功能|运镜|构图|环境|景别|画面|素材)$/i.test(field)) return false;
+  if (/(?:帧|frames?|fps)$/.test(normalizedClaim) && /^(?:时间轴|时长|剪辑|转场|运镜|镜头功能)$/i.test(field)) return true;
+  if (/(?:第\s*)?\d+(?:\.\d+)?\s*(?:秒|seconds?|secs?|s\b)/i.test(normalizedLine) && /第\s*\d/i.test(normalizedLine)) return true;
+  return /(?:持续|停留|留|淡入|淡出|转场|剪辑|节奏|静音|定格|推进|拉远|平移|镜头|画面|片头|片尾|起止|时长|帧率|fps)/i.test(normalizedLine);
+}
+
+function numericUnitGroup(unit: string): string {
+  const value = unit.toLowerCase();
+  if (['瓶', 'bottle', 'bottles'].includes(value)) return 'bottle';
+  if (['ml', '毫升'].includes(value)) return 'ml';
+  if (['kg', '千克', '公斤'].includes(value)) return 'kg';
+  if (['g', '克'].includes(value)) return 'g';
+  if (['cm', '厘米'].includes(value)) return 'cm';
+  if (['mm', '毫米'].includes(value)) return 'mm';
+  if (['天', 'day', 'days'].includes(value)) return 'day';
+  if (['秒', 's', 'second', 'seconds', 'sec', 'secs'].includes(value)) return 'second';
+  if (['帧', 'frame', 'frames'].includes(value)) return 'frame';
+  if (['%', 'percent'].includes(value)) return 'percent';
+  if (['个', '件', 'pc', 'pcs', 'piece', 'pieces'].includes(value)) return 'piece';
+  if (['箱', 'carton', 'cartons', 'box', 'boxes'].includes(value)) return 'carton';
+  if (['美元', 'usd'].includes(value)) return 'usd';
+  if (['元', 'rmb', 'cny'].includes(value)) return 'cny';
+  return value;
+}
+
+export function productInfoSupportsNumericClaim(claim: string, productInfo: string): boolean {
+  const normalizedClaim = normalizeNumericEvidenceText(claim);
+  const source = normalizeNumericEvidenceText(productInfo);
+  const parsed = Array.from(normalizedClaim.matchAll(NUMERIC_FACT_PATTERN))[0];
+  if (!parsed) return false;
+  const claimValue = Number(parsed[1]);
+  const claimUnit = numericUnitGroup(parsed[2]!);
+  if (!Number.isFinite(claimValue)) return false;
+  for (const match of source.matchAll(NUMERIC_FACT_PATTERN)) {
+    if (Number(match[1]) === claimValue && numericUnitGroup(match[2]!) === claimUnit) return true;
+  }
+  // Structured records sometimes keep the unit in the field semantics rather
+  // than the value, for example `MOQ: 100`. This is valid only for count units.
+  if (['bottle', 'piece', 'carton'].includes(claimUnit)) {
+    const escaped = String(claimValue).replace('.', '\\.');
+    return new RegExp(`(?:起订量|MOQ)[^\\n]{0,30}(?:^|\\D)${escaped}(?:\\D|$)`, 'i').test(source);
+  }
+  return false;
+}
+
 function evidenceSupportsTerm(evidence: string, term: string): boolean {
   const source = evidence.toLowerCase();
   const needle = term.toLowerCase();
   let cursor = source.indexOf(needle);
   while (cursor >= 0) {
     const prefix = source.slice(Math.max(0, cursor - 24), cursor);
-    if (!/(?:未(?:观察到|发现|显示|出现)|没有|不存在|不含|无|not\s+(?:observed|visible|shown|present)|without|no)\s*[^，。;；\n]{0,12}$/i.test(prefix)) return true;
+    if (!/(?:未(?:观察到|发现|显示|出现)|没有|不存在|不含|无|not\s+(?:observed|visible|shown|present)|without|no)\s*[^，。;；\n]{0,36}$/i.test(prefix)) return true;
     cursor = source.indexOf(needle, cursor + needle.length);
   }
   return false;
@@ -134,6 +215,10 @@ export function unsupportedMaterialVisualTerms(
     if (group.some(term => evidenceSupportsTerm(evidence, term))) return [];
     return group.filter(term => script.toLowerCase().includes(term.toLowerCase()));
   });
+  used.push(...STRICT_MATERIAL_VISUAL_FACT_GROUPS.flatMap(group => {
+    if (group.some(term => evidenceSupportsTerm(materialsText.toLowerCase(), term))) return [];
+    return group.filter(term => script.toLowerCase().includes(term.toLowerCase()));
+  }));
   return Array.from(new Set(used));
 }
 
@@ -142,11 +227,12 @@ export function neutralizeUnsupportedMaterialVisuals(
   productInfo: string,
   materialsText: string,
   materialInfos: StudioScriptMaterialInfo[] = [],
-): { script: string; warnings: string[]; neutralizedTerms: string[] } {
+): { script: string; warnings: string[]; neutralizedTerms: string[]; repairedTrustedScenes: number; pendingScenes: number } {
   const evidence = `${productInfo}\n${materialsText}`.toLowerCase();
-  const unsupportedGroups = MATERIAL_VISUAL_FACT_GROUPS.filter(group => (
-    !group.some(term => evidenceSupportsTerm(evidence, term))
-  ));
+  const unsupportedGroups = [
+    ...MATERIAL_VISUAL_FACT_GROUPS.filter(group => !group.some(term => evidenceSupportsTerm(evidence, term))),
+    ...STRICT_MATERIAL_VISUAL_FACT_GROUPS.filter(group => !group.some(term => evidenceSupportsTerm(materialsText.toLowerCase(), term))),
+  ];
   const unsupportedTerms = unsupportedGroups.flat();
   const materialSlots = materialInfos.flatMap(info => {
     const observations = info.observations?.filter(Boolean) || [];
@@ -177,6 +263,12 @@ export function neutralizeUnsupportedMaterialVisuals(
   const containsUnsupportedTerm = (value: string): boolean => unsupportedTerms.some(term => (
     value.toLowerCase().includes(term.toLowerCase())
   ));
+  const genericObservation = (value: string): boolean => {
+    const observation = String(value || '').trim();
+    if (!observation) return true;
+    return /^(?:企业知识库产品[“"][^”"]+[”"]的)?已上传(?:图片|视频|素材)$/i.test(observation)
+      || /^(?:uploaded|provided)\s+(?:image|video|asset)$/i.test(observation);
+  };
   const neutralizedTerms = new Set<string>();
   let sceneIndex = 0;
   let repairedTrustedScenes = 0;
@@ -187,8 +279,10 @@ export function neutralizeUnsupportedMaterialVisuals(
     const slot = materialSlots[sceneIndex];
     sceneIndex += 1;
     const terms = unsupportedGroups.flatMap(group => group.filter(term => block.toLowerCase().includes(term.toLowerCase())));
-    if (!terms.length) return block;
+    const observationOnlyConfirmsUpload = Boolean(slot && genericObservation(slot.observation));
+    if (!terms.length && !observationOnlyConfirmsUpload) return block;
     terms.forEach(term => neutralizedTerms.add(term));
+    if (observationOnlyConfirmsUpload) neutralizedTerms.add('素材观察仅确认文件已上传');
     let next = block;
     const replaceField = (field: string, value: string) => {
       const pattern = new RegExp(`^[ \\t]*${field}[：:].*$`, 'm');
@@ -218,12 +312,21 @@ export function neutralizeUnsupportedMaterialVisuals(
     const originalSubtitle = readField(block, '字幕');
     const originalMusic = readField(block, '配乐');
     replaceField('素材', slot.name);
-    replaceField('环境', '以已选素材实际环境为准');
-    replaceField('景别', safeShot(readField(block, '景别')));
-    replaceField('运镜', safeCamera(readField(block, '运镜')));
-    replaceField('构图', '仅呈现已选素材中实际可见的主体');
-    replaceField('镜头功能', '素材事实展示');
-    replaceField('画面', `按已选素材观察呈现：${safeObservation(slot.observation)}`);
+    if (observationOnlyConfirmsUpload) {
+      replaceField('环境', '以已选素材原始画面为准');
+      replaceField('景别', '保持原素材景别');
+      replaceField('运镜', '不添加未确认运镜');
+      replaceField('构图', '保持原素材构图');
+      replaceField('镜头功能', '原素材展示');
+      replaceField('画面', '原样展示已选素材；不补充未确认的物体、文字或动作');
+    } else {
+      replaceField('环境', '以已选素材实际环境为准');
+      replaceField('景别', safeShot(readField(block, '景别')));
+      replaceField('运镜', safeCamera(readField(block, '运镜')));
+      replaceField('构图', '仅呈现已选素材中实际可见的主体');
+      replaceField('镜头功能', '素材事实展示');
+      replaceField('画面', `按已选素材观察呈现：${safeObservation(slot.observation)}`);
+    }
     if (containsUnsupportedTerm(originalMusic)) replaceField('配乐', '轻节奏铺底');
     if (containsUnsupportedTerm(originalDialogue)) {
       replaceField('台词', '先看画面中的实际证据，再判断是否值得进一步沟通。');
@@ -248,6 +351,8 @@ export function neutralizeUnsupportedMaterialVisuals(
     script: repaired,
     neutralizedTerms: terms,
     warnings,
+    repairedTrustedScenes,
+    pendingScenes,
   };
 }
 
@@ -282,13 +387,27 @@ export function hardScriptSafetyIssues(script: string, productInfo: string): str
   const absoluteClaims = Array.from(String(script || '').matchAll(/不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|零缺陷|绝不漏|永不漏|no tear|won'?t tear|never breaks?|unbreakable/gi))
     .map(match => match[0]);
   if (absoluteClaims.length) issues.push(`脚本包含绝对化或不可验证承诺：${Array.from(new Set(absoluteClaims)).join('、')}`);
-  const numericClaims = Array.from(String(script || '').matchAll(/\d+(?:\.\d+)?\s*(?:瓶|ml|毫升|kg|g|克|斤|cm|厘米|mm|毫米|天|day|days|%|个|pcs|件|箱|元|美元)/gi))
+  const unsupportedProductClaims = PRODUCT_FACT_CLAIM_GROUPS.flatMap(group => {
+    if (group.some(term => evidenceSupportsTerm(productInfo.toLowerCase(), term))) return [];
+    return group.filter(term => script.toLowerCase().includes(term.toLowerCase()));
+  });
+  if (unsupportedProductClaims.length) issues.push(`脚本包含产品资料未提供的声明：${Array.from(new Set(unsupportedProductClaims)).join('、')}`);
+  // Visual evidence of equipment is not a test report for compatibility.
+  // Require the complete assertion, including the compatible target, in the
+  // product facts; an unrelated verified product must not license the claim.
+  const unsupportedCompatibility = Array.from(script.matchAll(/(?:已验证兼容|兼容性已验证|verified compatible with|compatibility verified for)[^。！？.!?;\n；]*/gi))
+    .map(match => match[0].trim())
+    .filter(claim => !evidenceSupportsTerm(productInfo.toLowerCase(), claim.toLowerCase()));
+  if (unsupportedCompatibility.length) issues.push(`脚本包含产品资料未验证的兼容性声明：${[...new Set(unsupportedCompatibility)].join('；')}`);
+  const normalizedScript = normalizeNumericEvidenceText(script);
+  const numericClaims = Array.from(normalizedScript.matchAll(NUMERIC_FACT_PATTERN))
     .filter(match => {
       const claim = match[0];
-      if (normalized(productInfo).includes(normalized(claim))) return false;
-      const start = script.lastIndexOf('\n', match.index ?? 0) + 1;
-      const end = script.indexOf('\n', match.index ?? 0);
-      const line = script.slice(start, end < 0 ? script.length : end).trim();
+      if (productInfoSupportsNumericClaim(claim, productInfo)) return false;
+      const start = normalizedScript.lastIndexOf('\n', match.index ?? 0) + 1;
+      const end = normalizedScript.indexOf('\n', match.index ?? 0);
+      const line = normalizedScript.slice(start, end < 0 ? normalizedScript.length : end).trim();
+      if (numericClaimIsProductionParameter(claim, line)) return false;
       if (/%$/.test(claim) && /^(?:运镜|构图|环境|景别)[：:]/.test(line)) return false;
       if (/(?:个|件|瓶)$/.test(claim) && /^(?:运镜|构图|环境|景别|画面)[：:]/.test(line)) return false;
       if (/(?:cm|厘米|mm|毫米)$/i.test(claim) && /^(?:运镜|画面|构图|环境|景别)[：:]/.test(line)) return false;
@@ -326,7 +445,7 @@ export function assessScriptQualityV2(input: {
     ...hardScriptSafetyIssues(neutralized.script, input.productInfo),
     ...(input.hardIssues || []),
   ].filter(Boolean)));
-  const needsMaterial = materialCoverage.pendingScenes > 0 || neutralized.neutralizedTerms.length > 0;
+  const needsMaterial = materialCoverage.pendingScenes > 0 || neutralized.pendingScenes > 0;
   return {
     script: neutralized.script,
     qualityStatus: hardIssues.length ? 'rejected' : needsMaterial ? 'needs_material' : warnings.length ? 'warning' : 'passed',

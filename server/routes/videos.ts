@@ -155,6 +155,7 @@ function isVisibleVideoPipelineRecord(record: Record<string, unknown>): boolean 
 interface CrawlerOpsTask {
   id: string;
   recordId: string;
+  tenantId?: string;
   platform: Platform;
   sourceUrl: string;
   title: string;
@@ -166,6 +167,11 @@ interface CrawlerOpsTask {
   lastError?: string;
   lastStrategy?: string;
   apifyFallbackAt?: string;
+  recoveryCount?: number;
+  recoveredAt?: string;
+  retryResetCount?: number;
+  retryResetAt?: string;
+  retryResetBy?: string;
 }
 
 function isTestTenantRecord(tenant: Record<string, unknown> | null): boolean {
@@ -475,11 +481,79 @@ function compactVideoPipelineError(message: unknown, max = 900): string {
 function publicVideoPipelineError(message: unknown): string {
   const text = compactVideoPipelineError(message, 500);
   if (!text) return '视频分析失败，请稍后重试。';
+  if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(text)) return 'Gemini 未配置，请联系管理员配置后重新分析，或切换到已配置的 Qwen。';
+  if (/video_analysis_hard_timeout|exact_chunk_timeout|qwen[^\n]*(?:timeout|timed out|超时)/i.test(text)) return 'Qwen 分析超时，可点击重新分析；连续超时时请改用策略分析或缩短视频。';
   if (/404|not found|unable to download|download webpage|unsupported url/i.test(text)) return '源视频暂时无法获取，请确认链接有效后重新分析。';
   if (/429|quota|resource_exhausted|额度|余额/i.test(text)) return 'AI 分析额度暂时不足，请稍后重试或联系管理员。';
   if (/timeout|timed out|超时/i.test(text)) return '视频分析超时，请稍后重新分析。';
   if (/gemini|model|api/i.test(text)) return 'AI 分析服务暂时不可用，请稍后重试。';
   return '视频分析失败，请稍后重试。';
+}
+
+export type VideoAnalysisRecovery = {
+  code: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
+  reason: string;
+  recoveryAction: string;
+  provider: 'Gemini' | 'Qwen' | 'AI';
+  hidden: boolean;
+};
+
+/** Keeps operational failures actionable without returning provider secrets. */
+export function describeVideoAnalysisRecovery(
+  analysis: Record<string, unknown>,
+  recordStatus = '',
+): VideoAnalysisRecovery {
+  const source = String(analysis.analysisSource || '').toLowerCase();
+  const rawError = compactVideoPipelineError([
+    analysis.analysisError,
+    analysis.videoLevelFailureStatus,
+    analysis.manualRequiredReason,
+    analysis.downloadError,
+    analysis.youtubeDirectError,
+  ].filter(Boolean).join(' '), 900);
+  const hidden = analysis.userVisible === false;
+  const provider: VideoAnalysisRecovery['provider'] = /qwen|dashscope/.test(`${source} ${rawError}`)
+    ? 'Qwen'
+    : /gemini/.test(`${source} ${rawError}`) ? 'Gemini' : 'AI';
+
+  if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(rawError)) {
+    return {
+      code: 'gemini_missing', provider: 'Gemini', hidden,
+      reason: 'Gemini 未配置，当前候选无法完成视频级分析。',
+      recoveryAction: '请管理员配置 GEMINI_API_KEY，或切换到已配置的 Qwen 后点击“重新分析”。',
+    };
+  }
+  if (/video_analysis_hard_timeout|exact_chunk_timeout|qwen[^\n]*(?:timeout|timed out|超时)/i.test(rawError)) {
+    return {
+      code: 'qwen_timeout', provider: 'Qwen', hidden,
+      reason: 'Qwen 视频分析超时，本次没有生成可用的全片结果。',
+      recoveryAction: '可点击“重新分析”；连续超时时改用策略分析、缩短视频，或交给人工补充源文件。',
+    };
+  }
+  if (/404|not found|unable to download|download webpage|unsupported url|manual_required|url_failed/i.test(rawError)) {
+    return {
+      code: 'source_unavailable', provider, hidden,
+      reason: '源视频暂时无法获取，候选不会被当作已分析结果展示。',
+      recoveryAction: '请确认公开链接或人工上传原视频，然后点击“重新分析”。',
+    };
+  }
+  if (hidden) {
+    return {
+      code: 'candidate_hidden', provider, hidden: true,
+      reason: '候选暂未展示：只有完成真实视频级分析后才会进入灵感大屏。',
+      recoveryAction: rawError
+        ? '查看失败原因后点击“重新分析”，或人工补充可读的原视频。'
+        : '等待当前分析完成；长时间无进展时可暂停后重新分析。',
+    };
+  }
+  if (rawError || recordStatus === 'failed') {
+    return {
+      code: 'analysis_failed', provider, hidden,
+      reason: publicVideoPipelineError(rawError),
+      recoveryAction: '点击“重新分析”；如果仍失败，请人工检查源视频和模型配置。',
+    };
+  }
+  return { code: 'none', provider, hidden, reason: '', recoveryAction: '', };
 }
 
 function recordKeywordText(record: Record<string, unknown>): string {
@@ -1445,19 +1519,25 @@ videosRouter.post('/:id/analyze-source', async (req, res) => {
 
 // ─── Internal crawler ops queue ──────────────────────────────────────────────
 videosRouter.get('/ops/queue', async (_req, res) => {
-  res.json({ items: loadCrawlerOpsTasks().filter(task => task.status === 'queued' || task.status === 'pushed' || task.status === 'processing') });
+  const { tenantId } = res.locals as AuthLocals;
+  const visibleRecordIds = await crawlerOpsRecordIdsForTenant(tenantId);
+  res.json({ items: filterCrawlerOpsTasksForRecordIds(loadCrawlerOpsTasks(), visibleRecordIds).filter(task => task.status === 'queued' || task.status === 'pushed' || task.status === 'processing') });
 });
 
 videosRouter.get('/ops/stats', async (_req, res) => {
-  res.json(crawlerOpsStats());
+  const { tenantId } = res.locals as AuthLocals;
+  const visibleRecordIds = await crawlerOpsRecordIdsForTenant(tenantId);
+  res.json(crawlerOpsStats(tenantId, visibleRecordIds));
 });
 
 videosRouter.post('/ops/run-once', async (_req, res) => {
-  const result = await runCrawlerOpsWorkerOnce();
+  const { tenantId } = res.locals as AuthLocals;
+  const result = await runCrawlerOpsWorkerOnce({ tenantId });
   res.json(result);
 });
 
 videosRouter.post('/ops/:taskId/resolve', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const { taskId } = req.params;
   const { videoBase64, mimeType = 'video/mp4', error } = req.body as {
     videoBase64?: string;
@@ -1467,6 +1547,12 @@ videosRouter.post('/ops/:taskId/resolve', async (req, res) => {
   const tasks = loadCrawlerOpsTasks();
   const task = tasks.find(item => item.id === taskId);
   if (!task) {
+    res.status(404).json({ error: 'Crawler ops task not found' });
+    return;
+  }
+  const record = await store.getById<Record<string, unknown>>(COL, task.recordId);
+  if (!record || String(record.tenantId || '') !== tenantId || (task.tenantId && task.tenantId !== tenantId)) {
+    // Deliberately use 404 so task IDs cannot be used to probe another tenant.
     res.status(404).json({ error: 'Crawler ops task not found' });
     return;
   }
@@ -2298,10 +2384,12 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const analysisRunId = randomUUID();
   const fileId = record.videoFileId as string | undefined;
+  const recordTenantId = String(record.tenantId || tenantId);
   if (analysisMode === 'exact'
     && Boolean(fileId)
     && previous.analysisQuality === 'video'
     && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))) {
+    resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false });
     await store.update(COL, req.params.id, {
       status: 'analyzed',
       aiAnalysis: JSON.stringify({
@@ -2333,16 +2421,20 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
       res.status(400).json({ error: 'No video file or public sourceUrl attached to this record' });
       return;
     }
-    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisError: undefined }) };
+    const retryResetAt = new Date().toISOString();
+    resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: true, now: retryResetAt });
+    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'processing', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
     await store.update(COL, req.params.id, { aiAnalysis: queuedRecord.aiAnalysis });
     await queueAnalyzeSource(queuedRecord);
     res.json({ status: 'pending' });
     return;
   }
 
+  const retryResetAt = new Date().toISOString();
+  resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: retryResetAt });
   await store.update(COL, req.params.id, {
     status: 'pending',
-    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisError: undefined, analysisPausedAt: undefined, analysisPausedBy: undefined, reanalyzeQueuedAt: new Date().toISOString() }),
+    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
   });
   const localPath = path.join(MEDIA_DIR, fileId);
   if (fs.existsSync(localPath)) {
@@ -2866,17 +2958,19 @@ const EXACT_ANALYSIS_STALL_MS = Math.max(
 );
 
 // 卡住的记录是少数，但分布在整个库里，只扫第一页会漏。全量翻页，靠节流控制开销。
-let lastStallSweepAt = 0;
+const lastStallSweepAt = new Map<string, number>();
 
-async function releaseStalledExactAnalysis(forceInterrupted = false): Promise<number> {
+async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: string): Promise<number> {
   const now = Date.now();
-  if (!forceInterrupted && now - lastStallSweepAt < Math.max(60_000, Math.floor(EXACT_ANALYSIS_STALL_MS / 6))) return 0;
-  lastStallSweepAt = now;
+  const sweepKey = tenantId || '__global__';
+  const lastSweep = lastStallSweepAt.get(sweepKey) || 0;
+  if (!forceInterrupted && now - lastSweep < Math.max(60_000, Math.floor(EXACT_ANALYSIS_STALL_MS / 6))) return 0;
+  lastStallSweepAt.set(sweepKey, now);
 
   const candidates: Record<string, unknown>[] = [];
   let page = 1;
   for (;;) {
-    const result = await store.list<Record<string, unknown>>(COL, { page, perPage: 500 });
+    const result = await store.list<Record<string, unknown>>(COL, { where: tenantId ? { tenantId } : undefined, page, perPage: 500 });
     for (const record of result.items) {
       if (parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {}).requestedAnalysisMode === 'exact') {
         candidates.push(record);
@@ -2891,6 +2985,7 @@ async function releaseStalledExactAnalysis(forceInterrupted = false): Promise<nu
   const inFlight = process.env.CRAWLER_OPS_WORKER_ENABLED === '0'
     ? new Set<string>()
     : new Set(loadCrawlerOpsTasks()
+      .filter(task => !tenantId || task.tenantId === tenantId || candidates.some(record => String(record.id || '') === task.recordId))
       .filter(task => ['queued', 'pushed', 'processing'].includes(task.status))
       .map(task => task.recordId));
 
@@ -3421,10 +3516,12 @@ async function analyzeSourceVideoJobInner(input: {
         })
         : enqueueCrawlerOpsTask({
           recordId,
+          tenantId: String(input.record?.tenantId || '').trim() || undefined,
           platform: input.platform,
           sourceUrl: input.sourceUrl,
           title: String(input.record?.title || input.title),
           reason: compactReason,
+          forceQueue: true,
         });
       if (opsTask && !input.suppressOpsRequeue) {
         void pushCrawlerOpsTask(opsTask).catch((pushError) => {
@@ -5143,6 +5240,10 @@ function isQwenConfigured(): boolean {
   try { fileKey = fs.readFileSync(process.env.DASHSCOPE_API_KEY_FILE || path.join(process.env.HOME || '', '.config/lingshu/dashscope.key'), 'utf8').trim(); } catch { /* optional */ }
   const key = process.env.DASHSCOPE_API_KEY?.trim() || fileKey;
   return /^[\x21-\x7E]{20,}$/.test(key);
+}
+
+function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY?.trim());
 }
 
 function shouldUseQwenFirst(): boolean {
@@ -7152,17 +7253,21 @@ function firstCrawlerProxyFromPool(): string {
   return crawlerProxyPool()[0] || '';
 }
 
-function buildYtDlpArgs(extra: string[], url: string, withCookies: boolean): string[] {
+export function buildYtDlpArgs(extra: string[], url: string, withCookies: boolean): string[] {
+  const referer = platformReferer(url);
   const args = [
     '-m', 'yt_dlp',
     '--ignore-config',
     '--no-warnings',
     '--user-agent', browserUserAgent(),
     '--add-header', 'Accept-Language: en-US,en;q=0.9',
-    '--referer', platformReferer(url),
-    ...extra,
   ];
-  if (/youtube\.com|youtu\.be/i.test(url) && process.env.YT_DLP_YOUTUBE_EJS_ENABLED !== '0') {
+  // ytsearchN:<keyword> is an yt-dlp pseudo URL, not a valid HTTP referer.
+  // Always send a stable platform origin so Chinese keywords never become a
+  // header value or get interpreted as a second command argument.
+  if (referer) args.push('--referer', referer);
+  args.push(...extra);
+  if ((/^ytsearch\d*:/i.test(url) || /youtube\.com|youtu\.be/i.test(url)) && process.env.YT_DLP_YOUTUBE_EJS_ENABLED !== '0') {
     args.push('--js-runtimes', `node:${process.execPath}`, '--remote-components', 'ejs:github');
   }
   const proxy = proxyUrl();
@@ -7177,7 +7282,8 @@ function browserUserAgent(): string {
     || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 }
 
-function platformReferer(url: string): string {
+export function platformReferer(url: string): string {
+  if (/^ytsearch\d*:/i.test(String(url || '').trim())) return 'https://www.youtube.com/';
   try {
     const host = new URL(url).hostname.replace(/^www\./, '');
     if (host.includes('tiktok.com')) return 'https://www.tiktok.com/';
@@ -7185,7 +7291,7 @@ function platformReferer(url: string): string {
     if (host.includes('facebook.com')) return 'https://www.facebook.com/';
     if (host.includes('youtube.com') || host.includes('youtu.be')) return 'https://www.youtube.com/';
   } catch { /* ignore */ }
-  return url;
+  return '';
 }
 
 async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout: number, maxBuffer: number): Promise<string> {
@@ -7368,6 +7474,117 @@ function loadCrawlerOpsTasks(): CrawlerOpsTask[] {
   }
 }
 
+export function filterCrawlerOpsTasksForRecordIds(
+  tasks: CrawlerOpsTask[],
+  visibleRecordIds?: Set<string>,
+): CrawlerOpsTask[] {
+  return visibleRecordIds ? tasks.filter(task => visibleRecordIds.has(task.recordId)) : tasks;
+}
+
+/**
+ * `attempts` counts attempts that were actually started. A process crash must
+ * not consume the in-flight attempt: return that single slot before queueing
+ * the task again. Once it is queued, another restart will not decrement it a
+ * second time.
+ */
+export function recoverInterruptedCrawlerOpsTask(task: CrawlerOpsTask, now = new Date().toISOString()): CrawlerOpsTask {
+  const legacyRecoveredZombie = task.status === 'queued'
+    && task.reason === 'recovered_after_restart'
+    && !task.recoveredAt;
+  if (task.status !== 'processing' && !legacyRecoveredZombie) return task;
+  return {
+    ...task,
+    status: 'queued',
+    attempts: Math.max(0, Number(task.attempts || 0) - 1),
+    reason: 'recovered_after_restart',
+    recoveryCount: Number(task.recoveryCount || 0) + 1,
+    recoveredAt: now,
+    updatedAt: now,
+  };
+}
+
+export function terminalizeExhaustedCrawlerOpsTask(
+  task: CrawlerOpsTask,
+  maxAttempts: number,
+  now = new Date().toISOString(),
+): CrawlerOpsTask {
+  if (task.status === 'resolved' || task.attempts < maxAttempts) return task;
+  return {
+    ...task,
+    status: 'failed',
+    reason: 'max_attempts_exhausted',
+    lastError: task.lastError || 'max_attempts_exhausted',
+    updatedAt: now,
+  };
+}
+
+export function resetCrawlerOpsTaskForExplicitRetryState(
+  task: CrawlerOpsTask,
+  input: { tenantId: string; userId: string; usesSourceQueue: boolean; now?: string },
+): CrawlerOpsTask {
+  const now = input.now || new Date().toISOString();
+  return {
+    ...task,
+    tenantId: task.tenantId || input.tenantId,
+    // The explicit request owns the immediate analysis attempt. Retire the old
+    // ops task so the background worker cannot run the same record in parallel;
+    // a retryable failure will enqueue a fresh task starting at attempt zero.
+    status: 'resolved',
+    attempts: 0,
+    reason: input.usesSourceQueue ? 'explicit_reanalyze_replaced_task' : 'explicit_reanalyze_uses_local_file',
+    lastError: undefined,
+    lastStrategy: input.usesSourceQueue ? 'explicit_reanalyze' : 'local_file',
+    retryResetCount: Number(task.retryResetCount || 0) + 1,
+    retryResetAt: now,
+    retryResetBy: input.userId,
+    updatedAt: now,
+  };
+}
+
+export function selectPendingCrawlerOpsTasks(
+  tasks: CrawlerOpsTask[],
+  maxAttempts: number,
+  visibleRecordIds?: Set<string>,
+  now = Date.now(),
+): CrawlerOpsTask[] {
+  return filterCrawlerOpsTasksForRecordIds(tasks, visibleRecordIds)
+    .filter(task => {
+      if (task.status === 'resolved') return false;
+      if (task.attempts >= maxAttempts) return false;
+      if (task.status === 'processing') {
+        const updatedAt = Date.parse(task.updatedAt);
+        return Number.isFinite(updatedAt) && now - updatedAt > 10 * 60 * 1000;
+      }
+      if (task.status === 'failed') return true;
+      return task.status === 'queued' || task.status === 'pushed';
+    })
+    .sort((a, b) => {
+      const ap = platformOpsPriority(a.platform);
+      const bp = platformOpsPriority(b.platform);
+      if (ap !== bp) return ap - bp;
+      return Date.parse(a.updatedAt) - Date.parse(b.updatedAt);
+    });
+}
+
+async function crawlerOpsRecordIdsForTenant(tenantId: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let page = 1;
+  for (;;) {
+    const records = await store.list<Record<string, unknown>>(COL, {
+      where: { tenantId },
+      page,
+      perPage: 500,
+    });
+    for (const record of records.items) {
+      const id = String(record.id || '').trim();
+      if (id) ids.add(id);
+    }
+    if (page >= records.totalPages || records.items.length < 500 || page >= 20) break;
+    page += 1;
+  }
+  return ids;
+}
+
 function persistCrawlerOpsTasks(tasks: CrawlerOpsTask[]): void {
   fs.mkdirSync(path.dirname(CRAWLER_OPS_FILE), { recursive: true });
   fs.writeFileSync(CRAWLER_OPS_FILE, JSON.stringify(tasks, null, 2), 'utf8');
@@ -7385,17 +7602,38 @@ function updateCrawlerOpsTask(taskId: string, patch: Partial<CrawlerOpsTask>): C
   return updated;
 }
 
+function resetCrawlerOpsTaskForExplicitRetry(input: {
+  recordId: string;
+  tenantId: string;
+  userId: string;
+  usesSourceQueue: boolean;
+  now?: string;
+}): CrawlerOpsTask | null {
+  const tasks = loadCrawlerOpsTasks();
+  let updated: CrawlerOpsTask | null = null;
+  persistCrawlerOpsTasks(tasks.map(task => {
+    if (task.recordId !== input.recordId) return task;
+    if (task.tenantId && task.tenantId !== input.tenantId) return task;
+    updated = resetCrawlerOpsTaskForExplicitRetryState(task, input);
+    return updated;
+  }));
+  return updated;
+}
+
 function enqueueCrawlerOpsTask(input: {
   recordId: string;
+  tenantId?: string;
   platform: Platform;
   sourceUrl: string;
   title: string;
   reason: string;
+  forceQueue?: boolean;
 }): CrawlerOpsTask {
   const now = new Date().toISOString();
   const tasks = loadCrawlerOpsTasks();
   const existing = tasks.find(task =>
     task.recordId === input.recordId &&
+    (!input.tenantId || !task.tenantId || task.tenantId === input.tenantId) &&
     task.sourceUrl === input.sourceUrl &&
     task.status !== 'resolved'
   );
@@ -7403,19 +7641,26 @@ function enqueueCrawlerOpsTask(input: {
     // A periodic recovery scan may see the same persisted record many times.
     // Merely rediscovering it is not another download attempt; attempts are
     // incremented only when the worker actually picks the task.
-    const updated = { ...existing, reason: input.reason, updatedAt: now };
+    const updated = {
+      ...existing,
+      tenantId: existing.tenantId || input.tenantId,
+      ...(input.forceQueue ? { status: 'queued' as const } : {}),
+      reason: input.reason,
+      updatedAt: now,
+    };
     persistCrawlerOpsTasks(tasks.map(task => task.id === existing.id ? updated : task));
     return updated;
   }
   const task: CrawlerOpsTask = {
     id: randomUUID(),
     recordId: input.recordId,
+    tenantId: input.tenantId,
     platform: input.platform,
     sourceUrl: input.sourceUrl,
     title: input.title,
     status: 'queued',
     reason: input.reason,
-    attempts: 1,
+    attempts: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -7459,7 +7704,7 @@ function logCrawlerOpsWorkerResult(result: { picked: number; resolved: number; r
   console.log(`[crawler-ops] picked=${result.picked} resolved=${result.resolved} retried=${result.retried} failed=${result.failed} skipped=${result.skipped}`);
 }
 
-export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: boolean } = {}): Promise<{
+export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: boolean; tenantId?: string } = {}): Promise<{
   ok: boolean;
   picked: number;
   resolved: number;
@@ -7480,19 +7725,27 @@ export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: bo
   let failed = 0;
   let skipped = 0;
   try {
-    await enqueueOpsTasksFromRecords(options.recoverInterrupted === true);
+    const tenantId = options.tenantId?.trim() || undefined;
+    await enqueueOpsTasksFromRecords(options.recoverInterrupted === true, tenantId, maxAttempts);
     // 回收卡死的精确分析请求。失败不应连累队列本身，单独兜住。
-    await releaseStalledExactAnalysis().catch(error => {
+    await releaseStalledExactAnalysis(false, tenantId).catch(error => {
       console.warn('[videos] stalled exact-analysis sweep failed:', error instanceof Error ? error.message : error);
       return 0;
     });
-    const candidates = pendingCrawlerOpsTasks(maxAttempts).slice(0, maxBatch);
+    const visibleRecordIds = tenantId ? await crawlerOpsRecordIdsForTenant(tenantId) : undefined;
+    const candidates = pendingCrawlerOpsTasks(maxAttempts, visibleRecordIds).slice(0, maxBatch);
     for (const task of candidates) {
       picked += 1;
       const record = await store.getById(COL, task.recordId);
       if (!record) {
         updateCrawlerOpsTask(task.id, { status: 'failed', lastError: 'record_not_found', reason: 'record_not_found' });
         failed += 1;
+        continue;
+      }
+      if (tenantId && String(record.tenantId || '') !== tenantId) {
+        // A tenant-scoped HTTP run must never mutate a task whose backing
+        // record moved or was incorrectly associated with another tenant.
+        skipped += 1;
         continue;
       }
       const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
@@ -7660,30 +7913,13 @@ export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: bo
   return { ok: true, picked, resolved, retried, failed, skipped };
 }
 
-function pendingCrawlerOpsTasks(maxAttempts: number): CrawlerOpsTask[] {
-  const now = Date.now();
-  return loadCrawlerOpsTasks()
-    .filter(task => {
-      if (task.status === 'resolved') return false;
-      if (task.attempts >= maxAttempts) return false;
-      if (task.status === 'processing') {
-        const updatedAt = Date.parse(task.updatedAt);
-        return Number.isFinite(updatedAt) && now - updatedAt > 10 * 60 * 1000;
-      }
-      if (task.status === 'failed' && task.attempts < maxAttempts) return true;
-      return task.status === 'queued' || task.status === 'pushed';
-    })
-    .sort((a, b) => {
-      const ap = platformOpsPriority(a.platform);
-      const bp = platformOpsPriority(b.platform);
-      if (ap !== bp) return ap - bp;
-      return Date.parse(a.updatedAt) - Date.parse(b.updatedAt);
-    });
+function pendingCrawlerOpsTasks(maxAttempts: number, visibleRecordIds?: Set<string>): CrawlerOpsTask[] {
+  return selectPendingCrawlerOpsTasks(loadCrawlerOpsTasks(), maxAttempts, visibleRecordIds);
 }
 
-async function enqueueOpsTasksFromRecords(recoverInterrupted = false): Promise<void> {
+async function enqueueOpsTasksFromRecords(recoverInterrupted = false, tenantId?: string, maxAttempts = Math.max(1, Number(process.env.CRAWLER_OPS_MAX_ATTEMPTS || 5))): Promise<void> {
   const maxScan = Math.max(50, Number(process.env.CRAWLER_OPS_SCAN_LIMIT || 300));
-  const records = await store.list<Record<string, unknown>>(COL, { sort: '-crawledAt', page: 1, perPage: maxScan });
+  const records = await store.list<Record<string, unknown>>(COL, { where: tenantId ? { tenantId } : undefined, sort: '-crawledAt', page: 1, perPage: maxScan });
   const now = Date.now();
   for (const record of records.items) {
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
@@ -7713,23 +7949,65 @@ async function enqueueOpsTasksFromRecords(recoverInterrupted = false): Promise<v
     if (!recordId || !/^https?:\/\//i.test(sourceUrl)) continue;
     const task = enqueueCrawlerOpsTask({
       recordId,
+      tenantId: String(record.tenantId || '').trim() || tenantId,
       platform: (record.platform || inferPlatformFromUrl(sourceUrl)) as Platform,
       sourceUrl,
       title: String(record.title || 'social-video'),
       reason: String(analysis.downloadError || analysis.crawlerOpsReason || (interruptedActive ? 'recovered_after_restart' : staleQueued ? 'recovered_stale_queue' : staleActive ? 'recovered_stalled_analysis' : 'ops_queued')),
     });
-    if (interruptedActive && task.status === 'processing') {
-      updateCrawlerOpsTask(task.id, {
-        status: 'queued',
-        reason: 'recovered_after_restart',
-        updatedAt: new Date().toISOString(),
+    const legacyRecoveredZombie = interruptedActive
+      && task.status === 'queued'
+      && task.reason === 'recovered_after_restart'
+      && !task.recoveredAt;
+    if ((interruptedActive || staleActive) && (task.status === 'processing' || legacyRecoveredZombie)) {
+      const recoveredAt = new Date().toISOString();
+      const recovered = recoverInterruptedCrawlerOpsTask(task, recoveredAt);
+      updateCrawlerOpsTask(task.id, recovered);
+      await store.update(COL, recordId, {
+        status: 'analyzed' as VideoStatus,
+        aiAnalysis: JSON.stringify({
+          ...analysis,
+          downloadStatus: 'ops_queued',
+          videoFetchStatus: 'ops_queued',
+          geminiStatus: 'waiting_for_video',
+          crawlerOpsTaskId: task.id,
+          crawlerOpsStatus: 'queued',
+          crawlerOpsReason: interruptedActive ? 'recovered_after_restart' : 'recovered_stalled_attempt',
+          crawlerOpsAttempt: recovered.attempts,
+          crawlerOpsRecoveredAt: recoveredAt,
+          crawlerOpsNextRetryAt: recoveredAt,
+        }),
+      });
+      continue;
+    }
+    if (task.attempts >= maxAttempts && task.status !== 'resolved') {
+      const exhaustedAt = new Date().toISOString();
+      const exhausted = terminalizeExhaustedCrawlerOpsTask(task, maxAttempts, exhaustedAt);
+      updateCrawlerOpsTask(task.id, exhausted);
+      await store.update(COL, recordId, {
+        status: 'analyzed' as VideoStatus,
+        aiAnalysis: JSON.stringify({
+          ...analysis,
+          requestedAnalysisMode: undefined,
+          downloadStatus: 'manual_required',
+          videoFetchStatus: 'ops_failed',
+          geminiStatus: 'video_failed',
+          crawlerOpsTaskId: task.id,
+          crawlerOpsStatus: 'failed',
+          crawlerOpsReason: 'max_attempts_exhausted',
+          crawlerOpsLastError: exhausted.lastError,
+          crawlerOpsNextRetryAt: undefined,
+          analysisRetryable: true,
+          videoLevelFailureStatus: '视频获取重试已达上限，可点击重新分析重置重试次数',
+          analysisError: exhausted.lastError || 'crawler_ops_max_attempts_exhausted',
+        }),
       });
     }
   }
 }
 
 function crawlerOpsStats(tenantId?: string, visibleRecordIds?: Set<string>): Record<string, unknown> {
-  const tasks = loadCrawlerOpsTasks().filter(task => !visibleRecordIds || visibleRecordIds.has(task.recordId));
+  const tasks = filterCrawlerOpsTasksForRecordIds(loadCrawlerOpsTasks(), visibleRecordIds);
   const byStatus = tasks.reduce<Record<string, number>>((acc, task) => {
     acc[task.status] = (acc[task.status] || 0) + 1;
     return acc;
@@ -7753,9 +8031,9 @@ function crawlerOpsStats(tenantId?: string, visibleRecordIds?: Set<string>): Rec
       enabled: process.env.APIFY_TIKTOK_VIDEO_FALLBACK_ENABLED !== '0' || process.env.APIFY_INSTAGRAM_VIDEO_FALLBACK_ENABLED !== '0',
       tiktokEnabled: process.env.APIFY_TIKTOK_VIDEO_FALLBACK_ENABLED !== '0',
       instagramEnabled: process.env.APIFY_INSTAGRAM_VIDEO_FALLBACK_ENABLED !== '0',
-      usedToday: apifyUsage.total,
+      usedToday: tenantId ? apifyUsage.tenant : apifyUsage.total,
       dailyLimit: apifyVideoDailyLimit(),
-      globalUsedToday: apifyUsage.total,
+      ...(tenantId ? {} : { globalUsedToday: apifyUsage.total }),
       globalDailyLimit: apifyVideoDailyLimit(),
       tenantUsedToday: apifyUsage.tenant,
       tenantDailyLimit: apifyVideoTenantDailyLimit(),
@@ -7864,6 +8142,7 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
       || ['queued', 'analyzing', 'waiting_for_video', 'downloading', 'download_retrying'].includes(gemini)
       || ['queued', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'].includes(fetchStatus);
     const itemStatus = paused ? 'paused' : failed ? 'failed' : analyzing ? 'analyzing' : 'analyzed';
+    const recovery = describeVideoAnalysisRecovery(analysis, String(record.status || ''));
     return {
       id: String(record.id || ''),
       title: String(record.title || '未命名视频'),
@@ -7874,6 +8153,11 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
       analysisMode: String(analysis.requestedAnalysisMode || analysis.analysisMode || 'strategy'),
       updatedAt: String(record.updated || record.crawledAt || ''),
       error: failed ? publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus) : '',
+      statusReason: recovery.reason,
+      recoveryAction: recovery.recoveryAction,
+      failureCode: recovery.code,
+      provider: recovery.provider,
+      visibility: recovery.hidden ? 'hidden' : 'visible',
     };
   });
 
@@ -7904,6 +8188,19 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
       pendingRecords: analysisItems.filter(item => item.status === 'analyzing' || item.status === 'paused').length,
       analyzedRecords: analysisItems.filter(item => item.status === 'analyzed').length,
       failedRecords: analysisItems.filter(item => item.status === 'failed').length,
+      hiddenRecords: analysisItems.filter(item => item.visibility === 'hidden').length,
+      providerStatus: {
+        gemini: {
+          configured: isGeminiConfigured(),
+          reason: isGeminiConfigured() ? '' : 'Gemini 未配置，不会启动 Gemini 视频分析。',
+          recoveryAction: isGeminiConfigured() ? '' : '请管理员配置 GEMINI_API_KEY，或确认已切换到 Qwen。',
+        },
+        qwen: {
+          configured: isQwenConfigured(),
+          reason: isQwenConfigured() ? '' : 'Qwen 未配置，Gemini 失败时无法使用 Qwen 兜底。',
+          recoveryAction: isQwenConfigured() ? '' : '请管理员配置 DASHSCOPE_API_KEY。',
+        },
+      },
       items: analysisItems,
       refinementItems,
     },

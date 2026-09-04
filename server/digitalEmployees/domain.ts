@@ -1,0 +1,516 @@
+import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
+
+export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
+export type PublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
+export interface PublishingTarget {
+  platform: PublishingPlatform;
+  accountId: string;
+  accountLabel: string;
+}
+export type WeeklyGoalStatus = 'draft' | 'pending_approval' | 'active' | 'paused' | 'completed' | 'cancelled';
+export type WorkflowTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting_external'
+  | 'waiting_approval'
+  | 'handed_off'
+  | 'skipped'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface DigitalEmployeeConfig {
+  companyName: string;
+  industry: string;
+  primaryBusiness: string;
+  targetMarkets: string;
+  customerProfile: string;
+  autonomyMode: AutonomyMode;
+  approvalOwner: string;
+  constraints: string[];
+  team: string[];
+  primaryGoal: 'awareness' | 'leads' | 'sales' | 'reactivation';
+  focusProducts: string;
+  enabledWorkflows: Array<'scheduled_social' | 'viral_clone' | 'product_content' | 'material_content' | 'content_publish' | 'customer_segmentation' | 'batch_followup'>;
+  socialCadence: string;
+  followupCadence: string;
+  reviewSchedule: string;
+  publishingTargets: PublishingTarget[];
+  /** Explicit tenant consent. Approval is still required for every content version. */
+  allowRealPublishing: boolean;
+  /** Shared outbound-consent flag consumed by the customer Agent. */
+  allowRealCustomerMessages: boolean;
+  /** Explicit consent to synthesize missing visual shots. Never inferred from enabled workflows. */
+  allowGeneratedVisuals: boolean;
+  approvalPolicy: {
+    contentPublish: boolean;
+    batchFollowup: boolean;
+    commercialCommitment: boolean;
+  };
+  agentApprovalPolicies: {
+    business: { activatePlan: boolean; changeGoalScope: boolean };
+    industry: { addUnverifiedSource: boolean; expandCollectionScope: boolean };
+    content: { contentPublish: boolean; factualClaims: boolean };
+    customer: { batchFollowup: boolean; commercialCommitment: boolean };
+  };
+}
+
+export interface WeeklyGoalInput {
+  businessLine: 'full_funnel' | 'content_growth' | 'customer_conversion';
+  contentPlatforms: Array<'facebook' | 'instagram' | 'tiktok' | 'youtube'>;
+  title: string;
+  objective: string;
+  metric: string;
+  baseline: number;
+  target: number;
+  unit: string;
+  startsAt: string;
+  endsAt: string;
+  scope: string;
+  constraints: string[];
+}
+
+export interface PlannedTask {
+  key: string;
+  title: string;
+  description: string;
+  agentRole: 'business' | 'industry' | 'content' | 'customer';
+  backgroundCapability?: 'knowledge' | 'planner' | 'risk' | 'channel' | 'review';
+  kind: 'analysis' | 'planning' | 'production' | 'approval' | 'activation' | 'review';
+  sequence: number;
+  priority: 'high' | 'medium';
+  requiresApproval: boolean;
+  dependsOn: string[];
+  expectedMinutes: number;
+  businessDomain: 'foundation' | 'content' | 'publishing' | 'customer' | 'review';
+  capabilityKey: string;
+  destination: 'enterprise' | 'scheduled' | 'socialInspiration' | 'scriptLibrary' | 'smartAssets' | 'conversion' | 'digitalEmployees';
+  destinationView?: 'create' | 'publish';
+  statusSource: string;
+  executionMode: 'internal' | 'observe' | 'draft_executor' | 'approval';
+  externalEffect: 'none' | 'draft' | 'schedule' | 'publish' | 'send';
+  automaticExecutionAllowed: boolean;
+  policySource: 'effective_runtime_policy';
+}
+
+export interface WeeklyPlanDraft {
+  strategy: string;
+  successCriteria: string[];
+  estimatedCost: number;
+  estimatedMinutes: number;
+  qualityGates: string[];
+  riskSummary: string;
+  tasks: PlannedTask[];
+}
+
+const text = (value: unknown, max = 500): string => String(value ?? '').trim().slice(0, max);
+const number = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeConfig>): DigitalEmployeeConfig {
+  const autonomyMode: AutonomyMode = ['suggest', 'collaborate', 'managed', 'automatic'].includes(String(input.autonomyMode))
+    ? input.autonomyMode as AutonomyMode
+    : 'managed';
+  const constraints = Array.isArray(input.constraints)
+    ? input.constraints.map(item => text(item, 240)).filter(Boolean).slice(0, 20)
+    : [];
+  const primaryGoal = ['awareness', 'leads', 'sales', 'reactivation'].includes(String(input.primaryGoal))
+    ? input.primaryGoal as DigitalEmployeeConfig['primaryGoal']
+    : 'leads';
+  const allowedWorkflows = new Set<DigitalEmployeeConfig['enabledWorkflows'][number]>([
+    'scheduled_social', 'viral_clone', 'product_content', 'material_content', 'content_publish', 'customer_segmentation', 'batch_followup',
+  ]);
+  const enabledWorkflows = Array.isArray(input.enabledWorkflows)
+    ? input.enabledWorkflows.filter((item): item is DigitalEmployeeConfig['enabledWorkflows'][number] => allowedWorkflows.has(item as DigitalEmployeeConfig['enabledWorkflows'][number]))
+    : [];
+  const allowedPublishingPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube']);
+  const publishingTargets: PublishingTarget[] = Array.isArray(input.publishingTargets)
+    ? input.publishingTargets
+      .map(item => ({
+        platform: String(item?.platform || '') as PublishingPlatform,
+        accountId: text(item?.accountId, 160),
+        accountLabel: text(item?.accountLabel, 200),
+      }))
+      .filter((item): item is PublishingTarget => allowedPublishingPlatforms.has(item.platform) && Boolean(item.accountId))
+      .filter((item, index, items) => items.findIndex(candidate => candidate.platform === item.platform && candidate.accountId === item.accountId) === index)
+    : [];
+  // External publication, bulk outreach, and commercial commitments are hard
+  // human-approval boundaries. They cannot be relaxed by a stale client or a
+  // higher autonomy selection.
+  const contentPublishApproval = true;
+  const batchFollowupApproval = true;
+  const commercialCommitmentApproval = true;
+  return {
+    companyName: text(input.companyName, 120),
+    industry: text(input.industry, 120),
+    primaryBusiness: text(input.primaryBusiness, 500),
+    targetMarkets: text(input.targetMarkets, 300),
+    customerProfile: text(input.customerProfile, 500),
+    autonomyMode,
+    approvalOwner: text(input.approvalOwner, 120),
+    constraints,
+    team: ['business', 'industry', 'content', 'customer'],
+    primaryGoal,
+    focusProducts: text(input.focusProducts, 500),
+    enabledWorkflows: Array.isArray(input.enabledWorkflows)
+      ? [...new Set(enabledWorkflows)]
+      : ['scheduled_social', 'viral_clone', 'product_content', 'content_publish', 'customer_segmentation', 'batch_followup'],
+    socialCadence: text(input.socialCadence, 1000) || 'YouTube、TikTok、Instagram、Facebook；公开行业关键词与已确认对标账号；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批',
+    followupCadence: text(input.followupCadence, 500) || '每周五 09:00 生成分层跟进草稿；17:00 前审批；仅在客户当地工作日 09:00–18:00 发送；同一客户 7 天最多 1 次',
+    reviewSchedule: text(input.reviewSchedule, 300) || '周五 17:30（北京时间）；数据截止 17:00；通知审批负责人；仅生成复盘和下周任务草稿',
+    publishingTargets,
+    allowRealPublishing: input.allowRealPublishing === true,
+    allowRealCustomerMessages: input.allowRealCustomerMessages === true,
+    allowGeneratedVisuals: input.allowGeneratedVisuals === true,
+    approvalPolicy: {
+      contentPublish: contentPublishApproval,
+      batchFollowup: batchFollowupApproval,
+      commercialCommitment: commercialCommitmentApproval,
+    },
+    agentApprovalPolicies: {
+      business: { activatePlan: input.agentApprovalPolicies?.business?.activatePlan !== false, changeGoalScope: input.agentApprovalPolicies?.business?.changeGoalScope !== false },
+      industry: { addUnverifiedSource: input.agentApprovalPolicies?.industry?.addUnverifiedSource !== false, expandCollectionScope: input.agentApprovalPolicies?.industry?.expandCollectionScope !== false },
+      content: { contentPublish: contentPublishApproval, factualClaims: input.agentApprovalPolicies?.content?.factualClaims !== false },
+      customer: { batchFollowup: batchFollowupApproval, commercialCommitment: commercialCommitmentApproval },
+    },
+  };
+}
+
+export function validateDigitalEmployeeConfig(config: DigitalEmployeeConfig): string[] {
+  const missing: string[] = [];
+  if (!config.companyName) missing.push('企业名称');
+  if (!config.industry) missing.push('行业');
+  if (!config.primaryBusiness) missing.push('主要业务');
+  if (!config.targetMarkets) missing.push('目标市场');
+  if (!config.customerProfile) missing.push('核心客户');
+  if (!config.approvalOwner) missing.push('审批负责人');
+  if (config.enabledWorkflows.includes('content_publish') && !config.publishingTargets.length) missing.push('发布平台与账号');
+  return missing;
+}
+
+export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: DigitalEmployeeConfig): WeeklyGoalInput {
+  const now = new Date();
+  const weekEnd = new Date(now);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  const baseline = Math.max(0, number(input.baseline));
+  const target = Math.max(baseline + 1, number(input.target, baseline + 5));
+  const businessLine = ['full_funnel', 'content_growth', 'customer_conversion'].includes(String(input.businessLine))
+    ? input.businessLine as WeeklyGoalInput['businessLine']
+    : 'full_funnel';
+  const allowedPlatforms = new Set<WeeklyGoalInput['contentPlatforms'][number]>(['facebook', 'instagram', 'tiktok', 'youtube']);
+  const configuredPlatforms = [...new Set(config.publishingTargets.map(target => target.platform))];
+  const defaultPlatforms = config.enabledWorkflows.includes('content_publish') && configuredPlatforms.length
+    ? configuredPlatforms
+    : ['facebook', 'instagram', 'tiktok', 'youtube'] as WeeklyGoalInput['contentPlatforms'];
+  const contentPlatforms: WeeklyGoalInput['contentPlatforms'] = Array.isArray(input.contentPlatforms)
+    ? [...new Set(input.contentPlatforms.filter((item): item is WeeklyGoalInput['contentPlatforms'][number] => allowedPlatforms.has(item as WeeklyGoalInput['contentPlatforms'][number])))]
+    : defaultPlatforms;
+  return {
+    businessLine,
+    contentPlatforms: contentPlatforms.length ? contentPlatforms : defaultPlatforms,
+    title: text(input.title, 160) || `${config.companyName} 本周增长目标`,
+    objective: text(input.objective, 1000),
+    metric: text(input.metric, 120) || 'approved_content_packages',
+    baseline,
+    target,
+    unit: text(input.unit, 40) || '项',
+    startsAt: text(input.startsAt, 40) || now.toISOString().slice(0, 10),
+    endsAt: text(input.endsAt, 40) || weekEnd.toISOString().slice(0, 10),
+    scope: text(input.scope, 600) || config.targetMarkets,
+    constraints: Array.isArray(input.constraints)
+      ? input.constraints.map(item => text(item, 240)).filter(Boolean).slice(0, 20)
+      : [...config.constraints],
+  };
+}
+
+export function validateWeeklyGoal(goal: WeeklyGoalInput): string[] {
+  const missing: string[] = [];
+  if (!goal.title) missing.push('目标名称');
+  if (!goal.objective) missing.push('目标说明');
+  if (!goal.metric) missing.push('指标');
+  if (!goal.scope) missing.push('业务范围');
+  if (!goal.startsAt || !goal.endsAt) missing.push('目标周期');
+  if (goal.target <= goal.baseline) missing.push('目标值必须高于基线');
+  return missing;
+}
+
+export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeConfig): WeeklyPlanDraft {
+  const runtimePolicy = resolveRuntimePolicy(config);
+  const businessLineName = goal.businessLine === 'content_growth' ? '内容增长' : goal.businessLine === 'customer_conversion' ? '客户转化' : '全链路经营';
+  const platformName: Record<WeeklyGoalInput['contentPlatforms'][number], string> = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube' };
+  const contentPlatformNames = goal.contentPlatforms.map(item => platformName[item]).join(' / ');
+  const taskCatalog: Array<Omit<PlannedTask, 'automaticExecutionAllowed' | 'policySource'>> = [
+    {
+      key: 'context_readiness',
+      title: '盘点企业、产品与授权边界',
+      description: `经营 Agent 调用知识能力读取 ${config.companyName} 的企业资料、重点产品、目标市场、社媒账号与客服授权，形成可追溯执行上下文。`,
+      agentRole: 'business', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 1, priority: 'high', requiresApproval: false, dependsOn: [], expectedMinutes: 3,
+      businessDomain: 'foundation', capabilityKey: 'enterprise.readiness', destination: 'enterprise', statusSource: 'enterprise/profile + platform accounts', executionMode: 'internal', externalEffect: 'none',
+    },
+    {
+      key: 'goal_decomposition',
+      title: '拆解本周目标与成功标准',
+      description: `经营 Agent 调用计划能力将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}。`,
+      agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 2, priority: 'high', requiresApproval: false, dependsOn: ['context_readiness'], expectedMinutes: 4,
+      businessDomain: 'foundation', capabilityKey: 'workflow.plan', destination: 'digitalEmployees', statusSource: 'weekly_plans', executionMode: 'internal', externalEffect: 'none',
+    },
+    {
+      key: 'scheduled_source_collection',
+      title: '建立社媒定时采集任务',
+      description: `行业 Agent 调用渠道能力在“定时任务”中为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，节奏为：${config.socialCadence}。`,
+      agentRole: 'industry', backgroundCapability: 'channel', kind: 'activation', sequence: 3, priority: 'high', requiresApproval: false, dependsOn: ['goal_decomposition'], expectedMinutes: 4,
+      businessDomain: 'content', capabilityKey: 'scheduler.social_collection', destination: 'scheduled', statusSource: 'scheduled_tasks + crawl_jobs', executionMode: 'observe', externalEffect: 'schedule',
+    },
+    {
+      key: 'viral_analysis',
+      title: '分析并筛选可用爆款',
+      description: '内容 Agent 读取爆款库的基础、策略和全片精确分析，只把具备可验证分镜证据的内容送入裂变。',
+      agentRole: 'industry', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 4, priority: 'high', requiresApproval: false, dependsOn: ['scheduled_source_collection'], expectedMinutes: 8,
+      businessDomain: 'content', capabilityKey: 'inspiration.exact_analysis', destination: 'socialInspiration', statusSource: 'trend_videos.aiAnalysis', executionMode: 'observe', externalEffect: 'none',
+    },
+    {
+      key: 'content_mode_routing',
+      title: '选择内容生产路径',
+      description: '经营 Agent 调用计划能力，根据爆款证据、重点产品和素材完备度生成可追溯内容订单。',
+      agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 5, priority: 'high', requiresApproval: false, dependsOn: ['viral_analysis'], expectedMinutes: 3,
+      businessDomain: 'content', capabilityKey: 'studio.mode_routing', destination: 'smartAssets', destinationView: 'create', statusSource: 'content_batch_plans.orders', executionMode: 'internal', externalEffect: 'draft',
+    },
+    {
+      key: 'content_production',
+      title: '执行脚本、素材与成片生产',
+      description: '内容 Agent 进入内容创作工作台，完成脚本、配音、字幕、素材匹配、分镜质检和渲染；作品完成状态不等于平台发布。',
+      agentRole: 'content', kind: 'production', sequence: 6, priority: 'high', requiresApproval: false, dependsOn: ['content_mode_routing'], expectedMinutes: 30,
+      businessDomain: 'content', capabilityKey: 'studio.production', destination: 'smartAssets', destinationView: 'create', statusSource: 'studio_projects + render jobs', executionMode: 'draft_executor', externalEffect: 'draft',
+    },
+    {
+      key: 'content_quality_gate', title: '完成内容质量门', description: '内容 Agent 调用风险能力核对事实、品牌、素材覆盖与分镜质量，保留需要人工修改的具体节点。',
+      agentRole: 'content', backgroundCapability: 'risk', kind: 'analysis', sequence: 7, priority: 'high', requiresApproval: false, dependsOn: ['content_production'], expectedMinutes: 8,
+      businessDomain: 'content', capabilityKey: 'studio.quality_gate', destination: 'smartAssets', destinationView: 'create', statusSource: 'studio project quality state', executionMode: 'observe', externalEffect: 'none',
+    },
+    {
+      key: 'content_release_approval', title: '审批发布内容与账号', description: '负责人逐项确认作品、平台文案、发布账号和时间；修改内容后原审批自动失效。',
+      agentRole: 'content', backgroundCapability: 'risk', kind: 'approval', sequence: 8, priority: 'high', requiresApproval: runtimePolicy.agents.content.approvals.contentPublish, dependsOn: ['content_quality_gate'], expectedMinutes: 5,
+      businessDomain: 'publishing', capabilityKey: 'publishing.approval', destination: 'smartAssets', destinationView: 'publish', statusSource: 'approval_requests', executionMode: 'approval', externalEffect: 'publish',
+    },
+    {
+      key: 'publishing_calendar', title: '写入内容发布日历', description: '内容 Agent 调用渠道能力将批准内容写入发布日历；经营自动化 Scheduler 与真实发布日历保持明确区分。',
+      agentRole: 'content', backgroundCapability: 'channel', kind: 'activation', sequence: 9, priority: 'high', requiresApproval: false, dependsOn: ['content_release_approval'], expectedMinutes: 4,
+      businessDomain: 'publishing', capabilityKey: 'publishing.calendar', destination: 'smartAssets', destinationView: 'publish', statusSource: 'posts.stats.status=scheduled', executionMode: 'observe', externalEffect: 'schedule',
+    },
+    {
+      key: 'platform_publish', title: '等待平台发布真实回执', description: '内容 Agent 调用渠道能力观察逐账号发布、失败重试和平台回执；只有平台 ID 或 publishResults=published 才算发布完成。',
+      agentRole: 'content', backgroundCapability: 'channel', kind: 'activation', sequence: 10, priority: 'high', requiresApproval: false, dependsOn: ['publishing_calendar'], expectedMinutes: 5,
+      businessDomain: 'publishing', capabilityKey: 'publishing.delivery', destination: 'smartAssets', destinationView: 'publish', statusSource: 'posts.platform_post_id + publishResults', executionMode: 'observe', externalEffect: 'publish',
+    },
+    {
+      key: 'customer_attribution', title: '回流互动与客户来源', description: '客户 Agent 将 WhatsApp 询盘与平台内容、产品和追踪码关联，无法确认时明确标记待归因。',
+      agentRole: 'customer', kind: 'analysis', sequence: 11, priority: 'high', requiresApproval: false, dependsOn: ['platform_publish'], expectedMinutes: 4,
+      businessDomain: 'customer', capabilityKey: 'customer.attribution', destination: 'conversion', statusSource: 'whatsapp_customers.sourcePostId', executionMode: 'observe', externalEffect: 'none',
+    },
+    {
+      key: 'customer_segmentation', title: '冻结本周客户分层快照', description: '客户 Agent 根据阶段、意向、BANT、来源、沉默时长和风险生成可审计客群，并记录排除原因。',
+      agentRole: 'customer', kind: 'analysis', sequence: 12, priority: 'high', requiresApproval: false, dependsOn: ['customer_attribution'], expectedMinutes: 5,
+      businessDomain: 'customer', capabilityKey: 'customer.segment_snapshot', destination: 'conversion', statusSource: 'customer_segments + members', executionMode: 'observe', externalEffect: 'none',
+    },
+    {
+      key: 'followup_batch_draft', title: '生成逐客跟进草稿', description: '客户 Agent 为冻结客群逐客生成草稿，保留语言、时区、24 小时窗口、模板状态与风险检查结果。',
+      agentRole: 'customer', kind: 'production', sequence: 13, priority: 'high', requiresApproval: false, dependsOn: ['customer_segmentation'], expectedMinutes: 12,
+      businessDomain: 'customer', capabilityKey: 'customer.followup_drafts', destination: 'conversion', statusSource: 'followup_batches + followup_batch_items', executionMode: 'observe', externalEffect: 'draft',
+    },
+    {
+      key: 'followup_batch_approval', title: '审批批量跟进', description: '负责人抽检或整批审批逐客草稿；价格、MOQ、付款和交期等商业承诺仍需逐条人工处理。',
+      agentRole: 'customer', backgroundCapability: 'risk', kind: 'approval', sequence: 14, priority: 'high', requiresApproval: runtimePolicy.agents.customer.approvals.batchFollowup, dependsOn: ['followup_batch_draft'], expectedMinutes: 8,
+      businessDomain: 'customer', capabilityKey: 'customer.followup_approval', destination: 'conversion', statusSource: 'approval_requests + followup_batches', executionMode: 'approval', externalEffect: 'send',
+    },
+    {
+      key: 'followup_dispatch', title: '按客户时区执行跟进', description: '客户 Agent 只发送已批准且通过窗口、模板与风险校验的单客任务；批量发送 Worker 未就绪时保持阻塞。',
+      agentRole: 'customer', kind: 'activation', sequence: 15, priority: 'high', requiresApproval: false, dependsOn: ['followup_batch_approval'], expectedMinutes: 10,
+      businessDomain: 'customer', capabilityKey: 'customer.followup_delivery', destination: 'conversion', statusSource: 'followup_batch_items.status + provider receipt', executionMode: 'observe', externalEffect: 'send',
+    },
+    {
+      key: 'weekly_review', title: '生成真实周复盘与下周草案', description: '经营 Agent 调用复盘能力聚合任务、内容、发布、询盘、客户、批次与人工纠偏；缺失来源显示数据缺口。',
+      agentRole: 'business', backgroundCapability: 'review', kind: 'review', sequence: 16, priority: 'medium', requiresApproval: false, dependsOn: ['followup_dispatch'], expectedMinutes: 5,
+      businessDomain: 'review', capabilityKey: 'review.weekly_business', destination: 'digitalEmployees', statusSource: 'weekly_reviews + business snapshot', executionMode: 'internal', externalEffect: 'none',
+    },
+  ];
+  const enabled = new Set(config.enabledWorkflows);
+  const lineAllowsContent = goal.businessLine !== 'customer_conversion';
+  const lineAllowsCustomer = goal.businessLine !== 'content_growth';
+  const hasScheduledCollection = lineAllowsContent && enabled.has('scheduled_social');
+  const hasViralClone = lineAllowsContent && enabled.has('viral_clone');
+  const hasContentCreation = lineAllowsContent && (hasViralClone || enabled.has('product_content') || enabled.has('material_content'));
+  const hasPublishing = lineAllowsContent && enabled.has('content_publish');
+  const hasBatchFollowup = lineAllowsCustomer && enabled.has('batch_followup');
+  const hasCustomerSegmentation = lineAllowsCustomer && (enabled.has('customer_segmentation') || hasBatchFollowup);
+  const included = new Set<string>(['context_readiness', 'goal_decomposition', 'weekly_review']);
+  if (hasScheduledCollection) included.add('scheduled_source_collection');
+  if (hasViralClone) included.add('viral_analysis');
+  if (hasContentCreation) {
+    included.add('content_mode_routing');
+    included.add('content_production');
+    included.add('content_quality_gate');
+  }
+  if (hasPublishing) {
+    included.add('content_release_approval');
+    included.add('publishing_calendar');
+    included.add('platform_publish');
+  }
+  if (hasPublishing && hasCustomerSegmentation) included.add('customer_attribution');
+  if (lineAllowsCustomer && hasCustomerSegmentation) included.add('customer_segmentation');
+  if (hasBatchFollowup) {
+    included.add('followup_batch_draft');
+    included.add('followup_batch_approval');
+    included.add('followup_dispatch');
+  }
+
+  const dependencyByKey: Record<string, string[]> = {
+    context_readiness: [],
+    goal_decomposition: ['context_readiness'],
+    scheduled_source_collection: ['goal_decomposition'],
+    viral_analysis: [hasScheduledCollection ? 'scheduled_source_collection' : 'goal_decomposition'],
+    // Viral evidence is opportunistic. Product/material routes must continue
+    // when an exact benchmark analysis is not available yet; the route
+    // allocator simply excludes clone until that evidence exists.
+    content_mode_routing: ['goal_decomposition'],
+    content_production: ['content_mode_routing'],
+    content_quality_gate: ['content_production'],
+    content_release_approval: [hasContentCreation ? 'content_quality_gate' : 'goal_decomposition'],
+    publishing_calendar: ['content_release_approval'],
+    platform_publish: ['publishing_calendar'],
+    customer_attribution: ['platform_publish'],
+    customer_segmentation: [hasPublishing ? 'customer_attribution' : 'goal_decomposition'],
+    followup_batch_draft: ['customer_segmentation'],
+    followup_batch_approval: ['followup_batch_draft'],
+    followup_dispatch: ['followup_batch_approval'],
+  };
+  const reviewDependencies = [
+    hasPublishing ? 'platform_publish' : hasContentCreation ? 'content_quality_gate' : hasScheduledCollection ? 'scheduled_source_collection' : '',
+    hasBatchFollowup ? 'followup_dispatch' : hasCustomerSegmentation ? 'customer_segmentation' : '',
+  ].filter(Boolean);
+  dependencyByKey.weekly_review = [...new Set(reviewDependencies.length ? reviewDependencies : ['goal_decomposition'])];
+
+  const tasks = taskCatalog
+    .filter(task => included.has(task.key))
+    .map((task, index) => ({
+      ...task,
+      sequence: index + 1,
+      dependsOn: dependencyByKey[task.key] || [],
+      automaticExecutionAllowed: automaticExecutionAllowed(runtimePolicy, task.externalEffect),
+      policySource: 'effective_runtime_policy' as const,
+    }));
+  const estimatedMinutes = tasks.reduce((sum, task) => sum + task.expectedMinutes, 0);
+  return {
+    strategy: `围绕“${goal.objective}”，按${businessLineName}主线${goal.businessLine === 'content_growth' ? `（${contentPlatformNames}）` : ''}组织任务；所有对外动作受 ${config.autonomyMode} 自主模式约束。`,
+    successCriteria: [
+      `${goal.metric} 从 ${goal.baseline} 提升到 ${goal.target} ${goal.unit}`,
+      '每个任务都绑定现有业务能力、事实来源与工作台去向',
+      '平台发布、批量发送与商业承诺均经过人工审批',
+      '作品完成与平台发布使用不同的真实状态来源',
+    ],
+    // Kept in the API contract for backwards compatibility; paid-media spend
+    // is intentionally not part of the current digital-employee workflow.
+    estimatedCost: 0,
+    estimatedMinutes,
+    qualityGates: ['企业事实完整性', '爆款证据完整性', '内容质量门', '发布与批量跟进审批', '业务结果可追溯'],
+    riskSummary: '读取、分析和内部草稿属于低风险动作；平台发布、批量发送与商业承诺仍需负责人批准。',
+    tasks,
+  };
+}
+
+export function buildTaskOutput(
+  taskKey: string,
+  goal: WeeklyGoalInput,
+  config: DigitalEmployeeConfig,
+): Record<string, unknown> {
+  if (taskKey === 'context_readiness') {
+    return {
+      company: config.companyName,
+      industry: config.industry,
+      business: config.primaryBusiness,
+      targetMarkets: config.targetMarkets,
+      customerProfile: config.customerProfile,
+      constraints: config.constraints,
+      evidenceStatus: 'confirmed_configuration',
+    };
+  }
+  if (taskKey === 'goal_decomposition') {
+    return {
+      objective: goal.objective,
+      successMetric: goal.metric,
+      baseline: goal.baseline,
+      target: goal.target,
+      unit: goal.unit,
+      scope: goal.scope,
+      businessLine: goal.businessLine,
+      contentPlatforms: goal.contentPlatforms,
+      checkpoints: goal.businessLine === 'content_growth'
+        ? ['建立四平台采集', '完成爆款分析与内容生产', '发布回执入库', '归因内容询盘', '生成周复盘']
+        : goal.businessLine === 'customer_conversion'
+          ? ['冻结客户分层', '生成逐客草稿', '完成人工审批', '按时区发送并回流', '生成周复盘']
+          : ['建立社媒采集', '完成爆款分析与内容生产', '发布回执入库', '客户分层与逐客跟进', '生成周复盘'],
+    };
+  }
+  if (taskKey === 'scheduled_source_collection') {
+    return { capability: 'scheduler.social_collection', destination: 'scheduled', cadence: config.socialCadence, platforms: goal.contentPlatforms, taskTypes: ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'], statusSource: 'scheduled_tasks + crawl_jobs', externalWritePerformed: false };
+  }
+  if (taskKey === 'viral_analysis') {
+    return { capability: 'inspiration.exact_analysis', destination: 'socialInspiration', minimumEvidence: 'full_video_exact_analysis', statusSource: 'trend_videos.aiAnalysis', selectionPerformed: false };
+  }
+  if (taskKey === 'content_mode_routing') {
+    const market = goal.scope || config.targetMarkets;
+    return {
+      packageType: 'business_native_content_plan',
+      audience: config.customerProfile,
+      market,
+      focusProducts: config.focusProducts,
+      routingSource: 'content_batch_plans.orders',
+      planningPerformed: false,
+      destination: 'smartAssets/create',
+    };
+  }
+  if (taskKey === 'content_production') return { capability: 'studio.production', statusSource: 'studio_projects + render jobs', destination: 'smartAssets/create', completedWorkIsPublished: false };
+  if (taskKey === 'content_quality_gate') return { capability: 'studio.quality_gate', checks: ['facts', 'brand', 'material_coverage', 'storyboard'], destination: 'smartAssets/create' };
+  if (taskKey === 'content_release_approval') return { capability: 'publishing.approval', destination: 'smartAssets/publish', externalPublishPerformed: false, approvalRequired: config.approvalPolicy.contentPublish };
+  if (taskKey === 'publishing_calendar') return { capability: 'publishing.calendar', statusSource: 'posts.stats.status=scheduled', destination: 'smartAssets/publish', scheduledIsPublished: false };
+  if (taskKey === 'platform_publish') return { capability: 'publishing.delivery', statusSource: 'posts.platform_post_id + publishResults', destination: 'smartAssets/publish', externalPublishPerformed: false };
+  if (taskKey === 'customer_attribution') return { capability: 'customer.attribution', statusSource: 'whatsapp_customers.sourcePostId', destination: 'conversion', attributionStatus: 'waiting_business_data' };
+  if (taskKey === 'customer_segmentation') return { capability: 'customer.segment_snapshot', criteria: ['stage', 'intentScore', 'bant', 'source', 'silentDays', 'risk'], destination: 'conversion', snapshotCreated: false };
+  if (taskKey === 'followup_batch_draft') return { capability: 'customer.followup_drafts', cadence: config.followupCadence, safetyMode: 'per_customer_draft', destination: 'conversion', messagesSent: 0 };
+  if (taskKey === 'followup_batch_approval') return { capability: 'customer.followup_approval', destination: 'conversion', messagesSent: 0, approvalRequired: config.approvalPolicy.batchFollowup, commercialCommitmentsRequireIndividualReview: true };
+  if (taskKey === 'followup_dispatch') {
+    return { capability: 'customer.followup_delivery', deliveryMode: 'single_customer_confirmation', bulkWorkerStatus: 'manual_or_scheduled', messagesSent: 0, reason: 'Worker 已接入；只有 Meta 返回消息 ID 后才计为已发送，Webhook 继续回写送达与已读。' };
+  }
+  if (taskKey === 'weekly_review') return { capability: 'review.weekly_business', destination: 'digitalEmployees', statusSource: 'business snapshot', nextWeekPlanCreated: false };
+  return { status: 'completed', summary: '任务已完成并写入真实运行记录。' };
+}
+
+export interface ReviewInput {
+  goal: WeeklyGoalInput;
+  totalTasks: number;
+  completedTasks: number;
+  approvalCount: number;
+  handoffCount: number;
+  failedTasks: number;
+}
+
+export function buildWeeklyReview(input: ReviewInput): Record<string, unknown> {
+  const completionRate = input.totalTasks ? Math.round((input.completedTasks / input.totalTasks) * 100) : 0;
+  const automaticTasks = Math.max(0, input.completedTasks - input.approvalCount);
+  const automationRate = input.completedTasks ? Math.round((automaticTasks / input.completedTasks) * 100) : 0;
+  return {
+    completionRate,
+    automationRate,
+    approvalRate: input.totalTasks ? Math.round((input.approvalCount / input.totalTasks) * 100) : 0,
+    handoffRate: input.totalTasks ? Math.round((input.handoffCount / input.totalTasks) * 100) : 0,
+    completedTasks: input.completedTasks,
+    totalTasks: input.totalTasks,
+    failedTasks: input.failedTasks,
+    highlights: input.failedTasks
+      ? ['已形成完整运行证据链', '存在失败节点，需要在下周计划中优先修复']
+      : ['周目标已形成可追溯任务链', '审批边界得到执行', '生产现场事件完整记录'],
+    nextGoalSuggestion: `延续“${input.goal.objective}”，基于本周已批准执行包接入真实渠道结果，并用 ${input.goal.metric} 校准下一周目标。`,
+    knowledgeCandidates: ['本周有效的内容主题', '审批人修改意见', '应继续保留的风险边界'],
+  };
+}

@@ -95,4 +95,25 @@ assert.equal(
 );
 assert.equal(isPredominantlyChineseText('帮我确认一下 MOQ 和交期'), true);
 
+assert.match(
+  source,
+  /真实客户 · 通道未连接/,
+  'real customers must not be described as reachable when WhatsApp is unavailable',
+);
+assert.match(
+  source,
+  /disabled=\{sending \|\| !channelReady/,
+  'the real-send action must remain disabled until the provider channel is ready',
+);
+assert.match(
+  source,
+  /\.catch\(error => \{[\s\S]{0,180}removeTimelineEvent\(customer\.id, event\.id\);[\s\S]{0,220}hasUnread: true[\s\S]{0,120}pendingDraft: restoreText/,
+  'a provider failure must remove the optimistic message and restore the customer draft/todo state',
+);
+assert.match(
+  source,
+  /\.then\(async result => \{[\s\S]{0,520}persistCustomerPatch\(customer\.id, \{ lastActive: '刚刚', hasUnread: false/,
+  'a customer todo may only be completed after the provider confirms the send',
+);
+
 console.log('customer reply UI translation contract tests passed');

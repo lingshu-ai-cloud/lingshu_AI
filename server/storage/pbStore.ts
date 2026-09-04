@@ -88,8 +88,10 @@ function sortLocalRecords<T extends Record<string, unknown>>(items: T[], sort?: 
     const bv = b[key];
     const an = typeof av === 'string' ? Date.parse(av) : Number(av);
     const bn = typeof bv === 'string' ? Date.parse(bv) : Number(bv);
-    const left = Number.isFinite(an) && Number.isFinite(bn) ? an : String(av ?? '').localeCompare(String(bv ?? ''));
-    return desc ? -left : left;
+    const comparison = Number.isFinite(an) && Number.isFinite(bn)
+      ? an - bn
+      : String(av ?? '').localeCompare(String(bv ?? ''));
+    return desc ? -comparison : comparison;
   });
 }
 
