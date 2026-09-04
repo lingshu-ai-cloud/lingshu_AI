@@ -1555,7 +1555,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                         <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${hasVideo ? status.className : 'bg-amber-50 text-amber-700'}`}>{hasVideo ? status.label : '未生成成片'}</span>
                       </div>
                       <p className="mt-1 truncate text-[11px] text-text-muted">
-                        {item.videoPath || '请返回内容创作生成该版本成片'} · {targetCount} 个账号 · {item.deliveryMode === 'now' ? '立即发布' : item.deliveryMode === 'flexible' ? '时间待定' : item.scheduledAt ? `定点 ${new Date(item.scheduledAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '待选定点时间'}
+                        {item.videoPath ? item.videoPath.split(/[\\/]/).pop() : '请返回内容创作生成该版本成片'} · {targetCount} 个账号 · {item.deliveryMode === 'now' ? '立即发布' : item.deliveryMode === 'flexible' ? '时间待定' : item.scheduledAt ? `定点 ${new Date(item.scheduledAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '待选定点时间'}
                       </p>
                       {item.error && <p className="mt-1 truncate text-[11px] font-semibold text-red-600" title={item.error}>{item.error}</p>}
                     </button>
@@ -1646,7 +1646,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               <div className="mt-4 space-y-3">
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">素材文件</span>
-                  <input value={activeItem?.videoPath || ''} onChange={event => activeItem && updateItem(activeItem.id, { videoPath: event.target.value, status: 'draft', error: undefined })} placeholder="/Users/.../rendered-video.mp4" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
+                  <input readOnly value={activeItem?.videoPath?.split(/[\\/]/).pop() || ''} placeholder="请上传视频或从内容创作生成成片" className="w-full rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent" />
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-[11px] font-semibold text-text-secondary">作品标题</span>

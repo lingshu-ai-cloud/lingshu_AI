@@ -2774,7 +2774,7 @@ function looksLikeStandaloneSpeech(value: string): boolean {
 function cleanVoiceoverLine(value: string): string {
   let text = String(value || '')
     .replace(/^\s*\[[^\]]+\]\s*/g, '')
-    .replace(/^(Hook|Body|CTA|口播|字幕|人物说|台词|Voiceover|VO|Caption)\s*[：:·-]?\s*/i, '')
+    .replace(/^(Hook|Body|CTA|口播|字幕|人物说|台词|Voiceover|VO|Caption)(?:\s*[：:·-]\s*|\s+)/i, '')
     .replace(/[（(]\s*(?:参考原节奏|参考节奏|原节奏|参考原片|原片|原视频|日文原句|英文原句|韩文原句)[^）)]*[）)]/gi, '')
     .replace(/[（(][^）)]*(?:参考原节奏|参考节奏|原节奏|参考原片|原片|原视频|日文原句|英文原句|韩文原句)[^）)]*[）)]/gi, '')
     .replace(/[（(][^）)]*[\u3040-\u30ff\uac00-\ud7af][^）)]*[）)]/g, '')
@@ -2861,7 +2861,7 @@ function mergeTimestampedVoiceoverSegments(
 }
 
 function parseTimestampedVoiceover(value: string): Array<{ time: string; text: string }> {
-  const lines = String(value || '').split(/\n+/);
+  const lines = String(value || '').replace(/\s+(?=(?:素材|环境|景别|运镜|构图|镜头功能|画面|配乐|台词|口播|人物说|字幕|Voiceover|VO|Visual|Caption)\s*[：:])/gi, '\n').split(/\n+/);
   const segments: Array<{ time: string; text: string }> = [];
   const structuredStoryboard = hasStoryboardFieldLabels(lines);
   let currentTime = '';
@@ -3016,6 +3016,12 @@ function stripVoiceoverTimestamps(value: string): string {
     .map(line => cleanVoiceoverLine(line))
     .filter(Boolean)
     .join('\n');
+}
+
+function publishCaption(caption: string, spoken: string): string {
+  const text = caption.trim();
+  const legacyDemo = 'Factory-direct home essentials 🏠✨ #tiktokmademebuyit #homefinds';
+  return text && text !== legacyDemo ? text : stripVoiceoverTimestamps(spoken);
 }
 
 function isBadTranslatedLine(text: string, target: string): boolean {
@@ -3852,7 +3858,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const digitalHumanQueueSubmissionRef = useRef('');
 
   const [account, setAccount] = useState<string | null>('a1');
-  const [caption, setCaption] = useState('Factory-direct home essentials 🏠✨ #tiktokmademebuyit #homefinds');
+  const [caption, setCaption] = useState('');
   const [captionLoading, setCaptionLoading] = useState(false);
   const [published, setPublished] = useState(false);
   const [demoAutoLoading, setDemoAutoLoading] = useState(false);
@@ -4076,12 +4082,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const materialCoverageReady = effectiveSelectedDuration >= Math.max(1, duration * 0.85);
   const matNames = selectedClips.map(c => c.name);
   const storyboardSlots = useMemo(() => {
-    const parsed = parseStoryboardSlots(script, duration);
-    const activeAudioDuration = voiceoverMode === 'ai'
-      ? voiceoverAudios[activeVoiceLang]?.duration || 0
-      : voiceoverMode === 'upload' ? voiceoverDur : 0;
-    return fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
-  }, [activeVoiceLang, duration, script, voiceoverAudios, voiceoverDur, voiceoverMode]);
+    // Storyboard boundaries belong to the script. Playback language must not
+    // change source trims or invalidate every language's render signature.
+    return parseStoryboardSlots(script, duration);
+  }, [duration, script]);
   useEffect(() => {
     if (!storyboardSlots.length) {
       if (activeStoryboardSlotId) setActiveStoryboardSlotId('');
@@ -5963,7 +5967,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const controller = new AbortController();
     voiceDraftAbortRef.current = controller;
     const isCurrentRequest = () => voiceDraftAbortRef.current === controller;
-    const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
+    const sourceText = voiceoverLines || script;
     const base = extractVoiceoverText(sourceText);
     const requestDraftSnapshot = { ...voiceDrafts };
     const initiallyStale = new Set(voiceDraftStaleLangs);
@@ -6118,7 +6122,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const specEpoch = studioSpecEpochRef.current;
     const isCurrentSpec = () => studioSpecEpochRef.current === specEpoch;
     const requestDraftSnapshot = { ...voiceDrafts };
-    const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
+    const sourceText = voiceoverLines || script;
     const base = extractVoiceoverText(sourceText);
     if (!base.trim()) {
       setVoiceDraftNotice('当前脚本没有可翻译的口播文案。');
@@ -6529,7 +6533,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         videoPath,
         previewUrl: output?.previewUrl || latestDone?.previewUrl || (key === activeRenderCombinationKey ? renderOutputPreviewUrl || undefined : undefined),
         title: `${baseTitle} - ${versionName}`,
-        description: caption.trim() || voiceDrafts[code] || activeSpokenScript,
+        description: publishCaption(caption, voiceDrafts[code] || activeSpokenScript),
         ratio,
         sourceProjectId: projectId || undefined,
         platform: publishPlatform,
@@ -6546,7 +6550,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       videoPath: renderOutputPath || '',
       previewUrl: renderOutputPreviewUrl || undefined,
       title: projectTitle.trim() || coverTitle || 'AI 快剪成片',
-      description: caption.trim() || activeSpokenScript,
+      description: publishCaption(caption, activeSpokenScript),
       ratio,
       sourceProjectId: projectId || undefined,
       platform: platform as StudioPublishPlatform,
@@ -7912,7 +7916,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           continue;
         }
         const audio = voiceoverAudios[code];
-        const generated = audio?.cues?.length
+        // Older TTS responses paginated Latin text in the middle of words.
+        // Regenerating subtitles must repair those cached cues as well.
+        const cachedText = audio?.cues?.map(cue => cue.text.trim()).join(' ').replace(/\s+/g, ' ').trim();
+        const spokenText = stripVoiceoverTimestamps(text).replace(/\s+/g, ' ').trim();
+        const cachedWordsIntact = /[\u3400-\u9fff]/.test(spokenText) || cachedText === spokenText;
+        const generated = audio?.cues?.length && cachedWordsIntact
           ? audio.cues
           : buildCues(text, audio?.duration || voiceoverDur || totalDur || duration);
         if (generated.length) next[code] = generated;
@@ -8352,7 +8361,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setCapturedCoverFrameUrl(typeof s.capturedCoverFrameUrl === 'string' ? s.capturedCoverFrameUrl : '');
     if (s.materialVersionCovers && typeof s.materialVersionCovers === 'object') setMaterialVersionCovers(s.materialVersionCovers as Record<string, CoverVersionConfig>);
     if (s.account !== undefined) setAccount(s.account as string | null);
-    if (typeof s.caption === 'string') setCaption(s.caption);
+    if (typeof s.caption === 'string') setCaption(publishCaption(s.caption, ''));
     if (s.posterDraft && typeof s.posterDraft === 'object') setPosterDraft(s.posterDraft as FbPosterResult);
     if (typeof s.posterJsonText === 'string') setPosterJsonText(s.posterJsonText);
     if (typeof s.posterImageUrl === 'string') setPosterImageUrl(s.posterImageUrl);
@@ -12289,9 +12298,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           : scriptStageTab === 'audio'
             ? voiceReady ? { status: 'ready' as const, label: voiceoverMode === 'none' ? '无需口播' : '配音完成' } : { status: 'idle' as const, label: '待生成配音' }
             : alignedCuesByLang[activeVoiceLang]?.length ? { status: 'ready' as const, label: '字幕完成' } : { status: 'idle' as const, label: '待生成字幕' }
-      : materialAssessment?.level === 'direct'
-        ? { status: 'ready' as const, label: `匹配 ${materialAssessment.score} 分` }
-        : materialAssessment?.level === 'review'
+      : materialAssessment && (materialAssessment.level === 'direct' || sourcePlanFor(slot).confirmed)
+        ? { status: 'ready' as const, label: `${sourcePlanFor(slot).confirmed ? '已确认' : '匹配'} ${materialAssessment.score} 分` }
+        : materialAssessment?.level === 'review' && !sourcePlanFor(slot).confirmed
           ? { status: 'warning' as const, label: `需确认 ${materialAssessment.score} 分` }
           : material ? { status: 'warning' as const, label: `低匹配 ${materialAssessment?.score || 0} 分` } : { status: 'idle' as const, label: '待匹配' };
     return {
@@ -12511,7 +12520,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const workbenchPropertyDescription = step === 'mode' ? '确认内容、素材与输出参数'
     : step === 'script' && scriptStageTab === 'theme' ? (activeSlotTime || '确认分镜结构与内容')
       : step === 'script' && scriptStageTab === 'voiceover' ? `${activeLanguageLabel} · 选择语言并生成文案`
-        : step === 'script' && scriptStageTab === 'audio' ? `${activeLanguageLabel} · 选择声音策略并生成语音`
+          : step === 'script' && scriptStageTab === 'audio' ? `${activeLanguageLabel} · ${activeVoiceDuration > 0 ? `口播 ${activeVoiceDuration.toFixed(1)} 秒；分镜保留脚本时长，成片按口播适配` : '选择声音策略并生成语音'}`
           : step === 'script' && scriptStageTab === 'subtitle' ? `${activeLanguageLabel} · 生成并调整字幕`
             : step === 'script' && scriptStageTab === 'bgm' ? '试听、上传并选择整片背景音乐'
           : step === 'script' ? '完成脚本与声音设置'

@@ -8646,7 +8646,19 @@ function splitSubtitleText(text: string): string[] {
   for (const sentence of sentences) {
     const max = /[\u3400-\u9fff]/.test(sentence) ? 16 : 42;
     if (sentence.length <= max) { result.push(sentence); continue; }
-    for (let cursor = 0; cursor < sentence.length; cursor += max) result.push(sentence.slice(cursor, cursor + max));
+    if (/[\u3400-\u9fff]/.test(sentence)) {
+      for (let cursor = 0; cursor < sentence.length; cursor += max) result.push(sentence.slice(cursor, cursor + max));
+    } else {
+      let line = '';
+      for (const word of sentence.split(/\s+/)) {
+        if (line && `${line} ${word}`.length > max) {
+          result.push(line);
+          line = '';
+        }
+        line = line ? `${line} ${word}` : word;
+      }
+      if (line) result.push(line);
+    }
   }
   return result;
 }
