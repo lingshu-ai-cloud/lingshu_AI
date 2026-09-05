@@ -1127,6 +1127,8 @@ export interface DigitalHumanJob {
   progress: number;
   outputMaterialId?: string;
   outputUrl?: string;
+  /** Server-probed duration of the immutable generated video. */
+  outputDurationSeconds?: number;
   qualityReport?: DigitalHumanQualityReport;
   errorCode?: string;
   errorMessage?: string;

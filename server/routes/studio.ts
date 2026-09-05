@@ -4550,10 +4550,10 @@ async function buildManifest(
       }
       digitalHumanSegment = buildDigitalHumanSegmentProvenance(matchingJobs[0]!);
       assertRequestedDigitalHumanProvenance(item.digitalHumanSegment, digitalHumanSegment);
-      const audioDuration = digitalHumanSegment.audioEndSeconds - digitalHumanSegment.audioStartSeconds;
+      const outputDuration = digitalHumanSegment.outputDurationSeconds;
       if (!Number.isFinite(Number(material.duration))
-        || Math.abs(Number(material.duration) - audioDuration) > DIGITAL_HUMAN_TERMINAL_TOLERANCE_SECONDS) {
-        throw new Error(`digital-human material ${material.id} duration differs from its worker-gated audio segment`);
+        || Math.abs(Number(material.duration) - outputDuration) > DIGITAL_HUMAN_TERMINAL_TOLERANCE_SECONDS) {
+        throw new Error(`digital-human material ${material.id} duration differs from its verified provider output`);
       }
     }
     const trimStart = digitalHumanGenerated
@@ -5606,6 +5606,9 @@ interface DigitalHumanJob {
   progress: number;
   outputMaterialId?: string;
   outputUrl?: string;
+  /** Measured duration of the immutable provider output. This can differ from
+   * the planned narration interval when a provider synthesizes its own voice. */
+  outputDurationSeconds?: number;
   uploadedResultSha256?: string;
   uploadedResultSize?: number;
   resultSha256?: string;
@@ -6017,6 +6020,7 @@ async function finalizeDigitalHumanFile(
     }
     return updateDigitalHumanJob(job.id, {
       status: 'review', stage: 'quality_review', progress: 100,
+      outputDurationSeconds: Number(serverValidation.durationSeconds),
       qualityReport: {
         ...(providerQuality || {}),
         passed: false,
@@ -6041,7 +6045,7 @@ async function finalizeDigitalHumanFile(
   const material = await createGeneratedVideoMaterial({
     title: job.storyboardSlotId ? `数字人口播 · ${job.avatarName} · 分镜` : `数字人口播 · ${job.avatarName}`,
     filename,
-    duration: job.audioEndSeconds && job.audioStartSeconds != null ? Math.max(0, job.audioEndSeconds - job.audioStartSeconds) : 0,
+    duration: Number(serverValidation.durationSeconds),
     tenantId: job.tenantId,
     sourceType: 'digital-human',
     beforeCommit: () => { job = assertDigitalHumanFinalizationCurrent(job.id, transfer); },
@@ -6052,6 +6056,7 @@ async function finalizeDigitalHumanFile(
   persistMaterials(upsertMaterialIndex(loadMaterials(), material));
   return updateDigitalHumanJob(job.id, {
     status: 'completed', stage: 'completed', progress: 100,
+    outputDurationSeconds: Number(serverValidation.durationSeconds),
     outputMaterialId: material.id, outputUrl: material.url || undefined,
     qualityReport: {
       ...providerQuality,
@@ -6631,6 +6636,19 @@ studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
   res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
 });
 
+studioRouter.get('/digital-human/jobs/:id/review-file', (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
+  if (job.status !== 'review') { res.status(409).json({ ok: false, error: '该任务当前没有待复核原片' }); return; }
+  const reviewPath = path.join(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, `${job.id}.review.mp4`);
+  if (!fs.existsSync(reviewPath)) { res.status(404).json({ ok: false, error: '待复核原片不存在' }); return; }
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `attachment; filename="${job.id}.review.mp4"`);
+  res.sendFile(reviewPath);
+});
+
 studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const source = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
@@ -6646,6 +6664,7 @@ studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
     workerId: undefined, workerLeaseId: undefined, workerLeaseUntil: undefined,
     workerAttemptCount: 0, cancelRequested: false,
     status: 'queued', stage: 'queued', progress: 0, outputMaterialId: undefined, outputUrl: undefined,
+    outputDurationSeconds: undefined,
     uploadedResultSha256: undefined, uploadedResultSize: undefined,
     resultSha256: undefined, resultWorkerId: undefined, resultLeaseId: undefined,
     qualityReport: undefined, errorCode: undefined, errorMessage: undefined, completedAt: undefined,

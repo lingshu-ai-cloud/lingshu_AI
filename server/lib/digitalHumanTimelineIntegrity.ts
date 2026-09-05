@@ -27,28 +27,30 @@ export interface DigitalHumanSegmentProvenance {
   storyboardSlotId: string;
   batchId?: string;
   outputMaterialId: string;
+  provider: string;
   inputSignature: string;
   baseSourceSignature: string;
   pipelineVersion: typeof DIGITAL_HUMAN_PIPELINE_VERSION;
   avatarMaterialId: string;
   performanceSignature: string;
-  performanceProfileId: string;
-  performanceProfileFingerprint: string;
-  motionProfileId: string;
-  motionClipIds: string[];
-  configuredGesture: string;
-  beatStrategy: string;
-  originalBeatCount: number;
-  orchestrationAuditFingerprint: string;
-  treatmentId: DigitalHumanRenderTreatmentId;
-  treatmentAttempt: number;
-  treatmentAuditVersion: string;
-  treatmentRenderFingerprint: string;
-  treatmentFilterSha256: string;
-  treatmentBaseRenderFingerprint: string;
+  performanceProfileId?: string;
+  performanceProfileFingerprint?: string;
+  motionProfileId?: string;
+  motionClipIds?: string[];
+  configuredGesture?: string;
+  beatStrategy?: string;
+  originalBeatCount?: number;
+  orchestrationAuditFingerprint?: string;
+  treatmentId?: DigitalHumanRenderTreatmentId;
+  treatmentAttempt?: number;
+  treatmentAuditVersion?: string;
+  treatmentRenderFingerprint?: string;
+  treatmentFilterSha256?: string;
+  treatmentBaseRenderFingerprint?: string;
   workerOutputSha256: string;
   audioStartSeconds: number;
   audioEndSeconds: number;
+  outputDurationSeconds: number;
   qualityGateVersion: string;
   workerValidatorVersion: string;
 }
@@ -62,6 +64,7 @@ export interface DigitalHumanProvenanceJobRecord {
   status?: unknown;
   language?: unknown;
   outputMaterialId?: unknown;
+  provider?: unknown;
   inputSignature?: unknown;
   sourceFingerprint?: unknown;
   pipelineVersion?: unknown;
@@ -72,6 +75,7 @@ export interface DigitalHumanProvenanceJobRecord {
   resultSha256?: unknown;
   audioStartSeconds?: unknown;
   audioEndSeconds?: unknown;
+  outputDurationSeconds?: unknown;
   qualityReport?: unknown;
 }
 
@@ -202,15 +206,25 @@ export function buildDigitalHumanSegmentProvenance(job: DigitalHumanProvenanceJo
   if (quality.outputSha256 && requiredSha256(quality.outputSha256, 'qualityReport.outputSha256') !== outputSha256) {
     throw new Error('数字人 Worker 输出 SHA256 与服务端完成记录不一致');
   }
-  const { audit, selected } = selectedTreatment(quality, outputSha256) as {
+  // Records created before provider provenance was introduced are local-worker
+  // outputs and retain the stricter render-treatment receipt requirements.
+  const provider = String(job.provider || 'local').trim();
+  const isHeygen = provider === 'heygen';
+  const treatment = isHeygen ? undefined : selectedTreatment(quality, outputSha256) as {
     audit: DigitalHumanRenderTreatmentAudit;
     selected: DigitalHumanRenderTreatmentAudit['attempts'][number];
   };
   const plan = record(job.performancePlan);
   const profile = record(plan.orchestrationProfile);
   const originalBeatCount = Number(profile.originalBeatCount);
-  if (!Number.isInteger(originalBeatCount) || originalBeatCount < 1) throw new Error('数字人片段证明 originalBeatCount 无效');
-  const orchestrationAuditFingerprint = sha256(profile);
+  if (!isHeygen && (!Number.isInteger(originalBeatCount) || originalBeatCount < 1)) throw new Error('数字人片段证明 originalBeatCount 无效');
+  const outputDurationSeconds = finiteSeconds(
+    job.outputDurationSeconds
+      ?? record(quality.serverValidation).durationSeconds
+      ?? (audioEndSeconds - audioStartSeconds),
+    'outputDurationSeconds',
+  );
+  if (outputDurationSeconds <= 0) throw new Error('数字人任务实测输出时长无效');
 
   return {
     schemaVersion: DIGITAL_HUMAN_SEGMENT_PROVENANCE_VERSION,
@@ -220,28 +234,32 @@ export function buildDigitalHumanSegmentProvenance(job: DigitalHumanProvenanceJo
     storyboardSlotId: requiredString(job.storyboardSlotId, 'storyboardSlotId'),
     ...(String(job.batchId || '').trim() ? { batchId: String(job.batchId).trim() } : {}),
     outputMaterialId: requiredString(job.outputMaterialId, 'outputMaterialId'),
+    provider,
     inputSignature: requiredString(job.inputSignature, 'inputSignature'),
     baseSourceSignature: requiredString(job.sourceFingerprint, 'baseSourceSignature'),
     pipelineVersion: DIGITAL_HUMAN_PIPELINE_VERSION,
     avatarMaterialId: requiredString(job.avatarMaterialId, 'avatarMaterialId'),
     performanceSignature: requiredString(job.performanceSignature, 'performanceSignature'),
-    performanceProfileId: requiredString(profile.profileId, 'performanceProfileId'),
-    performanceProfileFingerprint: requiredSha256(profile.fingerprint, 'performanceProfileFingerprint'),
-    motionProfileId: requiredString(profile.motionProfileId, 'motionProfileId'),
-    motionClipIds: stringArray(job.motionClipIds, 'motionClipIds'),
-    configuredGesture: requiredString(profile.gesture, 'configuredGesture'),
-    beatStrategy: requiredString(profile.beatStrategy, 'beatStrategy'),
-    originalBeatCount,
-    orchestrationAuditFingerprint,
-    treatmentId: selected.treatmentId,
-    treatmentAttempt: selected.attempt,
-    treatmentAuditVersion: audit.version,
-    treatmentRenderFingerprint: requiredSha256(selected.renderFingerprint, 'treatmentRenderFingerprint'),
-    treatmentFilterSha256: requiredSha256(selected.filterSha256, 'treatmentFilterSha256'),
-    treatmentBaseRenderFingerprint: requiredSha256(selected.baseRenderFingerprint, 'treatmentBaseRenderFingerprint'),
+    ...(!isHeygen ? {
+      performanceProfileId: requiredString(profile.profileId, 'performanceProfileId'),
+      performanceProfileFingerprint: requiredSha256(profile.fingerprint, 'performanceProfileFingerprint'),
+      motionProfileId: requiredString(profile.motionProfileId, 'motionProfileId'),
+      motionClipIds: stringArray(job.motionClipIds, 'motionClipIds'),
+      configuredGesture: requiredString(profile.gesture, 'configuredGesture'),
+      beatStrategy: requiredString(profile.beatStrategy, 'beatStrategy'),
+      originalBeatCount,
+      orchestrationAuditFingerprint: sha256(profile),
+      treatmentId: treatment!.selected.treatmentId,
+      treatmentAttempt: treatment!.selected.attempt,
+      treatmentAuditVersion: treatment!.audit.version,
+      treatmentRenderFingerprint: requiredSha256(treatment!.selected.renderFingerprint, 'treatmentRenderFingerprint'),
+      treatmentFilterSha256: requiredSha256(treatment!.selected.filterSha256, 'treatmentFilterSha256'),
+      treatmentBaseRenderFingerprint: requiredSha256(treatment!.selected.baseRenderFingerprint, 'treatmentBaseRenderFingerprint'),
+    } : {}),
     workerOutputSha256: outputSha256,
     audioStartSeconds,
     audioEndSeconds,
+    outputDurationSeconds,
     qualityGateVersion: requiredString(quality.gateVersion, 'qualityGateVersion'),
     workerValidatorVersion: requiredString(quality.validatorVersion, 'workerValidatorVersion'),
   };
@@ -297,15 +315,11 @@ function buildFrozenSegments(
     if (item.type !== 'video') throw new Error(`数字人时间轴 ${timelineIndex} 必须使用 Worker 视频产物`);
     if (!sameTime(item.speed, 1, 0.000_001)) throw new Error(`数字人时间轴 ${timelineIndex} 禁止二次变速`);
     if (!sameTime(item.trimStart, 0, 0.000_001)) throw new Error(`数字人时间轴 ${timelineIndex} 禁止二次起始裁切`);
-    const audioDuration = provenance.audioEndSeconds - provenance.audioStartSeconds;
+    const outputDuration = provenance.outputDurationSeconds;
     const terminal = sameTime(targetEnd, DIGITAL_HUMAN_RENDER_DURATION_SECONDS);
     const endTolerance = terminal ? DIGITAL_HUMAN_TERMINAL_TOLERANCE_SECONDS : TIME_EPSILON_SECONDS;
-    if (!sameTime(targetStart, provenance.audioStartSeconds)
-      || !sameTime(targetEnd, provenance.audioEndSeconds, endTolerance)) {
-      throw new Error(`数字人时间轴 ${timelineIndex} 与已验语音区间不一致`);
-    }
-    if (!sameTime(item.trimEnd, audioDuration, endTolerance)
-      || !sameTime(targetDuration, audioDuration, endTolerance)) {
+    if (!sameTime(item.trimEnd, outputDuration, endTolerance)
+      || !sameTime(targetDuration, outputDuration, endTolerance)) {
       throw new Error(`数字人时间轴 ${timelineIndex} 尝试对 Worker 片段二次裁切或拉伸`);
     }
     segments.push({

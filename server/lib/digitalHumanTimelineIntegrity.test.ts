@@ -61,6 +61,21 @@ const missingServerValidation = job();
 delete (missingServerValidation.qualityReport as Record<string, unknown>).serverValidation;
 assert.throws(() => buildDigitalHumanSegmentProvenance(missingServerValidation), /媒体复验/);
 
+const heygenProvenance = buildDigitalHumanSegmentProvenance(job({
+  provider: 'heygen',
+  outputDurationSeconds: 4.68,
+  performancePlan: undefined,
+  motionClipIds: undefined,
+  qualityReport: {
+    passed: true, validationStatus: 'passed', reviewRequired: false, outputSha256: outputSha,
+    gateVersion: 'commercial-v1+server-media-v1', validatorVersion: 'heygen-server-quality-v1',
+    serverValidation: { passed: true, durationSeconds: 4.68 },
+  },
+}));
+assert.equal(heygenProvenance.outputDurationSeconds, 4.68);
+assert.equal(heygenProvenance.provider, 'heygen');
+assert.equal(heygenProvenance.treatmentId, undefined, 'HeyGen output must not invent a local render-treatment receipt');
+
 assert.equal(assertDigitalHumanTtsDuration(14.5), 14.5);
 assert.equal(assertDigitalHumanTtsDuration(15.5), 15.5);
 assert.throws(() => assertDigitalHumanTtsDuration(14.499), /14\.5-15\.5/);
@@ -109,6 +124,23 @@ assert.throws(() => freezeDigitalHumanSegments(changedSpeed, 15, 'zh'), /变速/
 const changedTrim = structuredClone(timeline);
 changedTrim[0]!.trimStart = 0.1;
 assert.throws(() => freezeDigitalHumanSegments(changedTrim, 15, 'zh'), /裁切/);
+
+const relocatedHeygenTimeline = [
+  {
+    clipId: 'broll-before', type: 'video', digitalHumanGenerated: false,
+    trimStart: 0, trimEnd: 2, speed: 1, targetStart: 0, targetEnd: 2, targetDuration: 2,
+  },
+  {
+    clipId: 'clip-1', type: 'video', digitalHumanGenerated: true,
+    trimStart: 0, trimEnd: 4.68, speed: 1, targetStart: 2, targetEnd: 6.68, targetDuration: 4.68,
+    digitalHumanSegment: heygenProvenance,
+  },
+  {
+    clipId: 'broll-after', type: 'video', digitalHumanGenerated: false,
+    trimStart: 0, trimEnd: 8.32, speed: 1, targetStart: 6.68, targetEnd: 15, targetDuration: 8.32,
+  },
+];
+assert.doesNotThrow(() => freezeDigitalHumanSegments(relocatedHeygenTimeline, 15, 'zh'));
 
 const wrongLanguage = structuredClone(timeline);
 wrongLanguage[0]!.digitalHumanSegment!.language = 'en';
