@@ -5960,7 +5960,9 @@ async function finalizeDigitalHumanFile(
   if (!fs.existsSync(sourcePath)) throw new Error('数字人成片临时文件不存在');
   const sizeBytes = fs.statSync(sourcePath).size;
   if (!sizeBytes || sizeBytes > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片大小无效');
-  const expectedDurationSeconds = Number.isFinite(job.audioStartSeconds) && Number.isFinite(job.audioEndSeconds)
+  const providerControlsNarrationDuration = job.provider === 'heygen' && job.resolvedVoiceStrategy === 'person';
+  const expectedDurationSeconds = !providerControlsNarrationDuration
+    && Number.isFinite(job.audioStartSeconds) && Number.isFinite(job.audioEndSeconds)
     ? Math.max(0, Number(job.audioEndSeconds) - Number(job.audioStartSeconds))
     : undefined;
   const serverValidation = await validateDigitalHumanMediaFile(sourcePath, {
@@ -6016,7 +6018,8 @@ async function finalizeDigitalHumanFile(
     if (job.provider === 'heygen') {
       // Keep paid output private for revalidation; it must not become a publishable material.
       fs.mkdirSync(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, { recursive: true });
-      fs.copyFileSync(sourcePath, path.join(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, `${job.id}.review.mp4`));
+      const reviewPath = path.join(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, `${job.id}.review.mp4`);
+      if (path.resolve(sourcePath) !== path.resolve(reviewPath)) fs.copyFileSync(sourcePath, reviewPath);
     }
     return updateDigitalHumanJob(job.id, {
       status: 'review', stage: 'quality_review', progress: 100,
@@ -6647,6 +6650,26 @@ studioRouter.get('/digital-human/jobs/:id/review-file', (req, res) => {
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Disposition', `attachment; filename="${job.id}.review.mp4"`);
   res.sendFile(reviewPath);
+});
+
+studioRouter.post('/digital-human/jobs/:id/revalidate', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
+  if (job.provider !== 'heygen' || job.status !== 'review') {
+    res.status(409).json({ ok: false, error: '只有 HeyGen 待复核原片可以重新质检' }); return;
+  }
+  const reviewPath = path.join(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, `${job.id}.review.mp4`);
+  if (!fs.existsSync(reviewPath)) { res.status(404).json({ ok: false, error: '待复核原片不存在' }); return; }
+  try {
+    const updated = await finalizeDigitalHumanFile(job, reviewPath);
+    const outputMaterial = updated.outputMaterialId
+      ? loadMaterials().find(item => item.id === updated.outputMaterialId && item.tenantId === tenantId)
+      : undefined;
+    res.json({ ok: true, job: publicDigitalHumanJob(updated), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : '数字人原片重新质检失败' });
+  }
 });
 
 studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
