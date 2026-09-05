@@ -28,7 +28,10 @@ def main() -> int:
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--min-confidence", type=float, default=3.0)
     parser.add_argument("--max-offset", type=int, default=3)
+    parser.add_argument("--batch-size", type=int, default=20)
     args = parser.parse_args()
+    if args.batch_size < 1 or args.batch_size > 20:
+        parser.error("batch-size must be between 1 and 20")
 
     model = os.path.join(args.syncnet_dir, "data", "syncnet_v2.model")
     if not os.path.isfile(model):
@@ -50,6 +53,7 @@ def main() -> int:
         "--data_dir", args.work_dir,
         "--reference", reference,
         "--initial_model", model,
+        "--batch_size", str(args.batch_size),
     ], args.syncnet_dir)
     offsets = [int(value) for value in re.findall(r"AV offset:\s*(-?\d+)", output)]
     confidences = [float(value) for value in re.findall(r"Confidence:\s*(-?\d+(?:\.\d+)?)", output)]

@@ -5,6 +5,9 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
 import { buildDigitalHumanFinalQualityReport } from './digitalHumanWorkerFinalQuality.js';
+import { AsyncSerialGate } from './asyncSerialGate.js';
+
+const validationGate = new AsyncSerialGate();
 
 export type ValidationRunner = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>;
 
@@ -18,7 +21,7 @@ const run: ValidationRunner = (file, args) => new Promise((resolve, reject) => {
 });
 
 /** Measure the downloaded bytes ourselves; HeyGen does not return Worker metrics. */
-export async function validateHeygenOutput(
+async function measureHeygenOutput(
   file: string,
   mode: 'fast' | 'quality',
   options: { runner?: ValidationRunner; python?: string; syncnetDir?: string; ffmpeg?: string; ffprobe?: string } = {},
@@ -38,7 +41,7 @@ export async function validateHeygenOutput(
     await execute(ffmpeg, ['-v', 'error', '-i', file, '-map', '0:a:0', '-vn', '-ar', '16000', '-ac', '1', audio]);
     const probe = await execute(ffprobe, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height', '-of', 'json', file]);
     const visual = await execute(python, [path.resolve('scripts/validate-digital-human.py'), '--video', file, '--audio', audio, '--enforce']);
-    const sync = await execute(python, [path.resolve('scripts/validate-syncnet.py'), '--video', file, '--work-dir', path.join(temp, 'syncnet'), '--syncnet-dir', syncnetDir, '--min-confidence', mode === 'quality' ? '7' : '4', '--max-offset', mode === 'quality' ? '1' : '2']);
+    const sync = await execute(python, [path.resolve('scripts/validate-syncnet.py'), '--video', file, '--work-dir', path.join(temp, 'syncnet'), '--syncnet-dir', syncnetDir, '--min-confidence', mode === 'quality' ? '7' : '4', '--max-offset', mode === 'quality' ? '1' : '2', '--batch-size', '4']);
     const freeze = await execute(ffmpeg, ['-hide_banner', '-nostats', '-i', file, '-vf', 'freezedetect=n=-50dB:d=1', '-an', '-f', 'null', '-']);
     const hash = createHash('sha256');
     for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
@@ -54,4 +57,9 @@ export async function validateHeygenOutput(
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+}
+
+export function validateHeygenOutput(...args: Parameters<typeof measureHeygenOutput>) {
+  // Keep CPU inference from overlapping when multiple tenant jobs complete together.
+  return validationGate.run(() => measureHeygenOutput(...args));
 }

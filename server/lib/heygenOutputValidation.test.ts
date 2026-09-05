@@ -4,6 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateHeygenOutput, type ValidationRunner } from './heygenOutputValidation.js';
+import { trustedDigitalHumanOutputUrl } from './digitalHumanOutputUrl.js';
+
+assert.equal(trustedDigitalHumanOutputUrl('https://files.heygen.ai/video.mp4', 'heygen', ''), 'https://files.heygen.ai/video.mp4');
+for (const url of ['http://files.heygen.ai/video.mp4', 'https://heygen.ai.evil.test/video.mp4', 'https://evilheygen.ai/video.mp4', 'https://user:pass@files.heygen.ai/video.mp4', 'https://files.heygen.ai:444/video.mp4', 'http://127.0.0.1/video.mp4']) {
+  assert.equal(trustedDigitalHumanOutputUrl(url, 'heygen', 'http://127.0.0.1', '127.0.0.1'), '');
+}
+assert.equal(trustedDigitalHumanOutputUrl('http://localhost:9000/video.mp4', 'local-direct', 'http://localhost:9000'), 'http://localhost:9000/video.mp4');
+assert.equal(trustedDigitalHumanOutputUrl('http://evil.test/video.mp4', 'local-direct', 'http://localhost:9000'), '');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'heygen-validation-test-'));
 const file = path.join(dir, 'fixture.mp4');
@@ -18,6 +26,7 @@ const runner: ValidationRunner = async (_program, args) => {
   if (args.some(arg => arg.endsWith('validate-syncnet.py'))) {
     assert.equal(args[args.indexOf('--max-offset') + 1], '1');
     assert.equal(args[args.indexOf('--min-confidence') + 1], '7');
+    assert.equal(args[args.indexOf('--batch-size') + 1], '4');
     data = {passed: syncPassed, syncnet_confidence: syncPassed ? 8 : 2, av_offset_frames: 0, failures: syncPassed ? [] : ['sync failed']};
   }
   return {stdout: JSON.stringify(data), stderr: ''};
@@ -34,5 +43,8 @@ try {
   assert.equal((await validateHeygenOutput(file, 'quality', {...options, runner: async () => { throw new Error('runtime missing'); }})).passed, false);
   const source = fs.readFileSync(new URL('../routes/studio.ts', import.meta.url), 'utf8');
   assert.match(source, /job\.provider === 'heygen'\) \{\s*providerQuality = await validateHeygenOutput\(sourcePath, job.mode\)/);
+  assert.match(source, /status: 'quality_check', stage: 'quality_check', progress: 96/);
+  assert.match(source, /job = assertDigitalHumanFinalizationCurrent\(job.id\);\s*job = updateDigitalHumanJob\(job.id, \{ status: 'quality_check'/);
+  assert.match(source, /void refreshDigitalHumanJob\(job.id, req\)\.catch/);
   console.log('HeyGen downloaded-byte validation and failure handling passed');
 } finally { fs.rmSync(dir, {recursive: true, force: true}); }

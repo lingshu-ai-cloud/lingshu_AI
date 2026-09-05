@@ -156,6 +156,7 @@ import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
 import { commercialDigitalHumanGate } from '../lib/digitalHumanQualityGate.js';
 import { validateHeygenOutput } from '../lib/heygenOutputValidation.js';
+import { trustedDigitalHumanOutputUrl } from '../lib/digitalHumanOutputUrl.js';
 import {
   generateLocalQwenTts,
   localQwenTtsCapability,
@@ -5782,22 +5783,7 @@ async function digitalHumanFetch(url: string, init?: RequestInit): Promise<globa
 }
 
 function safeProviderOutputUrl(value: unknown, providerId?: string): string {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  let output: URL;
-  let provider: URL;
-  try { output = new URL(raw); provider = new URL(digitalHumanConfig().baseUrl); }
-  catch { return ''; }
-  if (!['https:', 'http:'].includes(output.protocol)) return '';
-  const allowed = new Set([
-    provider.host,
-    ...String(process.env.DIGITAL_HUMAN_OUTPUT_HOSTS || '').split(',').map(item => item.trim()).filter(Boolean),
-  ]);
-  if (providerId === 'heygen' && output.protocol === 'https:' && (
-    output.hostname === 'heygen.com' || output.hostname.endsWith('.heygen.com')
-    || output.hostname === 'heygen.ai' || output.hostname.endsWith('.heygen.ai')
-  )) return output.toString();
-  return allowed.has(output.host) ? output.toString() : '';
+  return trustedDigitalHumanOutputUrl(value, providerId, digitalHumanConfig().baseUrl, process.env.DIGITAL_HUMAN_OUTPUT_HOSTS);
 }
 
 function verifiedDigitalHumanSourceFingerprint(job: DigitalHumanJob, materials = loadMaterials()): string | undefined {
@@ -6136,6 +6122,8 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
 
     const outputUrl = safeProviderOutputUrl(payload.outputUrl, job.provider);
     if (!outputUrl) throw new Error('数字人服务返回了不受信任的输出地址');
+    job = assertDigitalHumanFinalizationCurrent(job.id);
+    job = updateDigitalHumanJob(job.id, { status: 'quality_check', stage: 'quality_check', progress: 96 });
     return finalizeDigitalHumanOutput(job, outputUrl, (payload.raw as any)?.quality as DigitalHumanQualityReport);
   })().catch(error => {
     const current = loadDigitalHumanJobs().find(item => item.id === jobId);
@@ -6633,7 +6621,12 @@ studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   let job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
-  if (job.provider !== 'local-worker' && ['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
+  if (job.provider !== 'local-worker' && ['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) {
+    // CPU validation can take minutes. Polling must return the current state,
+    // not hold an HTTP request open for the entire inference pipeline.
+    void refreshDigitalHumanJob(job.id, req).catch(() => console.error('[digital-human] background refresh failed'));
+    job = loadDigitalHumanJobs().find(item => item.id === job!.id && item.tenantId === tenantId) || job;
+  }
   const outputMaterial = job.outputMaterialId ? loadMaterials().find(item => item.id === job!.outputMaterialId && item.tenantId === tenantId) : undefined;
   res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
 });

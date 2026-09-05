@@ -202,7 +202,8 @@ app.get('/api/overseas/health', (_req, res) => {
     featureLocks: {
       geminiVideo: process.env.GEMINI_VIDEO_ENABLED !== 'true',
       seedanceVideo: process.env.SEEDANCE_VIDEO_ENABLED !== 'true',
-      digitalHuman: !String(process.env.DIGITAL_HUMAN_API_URL || '').trim(),
+      digitalHuman: !String(process.env.DIGITAL_HUMAN_API_URL || process.env.HEYGEN_API_KEY || '').trim()
+        && process.env.DIGITAL_HUMAN_PULL_WORKER_ENABLED !== 'true',
     },
   });
 });
@@ -302,6 +303,7 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`[overseas-agent] http://${HOST}:${PORT}`);
 });
