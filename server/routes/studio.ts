@@ -5722,11 +5722,14 @@ class DigitalHumanFinalizationFenceError extends Error {
 function assertDigitalHumanFinalizationCurrent(
   jobId: string,
   transfer?: DigitalHumanFinalizationTransfer,
+  allowReviewRevalidation = false,
 ): DigitalHumanJob {
   const current = loadDigitalHumanJobs().find(item => item.id === jobId);
   if (!current) throw new Error('digital human job not found');
   const failure = digitalHumanFinalizationFenceFailure(current, transfer);
-  if (failure) throw new DigitalHumanFinalizationFenceError(failure);
+  if (failure && !(allowReviewRevalidation && failure === 'JOB_TERMINAL' && current.status === 'review')) {
+    throw new DigitalHumanFinalizationFenceError(failure);
+  }
   return current;
 }
 
@@ -5955,8 +5958,10 @@ async function finalizeDigitalHumanFile(
   sourcePath: string,
   providerQuality?: DigitalHumanQualityReport,
   transfer?: { sha256: string; workerId: string; leaseId: string },
+  options?: { allowReviewRevalidation?: boolean },
 ): Promise<DigitalHumanJob> {
-  job = assertDigitalHumanFinalizationCurrent(job.id, transfer);
+  const allowReviewRevalidation = options?.allowReviewRevalidation === true;
+  job = assertDigitalHumanFinalizationCurrent(job.id, transfer, allowReviewRevalidation);
   if (!fs.existsSync(sourcePath)) throw new Error('数字人成片临时文件不存在');
   const sizeBytes = fs.statSync(sourcePath).size;
   if (!sizeBytes || sizeBytes > DIGITAL_HUMAN_MAX_OUTPUT_BYTES) throw new Error('数字人成片大小无效');
@@ -5972,10 +5977,10 @@ async function finalizeDigitalHumanFile(
   });
   // Validation can take long enough for a user to cancel or for a Worker lease
   // to expire. Never commit using the stale object captured before validation.
-  job = assertDigitalHumanFinalizationCurrent(job.id, transfer);
+  job = assertDigitalHumanFinalizationCurrent(job.id, transfer, allowReviewRevalidation);
   if (job.provider === 'heygen') {
     providerQuality = await validateHeygenOutput(sourcePath, job.mode);
-    job = assertDigitalHumanFinalizationCurrent(job.id, transfer);
+    job = assertDigitalHumanFinalizationCurrent(job.id, transfer, allowReviewRevalidation);
   }
   const p1LocalWorkerResult = job.pipelineVersion === DIGITAL_HUMAN_PIPELINE_VERSION
     && (Boolean(transfer)
@@ -6051,10 +6056,10 @@ async function finalizeDigitalHumanFile(
     duration: Number(serverValidation.durationSeconds),
     tenantId: job.tenantId,
     sourceType: 'digital-human',
-    beforeCommit: () => { job = assertDigitalHumanFinalizationCurrent(job.id, transfer); },
+    beforeCommit: () => { job = assertDigitalHumanFinalizationCurrent(job.id, transfer, allowReviewRevalidation); },
   });
   if (!material) throw new Error('数字人成片未能写入素材库');
-  job = assertDigitalHumanFinalizationCurrent(job.id, transfer);
+  job = assertDigitalHumanFinalizationCurrent(job.id, transfer, allowReviewRevalidation);
   material.folder = 'presenter';
   persistMaterials(upsertMaterialIndex(loadMaterials(), material));
   return updateDigitalHumanJob(job.id, {
@@ -6662,7 +6667,7 @@ studioRouter.post('/digital-human/jobs/:id/revalidate', async (req, res) => {
   const reviewPath = path.join(DIGITAL_HUMAN_WORKER_UPLOAD_DIR, `${job.id}.review.mp4`);
   if (!fs.existsSync(reviewPath)) { res.status(404).json({ ok: false, error: '待复核原片不存在' }); return; }
   try {
-    const updated = await finalizeDigitalHumanFile(job, reviewPath);
+    const updated = await finalizeDigitalHumanFile(job, reviewPath, undefined, undefined, { allowReviewRevalidation: true });
     const outputMaterial = updated.outputMaterialId
       ? loadMaterials().find(item => item.id === updated.outputMaterialId && item.tenantId === tenantId)
       : undefined;
