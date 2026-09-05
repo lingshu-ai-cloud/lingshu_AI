@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   assessScriptQualityV2,
+  numericClaimIsProductionParameter,
   hardScriptSafetyIssues,
   isBusinessRoleEntity,
   materialCoverageForScript,
@@ -20,6 +21,14 @@ const productInfo = `产品名称：LX-Vision 工业视觉检测工作站
 const materialObservation = '素材：气动输送带与工件；观察到工件在输送带上移动；未观察到文字或显示设备';
 const primaryCta = '发送工件、节拍、缺陷样本或现场布局，预约一次 30 分钟英文方案诊断';
 const targetBuyers = 'Factory Automation Manager、Engineering Manager、Plant Manager、Project Buyer';
+
+const compatibilityClaim = '已验证兼容PCB处理、自动化工位与标准机械机构';
+const observedEquipment = '已提供PCB板处理、控制面板、自动化工位和机械机构的真实视频；不据此推断未确认的型号、产能或精度';
+assert.match(hardScriptSafetyIssues(`字幕：${compatibilityClaim}。`, observedEquipment).join('；'), /未验证的兼容性/);
+assert.match(hardScriptSafetyIssues('台词：verified compatible with PCB handling.', observedEquipment).join('；'), /未验证的兼容性/);
+assert.match(hardScriptSafetyIssues(`台词：${compatibilityClaim}`, '已验证兼容其他设备').join('；'), /未验证的兼容性/);
+assert.deepEqual(hardScriptSafetyIssues(`台词：${compatibilityClaim}。`, `已核实事实：${compatibilityClaim}。`), []);
+assert.deepEqual(hardScriptSafetyIssues('台词：请提供应用需求，由工程师核实兼容性。', observedEquipment), []);
 
 const industrialFallbackScenes = safeProductScenes(productInfo, 4);
 assert.equal(industrialFallbackScenes.length, 4);
@@ -162,11 +171,11 @@ const hallucinationAssessment = assessScriptQualityV2({
   primaryCta,
   targetBuyerText: targetBuyers,
 });
-assert.equal(hallucinationAssessment.qualityStatus, 'needs_material');
+assert.equal(hallucinationAssessment.qualityStatus, 'warning', 'a fully grounded deterministic repair may proceed without inventing replacement material');
 assert.deepEqual(hallucinationAssessment.hardIssues, []);
 assert.doesNotMatch(hallucinationAssessment.script, /展板|logo|屏幕|检测结果/i);
 assert.match(hallucinationAssessment.script, /^素材：气动输送带$/m);
-assert.match(hallucinationAssessment.script, /^画面：按已选素材观察呈现：已选素材中的实际可见画面$/m);
+assert.match(hallucinationAssessment.script, /^画面：原样展示已选素材；不补充未确认的物体、文字或动作$/m);
 
 // Model output may hide unsupported visual nouns in shot/camera/music fields.
 // These fields must be repaired too; otherwise the route's grounding pass
@@ -264,4 +273,45 @@ const rejectedUnsafeClaims = assessScriptQualityV2({
 assert.equal(rejectedUnsafeClaims.qualityStatus, 'rejected');
 assert.ok(rejectedUnsafeClaims.hardIssues.length >= 2);
 
+assert.deepEqual(
+  hardScriptSafetyIssues('台词：最低起订量为100瓶。\n字幕：最低起订量为 100 瓶。', '产品名称：真实产品\nMOQ：１００　瓶起订'),
+  [],
+  'the server-side quality gate must treat full-width and spacing variants of the same MOQ as supported',
+);
+assert.match(
+  hardScriptSafetyIssues('高纯度配方符合美国市场基础合规要求。', '产品名称：真实产品\nMOQ：100 瓶起订').join('\n'),
+  /产品资料未提供的声明/,
+  'unsupported purity and compliance claims must remain a hard failure when deterministic storyboard repair cannot run',
+);
+
+const unsupportedProductAndVisualClaims = `[0-4s]
+素材：真实产品图
+环境：桌面
+景别：特写
+运镜：固定
+构图：瓶身居中
+镜头功能：产品证据
+画面：标签已有 FOR SENSITIVE SKIN 和 MOQ 字样，旁边出现二维码、邮箱与品牌VI
+配乐：轻节奏铺底
+台词：高纯度配方符合美国市场基础合规要求。
+字幕：高纯度配方符合美国市场基础合规要求。`;
+const repairedUnsupportedClaims = assessScriptQualityV2({
+  script: unsupportedProductAndVisualClaims,
+  productInfo: '产品名称：真实产品\nMOQ：100 瓶起订',
+  materialsText: '真实产品瓶体置于桌面；未观察到标签文字、二维码、邮箱、VI 或认证标识',
+  materialInfos: [{ name: '真实产品图', targetStart: 0, targetEnd: 4, observations: ['真实产品瓶体置于桌面'] }],
+  primaryCta,
+  targetBuyerText: targetBuyers,
+});
+assert.equal(repairedUnsupportedClaims.qualityStatus, 'warning');
+assert.deepEqual(repairedUnsupportedClaims.hardIssues, []);
+assert.doesNotMatch(repairedUnsupportedClaims.script, /高纯度|美国市场基础合规|FOR SENSITIVE SKIN|MOQ 字样|二维码|邮箱|品牌VI/i);
+assert.match(repairedUnsupportedClaims.script, /^画面：按已选素材观察呈现：真实产品瓶体置于桌面$/m);
+assert.match(repairedUnsupportedClaims.warnings.join('\n'), /已按已选素材的真实可见内容修复/);
+
 console.log('studio quality rules V2 tests passed');
+
+assert.equal(numericClaimIsProductionParameter('0.5s', '配乐：加入低频脉冲音效（+0.5s）'), true);
+assert.equal(numericClaimIsProductionParameter('2秒', '配乐：提示音收尾，余韵2秒'), true);
+assert.equal(numericClaimIsProductionParameter('2秒', '台词：2秒完成加工'), false);
+assert.equal(numericClaimIsProductionParameter('2秒', '字幕：2秒完成加工'), false);

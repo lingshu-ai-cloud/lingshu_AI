@@ -45,6 +45,9 @@ import { requireScopedAsset, syncAssetSession } from './lib/assetAccess.js';
 import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
+import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
+import { initFollowupDispatchWorker } from './digitalEmployees/followupDispatchWorker.js';
+import { initDigitalEmployeeRuntime } from './digitalEmployees/runtimeOrchestrator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -221,6 +224,7 @@ app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);
 app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
+app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 
@@ -231,6 +235,8 @@ initPocketBaseVideoBackfill();
 initCrawlWorkerCloudFallback();
 initTenantPlatformTokenMonitor();
 await initWhatsAppCustomerMaintenance();
+initFollowupDispatchWorker();
+initDigitalEmployeeRuntime();
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');

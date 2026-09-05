@@ -28,7 +28,7 @@ const WORKBENCH_ADMIN_NAME = String(process.env.WORKBENCH_ADMIN_NAME ?? '灵枢�
 type Field = { name: string; type: string; required?: boolean; [k: string]: unknown };
 
 /** Collection definitions, derived from what the route handlers write/read. */
-const COLLECTIONS: { name: string; fields: Field[] }[] = [
+const COLLECTIONS: { name: string; fields: Field[]; indexes?: string[] }[] = [
   {
     name: 'assistant_threads',
     fields: [
@@ -388,6 +388,333 @@ const COLLECTIONS: { name: string; fields: Field[] }[] = [
       { name: 'createdAt', type: 'text' },
     ],
   },
+  {
+    name: 'digital_employee_configs',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'config', type: 'json', required: true, maxSize: 262144 },
+      { name: 'status', type: 'text', required: true },
+      { name: 'config_version', type: 'number' },
+      { name: 'policy_version', type: 'text' },
+      { name: 'facts_version', type: 'text' },
+      { name: 'effective_config', type: 'json', maxSize: 1048576 },
+      { name: 'activated_at', type: 'text' },
+      { name: 'updated_by', type: 'text' },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_digital_employee_config_tenant ON digital_employee_configs (tenant_id)'],
+  },
+  {
+    name: 'digital_employee_config_versions',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'config_version', type: 'number', required: true },
+      { name: 'policy_version', type: 'text', required: true },
+      { name: 'facts_version', type: 'text', required: true },
+      { name: 'config', type: 'json', required: true, maxSize: 1048576 },
+      { name: 'knowledge_binding', type: 'json', required: true, maxSize: 1048576 },
+      { name: 'runtime_policy', type: 'json', required: true, maxSize: 1048576 },
+      { name: 'status', type: 'text', required: true },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_de_config_versions_tenant_version ON digital_employee_config_versions (tenant_id, config_version)',
+      'CREATE INDEX idx_de_config_versions_tenant_created ON digital_employee_config_versions (tenant_id, created_at)',
+    ],
+  },
+  {
+    name: 'weekly_goals',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'title', type: 'text', required: true },
+      { name: 'objective', type: 'text', required: true, max: 5000 },
+      { name: 'metric', type: 'text', required: true },
+      { name: 'baseline', type: 'number' },
+      { name: 'target', type: 'number', required: true },
+      { name: 'unit', type: 'text' },
+      { name: 'starts_at', type: 'text', required: true },
+      { name: 'ends_at', type: 'text', required: true },
+      { name: 'scope', type: 'json', maxSize: 65536 },
+      { name: 'constraints', type: 'json', maxSize: 65536 },
+      { name: 'owner_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE INDEX idx_weekly_goals_tenant_created ON weekly_goals (tenant_id, created_at)'],
+  },
+  {
+    name: 'weekly_plans',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'plan', type: 'json', required: true, maxSize: 524288 },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_weekly_plans_goal ON weekly_plans (tenant_id, goal_id)'],
+  },
+  {
+    name: 'workflow_runs',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text', required: true },
+      { name: 'plan_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'current_controller', type: 'text' },
+      { name: 'pause_reason', type: 'text' },
+      { name: 'started_at', type: 'text', required: true },
+      { name: 'completed_at', type: 'text' },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_workflow_runs_goal ON workflow_runs (tenant_id, goal_id)'],
+  },
+  {
+    name: 'workflow_tasks',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text', required: true },
+      { name: 'plan_id', type: 'text', required: true },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_key', type: 'text', required: true },
+      { name: 'title', type: 'text', required: true },
+      { name: 'description', type: 'text', max: 5000 },
+      { name: 'agent_role', type: 'text', required: true },
+      { name: 'kind', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'sequence', type: 'number', required: true },
+      { name: 'priority', type: 'text' },
+      { name: 'requires_approval', type: 'bool' },
+      { name: 'depends_on', type: 'json', maxSize: 65536 },
+      { name: 'output', type: 'json', maxSize: 524288 },
+      { name: 'blocked_reason', type: 'text' },
+      { name: 'owner_id', type: 'text' },
+      // Business-native task metadata. These fields let the Digital Employee
+      // page deep-link into the existing content, publishing and customer
+      // workspaces instead of creating a second source of truth.
+      { name: 'business_domain', type: 'text' },
+      { name: 'capability_key', type: 'text' },
+      { name: 'destination', type: 'text' },
+      { name: 'destination_view', type: 'text' },
+      { name: 'status_source', type: 'text' },
+      { name: 'execution_mode', type: 'text' },
+      { name: 'external_effect', type: 'text' },
+      { name: 'automatic_execution_allowed', type: 'bool' },
+      { name: 'policy_source', type: 'text' },
+      { name: 'business_refs', type: 'json', maxSize: 262144 },
+      { name: 'task_version', type: 'number' },
+      { name: 'correction_version', type: 'number' },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_workflow_tasks_run_key ON workflow_tasks (tenant_id, run_id, task_key)',
+      'CREATE INDEX idx_workflow_tasks_run_sequence ON workflow_tasks (tenant_id, run_id, sequence)',
+    ],
+  },
+  {
+    name: 'run_events',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_id', type: 'text' },
+      { name: 'sequence', type: 'number', required: true },
+      { name: 'type', type: 'text', required: true },
+      { name: 'level', type: 'text', required: true },
+      { name: 'summary', type: 'text', required: true, max: 5000 },
+      { name: 'payload', type: 'json', maxSize: 524288 },
+      { name: 'occurred_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_run_events_sequence ON run_events (tenant_id, run_id, sequence)'],
+  },
+  {
+    name: 'approval_requests',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text', required: true },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'action_summary', type: 'text', required: true, max: 5000 },
+      { name: 'risk_level', type: 'text', required: true },
+      { name: 'evidence', type: 'json', maxSize: 524288 },
+      { name: 'requested_by_agent', type: 'text' },
+      { name: 'decided_by', type: 'text' },
+      { name: 'decision_note', type: 'text', max: 5000 },
+      { name: 'subject_version', type: 'number' },
+      { name: 'content_hash', type: 'text' },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'decided_at', type: 'text' },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_approval_requests_task ON approval_requests (tenant_id, task_id)'],
+  },
+  {
+    name: 'handoff_sessions',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'taken_by', type: 'text', required: true },
+      { name: 'snapshot', type: 'json', required: true, maxSize: 524288 },
+      { name: 'started_at', type: 'text', required: true },
+      { name: 'returned_at', type: 'text' },
+    ],
+    indexes: ['CREATE INDEX idx_handoff_sessions_task ON handoff_sessions (tenant_id, task_id, started_at)'],
+  },
+  {
+    name: 'weekly_reviews',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text', required: true },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'summary', type: 'json', required: true, maxSize: 524288 },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_weekly_reviews_run ON weekly_reviews (tenant_id, run_id)'],
+  },
+  {
+    name: 'workflow_corrections',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text' },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_id', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true },
+      { name: 'scope', type: 'text', required: true },
+      { name: 'instruction', type: 'text', required: true, max: 5000 },
+      { name: 'rerun_downstream', type: 'bool' },
+      { name: 'before_state', type: 'json', required: true, maxSize: 524288 },
+      { name: 'after_state', type: 'json', required: true, maxSize: 524288 },
+      { name: 'affected_task_ids', type: 'json', maxSize: 262144 },
+      { name: 'business_refs', type: 'json', maxSize: 262144 },
+      { name: 'status', type: 'text', required: true },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_workflow_corrections_task_version ON workflow_corrections (tenant_id, task_id, version)',
+      'CREATE INDEX idx_workflow_corrections_run_created ON workflow_corrections (tenant_id, run_id, created_at)',
+    ],
+  },
+  {
+    name: 'customer_segments',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text' },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_id', type: 'text', required: true },
+      { name: 'name', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true },
+      { name: 'criteria', type: 'json', required: true, maxSize: 524288 },
+      { name: 'criteria_hash', type: 'text', required: true },
+      { name: 'member_count', type: 'number' },
+      { name: 'excluded_count', type: 'number' },
+      { name: 'exclusion_summary', type: 'json', maxSize: 262144 },
+      { name: 'snapshot_at', type: 'text', required: true },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_customer_segments_run_version ON customer_segments (tenant_id, run_id, version)',
+      'CREATE INDEX idx_customer_segments_tenant_snapshot ON customer_segments (tenant_id, snapshot_at)',
+    ],
+  },
+  {
+    name: 'customer_segment_members',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'segment_id', type: 'text', required: true },
+      { name: 'customer_id', type: 'text', required: true },
+      { name: 'customer_name', type: 'text' },
+      { name: 'membership', type: 'text', required: true },
+      { name: 'inclusion_reasons', type: 'json', maxSize: 262144 },
+      { name: 'exclusion_reasons', type: 'json', maxSize: 262144 },
+      { name: 'customer_snapshot', type: 'json', required: true, maxSize: 524288 },
+      { name: 'risk_level', type: 'text' },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_customer_segment_members_customer ON customer_segment_members (tenant_id, segment_id, customer_id)',
+      'CREATE INDEX idx_customer_segment_members_segment_state ON customer_segment_members (tenant_id, segment_id, membership)',
+    ],
+  },
+  {
+    name: 'followup_batches',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'goal_id', type: 'text' },
+      { name: 'run_id', type: 'text', required: true },
+      { name: 'task_id', type: 'text', required: true },
+      { name: 'segment_id', type: 'text', required: true },
+      { name: 'name', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true },
+      { name: 'approval_id', type: 'text' },
+      { name: 'approved_version', type: 'number' },
+      { name: 'content_hash', type: 'text', required: true },
+      { name: 'delivery_policy', type: 'json', required: true, maxSize: 262144 },
+      { name: 'safety_summary', type: 'json', required: true, maxSize: 262144 },
+      { name: 'counts', type: 'json', required: true, maxSize: 262144 },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'approved_by', type: 'text' },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+      { name: 'approved_at', type: 'text' },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_followup_batches_run_version ON followup_batches (tenant_id, run_id, version)',
+      'CREATE INDEX idx_followup_batches_tenant_status ON followup_batches (tenant_id, status, updated_at)',
+    ],
+  },
+  {
+    name: 'followup_batch_items',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'batch_id', type: 'text', required: true },
+      { name: 'segment_member_id', type: 'text' },
+      { name: 'customer_id', type: 'text', required: true },
+      { name: 'customer_name', type: 'text' },
+      { name: 'wa_number', type: 'text' },
+      { name: 'language', type: 'text' },
+      { name: 'time_zone', type: 'text' },
+      { name: 'last_inbound_at', type: 'text' },
+      { name: 'outside_24h', type: 'bool' },
+      { name: 'send_mode', type: 'text' },
+      { name: 'template_name', type: 'text' },
+      { name: 'template_status', type: 'text' },
+      { name: 'template_language', type: 'text' },
+      { name: 'template_variables', type: 'json', maxSize: 65536 },
+      { name: 'draft_body', type: 'text', required: true, max: 200000 },
+      { name: 'draft_version', type: 'number', required: true },
+      { name: 'content_hash', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'risk_level', type: 'text' },
+      { name: 'guard_rule', type: 'text' },
+      { name: 'exclusion_reason', type: 'text', max: 5000 },
+      { name: 'scheduled_at', type: 'text' },
+      { name: 'idempotency_key', type: 'text' },
+      { name: 'provider_message_id', type: 'text' },
+      { name: 'provider_receipt', type: 'json', maxSize: 524288 },
+      { name: 'attempts', type: 'number' },
+      { name: 'last_error', type: 'text', max: 5000 },
+      { name: 'approved_at', type: 'text' },
+      { name: 'sent_at', type: 'text' },
+      { name: 'delivered_at', type: 'text' },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_followup_batch_items_customer ON followup_batch_items (tenant_id, batch_id, customer_id)',
+      "CREATE UNIQUE INDEX idx_followup_batch_items_idempotency ON followup_batch_items (tenant_id, idempotency_key) WHERE idempotency_key != ''",
+      'CREATE INDEX idx_followup_batch_items_due ON followup_batch_items (tenant_id, status, scheduled_at)',
+    ],
+  },
 ];
 
 /** Auth as superuser; supports both new (_superusers) and legacy (admins) APIs. */
@@ -421,7 +748,7 @@ async function listCollections(token: string): Promise<Map<string, unknown>> {
   return new Map((json.items ?? []).map((c) => [c.name, c]));
 }
 
-async function createCollection(token: string, name: string, fields: Field[]): Promise<void> {
+async function createCollection(token: string, name: string, fields: Field[], indexes: string[] = []): Promise<void> {
   const res = await fetch(`${PB_URL}/api/collections`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: token },
@@ -429,12 +756,35 @@ async function createCollection(token: string, name: string, fields: Field[]): P
       name,
       type: 'base',
       fields: fields.map((f) => ({ ...f, required: f.required ?? false })),
+      indexes,
     }),
   });
   if (!res.ok) {
     throw new Error(`create ${name} failed: ${res.status} ${await res.text()}`);
   }
   console.log(`  ✓ created ${name}`);
+}
+
+/** Add only missing named indexes without removing PocketBase/system indexes. */
+async function ensureIndexes(token: string, name: string, want: string[]): Promise<void> {
+  if (!want.length) return;
+  const res = await fetch(`${PB_URL}/api/collections/${name}`, {
+    headers: { Authorization: token },
+  });
+  if (!res.ok) return;
+  const col = (await res.json()) as { indexes?: string[] };
+  const current = col.indexes ?? [];
+  const indexName = (definition: string) => definition.match(/INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([^\s`"']+)/i)?.[1] ?? definition;
+  const have = new Set(current.map(indexName));
+  const missing = want.filter(definition => !have.has(indexName(definition)));
+  if (!missing.length) return;
+  const up = await fetch(`${PB_URL}/api/collections/${name}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: token },
+    body: JSON.stringify({ indexes: [...current, ...missing] }),
+  });
+  if (!up.ok) throw new Error(`patch ${name} indexes failed: ${up.status} ${await up.text()}`);
+  console.log(`  ✓ ${name}: added ${missing.map(indexName).join(', ')}`);
 }
 
 /** Add any missing fields to an existing collection (idempotent schema sync). */
@@ -586,12 +936,13 @@ async function main(): Promise<void> {
 
   await ensureUsersCollection(token, existing);
 
-  for (const { name, fields } of COLLECTIONS) {
+  for (const { name, fields, indexes = [] } of COLLECTIONS) {
     if (existing.has(name)) {
       await ensureFields(token, name, fields);
+      await ensureIndexes(token, name, indexes);
       continue;
     }
-    await createCollection(token, name, fields);
+    await createCollection(token, name, fields, indexes);
   }
   await ensureWorkbenchAdmin(token);
   console.log('✓ Done.');

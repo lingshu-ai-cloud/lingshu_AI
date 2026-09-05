@@ -10,6 +10,7 @@ import { pipeline } from 'node:stream/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import ffmpegStatic from 'ffmpeg-static';
 import { callLLM } from '../agents/llm.js';
+import { SCRIPT_CREATIVE_QUALITY_RULES, SCRIPT_FACT_TO_VALUE_EXAMPLES, scriptUnusedFacts, scriptSelectedFactPhrase, scriptSelectedFactProductName, scriptNarrationLinesFromPlan, scriptNarrationBudget, scriptEndingRules, scriptCreativeModeRule, scriptVariantDirection } from '../prompts/scriptCreativeQuality.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
 import { auth, store } from '../storage/index.js';
 import {
@@ -24,9 +25,13 @@ import { generatePosterImage, imageExt, type ReferenceImage } from '../lib/image
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
 import { createLinkedAbort } from '../lib/abort.js';
+import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
 import {
   assessScriptQualityV2,
   isBusinessRoleEntity,
+  numericClaimIsProductionParameter,
+  normalizeNumericEvidenceText,
+  productInfoSupportsNumericClaim,
 } from '../lib/studioScriptQualityV2.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
@@ -46,6 +51,7 @@ import { groundedCaptionFallback, groundedCoverTitleFallbacks } from '../publish
 import { assessTransformation, commercialDigitalHumanGate, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
+import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -565,64 +571,17 @@ export function stripStoryboardReferenceLeaks(
     .trim();
 }
 
-function productSupportsNumericClaim(claim: string, productInfo: string): boolean {
-  // Product fields can contain non-breaking or zero-width separators copied
-  // from rich text. They render as `50g` in the UI but previously prevented
-  // the closed-world checker from finding the same `50g` claim.
-  const normalizeNumericEvidence = (value: string) => String(value)
-    .normalize('NFKC')
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const source = normalizeNumericEvidence(productInfo);
-  const normalizedClaim = normalizeNumericEvidence(claim);
-  if (source.toLowerCase().includes(normalizedClaim.toLowerCase())) return true;
-  const parsed = normalizedClaim.match(/(\d+(?:\.\d+)?)\s*(瓶|ml|毫升|kg|g|克|斤|cm|厘米|mm|毫米|天|day|days|秒|%|个|pcs|件|箱|元|美元)/i);
-  if (!parsed) return false;
-  const value = parsed[1];
-  const unit = parsed[2].toLowerCase();
-  const equivalents: Record<string, string[]> = {
-    ml: ['ml', '毫升'], 毫升: ['ml', '毫升'],
-    kg: ['kg', '千克', '公斤'], g: ['g', '克'], 克: ['g', '克'],
-    cm: ['cm', '厘米'], 厘米: ['cm', '厘米'], mm: ['mm', '毫米'], 毫米: ['mm', '毫米'],
-    day: ['day', 'days', '天'], days: ['day', 'days', '天'], 天: ['day', 'days', '天'],
-    pcs: ['pcs?', 'pieces?', '个', '件'], 个: ['pcs?', 'pieces?', '个', '件'], 件: ['pcs?', 'pieces?', '个', '件'],
-    瓶: ['瓶', 'bottles?'], 箱: ['箱', 'cartons?', 'boxes?'],
-    秒: ['秒', 's', 'sec(?:ond)?s?'],
-    '%': ['%', 'percent'],
-  };
-  if (unit === '美元') {
-    return [
-      `\\$\\s*${value}`,
-      `(?:usd|us\\$)\\s*${value}`,
-      `${value}\\s*(?:usd|us\\$|美元)`,
-    ].some(pattern => new RegExp(pattern, 'i').test(source));
-  }
-  if (unit === '元') {
-    return [
-      `[¥￥]\\s*${value}`,
-      `(?:rmb|cny)\\s*${value}`,
-      `${value}\\s*(?:rmb|cny|元)`,
-    ].some(pattern => new RegExp(pattern, 'i').test(source));
-  }
-  const candidates = equivalents[unit] || [unit];
-  if (candidates.some(candidate => new RegExp(`${value.replace('.', '\\.')}\\s*${candidate}`, 'i').test(source))) return true;
-  // 结构化产品资料有时把单位放在字段名里，例如“起订量：50”“价格(USD)：20”。
-  if (['pcs', '个', '件', '瓶', '箱'].includes(unit)) {
-    return new RegExp(`(?:起订量|MOQ)[^\\n]{0,30}\\b${value}\\b`, 'i').test(source);
-  }
-  return false;
-}
-
 export function unsupportedNumericClaims(candidate: string, productInfo: string): string[] {
-  const pattern = /\d+(?:\.\d+)?\s*(?:瓶|ml|ML|毫升|kg|KG|g|克|斤|cm|厘米|mm|毫米|天|day|days|Days|%|个|pcs|件|箱|元|美元)/g;
-  return [...new Set(Array.from(candidate.matchAll(pattern))
+  const normalizedCandidate = normalizeNumericEvidenceText(candidate);
+  const pattern = /\d+(?:\.\d+)?\s*(?:瓶|bottles?|ml|毫升|kg|千克|公斤|g|克|斤|cm|厘米|mm|毫米|天|day|days|秒|seconds?|secs?|%|percent|个|pcs?|pieces?|件|箱|cartons?|boxes?|元|美元|usd|rmb|cny)/gi;
+  return [...new Set(Array.from(normalizedCandidate.matchAll(pattern))
     .filter(match => {
       const claim = match[0];
-      if (productSupportsNumericClaim(claim, productInfo)) return false;
-      const start = candidate.lastIndexOf('\n', match.index ?? 0) + 1;
-      const end = candidate.indexOf('\n', match.index ?? 0);
-      const line = candidate.slice(start, end < 0 ? candidate.length : end).trim();
+      if (productInfoSupportsNumericClaim(claim, productInfo)) return false;
+      const start = normalizedCandidate.lastIndexOf('\n', match.index ?? 0) + 1;
+      const end = normalizedCandidate.indexOf('\n', match.index ?? 0);
+      const line = normalizedCandidate.slice(start, end < 0 ? normalizedCandidate.length : end).trim();
+      if (numericClaimIsProductionParameter(claim, line)) return false;
       if (/%$/.test(claim)) {
         return !/^(?:运镜|构图|环境|景别)[：:]/.test(line);
       }
@@ -1441,18 +1400,21 @@ function parseLockedStoryboardScenes(raw: string, expectedCount: number): Locked
       const scene = item as Record<string, unknown>;
       return {
         environment: String(scene.environment || '').trim(), shot: String(scene.shot || '').trim(), camera: String(scene.camera || '').trim(),
-        composition: String(scene.composition || '').trim(), purpose: String(scene.purpose || '').trim(), visual: String(scene.visual || '').trim(), music: String(scene.music || '').trim(),
+        composition: String(scene.composition || '').trim(), purpose: String(scene.purpose || '').trim(), visual: String(scene.visual || '').trim(), music: String(scene.music || '无').trim() || '无',
       };
     }).filter(scene => Object.values(scene).every(Boolean));
   } catch { return []; }
 }
-export function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines: string[], targetDuration = 0): string {
-  const naturalDurations = lines.map(voice => {
+export function lockedVoiceDurations(lines: string[]): number[] {
+  return lines.map(voice => {
     const chars = Array.from(voice.replace(/[\s，。！？、；：,.!?;:“”"'（）()]/g, '')).length;
     const words = voice.split(/\s+/).filter(Boolean).length;
     const spoken = /[\u3400-\u9fff]/.test(voice) ? chars / 4.5 : words / 2.5;
     return Math.max(2.4, +(spoken + 0.95).toFixed(1));
   });
+}
+export function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines: string[], targetDuration = 0): string {
+  const naturalDurations = lockedVoiceDurations(lines);
   const naturalTotal = naturalDurations.reduce((sum, duration) => sum + duration, 0);
   const requestedTotal = Number(targetDuration) || 0;
   const scaleToRequestedTotal = requestedTotal >= scenes.length * 2.4 && requestedTotal >= naturalTotal;
@@ -1472,126 +1434,11 @@ export function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines
   }).join('\n\n');
 }
 
-function lipBalmFallbackVoicePlan(route: CooperationRoute, theme: string, cta: string, sceneCount: number): string[] {
-  if (sceneCount >= 6 && route === 'consumer_retail') return [
-    '出门前补涂，你会先看哪一步？',
-    '膏体转出来，斜切面先露出来。',
-    '贴近唇部补一层，动作不用赶。',
-    '转回管里，顺手放进化妆包。',
-    '带走前，再看一眼它最真实的样子。',
-    cta,
-  ];
-  if (sceneCount >= 6 && route === 'wholesale_distribution') return [
-    '进口商拿到样品，第一眼该看哪里？',
-    '先把膏体转出来，看清实物形态。',
-    '再转回管里，动作比目录更直观。',
-    '这支是4.5g，拿在手里更好判断。',
-    '再做一次补涂，把展示细节补齐。',
-    cta,
-  ];
-  if (sceneCount >= 6 && theme === 'customization') return [
-    '品牌创始人，包装方向要从哪一步开始看？',
-    '先看白管和膏体，产品本身要先成立。',
-    '空白标签贴上去，版式关系马上能看见。',
-    '外盒合上，再看整套样品的感觉。',
-    '把管、标、盒摆在一起，方便继续讨论。',
-    cta,
-  ];
-  if (sceneCount >= 6) return [
-    '品牌创始人，样品到手后最难判断什么？',
-    '先把膏体转出来，看看产品本身。',
-    '再放进化妆包，看看日常场景。',
-    '白管、标签和外盒，先摆在同一张桌上。',
-    '最后做一次补涂，把产品呈现说清楚。',
-    cta,
-  ];
-  if (route === 'consumer_retail') return [
-    '乌兹别克斯坦消费者，随身补涂时你会先看哪一步？',
-    '旋出膏体，再旋回，动作一眼能看清。',
-    '手背单次试涂后，放进化妆包就能带走。',
-    cta,
-  ];
-  if (route === 'wholesale_distribution') return [
-    '进口商，目录图以外你想先确认什么？',
-    '先看膏体旋出和旋回，产品本体更直观。',
-    '再看单次试涂和随身场景，方便判断展示方式。',
-    cta,
-  ];
-  if (theme === 'customization') return [
-    '品牌创始人，润唇膏打样先确认哪一处？',
-    '先看膏体旋出、旋回和单次试涂。',
-    '再用一组无品牌管、标签和外盒确认包装适配。',
-    cta,
-  ];
-  return [
-    '品牌创始人，润唇膏打样别只看包装。',
-    '先旋出膏体，确认斜切面和旋回动作。',
-    '再做一次手背试涂，看清产品本体。',
-    cta,
-  ];
-}
-
-function defaultLipBalmScenes(route: CooperationRoute, theme: string, productName: string, sceneCount: number): LockedStoryboardScene[] {
-  const packaging = theme === 'customization';
-  const namedProduct = productName || '润唇膏';
-  const ctaScene: LockedStoryboardScene = { environment: '手机旁的梳妆台', shot: '中景', camera: '缓慢拉远', composition: '产品与手机并排', purpose: '单一行动邀请', visual: `手将${namedProduct}放在手机旁，指尖停在已验证的联系入口`, music: '收束音' };
-  if (sceneCount >= 6 && theme === 'customization') return [
-    { environment: '干净桌面', shot: '中景', camera: '俯拍固定', composition: '白管、标签和外盒并排', purpose: '包装问题钩子', visual: '手把白色无品牌旋转管、空白标签和牛皮纸外盒依次推入画面', music: '纸张轻响' },
-    { environment: '同一桌面', shot: '特写', camera: '固定微推进', composition: '膏体与白管居中', purpose: '产品本体确认', visual: `手旋出${namedProduct}，停在浅米色膏体的斜切面`, music: '清脆卡点' },
-    { environment: '同一桌面', shot: '近景', camera: '俯拍固定', composition: '标签与白管居中', purpose: '标签版式证据', visual: '手把空白标签贴合在白色无品牌旋转管上，再抚平边缘', music: '贴纸轻响' },
-    { environment: '同一桌面', shot: '近景', camera: '固定', composition: '外盒居中', purpose: '外盒样品证据', visual: '手将贴好标签的白管放入牛皮纸外盒，再合上盒盖', music: '纸盒合拢声' },
-    { environment: '同一桌面', shot: '中景', camera: '缓慢拉远', composition: '管、标、盒三件套居中', purpose: '定制讨论收束', visual: '手将白管、空白标签和外盒摆成一组，留出正面版式位置', music: '节拍收束' },
-    ctaScene,
-  ];
-  if (sceneCount >= 6 && route === 'wholesale_distribution') return [
-    { environment: '明亮梳妆台', shot: '特写', camera: '固定微推进', composition: '产品居中', purpose: '样品判断钩子', visual: `手将${namedProduct}推入画面，镜头先停在实物管身和膏体位置`, music: '轻快起音' },
-    { environment: '同一梳妆台', shot: '特写', camera: '固定', composition: '产品与拇指居中', purpose: '实物形态证据', visual: `拇指旋出${namedProduct}，膏体从管内露出`, music: '清脆卡点' },
-    { environment: '同一梳妆台', shot: '近景', camera: '固定微推进', composition: '手与产品居中', purpose: '操作细节证据', visual: `手将${namedProduct}旋回管内，再停在闭合位置`, music: '旋转轻响' },
-    { environment: '白色桌面', shot: '特写', camera: '俯拍固定', composition: '产品与规格卡并排', purpose: '规格核对', visual: `手将${namedProduct}的膏体放在写有“4.5g”的产品资料卡旁，镜头停在两者同框`, music: '轻提示音' },
-    { environment: '梳妆台镜前', shot: '近景', camera: '跟拍', composition: '唇部与产品居中', purpose: '展示动作证据', visual: `手用${namedProduct}完成一次唇部补涂，镜头跟随单次来回动作`, music: '自然环境声' },
-    ctaScene,
-  ];
-  if (sceneCount >= 6 && route === 'consumer_retail') return [
-    { environment: '明亮梳妆台', shot: '特写', camera: '固定微推进', composition: '产品居中', purpose: '场景钩子', visual: `手将${namedProduct}推入画面，镜头停在浅米色膏体的斜切面`, music: '轻快起音' },
-    { environment: '同一梳妆台', shot: '特写', camera: '固定', composition: '产品与拇指居中', purpose: '膏面细节', visual: `拇指旋出${namedProduct}，镜头从管身推进到斜切膏面`, music: '清脆卡点' },
-    { environment: '梳妆台镜前', shot: '近景', camera: '跟拍', composition: '唇部与产品居中', purpose: '补涂动作', visual: `手用${namedProduct}完成一次唇部补涂，镜头跟随单次来回动作`, music: '自然环境声' },
-    { environment: '化妆包旁的桌面', shot: '近景', camera: '固定微推进', composition: '手与产品居中', purpose: '随身收纳', visual: `手将${namedProduct}旋回管内，再放入化妆包`, music: '旋转与拉链轻响' },
-    { environment: '窗边梳妆台', shot: '中近景', camera: '缓慢拉远', composition: '产品正面居中', purpose: '产品收束', visual: `手将${namedProduct}立在化妆包旁，停留在产品正面`, music: '节拍收束' },
-    ctaScene,
-  ];
-  if (sceneCount >= 6 && route === 'oem_odm') return [
-    { environment: '明亮梳妆台', shot: '特写', camera: '固定微推进', composition: '产品居中', purpose: '打样问题钩子', visual: `手将${namedProduct}推入画面，镜头停在浅米色膏体的斜切面`, music: '轻快起音' },
-    { environment: '同一梳妆台', shot: '特写', camera: '固定', composition: '产品与拇指居中', purpose: '产品本体确认', visual: `拇指旋出${namedProduct}，膏体从管内平稳露出`, music: '清脆卡点' },
-    { environment: '化妆包旁的桌面', shot: '近景', camera: '跟拍', composition: '手与化妆包居中', purpose: '使用场景判断', visual: `手将${namedProduct}放入化妆包后合上拉链`, music: '拉链轻响' },
-    { environment: '干净桌面', shot: '中景', camera: '俯拍固定', composition: '白管、标签和外盒并排', purpose: '打样要素确认', visual: '手把白色无品牌旋转管、空白标签和牛皮纸外盒摆在同一张桌上', music: '纸张轻响' },
-    { environment: '梳妆台镜前', shot: '近景', camera: '跟拍', composition: '唇部与产品居中', purpose: '产品呈现确认', visual: `手用${namedProduct}完成一次唇部补涂，镜头跟随单次来回动作`, music: '自然环境声' },
-    ctaScene,
-  ];
-  if (sceneCount >= 6) return [
-    { environment: '明亮梳妆台', shot: '特写', camera: '固定微推进', composition: '润唇膏居中', purpose: '买家钩子', visual: `手将${namedProduct}推入画面，镜头停在浅米色膏体的斜切面`, music: '轻快起音' },
-    { environment: '同一梳妆台', shot: '特写', camera: '固定', composition: '产品与拇指居中', purpose: '产品形态证据', visual: `拇指旋出${namedProduct}，膏体从管内平稳露出`, music: '清脆卡点' },
-    { environment: '同一梳妆台', shot: '近景', camera: '固定微推进', composition: '手与产品居中', purpose: '产品动作证据', visual: `手将${namedProduct}旋回管内，再停在闭合位置`, music: '旋转轻响' },
-    { environment: '梳妆台镜前', shot: '近景', camera: '跟拍', composition: '唇部与产品居中', purpose: '使用动作证据', visual: `手用${namedProduct}完成一次唇部补涂，镜头跟随单次来回动作`, music: '自然环境声' },
-    packaging
-      ? { environment: '干净桌面', shot: '中景', camera: '俯拍固定', composition: '白管、标签和外盒并排', purpose: '包装打样证据', visual: '手把白色无品牌旋转管、空白标签和牛皮纸外盒并排摆开', music: '纸张轻响' }
-      : { environment: '化妆包旁的桌面', shot: '近景', camera: '跟拍', composition: '手与化妆包居中', purpose: '渠道场景证据', visual: `手将${namedProduct}放入化妆包后合上拉链`, music: '拉链轻响' },
-    ctaScene,
-  ];
-  return [
-    { environment: '明亮梳妆台', shot: '特写', camera: '固定微推进', composition: '润唇膏居中', purpose: '买家钩子', visual: `手旋出${namedProduct}的浅米色膏体，停在斜切膏面近景`, music: '轻快起音' },
-    { environment: '同一梳妆台', shot: '近景', camera: '固定', composition: '手与润唇膏居中', purpose: '产品实证', visual: `手将${namedProduct}的膏体旋回，再旋出，完整展示旋转动作`, music: '清脆卡点' },
-    packaging
-      ? { environment: '干净桌面', shot: '中景', camera: '俯拍固定', composition: '润唇膏、空白标签和外盒并排', purpose: '包装适配证据', visual: '手将无品牌旋转管、空白标签和牛皮纸外盒摆成一组', music: '纸张轻响' }
-      : { environment: '化妆包旁的桌面', shot: '近景', camera: '跟拍', composition: '手背与润唇膏居中', purpose: '产品使用证据', visual: `手背单次试涂${namedProduct}后，将产品放入化妆包`, music: '自然环境声' },
-    { environment: '手机旁的梳妆台', shot: '中景', camera: '缓慢拉远', composition: '产品与手机并排', purpose: '单一行动邀请', visual: `手将${namedProduct}放在手机旁，指尖停在已验证的联系入口`, music: '收束音' },
-  ];
-}
-
 export function repairMaterialScript(script: string, productInfo: string, materialsText: string): string {
   let repaired = dedupeStoryboardFieldLines(normalizeStoryboardFieldLines(script));
   const unsupportedNumbers = Array.from(repaired.matchAll(/\d+(?:\.\d+)?\s*(?:瓶|ml|ML|毫升|kg|KG|g|克|斤|cm|厘米|mm|毫米|天|day|days|Days|秒|%|个|pcs|件|箱|元|美元)/g))
     .map(match => match[0])
-    .filter(claim => !productSupportsNumericClaim(claim, productInfo));
+    .filter(claim => !productInfoSupportsNumericClaim(claim, productInfo));
   for (const claim of unsupportedNumbers) repaired = repaired.replaceAll(claim, '');
   const evidence = `${productInfo}\n${materialsText}`.toLowerCase();
   const unsupportedEffects: Array<[RegExp, string[], string]> = [
@@ -2226,9 +2073,9 @@ studioRouter.post('/script', async (req, res) => {
   const forbiddenLine = forbiddenTerms.length
     ? `Reference-only forbidden terms: ${forbiddenTerms.join(', ')}. Do not output these words, hashtags, brand names, original captions, or original product claims.`
     : 'Do not output reference-video brand names, hashtags, original captions, or original product claims.';
-  // 工作台脚本统一走千问；视频理解仍可使用独立的视觉模型配置。
-  // 统一文本模型后，四类脚本可以共享同一套事实、结构和自然表达契约。
-  const providerOpt: 'qwen' = 'qwen';
+  // Default remains Qwen. Product-only provider comparisons are an explicit server opt-in;
+  // material/reference generation and persisted script contracts remain unchanged.
+  const providerOpt: 'qwen' | 'gemini' = generationMode === 'product' && process.env.STUDIO_SCRIPT_BACKEND === 'gemini' ? 'gemini' : 'qwen';
   const hasNarrationDraft = voiceoverMode === 'ai' || voiceoverMode === 'unselected';
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
@@ -2236,7 +2083,10 @@ studioRouter.post('/script', async (req, res) => {
   const videoThemeId = String(normalizedVideoTheme.id || 'buyer_pain');
   const videoThemeTitle = String(normalizedVideoTheme.title || '买家痛点');
   const videoThemePainPoint = String(normalizedVideoTheme.painPoint || audience || '').trim();
+  const contentGoal = generationMode === 'product' && normalizedVideoTheme.contentGoal === 'reach' ? 'reach' : 'leads';
   const primaryCta = String(normalizedVideoTheme.primaryCta || normalizedVideoTheme.conversionGoal || '').trim();
+  const endingRules = scriptEndingRules(contentGoal, primaryCta);
+  const narrationBudget = scriptNarrationBudget(Number(duration), language);
   const themeConstraint = THEME_PROMPT_CONSTRAINTS[videoThemeId as ContentTheme] ?? THEME_PROMPT_CONSTRAINTS.buyer_pain;
   const modeForStrategy = generationMode === 'material'
     ? 'asset_library'
@@ -2269,22 +2119,12 @@ studioRouter.post('/script', async (req, res) => {
     availableEvidence: generationMode === 'material'
       ? normalizedMaterialInfos.map(item => ({ label: String(item.name || '未命名素材'), type: 'material' as const }))
       : product.trim() ? [{ label: '企业产品资料', type: 'product_detail' as const }] : [],
-    primaryCta: primaryCta || '私信了解产品资料',
+    primaryCta: primaryCta || (contentGoal === 'reach' ? '' : '私信了解产品资料'),
     verifiedCtaChannels: primaryCta ? ['user_selected'] : [],
     forbiddenClaims: themeConstraint.prohibitedPatterns,
   });
-  const strategyPlanRules = renderScriptContentPlan(buildScriptContentPlan(strategyBrief));
-  const themeDirectives: Record<string, string> = {
-    buyer_pain: '叙事公式：一个具体采购/使用顾虑 → 造成顾虑的判断难点 → 两个可见或可核实证据 → 一个会话式询盘。开场说买家会说的话，不能空喊焦虑。',
-    product_proof: '叙事公式：提出一个“怎么判断”的问题 → 实物细节 → 资料/规格证据 → 采购价值。每个结论紧跟证据，不把功效当作已发生结果。',
-    use_case: '叙事公式：一个明确人物和场景 → 一个完整使用动作 → 可见状态/操作细节 → 适用选择。场景、动作和结果必须有资料或素材支持。',
-    supplier_capability: '叙事公式：买家担心的供应风险 → 工厂/产线/质检/产能证据 → 该证据对采购的意义 → 询盘。没有对应企业证据就不输出该能力。',
-    customization: '叙事公式：渠道或品牌适配问题 → 已确认的包装/标识/规格选项 → 一个可拍的样品或版式动作 → 提交定制需求。不得把“可咨询”写成“均可定制”。',
-    comparison: '叙事公式：明确选型场景 → 统一比较维度 → 各自差异和适用条件 → 让买家描述需求。只比较输入中真实存在的产品，不虚构对手。',
-    customer_case: '叙事公式：已授权客户背景 → 可核实问题 → 企业采取的过程 → 已确认结果 → 相似需求邀请。缺少任一核心证据就不要故事化补全。',
-    trend: '叙事公式：带来源的变化/信号 → 对目标买家的含义 → 企业产品证据如何回应 → 讨论需求。没有趋势来源时降级为常青采购问题，禁止编造“大盘正在增长”。',
-    talking_head: '以已识别的真人出镜素材为主体，台词必须像自然讲解；人物动作、口型时长和每镜信息量必须匹配。',
-  };
+  const contentPlan = buildScriptContentPlan(strategyBrief);
+  const strategyPlanRules = renderScriptContentPlan(contentPlan);
   const voiceoverDirective = voiceoverMode === 'unselected'
     ? '声音策略：用户尚未选择配音方式。分镜可提供简短台词草案，也可写“无”；不得因口播数量阻断分镜生成。'
     : voiceoverMode === 'none'
@@ -2292,45 +2132,15 @@ studioRouter.post('/script', async (req, res) => {
     : generationMode === 'clone'
       ? '声音策略：用户选择重建口播。若原片存在口播位，可在对应位置写短台词；不得增加原片不存在的口播镜头。'
       : '声音策略：用户选择 AI 口播。每个承担钩子、问题、证据、决策或 CTA 的关键分镜都必须有完整自然口播；先按完整句子安排时长，禁止截断句子。台词与字幕必须逐字一致。';
-  const videoThemeRules = `本条视频主题（系统已自动匹配脚本策略，不要在输出中解释）：
-- 主题：${videoThemeTitle}
-- 潜在客户痛点：${videoThemePainPoint || '根据企业资料做保守判断，不得虚构市场结论'}
-- 本条唯一主 CTA：${primaryCta || '使用一个低门槛、不过度承诺的会话式行动'}
-- 钩子约束：${themeConstraint.hookDirective}
-- 证明顺序约束：${themeConstraint.evidenceDirective}
-- 禁用表达：${themeConstraint.prohibitedPatterns.join('；')}
-- 主题叙事要求：${themeDirectives[videoThemeId] || themeDirectives.buyer_pain}
-- ${voiceoverDirective}
-- 痛点必须由后续证据回应，不能只出现在第一句；结尾只能使用上面的唯一主 CTA。若 CTA 与目标输出语言不同，必须按目标语言自然翻译其动作语义，禁止把“引导跳转、以触达”等后台配置措辞直接念给观众。
-
-${strategyPlanRules}`;
-  const humanVoiceRules = `真人表达规则（仅作用于台词、口播和字幕，不改变时间轴及机器字段）：
-- 像一个懂产品的人对一个具体买家说话，一句话只完成一个沟通动作；中文优先短句，英文通常每句7-16词。
-- 先说买家在意的判断，再说产品；不要朗读资料表，不要连续使用“先看、再看、最后”。
-- 禁止“革命性、颠覆、卓越解决方案、Meet our、Are you ready、Look no further、Contact us today”等模板广告腔。
-- 不得把“未提供、待确认、没有素材、资料不足、系统检查”等内部审核语言说给客户；未知信息直接省略。
-- CTA像正常商务邀请，只保留一个动作，不虚构样品、MOQ、库存、交期或经销政策。`;
-  const sharedScriptQualityCore = `灵枢社媒脚本共享质量内核（内部执行，不得复述）：
-一、信息优先级
-1. 企业中心/本次产品信息中的明确字段，是产品事实的唯一来源；已选素材元信息只证明可见画面；对标分析只提供结构与节奏；用户补充要求不能覆盖事实边界。
-2. 输入没有提供的价格、折扣、MOQ、交期、库存、销量、排名、认证、功效结果、客户案例、样品政策、定制能力和市场趋势，一律省略。不得用“通常、一般、行业常见”补齐。
-3. 时间戳、目标视频时长、镜头序号和台词时长上限属于制作参数，不属于产品卖点。
-
-二、社媒爆量结构
-1. 一条视频只解决一个受众问题。前 1.5-3 秒给出停留理由：具体问题、反差、测试动作、可见结果或直接判断，禁止企业自我介绍和平铺产品名。
-2. 钩子之后尽快兑现，正文只保留 2-3 个证明点；证明按“画面证据 → 一句解释 → 对买家的意义”推进，不能连续罗列参数。
-3. 每 2-4 秒发生一次信息或视觉推进；相邻镜头的功能、动作、句式不能相同。允许强证据镜头无口播，避免全程播报。
-4. 结尾只有一个低门槛动作，并承接开场问题。不得同时索要数量、市场、包装、邮箱、电话等多项信息。
-5. 多版本差异必须来自钩子机制、证明顺序、叙述视角、镜头动作和 CTA 中至少两项，而不是同义词替换。
-
-三、可拍与自然表达
-1. 画面写清初始状态、主体接触、运动路径和结束状态；分别给出环境、景别、运镜和构图，禁止“高级感展示、真实场景、突出卖点”等空指令。
-2. 有口播的分镜，字幕必须逐字反映口播；无口播时才允许字幕承担独立信息。
-3. 中文按每秒约 4-5 字并预留停顿；英文单句通常 7-16 词。说不下就删信息或写“无”，不能压缩成生硬长句。
-4. 面向人的字段要像销售、产品经理或工厂人员自然说话；机器字段、时间轴和证据字段保持规范。
-
-四、输出前静默质检
-逐项检查：主题单一；钩子被正文兑现；至少两个结论有输入证据；动作可拍；时间连续；台词放得下；产品名/数字/单位原样；无内部审核话术；无模板广告腔；CTA 单一。发现问题直接修稿，只输出最终成稿。`;
+  const videoThemeRules = `本条主题：${videoThemeTitle}
+受众关注：${videoThemePainPoint || '从本次产品与素材中选择一个具体看点'}
+主题方向：${contentPlan.hookFormula}
+禁用表达：${themeConstraint.prohibitedPatterns.join('；')}
+${voiceoverDirective}
+${endingRules}`;
+  const creativeRules = `${SCRIPT_CREATIVE_QUALITY_RULES}
+${scriptCreativeModeRule(generationMode)}`;
+  const scriptFactRules = `事实边界：选定产品资料提供产品事实，素材观察只证明可见画面，对标只提供结构与节奏。数字、单位、性能和功能关系只能来自产品资料；不得补造精度、响应速度、价格、MOQ、交期、认证、功效或案例。保留适用条件。“支持某能力”不能扩写成自动完成、实时同步、免操作等未给定结论。制作参数不是产品卖点；不借用其他产品事实。`;
   const cloneMigrationMode = String(tone).includes('高保真复刻')
     ? 'fidelity'
     : String(tone).includes('机制借鉴')
@@ -2355,58 +2165,43 @@ ${strategyPlanRules}`;
   const previousCloneScripts = Array.isArray(existingScripts)
     ? existingScripts.map(item => String(item || '').trim()).filter(Boolean).slice(-4)
     : [];
+  const priorNarration = previousCloneScripts.flatMap(item => Array.from(item.matchAll(/^台词[：:]\s*(.+)$/gm)).map(match => match[1])).join(' ').replace(/\s/g, '').toLowerCase();
+  const productFacts = productFactCandidates(product);
+  const unusedProductFacts = scriptUnusedFacts(productFacts, priorNarration);
+  const planningProduct = generationMode === 'product' && selectedProductNames(product).length === 1 && productFacts.length
+    ? `产品名称：${selectedProductNames(product).join('、')}\n本轮可用事实：\n${(unusedProductFacts.length ? unusedProductFacts : productFacts).map(fact => `- ${fact}`).join('\n')}`
+    : product;
   const cloneDiversityRules = previousCloneScripts.length
     ? `\n当前生成第 ${Math.max(1, Number(variantSeed) + 1)} 版。以下是已经生成的版本，仅用于排重，严禁复制：\n${previousCloneScripts.map((item, index) => `--- 已有版本 ${index + 1} ---\n${item.slice(0, 6000)}`).join('\n')}\n新版本必须保持原片时间轴和镜头功能，但至少改变以下三项：开场呈现动作、产品证明动作、场景陈设、镜头内产品顺序、台词句式、字幕表达。不得只替换同义词。`
     : '';
 
   const productDuration = Math.max(10, Number(duration) || 20);
   const productSceneCount = productDuration <= 30 ? 4 : productDuration <= 45 ? 6 : 8;
-  const productBoundaries = Array.from({ length: productSceneCount + 1 }, (_, index) => +(productDuration * index / productSceneCount).toFixed(1));
-  const productTimeline = productBoundaries.slice(0, -1).map((start, index) => {
-    const end = productBoundaries[index + 1];
-    const maxChars = Math.max(4, Math.floor(Math.max(0.5, end - start - 0.5) * 4));
-    return `第${index + 1}段：[${start}-${end}s]，中文台词最多${maxChars}字（不含标点）`;
-  }).join('\n');
+  // Only shorten an explicit leading model token, never invent a Chinese alias.
+  const spokenName = (name: string) => /^[A-Za-z][A-Za-z0-9-]*\s+/.test(name) ? name.split(/\s+/)[0] : name;
   const packagingOnlyProductConstraint = /(?:无品牌瓶器|空白标签|外盒样品|包装方案)/.test(productInfo)
     && !/(?:防漏|密封|耐用|抗[压拉摔]|测试|容量|尺寸|材质|认证|交期|MOQ|起订)/i.test(productInfo)
     ? '本次产品资料仅证明容器/包装样品可提供：画面只能建议拍摄容器摆放、空白标签/外盒组合和手部排布；不得虚构瓶内液体、性能测试、厚薄、毛边、回弹、色差、密封、耐用、PDF资料或邮件界面。'
     : '';
-  const productScriptRules = `你是严谨的商业短视频分镜导演。请为我方产品创作一条真实、可拍、音画时长成立的社媒带货/外贸留资视频，不是在朗读产品资料。
-
-以下约束是输出协议，不是建议；任何一项不满足都视为无效脚本：
-1. 必须恰好输出${productSceneCount}段，总时长目标为${productDuration}秒。先写每段完整自然口播，再按口播实际长度和停顿安排时间戳；不得平均分段，不得为了迁就旧时间戳截断台词。时间轴从0开始、连续无重叠，并在目标时长附近自然收束。
-2. 每段必须依次包含且只包含：时间、环境、景别、运镜、构图、镜头功能、画面、配乐、台词、字幕。不得缺字段，不得输出标题、解释、自检、Markdown或代码围栏。
-3. 每段都是关键镜头，必须有一条完整、自然、真人能直接说出口的口播；不得包含“镜头、画面、字幕、参考节奏、展示卖点”等制作指令。口播与字幕必须逐字相同，只可用换行处理字幕阅读节奏。
-3. 每段画面必须是具体可拍动作，必须包含手部动作、产品动作、对比测试、包装/定制展示或使用场景之一。
-4. 第一段必须是痛点、对比、测试或结果 hook，不能用“这款产品适合……”平铺开场。
-5. 先判断转化目标：面向消费者时使用“场景痛点 → 使用动作 → 可见结果 → 购买理由”；面向采购商时使用“采购顾虑 → 实物证据 → 定制/交付能力 → 低门槛询盘”。不要混写两套话术。
-6. 至少包含两个已核实的商业信息，但优先放在短字幕和画面资料卡里；口播只说买家最关心的好处，不朗读 MOQ、认证和参数清单。
-7. 结尾 CTA 只要求一个低门槛动作，例如“发我数量和目标市场”“留言拿报价”“发包装需求看样”，不要一次索要五六项资料。
-8. 参考视频只允许借用节奏、镜头顺序和信息密度；不得输出参考视频标题、原 caption、原品牌、原 hashtag、原品类、原场景词或原产品功效。
-9. 产品事实采用封闭世界规则：只有“产品信息”明确提供的名称、数字、单位、周期、价格、MOQ、材质、规格、认证、功效和定制项才允许写入。允许不改变含义的单位转换（如 $20→20美元、50 pcs→50件），禁止创造资料中没有的数字（例如3天、12天、提升30%）；缺失信息直接省略，不得猜测。
-10. 不得输出制作说明，不得解释规则，只输出成稿。
-11. 原始卖点如果包含夸张绝对化表达，必须降级成可验证表述，例如“不易撕裂”“抗拉表现可打样测试”“承重可按需求确认”，不得写“不破、不裂、纹丝不动、吹不烂”等绝对承诺。
-12. 只能使用下方“产品信息”里列出的选定产品。不得改成企业中心其它产品，不得写“企业产品组合/主推产品/this product”，不得使用对标视频原产品。
-13. 多选产品时，脚本必须围绕这些选定产品组合呈现，至少在画面或字幕中覆盖每个选定产品的名称或明确细节，不得擅自新增未选择产品。
-14. ${forbiddenLine}
-15. 中文口播按每秒约4字计算并预留停顿；若完整句子需要更长镜头，延长该镜头并压缩其它镜头，绝不截断句子。
-16. 优先使用产品资料中已经提供的容量、材质、充电方式、规格和定制项；把参数翻译成使用利益或采购价值，但不得用跨品类的点亮、色温、安装、护肤功效等动作替代真实产品细节。
-17. 情绪应有推进：意外/顾虑 → 看见亮点 → 证据加深 → 品牌想象 → 立即行动。相邻两段不能用相同句式开头。
-18. 美妆护肤产品的产品实证、使用场景与C端零售主题：至少三分之二分镜必须展示膏体、上唇/手背使用、旋出旋回或随身携带等产品本体；包装只能作为一段辅助证据。${packagingOnlyProductConstraint || '产品画面可以设计建议补拍，但所有产品状态、性能和测试结论必须有产品资料支持。'}
-
-固定格式（每段完整重复，不得省略）：
+  const productScriptRules = `为选定产品生成 ${productDuration} 秒、${productSceneCount} 段的 ${lang} 分镜稿。
+时间从0开始连续无重叠，按完整口播与动作分配时长；中文约每秒4字并留停顿，不能截断句子。
+${voiceoverDirective}
+有口播时字幕逐字相同；无口播时字幕可独立传达信息。音效写入配乐字段。
+每段画面写清主体、初始状态、动作和结束状态，并保持人物、产品外观和空间连续。没有现成画面可建议补拍，但产品状态、使用方式和性能结论必须有资料支持。
+多选产品时，每个选定名称至少出现在一段画面中；只写输入支持的商业事实，不把参数扩写成未证实效果。
+${packagingOnlyProductConstraint}
+${forbiddenLine}
+只输出以下格式，每段字段各出现一次，无标题、解释或 Markdown：
 [start-end s]
-环境：<具体地点与可见陈设>
-景别：<远景/全景/中景/中近景/近景/特写之一>
-运镜：<固定/推进/拉远/横移/跟拍/环绕之一，并说明动作>
-构图：<主体位置、产品朝向、前中后景关系>
-镜头功能：<单一功能>
-画面：<主体+动作+可见结果，不能写抽象意图>
-配乐：<音乐或音效及其节奏>
-台词：<完整自然句>
-字幕：<逐字等同台词>\n\n分轨硬规则：台词只写真人会说出口的完整自然句；字幕逐字同步台词；音效只能写在画面或配乐字段。
-
-最终输出前在内部检查但不要输出检查过程：字段完整；时间连续；台词不超时；所有产品事实均可回指输入；没有编造效果与承诺。语言为${lang}。`;
+环境：<具体场景>
+景别：<景别>
+运镜：<镜头运动>
+构图：<主体位置与产品朝向>
+镜头功能：<本段作用>
+画面：<具体可执行动作；需补拍时明确标记>
+配乐：<音乐或环境声/音效>
+台词：<连贯口播片段，可有多句，或无>
+字幕：<有口播时逐字相同>`;
 
   const materialScriptRules = `你是在把“已选素材库片段”剪成一条有销售情绪的社媒带货/外贸留资视频。素材约束留在画面说明中，人物口播必须始终面向潜在买家，不能说后台审核语言。
 
@@ -2446,71 +2241,111 @@ ${normalizedMaterialInfos.map((info, index) => {
 台词：<真人能说出口的一句话；不需要则写“无”>
 字幕：<短字幕>`;
 
-  const productDiversityRules = generationMode === 'product'
-    ? `本次是第 ${Math.max(1, Number(variantSeed) || 1)} 次生成。${previousCloneScripts.length
-      ? `以下是此前版本，只用于排重：\n${previousCloneScripts.map((item, index) => `--- 旧版本 ${index + 1} ---\n${item.slice(0, 2400)}`).join('\n')}\n`
-      : ''}新版本不得复用旧版本的完整开场句、五段证据顺序和 CTA 句式；至少同时改变钩子机制、前两个证据的顺序、一个镜头动作和 CTA 表达，但产品事实、时间轴与字段格式保持不变。`
-    : '';
+  const variantRules = `${scriptVariantDirection(generationMode, variantSeed)}${previousCloneScripts.length
+    ? `
+已有版本（只用于排重，不作为产品事实）：
+${previousCloneScripts.map(item => [...new Set(Array.from(item.matchAll(/^(?:台词|字幕)[：:]\s*(.+)$/gm)).map(match => match[1]))].join(' ').slice(0, 1200)).join('\n')}
+新版本至少改变钩子切口、证据顺序、叙述视角中的两项；不能只替换同义词。`
+    : ''}`;
 
-  // Stage 1 owns words only. It cannot invent timestamps, subtitles or shots.
-  // Those are locked by the server before the visual director sees them.
-  const generatedVoiceLines = generationMode === 'product' && voiceoverMode === 'ai' && !/润唇膏|lip balm/i.test(product)
-    ? parseLockedVoicePlan(await callLLM(`你是外贸 B2B 产品短视频口播编导。只输出 JSON：{"lines":["...", "...", "...", "..."]}。
-为以下目标受众用${lang}写${productSceneCount}句完整自然口播。
-目标受众：${audience || (strategyRoute === 'oem_odm' ? 'OEM 品牌方的产品与采购负责人' : strategyRoute === 'wholesale_distribution' ? '进口商与经销商' : '终端买家')}
-主题：${videoThemeTitle}。每句只说一个意思：目标受众的决策问题、已核实证据1、已核实证据2、唯一CTA依次完成。英语每句最多12词，中文每句最多18字；不得用逗号拼接多个主张。第一句必须直接点名或描述目标受众中的一个决策角色。字幕将逐字复制口播，所以不要写标题式短语。
-第一句必须从目标受众的真实决策问题切入，可以直接称呼目标受众；禁止替目标受众虚构第一人称身份。目标受众已明确时，不得改写成品牌创始人、进口商、经销商或消费者等其他角色。
-至少两句必须围绕产品资料明确提供的产品身份、结构、规格、包装或定制触点；不得补写资料没有提供的内装物、使用动作、功效、测试结果或客户体验。
-唯一可用事实：${product}
-唯一CTA：${primaryCta || '私信了解产品资料'}
-禁止功效、认证、价格、MOQ、交期、销量、趋势和包装外的臆测。`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined }), productSceneCount)
-    : [];
-  const safeProductVoiceLines = generationMode === 'product' && hasNarrationDraft
-    ? safeProductVoicePlan(videoThemeId as ContentTheme, product, primaryCta, language, audience).slice(0, productSceneCount)
-    : [];
-  const generatedVoiceLinesMatchTheme = generatedVoiceLines.length === productSceneCount
-    && productVoicePlanSupportsTheme(generatedVoiceLines, videoThemeId as ContentTheme)
-    && openingMatchesTargetBuyer(generatedVoiceLines[0] || '', audience);
-  const lockedVoiceLines = generatedVoiceLinesMatchTheme
-    ? generatedVoiceLines
-    : generationMode === 'product' && voiceoverMode === 'ai' && /润唇膏|lip balm/i.test(product)
-      ? lipBalmFallbackVoicePlan(strategyRoute, videoThemeId, primaryCta || '私信了解产品资料', productSceneCount)
-      : generationMode === 'product' && hasNarrationDraft
-        ? safeProductVoiceLines
-        : generationMode === 'material' && voiceoverMode === 'unselected'
-          ? safeMaterialVoicePlan(normalizedMaterialInfos, primaryCta, language)
-          : generatedVoiceLines;
-  const lockedNarrationRules = lockedVoiceLines.length
-    ? `\n已锁定口播（不得改写、不得截断、不得新增；每段字幕必须逐字复制同一行）：\n${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}\n时间戳由后端按这些完整口播自动计算；只为每段补画面、环境、景别、运镜、构图、镜头功能和配乐。`
-    : '';
-  const hasProductVisualEvidence = /^(?:产品主图素材|工厂实拍素材|包装定制素材|使用场景素材|品牌视觉素材)[：:]\s*\S+/m.test(product);
-  const generatedVisualScenes = voiceoverMode === 'ai' && lockedVoiceLines.length && hasProductVisualEvidence && !/润唇膏|lip balm/i.test(product)
-    ? parseLockedStoryboardScenes(await callLLM(`只输出JSON：{"scenes":[{"environment":"","shot":"","camera":"","composition":"","purpose":"","visual":"","music":""}]}。
-为以下已锁定口播各写一个可拍产品短视频镜头。不得输出台词、字幕、时间戳或产品资料外的新事实。若资料只提供容器或包装信息，画面只能展示空容器、标签、外盒、颜色或结构，不得自行添加内装物和使用效果。
-产品资料：${product}
+  try {
+    const scriptSystemPrompt = `你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
+    // Select a source fact before drafting. An ungrounded draft must
+    // not become the source material for a second, increasingly confident rewrite.
+    const generatedVoicePlan = generationMode === 'product' && hasNarrationDraft
+      ? await callLLM(`为 ${platform} 的 ${lang} 产品口播选择一项事实。目标 ${productDuration} 秒，受众：${audience || '产品的潜在买家'}。
+产品资料：${planningProduct}
+主题：${videoThemeTitle}；关注方向：${videoThemePainPoint || contentPlan.hookFormula}
+${variantRules}
+选一项适合当前主题、值得向买家解释的细节。只摘完整原文并保留条件，不作解释，不追加问题或推论。只输出 JSON：{"factBasis":["产品资料原文"]}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt })
+      : '';
+    let spokenFact = '';
+    if (generatedVoicePlan) {
+      try {
+        const plan = JSON.parse(generatedVoicePlan.replace(/```json|```/gi, '').trim());
+        const facts = Array.isArray(plan.factBasis) ? plan.factBasis : [];
+        const supported = facts.length === 1 && facts.every((fact: unknown) => typeof fact === 'string' && fact.trim()
+          && planningProduct.replace(/\s/g, '').includes(fact.replace(/\s/g, '')));
+        if (supported) spokenFact = scriptSelectedFactPhrase(generatedVoicePlan, product);
+      } catch { /* fail explicitly below */ }
+      if (!spokenFact) throw new Error('口播构思模型未选出资料中的事实');
+    }
+    const factOwner = scriptSelectedFactProductName(generatedVoicePlan, product);
+    const spokenProductNames = (factOwner ? [factOwner] : selectedProductNames(product)).map(spokenName);
+    // Keep only the selected source clause in the writing context. Scene division
+    // happens afterwards and never changes the spoken wording.
+    let editedVoiceLines = spokenFact
+      ? scriptNarrationLinesFromPlan(await callLLM(`写一段 ${productDuration} 秒的 ${lang} 口播，用于 ${platform}。
+产品称呼：${spokenProductNames.join('、')}（只说一次，不念完整型号介绍）。
+本条只讲这个事实：${spokenFact}
+${scriptVariantDirection(generationMode, variantSeed)}
+对谁说：${audience || '产品的潜在买家'}。语气：${tone}。
+${SCRIPT_CREATIVE_QUALITY_RULES}
+${SCRIPT_FACT_TO_VALUE_EXAMPLES}
+${endingRules}
+${narrationBudget}
+只输出 JSON：{"narration":"像当面说话一样的完整口播"}。不分镜、不凑句数。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), productSceneCount)
+      : [];
+    if (spokenFact && !editedVoiceLines.length) {
+      throw new Error('口播模型未返回完整的结构化台词');
+    }
+    if (editedVoiceLines.length && lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
+      const estimated = lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0);
+      editedVoiceLines = scriptNarrationLinesFromPlan(await callLLM(`把口播缩到 ${productDuration} 秒；当前预估 ${estimated.toFixed(1)} 秒，至少减少 ${Math.max(20, Math.ceil((1 - productDuration / estimated) * 100))}% 内容。
+产品称呼：${spokenProductNames.join('、')}。本条事实：${spokenFact}
+原稿：${editedVoiceLines.join(' ')}
+保留原来的问题、事实条件和句间承接；提问仍然是提问，不替产品给出新答案。少讲一个点，不把全文压成口号。
+${endingRules}
+${narrationBudget}
+只输出 ${lang} JSON：{"narration":"缩短后的完整口播"}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), productSceneCount);
+      if (!editedVoiceLines.length || lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
+        res.status(422).json({
+          ok: false, source: 'ai_rejected', script: '', code: 'SCRIPT_DURATION_EXCEEDED', qualityStatus: 'rejected',
+          error: '口播仍超过目标时长，请增加时长或减少本条要讲的内容',
+          validationIssues: ['口播缩写后仍不满足目标时长'], validationWarnings: [],
+        });
+        return;
+      }
+    }
+    const lockedVoiceLines = generationMode === 'product'
+      ? editedVoiceLines
+      : generationMode === 'material' && voiceoverMode === 'unselected'
+        ? safeMaterialVoicePlan(normalizedMaterialInfos, primaryCta, language)
+        : [];
+    const lockedNarrationRules = lockedVoiceLines.length
+      ? `已锁定口播（不得改写；字幕逐字复制）：\n${lockedVoiceLines.join('\n')}`
+      : '';
+    const generatedVisualScenes = generationMode === 'product' && lockedVoiceLines.length
+      ? parseLockedStoryboardScenes(await callLLM(`为以下锁定口播片段写可执行分镜，恰好 ${lockedVoiceLines.length} 段。
+产品名称：${selectedProductNames(product).join('、')}
+本条事实：${spokenFact}
 主题：${videoThemeTitle}
-锁定口播：${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined }), productSceneCount)
-    : [];
-  const lockedVisualScenes = /润唇膏|lip balm/i.test(product) && lockedVoiceLines.length === productSceneCount
-    ? defaultLipBalmScenes(strategyRoute, videoThemeId, selectedProductNames(product)[0] || '', productSceneCount)
-    : generationMode === 'product' && voiceoverMode === 'unselected' && lockedVoiceLines.length === productSceneCount
-      ? safeProductScenes(product, productSceneCount)
-    : generatedVisualScenes.length === productSceneCount
-      ? generatedVisualScenes
-      : generationMode === 'product' && lockedVoiceLines.length === productSceneCount
-        ? safeProductScenes(product, productSceneCount)
-        : generationMode === 'material' && voiceoverMode === 'unselected' && lockedVoiceLines.length
-          ? safeMaterialScenes(normalizedMaterialInfos)
-        : generatedVisualScenes;
+已选素材观察：${structuredMaterials || '未提供已分析素材；画面必须标为“建议补拍”，不声称已有素材。'}
+锁定口播：${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}
+后期文案仅从锁定口播与本条选中事实中取用，不把上下文里的其他卖点塞进画面。行动只用锁定口播的 CTA 文字，不新增二维码、联系方式、立牌或扫码行动。
+镜头要求：用画面帮助理解口播，相邻镜头推进信息。没有实拍依据时，创意落在取景、呈现顺序、人手指示和后期文字上，设备保持静态；不通过虚构设备运行、界面或反馈来证明能力。抽象能力用产品实拍配资料原文提示，后期文字注明是后期叠加。
+示例（仅学形式）：资料只有“可选双工位”，可写“建议补拍：镜头从整机推进；后期出现‘双工位可选’，产品结构以实物为准”，不编排两工位同步加工或产能变化。每镜只写一个主要动作（初始状态→动作→结束状态），画面不超过80字，镜头功能只写短语。景别和运镜分开填写，保持主体与道具连续；配乐可写“无”。
+没有素材证明的镜头写“建议补拍”；未知设备细节保持未知：只拍整机及实际可见外观，不指定接口、传感器、屏幕、铭牌或指示灯位置。资料说明功能，不证明这些硬件可见。用取景变化承接口播；后期信息不能画成设备自带界面。不得输出台词、字幕或时间戳。
+只输出 JSON，字段含义如下（替换占位内容，不把动作写进景别）：
+{"scenes":[{"environment":"拍摄地点；未知写按实物环境","shot":"仅景别名称，如特写","camera":"仅运镜名称，如固定","composition":"主体位置与朝向","purpose":"本镜作用短语","visual":"完整动作描述；无素材时以建议补拍开头，不能只写建议补拍","music":"音乐或无"}]}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), lockedVoiceLines.length)
+      : [];
+    if (generationMode === 'product' && lockedVoiceLines.length && generatedVisualScenes.length !== lockedVoiceLines.length) {
+      throw new Error('分镜模型未返回完整的结构化画面');
+    }
+    const lockedVisualScenes = generationMode === 'material' && voiceoverMode === 'unselected' && lockedVoiceLines.length
+      ? safeMaterialScenes(normalizedMaterialInfos)
+      : generatedVisualScenes;
 
-  const prompt = generationMode === 'material'
-    ? `${materialScriptRules}
+    const prompt = generationMode === 'material'
+      ? `${materialScriptRules}
 
-${sharedScriptQualityCore}
+${creativeRules}
+
+${scriptFactRules}
 
 ${videoThemeRules}
 
-${humanVoiceRules}
+${variantRules}
 
 素材清单：
 ${structuredMaterials || '无可用素材。请拒绝生成，并提示先上传素材。'}
@@ -2524,18 +2359,19 @@ ${product || '未选择产品。只能围绕素材做保守剪辑建议，不得
 风格：${tone || '真实、可拍、素材优先、询盘导向'}
 
 请直接输出按素材逐段绑定的时间戳脚本。`
-    : generationMode === 'product'
-    ? `${productScriptRules}
+      : generationMode === 'product'
+      ? `${productScriptRules}
 
-${sharedScriptQualityCore}
+${creativeRules}
+
+${scriptFactRules}
 
 ${videoThemeRules}
 
-${productDiversityRules}
+${variantRules}
 
 ${lockedNarrationRules}
 
-${humanVoiceRules}
 
 	产品信息：
 	${product || '未选择产品。请拒绝生成具体产品脚本。'}
@@ -2547,8 +2383,8 @@ ${humanVoiceRules}
 素材信息：${clips}
 
 请直接输出脚本。`
-    : scriptType === 'storyboard'
-    ? `你是爆款参考视频的受约束迭代导演。你不负责重新设计营销结构，只负责在保留原片结构和爆点的前提下完成最小必要的产品替换。
+      : scriptType === 'storyboard'
+      ? `你是爆款参考视频的受约束迭代导演。你不负责重新设计营销结构，只负责在保留原片结构和爆点的前提下完成最小必要的产品替换。
 请生成 ${platform} 分镜脚本，语言为 ${lang}。总时长、分镜数量和时间段必须跟随对标视频脚本详析，不得套用 ${duration} 秒或固定段数模板。
 
 已选素材：${clips}
@@ -2568,9 +2404,10 @@ ${forbiddenLine}
 ${cloneFusionRules}
 ${cloneDiversityRules}
 
-${sharedScriptQualityCore}
+${creativeRules}
 
-${humanVoiceRules}
+${scriptFactRules}
+
 
 每个场景必须严格对应“对标视频脚本详析”的同一时间段，不要合并、跳段或擅自重排。使用以下固定格式，不要 markdown 符号，不要缺字段：
 [start-end s]
@@ -2600,7 +2437,7 @@ ${humanVoiceRules}
 - 不得输出分析摘要、基础要求、竞品识别、产品替换说明、成片目标或任何“对标视频”说明，只输出新的可拍分镜。
 - 缺少数据时写“无”或“沿用原片”，不得新增样品、报价或 CTA。
 - 最终只输出 storyboard 成稿。`
-    : `You are a senior short-video copywriter for a Chinese cross-border e-commerce seller.
+      : `You are a senior short-video copywriter for a Chinese cross-border e-commerce seller.
 Write a practical ${duration}-second ${platform} voiceover script in ${lang}.
 
 Selected clips: ${clips}
@@ -2617,9 +2454,10 @@ ${forbiddenLine}
 
 ${videoThemeRules}
 
-${sharedScriptQualityCore}
+${creativeRules}
 
-${humanVoiceRules}
+${scriptFactRules}
+
 
 Requirements:
 - Exactly three sections, each on its own block, labelled like "[Hook · 0-3s]", "[Proof · 3-${duration - 5}s]", "[CTA · ${duration - 5}-${duration}s]".
@@ -2632,9 +2470,8 @@ Requirements:
 - Do not copy or mention the reference video's title, original caption, hashtags, brand names, original product category, or original product claims.
 - Output ONLY the script text.`;
 
-  try {
     // Structured product scripts already have locked narration and visual scenes.
-    // Do not pay for a third, free-form storyboard call that can corrupt them.
+    // Do not add another free-form storyboard call that can corrupt them.
     const hasLockedDraft = lockedVisualScenes.length > 0 && lockedVisualScenes.length === lockedVoiceLines.length;
     const text = hasLockedDraft
       ? ''
@@ -2675,7 +2512,7 @@ Requirements:
         issues.push('资料未支持的寄样或样品政策承诺');
       }
       const ctaSatisfied = ctaSemanticallySatisfied(candidate, primaryCta);
-      if (!ctaSatisfied) {
+      if (generationMode !== 'clone' && !ctaSatisfied) {
         issues.push(`未使用本条唯一主 CTA：${primaryCta}`);
       }
       const spokenLines = Array.from(candidate.matchAll(/^台词[：:]\s*(.+)$/gm))
@@ -2748,7 +2585,7 @@ Requirements:
       });
       if (missingNames.length) issues.push(`未完整写入选定产品名称：${missingNames.join('、')}`);
       issues.push(...strictCommercialPolicyIssues(candidate));
-      issues.push(...strategyExecutionIssues(candidate));
+      // Editorial keyword heuristics are advisory, never model-repair triggers.
       issues.push(...duplicateStoryboardFieldIssues(candidate));
       issues.push(...subtitleVoiceMismatchIssues(candidate));
       issues.push(...storyboardSpeechIssues(candidate));
@@ -2758,7 +2595,7 @@ Requirements:
       return issues;
     };
     const repairFormat = generationMode === 'product'
-      ? `必须保留${productSceneCount}段及每段完整字段；可重新计算时间戳以容纳完整自然口播，总时长保持约${productDuration}秒，时间连续无重叠。`
+      ? `必须保留${lockedVoiceLines.length || productSceneCount}段及每段完整字段；可重新计算时间戳以容纳完整自然口播，总时长保持约${productDuration}秒，时间连续无重叠。`
       : generationMode === 'material'
         ? '必须保留原有时间段、素材绑定和每段字段，不得新增素材或臆造素材画面。'
         : scriptType === 'storyboard'
@@ -2779,8 +2616,8 @@ ${product || '无。不得写任何产品事实。'}
 本次发现的问题：
 ${issues.map(issue => `- ${issue}`).join('\n')}
 
-本条脚本必须重新服从以下策略结构：
-${strategyPlanRules}
+保留本条创意和模式边界：
+${generationMode === 'clone' ? scriptCreativeModeRule('clone') : contentGoal === 'reach' ? endingRules : strategyPlanRules}
 
 修复规则：
 - 删除或改写含有资料外数字、单位、MOQ、价格、交期、认证、效果、比较、保证、性能测试结论或文件完备性主张的整句；不要用另一个数字替换。
@@ -2789,10 +2626,10 @@ ${strategyPlanRules}
 - 禁止截断台词。超过镜头时必须重新安排该段时间戳或改写成语义完整的短句；不能以破折号、省略号或未完成短语收尾。
 - 每个分镜每个字段只能出现一次，尤其只能有一行“台词”和一行“字幕”；把 CTA 融入最后一段唯一的台词或字幕，不得另起重复字段。
 - 每个选定产品名称只需逐字出现在一段“字幕”或“画面”字段中；产品名称本身是已核实事实，不得缩写、改名或省略，也不要在多段重复粘贴。
-- 结尾只能保留与本条唯一主 CTA「${primaryCta || '无'}」语义一致的一个动作，并按目标语言自然表达；不得增加寄样、免费样品、报价、交期或其它行动承诺。
-- 当前产品资料只支持“无品牌瓶器、标签和外盒样品”这一组事实。画面只能建议拍摄容器摆放、空白标签/外盒组合与手部排布；不得虚构瓶内液体、厚薄、毛边、回弹、色差、密封、耐用、测试结果、PDF资料或邮件界面。
-- 如果问题涉及首段钩子，必须把首段台词或字幕改为“目标买家 + 一个具体判断问题/反差”；禁止以产品名称、企业介绍或卖点罗列开场。首段不能只说“这是/我们有/产品名”。
-- 若声音策略为 AI 口播，至少在两个不同镜头写自然短台词；不得将口播全部写成“无”。
+- ${generationMode === 'clone' ? '口播、字幕和 CTA 仅保留原片已有位置，原片没有则不新增。' : `结尾仅保留所选 CTA「${primaryCta || '无'}」，按目标语言自然表达，不增加其他行动承诺。`}
+- 画面必须服从本次产品和素材事实；仅提供容器包装时不能添加内装物或使用效果。
+- 保留已有的创意切口与自然开场，只修复列出的问题，不因缺少职业或主题关键词重写口播。
+- ${generationMode === 'clone' ? '不得为了口播段数新增原片没有的台词。' : voiceoverDirective}
 - 不得新增产品事实、人物、镜头、CTA、场景或产品名称；唯一 CTA 保持原意。
 - ${repairFormat}
 
@@ -2819,9 +2656,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     if (generationMode === 'clone' && voiceoverMode === 'none') {
       script = clearStoryboardSpeech(script);
     } else if (voiceoverMode === 'ai'
-      && ['material', 'clone'].includes(generationMode)
+      && generationMode === 'material'
       && (storyboardSpeechIssues(script).length > 0
-        || strategyExecutionIssues(script).length > 0
         || strictCommercialPolicyIssues(script).some(issue => /^未使用本条唯一主 CTA/.test(issue)))) {
       script = syncStoryboardSubtitles(applySafeStoryboardSpeechFallback(
         script,
@@ -2831,21 +2667,11 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         language,
       ));
     }
-    if (generationMode === 'clone'
-      && (storyboardReferenceLeakIssues(script, forbiddenTerms, forbiddenIndustryTerms).length > 0
-        || strictCommercialPolicyIssues(script).length > 0
-        || strategyExecutionIssues(script).length > 0
-        || storyboardSpeechIssues(script).length > 0
-        || duplicateStoryboardFieldIssues(script).length > 0)) {
-      script = buildSafeCloneStoryboard(script, productInfo, primaryCta, language, voiceoverMode, audience);
-    }
     script = ensureSelectedProductNamesInScript(script, productInfo);
     if (generationMode === 'clone') {
-      // Name enforcement and deterministic speech fallbacks can both write new
-      // text after the first sanitization pass. Re-sanitize the completed draft,
-      // then restore the CTA as the final content mutation before validation.
+      // Preserve reference speech/CTA slots. Unresolved factual or timing errors
+      // are reported by the final gate instead of replacing the entire concept.
       script = stripStoryboardReferenceLeaks(script, forbiddenTerms, forbiddenIndustryTerms);
-      script = ensureStoryboardPrimaryCta(script, primaryCta, language, voiceoverMode !== 'none');
     }
     let materialQualityV2: ReturnType<typeof assessScriptQualityV2> | null = null;
     if (generationMode === 'material') {
@@ -2875,7 +2701,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         const normalizedName = normalizeProductIdentity(name);
         return normalizedName.length > 0 && !normalizedScriptIdentity.includes(normalizedName);
       });
-    const speechIssues = isStructuredLockedDraft ? [] : storyboardSpeechIssues(script);
+    const speechIssues = storyboardSpeechIssues(script);
     const groundingIssues = generationMode === 'material'
       ? materialGroundingIssues(script, productInfo, structuredMaterials, audience)
       : [];
@@ -2924,7 +2750,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       genericCloneStoryboard ? '爆款分镜包含不可执行的泛化镜头描述' : '',
       hasUnnaturalVoiceover(script) ? '口播过长或堆叠过多技术名词' : '',
       invalidProductScript ? '产品模式把制作指令写进了人物口播' : '',
-      duplicateProductScript ? '本次脚本与上一版本过于相似，已切换差异化版本' : '',
+      duplicateProductScript ? '本次脚本与上一版本过于相似，建议换一个创意切口' : '',
       ...referenceLeakIssues,
       ...speechIssues,
       ...groundingIssues,
@@ -3669,7 +3495,7 @@ studioRouter.post('/insight', async (req, res) => {
   const { scope = 'traffic', metrics = {} } = req.body ?? {};
   const prompt = `你是跨境电商社媒操盘手。根据以下「${scope}」当期数据（JSON），给运营一句中文洞察 + 2-3 条可执行建议。
 数据：${JSON.stringify(metrics)}
-只返回 JSON：{ "summary": string（一句话核心结论，≤40 字）, "actions": string[]（2-3 条，每条≤18 字，动词开头，具体到内容方向/平台/语言/投流） }`;
+只返回 JSON：{ "summary": string（一句话核心结论，≤40 字）, "actions": string[]（2-3 条，每条≤18 字，动词开头，具体到内容方向/平台/语言/发布节奏） }`;
   try {
     const text = await callLLM(prompt, { backend: 'qwen', systemPrompt: await enterpriseCtx() || undefined });
     const obj = extractJSON<{ summary: string; actions: string[] }>(text);
@@ -4504,7 +4330,7 @@ studioRouter.get('/materials', async (req, res) => {
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
   let list = [
-    ...await listCloudMaterials(tenantId),
+    ...(await listCloudMaterials(tenantId)).filter(m => !isSyntheticMaterial(m as unknown as Record<string, unknown>)),
     ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
   ] as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
@@ -4563,8 +4389,7 @@ studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
 function isMockMaterial(m: Material): boolean {
   return (m.scope ?? 'own') === 'shared'
     || /^sh-/.test(m.id)
-    || /^示例[·・]/.test(m.name)
-    || m.folder === 'sample';
+    || isSyntheticMaterial(m as unknown as Record<string, unknown>);
 }
 
 const MAX_MATERIAL_UPLOAD_BYTES = 110 * 1024 * 1024;
@@ -6405,6 +6230,45 @@ async function persistTtsResult<T extends { url?: string }>(result: T, tenantId:
   return { ...result, url: await persistPrivateStudioAsset('tts', tenantId, filePath) };
 }
 
+/**
+ * Trusted in-process entry point used by the digital-employee content worker.
+ * It deliberately returns the tenant-scoped local file path as well as the
+ * public URL so the background renderer does not need to forge an HTTP user
+ * session. No publishing side effect happens here.
+ */
+export async function synthesizeStudioVoiceForAutomation(input: {
+  tenantId: string;
+  text: string;
+  language?: string;
+  voice?: string;
+  targetDuration?: number;
+}): Promise<{
+  ok: boolean;
+  source?: string;
+  url?: string;
+  localPath?: string;
+  duration?: number;
+  text?: string;
+  error?: string;
+}> {
+  return studioTenantContext.run(input.tenantId, async () => {
+    const language = String(input.language || 'zh');
+    const spoken = await repairVoiceoverTargetLanguage(String(input.text || '').trim(), language);
+    if (!spoken) return { ok: false, source: 'empty', error: 'no spoken text' };
+    const generated = await generateFittedTts(spoken, String(input.voice || 'v1'), language, {
+      preset: 'natural',
+      targetDuration: Math.max(1, Math.min(180, Number(input.targetDuration || 20))),
+    });
+    const persisted = await persistTtsResult(generated, input.tenantId);
+    const fileName = persisted.url ? path.basename(new URL(persisted.url, 'http://local').pathname) : '';
+    const localPath = fileName ? path.join(tenantAssetDir(TTS_ROOT, input.tenantId), fileName) : '';
+    return {
+      ...persisted,
+      ...(localPath && fs.existsSync(localPath) ? { localPath } : {}),
+    };
+  });
+}
+
 // POST /studio/tts  Body: { script?, text?, voice?, language? } → { ok, url, duration }
 studioRouter.post('/tts', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -6848,7 +6712,7 @@ const PROJECTS_FILE = path.join(__dirname, '../../data/studio-projects.json');
 interface StudioProject {
   id: string;
   title: string;
-  status: 'draft' | 'published' | 'template';
+  status: 'draft' | 'ready_for_approval' | 'published' | 'template';
   spec: Record<string, unknown>;
   thumbSeed?: string;
   createdAt: string;
@@ -6888,7 +6752,17 @@ studioRouter.post('/projects', async (req, res) => {
   if (id) {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
+      const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
+      if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
+        res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
+        return;
+      }
+
+      const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
+        || String(existing.title || '') !== String(title ?? existing.title ?? '')
+        || String(existing.status || '') !== String(status || '');
       await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
+      if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
       res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }) });
       return;
     }

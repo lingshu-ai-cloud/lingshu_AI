@@ -5,10 +5,22 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { composite, ffmpegPath } = require('./render.cjs');
+const { composite, ffmpegPath, extensionForAsset, isImageAsset, subtitlePages, normalizeSubtitleCues, cuesToAss } = require('./render.cjs');
 
 async function main() {
   assert.ok(ffmpegPath, 'ffmpeg-static is required');
+  const longSubtitle = '工业激光清洁设备适用于金属表面处理，可用于多种生产场景，具体规格、工艺方案和合作条件请联系确认。';
+  const pages = subtitlePages(longSubtitle);
+  assert.ok(pages.length >= 2, 'long subtitles must be split into multiple timed pages');
+  assert.ok(pages.every(page => page.length <= 2), 'every subtitle page must contain no more than two lines');
+  assert.ok(pages.flat().every(line => Array.from(line).length <= 16), 'Chinese subtitle lines must remain inside the mobile safe width');
+  const normalizedCues = normalizeSubtitleCues([{ start: 0, end: 4, text: longSubtitle }]);
+  assert.equal(normalizedCues[0].start, 0);
+  assert.equal(normalizedCues.at(-1).end, 4);
+  assert.ok(normalizedCues.every(cue => (cue.text.match(/\\N/g) || []).length <= 1));
+  const ass = cuesToAss([{ start: 0, end: 4, text: longSubtitle }], 1080, 1920);
+  assert.match(ass, /\\N/, 'ASS output must contain an explicit safe line break');
+  assert.match(ass, /WrapStyle: 0/, 'ASS output must permit renderer wrapping as a final safety net');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
   const server = http.createServer((req, res) => {
     if (req.url === '/voice.mp3' || req.url === '/bgm.mp3') {
@@ -23,6 +35,27 @@ async function main() {
   const origin = `http://127.0.0.1:${address.port}`;
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-render-test-'));
   try {
+    const productImage = path.join(outDir, 'owned-product.png');
+    const imageBuild = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x320:r=1', '-frames:v', '1', '-y', productImage], { encoding: 'utf8' });
+    assert.equal(imageBuild.status, 0, imageBuild.stderr);
+    const productDataUrl = `data:image/png;base64,${fs.readFileSync(productImage).toString('base64')}`;
+    assert.equal(extensionForAsset(productDataUrl, 'image'), 'png', 'data URL extension must come from MIME instead of the base64 payload');
+    assert.equal(isImageAsset(productDataUrl), true, 'image data URL must be bound as a still-image timeline input');
+    const visual = await composite({
+      jobId: 'owned-data-url-regression',
+      requireVisualAssets: true,
+      spec: { ratio: '1:1', duration: 1, bgmVol: 0, voiceVol: 0 },
+      timeline: [{ name: '真实产品图', type: 'image', url: productDataUrl, targetDuration: 1 }],
+      bgm: { url: null }, voiceover: { url: null }, subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(visual.ok, true, visual.error || 'owned data URL render should succeed');
+    const visualFrame = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-ss', '0.5', '-i', visual.outputPath, '-frames:v', '1', '-vf', 'scale=64:64,format=gray', '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1']);
+    assert.equal(visualFrame.status, 0, String(visualFrame.stderr));
+    const pixels = visualFrame.stdout;
+    const visualMean = [...pixels].reduce((sum, value) => sum + value, 0) / pixels.length;
+    const visualDeviation = Math.sqrt([...pixels].reduce((sum, value) => sum + (value - visualMean) ** 2, 0) / pixels.length);
+    assert.ok(visualDeviation > 10, `owned image must appear in output instead of a solid fallback (deviation=${visualDeviation})`);
+
     const result = await composite({
       jobId: 'voiceover-regression',
       spec: { ratio: '1:1', duration: 1.2, bgmVol: 20, voiceVol: 100 },
@@ -47,6 +80,15 @@ async function main() {
     }, () => {}, outDir);
     assert.equal(failed.ok, false, 'missing requested voiceover must fail instead of exporting a silent video');
     assert.match(String(failed.error), /口播配音读取失败/);
+
+    const missingVisual = await composite({
+      jobId: 'missing-owned-visual-regression', requireVisualAssets: true,
+      spec: { ratio: '1:1', duration: 1 },
+      timeline: [{ name: '已绑定但丢失的产品图', type: 'image', url: path.join(outDir, 'missing-product.png'), targetDuration: 1 }],
+      bgm: { url: null }, voiceover: { url: null }, subtitles: { mode: 'off', cues: [] },
+    }, () => {}, outDir);
+    assert.equal(missingVisual.ok, false, 'a declared owned timeline must not silently render the blue fallback');
+    assert.match(String(missingVisual.error), /时间线素材全部读取失败/);
   } finally {
     server.close();
     fs.rmSync(outDir, { recursive: true, force: true });

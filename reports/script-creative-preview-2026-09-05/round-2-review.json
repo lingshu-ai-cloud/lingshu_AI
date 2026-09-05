@@ -1,0 +1,62 @@
+{
+  "sample": "LX-Press 项目演示资料，中文，20秒，无真实素材",
+  "source": "run-10，Qwen实际调用；原稿未经人工改写",
+  "modelCalls": 9,
+  "usage": {
+    "prompt_tokens": 8132,
+    "completion_tokens": 2080
+  },
+  "manualReview": [
+    {
+      "version": 1,
+      "routeStatus": 200,
+      "qualityStatus": "warning",
+      "timelineSeconds": 20.0,
+      "elapsedMs": 17446,
+      "voiceover": [
+        "压装合格，光看终点压力够吗？",
+        "LX-Press 支持压力—位移双闭环。",
+        "判定靠曲线，不是单点值。",
+        "私信了解压装方案。"
+      ],
+      "angle": "压装判定",
+      "creative": "开头有具体判断问题，口播较短，后文承接压力与位移。",
+      "remaining": "“判定靠曲线，不是单点值”对比偏绝对，适合改成选型时关注曲线判定的建议；示意曲线必须保持示意标识，不作实测数据。",
+      "verdict": "可继续打磨"
+    },
+    {
+      "version": 2,
+      "routeStatus": 200,
+      "qualityStatus": "warning",
+      "timelineSeconds": 20.0,
+      "elapsedMs": 17341,
+      "voiceover": [
+        "压装曲线怎么归档到对应工单？",
+        "LX-Press 支持条码绑定、曲线存档和 MES 上传。",
+        "选它，能让每条曲线精准关联生产批次。",
+        "私信了解压装方案。"
+      ],
+      "angle": "曲线追溯",
+      "creative": "问题和产品能力对应，正文比此前罗列全部卖点集中。",
+      "remaining": "“每条曲线精准关联生产批次”超出原文“支持条码绑定、曲线存档、MES上传”的范围，不能直接使用。第三镜轻点外壳不能证明关联动作。",
+      "verdict": "待修改"
+    },
+    {
+      "version": 3,
+      "routeStatus": 200,
+      "qualityStatus": "warning",
+      "timelineSeconds": 20.0,
+      "elapsedMs": 16776,
+      "voiceover": [
+        "换产装工装，怕装错？",
+        "LX-Press 可配置快换工装与防错识别。",
+        "选它，就是选一道防错确认环节。",
+        "私信了解压装方案。"
+      ],
+      "angle": "换产防错",
+      "creative": "开头更短，贴近工艺经理的换产场景，保留了“可配置”，删去了上一轮虚构的3分钟和装错不启动。",
+      "remaining": "“选它，就是选一道防错确认环节”仍可更具体，并明确是在选配该能力时；分镜中的定位销、卡扣、锁紧前动作属于待核实方案，资料没有提供具体机构与工作方式。",
+      "verdict": "优先打磨此方向"
+    }
+  ]
+}

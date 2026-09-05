@@ -12,6 +12,77 @@ import {
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
 
+export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline';
+
+export type ScheduledWorkflowHandoff = {
+  runId: string;
+  taskId: string;
+  taskKey: 'scheduled_source_collection';
+  preview?: boolean;
+  entityId?: string;
+};
+
+const SCHEDULED_WORKFLOW_HANDOFF_TTL = 15 * 60 * 1000;
+
+export function parseScheduledWorkflowHandoff(
+  raw: string,
+  now = Date.now(),
+): ScheduledWorkflowHandoff | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      page?: string;
+      runId?: string;
+      taskId?: string;
+      issuedAt?: number;
+      businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
+    };
+    const issuedAt = Number(parsed.issuedAt);
+    const age = now - issuedAt;
+    const runId = String(parsed.runId || '').trim();
+    const taskId = String(parsed.taskId || '').trim();
+    const preview = parsed.businessRef?.preview === true;
+    if (
+      parsed.page !== 'scheduled'
+      || parsed.businessRef?.taskKey !== 'scheduled_source_collection'
+      || (!preview && (!runId || !taskId))
+      || !Number.isFinite(issuedAt)
+      || age < 0
+      || age > SCHEDULED_WORKFLOW_HANDOFF_TTL
+    ) return null;
+    return {
+      runId,
+      taskId,
+      taskKey: 'scheduled_source_collection',
+      ...(parsed.businessRef?.entityId ? { entityId: parsed.businessRef.entityId } : {}),
+      ...(preview ? { preview: true } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function peekScheduledWorkflowHandoff(): ScheduledWorkflowHandoff | null {
+  try {
+    const raw = window.sessionStorage.getItem('digitalEmployee.businessDeepLink');
+    return raw ? parseScheduledWorkflowHandoff(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function consumeScheduledWorkflowHandoff(): ScheduledWorkflowHandoff | null {
+  try {
+    const raw = window.sessionStorage.getItem('digitalEmployee.businessDeepLink');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { page?: string };
+    if (parsed.page !== 'scheduled') return null;
+    window.sessionStorage.removeItem('digitalEmployee.businessDeepLink');
+    return parseScheduledWorkflowHandoff(raw);
+  } catch {
+    return null;
+  }
+}
+
 interface ScheduledTask {
   id: string;
   name: string;
@@ -22,6 +93,7 @@ interface ScheduledTask {
   enabled: boolean;
   lastRun?: string;
   lastResult?: string;
+  executionState?: ScheduledTaskExecutionState;
   channelId?: string;
   config: Record<string, string>;
   createdAt: string;
@@ -37,6 +109,11 @@ interface VideoAnalysisItem {
   analysisMode?: string;
   updatedAt?: string;
   error?: string;
+  statusReason?: string;
+  recoveryAction?: string;
+  failureCode?: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
+  provider?: 'Gemini' | 'Qwen' | 'AI';
+  visibility?: 'visible' | 'hidden';
 }
 
 interface VideoStatsPayload {
@@ -65,6 +142,11 @@ interface VideoStatsPayload {
       pendingRecords?: number;
       analyzedRecords?: number;
       failedRecords?: number;
+      hiddenRecords?: number;
+      providerStatus?: {
+        gemini?: { configured?: boolean; reason?: string; recoveryAction?: string };
+        qwen?: { configured?: boolean; reason?: string; recoveryAction?: string };
+      };
       items?: VideoAnalysisItem[];
       refinementItems?: Array<{
         id: string;
@@ -81,6 +163,31 @@ interface VideoStatsPayload {
     };
   };
 }
+
+export function scheduledTaskExecutionState(
+  task: Pick<ScheduledTask, 'lastResult' | 'executionState'>,
+  options: { running?: boolean; workerOnline?: boolean } = {},
+): ScheduledTaskExecutionState {
+  if (options.running) return 'running';
+  const text = String(task.lastResult || '').trim();
+  const serverState = task.executionState;
+  const queued = serverState === 'queued' || /\u6267\u884c\u72b6\u6001\uff1a\u5df2\u6392\u961f|\u6267\u884c\u72b6\u6001\uff1a\u5904\u7406\u4e2d|\u7b49\u5f85\s*(?:Mac\s*)?(?:\u672c\u5730\s*)?Worker/.test(text);
+  if (queued && options.workerOnline === false) return 'worker_offline';
+  if (serverState) return serverState;
+  if (queued) return 'queued';
+  if (/\u6267\u884c\u72b6\u6001\uff1a(?:\u6267\u884c\u6210\u529f|\u90e8\u5206\u6210\u529f)|\u4efb\u52a1\u6267\u884c\u5b8c\u6210|\u91c7\u96c6\u5df2\u7ed3\u675f/.test(text)) return 'succeeded';
+  if (/\u6267\u884c\u72b6\u6001\uff1a\u6267\u884c\u5931\u8d25|\u6267\u884c\u5931\u8d25[:\uff1a]|\u4efb\u52a1\u5747\u6267\u884c\u5931\u8d25/.test(text)) return 'failed';
+  return 'idle';
+}
+
+const TASK_EXECUTION_META: Record<ScheduledTaskExecutionState, { label: string; style: string }> = {
+  idle: { label: '待执行', style: 'bg-gray-100 text-gray-600' },
+  queued: { label: '已入队', style: 'bg-amber-50 text-amber-700' },
+  running: { label: '执行中', style: 'bg-blue-50 text-blue-700' },
+  succeeded: { label: '成功', style: 'bg-green-50 text-green-700' },
+  failed: { label: '失败', style: 'bg-red-50 text-red-700' },
+  worker_offline: { label: 'Worker 离线', style: 'bg-red-50 text-red-700' },
+};
 
 function safeAnalysisActionMessage(message: unknown, fallback: string): string {
   const text = String(message || '').trim();
@@ -237,7 +344,7 @@ const CRON_PRESETS = [
 ];
 const CRAWLER_CRON_PRESET = CRON_PRESETS[0];
 const CRAWLER_LIMIT_MIN = 1;
-const CRAWLER_LIMIT_MAX = 10;
+const CRAWLER_LIMIT_MAX = 50;
 const WEEKDAYS = [
   { value: '1', label: '周一' }, { value: '2', label: '周二' }, { value: '3', label: '周三' },
   { value: '4', label: '周四' }, { value: '5', label: '周五' }, { value: '6', label: '周六' }, { value: '0', label: '周日' },
@@ -272,11 +379,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeGroup, setActiveGroup] = useState<AgentTaskGroup>(() => {
+    if (peekScheduledWorkflowHandoff()) return 'social';
     const saved = window.sessionStorage.getItem('scheduled.activeGroup');
     return saved === 'social' || saved === 'customer' || saved === 'conversion' ? saved : 'conversion';
   });
   const [socialTaskTab, setSocialTaskTab] = useState<SocialTaskTab>(() => (
-    window.sessionStorage.getItem('scheduled.socialTaskTab') === 'analysis' ? 'analysis' : 'crawler'
+    peekScheduledWorkflowHandoff()
+      ? 'crawler'
+      : window.sessionStorage.getItem('scheduled.socialTaskTab') === 'analysis' ? 'analysis' : 'crawler'
   ));
   const [showAdd, setShowAdd] = useState(false);
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
@@ -298,6 +408,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runNotice, setRunNotice] = useState<{ taskId: string; message: string; error: boolean } | null>(null);
   const [videoStats, setVideoStats] = useState<VideoStatsPayload | null>(null);
+  const [videoStatsLoading, setVideoStatsLoading] = useState(true);
+  const [videoStatsError, setVideoStatsError] = useState('');
   const [analysisQueueOpen, setAnalysisQueueOpen] = useState(() => window.sessionStorage.getItem('scheduled.analysisQueueOpen') === 'true');
   const [analysisActionId, setAnalysisActionId] = useState<string | null>(null);
   const [analysisActionError, setAnalysisActionError] = useState('');
@@ -329,6 +441,36 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     setShowAdd(true);
   }, []);
 
+  useEffect(() => {
+    const focusSourceCollection = (entityId?: string) => {
+      if (entityId) { setResultTaskId(entityId); setExpandedId(entityId); }
+      setActiveGroup('social');
+      setSocialTaskTab('crawler');
+      setShowAdd(false);
+      setWorkspaceMessage('已进入行业 Agent 的定时采集工作区。');
+    };
+    const handoff = consumeScheduledWorkflowHandoff();
+    if (handoff) focusSourceCollection(handoff.entityId);
+
+    const onNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        page?: string;
+        runId?: string;
+        taskId?: string;
+        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
+      }>).detail;
+      if (
+        detail?.page !== 'scheduled'
+        || detail.businessRef?.taskKey !== 'scheduled_source_collection'
+        || (!detail.businessRef?.preview && (!detail.runId || !detail.taskId))
+      ) return;
+      try { window.sessionStorage.removeItem('digitalEmployee.businessDeepLink'); } catch { /* optional handoff cache */ }
+      focusSourceCollection(detail.businessRef?.entityId);
+    };
+    window.addEventListener('lingshu:navigate', onNavigate);
+    return () => window.removeEventListener('lingshu:navigate', onNavigate);
+  }, []);
+
   const closeResultPanel = () => {
     // 用户主动关闭后，本次页面生命周期内不再由演示引导自动拉起任务侧栏。
     didAutoOpenDemoTask.current = true;
@@ -338,17 +480,21 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
   useEffect(() => {
     void fetchTasks();
-    void fetchVideoStats();
+    void fetchVideoStats(true);
     void fetchBusinessDynamics();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       void fetchTasks(false);
-      void fetchVideoStats();
+      void fetchVideoStats(false);
     }, 5000);
     return () => {
       window.clearInterval(timer);
-      tasksRequestRef.current?.abort();
-      videoStatsRequestRef.current?.abort();
+      const tasksController = tasksRequestRef.current;
+      tasksRequestRef.current = null;
+      tasksController?.abort();
+      const videoStatsController = videoStatsRequestRef.current;
+      videoStatsRequestRef.current = null;
+      videoStatsController?.abort();
     };
   }, []);
 
@@ -392,25 +538,36 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       // 保留最近一次成功结果；超时后下一轮仍可恢复。
     } finally {
       window.clearTimeout(timeout);
-      if (tasksRequestRef.current === controller) tasksRequestRef.current = null;
-      if (showLoading) setLoading(false);
+      if (tasksRequestRef.current === controller) {
+        tasksRequestRef.current = null;
+        if (showLoading) setLoading(false);
+      }
     }
   }
 
-  async function fetchVideoStats() {
+  async function fetchVideoStats(showLoading = false) {
     if (videoStatsRequestRef.current) return;
     const controller = new AbortController();
     videoStatsRequestRef.current = controller;
     const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    if (showLoading) setVideoStatsLoading(true);
+    setVideoStatsError('');
     try {
       const r = await fetch('/api/overseas/scheduler/video-stats', { headers: authHeader(), signal: controller.signal });
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(`生产状态加载失败（${r.status}）`);
       setVideoStats(await r.json());
-    } catch {
+    } catch (error) {
+      // StrictMode and navigation deliberately abort stale requests; only real
+      // transport failures should surface as a production-status warning.
+      if (error instanceof Error && error.name === 'AbortError') return;
       // Keep the previous snapshot visible during backend hot reloads.
+      setVideoStatsError(error instanceof Error ? error.message : '生产状态暂时不可用，将自动重试。');
     } finally {
       window.clearTimeout(timeout);
-      if (videoStatsRequestRef.current === controller) videoStatsRequestRef.current = null;
+      if (videoStatsRequestRef.current === controller) {
+        videoStatsRequestRef.current = null;
+        if (showLoading) setVideoStatsLoading(false);
+      }
     }
   }
 
@@ -556,15 +713,29 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
         const body = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `执行失败（${response.status}）`);
       }
-      const body = await response.json() as { result?: string };
-      const completedAt = new Date().toISOString();
+      const body = await response.json() as { result?: string; state?: ScheduledTaskExecutionState; lastRun?: string };
+      const completedAt = body.lastRun || new Date().toISOString();
+      const returnedState = body.state || scheduledTaskExecutionState({ lastResult: body.result });
+      const workerOnline = videoStats ? Boolean(videoStats.stats?.fetchQueue?.ops?.workerActive) : undefined;
+      const visibleState = returnedState === 'queued' && workerOnline === false ? 'worker_offline' : returnedState;
       setTasks(current => current.map(task => task.id === id ? {
         ...task,
         lastRun: completedAt,
         lastResult: body.result || task.lastResult || '任务执行完成',
+        executionState: returnedState,
       } : task));
       await fetchVideoStats();
-      setRunNotice({ taskId: id, message: `执行完成（${new Date(completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}），结果已刷新。`, error: false });
+      const time = new Date(completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const message = visibleState === 'queued'
+        ? `已入队（${time}），Worker 处理后将自动刷新。`
+        : visibleState === 'worker_offline'
+          ? `已入队，但 Worker 离线。请启动 Worker，队列会自动继续。`
+          : visibleState === 'running'
+            ? `执行中（${time}），页面每 5 秒自动刷新。`
+            : visibleState === 'failed'
+              ? `执行失败（${time}），请展开结果查看原因后重试。`
+              : `执行成功（${time}），结果已刷新。`;
+      setRunNotice({ taskId: id, message, error: visibleState === 'failed' || visibleState === 'worker_offline' });
       window.setTimeout(() => { void fetchTasks(false); }, 800);
     } catch (error) {
       setRunNotice({ taskId: id, message: error instanceof Error ? error.message : '任务执行失败，请稍后重试。', error: true });
@@ -650,13 +821,16 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const fetchQueue = stats?.fetchQueue ?? {};
   const analysisQueue = stats?.analysisQueue ?? {};
   const analysisStatusRows = [
-    { label: 'Gemini 队列', value: analysisQueue.queued ?? 0, desc: '等待/处理中' },
+    { label: 'AI 分析队列', value: analysisQueue.queued ?? 0, desc: '已入队 / 执行中' },
     { label: '待处理素材', value: analysisQueue.pendingRecords ?? 0, desc: '已入库但未完成分析' },
     { label: '已分析素材', value: analysisQueue.analyzedRecords ?? 0, desc: '可进入灵感大屏/素材库' },
     { label: '失败素材', value: analysisQueue.failedRecords ?? 0, desc: '需要重试或排查源文件' },
   ];
   const analysisStatusEntries = Object.entries(analysisQueue.byStatus ?? {});
   const analysisItems = analysisQueue.items ?? [];
+  const providerWarnings = Object.entries(analysisQueue.providerStatus ?? {})
+    .filter(([, status]) => status?.configured === false)
+    .map(([providerName, status]) => ({ providerName, ...status }));
   const refinementItems = analysisQueue.refinementItems ?? [];
   const crawlTasks = (videoStats?.tasks ?? tasks).filter(t => ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(t.taskType));
   const showTaskList = activeGroup !== 'social' || socialTaskTab === 'crawler';
@@ -1307,20 +1481,37 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
                   {socialTaskTab === 'crawler'
-                    ? `${crawlTasks.length > 0 ? `${crawlTasks.map(task => task.name).join(' / ')} · ${CRAWLER_CRON_PRESET.label}` : '自动采集任务未创建'} · 更新时间 ${formatTime(stats?.updatedAt)}`
+                    ? `${crawlTasks.length > 0 ? crawlTasks.map(task => `${task.name} · ${task.cronLabel}`).join(' / ') : '自动采集任务未创建'} · 更新时间 ${formatTime(stats?.updatedAt)}`
                     : `视频下载入库后的 Gemini 分析进度 · 更新时间 ${formatTime(stats?.updatedAt)}`}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => { void fetchTasks(); void fetchVideoStats(); }}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
+                onClick={() => { void fetchTasks(); void fetchVideoStats(true); }}
+                disabled={videoStatsLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
               >
-                刷新
+                <RefreshCw size={12} className={videoStatsLoading ? 'animate-spin' : ''} />
+                {videoStatsLoading ? '加载中…' : '刷新'}
               </button>
             </div>
 
-            {socialTaskTab === 'crawler' ? (
+            {videoStatsError && videoStats && (
+              <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {videoStatsError}当前展示上一次成功快照，页面会继续自动刷新。
+              </p>
+            )}
+
+            {videoStatsLoading && !videoStats ? (
+              <div role="status" className="flex min-h-40 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-500">
+                <Loader size={16} className="animate-spin" /> 正在加载生产状态…
+              </div>
+            ) : videoStatsError && !videoStats ? (
+              <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+                <p className="font-medium">生产状态暂时无法加载</p>
+                <p className="mt-1 text-xs">{videoStatsError}页面会每 5 秒自动重试，也可手动点击刷新。</p>
+              </div>
+            ) : socialTaskTab === 'crawler' ? (
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-center gap-2 text-xs text-gray-500">
@@ -1342,13 +1533,28 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   </div>
                   <div className="mt-3 flex items-end gap-3">
                     <span className="text-2xl font-semibold text-gray-900">{fetchQueue.queued ?? 0}</span>
-                    <span className="text-xs text-gray-500 pb-1">等待/处理中</span>
+                    <span className="text-xs text-gray-500 pb-1">已入队 / 执行中</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">Ops 队列 {fetchQueue.ops?.total ?? 0} · Worker {fetchQueue.ops?.workerActive ? '运行中' : fetchQueue.ops?.workerEnabled ? '待命' : '关闭'}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Ops 队列 {fetchQueue.ops?.total ?? 0} · {fetchQueue.ops?.workerActive
+                      ? 'Worker 执行中'
+                      : (fetchQueue.queued ?? 0) > 0
+                        ? 'Worker 离线'
+                        : fetchQueue.ops?.workerEnabled ? 'Worker 待命' : 'Worker 离线'}
+                  </p>
+                  {(fetchQueue.queued ?? 0) > 0 && !fetchQueue.ops?.workerActive && (
+                    <p className="mt-2 text-[11px] text-red-600">请启动本地 Worker 或检查云端兜底；已入队任务不会丢失。</p>
+                  )}
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
+                {providerWarnings.map(warning => (
+                  <div key={warning.providerName} role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <p className="font-semibold">{warning.reason || `${warning.providerName} 未配置`}</p>
+                    {warning.recoveryAction && <p className="mt-1 text-[11px] leading-5 text-amber-700">人工恢复：{warning.recoveryAction}</p>}
+                  </div>
+                ))}
                 <div className="rounded-xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <Activity size={14} className="text-green-500" />
@@ -1356,9 +1562,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   </div>
                   <div className="mt-3 flex items-end gap-3">
                     <span className="text-2xl font-semibold text-gray-900">{analysisQueue.queued ?? 0}</span>
-                    <span className="text-xs text-gray-500 pb-1">Gemini 队列</span>
+                    <span className="text-xs text-gray-500 pb-1">AI 分析队列</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">已分析 {analysisQueue.analyzedRecords ?? 0} · 待处理 {analysisQueue.pendingRecords ?? 0} · 失败 {analysisQueue.failedRecords ?? 0}</p>
+                  <p className="text-xs text-gray-500 mt-2">已分析 {analysisQueue.analyzedRecords ?? 0} · 待处理 {analysisQueue.pendingRecords ?? 0} · 失败 {analysisQueue.failedRecords ?? 0} · 候选隐藏 {analysisQueue.hiddenRecords ?? 0}</p>
                 </div>
 
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
@@ -1437,7 +1643,15 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate text-xs font-semibold text-gray-900" title={item.title}>{item.title}</p>
                                   <p className="mt-1 text-[11px] text-gray-500">{item.platform.toUpperCase()} · {item.analysisMode === 'exact' ? '精确分析' : '策略分析'} · {item.duration ? `${Math.round(item.duration)} 秒` : '时长未知'}</p>
-                                  {item.error && <p className="mt-1 truncate text-[11px] text-red-500" title={item.error}>{item.error}</p>}
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                    {item.provider && <span className="rounded bg-white px-1.5 py-0.5 text-gray-500">{item.provider}</span>}
+                                    <span className={`rounded px-1.5 py-0.5 ${item.visibility === 'hidden' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                                      {item.visibility === 'hidden' ? '候选暂未展示' : '可见'}
+                                    </span>
+                                  </div>
+                                  {item.error && <p className="mt-1 text-[11px] leading-4 text-red-500">{item.error}</p>}
+                                  {item.statusReason && <p className="mt-1 text-[11px] leading-4 text-amber-700">状态原因：{item.statusReason}</p>}
+                                  {item.recoveryAction && <p className="mt-1 text-[11px] leading-4 text-gray-500">人工恢复：{item.recoveryAction}</p>}
                                 </div>
                                 <span className={`flex-shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${statusMeta.style}`}>{statusMeta.label}</span>
                                 <div className="flex flex-shrink-0 items-center gap-2">
@@ -1530,6 +1744,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   const tmpl = templateForTask(task);
                   const result = runResult[task.id];
                   const isExpanded = expandedId === task.id;
+                  const crawlerTask = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(task.taskType);
+                  const executionState = scheduledTaskExecutionState(task, {
+                    running: runningId === task.id,
+                    workerOnline: crawlerTask && task.executionState === 'queued' && videoStats
+                      ? Boolean(fetchQueue.ops?.workerActive)
+                      : undefined,
+                  });
+                  const executionMeta = TASK_EXECUTION_META[executionState];
                   return (
                     <div key={task.id} className={`border rounded-xl p-4 min-h-[148px] h-full flex flex-col transition-all ${task.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}>
                       <div className="flex items-start gap-3">
@@ -1548,6 +1770,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                           <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
                             <Clock size={10} /> {task.cronLabel}
                           </p>
+                          <span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${executionMeta.style}`}>
+                            {executionMeta.label}
+                          </span>
                           {task.lastRun && (
                             <p className="text-xs text-gray-400 mt-0.5">
                               上次执行：{new Date(task.lastRun).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -1586,7 +1811,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                               />
                             </label>
                           </div>
-                          <p className="mt-1.5 text-[10px] text-gray-400">单条任务最多爬取 10 条视频</p>
+                          <p className="mt-1.5 text-[10px] text-gray-400">单条任务最多爬取 {CRAWLER_LIMIT_MAX} 条视频</p>
                         </div>
                       )}
 

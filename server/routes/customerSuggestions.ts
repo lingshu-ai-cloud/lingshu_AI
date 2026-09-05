@@ -7,8 +7,9 @@ import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence 
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
 import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
-import { sendTenantWhatsAppTemplate, sendTenantWhatsAppText } from '../whatsapp/send.js';
+import { sendTenantWhatsAppTemplateWithReceipt, sendTenantWhatsAppTextWithReceipts } from '../whatsapp/send.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
+import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
@@ -174,7 +175,8 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   }
   if (req.body?.auto === true) {
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
-    if (!status.autoReplyReady) {
+    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
+    if (!status.autoReplyReady || !messagingAuthorization.inboundAutoSendAllowed) {
       res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
       return;
     }
@@ -191,12 +193,24 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       return;
     }
     try {
-      await sendTenantWhatsAppTemplate({
+      const receipt = await sendTenantWhatsAppTemplateWithReceipt({
         tenantId,
         to,
         templateName,
         variables,
         languageCode: String(req.body?.languageCode || 'en_US'),
+      });
+      if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
+      const renderedBody = renderTemplate(templateName, variables) || body;
+      markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to, providerReceipts: [receipt] });
+      await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
+      res.json({
+        ok: true,
+        outboxId: receipt.messageId,
+        providerMessageIds: [receipt.messageId],
+        status: 'sent',
+        sentAt: new Date().toISOString(),
+        renderedBody,
       });
     } catch (error) {
       res.status(502).json({
@@ -205,16 +219,6 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       });
       return;
     }
-    const renderedBody = renderTemplate(templateName, variables) || body;
-    markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to });
-    await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
-    res.json({
-      ok: true,
-      outboxId: `tpl_${Date.now()}`,
-      status: 'sent',
-      sentAt: new Date().toISOString(),
-      renderedBody,
-    });
     return;
   }
   const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
@@ -225,8 +229,12 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     }
   }
   let sentMessages: string[] = [];
+  let providerReceipts: Array<{ messageId: string; recipientId: string; raw: Record<string, unknown> }> = [];
   try {
-    sentMessages = await sendTenantWhatsAppText(tenantId, to, body);
+    const delivered = await sendTenantWhatsAppTextWithReceipts(tenantId, to, body);
+    if (!delivered.receipts.length || delivered.receipts.some(receipt => !receipt.messageId)) throw new Error('whatsapp_provider_message_id_missing');
+    sentMessages = delivered.messages;
+    providerReceipts = delivered.receipts;
   } catch (error) {
     res.status(502).json({
       error: 'whatsapp_send_failed',
@@ -234,11 +242,12 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
     });
     return;
   }
-  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to });
+  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to, providerReceipts });
   await maybeRecordStyleMemory(req, tenantId, customerId, body);
   res.json({
     ok: true,
-    outboxId: `out_${Date.now()}`,
+    outboxId: providerReceipts[0]?.messageId,
+    providerMessageIds: providerReceipts.map(receipt => receipt.messageId),
     status: 'sent',
     sentAt: new Date().toISOString(),
     messages: sentMessages,

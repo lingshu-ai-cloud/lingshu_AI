@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-09-05T05:11:41.958Z",
+  "source": "real_studio_route_qwen",
+  "inputHash": "897618a93aca9c8b3644819534b534bcb8274c85dba5fddfd2c9ccd8928ad7e7",
+  "modelCalls": 12,
+  "versions": [
+    {
+      "version": 1,
+      "inputCase": {
+        "duration": 20
+      },
+      "httpStatus": 200,
+      "elapsedMs": 18794,
+      "ok": true,
+      "source": "ai",
+      "qualityStatus": "warning",
+      "qualityChecks": {
+        "materialGrounded": true,
+        "timelineGrounded": true,
+        "productGrounded": true,
+        "dialogueFits": true,
+        "structurallyComplete": true
+      },
+      "validationIssues": [],
+      "validationWarnings": [
+        "首段没有使用本条企业策略配置的目标买家"
+      ]
+    },
+    {
+      "version": 2,
+      "inputCase": {
+        "duration": 30
+      },
+      "httpStatus": 200,
+      "elapsedMs": 19043,
+      "ok": true,
+      "source": "ai",
+      "qualityStatus": "warning",
+      "qualityChecks": {
+        "materialGrounded": true,
+        "timelineGrounded": true,
+        "productGrounded": true,
+        "dialogueFits": true,
+        "structurallyComplete": true
+      },
+      "validationIssues": [],
+      "validationWarnings": [
+        "首段没有使用本条企业策略配置的目标买家"
+      ]
+    },
+    {
+      "version": 3,
+      "inputCase": {
+        "duration": 30,
+        "videoTheme": {
+          "id": "product_proof",
+          "title": "产品实证",
+          "contentGoal": "reach",
+          "primaryCta": "",
+          "conversionGoal": ""
+        }
+      },
+      "httpStatus": 200,
+      "elapsedMs": 20503,
+      "ok": true,
+      "source": "ai",
+      "qualityStatus": "warning",
+      "qualityChecks": {
+        "materialGrounded": true,
+        "timelineGrounded": true,
+        "productGrounded": true,
+        "dialogueFits": true,
+        "structurallyComplete": true
+      },
+      "validationIssues": [],
+      "validationWarnings": [
+        "首段没有使用本条企业策略配置的目标买家"
+      ]
+    }
+  ]
+}

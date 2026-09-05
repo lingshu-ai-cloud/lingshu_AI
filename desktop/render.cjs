@@ -14,6 +14,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -29,9 +30,78 @@ function resolution(ratio) {
 }
 
 const IMAGE_RE = /\.(jpe?g|png|webp|gif|bmp|svg)(\?|$)/i;
+const DATA_URL_RE = /^data:([^;,]+)?((?:;[^,]*)*),(.*)$/is;
+
+function dataUrlParts(value) {
+  const match = String(value || '').match(DATA_URL_RE);
+  if (!match) return null;
+  const mime = String(match[1] || 'application/octet-stream').toLowerCase();
+  const metadata = String(match[2] || '');
+  try {
+    return {
+      mime,
+      bytes: /;base64/i.test(metadata)
+        ? Buffer.from(match[3] || '', 'base64')
+        : Buffer.from(decodeURIComponent(match[3] || ''), 'utf8'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extensionForAsset(value, declaredType) {
+  const data = dataUrlParts(value);
+  const mime = data && data.mime;
+  if (mime === 'image/jpeg') return 'jpg';
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/gif') return 'gif';
+  if (mime === 'video/quicktime') return 'mov';
+  if (mime === 'video/webm') return 'webm';
+  if (mime === 'video/mp4') return 'mp4';
+  if (mime === 'audio/mpeg') return 'mp3';
+  if (mime === 'audio/wav' || mime === 'audio/x-wav') return 'wav';
+  let pathname = '';
+  try {
+    pathname = new URL(String(value || ''), 'http://local').pathname;
+  } catch {
+    pathname = String(value || '').split(/[?#]/)[0];
+  }
+  const ext = path.extname(pathname).slice(1).toLowerCase();
+  if (/^[a-z0-9]{1,8}$/.test(ext)) return ext;
+  if (declaredType === 'image') return 'png';
+  if (declaredType === 'audio') return 'wav';
+  return 'mp4';
+}
+
+function isImageAsset(value, declaredType) {
+  if (declaredType === 'image') return true;
+  if (declaredType === 'video') return false;
+  const data = dataUrlParts(value);
+  if (data) return data.mime.startsWith('image/');
+  return IMAGE_RE.test(String(value || ''));
+}
 
 /** 下载远端 url 到本地文件（桌面端与本机 express 同机，localhost 直连） */
 async function downloadTo(url, dest, options = {}) {
+  const source = String(url || '');
+  const data = dataUrlParts(source);
+  if (data) {
+    if (!data.bytes.length) throw new Error('empty data URL');
+    fs.writeFileSync(dest, data.bytes);
+    return dest;
+  }
+  if (source.startsWith('file://')) {
+    const localPath = fileURLToPath(source);
+    if (!fs.existsSync(localPath) || fs.statSync(localPath).size <= 0) throw new Error(`missing local file ${localPath}`);
+    fs.copyFileSync(localPath, dest);
+    return dest;
+  }
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(source) && fs.existsSync(source)) {
+    if (fs.statSync(source).size <= 0) throw new Error(`empty local file ${source}`);
+    fs.copyFileSync(source, dest);
+    return dest;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
   const headers = options.assetOrigin && String(url).startsWith(options.assetOrigin)
@@ -39,11 +109,11 @@ async function downloadTo(url, dest, options = {}) {
     : {};
   let res;
   try {
-    res = await fetch(url, { headers, signal: controller.signal });
+    res = await fetch(source, { headers, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) throw new Error(`download ${url} -> ${res.status}`);
+  if (!res.ok) throw new Error(`download ${source} -> ${res.status}`);
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
   return dest;
 }
@@ -70,6 +140,83 @@ function assText(value) {
     .trim();
 }
 
+function subtitleUnit(char) {
+  if (/\s/.test(char)) return 0.35;
+  if (/[\x00-\xff]/.test(char)) return 0.55;
+  return 1;
+}
+
+function subtitleUnits(value) {
+  return Array.from(String(value || '')).reduce((sum, char) => sum + subtitleUnit(char), 0);
+}
+
+/**
+ * Break a subtitle into mobile-safe pages. Each page contains at most two
+ * lines, and every line is constrained by visual width rather than JS string
+ * length so Chinese and Latin copy behave consistently.
+ */
+function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
+  const source = assText(value);
+  if (!source) return [];
+  const chars = Array.from(source);
+  const lines = [];
+  let line = '';
+  let units = 0;
+  let lastSoftBreak = -1;
+  const flush = () => {
+    const next = line.trim();
+    if (next) lines.push(next);
+    line = '';
+    units = 0;
+    lastSoftBreak = -1;
+  };
+  for (const char of chars) {
+    const nextUnits = units + subtitleUnit(char);
+    if (line && nextUnits > maxUnitsPerLine) {
+      if (lastSoftBreak >= Math.ceil(line.length * 0.45)) {
+        const head = line.slice(0, lastSoftBreak + 1).trim();
+        const tail = line.slice(lastSoftBreak + 1).trimStart();
+        if (head) lines.push(head);
+        line = tail;
+        units = subtitleUnits(tail);
+      } else {
+        flush();
+      }
+    }
+    line += char;
+    units += subtitleUnit(char);
+    if (/[\s，。！？；：、,.!?;:]/.test(char)) lastSoftBreak = line.length - 1;
+  }
+  flush();
+  const pages = [];
+  for (let index = 0; index < lines.length; index += maxLines) {
+    pages.push(lines.slice(index, index + maxLines));
+  }
+  return pages;
+}
+
+function normalizeSubtitleCues(cues, options = {}) {
+  const maxUnitsPerLine = Math.max(8, finiteNumber(options.maxUnitsPerLine, 15));
+  const maxLines = Math.max(1, Math.min(2, Math.round(finiteNumber(options.maxLines, 2))));
+  return (Array.isArray(cues) ? cues : []).flatMap(cue => {
+    const start = Math.max(0, Number(cue && cue.start) || 0);
+    const end = Math.max(0, Number(cue && cue.end) || 0);
+    const pages = subtitlePages(cue && cue.text, maxUnitsPerLine, maxLines);
+    if (!pages.length || end <= start) return [];
+    const weights = pages.map(page => Math.max(1, subtitleUnits(page.join(''))));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    let cursor = start;
+    return pages.map((page, index) => {
+      const pageEnd = index === pages.length - 1
+        ? end
+        : cursor + (end - start) * weights[index] / totalWeight;
+      const normalized = { start: cursor, end: pageEnd, text: page.join('\\N') };
+      cursor = pageEnd;
+      return normalized;
+    });
+  });
+}
+
 function filterPath(value) {
   return String(value || '')
     .replace(/\\/g, '\\\\')
@@ -79,11 +226,11 @@ function filterPath(value) {
 }
 
 function cuesToAss(cues, width, height) {
-  const valid = (Array.isArray(cues) ? cues : [])
+  const valid = normalizeSubtitleCues(cues)
     .map(cue => ({
       start: Math.max(0, Number(cue && cue.start) || 0),
       end: Math.max(0, Number(cue && cue.end) || 0),
-      text: assText(cue && cue.text),
+      text: String(cue && cue.text || '').replace(/[{}]/g, '').trim(),
     }))
     .filter(cue => cue.text && cue.end > cue.start);
   if (!valid.length) return '';
@@ -98,7 +245,7 @@ function cuesToAss(cues, width, height) {
     'ScriptType: v4.00+',
     `PlayResX: ${width}`,
     `PlayResY: ${height}`,
-    'WrapStyle: 2',
+    'WrapStyle: 0',
     'ScaledBorderAndShadow: yes',
     '',
     '[V4+ Styles]',
@@ -139,19 +286,38 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
   try {
     // 1) 拉取真实素材片段与 BGM
-    const timeline = (manifest && manifest.timeline ? manifest.timeline : []).filter(t => t && t.url);
+    const declaredTimeline = Array.isArray(manifest && manifest.timeline) ? manifest.timeline : [];
+    const timeline = declaredTimeline.filter(t => t && t.url);
+    if (manifest && manifest.requireVisualAssets === true && !declaredTimeline.length) {
+      throw new Error('自动成片没有视觉时间线，已停止纯色画面降级');
+    }
+    if (manifest && manifest.requireVisualAssets === true && timeline.length !== declaredTimeline.length) {
+      throw new Error('视觉时间线存在未绑定素材地址的片段，已停止渲染');
+    }
     const localClips = [];
+    const clipErrors = [];
     for (let i = 0; i < timeline.length; i++) {
       const u = timeline[i].url;
-      const ext = (u.split('?')[0].split('.').pop() || 'mp4').toLowerCase();
+      const ext = extensionForAsset(u, timeline[i].type);
       const dest = path.join(tmp, `clip${i}.${ext}`);
-      try { await downloadTo(u, dest, downloadOptions); localClips.push({ ...timeline[i], file: dest, image: IMAGE_RE.test(u) }); } catch { /* 跳过失败片段 */ }
+      try {
+        await downloadTo(u, dest, downloadOptions);
+        localClips.push({ ...timeline[i], file: dest, image: isImageAsset(u, timeline[i].type) });
+      } catch (error) {
+        clipErrors.push(`片段 ${i + 1}（${String(timeline[i].name || '未命名素材')}）: ${error && error.message || error}`);
+      }
+    }
+    if (timeline.length && !localClips.length) {
+      throw new Error(`时间线素材全部读取失败，已停止纯色画面降级：${clipErrors.join('；')}`);
+    }
+    if (manifest && manifest.requireVisualAssets === true && clipErrors.length) {
+      throw new Error(`时间线素材不完整，已停止渲染：${clipErrors.join('；')}`);
     }
 
     let bgmFile = null;
     const bgmUrl = manifest && manifest.bgm && manifest.bgm.url;
     if (bgmUrl) {
-      bgmFile = path.join(tmp, `bgm${path.extname(bgmUrl.split('?')[0]) || '.wav'}`);
+      bgmFile = path.join(tmp, `bgm.${extensionForAsset(bgmUrl, 'audio')}`);
       try { await downloadTo(bgmUrl, bgmFile, downloadOptions); }
       catch (error) { throw new Error(`背景音乐读取失败：${error && error.message || error}`); }
     }
@@ -159,7 +325,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     let voFile = null;
     const voUrl = manifest && manifest.voiceover && manifest.voiceover.url;
     if (voUrl) {
-      voFile = path.join(tmp, `vo${path.extname(voUrl.split('?')[0]) || '.wav'}`);
+      voFile = path.join(tmp, `vo.${extensionForAsset(voUrl, 'audio')}`);
       try { await downloadTo(voUrl, voFile, downloadOptions); }
       catch (error) { throw new Error(`口播配音读取失败：${error && error.message || error}`); }
     }
@@ -184,11 +350,23 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         const rawTrimEnd = finiteNumber(c.trimEnd, trimStart + target);
         const trimEnd = Math.max(trimStart + 0.1, rawTrimEnd);
         const speed = Math.min(4, Math.max(0.25, finiteNumber(c.speed, 1)));
-        // 所有素材统一铺满目标画幅，避免横竖素材混用时出现黑边和画面尺寸跳变。
+        // Without a trusted focal anchor, preserve the entire source on top of
+        // a blurred fill. Blind center-cropping is especially destructive when
+        // a landscape factory/product shot is rendered to a 9:16 canvas.
         const source = c.image
           ? `[${i}:v]trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`
           : `[${i}:v]trim=start=${trimStart.toFixed(3)}:end=${trimEnd.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},tpad=stop_mode=clone:stop_duration=${target.toFixed(3)},trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`;
-        filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
+        const focusX = Math.max(0, Math.min(1, finiteNumber(c.focusX, 0.5)));
+        const focusY = Math.max(0, Math.min(1, finiteNumber(c.focusY, 0.5)));
+        const trustedFocus = c.cropMode === 'cover' || (c.cropMode === 'smart' && Number.isFinite(Number(c.focusX)) && Number.isFinite(Number(c.focusY)));
+        if (trustedFocus) {
+          filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:(iw-ow)*${focusX.toFixed(4)}:(ih-oh)*${focusY.toFixed(4)},setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
+        } else {
+          filters.push(`${source},split=2[bg${i}raw][fg${i}raw]`);
+          filters.push(`[bg${i}raw]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=20:2[bg${i}]`);
+          filters.push(`[fg${i}raw]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg${i}]`);
+          filters.push(`[bg${i}][fg${i}]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
+        }
       });
       filters.push(`${localClips.map((_, i) => `[v${i}]`).join('')}concat=n=${n}:v=1:a=0[vcat]`);
       vlabel = '[vcat]';
@@ -281,4 +459,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath };
+module.exports = { composite, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, normalizeSubtitleCues, cuesToAss };

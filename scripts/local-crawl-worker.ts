@@ -23,6 +23,7 @@ const SERVER_URL = (process.env.CRAWL_WORKER_SERVER_URL || process.env.PUBLIC_OR
 const WORKER_TOKEN = process.env.CRAWL_WORKER_TOKEN || (process.env.NODE_ENV === 'production' ? '' : 'lingshu-local-crawl-worker-token');
 const WORKER_ID = process.env.CRAWL_WORKER_ID || `mac-${process.env.USER || 'worker'}`;
 const POLL_MS = Math.max(5_000, Number(process.env.CRAWL_WORKER_POLL_MS || 15_000));
+const HEARTBEAT_MS = Math.max(15_000, Number(process.env.CRAWL_WORKER_HEARTBEAT_MS || 60_000));
 const RUN_ONCE = process.env.CRAWL_WORKER_ONCE === '1';
 let stopped = false;
 
@@ -67,8 +68,27 @@ async function completeJob(jobId: string, payload: Record<string, unknown>): Pro
   });
 }
 
+async function heartbeatJob(jobId: string): Promise<void> {
+  await api(`/api/overseas/crawl-worker/jobs/${encodeURIComponent(jobId)}/heartbeat`, { method: 'POST' });
+}
+
+export function localCrawlWorkerFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/cookies|login|sign in|not a bot/i.test(message)) return '本地 Worker 登录态不可用，请在 Safari/Chrome 登录目标平台后重试。';
+  if (/timeout|timed out|ETIMEDOUT/i.test(message)) return '本地 Worker 执行超时，请检查网络或降低单次采集数量后重试。';
+  if (/GEMINI_API_KEY\s+is\s+not\s+set/i.test(message)) return 'Gemini 未配置，请配置后重试或切换到已配置的 Qwen。';
+  if (/video_analysis_hard_timeout|exact_chunk_timeout|qwen[^\n]*(?:timeout|timed out|超时)/i.test(message)) return 'Qwen 分析超时，请重试或改用策略分析。';
+  return message.slice(0, 500) || 'worker_failed';
+}
+
 async function runJob(job: CrawlJob): Promise<void> {
   const started = Date.now();
+  const heartbeat = setInterval(() => {
+    void heartbeatJob(job.id).catch(error => {
+      console.warn(`[crawl-worker] heartbeat failed ${job.id}:`, error instanceof Error ? error.message : error);
+    });
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
   console.log(`[crawl-worker] running ${job.id} ${job.platform} ${job.mode}`);
   try {
     const result = await crawlVideosForTenant({
@@ -102,8 +122,10 @@ async function runJob(job: CrawlJob): Promise<void> {
     console.log(`[crawl-worker] done ${job.id}: ${result.message}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await completeJob(job.id, { ok: false, error: message });
+    await completeJob(job.id, { ok: false, error: localCrawlWorkerFailureMessage(error) });
     console.warn(`[crawl-worker] failed ${job.id}: ${message}`);
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 

@@ -209,6 +209,16 @@ assert.match(sanitizedReferenceLeaks, /设备|equipment/);
 assert.deepEqual(unsupportedNumericClaims('运镜：镜头向前推进1cm\n画面：滴管抬起0.5cm', '产品名称：测试精华'), []);
 assert.deepEqual(unsupportedNumericClaims('构图：产品占画面70%\n运镜：推进至80%\n字幕：提升70%\n画面：瓶身高度10cm', '产品名称：测试精华'), ['70%', '10cm']);
 assert.deepEqual(unsupportedNumericClaims('画面：摆放3个空白标签样稿\n字幕：每箱3个', '产品名称：测试精华'), ['3个']);
+assert.deepEqual(
+  unsupportedNumericClaims('配乐：单音阶上升提示音（第15秒）\n剪辑：画面持续 4 秒后淡出', '产品名称：测试精华'),
+  [],
+  'timeline directions are production parameters rather than product claims',
+);
+assert.deepEqual(
+  unsupportedNumericClaims('台词：15秒即可完成换线。\n字幕：15秒完成换线', '产品名称：测试精华'),
+  ['15秒'],
+  'seconds stated in speech or captions remain subject to the closed-world fact gate',
+);
 const multiProductInfo = `选定产品 1：Mock Hydra Serum Dropper Bottle
 产品名称：Mock Hydra Serum Dropper Bottle
 产品卖点：30ml透明玻璃滴管瓶
@@ -221,6 +231,14 @@ assert.deepEqual(unsupportedNumericClaims(
   multiProductInfo,
 ), []);
 assert.deepEqual(unsupportedNumericClaims('台词：This jar is 60g.\n字幕：This jar is 60g.', multiProductInfo), ['60g']);
+assert.deepEqual(unsupportedNumericClaims(
+  '台词：本产品支持100瓶起订。\n字幕：本产品支持 100 瓶起订。',
+  '产品名称：测试产品\nMOQ：100 瓶起订',
+), [], 'MOQ facts must tolerate optional whitespace between value and unit');
+assert.deepEqual(unsupportedNumericClaims(
+  '台词：本产品支持100瓶起订。',
+  '产品名称：测试产品\nMOQ：１００　瓶起订',
+), [], 'MOQ facts must normalize full-width digits and spaces');
 
 assert.equal(isPackagingOnlyProductInfo('所属类目：美妆个护\n产品卖点：30ml透明玻璃滴管瓶；适合精华液包装展示'), true);
 assert.equal(isPackagingOnlyProductInfo('所属类目：美妆个护\n产品卖点：精华液膏体质地轻盈，适合涂抹'), false);

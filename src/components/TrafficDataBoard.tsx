@@ -37,22 +37,6 @@ interface RealVideo {
   permalinkUrl?: string;
 }
 
-const WORKSPACE_SOCIAL_ACCOUNTS: SocialAccount[] = [
-  { id: 'tiktok-lx-automation', platform: 'tiktok', title: 'LX Automation', handle: '@lxautomation', followerCount: 18_640, videoCount: 46, viewCount: 1_286_000, status: 'connected' },
-  { id: 'instagram-lx-factory', platform: 'instagram', title: 'LX Smart Factory', handle: '@lx.smartfactory', followerCount: 9_280, videoCount: 38, viewCount: 436_800, status: 'connected' },
-  { id: 'facebook-lx-solutions', platform: 'facebook', title: 'LX Industrial Solutions', handle: 'LXIndustrialSolutions', followerCount: 5_760, videoCount: 31, viewCount: 295_400, status: 'connected' },
-];
-
-const WORKSPACE_SOCIAL_VIDEOS: RealVideo[] = [
-  { id: 'tiktok-vision-demo', platform: 'tiktok', account: 'LX Automation', title: '4K vision inspection catches micro defects in real time', publishedAt: '2026-08-19T08:30:00.000Z', viewCount: 68_420, likeCount: 3_962, commentCount: 186, shareCount: 421 },
-  { id: 'instagram-clean-assembly', platform: 'instagram', account: 'LX Smart Factory', title: 'Clean-room assembly cell: torque traceability walkthrough', publishedAt: '2026-08-18T10:10:00.000Z', viewCount: 31_680, likeCount: 1_742, commentCount: 94, shareCount: 208 },
-  { id: 'facebook-cartoning', platform: 'facebook', account: 'LX Industrial Solutions', title: 'Flexible cartoning changeover from setup to first qualified pack', publishedAt: '2026-08-17T06:45:00.000Z', viewCount: 26_950, likeCount: 1_106, commentCount: 73, shareCount: 164 },
-  { id: 'tiktok-battery-trace', platform: 'tiktok', account: 'LX Automation', title: 'Battery module traceability across four product recipes', publishedAt: '2026-08-16T09:20:00.000Z', viewCount: 57_840, likeCount: 3_214, commentCount: 141, shareCount: 356 },
-  { id: 'instagram-fat-checklist', platform: 'instagram', account: 'LX Smart Factory', title: 'What buyers review during FAT for automated workstations', publishedAt: '2026-08-15T12:00:00.000Z', viewCount: 24_760, likeCount: 1_438, commentCount: 82, shareCount: 177 },
-  { id: 'facebook-remote-diagnosis', platform: 'facebook', account: 'LX Industrial Solutions', title: 'Remote sample diagnosis before an automation proposal', publishedAt: '2026-08-14T07:15:00.000Z', viewCount: 21_430, likeCount: 872, commentCount: 61, shareCount: 128 },
-  { id: 'tiktok-changeover', platform: 'tiktok', account: 'LX Automation', title: '55-minute changeover problem reduced to a repeatable recipe flow', publishedAt: '2026-08-13T11:40:00.000Z', viewCount: 55_350, likeCount: 2_986, commentCount: 153, shareCount: 339 },
-];
-
 async function readJson<T>(url: string, fallback: T): Promise<T> {
   try {
     const res = await fetch(url, { headers: authHeader() });
@@ -87,7 +71,7 @@ function normalizeVideo(raw: any, platform: string, account: string): RealVideo 
   };
 }
 
-export default function TrafficDataBoard({ onOpenAccounts, enableWorkspaceSnapshot = false }: { windowDays?: number; onOpenAccounts?: () => void; enableWorkspaceSnapshot?: boolean }) {
+export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: number; onOpenAccounts?: () => void }) {
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
   const [youtubeAccounts, setYoutubeAccounts] = useState<YouTubeAccount[]>([]);
   const [videos, setVideos] = useState<RealVideo[]>([]);
@@ -115,15 +99,14 @@ export default function TrafficDataBoard({ onOpenAccounts, enableWorkspaceSnapsh
         }),
       ]);
       const nextVideos = videoResults.flatMap(result => result.status === 'fulfilled' ? result.value : []);
-      const useWorkspaceSnapshot = enableWorkspaceSnapshot && socialItems.length + youtubeItems.length === 0;
       if (!alive) return;
-      setSocialAccounts(useWorkspaceSnapshot ? WORKSPACE_SOCIAL_ACCOUNTS : socialItems);
+      setSocialAccounts(socialItems);
       setYoutubeAccounts(youtubeItems);
-      setVideos((useWorkspaceSnapshot ? WORKSPACE_SOCIAL_VIDEOS : nextVideos).sort((a, b) => Date.parse(b.publishedAt || '') - Date.parse(a.publishedAt || '')));
+      setVideos(nextVideos.sort((a, b) => Date.parse(b.publishedAt || '') - Date.parse(a.publishedAt || '')));
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [enableWorkspaceSnapshot, refreshKey]);
+  }, [refreshKey]);
 
   const summary = useMemo(() => {
     const accountCount = socialAccounts.length + youtubeAccounts.length;

@@ -31,7 +31,9 @@ import { verifySupportAccessToken } from '../lib/supportAccess.js';
 
 const LOCAL_AUTH_PREFIX = 'local-demo.';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_STORE_DIR = path.join(__dirname, '../../data/local-store');
+const LOCAL_STORE_DIR = process.env.LOCAL_STORE_DIR?.trim()
+  ? path.resolve(process.env.LOCAL_STORE_DIR)
+  : path.join(__dirname, '../../data/local-store');
 
 function isLocalDevFallbackEnabled(): boolean {
   return process.env.NODE_ENV !== 'production' && process.env.DISABLE_LOCAL_AUTH_FALLBACK !== 'true';
@@ -83,8 +85,10 @@ function sortLocalRecords<T extends Record<string, unknown>>(items: T[], sort?: 
     const bv = b[key];
     const an = typeof av === 'string' ? Date.parse(av) : Number(av);
     const bn = typeof bv === 'string' ? Date.parse(bv) : Number(bv);
-    const left = Number.isFinite(an) && Number.isFinite(bn) ? an : String(av ?? '').localeCompare(String(bv ?? ''));
-    return desc ? -left : left;
+    const comparison = Number.isFinite(an) && Number.isFinite(bn)
+      ? an - bn
+      : String(av ?? '').localeCompare(String(bv ?? ''));
+    return desc ? -comparison : comparison;
   });
 }
 

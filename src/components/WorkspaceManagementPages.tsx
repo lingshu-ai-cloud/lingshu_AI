@@ -7,7 +7,6 @@ import {
   RotateCcw, Pencil, Download, Upload, History,
 } from 'lucide-react';
 import { authApi, authHeader, type EmployeeAccount, type OrganizationRole } from '../lib/auth';
-import { createMockCustomers } from '../mocks/customerProfiles';
 import { studioApi, type StudioProject } from '../lib/studioApi';
 import { ContentOpsExecutionDialog, type ContentOpsExecutionIntent } from './ContentOpsExecutionDialog';
 import { HighConfidenceInsights, PlatformTrends, type OpsEvidence } from './ContentOpsDrilldowns';
@@ -688,7 +687,22 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
       fetch('/api/overseas/customers', { headers: authHeader() }).then(response => response.ok ? response.json() : { items: [] }),
       fetch('/api/overseas/agent-memory/strategies', { headers: authHeader() }).then(response => response.ok ? response.json() : { items: [] }),
     ])
-      .then(([records, projects, enterprise, customers, strategies]) => {
+      .then(async ([records, projects, enterprise, customers, strategies]) => {
+        if (!active) return;
+        const mockCustomerContexts = includeMockCustomers && import.meta.env.DEV
+          ? (await import('../mocks/customerProfiles')).createMockCustomers(mockCustomerScope).map(customer => ({
+            id: customer.id,
+            name: customer.name,
+            product: customer.product,
+            countryName: customer.countryName,
+            language: customer.language,
+            stage: customer.stage,
+            summary: customer.summary,
+            nextStep: customer.nextStep,
+            intentSignals: customer.intentSignals,
+            tags: [...customer.tags, '模拟场景'],
+          }))
+          : [];
         if (!active) return;
         const analyses: ContentMemory[] = records.map(record => ({ record, analysis: parseAnalysis(record.aiAnalysis) }))
           .filter(({ analysis }) => analysis.analysisMode === 'exact' && Boolean(analysis.scriptDetails15s?.length))
@@ -723,20 +737,6 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
         setStyleProfile(enterpriseRecord.salesStyleProfile || null);
         const customerPayload = customers as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
         const liveCustomerContexts = Array.isArray(customerPayload) ? customerPayload : Array.isArray(customerPayload.items) ? customerPayload.items : [];
-        const mockCustomerContexts = includeMockCustomers
-          ? createMockCustomers(mockCustomerScope).map(customer => ({
-            id: customer.id,
-            name: customer.name,
-            product: customer.product,
-            countryName: customer.countryName,
-            language: customer.language,
-            stage: customer.stage,
-            summary: customer.summary,
-            nextStep: customer.nextStep,
-            intentSignals: customer.intentSignals,
-            tags: [...customer.tags, '模拟场景'],
-          }))
-          : [];
         const liveIds = new Set(liveCustomerContexts.map(customer => String(customer.id || '')));
         setCustomerContexts([...liveCustomerContexts, ...mockCustomerContexts.filter(customer => !liveIds.has(customer.id))]);
         const strategyPayload = strategies as { items?: Array<Record<string, unknown>> };
@@ -761,11 +761,21 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
         const trend = trendResponse.ok ? await trendResponse.json() : null;
         return socialMetricsOpsOverview(overview, trend);
       })
-      .then(result => { if (active) setOpsOverview(import.meta.env.DEV && !hasContentOpsData(result) ? MOCK_CONTENT_OPS_OVERVIEW : result); })
-      .catch(() => { if (active) setOpsOverview(import.meta.env.DEV ? MOCK_CONTENT_OPS_OVERVIEW : null); })
+      .then(result => {
+        if (!active) return;
+        // Synthetic operating metrics belong only to the explicitly opened
+        // simulation workspace. Normal tenant pages must stay empty until a
+        // real platform snapshot is available, including during development.
+        setOpsOverview(includeMockCustomers && import.meta.env.DEV && !hasContentOpsData(result)
+          ? MOCK_CONTENT_OPS_OVERVIEW
+          : result);
+      })
+      .catch(() => {
+        if (active) setOpsOverview(includeMockCustomers && import.meta.env.DEV ? MOCK_CONTENT_OPS_OVERVIEW : null);
+      })
       .finally(() => { if (active) setOpsLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [includeMockCustomers]);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();

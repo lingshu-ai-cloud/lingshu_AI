@@ -2,6 +2,13 @@ import type { PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
 import { publishVideoToAccount } from './platformPublisher.js';
 import { finalizeTrackedPost, type PostRecord } from './waLink.js';
+import { digitalEmployeeRunBlockedReason, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
+
+interface ScheduledPublishingDependencies {
+  publish: typeof publishVideoToAccount;
+  finalize: typeof finalizeTrackedPost;
+}
+const defaultDependencies: ScheduledPublishingDependencies = { publish: publishVideoToAccount, finalize: finalizeTrackedPost };
 
 const POLL_INTERVAL_MS = 30_000;
 const STALE_LOCK_MS = 15 * 60_000;
@@ -46,6 +53,9 @@ export function scheduledRetryDelay(attempt: number): number {
 export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean {
   const stats = statsOf(post);
   const status = text(stats.status);
+  // Digital-employee calendar entries require an explicit, version-frozen
+  // tenant authorization in addition to the human content approval.
+  if (text(stats.workflowRunId) && stats.realPublishingAuthorized !== true) return false;
   const scheduledAt = Date.parse(text(post.published_at));
   if (!Number.isFinite(scheduledAt) || scheduledAt > now || attemptsOf(stats) >= MAX_ATTEMPTS) return false;
   if (status === 'scheduled') return true;
@@ -88,8 +98,10 @@ async function markFailed(post: PostRecord, stats: Record<string, unknown>, atte
   });
 }
 
-async function publishScheduledPost(post: PostRecord): Promise<void> {
+async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPublishingDependencies): Promise<void> {
   const initialStats = statsOf(post);
+  const workflowRunId = text(initialStats.workflowRunId);
+  if (workflowRunId && await digitalEmployeeRunBlockedReason(post.tenant_id, workflowRunId)) return;
   const attempts = attemptsOf(initialStats) + 1;
   const attemptStartedAt = new Date().toISOString();
   const lockedStats = {
@@ -130,7 +142,7 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
   for (const accountId of accountIds) {
     if (results[accountId]?.status === 'published') continue;
     try {
-      const result = await publishVideoToAccount({
+      const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
         accountId,
         platform,
@@ -145,12 +157,22 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
         trackingPost: post,
         finalizeTracking: false,
       });
+      const result = workflowRunId
+        ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, publish)
+        : await publish();
       results[accountId] = {
         status: 'published',
         platformPostId: result.platformPostId,
         publishedAt: new Date().toISOString(),
       };
     } catch (error) {
+      if (error instanceof WorkflowRunBlockedError) {
+        await store.update('posts', post.id, { stats: {
+          ...lockedStats, status: 'scheduled', publishAttempts: attempts - 1,
+          publishResults: results, workflowBlockedReason: error.reason,
+        } });
+        return;
+      }
       results[accountId] = {
         status: 'failed',
         error: errorMessage(error),
@@ -170,7 +192,7 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
   }
 
   const firstPlatformPostId = accountIds.map(accountId => text(results[accountId]?.platformPostId)).find(Boolean) || '';
-  await finalizeTrackedPost(post.id, {
+  await dependencies.finalize(post.id, {
     platformPostId: firstPlatformPostId,
     title: text(post.title),
     stats: {
@@ -187,7 +209,7 @@ async function publishScheduledPost(post: PostRecord): Promise<void> {
 
 let cycleRunning = false;
 
-export async function runScheduledPublishingCycle(now = Date.now()): Promise<number> {
+export async function runScheduledPublishingCycle(now = Date.now(), dependencies: ScheduledPublishingDependencies = defaultDependencies): Promise<number> {
   if (cycleRunning) return 0;
   cycleRunning = true;
   try {
@@ -195,7 +217,7 @@ export async function runScheduledPublishingCycle(now = Date.now()): Promise<num
     const duePosts = result.items.filter(post => isScheduledPostDue(post, now)).slice(0, 20);
     for (const post of duePosts) {
       try {
-        await publishScheduledPost(post);
+        await publishScheduledPost(post, dependencies);
       } catch (error) {
         const stats = statsOf(post);
         const attempts = Math.max(attemptsOf(stats) + 1, 1);

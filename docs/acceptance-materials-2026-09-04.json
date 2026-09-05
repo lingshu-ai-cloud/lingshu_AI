@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "verifiedOn": "2026-09-04",
+  "purpose": "licensed-industry-illustration-only",
+  "enterpriseOwnership": false,
+  "productEvidence": false,
+  "mediaRoot": "data/acceptance-materials/open-licensed-2026-09-04",
+  "assets": [
+    {
+      "id": "pcb-traces",
+      "file": "pexels-6754819-pcb.mp4",
+      "title": "Close up Shot of a Printed Circuit Board",
+      "creator": "Tima Miroshnichenko",
+      "sourceUrl": "https://www.pexels.com/video/close-up-shot-of-a-printed-circuit-board-6754819/",
+      "downloadUrl": "https://videos.pexels.com/video-files/6754819/6754819-uhd_3840_2160_25fps.mp4",
+      "license": "Pexels License",
+      "licenseUrl": "https://www.pexels.com/license/",
+      "sha256": "4e2682ec9e93a9987f7e20906faaa2c22f0f844993dea6e00191e3d7a1a6554c",
+      "duration": 32.28,
+      "status": "selected",
+      "observed": "绿色电路板背面走线与焊点，浅景深移动特写；不能据此证明制造精度、兼容性或具体企业产品。"
+    },
+    {
+      "id": "pcb-components",
+      "file": "pexels-6754830-components.mp4",
+      "title": "Close Up Shot of Printed Circuit Board",
+      "creator": "Tima Miroshnichenko",
+      "sourceUrl": "https://www.pexels.com/video/close-up-shot-of-printed-circuit-board-6754830/",
+      "downloadUrl": "https://videos.pexels.com/video-files/6754830/6754830-uhd_3840_2160_25fps.mp4",
+      "license": "Pexels License",
+      "licenseUrl": "https://www.pexels.com/license/",
+      "sha256": "c6e5aae65e7419550aab1ba3ccc62baf3201fa8181108aaa213de01bdbdd6673",
+      "duration": 16.36,
+      "status": "selected",
+      "observed": "电路板元件、插槽和散热结构的移动特写；仅作电子硬件行业示意。"
+    },
+    {
+      "id": "manufacturing",
+      "file": "pexels-34775736-manufacturing.mp4",
+      "title": "Automated Industrial Manufacturing Process",
+      "creator": "Val А",
+      "sourceUrl": "https://www.pexels.com/video/automated-industrial-manufacturing-process-34775736/",
+      "downloadUrl": "https://videos.pexels.com/video-files/34775736/14742963_1080_1920_60fps.mp4",
+      "license": "Pexels License",
+      "licenseUrl": "https://www.pexels.com/license/",
+      "sha256": "2dc01e265a8aa3a55f1f822a36f71f143d3ead56f16da18c4af845a5b1f34385",
+      "duration": 41.2411833,
+      "status": "selected",
+      "observed": "竖屏工业设备、成组执行机构、管线和输送结构；具体工艺未确认，不能称为贴片机、PCB产线或本企业工厂。"
+    },
+    {
+      "id": "wedge-bonding",
+      "file": "ultrasonic-wedge-bonding.webm",
+      "title": "Ultrasonic wedge bonding",
+      "creator": "Holger Motzkau",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Ultrasonic_wedge_bonding.webm",
+      "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/6/6f/Ultrasonic_wedge_bonding.webm",
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "sha256": "bf740d5fe15ceace07344b29fdd84ad7269157717d41bfe124aaeb4b9e820cdd",
+      "duration": 43.56,
+      "status": "reserve-sharealike",
+      "observed": "显微视角的引线键合演示。来源说明为斯德哥尔摩大学 NanoFabLab，并非本企业设备。使用时署名、附许可证、说明改动，并遵守衍生作品相同或兼容许可要求。"
+    },
+    {
+      "id": "factory-rack-focus",
+      "file": "pexels-2376984-circuit-board.mp4",
+      "title": "Close-Up Shot of a Circuit Board",
+      "creator": "Video Kickstarter",
+      "sourceUrl": "https://www.pexels.com/video/close-up-shot-of-a-circuit-board-2376984/",
+      "downloadUrl": "https://videos.pexels.com/video-files/2376984/2376984-hd_1920_1080_24fps.mp4",
+      "license": "Pexels License",
+      "licenseUrl": "https://www.pexels.com/license/",
+      "sha256": "786cb82d5d39c8eaee6f140368a6c3781999d13c9ff7b4e6e8eb230f74e3aaf9",
+      "duration": 6.96529,
+      "status": "not-selected",
+      "observed": "基础机器质检通过，但人工抽查开头主体失焦；时长不足7秒，不选作20秒订单主素材。"
+    }
+  ],
+  "coveragePlan": {
+    "description": "仅验证两条各25秒的行业示意方案（20秒目标加时长余量），跨两条共用游标避免源片区间重复；不代表冻结订单、脚本、配音或成片验收通过。",
+    "sceneAssetIds": ["manufacturing", "pcb-traces", "pcb-components", "manufacturing", "pcb-traces", "pcb-components", "manufacturing", "pcb-traces", "pcb-components", "manufacturing"],
+    "sceneDurations": [5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    "splitAfterScene": 5
+  }
+}

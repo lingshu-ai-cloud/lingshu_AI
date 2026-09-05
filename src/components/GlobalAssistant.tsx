@@ -222,6 +222,8 @@ function pageKey(page: Page) {
 type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
 
 const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
+  digitalEmployees: 'excited',
+  agentMonitor: 'thinking',
   strategy: 'happy',
   traffic: 'excited',
   socialInspiration: 'excited',
@@ -1107,7 +1109,7 @@ export default function GlobalAssistant({
       ref={assistantRootRef}
       data-global-assistant="root"
       data-lingshu-assistant-dragged={assistantPosition ? 'true' : 'false'}
-      className={`fixed z-[75] ${launcherDragging ? '' : 'transition-[left,right,top,bottom] duration-300'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
+      className={`fixed ${page === 'digitalEmployees' && mode === 'breathing' ? 'z-[35]' : 'z-[75]'} ${launcherDragging ? '' : 'transition-[left,right,top,bottom] duration-300'} ${assistantPosition ? '' : dockOnLeft ? 'bottom-5 left-4 lg:left-[292px]' : launcherAtEdge ? 'bottom-5 right-0' : 'bottom-5 right-5'}`}
       style={assistantPosition ? { left: assistantPosition.x, top: assistantPosition.y } : undefined}
     >
       {mode === 'expanded' && (

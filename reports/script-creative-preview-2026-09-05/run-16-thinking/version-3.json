@@ -1,0 +1,28 @@
+{
+  "version": 3,
+  "inputCase": {
+    "duration": 30,
+    "videoTheme": {
+      "id": "product_proof",
+      "title": "产品实证",
+      "contentGoal": "reach",
+      "primaryCta": "",
+      "conversionGoal": ""
+    }
+  },
+  "httpStatus": 200,
+  "elapsedMs": 85313,
+  "ok": true,
+  "source": "ai",
+  "script": "[0-5.3s]\n环境：按实物环境\n景别：中景\n运镜：固定\n构图：操作员侧身面对设备，设备在背景中\n镜头功能：引出参数输入痛点\n画面：建议补拍：工厂车间内操作员注视静态LX-Press设备皱眉；后期叠加文字'换产调参数担心输错？'，产品外观以实物为准。；展示 LX-Press 伺服压装检测单元\n配乐：无\n台词：工厂自动化负责人，换产调参数总担心输错吧？\n字幕：工厂自动化负责人，换产调参数总担心输错吧？\n[5.3-11.5s]\n环境：按实物环境\n景别：全景\n运镜：固定\n构图：LX-Press整机居中，正面朝向镜头\n镜头功能：展示配方管理功能\n画面：建议补拍：LX-Press整机静态展示；后期叠加文字'配方管理支持预存多组压装参数'，文字注明后期叠加。\n配乐：无\n台词：LX-Press的配方管理支持预存多组压装参数，\n字幕：LX-Press的配方管理支持预存多组压装参数，\n[11.5-21.5s]\n环境：按实物环境\n景别：特写\n运镜：推\n构图：设备操作区域居中，正面\n镜头功能：呈现kN范围与配方切换\n画面：建议补拍：镜头从整机推近至操作区域；后期叠加文字'1—100 kN可选，切换型号调用预存配方'，产品结构以实物为准。\n配乐：无\n台词：比如在1—100 kN范围内设定不同产品参数。切换型号时直接调用预存配方，不用手动重输。\n字幕：比如在1—100 kN范围内设定不同产品参数。切换型号时直接调用预存配方，不用手动重输。\n[21.5-30s]\n环境：按实物环境\n景别：近景\n运镜：固定\n构图：LX-Press正面主体居中\n镜头功能：强调选择标准CTA\n画面：建议补拍：LX-Press设备正面静态；后期叠加文字'确认灵活配置配方，换产效率取决于操作习惯'，文字注明后期叠加。\n配乐：无\n台词：选设备时，先确认它能否灵活配置配方，这样换产效率就取决于你的操作习惯了。\n字幕：选设备时，先确认它能否灵活配置配方，这样换产效率就取决于你的操作习惯了。",
+  "qualityStatus": "passed",
+  "qualityChecks": {
+    "materialGrounded": true,
+    "timelineGrounded": true,
+    "productGrounded": true,
+    "dialogueFits": true,
+    "structurallyComplete": true
+  },
+  "validationIssues": [],
+  "validationWarnings": []
+}

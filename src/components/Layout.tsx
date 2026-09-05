@@ -4,7 +4,7 @@ import {
   Home, Users, LayoutGrid,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, BookOpen, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send,
+  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send, Target,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
@@ -18,7 +18,7 @@ interface NavSection {
   items: { id: Page; label: string; icon: ReactNode }[];
 }
 
-const HOME_NAV_ITEM = { id: 'strategy' as Page, label: '首页', icon: <Home size={16} /> };
+const HOME_NAV_ITEM = { id: 'digitalEmployees' as Page, label: '经营驾驶舱', icon: <Home size={16} /> };
 
 type ContentNavigationEntry = 'create' | 'works' | 'publish';
 
@@ -27,6 +27,13 @@ const CONTENT_NAV_ITEMS: Array<{ id: ContentNavigationEntry; label: string; icon
   { id: 'works', label: '我的创作', icon: <FolderOpen size={16} /> },
   { id: 'publish', label: '内容发布', icon: <Send size={16} /> },
 ];
+
+const OPERATIONS_NAV: NavSection = {
+  label: '经营管理',
+  items: [
+    { id: 'strategy', label: '经营策略顾问', icon: <Target size={16} /> },
+  ],
+};
 
 const SOCIAL_NAV: NavSection = {
   label: '社媒运营',
@@ -71,13 +78,13 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-const NAV_SECTIONS = [SOCIAL_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  admin: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  social_operator: new Set<Page>(['strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
-  customer_service: new Set<Page>(['strategy', 'conversion', 'orders', 'scheduled']),
+  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'orders', 'scheduled']),
 };
 
 interface LayoutProps {
@@ -392,7 +399,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     <div className="flex h-screen overflow-hidden">
 
       {/* ── Left sidebar ─────────────────────────────── */}
-      <motion.aside
+      {page !== 'agentMonitor' && <motion.aside
         initial={false}
         animate={{ width: sidebarCollapsed ? 64 : 220 }}
         transition={{ type: 'spring', damping: 30, stiffness: 320 }}
@@ -640,7 +647,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             {!sidebarCollapsed && <ChevronRight size={14} className={`text-text-muted transition-transform ${accountMenuOpen ? '-rotate-90' : ''}`} />}
           </div>
         </div>
-      </motion.aside>
+      </motion.aside>}
 
       <AccountSettingsModal open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} onLogout={onLogout} />
 

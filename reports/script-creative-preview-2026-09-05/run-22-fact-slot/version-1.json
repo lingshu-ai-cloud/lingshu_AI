@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "inputCase": {
+    "duration": 20
+  },
+  "httpStatus": 422,
+  "elapsedMs": 5468,
+  "ok": false,
+  "source": "ai_rejected",
+  "script": "",
+  "code": "SCRIPT_DURATION_EXCEEDED",
+  "qualityStatus": "rejected",
+  "error": "口播仍超过目标时长，请增加时长或减少本条要讲的内容",
+  "validationIssues": [
+    "口播缩写后仍不满足目标时长"
+  ],
+  "validationWarnings": []
+}

@@ -16,6 +16,7 @@ import {
   enterpriseAssetTenantKey,
   enterpriseAssetTypeAllowed,
 } from '../storage/enterpriseAssets.js';
+import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
@@ -130,6 +131,11 @@ interface OrderRecord {
 const ORDER_STATUSES: OrderStatus[] = ['待付款', '已付款', '生产中', '已发货', '已完成', '退款'];
 
 export interface EnterpriseProfile {
+  digitalEmployeeOnboarding?: {
+    profileConfirmedAt?: string;
+    productSelectionConfirmedAt?: string;
+    continuedWithoutProducts?: boolean;
+  };
   company: {
     name: string;
     industry: string;
@@ -719,6 +725,12 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     lastSavedAt: text(profile.dataGovernance?.lastSavedAt),
     lastSavedSource: profile.dataGovernance?.lastSavedSource,
   };
+  const onboardingInput = profile.digitalEmployeeOnboarding ?? {};
+  const digitalEmployeeOnboarding = {
+    profileConfirmedAt: text(onboardingInput.profileConfirmedAt),
+    productSelectionConfirmedAt: text(onboardingInput.productSelectionConfirmedAt),
+    continuedWithoutProducts: onboardingInput.continuedWithoutProducts === true,
+  };
   const socialInput: NonNullable<EnterpriseProfile['socialStrategy']> = profile.socialStrategy ?? { enabledRoutes: [], routeStrategies: {} };
   const allowedRoutes = ['oem_odm', 'wholesale_distribution', 'consumer_retail'] as const;
   let enabledRoutes = Array.isArray(socialInput.enabledRoutes)
@@ -752,6 +764,7 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     customerService,
     salesStyleProfile,
     dataGovernance,
+    digitalEmployeeOnboarding,
     socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [] },
   };
 }
@@ -1420,6 +1433,16 @@ function allPackPreviews(profile: EnterpriseProfile) {
 export const enterpriseRouter = Router();
 enterpriseRouter.use(requireAuth);
 
+async function customerServiceRuntimeStatus(tenantId: string, profile: EnterpriseProfile) {
+  const status = customerServiceStatus(profile);
+  const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
+  return {
+    ...status,
+    autoReplyReady: status.autoReplyReady && messagingAuthorization.inboundAutoSendAllowed,
+    messagingAuthorization,
+  };
+}
+
 enterpriseRouter.get('/profile', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.json(await readTenantProfile(tenantId));
@@ -1428,7 +1451,8 @@ enterpriseRouter.get('/profile', async (_req, res) => {
 enterpriseRouter.get('/customer-service/status', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.setHeader('Cache-Control', 'no-store');
-  res.json(customerServiceStatus(await readTenantProfile(tenantId)));
+  const profile = await readTenantProfile(tenantId);
+  res.json(await customerServiceRuntimeStatus(tenantId, profile));
 });
 
 enterpriseRouter.patch('/customer-service/status', async (req, res) => {
@@ -1491,7 +1515,7 @@ enterpriseRouter.patch('/customer-service/status', async (req, res) => {
     }), 'enterprise_center');
     await writeTenantProfile(tenantId, profile, userId);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, status: customerServiceStatus(profile), profile });
+    res.json({ ok: true, status: await customerServiceRuntimeStatus(tenantId, profile), profile });
   } catch (error) {
     console.error('[enterprise] customer service status update failed', error);
     res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '智能客服设置暂时无法保存，请稍后重试。' });

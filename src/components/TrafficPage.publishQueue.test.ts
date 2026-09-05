@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { normalizeStoredPublishDraft, normalizeStoredPublishQueueItem } from './TrafficPage';
+import { normalizeStoredPublishDraft, normalizeStoredPublishQueueItem, publishStorageKey } from './TrafficPage';
+
+assert.equal(publishStorageKey('ow_publish_queue', 'tenant A'), 'ow_publish_queue:tenant%20A');
+assert.notEqual(publishStorageKey('ow_publish_queue', 'tenant-a'), publishStorageKey('ow_publish_queue', 'tenant-b'));
 
 const legacyItem = normalizeStoredPublishQueueItem({ id: 'legacy-item' });
 assert.ok(legacyItem);

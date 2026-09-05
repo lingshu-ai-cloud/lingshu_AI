@@ -8,6 +8,7 @@ import { testDingTalk } from '../integrations/dingtalk.js';
 import { testFeishu } from '../integrations/feishu.js';
 import { getShopInfo, testShopify } from '../integrations/shopify.js';
 import { handleMetaWebhook } from '../whatsapp/historyImport.js';
+import { ingestFollowupDeliveryStatuses } from '../digitalEmployees/followupDispatchWorker.js';
 import { sendTenantWhatsAppText } from '../whatsapp/send.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
@@ -243,7 +244,10 @@ channelsRouter.post('/webhook/whatsapp/:id', (req: Request, res: Response) => {
   const channels = load();
   const idx = channels.findIndex(c => c.id === req.params.id);
   if (idx !== -1) { channels[idx].stats.received++; channels[idx].lastActivity = new Date().toISOString(); save(channels); }
-  void handleMetaWebhook(channel.id, req.body).catch(error => console.error('[whatsapp-channel-webhook]', error));
+  void Promise.all([
+    handleMetaWebhook(channel.id, req.body),
+    ingestFollowupDeliveryStatuses(channel.id, req.body),
+  ]).catch(error => console.error('[whatsapp-channel-webhook]', error));
   res.sendStatus(200);
 });
 

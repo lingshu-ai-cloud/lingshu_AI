@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { decryptSecret, getTenantPlatformApp, verifyMetaSignature } from '../lib/tenantPlatformApps.js';
 import { handleMetaWebhook } from '../whatsapp/historyImport.js';
+import { ingestFollowupDeliveryStatuses } from '../digitalEmployees/followupDispatchWorker.js';
 import { decryptWeComEcho, verifyWeComSignature } from '../integrations/wecom.js';
 
 export const webhookRouter = Router();
@@ -40,7 +41,10 @@ webhookRouter.post('/meta/:tenantId', async (req, res) => {
     return;
   }
 
-  void handleMetaWebhook(tenantId, req.body).catch(error => console.error('[meta-webhook-ingest]', error));
+  void Promise.all([
+    handleMetaWebhook(tenantId, req.body),
+    ingestFollowupDeliveryStatuses(tenantId, req.body),
+  ]).catch(error => console.error('[meta-webhook-ingest]', error));
   console.log('[meta-webhook]', tenantId, JSON.stringify(req.body).slice(0, 500));
   res.json({ ok: true });
 });

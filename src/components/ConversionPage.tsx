@@ -1,3 +1,4 @@
+import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -313,17 +314,22 @@ function translateChineseReplyForCustomer(customer: CustomerProfile, text: strin
 async function translateReplyToCustomerLanguage(customer: CustomerProfile, text: string): Promise<string> {
   const body = text.trim();
   if (!body || !isPredominantlyChineseText(body)) return body;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 6_000);
   try {
     const response = await fetch('/api/overseas/plugins/translate/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ text: body, source: '简体中文', target: replyLanguage(customer) }),
+      signal: controller.signal,
     });
     const data = await response.json().catch(() => ({}));
     const translated = response.ok && typeof data?.translatedText === 'string' ? data.translatedText.trim() : '';
     if (translated && translated !== body) return translated;
   } catch {
     // Keep the composer usable in local preview when the translation provider is unavailable.
+  } finally {
+    window.clearTimeout(timeout);
   }
   return translateChineseReplyForCustomer(customer, body);
 }
@@ -573,7 +579,9 @@ function CompactCustomerList({
               <div className="min-w-0">
                 <p className="truncate text-xs font-bold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  {customer.isMock && <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-black text-cyan-700">模拟</span>}
+                  <span className={`rounded px-1.5 py-0.5 text-[9px] font-black ${customer.isMock ? 'bg-cyan-50 text-cyan-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                    {customer.isMock ? '模拟客户' : '真实客户'}
+                  </span>
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
                 </div>
@@ -866,6 +874,8 @@ function ChatThread({
   knowledgeMiss,
   bridgeOnly,
   onMockBuyerMessage,
+  sending,
+  channelReady,
 }: {
   customer: CustomerProfile | null;
   draftSuggestion: string | null;
@@ -887,6 +897,8 @@ function ChatThread({
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   onMockBuyerMessage: (text: string) => void;
+  sending?: boolean;
+  channelReady?: boolean;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const emojiMenuRef = useRef<HTMLDivElement>(null);
@@ -957,6 +969,9 @@ function ChatThread({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <p className="truncate text-sm font-black text-text-primary">{customer.name}</p>
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${customer.isMock ? 'bg-cyan-50 text-cyan-700' : channelReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+              {customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}
+            </span>
             {customer.simulation?.checkpoint && (
               <span className="max-w-52 truncate rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-black text-cyan-700" title={customer.simulation.checkpoint}>
                 {customer.simulation.checkpoint}
@@ -1046,6 +1061,7 @@ function ChatThread({
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-white p-3">
         <div className="mx-auto max-w-3xl space-y-2">
+          {!customer.isMock && !channelReady && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">WhatsApp 通道尚未连接。可以编辑和保留草稿，连接测试或正式账号后才能真实发送。</div>}
           {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{'\u8ddd\u5ba2\u6237\u4e0a\u6b21\u6d88\u606f\u5df2\u8d85\u8fc724\u5c0f\u65f6\uff0cWhatsApp \u8981\u6c42\u4ee5\u6a21\u677f\u6d88\u606f\u53d1\u9001'}</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
@@ -1099,7 +1115,7 @@ function ChatThread({
                   {previewOpen ? '隐藏译文' : '显示译文'}
                 </button>
               </div>
-               <button type="button" onClick={onSend} disabled={!input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
+               <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
             </div>
           </div>
         </div>
@@ -1644,7 +1660,7 @@ async function sendCustomerOutbox(customer: CustomerProfile, body: string, outsi
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.message || data.error || '发送失败');
-  return data as { status?: 'queued' | 'sent' | 'delivered'; outboxId?: string };
+  return data as { status?: 'queued' | 'sent' | 'delivered'; outboxId?: string; providerMessageIds?: string[] };
 }
 
 export default function ConversionPage({ onLeaveConversation: _onLeaveConversation, isDemo = false, includeMockCustomers = false, mockCustomerScope = 'admin' }: Props) {
@@ -1658,6 +1674,24 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   });
   const { customers, updateCustomer, appendTimelineEvent, updateTimelineEvent, removeTimelineEvent } = useCustomers(0, includeMockCustomers, mockCustomerScope);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const deliveryHandoff = useDeliveryHandoff('conversion');
+  const [deliveryDraft, setDeliveryDraft] = useState<{ body: string; version: number; customerId: string } | null>(null);
+  const [deliveryError, setDeliveryError] = useState('');
+  useEffect(() => {
+    const ref = deliveryHandoff?.businessRef;
+    setDeliveryDraft(null);
+    if (!ref?.batchId || !ref.itemId) return;
+    const abort = new AbortController();
+    void fetch(`/api/overseas/digital-employees/followup-batches/${encodeURIComponent(String(ref.batchId))}`, { headers: authHeader(), signal: abort.signal })
+      .then(async response => { if (!response.ok) throw new Error('无法加载关联草稿'); return response.json(); })
+      .then(data => {
+        const item = data.items?.find((entry: { id: string; customer_id: string }) => entry.id === ref.itemId && entry.customer_id === ref.entityId);
+        if (!item) throw new Error('关联草稿已不可用，请返回看板刷新');
+        setDeliveryDraft({ body: item.draft_body || '', version: item.draft_version || 1, customerId: item.customer_id });
+      }).catch(error => { if (!abort.signal.aborted) setDeliveryError(error.message); });
+    return () => abort.abort();
+  }, [deliveryHandoff]);
+
   const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>('draft');
   const [customerServiceStatus, setCustomerServiceStatus] = useState<CustomerServiceStatus | null>(null);
   const [customerServiceStatusLoadFailed, setCustomerServiceStatusLoadFailed] = useState(false);
@@ -1669,6 +1703,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [learnDialogOpen, setLearnDialogOpen] = useState(false);
   const [input, setInput] = useState('');
   const [translatedInput, setTranslatedInput] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
   const translationRequestRef = useRef(0);
   const [toast, setToast] = useState<string | null>(null);
   const [undoSend, setUndoSend] = useState<null | { customerId: string; eventId: string; restoreText: string; timer: number }>(null);
@@ -1737,6 +1772,17 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     if (!selectedId && filterEmptySelectionRef.current) return;
     setSelectedId(customersInActiveView[0]?.id ?? null);
   }, [customersInActiveView, selectedId]);
+
+  useEffect(() => {
+    const ref = deliveryHandoff?.businessRef;
+    if (!ref?.entityId) return;
+    const customer = customers.find(item => item.id === ref.entityId);
+    if (!customer) { if (customers.length) setDeliveryError('关联客户暂不可访问，请返回交付看板核对。'); return; }
+    setDeliveryError('');
+    setSelectedId(customer.id);
+    setView(customer.stage === 'won' ? 'won' : ['silent30', 'silent60'].includes(customer.stage) ? 'silent' : 'leads');
+  }, [deliveryHandoff, customers]);
+
 
   useEffect(() => {
     customers.forEach(customer => {
@@ -2134,10 +2180,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     });
   };
 
-  const markMessageStatus = (customerId: string, messageId: string, status: TimelineEvent['sendStatus']) => {
-    updateTimelineEvent(customerId, messageId, { sendStatus: status });
-  };
-
   const buildStyleMemoryPayload = (customer: CustomerProfile, finalZh: string, meta?: DraftResult | null): StyleMemoryPayload | null => {
     const original = meta?.originalDraft || meta?.draft || '';
     const trigger = meta?.buyerMessage || latestBuyerText(customer);
@@ -2177,7 +2219,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       audit: meta?.knowledgeMiss ? { knowledgeMiss: true, buyerMessage: meta.buyerMessage, evidence: meta.evidence } : undefined,
     });
     appendTimelineEvent(customer.id, event);
-    persistCustomerPatch(customer.id, { lastActive: '刚刚', hasUnread: false, todoCompletedAt: new Date().toISOString(), pendingDraft: undefined });
     setDraftSuggestion(null);
     setDraftMeta(null);
     setInput('');
@@ -2187,14 +2228,30 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       setUndoSend(current => current?.eventId === event.id ? null : current);
       void sendCustomerOutbox(customer, body, isOutsideWhatsAppWindow(customer), templatePlan, styleMemory)
         .then(async result => {
-          markMessageStatus(customer.id, event.id, result.status || 'sent');
+          updateTimelineEvent(customer.id, event.id, {
+            sendStatus: result.status || 'sent',
+            audit: {
+              ...(event.audit || {}),
+              providerMessageId: result.providerMessageIds?.[0] || result.outboxId,
+            },
+          });
           if (meta?.knowledgeMiss && meta.buyerMessage) {
             await prepareLearnCandidate(meta.buyerMessage, restoreText);
             showToast('已发送，可将这条补进知识库');
           }
+          persistCustomerPatch(customer.id, { lastActive: '刚刚', hasUnread: false, todoCompletedAt: new Date().toISOString(), pendingDraft: undefined });
+          setSendingReply(false);
+          setUndoSend(null);
         })
         .catch(error => {
-          markMessageStatus(customer.id, event.id, 'failed');
+          removeTimelineEvent(customer.id, event.id);
+          persistCustomerPatch(customer.id, { hasUnread: true, todoCompletedAt: undefined, pendingDraft: restoreText });
+          if (selected?.id === customer.id) {
+            setInput(restoreText);
+            setTranslatedInput('');
+          }
+          setSendingReply(false);
+          setUndoSend(null);
           showToast(error instanceof Error ? error.message : '发送失败');
         });
     }, 4000);
@@ -2212,29 +2269,47 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       savePendingDraft(selected, undoSend.restoreText);
     }
     setUndoSend(null);
+    setSendingReply(false);
   };
 
   const sendReply = async () => {
-    if (!selected) return;
-    const templatePlan = isOutsideWhatsAppWindow(selected) ? buildTemplatePlan(selected, templates, input) : null;
-    const body = templatePlan?.rendered || translatedInput.trim() || await translateReplyToCustomerLanguage(selected, input);
-    if (!body) return;
-    if (isOutsideWhatsAppWindow(selected) && templatePlan?.template.status !== 'approved') {
-      showToast('消息模板审核中，暂时不能发送超窗触达。');
-      return;
+    if (!selected || sendingReply) return;
+    setSendingReply(true);
+    try {
+      const templatePlan = isOutsideWhatsAppWindow(selected) ? buildTemplatePlan(selected, templates, input) : null;
+      const body = templatePlan?.rendered || translatedInput.trim() || await translateReplyToCustomerLanguage(selected, input);
+      if (!body) {
+        setSendingReply(false);
+        return;
+      }
+      if (isOutsideWhatsAppWindow(selected) && templatePlan?.template.status !== 'approved') {
+        showToast('消息模板审核中，暂时不能发送超窗触达。');
+        setSendingReply(false);
+        return;
+      }
+      queueSend(selected, body, input, templatePlan, draftMeta?.knowledgeMiss ? draftMeta : null);
+    } catch (error) {
+      setSendingReply(false);
+      showToast(error instanceof Error ? error.message : '发送失败');
     }
-    queueSend(selected, body, input, templatePlan, draftMeta?.knowledgeMiss ? draftMeta : null);
   };
 
   const sendDraftDirectly = async () => {
-    if (!selected || !draftSuggestion) return;
+    if (!selected || !draftSuggestion || sendingReply) return;
+    setSendingReply(true);
     const templatePlan = isOutsideWhatsAppWindow(selected) ? buildTemplatePlan(selected, templates, draftSuggestion) : null;
     if (isOutsideWhatsAppWindow(selected) && templatePlan?.template.status !== 'approved') {
       showToast('消息模板审核中，暂时不能发送超窗触达。');
+      setSendingReply(false);
       return;
     }
-    const body = templatePlan?.rendered || await translateReplyToCustomerLanguage(selected, draftSuggestion);
-    queueSend(selected, body, draftSuggestion, templatePlan, draftMeta);
+    try {
+      const body = templatePlan?.rendered || await translateReplyToCustomerLanguage(selected, draftSuggestion);
+      queueSend(selected, body, draftSuggestion, templatePlan, draftMeta);
+    } catch (error) {
+      setSendingReply(false);
+      showToast(error instanceof Error ? error.message : '发送失败');
+    }
   };
 
   const generateManualDraft = async (instruction: string, intent: DraftIntent = 'reply') => {
@@ -2378,6 +2453,14 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
 
   return (
+    <>
+    {deliveryHandoff && <section className="mx-4 mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-blue-800">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: { page: "digitalEmployees" } }))} className="text-xs font-bold text-blue-700">返回交付看板</button></div>
+      {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
+        <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
+        <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
+      </> : <p className="mt-2 text-xs text-slate-500">正在定位关联客户与草稿…</p>}
+    </section>}
     <div className="flex h-full min-w-0 flex-col bg-white" data-lingshu-guide="customer-workbench">
       <div data-testid="conversation-workspace-main" className="flex min-h-0 flex-1">
         <CompactCustomerList
@@ -2413,6 +2496,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           knowledgeMiss={Boolean(draftMeta?.knowledgeMiss)}
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
           onMockBuyerMessage={pushMockBuyerMessage}
+          sending={sendingReply}
+          channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
         />
         <CustomerInfoRail
           customer={selected}
@@ -2504,5 +2589,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         </div>
       )}
     </div>
+    </>
   );
 }

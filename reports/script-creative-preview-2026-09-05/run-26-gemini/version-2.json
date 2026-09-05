@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "inputCase": {
+    "duration": 30
+  },
+  "httpStatus": 502,
+  "elapsedMs": 702,
+  "ok": false,
+  "source": "ai_failed",
+  "script": "",
+  "qualityStatus": "failed",
+  "error": "上游模型额度不足，未生成脚本。请更换模型 Key 或稍后重试。",
+  "validationIssues": [
+    "上游模型额度不足，未生成脚本。请更换模型 Key 或稍后重试。"
+  ]
+}

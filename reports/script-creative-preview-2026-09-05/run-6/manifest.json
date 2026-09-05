@@ -1,0 +1,69 @@
+{
+  "generatedAt": "2026-09-04T21:58:46.669Z",
+  "source": "real_studio_route_qwen",
+  "inputHash": "295ded82a681d142f199403acd631e7d62cacee6d329fed41653bcb40923d0b1",
+  "modelCalls": 6,
+  "versions": [
+    {
+      "version": 1,
+      "httpStatus": 200,
+      "elapsedMs": 17067,
+      "ok": true,
+      "source": "ai",
+      "qualityStatus": "warning",
+      "qualityChecks": {
+        "materialGrounded": true,
+        "timelineGrounded": true,
+        "productGrounded": true,
+        "dialogueFits": true,
+        "structurallyComplete": true
+      },
+      "validationIssues": [],
+      "validationWarnings": [
+        "首段没有先给目标买家的具体决策问题或判断反差，仍像产品自我介绍",
+        "首段没有使用本条企业策略配置的目标买家"
+      ]
+    },
+    {
+      "version": 2,
+      "httpStatus": 200,
+      "elapsedMs": 17149,
+      "ok": true,
+      "source": "ai",
+      "qualityStatus": "warning",
+      "qualityChecks": {
+        "materialGrounded": true,
+        "timelineGrounded": true,
+        "productGrounded": true,
+        "dialogueFits": true,
+        "structurallyComplete": true
+      },
+      "validationIssues": [],
+      "validationWarnings": [
+        "首段没有先给目标买家的具体决策问题或判断反差，仍像产品自我介绍",
+        "首段没有执行“产品实证”主题的钩子公式",
+        "首段没有使用本条企业策略配置的目标买家"
+      ]
+    },
+    {
+      "version": 3,
+      "httpStatus": 200,
+      "elapsedMs": 15868,
+      "ok": true,
+      "source": "ai",
+      "qualityStatus": "warning",
+      "qualityChecks": {
+        "materialGrounded": true,
+        "timelineGrounded": true,
+        "productGrounded": true,
+        "dialogueFits": true,
+        "structurallyComplete": true
+      },
+      "validationIssues": [],
+      "validationWarnings": [
+        "首段没有执行“产品实证”主题的钩子公式",
+        "首段没有使用本条企业策略配置的目标买家"
+      ]
+    }
+  ]
+}
