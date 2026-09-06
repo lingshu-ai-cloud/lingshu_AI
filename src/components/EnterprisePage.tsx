@@ -1726,16 +1726,18 @@ export default function EnterprisePage() {
       <p className="mb-4 text-[11px] leading-relaxed text-text-muted">大单、客户要通话时，提醒发给谁</p>
       <div className="space-y-3">
         {(profile.notifications?.receivers ?? []).map((receiver, index) => (
-          <div key={index} className="grid grid-cols-[1fr_130px_1.3fr_auto_auto] gap-2 rounded-lg border border-border bg-white p-3">
+          <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border border-border bg-white p-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_130px_minmax(0,1.3fr)_auto_auto]">
             <input className={inputCls} value={receiver.name} onChange={e => updateReceiver(index, { name: e.target.value })} placeholder="接收人姓名" />
             <select className={inputCls} value={receiver.channel} onChange={e => updateReceiver(index, { channel: e.target.value as NotificationChannel })}>
               {CHANNEL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
-            <input className={inputCls} value={receiver.target} onChange={e => updateReceiver(index, { target: e.target.value })} placeholder="Webhook / 手机号 / 账号" />
-            <button type="button" onClick={() => void testReceiver(receiver, index)} disabled={notificationTesting === String(index)} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-60">
-              {notificationTesting === String(index) ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}测试
-            </button>
-            <button type="button" onClick={() => removeReceiver(index)} aria-label={`删除接收人 ${receiver.name || index + 1}`} title="删除接收人" className="rounded-lg border border-border bg-white px-2 text-text-muted hover:text-red"><X size={13} /></button>
+            <input className={`${inputCls} sm:col-span-2 xl:col-span-1`} value={receiver.target} onChange={e => updateReceiver(index, { target: e.target.value })} placeholder="Webhook / 手机号 / 账号" />
+            <div className="grid grid-cols-[1fr_auto] gap-2 sm:col-span-2 xl:contents">
+              <button type="button" onClick={() => void testReceiver(receiver, index)} disabled={notificationTesting === String(index)} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-60">
+                {notificationTesting === String(index) ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}测试
+              </button>
+              <button type="button" onClick={() => removeReceiver(index)} aria-label={`删除接收人 ${receiver.name || index + 1}`} title="删除接收人" className="flex min-h-10 items-center justify-center rounded-lg border border-border bg-white px-3 text-text-muted hover:text-red"><X size={13} /></button>
+            </div>
           </div>
         ))}
         <button type="button" onClick={addReceiver} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
@@ -1743,19 +1745,21 @@ export default function EnterprisePage() {
         </button>
         {notificationMessage && <p className={`text-xs font-bold ${notificationMessageError ? 'text-red-600' : 'text-emerald-700'}`}>{notificationMessage}</p>}
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-4">
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Field label="工作开始时间">
           <input className={inputCls} type="time" value={profile.notifications?.workHours.start ?? '09:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), start: e.target.value } } }))} />
         </Field>
         <Field label="工作结束时间">
           <input className={inputCls} type="time" value={profile.notifications?.workHours.end ?? '22:00'} onChange={e => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), workHours: { ...(prev.notifications?.workHours ?? DEFAULT.notifications!.workHours), end: e.target.value } } }))} />
         </Field>
+        <div className="sm:col-span-2 xl:col-span-1">
         <Field label="非工作时段">
           <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-white px-3">
             <Toggle checked={profile.notifications?.quietOutsideHours ?? true} onChange={checked => setProfile(prev => ({ ...prev, notifications: { ...(prev.notifications ?? DEFAULT.notifications!), quietOutsideHours: checked } }))} />
             <span className="text-xs text-text-secondary">仅记录不即时推送</span>
           </div>
         </Field>
+        </div>
       </div>
       <div data-lingshu-guide="enterprise-night-mode" className="mt-4 flex items-start justify-between gap-4 border-t border-border pt-4">
         <p className="text-xs font-black text-text-primary">非工作时间继续接待</p>
@@ -1777,31 +1781,30 @@ export default function EnterprisePage() {
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-white px-5">
+      <header className="flex min-h-[68px] shrink-0 items-center justify-between border-b border-border bg-white px-5 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+          <span className="flex h-6 w-6 items-center justify-center text-accent">
             <Building2 size={13} />
           </span>
-          <span className="text-sm font-semibold text-text-primary">企业中心</span>
+          <div><h1 className="text-lg font-semibold text-text-primary">企业中心</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">统一维护企业事实、社媒策略与客户服务边界</p></div>
         </div>
         <div className="flex items-center gap-2">
           {saveError && <span className="max-w-72 truncate text-[11px] font-bold text-red-600" title={saveError}>{saveError}</span>}
           <motion.button
-            whileTap={{ scale: 0.96 }}
             onClick={handleSave}
             disabled={saving || !hasUnsavedChanges}
             title={saveError || (hasUnsavedChanges ? '保存后，灵小枢、客服和社媒创作会使用这些资料' : '资料已保存在企业空间，并授权给 AI 使用')}
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-all disabled:opacity-60"
-            style={{ background: saveError ? '#dc2626' : !hasUnsavedChanges ? '#16a34a' : '#0f172a' }}
+            style={{ background: saveError ? '#b74d43' : 'var(--color-accent)' }}
           >
             {saving ? <Loader2 size={12} className="animate-spin" /> : saveError ? <X size={12} /> : !hasUnsavedChanges ? <CheckCircle2 size={12} /> : <Save size={12} />}
             {saving ? '保存中' : saveError ? '保存失败' : !hasUnsavedChanges ? '已保存' : '保存'}
           </motion.button>
         </div>
-      </div>
+      </header>
 
-      <div className="shrink-0 border-b border-border bg-surface px-6 py-3">
-        <div className="grid w-full grid-cols-3 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
+      <div className="shrink-0 bg-white px-4 sm:px-6">
+        <div className="flex w-full gap-7 overflow-x-auto border-b border-border">
           {([
             { id: 'facts' as EnterpriseArea, label: '企业真实资料', icon: Building2, initialView: 'company' as KnowledgeView },
             { id: 'social' as EnterpriseArea, label: '社媒策略', icon: Megaphone, initialView: 'socialStrategy' as KnowledgeView },
@@ -1818,7 +1821,7 @@ export default function EnterprisePage() {
                   setKnowledgeView(item.initialView);
                   if (item.id === 'service') openKnowledgeIntakeOnce();
                 }}
-                className={`flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-black transition-all ${active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60 hover:text-text-secondary'}`}
+                className={`flex h-12 shrink-0 items-center justify-center gap-2 border-b-2 px-1 text-sm font-semibold transition-colors ${active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
               >
                 <Icon size={18} className={active ? 'text-accent' : 'text-text-muted'} />
                 <span className="min-w-0 truncate">{item.label}</span>
@@ -1832,7 +1835,7 @@ export default function EnterprisePage() {
         <div className="mx-auto max-w-5xl space-y-5 px-6 py-5">
           {enterpriseArea !== 'social' && (
             <div className="overflow-x-auto pb-0.5">
-              <div className={`grid gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm ${enterpriseArea === 'facts' ? 'min-w-[360px] grid-cols-2' : 'min-w-[680px] grid-cols-4'}`}>
+              <div className={`flex gap-6 border-b border-border ${enterpriseArea === 'facts' ? 'min-w-[360px]' : 'min-w-[680px]'}`}>
                 {(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
                   const active = knowledgeView === item.id;
                   const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
@@ -1842,7 +1845,7 @@ export default function EnterprisePage() {
                       type="button"
                       onClick={() => setKnowledgeView(item.id)}
                       title={`${item.label} · ${item.hint}`}
-                      className={`flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-black transition-all ${active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60 hover:text-text-secondary'}`}
+                      className={`flex h-11 flex-1 items-center justify-center gap-2 border-b-2 px-2 text-sm font-semibold transition-colors ${active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
                     >
                       <Icon size={16} className={active ? (enterpriseArea === 'facts' ? 'text-emerald-600' : 'text-sky-600') : 'text-text-muted'} />
                       <span className="min-w-0 truncate">{item.label}</span>

@@ -47,6 +47,6 @@ function Player({ src, poster, className }: Props) {
         if (position.playing) void element.play().catch(() => { playing.current = false; });
       }}
     />
-    {failed && <p role="status" className="text-xs text-red-600">视频暂时无法播放，请刷新重试或下载 MP4 查看。</p>}
+    {failed && <p role="status" className="mt-2 border-l-2 border-red bg-surface-2 px-3 py-2 text-xs text-red">视频暂时无法播放，请刷新重试或下载 MP4 查看。</p>}
   </>;
 }

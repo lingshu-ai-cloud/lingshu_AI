@@ -117,7 +117,6 @@ const defaultActionItems = [
   },
 ];
 
-const titleLevel2 = 'text-base font-bold';
 const sectionTitle = 'flex items-center gap-2 text-base font-bold text-text-primary';
 const sectionIcon = 'flex h-6 w-6 items-center justify-center rounded-lg bg-green-50 text-green-700';
 const bodyTitle = 'text-sm font-bold text-text-primary';
@@ -344,36 +343,36 @@ export default function StrategyDataBoard({
   };
 
   return (
-    <div className="h-full flex flex-col" data-lingshu-guide="strategy-dashboard">
-      <div className="px-6 pt-3 pb-3 border-b border-border flex-shrink-0">
-        <div className="grid w-full grid-cols-3 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
+    <div className="home-dashboard h-full flex flex-col" data-lingshu-guide="strategy-dashboard">
+      <div className="flex-shrink-0 px-4 pt-1 sm:px-6">
+        <div className="home-tabs flex max-w-full items-center gap-6 border-b">
           {TABS.map(x => (
             <button key={x.id} onClick={() => setTab(x.id)}
-              className={`flex h-10 items-center justify-center gap-2 rounded-xl ${titleLevel2} transition-all ${
+              className={`flex h-12 min-w-[64px] items-center justify-center gap-2 border-b-2 px-1 text-sm font-semibold transition-colors ${
                 tab === x.id
-                  ? 'bg-white text-green-700 shadow-md ring-1 ring-green-100'
-                  : 'text-text-muted hover:bg-white/70 hover:text-text-primary'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
               }`}>
-              <x.icon size={18} /> {x.label}
+              {x.label}
             </button>
           ))}
         </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="px-6 py-4">
-          <section className="rounded-2xl border border-border bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="px-4 py-5 sm:px-6">
+          <section className="home-board home-overview-panel mx-auto max-w-[1440px]">
+            <div className="mb-3 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div>
-                <h2 className="text-base font-black text-text-primary">当前获客经营总览</h2>
-                <button type="button" onClick={() => { saveBusinessPageContext('production', tab); onNavigate?.('digitalEmployees'); }} className="mt-2 text-xs font-semibold text-emerald-700">{tab === 'traffic' ? '查看内容生产与发布' : '查看客户跟进执行'} →</button>
+                <h2 className="text-lg font-semibold tracking-[-.025em] text-text-primary">当前获客经营总览</h2>
+                <button type="button" onClick={() => { saveBusinessPageContext('production', tab); onNavigate?.('digitalEmployees'); }} className="mt-2 inline-flex items-center border-b border-accent/30 pb-0.5 text-xs font-semibold text-accent transition-colors hover:border-accent hover:text-accent-dim">{tab === 'traffic' ? '查看内容生产与发布' : '查看客户跟进执行'} →</button>
                 <p className="mt-1 text-[11px] text-text-muted">从内容曝光到成交推进，先看趋势，再看渠道和待办。</p>
               </div>
-              <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往社媒运营 · 账号管理">
+              <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-md border border-[#bdd8c7] bg-[#eff7f1] px-3 py-2 text-[11px] font-semibold text-accent transition hover:border-[#9fc8af] hover:bg-[#e6f2e9]" title="前往社媒运营 · 账号管理">
                 已接入账号 {exposure.accountCount} · 查看动态 →
               </button>
             </div>
-            <div className="grid gap-2.5 md:grid-cols-4">
+            <div className="metric-strip">
               {chainMetrics.map(item => {
                 const active = selectedMetrics.has(item.id);
                 return (
@@ -382,11 +381,8 @@ export default function StrategyDataBoard({
                   key={item.label}
                   onClick={() => openMetric(item.id)}
                   title={item.id === 'exposure' ? '前往我的社媒 · 账号动态' : '前往我的客户查看明细'}
-                  className={`rounded-xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-200 ${
-                    active
-                      ? 'border-green-200 bg-green-50 shadow-sm ring-1 ring-green-100'
-                      : 'border-border bg-surface'
-                  }`}
+                  data-active={active}
+                  className="home-metric p-4 text-left transition-colors hover:bg-[#f7faf7] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/20"
                 >
                   <div className="flex items-center gap-2">
                     {item.icon}
@@ -402,31 +398,31 @@ export default function StrategyDataBoard({
               })}
             </div>
 
-            <div className="mt-3 grid gap-3 xl:grid-cols-[1.45fr_1fr]">
-              <section className="rounded-2xl border border-border bg-white p-4">
+            <div className="analysis-grid mt-6 grid border-b border-border xl:grid-cols-[1.45fr_1fr] xl:divide-x xl:divide-border">
+              <section className="pb-6 xl:pr-6">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div><p className={bodyTitle}>获客趋势</p><p className="mt-1 text-[10px] text-text-muted">曝光持续增长时，询盘是否同步增长</p></div>
-                  <span className="rounded-lg bg-green-50 px-2 py-1 text-[10px] font-bold text-green-700">询盘效率 {exposure.ready && exposure.value > 0 ? `${(effectiveInquiries.length / exposure.value * 10000).toFixed(2)} / 万曝光` : '暂无真实数据'}</span>
+                  <span className="text-[11px] font-semibold text-green-700">询盘效率 {exposure.ready && exposure.value > 0 ? `${(effectiveInquiries.length / exposure.value * 10000).toFixed(2)} / 万曝光` : '暂无真实数据'}</span>
                 </div>
                 {exposure.source === 'workspace' ? (
                   <div className="h-[220px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={acquisitionTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <defs><linearGradient id="homeExposureFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22c55e" stopOpacity={0.28}/><stop offset="100%" stopColor="#22c55e" stopOpacity={0.03}/></linearGradient></defs>
+                        <defs><linearGradient id="homeExposureFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#169b62" stopOpacity={0.22}/><stop offset="100%" stopColor="#169b62" stopOpacity={0.02}/></linearGradient></defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false}/>
                         <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}/>
                         <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={value => `${Math.round(Number(value) / 1000)}k`}/>
                         <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE}/>
-                        <Area type="monotone" dataKey="exposure" name="内容曝光" stroke="#16a34a" strokeWidth={2.5} fill="url(#homeExposureFill)"/>
+                        <Area type="monotone" dataKey="exposure" name="内容曝光" stroke="#169b62" strokeWidth={2.5} fill="url(#homeExposureFill)"/>
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 ) : (
-                  <div className="flex h-[220px] items-center justify-center rounded-xl bg-surface-2 px-6 text-center text-xs text-text-muted">当前接口仅返回累计曝光，没有按日历史序列。接入平台 insights 时间序列后，这里将展示趋势。</div>
+                  <div className="flex h-[220px] items-center justify-center border border-dashed border-border bg-surface-2/60 px-6 text-center text-xs text-text-muted">当前接口仅返回累计曝光，没有按日历史序列。接入平台 insights 时间序列后，这里将展示趋势。</div>
                 )}
               </section>
 
-              <section className="rounded-2xl border border-border bg-white p-4">
+              <section className="border-t border-border pb-6 pt-6 xl:border-t-0 xl:pl-6 xl:pt-0">
                 <div className="mb-3"><p className={bodyTitle}>渠道询盘贡献</p><p className="mt-1 text-[10px] text-text-muted">对比询盘量与已转化数量，避免只看流量</p></div>
                 <div className="h-[220px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -435,23 +431,23 @@ export default function StrategyDataBoard({
                       <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}/>
                       <YAxis type="category" dataKey="channel" width={62} tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false}/>
                       <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE}/>
-                      <Bar dataKey="inquiries" name="询盘" fill="#86efac" radius={[0, 5, 5, 0]} barSize={12}/>
-                      <Bar dataKey="converted" name="已转化" fill="#15803d" radius={[0, 5, 5, 0]} barSize={12}/>
+                      <Bar dataKey="inquiries" name="询盘" fill="#9bc8ad" radius={[0, 3, 3, 0]} barSize={12}/>
+                      <Bar dataKey="converted" name="已转化" fill="#177a51" radius={[0, 3, 3, 0]} barSize={12}/>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </section>
             </div>
 
-            <section className="mt-3 rounded-2xl border border-border bg-surface-2 p-4">
+            <section className="border-b border-border py-5">
               <div className="flex items-center gap-2"><span className={sectionIcon}><CircleDollarSign size={14}/></span><p className={bodyTitle}>获客转化漏斗</p><span className="ml-auto text-[10px] text-text-muted">当前累计快照</span></div>
-              <div className="mt-3 grid grid-cols-4 gap-2">
-                {funnelData.map(([label,value,rate],index)=><div key={label} className="relative rounded-xl border border-border bg-white p-3"><p className="text-[10px] font-semibold text-text-muted">{label}</p><p className="mt-1 text-xl font-black text-text-primary">{value}</p><p className="mt-1 text-[9px] font-bold text-green-700">{rate}</p>{index<3&&<ArrowRight size={13} className="absolute -right-2.5 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white text-text-muted"/>}</div>)}
+              <div className="funnel-strip mt-3">
+                {funnelData.map(([label,value,rate])=><div key={label} className="funnel-step p-3"><p className="text-[10px] font-semibold text-text-muted">{label}</p><p className="mt-1 text-xl font-semibold text-text-primary">{value}</p><p className="mt-1 text-[9px] font-bold text-green-700">{rate}</p></div>)}
               </div>
             </section>
 
             <div className="mt-3 grid gap-3">
-              <section className="rounded-2xl border border-border bg-white p-4">
+              <section className="home-insight-panel p-4 sm:px-5">
                 <div className="flex items-center justify-between gap-3">
                   <div className={sectionTitle}>
                     <span className={sectionIcon}><ListChecks size={14} /></span>
@@ -467,7 +463,7 @@ export default function StrategyDataBoard({
                     {advisorLoading ? '分析中' : '刷新分析'}
                   </button>
                 </div>
-                <div className="mt-3 space-y-2.5">
+                <div className="mt-3 border-t border-[#eadfd5]">
                   {advisorLoading && !actionItems.length && (
                     <div className="flex h-24 items-center justify-center rounded-xl border border-dashed border-border bg-surface text-xs text-text-muted">
                       <Loader2 size={14} className="mr-2 animate-spin" />正在结合经营数据与外部趋势生成建议
@@ -489,13 +485,13 @@ export default function StrategyDataBoard({
                             toggleAdvisorDetails(item.id);
                           }
                         }}
-                        className="group flex w-full cursor-pointer items-start gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-green-200 hover:bg-green-50/60 focus:outline-none focus:ring-2 focus:ring-green-200"
+                        className="group flex w-full cursor-pointer items-start gap-3 border-b border-[#eadfd5] bg-transparent px-1 py-3 text-left transition-colors hover:bg-white/65 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[#f3b37a]/25"
                       >
                         <span className="min-w-0 flex-1">
                           <span className="flex flex-wrap items-center gap-2">
                             <ChevronDown size={13} className={`shrink-0 text-text-muted transition-transform ${expanded ? 'rotate-180' : ''}`} />
                             <span className={actionTitleText}>{item.title}</span>
-                            <span className="rounded-md border border-green-200 bg-green-50 px-1.5 py-0.5 text-[9px] font-bold text-green-700">置信度 {item.confidence}</span>
+                            <span className="border-l border-[#a9cdb6] pl-2 text-[9px] font-bold text-green-700">置信度 {item.confidence}</span>
                           </span>
                           <span className={`mt-1 block ${bodyText}`}>{item.desc}</span>
                           <span className={`grid transition-all duration-200 ${expanded ? 'mt-1.5 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
@@ -515,7 +511,7 @@ export default function StrategyDataBoard({
                             executeAdvisorAction(item);
                           }}
                           onKeyDown={event => event.stopPropagation()}
-                          className="group/nav mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white hover:text-green-700 focus:outline-none focus:ring-2 focus:ring-green-200"
+                          className="group/nav mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center text-text-muted transition-colors hover:text-green-700 focus:outline-none focus:ring-2 focus:ring-green-200"
                         >
                           <ArrowRight size={14} className="transition-transform duration-150 group-hover/nav:scale-125" />
                         </button>
@@ -524,9 +520,9 @@ export default function StrategyDataBoard({
                   })}
                 </div>
                 {advisor?.marketContext.summary && (
-                  <div className="mt-3 rounded-xl border border-sky-100 bg-sky-50/60 px-3.5 py-3">
-                    <p className="text-[11px] font-black text-sky-900">外部市场信号</p>
-                    <p className="mt-1 whitespace-pre-line text-[11px] leading-5 text-sky-900/80">{advisor.marketContext.summary}</p>
+                  <div className="mt-3 border-t border-[#e7cfba] px-1 pt-3">
+                    <p className="text-[11px] font-black text-[#7f4b2e]">外部市场信号</p>
+                    <p className="mt-1 whitespace-pre-line text-[11px] leading-5 text-[#805c47]">{advisor.marketContext.summary}</p>
                     {!!advisor.marketContext.sources.length && (
                       <div className="mt-2 flex flex-wrap gap-2">
                         {advisor.marketContext.sources.map(source => (

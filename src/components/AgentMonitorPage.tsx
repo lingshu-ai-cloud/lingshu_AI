@@ -32,6 +32,7 @@ import {
 
 import AgentBrowserViewport from "./AgentBrowserViewport";
 import { groupMonitorEvents, mergeMonitorEvents } from "../lib/agentMonitor";
+import { useModalFocus } from "../hooks/useModalFocus";
 
 type MonitorFilter = "all" | "content" | "customer";
 type MonitorStatusFilter = "all" | "active" | "attention";
@@ -98,28 +99,31 @@ function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = 
   const active = ["running", "planning"].includes(task.status);
 
   return (
-    <article className="group overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl shadow-black/30">
-      <header className="flex items-center justify-between gap-3 border-b border-slate-800 bg-slate-900/90 px-3 py-2.5">
+    <article className="group overflow-hidden rounded-lg border border-border bg-surface">
+      <header className="flex items-center justify-between gap-3 border-b border-border bg-surface-2/60 px-3 py-2.5">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${active ? "animate-pulse bg-emerald-400" : task.status === "failed" ? "bg-red-400" : "bg-slate-600"}`} />
-            <p className="truncate text-[11px] font-black text-white">{task.title}</p>
+            <span className={`h-2 w-2 shrink-0 rounded-full ${active ? "bg-accent" : task.status === "failed" ? "bg-red" : "bg-border-bright"}`} />
+            <p className="truncate text-xs font-bold text-text-primary">{task.title}</p>
           </div>
-          <p className="mt-0.5 truncate text-[9px] text-slate-500">{group === "customer" ? "客服 Agent" : "内容 Agent"} · {statusLabel[task.status] || task.status}</p>
+          <p className="mt-0.5 truncate text-[10px] text-text-muted">{group === "customer" ? "客服 Agent" : "内容 Agent"} · {statusLabel[task.status] || task.status}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">{onFocus && <button type="button" onClick={onFocus} className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:border-emerald-500 hover:text-white" aria-label={`放大查看${task.title}`}><Maximize2 size={11}/></button>}<button type="button" disabled={opening} onClick={() => void openWorkPage()} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] font-bold text-slate-200 transition hover:border-emerald-500 hover:text-white">工作页 <ExternalLink size={10} /></button></div>
+        <div className="flex shrink-0 items-center gap-1">
+          {onFocus && <button type="button" onClick={onFocus} className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition hover:border-accent/40 hover:text-accent" aria-label={`放大查看${task.title}`}><Maximize2 size={11}/></button>}
+          <button type="button" disabled={opening} onClick={() => void openWorkPage()} className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1.5 text-[10px] font-bold text-text-secondary transition hover:border-accent/40 hover:text-accent disabled:cursor-wait disabled:opacity-50">工作页 <ExternalLink size={10} /></button>
+        </div>
       </header>
 
-      {openError && <p role="alert" className="p-3 text-xs text-red-300">{openError}</p>}
+      {openError && <p role="alert" className="border-t border-red/15 bg-red/5 p-3 text-xs text-red">{openError}</p>}
       <AgentBrowserViewport enabled={liveEnabled} runId={runId || task.run_id} taskId={task.id} taskStatus={task.status} />
 
-      {task.status === 'waiting_external' && routingCheck?.count && <p className="mb-2 text-xs text-amber-300">等待条件：{routingCheck.reason} · 已检查 {routingCheck.count} 次</p>}
-      <details className="border-t border-slate-800 px-3 py-2">
-        <summary className="cursor-pointer text-[10px] font-bold text-slate-500">执行记录 · {events.length} 条</summary>
-        <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">{events.length ? groupMonitorEvents(events).reverse().slice(0, 5).map(event => <div key={event.id} className="flex items-start gap-3 text-[10px] leading-5"><time className="shrink-0 text-slate-600">{new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</time><p className={event.level === "error" ? "text-red-300" : "text-slate-300"}>{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-slate-400">（连续 {event.repeatCount} 次）</span>}</p></div>) : <p className="text-[11px] text-slate-500">尚无执行事件</p>}</div>
+      {task.status === 'waiting_external' && routingCheck?.count && <p className="border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs text-amber">等待条件：{routingCheck.reason} · 已检查 {routingCheck.count} 次</p>}
+      <details className="border-t border-border px-3 py-2">
+        <summary className="cursor-pointer text-[10px] font-bold text-text-muted">执行记录 · {events.length} 条</summary>
+        <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">{events.length ? groupMonitorEvents(events).reverse().slice(0, 5).map(event => <div key={event.id} className="flex items-start gap-3 text-[10px] leading-5"><time className="shrink-0 text-text-muted">{new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</time><p className={event.level === "error" ? "text-red" : "text-text-secondary"}>{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-text-muted">（连续 {event.repeatCount} 次）</span>}</p></div>) : <p className="text-[11px] text-text-muted">尚无执行事件</p>}</div>
       </details>
 
-      <footer className="flex items-center justify-between gap-3 px-3 py-2.5 text-[9px] text-slate-500">
+      <footer className="flex items-center justify-between gap-3 border-t border-border/70 px-3 py-2.5 text-[10px] text-text-muted">
         <span className="truncate">{latestEvent?.summary || "等待任务事件"}</span>
         <span className="shrink-0">{relativeSignalTime(latestEvent?.occurred_at)}</span>
       </footer>
@@ -129,12 +133,17 @@ function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = 
 
 function FocusedMonitor({ task, events, planTasks, runId, onClose }: { task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onClose: () => void }) {
   const actions = events.map(agentUiActionFromEvent).filter(Boolean);
-  return <div className="fixed inset-0 z-[100] bg-black/90 p-3 backdrop-blur-sm lg:p-6" role="dialog" aria-modal="true" aria-label={`${task.title}放大监控`}>
-    <div className="mx-auto flex h-full max-w-[1800px] flex-col overflow-hidden rounded-3xl border border-slate-700 bg-slate-950 shadow-2xl">
-      <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-400">Focused live session</p><h2 className="mt-1 text-sm font-black text-white">{task.title}</h2></div><button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label="关闭放大监控"><X size={15}/></button></header>
-      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open: true,
+    onClose,
+    closeOnEscape: () => !document.fullscreenElement,
+  });
+  return <div ref={dialogRef} tabIndex={-1} className="fixed inset-0 z-[100] bg-slate-950/75 p-3 backdrop-blur-sm lg:p-6" role="dialog" aria-modal="true" aria-labelledby="focused-monitor-dialog-title">
+    <div className="mx-auto flex h-full max-w-[1800px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
+      <header className="flex items-center justify-between border-b border-border px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-accent">Focused live session</p><h2 id="focused-monitor-dialog-title" className="mt-1 text-sm font-bold text-text-primary">{task.title}</h2></div><button type="button" data-modal-initial-focus onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition hover:bg-surface-2 hover:text-text-primary" aria-label="关闭放大监控"><X size={15}/></button></header>
+      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto bg-surface-2/40 p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="self-start"><MonitorWindow task={task} events={events} planTasks={planTasks} runId={runId}/></div>
-        <aside className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"><div className="flex items-center justify-between"><h3 className="text-xs font-black text-white">实时操作轨迹</h3><span className="text-[9px] text-slate-500">{actions.length} 条 UI 操作</span></div><div className="mt-3 space-y-2">{events.length ? groupMonitorEvents(events).reverse().slice(0,20).map((event) => { const action = agentUiActionFromEvent(event); return <div key={event.id} className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5"><div className="flex items-start gap-2">{action ? <MousePointer2 size={12} className="mt-0.5 shrink-0 text-emerald-400"/> : <Clock3 size={12} className="mt-0.5 shrink-0 text-slate-600"/>}<div className="min-w-0"><p className="text-[10px] font-bold leading-4 text-slate-200">{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-slate-400">（连续 {event.repeatCount} 次）</span>}</p><p className="mt-1 text-[8px] text-slate-600">{action?.kind || event.type} · {new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</p></div></div></div>; }) : <p className="rounded-xl border border-dashed border-slate-800 px-3 py-10 text-center text-[10px] text-slate-600">尚无真实事件</p>}</div></aside>
+        <aside className="rounded-lg border border-border bg-surface p-4"><div className="flex items-center justify-between"><h3 className="text-xs font-bold text-text-primary">实时操作轨迹</h3><span className="text-[10px] text-text-muted">{actions.length} 条 UI 操作</span></div><div className="mt-3 divide-y divide-border border-y border-border">{events.length ? groupMonitorEvents(events).reverse().slice(0,20).map((event) => { const action = agentUiActionFromEvent(event); return <div key={event.id} className="px-1 py-2.5"><div className="flex items-start gap-2">{action ? <MousePointer2 size={12} className="mt-0.5 shrink-0 text-accent"/> : <Clock3 size={12} className="mt-0.5 shrink-0 text-text-muted"/>}<div className="min-w-0"><p className="text-[11px] font-bold leading-4 text-text-secondary">{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-text-muted">（连续 {event.repeatCount} 次）</span>}</p><p className="mt-1 text-[9px] text-text-muted">{action?.kind || event.type} · {new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</p></div></div></div>; }) : <p className="border-dashed px-3 py-10 text-center text-[10px] text-text-muted">尚无真实事件</p>}</div></aside>
       </div>
     </div>
   </div>;
@@ -238,14 +247,6 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
     document.addEventListener("fullscreenchange", update);
     return () => document.removeEventListener("fullscreenchange", update);
   }, []);
-  useEffect(() => {
-    const closeFocusedMonitor = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && focusedTaskId && !document.fullscreenElement) closeFocus();
-    };
-    window.addEventListener("keydown", closeFocusedMonitor);
-    return () => window.removeEventListener("keydown", closeFocusedMonitor);
-  }, [focusedTaskId]);
-
   const toggleFullscreen = async () => {
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
@@ -279,41 +280,41 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
   const attentionTasks = (data?.tasks || []).filter((task) => taskMonitorGroup(task) && ["waiting_approval", "waiting_human", "handed_off", "failed"].includes(task.status));
   const focusedTask = (data?.tasks || []).find((task) => task.id === focusedTaskId);
 
-  if (loading) return <div className="flex h-full items-center justify-center bg-slate-950"><Loader2 className="animate-spin text-emerald-400" /></div>;
+  if (loading) return <div className="flex h-full items-center justify-center bg-surface-2"><Loader2 className="animate-spin text-accent" /></div>;
 
   return (
-    <main className="h-full overflow-y-auto bg-slate-950 px-4 py-4 text-white lg:px-6">
-      <header className="sticky top-0 z-30 rounded-2xl border border-slate-800 bg-slate-950/95 px-4 py-3 shadow-2xl backdrop-blur">
+    <main className="h-full overflow-y-auto bg-ink px-4 py-4 text-text-primary lg:px-6">
+      <header className="sticky top-0 z-30 border-b border-border bg-surface/95 px-1 py-3 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <button type="button" onClick={onBack} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label="返回智能经营"><ArrowLeft size={16} /></button>
-            <div className="min-w-0"><div className="flex items-center gap-2"><MonitorPlay size={18} className="text-emerald-400" /><h1 className="truncate text-base font-black">Agent 实时生产监控大屏</h1></div><p className="mt-0.5 text-[10px] text-slate-500">每个窗口都是独立的任务浏览器 · 实际鼠标操作与工作页面同步直播</p></div>
+            <button type="button" onClick={onBack} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent" aria-label="返回智能经营"><ArrowLeft size={16} /></button>
+            <div className="min-w-0"><div className="flex items-center gap-2"><MonitorPlay size={18} className="text-accent" /><h1 className="truncate text-base font-bold">Agent 实时生产监控大屏</h1></div><p className="mt-0.5 text-[11px] text-text-muted">每个窗口都是独立的任务浏览器 · 实际鼠标操作与工作页面同步直播</p></div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[10px] font-bold ${connection === "live" ? "bg-emerald-950 text-emerald-400" : connection === "offline" ? "bg-red-950 text-red-400" : "bg-slate-900 text-slate-400"}`}>{connection === "live" ? <Wifi size={11}/> : <WifiOff size={11}/>} {connectionLabel[connection]}{lastSignalAt ? ` · ${relativeSignalTime(lastSignalAt)}` : ""}</span>
-            <span className="rounded-lg bg-slate-900 px-2.5 py-2 text-[10px] font-bold text-slate-400">{monitoredTasks.length} 个窗口</span>
-            <span className="rounded-lg bg-emerald-950 px-2.5 py-2 text-[10px] font-bold text-emerald-400">{activeCount} 执行中</span>
-            <span className="rounded-lg bg-amber-950 px-2.5 py-2 text-[10px] font-bold text-amber-400">{humanCount} 待人工</span>
-            <button type="button" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label="刷新监控大屏"><RefreshCcw size={14} /></button>
-            <button type="button" onClick={() => void toggleFullscreen()} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label={fullscreen ? "退出全屏" : "进入全屏"}>{fullscreen ? <Minimize2 size={14}/> : <Maximize2 size={14}/>}</button>
+            <span className={`inline-flex items-center gap-1.5 border-r border-border pr-3 text-[10px] font-bold ${connection === "live" ? "text-accent" : connection === "offline" ? "text-red" : "text-text-muted"}`}>{connection === "live" ? <Wifi size={11}/> : <WifiOff size={11}/>} {connectionLabel[connection]}{lastSignalAt ? ` · ${relativeSignalTime(lastSignalAt)}` : ""}</span>
+            <span className="border-r border-border pr-3 text-[10px] font-bold text-text-muted">{monitoredTasks.length} 个窗口</span>
+            <span className="border-r border-border pr-3 text-[10px] font-bold text-accent">{activeCount} 执行中</span>
+            <span className="text-[10px] font-bold text-amber">{humanCount} 待人工</span>
+            <button type="button" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent" aria-label="刷新监控大屏"><RefreshCcw size={14} /></button>
+            <button type="button" onClick={() => void toggleFullscreen()} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent" aria-label={fullscreen ? "退出全屏" : "进入全屏"}>{fullscreen ? <Minimize2 size={14}/> : <Maximize2 size={14}/>}</button>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-900 p-1">
-          <div className="flex flex-wrap gap-1">{([['all','全部现场'],['content','内容 Agent'],['customer','客服 Agent']] as Array<[MonitorFilter,string]>).map(([id,label]) => <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)} className={`rounded-lg px-4 py-2 text-[10px] font-black transition ${filter === id ? "bg-white text-slate-950" : "text-slate-500 hover:bg-slate-800 hover:text-white"}`}>{label}</button>)}</div>
-          <div className="flex flex-wrap gap-1">{([['all','全部状态'],['active','仅执行中'],['attention','只看待处理']] as Array<[MonitorStatusFilter,string]>).map(([id,label]) => <button key={id} type="button" aria-pressed={statusFilter === id} onClick={() => setStatusFilter(id)} className={`rounded-lg px-3 py-2 text-[9px] font-bold transition ${statusFilter === id ? "bg-slate-700 text-white" : "text-slate-500 hover:text-white"}`}>{label}</button>)}</div>
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-2 border-t border-border">
+          <div className="flex flex-wrap gap-5">{([['all','全部现场'],['content','内容 Agent'],['customer','客服 Agent']] as Array<[MonitorFilter,string]>).map(([id,label]) => <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)} className={`border-b-2 px-1 py-2.5 text-[11px] font-bold transition ${filter === id ? "border-accent text-accent" : "border-transparent text-text-muted hover:text-text-primary"}`}>{label}</button>)}</div>
+          <div className="flex flex-wrap gap-4">{([['all','全部状态'],['active','仅执行中'],['attention','只看待处理']] as Array<[MonitorStatusFilter,string]>).map(([id,label]) => <button key={id} type="button" aria-pressed={statusFilter === id} onClick={() => setStatusFilter(id)} className={`border-b-2 px-1 py-2.5 text-[10px] font-bold transition ${statusFilter === id ? "border-text-primary text-text-primary" : "border-transparent text-text-muted hover:text-text-primary"}`}>{label}</button>)}</div>
         </div>
       </header>
 
-      {error && <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-900 bg-red-950/60 px-4 py-3 text-xs text-red-300"><AlertTriangle size={14} />{error}</div>}
-      {attentionTasks.length > 0 && <button type="button" onClick={() => setStatusFilter("attention")} className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-amber-900/70 bg-amber-950/50 px-4 py-3 text-left"><span className="flex min-w-0 items-center gap-2 text-xs font-bold text-amber-300"><ShieldAlert size={15} className="shrink-0"/><span className="truncate">{attentionTasks.length} 个任务需要人工处理：{attentionTasks.slice(0,2).map((task) => task.title).join("、")}</span></span><span className="shrink-0 text-[9px] font-black text-amber-500">只看待处理</span></button>}
+      {error && <div className="mt-4 flex items-center gap-2 rounded-md border border-red/20 bg-red/5 px-4 py-3 text-xs text-red"><AlertTriangle size={14} />{error}</div>}
+      {attentionTasks.length > 0 && <button type="button" onClick={() => setStatusFilter("attention")} className="mt-4 flex w-full items-center justify-between gap-3 border-l-2 border-amber bg-amber-dim px-4 py-3 text-left"><span className="flex min-w-0 items-center gap-2 text-xs font-bold text-amber"><ShieldAlert size={15} className="shrink-0"/><span className="truncate">{attentionTasks.length} 个任务需要人工处理：{attentionTasks.slice(0,2).map((task) => task.title).join("、")}</span></span><span className="shrink-0 text-[10px] font-bold text-amber">只看待处理</span></button>}
 
       {monitoredTasks.length ? (
         <section className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
           {monitoredTasks.map((task) => <MonitorWindow key={task.id} liveEnabled={!focusedTaskId} task={task} events={eventsByTask.get(task.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || task.run_id} onFocus={() => focusTask(task.id)} />)}
         </section>
       ) : (
-        <section className="mt-4 flex min-h-[520px] items-center justify-center rounded-3xl border border-dashed border-slate-800 bg-slate-900/30 px-6 text-center">
-          <div className="max-w-lg"><CheckCircle2 size={30} className="mx-auto text-slate-700" /><h2 className="mt-4 text-base font-black text-slate-300">当前没有可监控的真实任务</h2><p className="mt-2 text-xs leading-6 text-slate-500">批准经营计划后，内容和客服任务会自动出现在这里。每个窗口直播真实浏览器；任务等待或暂停时，鼠标也会停下来。</p></div>
+        <section className="mt-4 flex min-h-[520px] items-center justify-center rounded-lg border border-dashed border-border bg-surface px-6 text-center">
+          <div className="max-w-lg"><CheckCircle2 size={30} className="mx-auto text-border-bright" /><h2 className="mt-4 text-base font-bold text-text-secondary">当前没有可监控的真实任务</h2><p className="mt-2 text-xs leading-6 text-text-muted">批准经营计划后，内容和客服任务会自动出现在这里。每个窗口直播真实浏览器；任务等待或暂停时，鼠标也会停下来。</p></div>
         </section>
       )}
       {focusedTask && <FocusedMonitor task={focusedTask} events={eventsByTask.get(focusedTask.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || focusedTask.run_id} onClose={closeFocus}/>}

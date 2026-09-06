@@ -4,7 +4,7 @@ import UserSocialAppCredentials, { WhatsAppConnectionPanel } from './UserSocialA
 export default function ChannelsPage() {
   return (
     <main
-      className="h-full overflow-y-auto bg-gray-50 p-5 pb-28 md:pb-5"
+      className="h-full overflow-y-auto bg-[#f8faf7] p-4 pb-28 sm:p-6 md:pb-6"
       data-lingshu-guide="channel-connections"
     >
       <UserSocialAppCredentials />

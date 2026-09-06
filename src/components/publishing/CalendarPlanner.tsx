@@ -26,6 +26,7 @@ import {
 import { ContentQueuePanel, type PendingPlacement } from './ContentQueuePanel';
 import { PlatformBadge } from './PlatformBadge';
 import { localTimeValue, moveScheduleToDay, resolvePendingDrop, type PublishDeliveryMode } from './schedulePolicy';
+import { useModalFocus } from '../../hooks/useModalFocus';
 
 export type CalendarPost = {
   id: string;
@@ -265,6 +266,11 @@ export function CalendarPlanner({
   const [interactionMessage, setInteractionMessage] = useState('');
   const [pendingTimeSelection, setPendingTimeSelection] = useState<{ id: string; title: string; day: Date; time: string } | null>(null);
   const [pendingTimeSaving, setPendingTimeSaving] = useState(false);
+  const pendingTimeDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(pendingTimeSelection),
+    onClose: () => { if (!pendingTimeSaving) setPendingTimeSelection(null); },
+    closeOnEscape: () => !pendingTimeSaving,
+  });
   const [loading, setLoading] = useState(false);
   const [recoveryPost, setRecoveryPost] = useState<CalendarPost | null>(null);
   const openPost = (post: CalendarPost) => { if (post.status === 'needs_attention') { setHoveredContent(null); setRecoveryPost(post); } else onOpenPost?.(post); };
@@ -943,7 +949,7 @@ export function CalendarPlanner({
       />
 
       {pendingTimeSelection && (
-        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pending-time-title">
+        <div ref={pendingTimeDialogRef} tabIndex={-1} className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pending-time-title">
           <div className="w-full max-w-sm rounded-2xl border border-border bg-white p-5 shadow-2xl">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-700"><CalendarClock size={18} /></span>
@@ -960,6 +966,7 @@ export function CalendarPlanner({
               <label className="block">
                 <span className="mb-1.5 block text-[10px] font-bold text-text-muted">发布时间</span>
                 <input
+                  data-modal-initial-focus
                   type="time"
                   value={pendingTimeSelection.time}
                   onChange={event => setPendingTimeSelection(previous => previous ? { ...previous, time: event.target.value } : previous)}

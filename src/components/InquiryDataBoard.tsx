@@ -42,7 +42,7 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
   }, [inquiries]);
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
+    <div className="secondary-data-board h-full overflow-y-auto px-4 py-6 sm:px-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="text-sm font-bold text-text-primary">询盘经营数据</p>
@@ -54,19 +54,19 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
       </div>
 
       {loading ? (
-        <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>
+        <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>
       ) : inquiries.length === 0 ? (
         <EmptyState text="暂无 WhatsApp 客户会话。" />
       ) : (
         <>
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="secondary-stat-strip mb-5">
             <StatCard label="WhatsApp询盘" value={String(inquiries.length)} icon={<SocialPlatformIcon platform="whatsapp" size={15} />} />
             <StatCard label="高意向客户" value={String(summary.highIntent)} icon={<TrendingUp size={14} />} />
             <StatCard label="需人工跟进" value={String(summary.needsHuman)} icon={<UserCheck size={14} />} />
             <StatCard label="预估金额" value={`$${summary.estimated.toLocaleString('en-US')}`} icon={<Info size={14} />} />
           </div>
 
-          <section className="rounded-xl border border-border bg-white">
+          <section className="secondary-panel border border-border bg-white">
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-bold text-text-primary">WhatsApp 询盘明细</p>
             </div>
@@ -124,7 +124,7 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
 
 function StatCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-white p-3">
+    <div className="secondary-stat-item bg-transparent p-4">
       <div className="flex items-center gap-2 text-green-700">{icon}<span className="text-xs font-semibold text-text-secondary">{label}</span></div>
       <p className="mt-2 text-2xl font-bold leading-none text-text-primary">{value}</p>
     </div>
@@ -133,7 +133,7 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-sm text-text-muted">
+    <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">
       <div className="flex items-start gap-2"><AlertCircle size={16} className="mt-0.5 text-text-muted" /><p>{text}</p></div>
     </div>
   );

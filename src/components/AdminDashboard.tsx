@@ -213,15 +213,15 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
 
   return (
     <div className="h-full flex flex-col bg-white">
-      <div className="h-12 px-5 border-b border-border flex items-center justify-between flex-shrink-0">
+      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between border-b border-border px-5 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center bg-surface-2 text-text-secondary"><ShieldCheck size={13} /></div>
-          <span className="text-sm font-semibold text-text-primary">账号总控</span>
+          <div className="flex h-6 w-6 items-center justify-center text-accent"><ShieldCheck size={13} /></div>
+          <div><h1 className="text-lg font-semibold text-text-primary">账号总控</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">管理试用、客户与行业账号</p></div>
         </div>
         <button onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary hover:bg-surface-2 disabled:opacity-60">
           {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />} 刷新
         </button>
-      </div>
+      </header>
 
       <div className="flex-1 min-h-0 overflow-auto p-5">
         {error && <p className="mb-3 text-xs text-red">{error}</p>}

@@ -8,22 +8,22 @@ type LegalPageKind = 'privacy' | 'data-deletion';
 
 function PageShell({ title, subtitle, icon, children }: { title: string; subtitle: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <main className="min-h-screen bg-surface-2 px-4 py-8 text-text-primary">
+    <main className="min-h-screen bg-ink px-4 py-6 text-text-primary sm:py-8">
       <div className="mx-auto max-w-4xl">
-        <a href="/" className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-3 py-2 text-sm font-semibold text-text-secondary transition-colors hover:border-border-bright hover:text-text-primary">
+        <a href="/" className="inline-flex items-center gap-2 rounded-md border border-border bg-white px-3 py-2 text-sm font-semibold text-text-secondary transition-colors hover:border-border-bright hover:bg-surface-2 hover:text-text-primary">
           <ArrowLeft size={16} />
           返回灵枢 AI
         </a>
-        <section className="mt-5 rounded-2xl border border-border bg-white p-6 shadow-sm md:p-8">
-          <div className="flex flex-col gap-4 border-b border-border pb-6 md:flex-row md:items-start">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-accent-glow text-accent">{icon}</div>
+        <section className="mt-5 rounded-lg border border-border bg-white p-5 sm:p-6 md:p-8">
+          <header className="flex flex-col gap-4 border-b border-border pb-6 md:flex-row md:items-start">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">{icon}</div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-text-muted">灵枢 AI</p>
-              <h1 className="mt-2 text-2xl font-black text-text-primary md:text-3xl">{title}</h1>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">LINGSHU AI · LEGAL</p>
+              <h1 className="mt-2 text-2xl font-bold text-text-primary md:text-3xl">{title}</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">{subtitle}</p>
               <p className="mt-3 text-xs text-text-muted">更新日期：{UPDATED_AT}</p>
             </div>
-          </div>
+          </header>
           <article className="mt-6 space-y-7 text-sm leading-7 text-text-secondary">{children}</article>
         </section>
       </div>
@@ -34,7 +34,7 @@ function PageShell({ title, subtitle, icon, children }: { title: string; subtitl
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h2 className="text-base font-black text-text-primary">{title}</h2>
+      <h2 className="border-l-2 border-insight pl-3 text-base font-bold text-text-primary">{title}</h2>
       <div className="mt-2 space-y-2">{children}</div>
     </section>
   );

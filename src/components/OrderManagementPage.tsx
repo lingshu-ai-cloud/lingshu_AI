@@ -252,12 +252,12 @@ export default function OrderManagementPage() {
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="orders-workbench">
-      <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border px-5">
+      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between border-b border-border px-5 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-green-50 text-green-700">
+          <div className="flex h-6 w-6 items-center justify-center text-accent">
             <ShoppingCart size={13} />
           </div>
-          <p className="text-sm font-black text-text-primary">我的订单</p>
+          <div><h1 className="text-lg font-semibold text-text-primary">我的订单</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">跟踪成交、履约与收入表现</p></div>
         </div>
         <div className="flex items-center gap-3">
           <span aria-live="polite" className="text-xs font-semibold text-text-muted">{feedback}</span>
@@ -266,21 +266,21 @@ export default function OrderManagementPage() {
           导出 CSV
           </button>
         </div>
-      </div>
+      </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-5">
-        <div className="mb-5 grid gap-3 md:grid-cols-4">
+        <div className="secondary-stat-strip mb-5">
           {[
             { label: '有效 GMV', value: money(summary.gmv), desc: `${summary.orders} 个有效订单`, icon: <DollarSign size={14} />, color: '#047857', bg: '#D1FAE5' },
             { label: '平均客单价', value: money(summary.aov), desc: '按有效订单计算', icon: <TrendingUp size={14} />, color: '#1D4ED8', bg: '#DBEAFE' },
             { label: '毛利率', value: pct(summary.margin), desc: `毛利 ${money(summary.gmv - summary.cost)}`, icon: <LineChartIcon size={14} />, color: '#6D28D9', bg: '#EDE9FE' },
             { label: '待履约', value: String(summary.pending), desc: `退款金额 ${money(summary.refund)}`, icon: <PackageCheck size={14} />, color: '#92400E', bg: '#FEF3C7' },
           ].map(item => (
-            <div key={item.label} className="card !rounded-xl p-4">
+            <div key={item.label} className="secondary-stat-item p-4">
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-semibold text-text-muted">{item.label}</span>
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: item.bg, color: item.color }}>{item.icon}</span>
+                <span className="flex h-7 w-7 items-center justify-center text-accent">{item.icon}</span>
               </div>
               <p className="text-2xl font-bold font-display text-text-primary">{item.value}</p>
               <p className="mt-1 text-xs text-text-muted">{item.desc}</p>

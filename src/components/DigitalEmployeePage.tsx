@@ -1130,10 +1130,10 @@ function OnboardingPanel({
     onSave(completed);
   };
   if (mode === "first" && !profileConfirmed) return (
-    <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3"><div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">第一步 · 建立企业档案</p><h2 className="mt-1 text-xl font-bold text-slate-950">告诉数字员工，你是谁、卖什么、卖给谁</h2><p className="mt-1 text-sm text-slate-500">这里只建档一次。保存后同步到企业知识库，后续统一在企业知识库维护，智能经营直接读取。</p></div></div>
-        <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-500">企业知识库 · 唯一数据源</span>
+    <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3"><div className="shrink-0 rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">第一步 · 建立企业档案</p><h2 className="mt-1 text-xl font-bold text-slate-950">告诉数字员工，你是谁、卖什么、卖给谁</h2><p className="mt-1 text-sm text-slate-500">这里只建档一次。保存后同步到企业知识库，后续统一在企业知识库维护，智能经营直接读取。</p></div></div>
+        <span className="shrink-0 self-start rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-500">企业知识库 · 唯一数据源</span>
       </div>
       {profileLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
         <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">如果企业知识库已有资料，系统会自动带入；你在这里修改并保存后，两处会保持一致，不需要重复填写。</div>
@@ -1694,12 +1694,12 @@ function BusinessLineNav({ value, platform, onChange, onPlatformChange }: { valu
     ["customer_conversion", "客户转化", "询盘到成交"],
   ];
   const platforms: Array<[ContentPlatform, string]> = [["all","全部平台"],["facebook","Facebook"],["instagram","Instagram"],["tiktok","TikTok"],["youtube","YouTube"]];
-  return <section aria-label="经营视角切换" className="mt-3 rounded-xl border border-slate-200 bg-white p-2">
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="flex items-center gap-1.5 px-2 text-[10px] font-black text-slate-400"><Layers3 size={13}/>经营视角</span>
-      {lines.map(([id,label,caption])=><button key={id} type="button" title={caption} aria-pressed={value===id} onClick={()=>onChange(id)} className={`rounded-xl px-3 py-2 text-[11px] font-black transition ${value===id?"bg-slate-950 text-white shadow-sm":"text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}>{label}</button>)}
+  return <section aria-label="经营视角切换" className="border-b border-slate-200 bg-transparent">
+    <div className="flex flex-wrap items-center gap-5">
+      <span className="flex items-center gap-1.5 py-3 text-[10px] font-bold text-slate-400"><Layers3 size={13}/>经营视角</span>
+      {lines.map(([id,label,caption])=><button key={id} type="button" title={caption} aria-pressed={value===id} onClick={()=>onChange(id)} className={`border-b-2 px-1 py-3 text-[11px] font-semibold transition-colors ${value===id?"border-accent text-text-primary":"border-transparent text-slate-500 hover:text-slate-900"}`}>{label}</button>)}
     </div>
-    {value==="content_growth"&&<div className="mt-1.5 flex flex-wrap items-center gap-1 border-t border-slate-100 pt-1.5"><span className="px-2 text-[9px] font-bold text-slate-400">平台</span>{platforms.map(([id,label])=><button key={id} type="button" aria-pressed={platform===id} onClick={()=>onPlatformChange(id)} className={`rounded-lg px-2.5 py-1.5 text-[9px] font-bold ${platform===id?"bg-blue-700 text-white":"bg-blue-50 text-blue-700 hover:bg-blue-100"}`}>{label}</button>)}</div>}
+    {value==="content_growth"&&<div className="flex flex-wrap items-center gap-4 border-t border-slate-100 py-2"><span className="text-[10px] font-bold text-slate-400">平台</span>{platforms.map(([id,label])=><button key={id} type="button" aria-pressed={platform===id} onClick={()=>onPlatformChange(id)} className={`border-b px-0.5 py-1 text-[10px] font-semibold ${platform===id?"border-accent text-accent":"border-transparent text-slate-500 hover:text-slate-900"}`}>{label}</button>)}</div>}
   </section>;
 }
 
@@ -2887,7 +2887,7 @@ function metricText(metric?: BusinessMetric, suffix = "") {
 
 function DataMetricCard({ label, metric, icon, note }: { label: string; metric?: BusinessMetric; icon?: ReactNode; note?: string }) {
   const available = metric?.status === "available" && metric.value !== null;
-  return <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5" title={note || metric?.note || metric?.source}>
+  return <div className="digital-metric p-3.5" title={note || metric?.note || metric?.source}>
     <div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-slate-500">{label}</p><span className="text-slate-400">{icon}</span></div>
     <p className={`mt-2 text-xl font-black ${available ? "text-slate-950" : "text-slate-400"}`}>{available ? metricText(metric) : "—"}</p>
     {!available && <p className="mt-1 truncate text-[11px] text-slate-400">{metric?.note || "等待数据源回流"}</p>}
@@ -3062,7 +3062,7 @@ function NextActionBanner({
         detail: "只需确定结果、指标和边界，数字员工会拆解执行节点。",
         label: "制定本周目标",
         action: onGoal,
-        tone: "from-blue-700 to-indigo-700",
+        tone: "bg-text-primary",
       }
     : data.goal.status === "draft"
       ? {
@@ -3073,7 +3073,7 @@ function NextActionBanner({
             : "等待服务端返回可预览的任务计划。",
           label: "查看批准项",
           action: onPlan,
-          tone: "from-blue-700 to-indigo-700",
+          tone: "bg-text-primary",
         }
       : blocked
         ? {
@@ -3083,7 +3083,7 @@ function NextActionBanner({
               blocked.blocked_reason || "选择重试、跳过、人工完成或纠偏。",
             label: "处理阻塞任务",
             action: onLive,
-            tone: "from-red-700 to-rose-700",
+            tone: "bg-red",
           }
         : pendingApproval
           ? {
@@ -3092,7 +3092,7 @@ function NextActionBanner({
               detail: "先核对执行依据和真实外部影响，再批准或驳回。",
               label: "前往审批",
               action: onLive,
-              tone: "from-amber-600 to-orange-600",
+              tone: "bg-amber",
             }
           : terminalRun
             ? {
@@ -3101,7 +3101,7 @@ function NextActionBanner({
                 detail: "结果按已取得、等待回流、暂不可用分别呈现。",
                 label: "查看本周复盘",
                 action: onReview,
-                tone: "from-emerald-700 to-teal-700",
+                tone: "bg-green",
               }
             : {
                 eyebrow: "正在执行",
@@ -3111,11 +3111,11 @@ function NextActionBanner({
                 detail: "进入生产现场观看真实事件、业务回写并随时纠偏。",
                 label: "观看生产现场",
                 action: onLive,
-                tone: "from-slate-900 to-slate-700",
+                tone: "bg-text-primary",
               };
   return (
     <section
-      className={`rounded-3xl bg-gradient-to-r ${state.tone} p-5 text-white shadow-lg`}
+      className={`rounded-lg border border-white/10 ${state.tone} p-5 text-white`}
     >
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
@@ -3131,7 +3131,7 @@ function NextActionBanner({
           type="button"
           disabled={data.goal?.status === "draft" && !data.plan}
           onClick={state.action}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-black text-slate-900 shadow-sm disabled:opacity-50"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-xs font-black text-slate-900 disabled:opacity-50"
         >
           {state.label} <ArrowRight size={14} />
         </button>
@@ -3286,10 +3286,10 @@ function BatchFollowupTruthPanel({
     },
   ];
   return (
-    <section className="rounded-3xl border border-violet-200 bg-gradient-to-r from-violet-50/80 to-white p-5 shadow-sm">
+    <section className="insight-note rounded-lg border border-insight/20 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 text-violet-800">
+          <div className="flex items-center gap-2 text-text-primary">
             <MessageSquare size={18} />
             <h2 className="font-black">批量跟进执行边界</h2>
           </div>
@@ -3306,7 +3306,7 @@ function BatchFollowupTruthPanel({
                 stage: "batch_followup",
               })
             }
-            className="inline-flex items-center gap-1.5 rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-accent-dim"
           >
             进入客户工作台 <ExternalLink size={12} />
           </button>
@@ -3762,20 +3762,36 @@ export default function DigitalEmployeePage({
     );
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb]">
-      <div className="mx-auto max-w-[1500px] px-5 pb-8 pt-6 lg:px-8">
-        <header className="rounded-2xl border border-slate-200 bg-white px-5 py-4 sm:px-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-sm font-medium text-slate-600">数字员工</h1>
-              {data?.config && <span className="text-xs text-slate-500">· {data.config.companyName}</span>}
+    <div className="workspace-canvas digital-employee-page">
+      <div className="workspace-frame">
+        <header className="workspace-header">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="workspace-kicker flex items-center gap-2">
+                <Activity size={14} /> LingShu Operations
+              </div>
+              <h1 className="workspace-title mt-2">
+                数字员工经营驾驶舱
+              </h1>
+              <p className="workspace-subtitle mt-2">
+                从内容生产到客户承接，每个状态都来自服务端任务、业务快照或真实渠道回执。
+              </p>
             </div>
             {data?.config && (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-500">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-secondary">
+                <span className="border-l border-border pl-3 font-semibold text-text-primary">
+                  {data.config.companyName}
+                </span>
+                <span>
+                  {autonomyLabel[data.config.autonomyMode]}模式
+                </span>
+                <span>
+                  {operatingState} · {cycleLabel}
+                </span>
                 <button
                   type="button"
                   onClick={() => setWorkspaceView("rules")}
-                  className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 transition ${workspaceView === "rules" ? "bg-emerald-50 text-emerald-700" : "hover:bg-slate-50 hover:text-slate-900"}`}
+                  className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 font-semibold ${workspaceView === "rules" ? "border-accent bg-surface-2 text-accent" : "border-border bg-white text-text-secondary hover:border-border-bright hover:text-text-primary"}`}
                 >
                   <Settings2 size={13} /> Agent 设置
                 </button>
@@ -3785,7 +3801,7 @@ export default function DigitalEmployeePage({
                     setWorkspaceView("today");
                     setShowHistory((value) => !value);
                   }}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-slate-50 hover:text-slate-900"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-3 py-2 font-semibold text-text-secondary hover:border-border-bright hover:text-text-primary"
                 >
                   <History size={13} /> 历史记录
                 </button>
@@ -3802,7 +3818,7 @@ export default function DigitalEmployeePage({
               </div>
             )}
           </div>
-          {!data?.config && <p className="mt-2 text-xs text-slate-500">{operatingState}</p>}
+          {!data?.config && <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-text-primary">1</span>{operatingState}</div>}
           {data?.config && data.run && !viewGoalId && <AgentExecutionStatus data={data} onOpen={goLive} collapsed={headerCollapsed} detailId={executionDetailId}/>}
           <div id={headerDetailsId} hidden={headerCollapsed}>
             {data?.config && workspaceView === "today" && (!newGoal || Boolean(goal)) && <TodayNextAction
@@ -3828,7 +3844,7 @@ export default function DigitalEmployeePage({
 
         {data?.config && <nav
           aria-label="数字员工工作视图"
-          className="mt-4 grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1.5 sm:grid-cols-4"
+          className="workspace-tabs mt-2"
         >
           {workspaceViews.map((view) => {
             const pendingCount = data.approvals.filter((item) => item.status === "pending").length;
@@ -3838,11 +3854,11 @@ export default function DigitalEmployeePage({
               type="button"
               onClick={() => setWorkspaceView(view.id)}
               aria-current={workspaceView === view.id ? "page" : undefined}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${workspaceView === view.id ? "bg-slate-950 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
+              className="workspace-tab min-w-[150px] px-1 py-2"
             >
               <span className="block text-xs font-black">{view.label}</span>
               <span
-                className={`mt-0.5 block text-[10px] ${workspaceView === view.id ? "text-slate-300" : "text-slate-400"}`}
+                className="mt-0.5 block text-[10px] text-slate-400"
               >
                 {caption}
               </span>

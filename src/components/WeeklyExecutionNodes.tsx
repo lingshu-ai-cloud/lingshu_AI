@@ -37,14 +37,14 @@ export function nodeDeepLink(planned: PlanTask | undefined, runtime: WorkflowTas
   };
 }
 export function nodeState(task?: WorkflowTask) {
-  const neutral = 'bg-slate-100 text-slate-600';
+  const neutral = 'bg-surface-2 text-text-secondary';
   if (!task) return { label: '未启动', tone: neutral };
-  if (task.status === 'failed') return { label: '执行失败', tone: 'bg-red-50 text-red-700' };
+  if (task.status === 'failed') return { label: '执行失败', tone: 'bg-surface-2 text-red' };
   if (task.output?.dataStatus === 'no_data') return { label: '暂无数据', tone: neutral };
   if (task.output?.dataStatus === 'not_required') return { label: '本轮无需执行', tone: neutral };
-  if (task.status === 'succeeded') return { label: '已完成', tone: 'bg-emerald-50 text-emerald-700' };
-  if (task.status === 'running') return { label: '执行中', tone: 'bg-blue-50 text-blue-700' };
-  if (task.status === 'waiting_approval') return { label: '待审批', tone: 'bg-amber-50 text-amber-700' };
+  if (task.status === 'succeeded') return { label: '已完成', tone: 'bg-[#eff7f1] text-accent' };
+  if (task.status === 'running') return { label: '执行中', tone: 'bg-[#eff7f1] text-accent' };
+  if (task.status === 'waiting_approval') return { label: '待审批', tone: 'bg-amber-dim text-amber' };
   const waitState = task.output?.waitState as TaskWaitState | undefined;
   const labels: Record<string, string> = { pending: '待执行', skipped: '已跳过', cancelled: '已取消', paused: '已暂停', waiting_human: '待人工处理', handed_off: '人工接管', waiting_external: '等待业务结果' };
   return { label: task.status === 'waiting_external' && waitState ? taskWaitLabels[waitState.kind] || labels[task.status] : labels[task.status] || '状态待确认', tone: neutral };
@@ -72,9 +72,9 @@ export default function WeeklyExecutionNodes({ data, onOpen, onDetails, onConfig
       const configurations = [...new Map(group.nodes.flatMap(node => node.packageTask ? [[node.packageTask.templateId, node.packageTask] as const] : [])).values()];
       return <section key={group.id} aria-labelledby={`node-group-${group.id}`}>
         <header className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h3 id={`node-group-${group.id}`} className="text-sm font-bold text-slate-800">{group.title}</h3>
-          <span className="text-xs tabular-nums text-slate-400">{completed}/{group.nodes.length} 已完成</span>
-          <div className="ml-auto flex items-center gap-3">{configurations.map(task => <button key={task.templateId} type="button" onClick={() => onConfigure(task)} aria-label={`配置${task.title}`} title={`配置${task.title}`} className="inline-flex items-center gap-1 rounded text-xs text-slate-400 hover:text-emerald-700 focus-visible:outline-emerald-600"><Settings2 size={12}/><span>{configurations.length > 1 ? task.title : '配置'}</span></button>)}</div>
+          <h3 id={`node-group-${group.id}`} className="text-sm font-bold text-text-primary">{group.title}</h3>
+          <span className="text-xs tabular-nums text-text-muted">{completed}/{group.nodes.length} 已完成</span>
+          <div className="ml-auto flex items-center gap-3">{configurations.map(task => <button key={task.templateId} type="button" onClick={() => onConfigure(task)} aria-label={`配置${task.title}`} title={`配置${task.title}`} className="inline-flex items-center gap-1 rounded-md text-xs text-text-muted hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"><Settings2 size={12}/><span>{configurations.length > 1 ? task.title : '配置'}</span></button>)}</div>
         </header>
         <ol aria-label={`${group.title}节点`} className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {group.nodes.map(({ key, planned, runtime, number }) => {
@@ -83,12 +83,12 @@ export default function WeeklyExecutionNodes({ data, onOpen, onDetails, onConfig
             const destination = link.page === 'digitalEmployees' ? key === 'weekly_review' ? '本周复盘' : '目标与执行计划'
               : link.page === 'smartAssets' ? link.view === 'publish' ? '内容发布' : '内容创作' : pageLabels[link.page] || '业务页面';
             const title = runtime?.title || planned?.title || key;
-            return <li key={key} value={number} data-node-key={key} className="relative rounded-xl border border-slate-200 bg-white transition hover:border-emerald-400">
-              <button type="button" aria-label={`${number}. ${title}，前往${destination}`} onClick={() => onOpen(link)} className="group h-full w-full rounded-xl p-3 text-left hover:bg-emerald-50/30 focus-visible:outline-emerald-600">
-                <div className="flex items-start gap-2"><span className="pt-0.5 text-xs font-semibold tabular-nums text-slate-400">{String(number).padStart(2, '0')}</span><h4 className="min-w-0 flex-1 text-sm font-semibold leading-5 text-slate-900">{title}</h4><ArrowRight size={14} className="mt-0.5 shrink-0 text-slate-400 group-hover:text-emerald-700"/></div>
-                <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 ${runtime ? 'pr-6' : ''}`}><span className={`rounded px-1.5 py-0.5 text-[11px] ${state.tone}`}>{state.label}</span><span className="text-xs text-slate-500">{destination}</span></div>
+            return <li key={key} value={number} data-node-key={key} className="relative rounded-md border border-border bg-surface transition-colors hover:border-border-bright">
+              <button type="button" aria-label={`${number}. ${title}，前往${destination}`} onClick={() => onOpen(link)} className="group h-full w-full rounded-md p-3 text-left hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/25">
+                <div className="flex items-start gap-2"><span className="pt-0.5 text-xs font-semibold tabular-nums text-text-muted">{String(number).padStart(2, '0')}</span><h4 className="min-w-0 flex-1 text-sm font-semibold leading-5 text-text-primary">{title}</h4><ArrowRight size={14} className="mt-0.5 shrink-0 text-text-muted group-hover:text-accent"/></div>
+                <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 ${runtime ? 'pr-6' : ''}`}><span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${state.tone}`}>{state.label}</span><span className="text-xs text-text-secondary">{destination}</span></div>
               </button>
-              {runtime && <button type="button" onClick={() => onDetails(runtime.id)} aria-label={`执行详情：${title}`} title="执行详情" className="absolute bottom-3 right-2 rounded p-0.5 text-slate-400 hover:text-emerald-700 focus-visible:outline-emerald-600"><FileText size={14}/></button>}
+              {runtime && <button type="button" onClick={() => onDetails(runtime.id)} aria-label={`执行详情：${title}`} title="执行详情" className="absolute bottom-3 right-2 rounded-sm p-0.5 text-text-muted hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"><FileText size={14}/></button>}
             </li>;
           })}
         </ol>

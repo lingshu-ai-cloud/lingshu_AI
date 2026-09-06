@@ -111,9 +111,9 @@ const loadPage = (): Page => {
   try {
     if (window.location.pathname === '/admin/delivery') return 'adminDelivery';
     const queryPage = new URLSearchParams(window.location.search).get('page') as Page | null;
-    if (queryPage && ALL_PAGES.includes(queryPage)) return queryPage;
+    if (queryPage && ALL_PAGES.includes(queryPage)) return queryPage === 'retention' ? 'conversion' : queryPage;
     const saved = localStorage.getItem('ow_page') as Page | null;
-    if (saved && ALL_PAGES.includes(saved)) return saved;
+    if (saved && ALL_PAGES.includes(saved)) return saved === 'retention' ? 'conversion' : saved;
     if (saved) localStorage.removeItem('ow_page');
     return 'digitalEmployees';
   } catch { return 'digitalEmployees'; }

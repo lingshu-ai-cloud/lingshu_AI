@@ -31,17 +31,17 @@ export default function ProductionTaskScene({ runId, taskId }: { runId: string; 
     return () => { abort.abort(); clearTimeout(timer); };
   }, [runId, taskId]);
   const task = snapshot?.task;
-  return <section data-testid="production-task-scene" className={expanded ? 'absolute inset-0 z-[70] flex flex-col overflow-hidden bg-slate-950 text-white' : 'shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950'}>
-    <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-700/30 px-4 py-3">
-      <div><h2 className="font-bold">智能员工生产现场 · {task?.title || '正在读取任务'}</h2><p className="mt-1 text-xs opacity-70">{error ? '状态连接异常' : task ? statuses[task.status] || task.status : '正在连接'}{snapshot?.stage ? ` · ${stages[snapshot.stage] || snapshot.stage}` : ''}</p></div>
-      <div className="flex gap-3 text-xs"><button type="button" onClick={requestProductionBack}>返回上一页</button><button type="button" className="rounded border border-current px-3 py-2" onClick={() => setExpanded(!expanded)}>{expanded ? '查看关联作品编辑器' : '观看员工现场'}</button></div>
+  return <section data-testid="production-task-scene" className={expanded ? 'absolute inset-0 z-[70] flex flex-col overflow-hidden bg-[#f7faf7] text-text-primary' : 'shrink-0 border-b border-border bg-surface-2 px-4 py-3 text-sm text-text-primary'}>
+    <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
+      <div><h2 className="font-bold text-text-primary">智能员工生产现场 · {task?.title || '正在读取任务'}</h2><p className="mt-1 text-xs text-text-secondary">{error ? '状态连接异常' : task ? statuses[task.status] || task.status : '正在连接'}{snapshot?.stage ? ` · ${stages[snapshot.stage] || snapshot.stage}` : ''}</p></div>
+      <div className="flex flex-wrap gap-2 text-xs"><button type="button" className="rounded-md border border-border bg-white px-3 py-2 font-semibold text-text-secondary hover:bg-surface-2" onClick={requestProductionBack}>返回上一页</button><button type="button" className="rounded-md bg-accent px-3 py-2 font-semibold text-white hover:bg-accent-dim" onClick={() => setExpanded(!expanded)}>{expanded ? '查看关联作品编辑器' : '观看员工现场'}</button></div>
     </header>
     {expanded && <div className="grid min-h-0 flex-1 gap-4 overflow-auto p-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-      <div><p className="mb-3 text-xs text-slate-400">直播员工实际使用的任务浏览器，鼠标和页面变化来自真实操作。</p><AgentBrowserViewport runId={runId} taskId={taskId} taskStatus={task?.status || 'pending'} />
-        <p className="mt-3 text-sm text-slate-300">{error ? '连接中断，画面与记录可能不是最新状态。' : !task ? '尚未读取到任务状态，暂不能判断员工是否正在执行。' : task.blocker_reason || (task.status === 'running' ? '正在执行；生成或等待服务返回期间，页面可能保持静止。' : task?.status === 'succeeded' ? '任务已完成，以下记录可查看已执行的工作。' : '当前任务没有持续执行；请结合任务状态和执行记录查看原因。')}</p>
-        {error && <p role="alert" className="mt-3 text-sm text-amber-300">{error}</p>}
+      <div><p className="mb-3 text-xs text-text-muted">直播员工实际使用的任务浏览器，鼠标和页面变化来自真实操作。</p><AgentBrowserViewport runId={runId} taskId={taskId} taskStatus={task?.status || 'pending'} />
+        <p className="mt-3 text-sm leading-6 text-text-secondary">{error ? '连接中断，画面与记录可能不是最新状态。' : !task ? '尚未读取到任务状态，暂不能判断员工是否正在执行。' : task.blocker_reason || (task.status === 'running' ? '正在执行；生成或等待服务返回期间，页面可能保持静止。' : task?.status === 'succeeded' ? '任务已完成，以下记录可查看已执行的工作。' : '当前任务没有持续执行；请结合任务状态和执行记录查看原因。')}</p>
+        {error && <p role="alert" className="mt-3 border-l-2 border-amber bg-amber-dim px-3 py-2 text-sm text-amber">{error}</p>}
       </div>
-      <aside><h3 className="font-semibold">实际执行记录</h3><p className="mt-1 text-xs text-slate-400">仅展示此任务已写入的操作与结果</p><ol className="mt-4 space-y-3">{[...(snapshot?.events || [])].reverse().map(event => <li key={event.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3"><time className="text-xs text-slate-400">{new Date(event.occurred_at).toLocaleString('zh-CN')}</time><p className={`mt-2 text-sm ${event.level === 'error' ? 'text-red-300' : 'text-slate-100'}`}>{event.summary}</p></li>)}</ol>{snapshot && !snapshot.events?.length && <p className="mt-4 text-sm text-slate-400">此任务尚无执行记录，暂不能证明员工已开始工作。</p>}</aside>
+      <aside className="border-t border-border pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0"><h3 className="font-semibold text-text-primary">实际执行记录</h3><p className="mt-1 text-xs text-text-muted">仅展示此任务已写入的操作与结果</p><ol className="mt-4 divide-y divide-border border-y border-border">{[...(snapshot?.events || [])].reverse().map(event => <li key={event.id} className="px-1 py-3"><time className="text-xs text-text-muted">{new Date(event.occurred_at).toLocaleString('zh-CN')}</time><p className={`mt-2 text-sm ${event.level === 'error' ? 'text-red' : 'text-text-primary'}`}>{event.summary}</p></li>)}</ol>{snapshot && !snapshot.events?.length && <p className="mt-4 text-sm text-text-muted">此任务尚无执行记录，暂不能证明员工已开始工作。</p>}</aside>
     </div>}
   </section>;
 }

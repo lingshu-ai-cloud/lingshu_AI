@@ -140,7 +140,7 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
   ];
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5" data-lingshu-guide="social-performance">
+    <div className="secondary-data-board h-full overflow-y-auto px-4 py-6 sm:px-6" data-lingshu-guide="social-performance">
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm font-bold text-text-primary">社媒经营数据</p>
         <button type="button" onClick={() => setRefreshKey(v => v + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary">
@@ -154,21 +154,21 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
         <EmptyState text="暂无已授权社媒账号。接入 TikTok / Instagram / Facebook / YouTube 后，这里才会展示真实数据。" />
       ) : (
         <>
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="secondary-stat-strip mb-5">
             <StatCard label="已授权账号" value={compact(summary.accountCount)} icon={<Users size={14} />} onClick={onOpenAccounts} hint="查看账号动态" />
             <StatCard label="可读取视频" value={compact(summary.videoCount)} icon={<Film size={14} />} />
             <StatCard label="视频播放" value={compact(summary.views)} icon={<Play size={14} />} />
             <StatCard label="互动合计" value={compact(summary.interactions)} icon={<Info size={14} />} />
           </div>
 
-          <section className="mb-4 rounded-xl border border-border bg-white p-4">
+          <section className="secondary-panel mb-5 border border-border bg-white p-4">
             <button type="button" onClick={onOpenAccounts} disabled={!onOpenAccounts} className="mb-3 inline-flex items-center gap-2 text-sm font-bold text-text-primary transition-colors hover:text-green-700 disabled:cursor-default disabled:hover:text-text-primary">
               已接入账号
               {onOpenAccounts && <span className="text-[10px] font-black text-green-700">查看账号动态 →</span>}
             </button>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {accounts.map(account => (
-                <div key={`${account.platform}-${account.id}`} className="rounded-lg border border-border bg-surface px-3 py-2">
+                <div key={`${account.platform}-${account.id}`} className="border-b border-border bg-surface px-1 py-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <p className="inline-flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold text-text-primary"><SocialPlatformIcon platform={account.platform} size={16} />{account.name}</p>
                     <span className="rounded bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700">{socialBrandLabel(account.platform)}</span>
@@ -180,7 +180,7 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
           </section>
 
           {videos.length > 0 ? (
-            <section className="rounded-xl border border-border bg-white">
+            <section className="secondary-panel border border-border bg-white">
               <div className="border-b border-border px-4 py-3">
                 <p className="text-sm font-bold text-text-primary">近期内容明细</p>
               </div>
@@ -218,7 +218,7 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
 }
 
 function StatCard({ label, value, icon, onClick, hint }: { label: string; value: string; icon: React.ReactNode; onClick?: () => void; hint?: string }) {
-  const className = `w-full rounded-xl border border-border bg-white p-3 text-left transition-all ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:border-green-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-200' : ''}`;
+  const className = `secondary-stat-item w-full bg-transparent p-4 text-left transition-colors ${onClick ? 'cursor-pointer hover:bg-[#f5f8f6] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-200' : ''}`;
   if (onClick) {
     return (
       <button type="button" onClick={onClick} className={className} title={hint}>
@@ -237,7 +237,7 @@ function StatCard({ label, value, icon, onClick, hint }: { label: string; value:
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-sm text-text-muted">
+    <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">
       <div className="flex items-start gap-2"><AlertCircle size={16} className="mt-0.5 text-text-muted" /><p>{text}</p></div>
     </div>
   );

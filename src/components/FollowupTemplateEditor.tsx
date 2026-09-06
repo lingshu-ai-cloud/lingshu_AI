@@ -36,18 +36,18 @@ export function FollowupTemplateForm({ templates, loading, busy, error, selected
   const approved = templates.filter(template => template.status === 'APPROVED');
   const template = approved.find(item => item.id === selected);
   const ready = template && variables.length === template.variableCount && variables.every(value => value.trim());
-  return <div className="mt-2 space-y-2 rounded-lg border border-amber-200 bg-white p-3 text-sm">
+  return <div className="mt-3 space-y-3 border-l-2 border-amber bg-amber-dim px-4 py-3 text-sm text-text-primary">
     <p className="font-semibold">配置 WhatsApp 获批模板</p>
-    <p className="text-xs text-slate-600">已超过 24 小时会话窗口。选择模板并补全内容后，需要重新审批才能发送。</p>
-    {loading ? <p role="status">正在加载模板…</p> : <>
-      {error && <p role="alert" className="text-red-700">{error}</p>}
-      {!approved.length && !error && <p>暂无可用的获批模板，请先在 WhatsApp 商业账号中提交模板并等待获批。</p>}
-      <button type="button" className="text-blue-700 disabled:opacity-50" disabled={busy} onClick={onRetry}>刷新模板目录</button>
+    <p className="text-xs leading-5 text-text-secondary">已超过 24 小时会话窗口。选择模板并补全内容后，需要重新审批才能发送。</p>
+    {loading ? <p role="status" className="text-xs text-text-muted">正在加载模板…</p> : <>
+      {error && <p role="alert" className="border-l-2 border-red bg-white/70 px-3 py-2 text-red">{error}</p>}
+      {!approved.length && !error && <p className="text-xs leading-5 text-text-secondary">暂无可用的获批模板，请先在 WhatsApp 商业账号中提交模板并等待获批。</p>}
+      <button type="button" className="inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-text-secondary transition-colors hover:border-border-bright hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:opacity-50" disabled={busy} onClick={onRetry}>刷新模板目录</button>
       {!!approved.length && <>
-        <label className="block">消息模板<select aria-label="选择消息模板" className="mt-1 w-full rounded border bg-white p-2" disabled={busy} value={selected} onChange={event => onSelect(event.target.value)}><option value="">请选择模板</option>{approved.map(item => <option key={item.id} value={item.id}>{item.name} · {item.language}</option>)}</select></label>
-        {template && <>{Array.from({ length: template.variableCount }, (_, index) => <label key={index} className="block">内容 {index + 1}<input aria-label={`模板内容 ${index + 1}`} className="mt-1 w-full rounded border p-2" disabled={busy} value={variables[index] || ''} onChange={event => onVariables(variables.map((value, at) => at === index ? event.target.value : value))} /></label>)}
-          <div className="rounded bg-slate-50 p-2"><p className="text-xs font-semibold text-slate-600">客户将收到的内容</p><p className="whitespace-pre-wrap break-words">{templatePreview(template, variables)}</p></div>
-          <button type="button" disabled={busy || !ready} onClick={onSave} className="rounded bg-blue-700 px-3 py-2 text-white disabled:opacity-50">{busy ? '正在保存…' : '保存模板，等待重新审批'}</button>
+        <label className="block text-xs font-semibold text-text-secondary">消息模板<select aria-label="选择消息模板" className="ui-field mt-1.5 !min-h-10 !rounded-md !px-3 !py-2 !text-sm" disabled={busy} value={selected} onChange={event => onSelect(event.target.value)}><option value="">请选择模板</option>{approved.map(item => <option key={item.id} value={item.id}>{item.name} · {item.language}</option>)}</select></label>
+        {template && <>{Array.from({ length: template.variableCount }, (_, index) => <label key={index} className="block text-xs font-semibold text-text-secondary">内容 {index + 1}<input aria-label={`模板内容 ${index + 1}`} className="ui-field mt-1.5 !min-h-10 !rounded-md !px-3 !py-2 !text-sm" disabled={busy} value={variables[index] || ''} onChange={event => onVariables(variables.map((value, at) => at === index ? event.target.value : value))} /></label>)}
+          <div className="border-y border-[#e7cfba] bg-white/60 px-3 py-3"><p className="text-xs font-semibold text-[#805c47]">客户将收到的内容</p><p className="mt-1 whitespace-pre-wrap break-words leading-6 text-text-primary">{templatePreview(template, variables)}</p></div>
+          <button type="button" disabled={busy || !ready} onClick={onSave} className="inline-flex min-h-10 items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25 disabled:opacity-50">{busy ? '正在保存…' : '保存模板，等待重新审批'}</button>
         </>}
       </>}
     </>}

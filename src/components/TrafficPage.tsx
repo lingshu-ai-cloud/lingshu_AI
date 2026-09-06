@@ -21,6 +21,7 @@ import type { CalendarPost } from './publishing/CalendarPlanner';
 import type { PublishDeliveryMode } from './publishing/schedulePolicy';
 import type { ConversationContext, Page, RestoreSignal, KickoffSignal, AgentAction } from '../App';
 import { authHeader } from '../lib/auth';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import {
   resolveInitialTrafficViewMode,
@@ -614,12 +615,12 @@ export default function TrafficPage({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-5">
+      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between gap-3 border-b border-border bg-white px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+          <div className="flex h-6 w-6 items-center justify-center text-accent">
             <Zap size={13} />
           </div>
-          <h1 className="truncate text-sm font-semibold text-text-primary">{pageTitle}</h1>
+          <h1 className="truncate text-lg font-semibold text-text-primary">{pageTitle}</h1>
           {showModeTabs && (
             <>
               <ChevronLeft aria-hidden="true" size={13} className="hidden rotate-180 text-text-muted sm:block" />
@@ -640,11 +641,11 @@ export default function TrafficPage({
         )}
       </header>
 
-      {showModeTabs && <div className="flex-shrink-0 border-b border-border bg-surface px-3 py-2 sm:px-6">
+      {showModeTabs && <div className="flex-shrink-0 bg-white px-3 sm:px-6">
         <div
           role="tablist"
           aria-label={`${pageTitle}流程`}
-          className="mx-auto grid w-full max-w-2xl gap-1 rounded-xl border border-border bg-surface-2 p-1"
+          className="mx-auto flex w-full max-w-2xl items-stretch justify-center gap-7 overflow-x-auto border-b border-border"
           style={{ gridTemplateColumns: `repeat(${modeItems.length}, minmax(0, 1fr))` }}
         >
           {modeItems.map(({ mode, icon: Icon, label, guide }) => {
@@ -660,8 +661,8 @@ export default function TrafficPage({
                 aria-current={active ? 'step' : undefined}
                 data-lingshu-guide={guide}
                 onClick={() => setViewMode(mode)}
-                className={`flex h-9 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 ${
-                  active ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/70 hover:text-text-secondary'
+                className={`flex h-12 min-w-fit items-center justify-center gap-1.5 border-b-2 px-1 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 ${
+                  active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'
                 }`}
               >
                 <Icon aria-hidden="true" size={16} className={active ? 'text-accent' : 'text-text-muted'} />
@@ -740,6 +741,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   const materializedVideoPathsRef = useRef(new Set<string>());
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const publishSettingsRef = useRef<HTMLElement | null>(null);
+  const publishConfirmationRef = useModalFocus<HTMLDivElement>({
+    open: publishConfirmationOpen,
+    onClose: () => setPublishConfirmationOpen(false),
+  });
   const handledWorkflowContextRef = useRef(
     workflowContext ? `${workflowContext.runId}:${workflowContext.taskId}` : '',
   );
@@ -1496,12 +1501,12 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     <div className="px-6 pb-5 pt-3">
       <div className="mx-auto max-w-[1600px] space-y-4">
         <div className="flex justify-center">
-          <div role="group" aria-label="发布工作区" className="grid w-full max-w-xl grid-cols-2 gap-1 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
+          <div role="group" aria-label="发布工作区" className="flex w-full max-w-xl justify-center gap-8 border-b border-border">
             <button
               type="button"
               onClick={() => setWorkspaceTab('schedule')}
               aria-pressed={workspaceTab === 'schedule'}
-              className={`h-10 rounded-xl px-4 text-sm font-black transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'schedule' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
+              className={`h-11 border-b-2 px-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'schedule' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
             >
               内容日历
             </button>
@@ -1509,7 +1514,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               type="button"
               onClick={() => setWorkspaceTab('publish')}
               aria-pressed={workspaceTab === 'publish'}
-              className={`h-10 rounded-xl px-4 text-sm font-black transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'publish' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
+              className={`h-11 border-b-2 px-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'publish' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
             >
               新建发布
             </button>
@@ -1899,7 +1904,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
           </aside>
         </div>
         {publishConfirmationOpen && (
-          <div className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="publish-confirmation-title">
+          <div ref={publishConfirmationRef} tabIndex={-1} className="fixed inset-0 z-[180] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="publish-confirmation-title">
             <div className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
               <div className="flex items-start gap-3">
                 <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Send size={18} /></span>
@@ -1914,7 +1919,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               </div>
               <p className="mt-3 rounded-xl bg-surface px-3 py-2 text-[11px] leading-5 text-text-secondary">共 {publishableAssignments} 个账号目标。部分平台可能因审核、权限或素材规范拒绝发布，失败项会保留在队列中供修改后重试。</p>
               <div className="mt-5 flex justify-end gap-2">
-                <button type="button" onClick={() => setPublishConfirmationOpen(false)} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary hover:bg-surface">返回检查</button>
+                <button type="button" data-modal-initial-focus onClick={() => setPublishConfirmationOpen(false)} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary hover:bg-surface">返回检查</button>
                 <button type="button" onClick={() => void publishConfirmed()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-700"><CheckCircle2 size={14} /> 确认真实发布</button>
               </div>
             </div>

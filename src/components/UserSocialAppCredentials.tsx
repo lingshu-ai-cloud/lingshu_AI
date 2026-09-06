@@ -3,6 +3,7 @@ import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Clipboard, KeyRo
 import { authHeader } from '../lib/auth';
 import { getWhatsAppEmbeddedSignupConfig, startWhatsAppEmbeddedSignup } from '../lib/whatsappEmbeddedSignup';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 type AppInfo = {
   appId: string;
@@ -45,10 +46,10 @@ function withoutPlatformCredentials(form: Form, platform: ConfigPlatform): Form 
 
 function Callback({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
-  return <div className="rounded-xl border border-border bg-surface-2 px-3 py-2">
+  return <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
     <div className="mb-1 flex items-center justify-between gap-2"><span className="text-[10px] font-bold text-text-muted">{label}</span>
-      <button type="button" onClick={async () => { await navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }} className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-text-secondary">
-        {copied ? <CheckCircle2 size={11} className="text-emerald-600" /> : <Clipboard size={11} />}{copied ? '已复制' : '复制'}
+      <button type="button" onClick={async () => { await navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200); }} className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-[10px] font-bold text-text-secondary hover:border-border-bright">
+        {copied ? <CheckCircle2 size={11} className="text-accent" /> : <Clipboard size={11} />}{copied ? '已复制' : '复制'}
       </button>
     </div><code className="block break-all text-[11px] text-text-secondary">{value}</code>
   </div>;
@@ -56,8 +57,8 @@ function Callback({ label, value }: { label: string; value: string }) {
 
 function Field({ label, value, saved, onChange }: { label: string; value: string; saved?: boolean; onChange: (value: string) => void }) {
   return <label className="grid gap-1 text-[11px] font-bold text-text-secondary">
-    <span className="flex items-center justify-between"><span>{label}<span className="ml-0.5 text-red-500">*</span></span>{(value.trim() || saved) && <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600"><CheckCircle2 size={11} />已填写</span>}</span>
-    <input type="text" autoComplete="off" data-1p-ignore data-lpignore="true" value={value} onChange={e => onChange(e.target.value)} placeholder={saved ? '已安全保存；留空表示不修改' : label} className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-normal text-text-primary outline-none focus:border-emerald-400" />
+    <span className="flex items-center justify-between"><span>{label}<span className="ml-0.5 text-red">*</span></span>{(value.trim() || saved) && <span className="inline-flex items-center gap-1 text-[10px] text-accent"><CheckCircle2 size={11} />已填写</span>}</span>
+    <input type="text" autoComplete="off" data-1p-ignore data-lpignore="true" value={value} onChange={e => onChange(e.target.value)} placeholder={saved ? '已安全保存；留空表示不修改' : label} className="ui-field !rounded-md !bg-surface-2 font-normal" />
   </label>;
 }
 
@@ -71,6 +72,11 @@ export default function UserSocialAppCredentials() {
   const [error, setError] = useState('');
   const [clearTarget, setClearTarget] = useState<ConfigPlatform | null>(null);
   const [clearing, setClearing] = useState(false);
+  const clearDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(clearTarget),
+    onClose: () => { if (!clearing) setClearTarget(null); },
+    closeOnEscape: () => !clearing,
+  });
 
   async function load() {
     setLoading(true); setError('');
@@ -122,15 +128,15 @@ export default function UserSocialAppCredentials() {
     { key: 'tiktok', title: 'TikTok', icon: <SocialPlatformIcon platform="tiktok" size={20} />, sub: 'Login Kit + Content Posting API', idLabel: 'Client Key', idKey: 'tiktokClientKey' as const, secretLabel: 'Client Secret', secretKey: 'tiktokClientSecret' as const, callbacks: [['Redirect URI', config.callbacks.tiktok]] },
   ];
   return <>
-  <section className="mb-5 overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm">
-    <button type="button" onClick={() => setOpen(value => !value)} className="flex w-full items-center justify-between gap-3 bg-emerald-50/60 px-5 py-4 text-left">
-      <div><h2 className="flex items-center gap-2 text-sm font-black text-text-primary"><KeyRound size={16} className="text-emerald-600" />配置我自己的社媒应用</h2><p className="mt-1 text-xs text-text-secondary">凭证只用于你的企业空间，账号授权与发布不与其他用户共用出口配置。</p></div><ChevronDown size={16} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+  <section className="mb-5 overflow-hidden rounded-lg border border-border bg-white">
+    <button type="button" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-controls="social-app-credentials-content" className="flex w-full items-center justify-between gap-3 border-l-2 border-accent bg-white px-4 py-4 text-left sm:px-5">
+      <div><h2 className="flex items-center gap-2 text-sm font-bold text-text-primary"><KeyRound size={16} className="text-accent" />配置我自己的社媒应用</h2><p className="mt-1 text-xs text-text-secondary">凭证只用于你的企业空间，账号授权与发布不与其他用户共用出口配置。</p></div><ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
     </button>
-    {open && <div className="space-y-4 border-t border-emerald-100 p-5">
-      <p className="text-[11px] text-amber-700">先在 Google、Meta 或 TikTok 开发者后台创建应用，再填写凭证。Secret 会加密保存，页面不会再次明文显示。</p>
-      {message && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">{message}</p>}{error && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700">{error}</p>}
+    {open && <div id="social-app-credentials-content" className="space-y-4 border-t border-border p-4 sm:p-5">
+      <p className="border-l-2 border-insight bg-insight-soft px-3 py-2 text-[11px] leading-5 text-insight-action">先在 Google、Meta 或 TikTok 开发者后台创建应用，再填写凭证。Secret 会加密保存，页面不会再次明文显示。</p>
+      {message && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent">{message}</p>}{error && <p role="alert" className="border-l-2 border-red bg-red/5 px-3 py-2 text-xs font-bold text-red">{error}</p>}
       {loading ? <div className="flex h-24 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取配置...</div> : <>
-        <div className="grid gap-3 xl:grid-cols-3">{cards?.map(card => <div key={card.key} className="space-y-3 rounded-2xl border border-border p-4">
+        <div className="grid gap-3 xl:grid-cols-3">{cards?.map(card => <div key={card.key} className="space-y-3 rounded-lg border border-border p-4">
           <div className="flex items-start justify-between gap-3">
             <div><p className="flex items-center gap-2 text-sm font-black text-text-primary">{card.icon}{card.title}</p><p className="mt-1 text-[11px] text-text-muted">{card.sub}</p></div>
             <button
@@ -138,7 +144,7 @@ export default function UserSocialAppCredentials() {
               onClick={() => setClearTarget(card.key as ConfigPlatform)}
               disabled={!config?.apps[card.key as ConfigPlatform] || clearing}
               aria-label={`清除 ${card.title} 平台配置`}
-              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[10px] font-bold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-2 disabled:text-text-muted"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red/30 bg-red/5 px-2 py-1.5 text-[10px] font-bold text-red transition hover:bg-red/10 disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-2 disabled:text-text-muted"
             >
               <Trash2 size={11} />清除配置
             </button>
@@ -148,23 +154,23 @@ export default function UserSocialAppCredentials() {
           {card.key === 'meta' && <Field label="Embedded Signup Config ID（连接 WhatsApp 时填写）" value={form.metaWhatsAppConfigId} onChange={value => field('metaWhatsAppConfigId', value)} />}
           {card.callbacks.map(([label, value]) => <Callback key={label} label={label} value={value} />)}
         </div>)}</div>
-        <div className="flex justify-end"><button type="button" disabled={saving} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">{saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}保存我的平台凭证</button></div>
+        <div className="flex justify-end"><button type="button" disabled={saving} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2.5 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-50">{saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}保存我的平台凭证</button></div>
       </>}
     </div>}
   </section>
-  {clearTarget && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4" role="presentation" onMouseDown={() => !clearing && setClearTarget(null)}>
-    <div role="dialog" aria-modal="true" aria-labelledby="clear-user-platform-title" className="w-full max-w-md rounded-2xl border border-red-100 bg-white p-5 shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+  {clearTarget && <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !clearing) setClearTarget(null); }}>
+    <div ref={clearDialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="clear-user-platform-title" aria-describedby="clear-user-platform-description" className="w-full max-w-md rounded-t-lg border border-border bg-white p-5 shadow-xl sm:rounded-lg" onMouseDown={event => event.stopPropagation()}>
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600"><AlertTriangle size={19} /></span>
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-insight-soft text-insight-action"><AlertTriangle size={19} /></span>
         <div>
-          <h3 id="clear-user-platform-title" className="text-base font-black text-text-primary">清除 {PLATFORM_LABELS[clearTarget]} 配置？</h3>
-          <p className="mt-2 text-sm leading-6 text-text-secondary">应用凭证会从你的企业空间中删除，这个平台下已连接的账号也会同时断开。</p>
+          <h3 id="clear-user-platform-title" className="text-base font-bold text-text-primary">清除 {PLATFORM_LABELS[clearTarget]} 配置？</h3>
+          <p id="clear-user-platform-description" className="mt-2 text-sm leading-6 text-text-secondary">应用凭证会从你的企业空间中删除，这个平台下已连接的账号也会同时断开。</p>
           <p className="mt-2 text-xs leading-5 text-text-muted">这不会撤销第三方平台后台的授权；如需彻底撤销，请同时到对应平台的账号安全设置中移除本应用。</p>
         </div>
       </div>
       <div className="mt-5 flex justify-end gap-2">
-        <button type="button" onClick={() => setClearTarget(null)} disabled={clearing} className="rounded-xl border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary disabled:opacity-50">取消</button>
-        <button type="button" onClick={() => void clearPlatform()} disabled={clearing} className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50">
+        <button type="button" data-modal-initial-focus onClick={() => setClearTarget(null)} disabled={clearing} className="rounded-md border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">取消</button>
+        <button type="button" onClick={() => void clearPlatform()} disabled={clearing} className="inline-flex items-center gap-1.5 rounded-md bg-red px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">
           {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}确认清除
         </button>
       </div>
@@ -215,29 +221,29 @@ export function WhatsAppConnectionPanel() {
     }
   }
 
-  return <section className="flex min-h-[360px] flex-col rounded-xl border border-gray-200 bg-white p-5">
+  return <section className="flex min-h-[360px] flex-col rounded-lg border border-border bg-white p-4 sm:p-5">
     <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><SocialPlatformIcon platform="whatsapp" size={24} /></div>
-        <div className="min-w-0"><h2 className="text-sm font-semibold text-gray-900">WhatsApp Business 一键授权</h2><p className="mt-1 text-xs leading-relaxed text-gray-500">连接后，客户发来的 WhatsApp 消息会自动进入“我的客户”。</p></div>
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent"><SocialPlatformIcon platform="whatsapp" size={24} /></div>
+        <div className="min-w-0"><h2 className="text-sm font-semibold text-text-primary">WhatsApp Business 一键授权</h2><p className="mt-1 text-xs leading-relaxed text-text-muted">连接后，客户发来的 WhatsApp 消息会自动进入“我的客户”。</p></div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <button type="button" onClick={() => void load()} disabled={loading} title="刷新" className="rounded-lg border border-gray-200 p-2 text-gray-500 disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
-        <button type="button" onClick={() => void connect()} disabled={connecting || loading} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+        <button type="button" onClick={() => void load()} disabled={loading} title="刷新" aria-label="刷新 WhatsApp 连接状态" className="rounded-md border border-border p-2 text-text-muted hover:bg-surface-2 disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
+        <button type="button" onClick={() => void connect()} disabled={connecting || loading} className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-dim disabled:opacity-50 sm:flex-none">
           {connecting ? <Loader2 size={15} className="animate-spin" /> : <SocialPlatformIcon platform="whatsapp" size={17} />}{connected ? '重新连接' : '连接 WhatsApp'}
         </button>
       </div>
     </div>
-    {message && <div className="mt-4 flex items-start gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700"><CheckCircle2 size={14} className="mt-0.5 shrink-0" /><span>{message}</span></div>}
-    {error && <div className="mt-4 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600"><AlertCircle size={14} className="mt-0.5 shrink-0" /><span>{error}</span></div>}
-    {loading ? <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-gray-400"><Loader2 size={16} className="animate-spin" />正在读取 WhatsApp 状态...</div> : connected ? (
-      <div className="mt-auto rounded-xl border border-gray-200 p-4">
-        <div className="flex items-center gap-2"><CheckCircle2 size={18} className="text-emerald-600" /><p className="text-sm font-semibold text-gray-900">WhatsApp Business 已连接</p></div>
-        <div className="mt-3 grid gap-2 text-xs text-gray-500 sm:grid-cols-2">
-          <div className="rounded-lg bg-gray-50 px-3 py-2"><span className="block text-[10px] text-gray-400">号码</span>{meta?.waPublicNumber || '已完成授权'}</div>
-          <div className="rounded-lg bg-gray-50 px-3 py-2"><span className="block text-[10px] text-gray-400">Phone Number ID</span><span className="break-all">{meta?.phoneNumberId}</span></div>
+    {message && <div role="status" className="mt-4 flex items-start gap-2 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs text-accent"><CheckCircle2 size={14} className="mt-0.5 shrink-0" /><span>{message}</span></div>}
+    {error && <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-red bg-red/5 px-3 py-2 text-xs text-red"><AlertCircle size={14} className="mt-0.5 shrink-0" /><span>{error}</span></div>}
+    {loading ? <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取 WhatsApp 状态...</div> : connected ? (
+      <div className="mt-auto border-y border-border py-4">
+        <div className="flex items-center gap-2"><CheckCircle2 size={18} className="text-accent" /><p className="text-sm font-semibold text-text-primary">WhatsApp Business 已连接</p></div>
+        <div className="mt-3 grid gap-2 text-xs text-text-secondary sm:grid-cols-2">
+          <div className="rounded-md bg-surface-2 px-3 py-2"><span className="block text-[10px] text-text-muted">号码</span>{meta?.waPublicNumber || '已完成授权'}</div>
+          <div className="rounded-md bg-surface-2 px-3 py-2"><span className="block text-[10px] text-text-muted">Phone Number ID</span><span className="break-all">{meta?.phoneNumberId}</span></div>
         </div>
       </div>
-    ) : <div className="mt-auto rounded-xl border border-dashed border-gray-200 px-4 py-5 text-center"><SocialPlatformIcon platform="whatsapp" size={32} className="mx-auto mb-2 opacity-35" /><p className="text-sm font-medium text-gray-700">还没有连接 WhatsApp Business</p><p className="mt-1 text-xs text-gray-400">请先在上方保存 Meta App 和 Embedded Signup Config ID。</p></div>}
+    ) : <div className="mt-auto rounded-md border border-dashed border-border px-4 py-5 text-center"><SocialPlatformIcon platform="whatsapp" size={32} className="mx-auto mb-2 opacity-35" /><p className="text-sm font-medium text-text-secondary">还没有连接 WhatsApp Business</p><p className="mt-1 text-xs text-text-muted">请先在上方保存 Meta App 和 Embedded Signup Config ID。</p></div>}
   </section>;
 }

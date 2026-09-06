@@ -255,23 +255,25 @@ export default function AccountActivity() {
 
   return (
     <div className="min-h-full">
-      <div className="sticky top-0 z-10 border-b border-border bg-white/95 px-6 backdrop-blur">
-        <div className="flex h-14 items-center justify-between gap-4">
-          <div className="flex items-center gap-1 rounded-xl bg-surface-2 p-1">
+      <div className="sticky top-0 z-10 border-b border-border bg-white/95 px-4 backdrop-blur sm:px-6">
+        <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-2">
+          <div className="flex items-center gap-6 border-b border-border" role="tablist" aria-label="账号动态视图">
             {TAB_ITEMS.map(item => (
               <button
                 key={item.id}
                 type="button"
+                role="tab"
+                aria-selected={tab === item.id}
                 onClick={() => setTab(item.id)}
-                className={`rounded-lg px-4 py-2 text-xs font-black transition ${tab === item.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+                className={`border-b-2 px-1 py-2.5 text-xs font-semibold transition-colors ${tab === item.id ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}
               >
                 {item.label}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2 text-[11px] text-text-muted">
-            <span className="rounded-full bg-emerald-50 px-2 py-1 font-bold text-emerald-700">真实账号数据</span>
-            <button type="button" onClick={() => void loadComments()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">
+            <span className="border-l-2 border-accent bg-accent-glow px-2 py-1 font-bold text-accent">真实账号数据</span>
+            <button type="button" onClick={() => void loadComments()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> {loading ? '同步中' : '同步动态'}
             </button>
           </div>
@@ -279,21 +281,21 @@ export default function AccountActivity() {
       </div>
 
       {notice && (
-        <div role="status" aria-live="polite" className="mx-6 mt-3 flex items-center justify-between gap-3 rounded-xl bg-sky-50 px-3 py-2 text-xs font-bold text-sky-700">
+        <div role="status" aria-live="polite" className="mx-4 mt-3 flex items-center justify-between gap-3 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent sm:mx-6">
           <span>{notice}</span>
-          <button type="button" onClick={() => setNotice('')} aria-label="关闭同步提示" className="rounded p-1 hover:bg-sky-100"><X size={13} /></button>
+          <button type="button" onClick={() => setNotice('')} aria-label="关闭同步提示" className="rounded-md p-1 hover:bg-white"><X size={13} /></button>
         </div>
       )}
 
-      {tab === 'overview' && <div className="px-6 py-5"><ChannelOverview /></div>}
+      {tab === 'overview' && <div className="px-4 py-5 sm:px-6"><ChannelOverview /></div>}
 
       {tab === 'comments' && (
         <div className="min-h-[620px]">
-          <div className="flex min-h-[540px] overflow-hidden">
-          <aside className="w-56 flex-shrink-0 border-r border-border bg-surface px-3 py-4">
+          <div className="flex min-h-[540px] flex-col overflow-hidden xl:flex-row">
+          <aside className="w-full flex-shrink-0 border-b border-border bg-surface px-3 py-4 xl:w-56 xl:border-b-0 xl:border-r">
             <div className="space-y-2 border-b border-border pb-4">
-              <details className="group rounded-xl border border-border bg-white shadow-sm">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-black text-text-secondary">
+              <details className="group rounded-md border border-border bg-white">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-bold text-text-secondary">
                   <Layers3 size={13} className="text-text-muted" /><span className="flex-1">平台</span><span className="text-[10px] font-bold text-accent">{selectedPlatforms.length ? `已选 ${selectedPlatforms.length}` : '全部'}</span><ChevronDown size={13} className="text-text-muted transition group-open:rotate-180" />
                 </summary>
                 <div className="space-y-1 border-t border-border p-2">
@@ -305,8 +307,8 @@ export default function AccountActivity() {
                   })}
                 </div>
               </details>
-              <details className="group rounded-xl border border-border bg-white shadow-sm">
-                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-black text-text-secondary">
+              <details className="group rounded-md border border-border bg-white">
+                <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-bold text-text-secondary">
                   <UsersRound size={13} className="text-text-muted" /><span className="flex-1">账号</span><span className="text-[10px] font-bold text-accent">{selectedAccounts.length ? `已选 ${selectedAccounts.length}` : '全部'}</span><ChevronDown size={13} className="text-text-muted transition group-open:rotate-180" />
                 </summary>
                 <div className="space-y-1 border-t border-border p-2">
@@ -321,11 +323,11 @@ export default function AccountActivity() {
               </details>
             </div>
             <div className="mb-3 mt-4 flex items-center gap-2 px-2 text-[11px] font-black uppercase tracking-wider text-text-muted"><Filter size={12} /> 评论筛选</div>
-            <div className="space-y-1">
+            <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 xl:grid-cols-1">
               {FILTERS.map(item => {
                 const count = scopedComments.filter(comment => item.id === 'all' ? true : item.id === 'high' ? comment.score >= 80 : comment.status === item.id).length;
                 return (
-                  <button key={item.id} type="button" onClick={() => setFilter(item.id)} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-bold ${filter === item.id ? 'bg-white text-accent shadow-sm' : 'text-text-secondary hover:bg-white/70'}`}>
+                  <button key={item.id} type="button" onClick={() => setFilter(item.id)} className={`flex w-full items-center justify-between rounded-md border-l-2 px-3 py-2.5 text-left text-xs font-bold ${filter === item.id ? 'border-accent bg-white text-accent' : 'border-transparent text-text-secondary hover:bg-white/70'}`}>
                     <span>{item.label}</span><span className="text-[10px] text-text-muted">{count}</span>
                   </button>
                 );
@@ -334,33 +336,33 @@ export default function AccountActivity() {
           </aside>
 
           <section className="min-w-0 flex-1 bg-white">
-            <div className="flex items-center justify-between border-b border-border px-5 py-3">
-              <div><p className="text-xs font-black text-text-primary">{FILTERS.find(item => item.id === filter)?.label}</p><p className="mt-1 flex items-center gap-2 text-[11px] text-text-muted"><span>共 {filtered.length} 条，点击卡片可多选</span><span className="inline-flex items-center gap-1 font-bold text-emerald-700"><Languages size={11} /> {translatingCount ? `正在翻译 ${translatingCount} 条` : '外语评论自动翻译'}</span></p></div>
-              <div className="flex items-center gap-2">
+            <div className="flex flex-col items-start justify-between gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:px-5">
+              <div><p className="text-xs font-bold text-text-primary">{FILTERS.find(item => item.id === filter)?.label}</p><p className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-text-muted"><span>共 {filtered.length} 条，点击卡片可多选</span><span className="inline-flex items-center gap-1 font-bold text-accent"><Languages size={11} /> {translatingCount ? `正在翻译 ${translatingCount} 条` : '外语评论自动翻译'}</span></p></div>
+              <div className="flex flex-wrap items-center gap-2">
                 {selectedIds.length > 0 && <button type="button" onClick={() => setSelectedIds([])} className="text-[11px] font-bold text-text-muted hover:text-text-primary">清空选择</button>}
-                <button type="button" onClick={() => setSelectedIds(selectedIds.length === filtered.length ? [] : filtered.map(comment => comment.id))} disabled={!filtered.length} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary disabled:opacity-40">{filtered.length > 0 && selectedIds.length === filtered.length ? <CheckSquare2 size={14} /> : <Square size={14} />} 全选</button>
-                <span className="rounded-full bg-accent-glow px-3 py-1.5 text-[11px] font-black text-accent">已选 {selectedComments.length} 条</span>
+                <button type="button" onClick={() => setSelectedIds(selectedIds.length === filtered.length ? [] : filtered.map(comment => comment.id))} disabled={!filtered.length} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-[11px] font-bold text-text-secondary disabled:opacity-40">{filtered.length > 0 && selectedIds.length === filtered.length ? <CheckSquare2 size={14} /> : <Square size={14} />} 全选</button>
+                <span className="rounded-md bg-accent-glow px-3 py-1.5 text-[11px] font-bold text-accent">已选 {selectedComments.length} 条</span>
               </div>
             </div>
-            <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 p-4 md:grid-cols-2 2xl:grid-cols-3 sm:p-5">
               {filtered.map(comment => {
                 const checked = selectedIds.includes(comment.id);
                 const first = selectedIds[0] === comment.id;
                 return (
-                  <button key={comment.id} type="button" onClick={() => toggleComment(comment.id)} className={`relative rounded-2xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${checked ? 'border-accent bg-accent-glow/50 ring-1 ring-accent/20' : 'border-border bg-white'}`}>
+                  <button key={comment.id} type="button" aria-pressed={checked} onClick={() => toggleComment(comment.id)} className={`relative rounded-lg border p-4 text-left transition-colors hover:border-border-bright ${checked ? 'border-accent bg-accent-glow/50 ring-1 ring-accent/20' : 'border-border bg-white'}`}>
                     <span className={`absolute right-3 top-3 ${checked ? 'text-accent' : 'text-text-muted'}`}>{checked ? <CheckSquare2 size={18} /> : <Square size={18} />}</span>
                     <div className="flex items-center gap-2 pr-7"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-2 text-text-muted"><CircleUserRound size={18} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-black text-text-primary">{comment.author}</p><p className="flex items-center gap-1 truncate text-[10px] text-text-muted"><SocialPlatformIcon platform={comment.platform} size={12} /> {comment.platform} · {comment.receivedAt}</p></div></div>
                     <p className="mt-3 line-clamp-3 min-h-[60px] text-xs leading-5 text-text-secondary">{comment.text}</p>
-                    {comment.translationStatus === 'loading' && <p className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-emerald-600"><RefreshCw size={10} className="animate-spin" /> 正在翻译成中文…</p>}
+                    {comment.translationStatus === 'loading' && <p className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-accent"><RefreshCw size={10} className="animate-spin" /> 正在翻译成中文…</p>}
                     {comment.translation && (
-                      <div className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50/70 px-2.5 py-2">
-                        <p className="flex items-center gap-1 text-[9px] font-black text-emerald-700"><Languages size={10} /> 中文译文</p>
-                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-emerald-950">{comment.translation}</p>
+                      <div className="mt-2 rounded-md border border-border bg-accent-glow px-2.5 py-2">
+                        <p className="flex items-center gap-1 text-[9px] font-bold text-accent"><Languages size={10} /> 中文译文</p>
+                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-primary">{comment.translation}</p>
                       </div>
                     )}
-                    {comment.translationStatus === 'failed' && <p className="mt-2 text-[10px] font-bold text-amber-700">翻译暂时失败，打开评论可重试</p>}
+                    {comment.translationStatus === 'failed' && <p className="mt-2 text-[10px] font-bold text-insight-action">翻译暂时失败，打开评论可重试</p>}
                     <p className="mt-2 truncate text-[10px] text-text-muted">来自《{comment.contentTitle}》</p>
-                    <div className="mt-3 flex items-center justify-between gap-2"><div className="flex items-center gap-1.5"><span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-secondary">{comment.intent}</span>{first && <span className="rounded-md bg-violet-50 px-2 py-1 text-[10px] font-black text-violet-700">首个选定</span>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${comment.score >= 80 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{comment.score} 分</span></div>
+                    <div className="mt-3 flex items-center justify-between gap-2"><div className="flex items-center gap-1.5"><span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-bold text-text-secondary">{comment.intent}</span>{first && <span className="rounded-md bg-insight-soft px-2 py-1 text-[10px] font-bold text-insight-action">首个选定</span>}</div><span className={`rounded-md px-2 py-1 text-[10px] font-bold ${comment.score >= 80 ? 'bg-red/5 text-red' : 'bg-insight-soft text-insight-action'}`}>{comment.score} 分</span></div>
                   </button>
                 );
               })}
@@ -370,63 +372,63 @@ export default function AccountActivity() {
 
           <AnimatePresence initial={false}>
             {selected && (
-              <motion.aside initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }} transition={{ duration: 0.2 }} className="w-[460px] flex-shrink-0 border-l border-border bg-surface p-5 shadow-[-12px_0_30px_rgba(15,23,42,0.08)]">
-              <div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-black text-text-primary">评论详情与回复</h2><p className="mt-1 text-[11px] text-text-muted">以首个选中评论生成，应用于已选 {selectedComments.length} 条</p></div><button type="button" onClick={() => setSelectedIds([])} className="rounded-lg p-2 text-text-muted hover:bg-white hover:text-text-primary"><X size={17} /></button></div>
+              <motion.aside initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }} transition={{ duration: 0.2 }} className="w-full flex-shrink-0 border-t border-border bg-surface p-4 sm:p-5 xl:w-[460px] xl:border-l xl:border-t-0">
+              <div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-bold text-text-primary">评论详情与回复</h2><p className="mt-1 text-[11px] text-text-muted">以首个选中评论生成，应用于已选 {selectedComments.length} 条</p></div><button type="button" onClick={() => setSelectedIds([])} aria-label="关闭评论详情" className="rounded-md p-2 text-text-muted hover:bg-white hover:text-text-primary"><X size={17} /></button></div>
               <div className="space-y-4">
-                <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+                <div className="rounded-lg border border-border bg-white p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div><div className="flex items-center gap-2"><h3 className="text-sm font-black text-text-primary">{selected.author}</h3><span className="text-xs text-text-muted">{selected.handle}</span></div><p className="mt-1 flex items-center gap-1 text-[11px] text-text-muted"><SocialPlatformIcon platform={selected.platform} size={13} /> {selected.platform} · 来自《{selected.contentTitle}》</p></div>
                     <button type="button" className="inline-flex items-center gap-1 text-[11px] font-bold text-text-muted hover:text-accent">查看原评论 <ExternalLink size={11} /></button>
                   </div>
-                  <div className="mt-4 rounded-xl bg-surface px-4 py-3">
+                  <div className="mt-4 rounded-md bg-surface-2 px-4 py-3">
                     <p className="text-[10px] font-black text-text-muted">原文</p>
                     <p className="mt-1 text-sm leading-6 text-text-primary">{selected.text}</p>
                   </div>
                   {selected.translationStatus === 'loading' && (
-                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-700">
+                    <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-accent-glow px-4 py-3 text-xs font-bold text-accent">
                       <RefreshCw size={12} className="animate-spin" /> 正在自动翻译成中文…
                     </div>
                   )}
                   {selected.translation && (
-                    <div className="mt-2 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
-                      <p className="flex items-center gap-1.5 text-[10px] font-black text-emerald-700"><Languages size={11} /> 中文译文{selected.translationLanguage ? ` · ${selected.translationLanguage}` : ''}</p>
-                      <p className="mt-1 text-sm leading-6 text-emerald-950">{selected.translation}</p>
+                    <div className="mt-2 rounded-md border border-border bg-accent-glow px-4 py-3">
+                      <p className="flex items-center gap-1.5 text-[10px] font-bold text-accent"><Languages size={11} /> 中文译文{selected.translationLanguage ? ` · ${selected.translationLanguage}` : ''}</p>
+                      <p className="mt-1 text-sm leading-6 text-text-primary">{selected.translation}</p>
                     </div>
                   )}
                   {selected.translationStatus === 'failed' && (
-                    <button type="button" onClick={() => void translateComments([selected])} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-black text-amber-700 hover:bg-amber-100">
+                    <button type="button" onClick={() => void translateComments([selected])} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-insight/30 bg-insight-soft px-3 py-2 text-[11px] font-bold text-insight-action">
                       <RefreshCw size={11} /> 重新翻译
                     </button>
                   )}
-                  <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/70 p-4">
-                    <div className="flex items-center gap-2 text-xs font-black text-violet-800"><Sparkles size={14} /> AI 商机判断 · {selected.intent} · {selected.score} 分</div>
-                    <p className="mt-2 text-xs leading-5 text-violet-700">{selected.reason}</p>
+                  <div className="mt-4 border-l-2 border-insight bg-insight-soft p-4">
+                    <div className="flex items-center gap-2 text-xs font-bold text-insight-action"><Sparkles size={14} /> AI 商机判断 · {selected.intent} · {selected.score} 分</div>
+                    <p className="mt-2 text-xs leading-5 text-insight-action">{selected.reason}</p>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-                  <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-black text-text-primary">AI 三版回复</h3><p className="mt-1 text-[11px] text-text-muted">基于首个选定卡片，可编辑后批量发送</p></div><span className="whitespace-nowrap rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700">人工确认</span></div>
+                <div className="rounded-lg border border-border bg-white p-4 sm:p-5">
+                  <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-text-primary">AI 三版回复</h3><p className="mt-1 text-[11px] text-text-muted">基于首个选定卡片，可编辑后批量发送</p></div><span className="whitespace-nowrap border-l-2 border-accent bg-accent-glow px-2.5 py-1 text-[10px] font-bold text-accent">人工确认</span></div>
                   <div className="mt-4 flex gap-2">
                     {selected.replies.slice(0, 3).map((reply, index) => <button key={index} type="button" onClick={() => { setReplyIndex(index); setReplyText(reply); }} className={`rounded-lg px-3 py-1.5 text-[11px] font-black ${replyIndex === index ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>版本 {index + 1}</button>)}
                   </div>
-                  <textarea value={replyText} onChange={event => setReplyText(event.target.value)} rows={4} placeholder={selected.replies.length ? '' : 'AI 正在生成回复建议…'} className="mt-3 w-full resize-none rounded-xl border border-border bg-surface px-4 py-3 text-sm leading-6 outline-none focus:border-accent" />
+                  <textarea value={replyText} onChange={event => setReplyText(event.target.value)} rows={4} placeholder={selected.replies.length ? '' : 'AI 正在生成回复建议…'} className="ui-field mt-3 !rounded-md px-4 py-3 text-sm leading-6" />
                   {selectedReplyTranslation && (
-                    <div className="mt-2 rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
-                      <p className="flex items-center gap-1.5 text-[10px] font-black text-emerald-700"><Languages size={11} /> 回复中文翻译</p>
-                      <p className="mt-1 text-xs leading-5 text-emerald-950">{selectedReplyTranslation}</p>
-                      {replyText !== selected.replies[replyIndex] && <p className="mt-1 text-[9px] font-bold text-amber-700">你已修改外语回复，发送前请以外语原文为准。</p>}
+                    <div className="mt-2 rounded-md border border-border bg-accent-glow px-4 py-3">
+                      <p className="flex items-center gap-1.5 text-[10px] font-bold text-accent"><Languages size={11} /> 回复中文翻译</p>
+                      <p className="mt-1 text-xs leading-5 text-text-primary">{selectedReplyTranslation}</p>
+                      {replyText !== selected.replies[replyIndex] && <p className="mt-1 text-[9px] font-bold text-insight-action">你已修改外语回复，发送前请以外语原文为准。</p>}
                     </div>
                   )}
-                  {selectedComments.length > 1 && <p className="mt-2 text-[10px] leading-4 text-amber-700">同一版回复将发送给全部 {selectedComments.length} 条已选评论，请确认内容对所有对象都适用。</p>}
+                  {selectedComments.length > 1 && <p className="mt-2 text-[10px] leading-4 text-insight-action">同一版回复将发送给全部 {selectedComments.length} 条已选评论，请确认内容对所有对象都适用。</p>}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                     <button type="button" onClick={() => setStatus(selected.id, 'ignored')} className="text-xs font-bold text-text-muted hover:text-text-secondary">忽略评论</button>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => setStatus(selected.id, 'following')} className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-black text-text-secondary"><MessageCircle size={14} /> 标记跟进</button>
-                      <span className="inline-flex items-center rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-text-muted">加 WhatsApp 后自动进入客户</span>
-                      <button type="button" onClick={() => void sendReplies()} disabled={acting || !replyText.trim()} className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-xs font-black text-white disabled:opacity-50"><Send size={14} /> {acting ? '批量发送中' : `一键回复 ${selectedComments.length} 条`}</button>
+                      <button type="button" onClick={() => setStatus(selected.id, 'following')} className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-bold text-text-secondary"><MessageCircle size={14} /> 标记跟进</button>
+                      <span className="inline-flex items-center rounded-md border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-text-muted">加 WhatsApp 后自动进入客户</span>
+                      <button type="button" onClick={() => void sendReplies()} disabled={acting || !replyText.trim()} className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-50"><Send size={14} /> {acting ? '批量发送中' : `一键回复 ${selectedComments.length} 条`}</button>
                     </div>
                   </div>
-                  {selected.status !== 'pending' && <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700"><CheckCircle2 size={14} /> 当前状态：{statusLabel[selected.status]}</div>}
+                  {selected.status !== 'pending' && <div role="status" className="mt-4 flex items-center gap-2 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent"><CheckCircle2 size={14} /> 当前状态：{statusLabel[selected.status]}</div>}
                 </div>
               </div>
               </motion.aside>

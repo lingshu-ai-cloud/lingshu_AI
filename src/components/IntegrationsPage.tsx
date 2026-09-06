@@ -41,14 +41,14 @@ class IntegrationTabBoundary extends Component<
 export default function IntegrationsPage() {
   return (
     <div className="flex flex-col h-full bg-white">
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
+      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between border-b border-border px-5 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
+          <div className="flex h-6 w-6 items-center justify-center text-accent">
             <PlugZap size={13} />
           </div>
-          <span className="text-sm font-semibold text-text-primary">集成中心</span>
+          <div><h1 className="text-lg font-semibold text-text-primary">集成中心</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">连接业务渠道并检查授权状态</p></div>
         </div>
-      </div>
+      </header>
 
       <div className="min-h-0 flex-1">
         <IntegrationTabBoundary>

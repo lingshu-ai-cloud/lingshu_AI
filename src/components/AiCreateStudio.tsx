@@ -17,6 +17,7 @@ import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask } from '../lib/scriptGapQueue';
 import {
   StudioWorkbenchFrame,
@@ -31,7 +32,7 @@ import {
    稳定工作台：① 内容对象  ② 内容画布  ③ 步骤与属性  ④ 固定操作栏
 ─────────────────────────────────────────────────────────────────────────── */
 
-const TRAFFIC_GREEN = '#16a34a';
+const TRAFFIC_GREEN = '#117f51';
 const CANVA_VIDEO_COVER_URL = 'https://www.canva.cn/create/video-covers/';
 const CANVA_COVER_RETURN_KEY = 'ow_canva_cover_return';
 const CANVA_COVER_RETURN_TTL = 6 * 60 * 60 * 1000;
@@ -4026,6 +4027,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
   const [sourceDraftCheckPending, setSourceDraftCheckPending] = useState(true);
   const [existingSourceDraftPrompt, setExistingSourceDraftPrompt] = useState<ExistingSourceDraftPrompt | null>(null);
+  const existingSourceDraftDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(existingSourceDraftPrompt),
+    onClose: () => undefined,
+    closeOnEscape: false,
+  });
   const referenceVoice = useMemo(() => referenceVoiceProfile(videoKickoff), [videoKickoff]);
 
   useEffect(() => {
@@ -12659,6 +12665,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
           >
             <motion.div
+              ref={existingSourceDraftDialogRef}
               initial={{ opacity: 0, y: 8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.98 }}
@@ -12683,6 +12690,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 <div className="mt-6 flex flex-wrap gap-2">
                   <button
                     type="button"
+                    data-modal-initial-focus
                     onClick={() => {
                       const project = existingSourceDraftPrompt.project;
                       setExistingSourceDraftPrompt(null);
@@ -12755,6 +12763,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
   onPublish: (draft: any) => void;
 }) {
   const [collection, setCollection] = useState<'projects' | 'finished'>('projects');
+  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const drafts = projects.filter(p => p.status === 'draft');
   const works = projects.filter(p => p.status === 'ready_for_approval' || p.status === 'published');
 
@@ -12805,6 +12814,11 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
 
   return (
     <motion.div
+      ref={dialogRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="projects-overlay-title"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="absolute inset-0 z-50 flex bg-surface">
       <motion.div
@@ -12816,11 +12830,11 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
           <div className="flex items-center gap-2">
             <FolderOpen size={15} style={{ color: TRAFFIC_GREEN }} />
             <div>
-              <span className="text-sm font-bold text-text-primary">{workflowContext ? '当前任务的内容项目' : '我的创作'}</span>
+              <span id="projects-overlay-title" className="text-sm font-bold text-text-primary">{workflowContext ? '当前任务的内容项目' : '我的创作'}</span>
               {workflowContext && <p className="mt-0.5 text-[10px] text-text-muted">仅显示本次运行与任务关联的项目</p>}
             </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="关闭我的创作" title="关闭" className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
+          <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭我的创作" title="关闭" className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-2 hover:text-text-primary">
             返回创作
           </button>
         </div>

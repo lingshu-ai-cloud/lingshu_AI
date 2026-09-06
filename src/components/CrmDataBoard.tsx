@@ -146,7 +146,7 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
   }, [customers.length, effectiveOrders, validOrders]);
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
+    <div className="secondary-data-board h-full overflow-y-auto px-4 py-6 sm:px-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
           <p className="text-sm font-bold text-text-primary">客户经营数据</p>
@@ -163,14 +163,14 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
         <EmptyState text="当前会话客户暂无订单记录，成交后会自动汇总到这里。" />
       ) : (
         <>
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="secondary-stat-strip mb-5">
             <StatCard label="订单客户" value={String(summary.customerCount)} icon={<Users size={14} />} />
             <StatCard label="有效订单" value={String(summary.orderCount)} icon={<ShoppingBag size={14} />} />
             <StatCard label="有效GMV" value={money(summary.revenue)} icon={<DollarSign size={14} />} />
             <StatCard label="待履约" value={String(summary.pending)} icon={<PackageCheck size={14} />} />
           </div>
 
-          <section className="mb-4 rounded-xl border border-border bg-white">
+          <section className="secondary-panel mb-5 border border-border bg-white">
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-bold text-text-primary">订单客户汇总</p>
               <p className="mt-1 text-xs text-text-muted">按买家名称从我的订单聚合，金额只统计已付款/生产中/已发货/已完成订单。</p>
@@ -206,7 +206,7 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
             </div>
           </section>
 
-          <section className="rounded-xl border border-border bg-white">
+          <section className="secondary-panel border border-border bg-white">
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-bold text-text-primary">最近订单明细</p>
             </div>
@@ -246,7 +246,7 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
 
 function StatCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-white p-3">
+    <div className="secondary-stat-item bg-transparent p-4">
       <div className="flex items-center gap-2 text-green-700">{icon}<span className="text-xs font-semibold text-text-secondary">{label}</span></div>
       <p className="mt-2 text-2xl font-bold leading-none text-text-primary">{value}</p>
     </div>
@@ -255,7 +255,7 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-sm text-text-muted">
+    <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">
       <div className="flex items-start gap-2"><AlertCircle size={16} className="mt-0.5 text-text-muted" /><p>{text}</p></div>
     </div>
   );

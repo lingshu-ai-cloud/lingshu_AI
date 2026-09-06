@@ -64,7 +64,7 @@ const STEPS: GuideStep[] = [
   },
 ];
 
-const CONFETTI_COLORS = ['#16a34a', '#22c55e', '#0ea5e9', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#f97316'];
+const CONFETTI_COLORS = ['#117f51', '#d7eadb', '#e98268', '#fff3e7', '#173d31'];
 
 function useTargetRect(target: string, tick: number) {
   const [rect, setRect] = useState<DOMRect | null>(null);
@@ -165,7 +165,7 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
 
   if (isComplete) {
     return showCelebration ? (
-      <div className="fixed inset-0 z-[90] pointer-events-none overflow-hidden bg-slate-950/18 backdrop-blur-[1px]">
+      <div className="pointer-events-none fixed inset-0 z-[90] overflow-hidden bg-slate-950/18" aria-live="polite">
         {confetti.map(piece => (
           <span
             key={piece.id}
@@ -188,11 +188,11 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
           transition={{ duration: 0.72, times: [0, 0.58, 1], ease: 'easeOut' }}
           className="absolute inset-0 flex items-center justify-center px-6"
         >
-          <div className="max-w-[560px] rounded-[8px] border border-white/60 bg-white/94 px-8 py-7 text-center shadow-2xl">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-green-50 text-green-600">
+          <div className="max-w-[560px] rounded-lg border border-border bg-white/95 px-6 py-6 text-center shadow-xl sm:px-8 sm:py-7">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md bg-accent-glow text-accent">
               <Sparkles size={22} />
             </div>
-            <p className="text-2xl font-bold text-slate-950 leading-snug">
+            <p className="text-xl font-bold leading-snug text-text-primary sm:text-2xl">
               现在你已经了解灵枢AI啦，一起加油吧～
             </p>
           </div>
@@ -212,13 +212,13 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
     <>
       {rect && (
         <div
-          className="fixed z-[70] rounded-2xl pointer-events-none transition-all duration-200"
+          className="pointer-events-none fixed z-[70] rounded-lg transition-all duration-200"
           style={{
             left: rect.left - 6,
             top: rect.top - 6,
             width: rect.width + 12,
             height: rect.height + 12,
-            boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.10), 0 0 0 3px rgba(34, 197, 94, 0.45), 0 14px 36px rgba(22, 163, 74, 0.28)',
+            boxShadow: '0 0 0 9999px rgba(23, 61, 49, 0.10), 0 0 0 2px rgba(17, 127, 81, 0.52), 0 8px 24px rgba(17, 127, 81, 0.16)',
           }}
         />
       )}
@@ -227,20 +227,23 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
         initial={{ opacity: 0, scale: 0.96, y: -6 }}
         animate={{ opacity: 1, scale: [0.96, 1.025, 1], y: [-6, 0, 0] }}
         transition={{ duration: 0.55, times: [0, 0.62, 1], ease: 'easeOut' }}
-        className="fixed bottom-6 left-4 w-[318px] max-w-[calc(100vw-32px)] rounded-2xl border border-green-100 bg-white shadow-lg overflow-visible z-[71]"
+        role="region"
+        aria-live="polite"
+        aria-labelledby="demo-guide-step-title"
+        className="fixed bottom-3 left-3 right-3 z-[71] overflow-visible rounded-lg border border-border bg-white shadow-lg sm:bottom-6 sm:left-4 sm:right-auto sm:w-[318px]"
       >
         <div className="px-4 py-4">
           <div className="mb-2 flex justify-end">
             <button
               type="button"
               onClick={skipGuide}
-              className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+              className="rounded-md px-2 py-1 text-[11px] font-semibold text-text-muted hover:bg-surface-2 hover:text-text-secondary"
             >
               跳过引导
             </button>
           </div>
           <div className="flex items-start gap-3">
-            <span className="w-8 h-8 rounded-xl bg-green-50 text-green-600 flex items-center justify-center flex-shrink-0">
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
               <Sparkles size={14} />
             </span>
             <div className="min-w-0">
@@ -251,7 +254,7 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
           </div>
 
           <div className="mt-4">
-            <p className="text-[15px] font-bold text-slate-900 leading-snug">{current.title}</p>
+            <p id="demo-guide-step-title" className="text-[15px] font-bold leading-snug text-text-primary">{current.title}</p>
           </div>
 
           <p className="text-xs text-text-secondary mt-3 leading-relaxed">
@@ -259,14 +262,13 @@ export default function DemoGuide({ page, onNavigate, onShown, forceStart }: { p
           </p>
 
           <div className="flex items-center justify-between gap-3 mt-4">
-            <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 py-1 text-[12px] font-bold text-slate-700">
+            <span className="inline-flex items-center border-l-2 border-insight bg-insight-soft px-2.5 py-1 text-[12px] font-bold text-insight-action">
               当前步骤 {currentStepIndex + 1}/{STEPS.length}
             </span>
             <button
               type="button"
               onClick={go}
-              className="h-8 px-4 rounded-lg text-xs font-semibold text-white flex-shrink-0"
-              style={{ background: '#16a34a' }}
+              className="h-8 flex-shrink-0 rounded-md bg-accent px-4 text-xs font-semibold text-white hover:bg-accent-dim"
             >
               带我去
             </button>

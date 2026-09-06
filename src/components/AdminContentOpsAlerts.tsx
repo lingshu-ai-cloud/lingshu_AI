@@ -260,22 +260,22 @@ export default function AdminContentOpsAlerts() {
   };
 
   return (
-    <section className="rounded-3xl border border-border bg-surface p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <section className="rounded-lg border border-border bg-surface p-4">
+      <div className="mb-3 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-amber/10 text-amber">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-insight-soft text-insight-action">
             <AlertTriangle size={15} />
           </div>
           <div>
-            <p className="text-sm font-black text-text-primary">内容运维</p>
+            <p className="text-sm font-bold text-text-primary">内容运维</p>
             <p className="mt-0.5 text-[11px] text-text-muted">汇总试用账号与正式账号的爬取失败视频，支持人工补传修复。</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-text-secondary">
+        <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-start">
+          <span className="border-l-2 border-insight bg-insight-soft px-2.5 py-1 text-[11px] font-bold text-insight-action">
             {loading ? '读取中' : `${summary.total} 条待修复`}
           </span>
-          <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">
+          <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:border-border-bright hover:bg-surface-2">
             {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />}
             刷新
           </button>
@@ -293,24 +293,24 @@ export default function AdminContentOpsAlerts() {
       )}
 
       {reconciliation?.warning && (
-        <p className={`mb-3 rounded-xl px-3 py-2 text-xs font-bold ${
-          reconciliation.ok ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-700'
+        <p role="status" className={`mb-3 border-l-2 px-3 py-2 text-xs font-bold ${
+          reconciliation.ok ? 'border-insight bg-insight-soft text-insight-action' : 'border-red bg-red/5 text-red'
         }`}>
           {reconciliation.warning}
           {reconciliation.scanned > 0 ? ` 已扫描 ${reconciliation.scanned} 条视频记录。` : ''}
         </p>
       )}
 
-      {error && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700">{error}</p>}
-      {message && <p className="mb-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">{message}</p>}
+      {error && <p role="alert" className="mb-3 border-l-2 border-red bg-red/5 px-3 py-2 text-xs font-bold text-red">{error}</p>}
+      {message && <p role="status" className="mb-3 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent">{message}</p>}
 
       {alerts.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-border bg-white px-3 py-4 text-xs text-text-muted">暂无试用账号或正式账号需要人工处理的爬取失败视频。</p>
+        <p className="rounded-md border border-dashed border-border bg-white px-3 py-4 text-xs text-text-muted">暂无试用账号或正式账号需要人工处理的爬取失败视频。</p>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border bg-white">
+        <div className="overflow-hidden rounded-md border border-border bg-white">
           <div className="divide-y divide-border">
             {alerts.map(alert => (
-              <div key={alert.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-3 py-2.5">
+              <div key={alert.id} className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ${
@@ -338,14 +338,14 @@ export default function AdminContentOpsAlerts() {
                   </p>
                   <p className="mt-1 line-clamp-2 text-[10px] text-text-secondary">{alert.error || '无详细错误'}</p>
                 </div>
-                <div className="flex flex-col items-end gap-1.5">
-                  <div className="flex items-center gap-1.5">
+                <div className="flex min-w-0 flex-col items-start gap-1.5 lg:items-end">
+                  <div className="flex max-w-full flex-wrap items-center gap-1.5">
                     {alert.sourceUrl && (
                       <a
                         href={alert.sourceUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-border px-2 text-[10px] font-semibold text-text-secondary hover:bg-surface-2 hover:text-text-primary"
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[10px] font-semibold text-text-secondary hover:bg-surface-2 hover:text-text-primary"
                       >
                         <ExternalLink size={11} />
                         原视频
@@ -364,7 +364,7 @@ export default function AdminContentOpsAlerts() {
                     />
                     <label
                       htmlFor={`manual-video-${alert.id}`}
-                      className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-lg border border-border px-2 text-[10px] font-semibold text-text-secondary hover:bg-surface-2 hover:text-text-primary"
+                      className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border border-border px-2 text-[10px] font-semibold text-text-secondary hover:bg-surface-2 hover:text-text-primary"
                     >
                       <Upload size={11} />
                       选择修复视频
@@ -373,7 +373,7 @@ export default function AdminContentOpsAlerts() {
                       type="button"
                       onClick={() => void uploadManualVideo(alert)}
                       disabled={!selectedFiles[alert.id] || uploadingAlertId === alert.id}
-                      className="inline-flex h-7 items-center gap-1 rounded-lg bg-accent px-2 text-[10px] font-semibold text-white disabled:opacity-50"
+                      className="inline-flex h-7 items-center gap-1 rounded-md bg-accent px-2 text-[10px] font-semibold text-white hover:bg-accent-dim disabled:opacity-50"
                     >
                       {uploadingAlertId === alert.id ? <Loader2 size={11} className="animate-spin" /> : <Wrench size={11} />}
                       人工修复

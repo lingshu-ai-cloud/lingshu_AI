@@ -200,10 +200,10 @@ const SKILL_AGENTS: Array<{
   Icon: typeof Compass;
   position: { x: number; y: number };
 }> = [
-  { id: 'strategy', label: '策略助手', agentType: 'strategy', color: '#60A5FA', bg: '#EFF6FF', Icon: Compass, position: { x: 0, y: -1 } },
-  { id: 'content', label: '内容助手', agentType: 'traffic', color: '#60A5FA', bg: '#EFF6FF', Icon: Zap, position: { x: -0.5, y: -0.866 } },
-  { id: 'customer', label: '客户助手', agentType: 'conversion', color: '#60A5FA', bg: '#EFF6FF', Icon: Users, position: { x: -0.866, y: -0.5 } },
-  { id: 'retention', label: '唤醒助手', agentType: 'retention', color: '#60A5FA', bg: '#EFF6FF', Icon: ShoppingCart, position: { x: -1, y: 0 } },
+  { id: 'strategy', label: '策略助手', agentType: 'strategy', color: '#117F51', bg: '#F1F6F2', Icon: Compass, position: { x: 0, y: -1 } },
+  { id: 'content', label: '内容助手', agentType: 'traffic', color: '#117F51', bg: '#F1F6F2', Icon: Zap, position: { x: -0.5, y: -0.866 } },
+  { id: 'customer', label: '客户助手', agentType: 'conversion', color: '#A45A3B', bg: '#FFF3E7', Icon: Users, position: { x: -0.866, y: -0.5 } },
+  { id: 'retention', label: '唤醒助手', agentType: 'retention', color: '#53695F', bg: '#F1F6F2', Icon: ShoppingCart, position: { x: -1, y: 0 } },
 ];
 
 const AGENT_DISPLAY_NAME: Record<OrbitAgentId, string> = {
@@ -422,19 +422,19 @@ function quickQuestions(context: AssistantContext) {
 }
 
 function todoToneClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'border-emerald-100 bg-emerald-50/80 text-emerald-800';
-  if (tone === 'red') return 'border-red-100 bg-red-50 text-red-800';
-  if (tone === 'amber') return 'border-amber-100 bg-amber-50 text-amber-800';
-  if (tone === 'blue') return 'border-sky-100 bg-sky-50 text-sky-800';
-  return 'border-emerald-100 bg-emerald-50 text-emerald-800';
+  if (completed) return 'border-accent/20 bg-accent-glow text-accent';
+  if (tone === 'red') return 'border-red/20 bg-red/5 text-red';
+  if (tone === 'amber') return 'border-amber/20 bg-amber-dim text-amber';
+  if (tone === 'blue') return 'border-accent/20 bg-accent-glow text-accent';
+  return 'border-border bg-surface text-text-secondary';
 }
 
 function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
-  if (completed) return 'bg-emerald-500';
-  if (tone === 'red') return 'bg-red-500';
-  if (tone === 'amber') return 'bg-amber-500';
-  if (tone === 'blue') return 'bg-sky-500';
-  return 'bg-emerald-500';
+  if (completed) return 'bg-accent';
+  if (tone === 'red') return 'bg-red';
+  if (tone === 'amber') return 'bg-amber';
+  if (tone === 'blue') return 'bg-accent';
+  return 'bg-border-bright';
 }
 
 export default function GlobalAssistant({
@@ -1074,6 +1074,18 @@ export default function GlobalAssistant({
   }, [mode]);
 
   useEffect(() => {
+    if (mode !== 'chat' && assistantTool !== 'knowledge-intake') return;
+    const closePanel = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      setAssistantTool(null);
+      setPanelView('chat');
+      setMode('breathing');
+    };
+    window.addEventListener('keydown', closePanel);
+    return () => window.removeEventListener('keydown', closePanel);
+  }, [assistantTool, mode]);
+
+  useEffect(() => {
     setLauncherRetracted(false);
   }, [page]);
 
@@ -1128,7 +1140,7 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 10, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 7, scale: 0.96 }}
-            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)] ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
             <button
@@ -1140,10 +1152,10 @@ export default function GlobalAssistant({
             >
               <X size={13} />
             </button>
-            <p className="pr-6 text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢陪你等</p>
+            <p className="pr-6 text-[10px] font-black uppercase tracking-[0.14em] text-accent">灵小枢陪你等</p>
             <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{performanceMessage}</p>
-            <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-emerald-500"/><span className="h-1 w-3 animate-pulse rounded-full bg-emerald-300 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-emerald-200 [animation-delay:320ms]"/></div>
-            <span className={`absolute h-4 w-4 rotate-45 border-emerald-200 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <div className="mt-2 flex gap-1"><span className="h-1 w-5 animate-pulse rounded-full bg-accent"/><span className="h-1 w-3 animate-pulse rounded-full bg-accent/55 [animation-delay:160ms]"/><span className="h-1 w-2 animate-pulse rounded-full bg-accent/25 [animation-delay:320ms]"/></div>
+            <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1156,12 +1168,12 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
-            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-200 bg-white p-3 shadow-[0_18px_48px_rgba(15,23,42,0.18)] ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            className={`absolute z-30 w-[248px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(248, viewport.width - 104)) } : undefined}
           >
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-emerald-600">灵小枢</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-accent">灵小枢</p>
             <p className="mt-1 text-xs font-semibold leading-[1.65] text-text-secondary">{speechBubble.message}</p>
-            <span className={`absolute h-4 w-4 rotate-45 border-emerald-200 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1174,14 +1186,14 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
-            className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-2xl border border-emerald-100 bg-white p-3 shadow-[0_16px_42px_rgba(15,23,42,0.16)] ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
+            className={`absolute z-20 w-[236px] max-w-[calc(100vw-104px)] rounded-lg border border-border bg-surface p-3 shadow-lg ${assistantPosition ? '' : dockOnLeft ? 'left-[72px]' : 'right-[72px]'} ${dockOnTop ? 'top-1' : 'bottom-1'}`}
             style={assistantPosition ? { left: positionedPopupLeft(Math.min(236, viewport.width - 104)) } : undefined}
           >
             <button type="button" onClick={() => setFeatureGuide(null)} className="absolute right-2.5 top-2.5 rounded-lg p-1 text-text-muted hover:bg-surface-2" aria-label="关闭用法提示">
               <X size={13} />
             </button>
             <div className="pr-6">
-              <p className="text-xs font-black text-emerald-700">{featureGuide.title}</p>
+              <p className="text-xs font-black text-accent">{featureGuide.title}</p>
               <p className="mt-1 text-xs leading-[1.65] text-text-secondary">{featureGuide.message}</p>
             </div>
             <button
@@ -1191,11 +1203,11 @@ export default function GlobalAssistant({
                 setFeatureGuide(null);
                 openAgent(agentId);
               }}
-              className="mt-2 text-[11px] font-black text-emerald-700 hover:text-emerald-800"
+              className="mt-2 text-[11px] font-black text-accent hover:text-accent-dim"
             >
               问问灵小枢 →
             </button>
-            <span className={`absolute h-4 w-4 rotate-45 border-emerald-100 bg-white ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <span className={`absolute h-4 w-4 rotate-45 border-border bg-surface ${dockOnLeft ? '-left-2 border-b border-l' : '-right-2 border-r border-t'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1208,7 +1220,7 @@ export default function GlobalAssistant({
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 4 }}
             onClick={openCurrentPageAgent}
-            className={`absolute z-10 whitespace-nowrap rounded-full border border-emerald-100 bg-white/95 px-3 py-1.5 text-[11px] font-black text-emerald-700 shadow-sm hover:border-emerald-200 hover:bg-emerald-50 ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
+            className={`absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-black text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
           >
             要补资料？点我
           </motion.button>
@@ -1223,8 +1235,8 @@ export default function GlobalAssistant({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <div className={`absolute h-36 w-36 rounded-full border border-dashed border-text-muted/40 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
-            <div className={`absolute h-24 w-24 rounded-full border border-dashed border-text-muted/30 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <div className={`absolute h-36 w-36 rounded-full border border-dashed border-accent/25 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
+            <div className={`absolute h-24 w-24 rounded-full border border-dashed border-accent/15 ${dockOnLeft ? 'left-6' : 'right-6'} ${dockOnTop ? 'top-6' : 'bottom-6'}`} />
             {SKILL_AGENTS.map((agent, index) => {
               const Icon = agent.Icon;
               const unread = threads[agent.id].unreadCount;
@@ -1235,8 +1247,9 @@ export default function GlobalAssistant({
                   key={agent.id}
                   type="button"
                   title={AGENT_DISPLAY_NAME[agent.id]}
+                  aria-label={`打开${AGENT_DISPLAY_NAME[agent.id]}`}
                   onClick={() => openAgent(agent.id)}
-                  className={`group pointer-events-auto absolute flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-[0_12px_28px_rgba(15,23,42,0.14)] ${dockOnLeft ? 'left-2' : 'right-2'} ${dockOnTop ? 'top-2' : 'bottom-2'}`}
+                  className={`group pointer-events-auto absolute flex h-12 w-12 items-center justify-center rounded-full border bg-surface shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${dockOnLeft ? 'left-2' : 'right-2'} ${dockOnTop ? 'top-2' : 'bottom-2'}`}
                   style={{ borderColor: agent.color, color: agent.color, backgroundColor: agent.bg }}
                   initial={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
                   animate={{ x, y, opacity: 1, scale: 1 }}
@@ -1244,7 +1257,7 @@ export default function GlobalAssistant({
                   transition={{ type: 'spring', stiffness: 260, damping: 18, delay: index * 0.06 }}
                 >
                   <Icon size={20} />
-                  <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-text-primary px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                     {AGENT_DISPLAY_NAME[agent.id]}
                   </span>
                   {unread > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-bold text-white">{unread}</span>}
@@ -1259,12 +1272,15 @@ export default function GlobalAssistant({
         {(mode === 'chat' || assistantTool === 'knowledge-intake') && (
           <motion.section
             data-global-assistant="panel"
+            role="dialog"
+            aria-label={panelTitle}
+            tabIndex={-1}
             layoutId={`assistant-${activeAgent}`}
             initial={{ opacity: 0, y: 18, scale: 0.96 }}
             animate={mode === 'chat' ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: 18, scale: 0.96 }}
             exit={{ opacity: 0, y: 18, scale: 0.96 }}
             transition={reduceMotion ? { duration: 0.16 } : { type: 'spring', stiffness: 240, damping: 24 }}
-            className={`absolute z-10 flex max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+            className={`absolute z-10 flex max-h-[calc(100dvh-32px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantPosition ? '' : dockOnLeft ? 'left-0' : 'right-0'} ${dockOnTop ? 'top-14' : 'bottom-14'} ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
             style={{ height: assistantPanelHeight, ...(assistantPosition ? { left: positionedPanelLeft } : {}) }}
           >
             <header className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
@@ -1278,7 +1294,8 @@ export default function GlobalAssistant({
                     } else if (isCustomerTodoView) setPanelView('chat');
                     else setMode('expanded');
                   }}
-                  className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2"
+                  className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  aria-label={assistantTool === 'knowledge-intake' ? '返回灵小枢对话' : isCustomerTodoView ? '返回客户助手' : '返回展开态'}
                   title={assistantTool === 'knowledge-intake' ? '返回灵小枢对话' : isCustomerTodoView ? '返回客户助手' : '返回展开态'}
                 >
                   <ArrowLeft size={16} />
@@ -1288,7 +1305,7 @@ export default function GlobalAssistant({
                   <p className="truncate text-[11px] text-text-muted">{panelSubtitle}</p>
                 </div>
               </div>
-              <button type="button" onClick={() => { setAssistantTool(null); setPanelView('chat'); setMode('breathing'); }} className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2" title="关闭">
+              <button type="button" onClick={() => { setAssistantTool(null); setPanelView('chat'); setMode('breathing'); }} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭" aria-label="关闭灵枢助手">
                 <X size={15} />
               </button>
             </header>
@@ -1307,15 +1324,15 @@ export default function GlobalAssistant({
             ) : isCustomerTodoView ? (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
                 <div className="space-y-3">
-                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
-                    <p className="text-sm font-black text-cyan-950">今日待办（{pendingCount}）</p>
-                    <p className="mt-2 text-sm leading-relaxed text-cyan-900">
+                  <div className="border-l-2 border-amber bg-amber-dim p-4">
+                    <p className="text-sm font-black text-text-primary">今日待办（{pendingCount}）</p>
+                    <p className="mt-2 text-sm leading-relaxed text-text-secondary">
                       {pendingCount > 0 ? '需要你处理和确认的客户已按优先级排好。' : '今天的待办已处理完。'}
                     </p>
                     <button
                       type="button"
                       onClick={() => setPanelView('chat')}
-                      className="mt-4 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-xs font-black text-cyan-800 hover:bg-cyan-100"
+                      className="mt-4 rounded-md bg-accent px-3 py-2 text-xs font-black text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
                     >
                       客户助手
                     </button>
@@ -1331,14 +1348,14 @@ export default function GlobalAssistant({
                             window.dispatchEvent(new CustomEvent('lingshu:select-customer', { detail: { id: item.id } }));
                             setPanelView('chat');
                           }}
-                          className={`flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition-colors hover:bg-white ${todoToneClass(item.tone, item.completed)}`}
+                          className={`flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${todoToneClass(item.tone, item.completed)}`}
                         >
                           <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${todoDotClass(item.tone, item.completed)}`} />
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2">
                               <span className="truncate text-xs font-black text-text-primary">{item.name}</span>
                               {item.completed && (
-                                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
+                                <span className="inline-flex shrink-0 items-center gap-1 border-l-2 border-accent bg-accent-glow px-2 py-0.5 text-[10px] font-black text-accent">
                                   <CheckCircle2 size={11} /> 已完成
                                 </span>
                               )}
@@ -1350,7 +1367,7 @@ export default function GlobalAssistant({
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-border bg-surface-2 px-3 py-4 text-center text-xs font-bold text-text-muted">
+                    <div className="rounded-lg border border-border bg-surface-2 px-3 py-4 text-center text-xs font-bold text-text-muted">
                       暂无今日待办
                     </div>
                   )}
@@ -1374,7 +1391,7 @@ export default function GlobalAssistant({
                             key={item}
                             type="button"
                             onClick={() => void send(item)}
-                            className="rounded-xl border border-border bg-surface px-3 py-2 text-left text-xs font-semibold text-text-secondary hover:border-slate-300 hover:text-text-primary"
+                            className="rounded-md border border-border bg-surface px-3 py-2 text-left text-xs font-semibold text-text-secondary hover:border-accent/35 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                           >
                             {item}
                           </button>
@@ -1385,8 +1402,8 @@ export default function GlobalAssistant({
                     <div className="space-y-4">
                       {activeThread.messages.map((msg, index) => (
                         <div key={index} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
-                          {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white"><Bot size={13} /></div>}
-                          <div className={`max-w-[82%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm bg-accent text-white whitespace-pre-line' : 'rounded-tl-sm border border-border bg-surface-2 text-text-primary'}`}>
+                          {msg.role === 'assistant' && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>}
+                          <div className={`max-w-[82%] rounded-lg px-3 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm bg-accent text-white whitespace-pre-line' : 'rounded-tl-sm border border-border bg-surface-2 text-text-primary'}`}>
                             {msg.role === 'assistant'
                               ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
                               : msg.content}
@@ -1395,8 +1412,8 @@ export default function GlobalAssistant({
                       ))}
                       {loading && (
                         <div className="flex gap-2">
-                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white"><Loader2 size={13} className="animate-spin" /></div>
-                          <div className="rounded-2xl rounded-tl-sm border border-border bg-surface-2 px-3 py-2 text-sm text-text-muted">思考中...</div>
+                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="animate-spin" /></div>
+                          <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-3 py-2 text-sm text-text-muted">思考中...</div>
                         </div>
                       )}
                       <div ref={bottomRef} />
@@ -1405,7 +1422,7 @@ export default function GlobalAssistant({
                 </div>
 
                 <div className="shrink-0 border-t border-border p-3">
-                  <div className="rounded-2xl border border-border bg-surface-2">
+                  <div className="rounded-lg border border-border bg-surface-2 focus-within:border-accent/40 focus-within:ring-2 focus-within:ring-accent/10">
                     <textarea
                       value={activeThread.draftInput}
                       onChange={event => setDraftInput(activeAgent, event.target.value)}
@@ -1417,10 +1434,10 @@ export default function GlobalAssistant({
                       }}
                       rows={2}
                       placeholder="问灵枢助手..."
-                      className="w-full resize-none bg-transparent px-3 pt-3 text-sm outline-none placeholder:text-text-muted"
+                      className="w-full resize-none bg-transparent px-3 pt-3 text-sm text-text-primary outline-none placeholder:text-text-muted"
                     />
                     <div className="flex items-center justify-end px-2 pb-2">
-                      <button type="button" onClick={() => void send(activeThread.draftInput)} disabled={!activeThread.draftInput.trim() || loading} className="flex h-8 w-8 items-center justify-center rounded-xl bg-slate-950 text-white disabled:opacity-40">
+                      <button type="button" onClick={() => void send(activeThread.draftInput)} disabled={!activeThread.draftInput.trim() || loading} className="flex h-8 w-8 items-center justify-center rounded-md bg-accent text-white hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:opacity-40" aria-label="发送消息">
                         {loading ? <Loader2 size={13} className="animate-spin" /> : <ArrowUp size={13} />}
                       </button>
                     </div>
@@ -1443,7 +1460,7 @@ export default function GlobalAssistant({
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 10, scale: 0.94 }}
           transition={reduceMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 320, damping: 24 }}
-          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-2xl border border-r-0 border-emerald-200 bg-white text-emerald-700 shadow-[0_10px_26px_rgba(15,23,42,0.16)] outline-none hover:w-9 hover:bg-emerald-50 focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+          className="relative z-10 flex h-10 w-8 items-center justify-center rounded-l-md border border-r-0 border-border bg-surface text-accent shadow-md outline-none hover:w-9 hover:bg-accent-glow focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
         >
           <Bot size={16} />
           {pendingCount > 0 && <span className="absolute -left-1.5 -top-1 min-w-4 rounded-full bg-red px-1 text-[9px] font-black text-white">{pendingBadge}</span>}
@@ -1456,6 +1473,7 @@ export default function GlobalAssistant({
             type="button"
             draggable
             data-global-assistant="launcher"
+            aria-label={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[orbitIdForAgent(pageContext.agent)]}` : '拖动可移动，点击可展开灵枢助手'}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -1464,7 +1482,7 @@ export default function GlobalAssistant({
             onDragCapture={handleNativeDrag}
             onDragEndCapture={handleNativeDragEnd}
             onClick={handleLauncherClick}
-            className={`absolute inset-0 flex touch-none items-center justify-center rounded-2xl bg-transparent outline-none transition-transform focus-visible:ring-2 focus-visible:ring-[#6FDBA1] focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab hover:-translate-y-0.5'}`}
+            className={`absolute inset-0 flex touch-none items-center justify-center rounded-lg bg-transparent outline-none transition-transform focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${launcherDragging ? 'cursor-grabbing' : 'cursor-grab hover:-translate-y-0.5'}`}
             animate={performance && !reduceMotion
               ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
               : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}

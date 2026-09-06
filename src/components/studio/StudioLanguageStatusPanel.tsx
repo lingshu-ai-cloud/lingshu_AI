@@ -543,7 +543,7 @@ export default function StudioLanguageStatusPanel({
         </div>
       </header>
 
-      <div className="hidden">
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[760px] border-collapse text-left">
           <thead className="bg-surface-2 text-[10px] font-bold uppercase tracking-wide text-text-muted">
             <tr>
@@ -633,7 +633,7 @@ export default function StudioLanguageStatusPanel({
         </table>
       </div>
 
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-border md:hidden">
         {languages.map((item) => {
           const selected = item.id === selectedLanguageId;
           return (

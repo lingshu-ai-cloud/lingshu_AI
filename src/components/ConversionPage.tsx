@@ -30,6 +30,7 @@ import { LiveLocalTime } from './customers/LiveLocalTime';
 import { DailyBriefing } from './customers/DailyBriefing';
 import { useCustomers } from '../hooks/useCustomers';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
@@ -124,12 +125,12 @@ const STAGE_LABEL: Record<CustomerStage, string> = {
 };
 
 const STAGE_META: Record<CustomerStage, { color: string; bg: string }> = {
-  lead: { color: '#0891b2', bg: 'rgba(8,145,178,0.1)' },
-  inquiry: { color: '#4f46e5', bg: 'rgba(79,70,229,0.1)' },
-  quoted: { color: '#d97706', bg: 'rgba(217,119,6,0.1)' },
-  won: { color: '#16a34a', bg: 'rgba(22,163,74,0.1)' },
-  silent30: { color: '#ca8a04', bg: 'rgba(202,138,4,0.1)' },
-  silent60: { color: '#dc2626', bg: 'rgba(220,38,38,0.1)' },
+  lead: { color: 'var(--color-accent)', bg: 'var(--color-accent-glow)' },
+  inquiry: { color: 'var(--color-accent-dim)', bg: 'var(--color-surface-2)' },
+  quoted: { color: 'var(--color-amber)', bg: 'var(--color-amber-dim)' },
+  won: { color: 'var(--color-accent)', bg: 'var(--color-accent-glow)' },
+  silent30: { color: 'var(--color-amber)', bg: 'var(--color-amber-dim)' },
+  silent60: { color: 'var(--color-red)', bg: 'rgba(183,77,67,0.08)' },
 };
 
 const EMPTY_CUSTOMER_FILTERS: CustomerListFilters = {
@@ -144,9 +145,9 @@ const EMPTY_CUSTOMER_FILTERS: CustomerListFilters = {
 };
 
 const HANDLING_COLOR: Record<HandlingMode, string> = {
-  ai_auto: '#16a34a',
-  ai_draft: '#d97706',
-  human_needed: '#dc2626',
+  ai_auto: 'var(--color-accent)',
+  ai_draft: 'var(--color-amber)',
+  human_needed: 'var(--color-red)',
 };
 
 function filterCustomers(view: CustomerView, customers: CustomerProfile[]) {
@@ -554,7 +555,7 @@ function CompactCustomerList({
       <select
         value={value}
         onChange={event => onChange(event.target.value)}
-        className="mt-1 w-full rounded-lg border border-border bg-white px-2.5 py-2 text-xs font-semibold text-text-primary outline-none focus:border-[#0891b2]"
+        className="ui-field ui-select mt-1 w-full !min-h-9 !rounded-md !px-2.5 !py-2 !text-xs"
       >
         <option value="all">全部</option>
         {options.map(item => <option key={item} value={item}>{renderLabel ? renderLabel(item) : item}</option>)}
@@ -570,7 +571,7 @@ function CompactCustomerList({
         key={customer.id}
         type="button"
         onClick={() => onOpen(customer.id)}
-        className={`w-full border-b border-border px-3 py-2.5 text-left transition-colors hover:bg-surface-2 ${customer.id === selectedId ? 'bg-[#0891b2]/10' : 'bg-white'}`}
+        className={`w-full border-b border-border px-3 py-2.5 text-left transition-colors hover:bg-surface-2 ${customer.id === selectedId ? 'border-l-2 border-l-accent bg-accent-glow' : 'border-l-2 border-l-transparent bg-surface'}`}
       >
         <div className="flex items-start gap-2.5">
           <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-xs font-black text-text-secondary">
@@ -582,7 +583,7 @@ function CompactCustomerList({
               <div className="min-w-0">
                 <p className="truncate text-xs font-bold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <span className={`rounded px-1.5 py-0.5 text-[9px] font-black ${customer.isMock ? 'bg-cyan-50 text-cyan-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                  <span className={`border-l-2 px-1.5 py-0.5 text-[9px] font-bold ${customer.isMock ? 'border-amber bg-amber-dim text-amber' : 'border-accent bg-accent-glow text-accent'}`}>
                     {customer.isMock ? '模拟客户' : '真实客户'}
                   </span>
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">大单预警</span>}
@@ -604,13 +605,13 @@ function CompactCustomerList({
           <div className="flex min-w-0 items-center gap-1.5">
             <p className="truncate text-[11px] text-text-muted">{list.length} 个待处理 · 按最近动态排序</p>
             {showSimulationBadge && (
-              <span title="客服演示沙盘" className="shrink-0 rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-bold text-cyan-700">演示</span>
+              <span title="客服演示沙盘" className="shrink-0 border-l-2 border-amber bg-amber-dim px-1.5 py-0.5 text-[9px] font-bold text-amber">演示</span>
             )}
           </div>
           <button
             type="button"
             onClick={() => setFilterOpen(open => !open)}
-            className={`relative flex h-8 items-center justify-center gap-1 rounded-lg border px-2 transition-colors ${activeFilterCount ? 'border-[#0891b2] bg-[#0891b2]/10 text-[#0891b2]' : 'w-8 border-transparent text-text-muted hover:border-border hover:bg-surface-2'}`}
+            className={`relative flex h-8 items-center justify-center gap-1 rounded-md border px-2 transition-colors ${activeFilterCount ? 'border-accent bg-accent-glow text-accent' : 'w-8 border-transparent text-text-muted hover:border-border hover:bg-surface-2'}`}
             title={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'}
             aria-label={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'}
           >
@@ -620,7 +621,7 @@ function CompactCustomerList({
             )}
           </button>
           {filterOpen && (
-            <div className="absolute right-0 top-9 z-30 w-72 rounded-2xl border border-border bg-white p-3 shadow-xl">
+            <div className="absolute right-0 top-9 z-30 w-72 max-w-[calc(100vw-24px)] rounded-lg border border-border bg-surface p-3 shadow-lg">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div>
                   <p className="text-xs font-black text-text-primary">筛选客户</p>
@@ -649,7 +650,7 @@ function CompactCustomerList({
                       key={item.key}
                       type="button"
                       onClick={() => setFilters(current => ({ ...current, [item.key]: !current[item.key] }))}
-                      className={`flex items-center justify-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-bold transition-colors ${active ? 'border-[#0891b2] bg-[#0891b2]/10 text-[#0891b2]' : 'border-border text-text-muted hover:text-text-primary'}`}
+                      className={`flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-2 text-xs font-bold transition-colors ${active ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-muted hover:text-text-primary'}`}
                     >
                       {active && <Check size={12} />}
                       {item.label}
@@ -661,20 +662,22 @@ function CompactCustomerList({
                 <button type="button" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)} className="text-xs font-bold text-text-muted hover:text-text-primary">
                   清空筛选
                 </button>
-                <button type="button" onClick={() => setFilterOpen(false)} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-black text-white">
+                <button type="button" onClick={() => setFilterOpen(false)} className="rounded-md bg-accent px-3 py-2 text-xs font-bold text-white hover:bg-accent-dim">
                   应用
                 </button>
               </div>
             </div>
           )}
         </div>
-        <div className="mt-3 flex gap-1 overflow-x-auto">
+        <div className="-mb-3 mt-3 flex gap-4 overflow-x-auto" role="tablist" aria-label="客户视图">
           {(Object.entries(VIEW_META) as [CustomerView, typeof VIEW_META[CustomerView]][]).map(([key, item]) => (
             <button
               key={key}
               type="button"
+              role="tab"
+              aria-selected={view === key}
               onClick={() => onViewChange(key)}
-              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition-colors ${view === key ? 'bg-slate-950 text-white' : 'bg-surface-2 text-text-muted hover:text-text-primary'}`}
+              className={`shrink-0 border-b-2 px-0.5 pb-2.5 text-[11px] font-bold transition-colors ${view === key ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}`}
             >
               {item.label}
             </button>
@@ -687,7 +690,7 @@ function CompactCustomerList({
           <div className="px-5 py-10 text-center">
             <p className="text-xs font-bold text-text-secondary">没有符合当前条件的客户</p>
             {activeFilterCount > 0 && (
-              <button type="button" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)} className="mt-3 text-xs font-bold text-[#0891b2] hover:underline">
+              <button type="button" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)} className="mt-3 text-xs font-bold text-accent hover:underline">
                 清空筛选
               </button>
             )}
@@ -742,29 +745,29 @@ function DraftSuggestionBar({
     onChangeDraft(draftMessages.filter((_, itemIndex) => itemIndex !== index).join('\n\n'));
   };
   return (
-    <div data-draft-suggestion className="relative ml-auto max-w-[74%] rounded-2xl rounded-tr-sm border border-dashed border-[#0891b2]/35 bg-[#0891b2]/[0.08] px-4 py-3 shadow-sm">
+    <div data-draft-suggestion className="relative ml-auto max-w-[90%] rounded-lg rounded-tr-sm border border-dashed border-accent/35 bg-accent-glow px-4 py-3 sm:max-w-[74%]">
       <button type="button" onClick={onDismiss} aria-label="关闭 AI 建议" className="absolute right-2 top-2 rounded-full p-1 text-text-muted hover:bg-white/70">
         <X size={12} />
       </button>
       <div className="pr-6">
-        <div className="flex shrink-0 items-center gap-1.5 text-xs font-black text-[#0891b2]">
+        <div className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-accent">
           <Bot size={14} />
           {bridgeOnly ? 'AI 承接回复' : 'AI 建议回复'}
           {isTemplate && (
-            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${templateApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+            <span className={`border-l-2 px-1.5 py-0.5 text-[10px] font-bold ${templateApproved ? 'border-accent bg-surface text-accent' : 'border-amber bg-amber-dim text-amber'}`}>
               {templateApproved ? '\u6a21\u677f\u53ef\u53d1' : '\u6a21\u677f\u5ba1\u6838\u4e2d'}
             </span>
           )}
           {knowledgeMiss && (
-            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-700">{bridgeOnly ? '已转人工确认' : '知识库未覆盖'}</span>
+            <span className="border-l-2 border-amber bg-amber-dim px-1.5 py-0.5 text-[10px] font-bold text-amber">{bridgeOnly ? '已转人工确认' : '知识库未覆盖'}</span>
           )}
-          <button type="button" onClick={onRegenerate} className="ml-1 rounded-full p-1 text-[#0891b2] hover:bg-white" title="换一版">
+          <button type="button" onClick={onRegenerate} className="ml-1 rounded-md p-1 text-accent hover:bg-surface" title="换一版">
             <RefreshCw size={12} />
           </button>
         </div>
         <div className="mt-2 space-y-2">
           {draftMessages.map((message, index) => (
-            <div key={`${index}-${message.slice(0, 12)}`} className="group relative rounded-2xl rounded-tr-sm border border-[#0891b2]/20 bg-white px-3 py-2 pr-8">
+            <div key={`${index}-${message.slice(0, 12)}`} className="group relative rounded-md rounded-tr-sm border border-accent/20 bg-surface px-3 py-2 pr-8">
               <textarea
                 value={message}
                 rows={Math.min(4, Math.max(1, message.split(/\n/).length))}
@@ -780,7 +783,7 @@ function DraftSuggestionBar({
           <p className="text-[10px] font-semibold text-text-muted">将按顺序发送，共 {draftMessages.length}/3 条；每条都可直接修改或删除。</p>
         </div>
         {isTemplate && templatePlan && (
-          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          <div className="mt-2 border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs leading-relaxed text-amber">
             <p className="font-black">{'AI \u5df2\u9009\u62e9\u6a21\u677f\uff1a'}{templatePlan.template.label}</p>
             <p className="mt-1">{'\u53d8\u91cf\uff1a'}{templatePlan.variables.map((item, index) => `{{${index + 1}}}=${item}`).join(' / ')}</p>
             <p className="mt-1 whitespace-pre-line">{'\u6700\u7ec8\u53d1\u9001\u6548\u679c\uff1a'}{templatePlan.rendered}</p>
@@ -790,14 +793,14 @@ function DraftSuggestionBar({
           <button
             type="button"
             onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-biz-rules', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }}
-            className="mt-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-left text-xs font-bold text-sky-800 hover:bg-sky-100"
+            className="mt-2 rounded-md border border-accent/20 bg-surface px-3 py-2 text-left text-xs font-bold text-accent hover:bg-surface-2"
           >
             完善报价规则后，AI 才能帮你答价格 → 去完善
           </button>
         )}
         <div className="mt-3 flex justify-end gap-1.5">
           <button type="button" onClick={onSave} disabled={savingDraft || !draft.trim()} className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存修改'}</button>
-          <button type="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="rounded-lg bg-[#0891b2] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-amber-200 disabled:text-amber-900">
+          <button type="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="rounded-md bg-accent px-3 py-1.5 text-xs font-bold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:bg-amber-dim disabled:text-amber">
             {!templateApproved ? '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d' : isTemplate ? '\u53d1\u9001\u6a21\u677f' : '\u76f4\u63a5\u53d1\u9001'}
           </button>
           <button type="button" onClick={onEdit} className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary">{'\u4fee\u6539'}</button>
@@ -967,7 +970,7 @@ function ChatThread({
 
   if (!customer) {
     return (
-      <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 items-center justify-center bg-white">
+      <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 items-center justify-center bg-surface">
         <div className="text-center">
           <MessageSquare size={26} className="mx-auto text-text-muted" />
           <p className="mt-3 text-sm font-black text-text-primary">{'\u9009\u62e9\u5de6\u4fa7\u4e00\u4e2a\u5ba2\u6237\u5f00\u59cb'}</p>
@@ -978,16 +981,16 @@ function ChatThread({
   }
 
   return (
-    <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 flex-col bg-white">
+    <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 flex-col bg-surface">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <p className="truncate text-sm font-black text-text-primary">{customer.name}</p>
-            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${customer.isMock ? 'bg-cyan-50 text-cyan-700' : channelReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+            <span className={`shrink-0 border-l-2 px-2 py-0.5 text-[10px] font-bold ${customer.isMock ? 'border-amber bg-amber-dim text-amber' : channelReady ? 'border-accent bg-accent-glow text-accent' : 'border-amber bg-amber-dim text-amber'}`}>
               {customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}
             </span>
             {customer.simulation?.checkpoint && (
-              <span className="max-w-52 truncate rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-black text-cyan-700" title={customer.simulation.checkpoint}>
+              <span className="max-w-52 truncate border-l-2 border-accent bg-accent-glow px-2 py-0.5 text-[10px] font-bold text-accent" title={customer.simulation.checkpoint}>
                 {customer.simulation.checkpoint}
               </span>
             )}
@@ -1000,17 +1003,17 @@ function ChatThread({
             <span>{customer.lastActive}</span>
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary">{'\u5f53\u5730\u65f6\u95f4'} <LiveLocalTime timeZone={customer.timeZone} /></div>
+        <div className="border-l border-border pl-3 text-xs font-bold text-text-secondary">{'\u5f53\u5730\u65f6\u95f4'} <LiveLocalTime timeZone={customer.timeZone} /></div>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/35 px-6 py-5">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-ink px-3 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-4">
           {customer.isMock && (
-            <form onSubmit={event => { event.preventDefault(); const value = mockInput.trim(); if (!value) return; onMockBuyerMessage(value); setMockInput(''); }} className="rounded-2xl border border-cyan-200 bg-cyan-50/70 p-4">
-              <div className="flex items-center gap-2 text-xs font-black text-cyan-800"><UserRound size={14} />模拟客户输入</div>
-              <p className="mt-1 text-[11px] text-cyan-700">输入客户接下来会说的话，只在演示沙盘里推进，不会发送到真实平台。</p>
+            <form onSubmit={event => { event.preventDefault(); const value = mockInput.trim(); if (!value) return; onMockBuyerMessage(value); setMockInput(''); }} className="rounded-lg border border-accent/20 bg-accent-glow p-4">
+              <div className="flex items-center gap-2 text-xs font-bold text-accent"><UserRound size={14} />模拟客户输入</div>
+              <p className="mt-1 text-[11px] text-text-secondary">输入客户接下来会说的话，只在演示沙盘里推进，不会发送到真实平台。</p>
               <div className="mt-3 flex gap-2">
-                <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder={customer.simulation?.editable ? '例如：我们想改造一条装配线，怎么开始？' : '输入下一条客户消息…'} className="min-w-0 flex-1 rounded-xl border border-cyan-200 bg-white px-3 py-2 text-sm outline-none focus:border-cyan-500" />
-                <button type="submit" disabled={!mockInput.trim()} className="rounded-xl bg-cyan-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">模拟发送</button>
+                <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder={customer.simulation?.editable ? '例如：我们想改造一条装配线，怎么开始？' : '输入下一条客户消息…'} className="ui-field min-w-0 flex-1 !rounded-md px-3 py-2 text-sm" />
+                <button type="submit" disabled={!mockInput.trim()} className="rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-40">模拟发送</button>
               </div>
             </form>
           )}
@@ -1018,7 +1021,7 @@ function ChatThread({
             if (event.type !== 'whatsapp') {
               return (
                 <div key={event.id} className="flex justify-center">
-                  <div className="max-w-[82%] rounded-xl border border-border bg-surface px-3 py-2 text-center shadow-sm">
+                  <div className="max-w-[90%] rounded-md border border-border bg-surface px-3 py-2 text-center sm:max-w-[82%]">
                     <p className="text-[11px] font-black text-text-primary">{event.title}</p>
                     <p className="mt-1 text-xs leading-5 text-text-muted">{event.body}</p>
                     <p className="mt-1 text-[10px] text-text-muted">{event.time}</p>
@@ -1034,8 +1037,8 @@ function ChatThread({
             const translation = event.translatedBody || chineseMessageTranslation(event.body, customer) || null;
             return (
               <div key={event.id} className={`flex ${isBuyer ? 'justify-start' : 'justify-end'}`}>
-                <div className={`relative max-w-[74%] rounded-2xl px-4 py-3 shadow-sm ${isBuyer ? 'rounded-tl-sm border border-border bg-surface-2 text-text-primary' : 'rounded-tr-sm bg-[#0891b2] text-white'}`}>
-                  {isAi && <span className="absolute -top-2 right-3 rounded-full bg-white px-1.5 py-0.5 text-[9px] font-black text-[#0891b2] shadow-sm">AI</span>}
+                <div className={`relative max-w-[90%] rounded-lg px-4 py-3 sm:max-w-[74%] ${isBuyer ? 'rounded-tl-sm border border-border bg-surface text-text-primary' : 'rounded-tr-sm bg-accent text-white'}`}>
+                  {isAi && <span className="absolute -top-2 right-3 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-accent">AI</span>}
                   <div className="flex items-center justify-between gap-4">
                     <p className={`text-xs font-bold ${isBuyer ? 'text-text-primary' : 'text-white'}`}>{event.title}</p>
                     <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
@@ -1073,16 +1076,16 @@ function ChatThread({
           )}
         </div>
       </div>
-      <div className="shrink-0 space-y-2 border-t border-border bg-white p-3">
+      <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
           {!customer.isMock && !channelReady && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">WhatsApp 通道尚未连接。可以编辑和保留草稿，连接测试或正式账号后才能真实发送。</div>}
           {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{'\u8ddd\u5ba2\u6237\u4e0a\u6b21\u6d88\u606f\u5df2\u8d85\u8fc724\u5c0f\u65f6\uff0cWhatsApp \u8981\u6c42\u4ee5\u6a21\u677f\u6d88\u606f\u53d1\u9001'}</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-primary/30 hover:bg-primary/5 hover:text-primary"><Sparkles size={13} /> {chip.label}</button>)}
+              {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-accent/30 hover:bg-accent-glow hover:text-accent"><Sparkles size={13} /> {chip.label}</button>)}
             </div>
           )}
-          <div data-testid="conversation-composer" className="relative rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+          <div data-testid="conversation-composer" className="relative rounded-lg border border-border bg-surface-2 px-3 py-2.5 focus-within:border-accent">
             {previewOpen && (
               <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
                 <span className="font-black text-text-primary">目标语言译文（{customer.language}）：</span>
@@ -1130,7 +1133,7 @@ function ChatThread({
                 </button>
               </div>
                <button type="button" onClick={() => onSaveDraft(input)} disabled={savingDraft || !input.trim()} className="shrink-0 rounded-lg border border-border px-2 py-2 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存草稿'}</button>
-               <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
+               <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
             </div>
           </div>
         </div>
@@ -1322,13 +1325,13 @@ function CustomerIntentActionPanel({
   };
 
   return (
-    <section data-testid="ai-intent-action-panel" className="rounded-2xl border border-border bg-white shadow-sm">
+    <section data-testid="ai-intent-action-panel" className="rounded-lg border border-border bg-surface">
       <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
         <div>
           <p className="text-xs font-bold text-text-primary">AI 意向信号</p>
           <p className="mt-0.5 text-[10px] text-text-muted">沟通阶段与下一步推进建议</p>
         </div>
-        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">
+        <span className="shrink-0 border-l-2 border-accent bg-accent-glow px-2 py-1 text-[10px] font-bold text-accent">
           {intentLevelLabel(customer)} · {customer.intentScore}
         </span>
       </div>
@@ -1342,7 +1345,7 @@ function CustomerIntentActionPanel({
       </div>
       <div className="pt-2.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">下一步推进建议</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-accent">下一步推进建议</p>
           <p className="text-[11px] font-bold text-text-primary">{suggestion.headline}</p>
         </div>
         <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">{nextMove || suggestion.reason}</p>
@@ -1350,13 +1353,13 @@ function CustomerIntentActionPanel({
       {!!customer.intentSignals.length && (
         <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
           {customer.intentSignals.slice(0, 6).map(signal => (
-            <span key={signal} className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-600">{signal}</span>
+            <span key={signal} className="shrink-0 rounded-md border border-border bg-surface px-2 py-1 text-[10px] font-semibold text-text-secondary">{signal}</span>
           ))}
         </div>
       )}
       {(suggestion.suggestionType !== 'none' || agentProduction.action) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <button type="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && !['customer_segmentation', 'followup_batch_draft'].includes(window.__agentProductionTarget?.link.businessRef.taskKey || '') ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
+          <button type="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && !['customer_segmentation', 'followup_batch_draft'].includes(window.__agentProductionTarget?.link.businessRef.taskKey || '') ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-bold text-white hover:bg-accent-dim disabled:cursor-wait disabled:opacity-70">
             {agentProduction.busy || isPrimaryLoading ? '草稿生成中…' : agentProduction.action?.label || primaryLabel[suggestion.suggestionType]}
           </button>
           {secondaryLabel[suggestion.suggestionType] && (
@@ -1373,7 +1376,7 @@ function CustomerIntentActionPanel({
         </button>
       )}
       {evidenceOpen && (
-        <div className="mt-2 rounded-xl bg-slate-50 px-3 py-3 text-[11px] leading-5">
+        <div className="mt-2 border-l-2 border-border-bright bg-surface-2 px-3 py-3 text-[11px] leading-5">
           {suggestion.suggestionType === 'handoff' && (
             <div className="mb-2 whitespace-pre-line rounded-lg bg-white px-3 py-2 text-text-secondary">
               {handoffSummary || '正在整理交接摘要...'}
@@ -1415,14 +1418,14 @@ function RulesDisclosure({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-2xl border border-border bg-white shadow-sm">
+    <div className="rounded-lg border border-border bg-surface">
       <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-center justify-between px-3.5 py-3 text-left text-xs font-bold text-text-primary">
         分工规则
         <ChevronDown size={14} className={`text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
         <div className="space-y-2 border-t border-border px-3.5 py-3 text-[11px] leading-5 text-text-secondary">
-          <div className="mb-3 rounded-xl bg-slate-50 p-3">
+          <div className="mb-3 border-y border-border bg-surface-2 p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-bold text-text-primary">智能客服接待</p>
@@ -1436,16 +1439,16 @@ function RulesDisclosure({
                 title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
                 disabled={customerServiceSaving}
                 onClick={() => onToggleCustomerService(!customerServiceStatus?.enabled)}
-                className={`relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-cyan-600' : 'bg-slate-300'}`}
+                className={`relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-accent' : 'bg-border-bright'}`}
               >
                 <span className={`absolute top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${customerServiceStatus?.enabled ? 'translate-x-5' : 'translate-x-1'}`}>
-                  <Power size={9} className={customerServiceStatus?.enabled ? 'text-cyan-700' : 'text-slate-400'} />
+                  <Power size={9} className={customerServiceStatus?.enabled ? 'text-accent' : 'text-text-muted'} />
                 </span>
               </button>
             </div>
             <p className="mt-2 text-[10px] leading-4 text-text-muted">{customerServiceSummary}</p>
             {customerServiceStatus?.enabled && customerServiceStatus.eligibleForPartialAutoReply && customerServiceStatus.partialAutoReplyDecision === 'declined' && (
-              <button type="button" disabled={customerServiceSaving} onClick={onEnablePartialAutoReply} className="mt-2 text-[10px] font-bold text-cyan-700 hover:underline disabled:opacity-50">
+              <button type="button" disabled={customerServiceSaving} onClick={onEnablePartialAutoReply} className="mt-2 text-[10px] font-bold text-accent hover:underline disabled:opacity-50">
                 开放部分直回
               </button>
             )}
@@ -1472,7 +1475,7 @@ function RulesDisclosure({
               localStorage.setItem('lingshu:enterprise:highlight-autonomy', 'auto');
               window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
             }}
-            className="mt-1 text-[11px] font-bold text-cyan-700 hover:underline"
+            className="mt-1 text-[11px] font-bold text-accent hover:underline"
           >
             在企业中心调整规则
           </button>
@@ -1500,14 +1503,14 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
   useEffect(() => setOpen(false), [customer.id]);
 
   return (
-    <section data-testid="customer-insight-disclosure" className="rounded-2xl border border-border bg-white shadow-sm">
+    <section data-testid="customer-insight-disclosure" className="rounded-lg border border-border bg-surface">
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
         className="flex w-full items-center gap-2 px-3.5 py-3 text-left"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
           <BrainCircuit size={14} />
         </span>
         <span className="min-w-0 flex-1">
@@ -1523,8 +1526,8 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
                 <AlertTriangle size={10} />大单预警
               </span>
             )}
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600">{STAGE_LABEL[customer.stage]}</span>
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600">意向 {customer.intentScore}</span>
+            <span className="border-l border-border-bright px-2 py-0.5 text-[10px] font-semibold text-text-secondary">{STAGE_LABEL[customer.stage]}</span>
+            <span className="border-l border-border-bright px-2 py-0.5 text-[10px] font-semibold text-text-secondary">意向 {customer.intentScore}</span>
           </span>
         </span>
         <ChevronDown size={14} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -1533,7 +1536,7 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
       {open && (
         <div className="space-y-3 border-t border-border px-3.5 py-3">
           {scenario?.warning && (
-            <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-[11px] leading-5 text-red-700">{scenario.warning.reason}</p>
+            <p className="border-l-2 border-red bg-red/5 px-3 py-2 text-[11px] leading-5 text-red">{scenario.warning.reason}</p>
           )}
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">AI 对客户意向的判断</p>
@@ -1548,14 +1551,14 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
           <div className="border-t border-border pt-3">
             <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">AI 处理记录</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">AI 参与 {aiHandledCount} 次</span>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">人工优化 {humanEditCount} 次</span>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">学习记录 {memoryRecords.length} 条</span>
+              <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">AI 参与 {aiHandledCount} 次</span>
+              <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">人工优化 {humanEditCount} 次</span>
+              <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">学习记录 {memoryRecords.length} 条</span>
             </div>
             {!!memoryRecords.length && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {memoryRecords.slice(0, 6).map(item => (
-                  <span key={item} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-600">{item}</span>
+                  <span key={item} className="rounded-md border border-border bg-surface px-2 py-1 text-[10px] text-text-secondary">{item}</span>
                 ))}
               </div>
             )}
@@ -1748,6 +1751,18 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [priceRulesReady, setPriceRulesReady] = useState(true);
   const [notificationReady, setNotificationReady] = useState(true);
+  const partialAutoReplyDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(customerServiceStatus?.shouldAskPartialAutoReply),
+    onClose: () => {},
+    closeOnEscape: false,
+  });
+  const knowledgeDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(learnCandidate && learnDialogOpen),
+    onClose: () => {
+      setLearnCandidate(null);
+      setLearnDialogOpen(false);
+    },
+  });
   const [lastDraftKey, setLastDraftKey] = useState('');
   const deepLinkConsumedRef = useRef(false);
   const filterEmptySelectionRef = useRef(false);
@@ -2501,16 +2516,23 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   return (
     <>
     {deliveryHandoff?.runId && <CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} />}
-    {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
-      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-blue-800">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={requestProductionBack} className="text-xs font-bold text-blue-700">返回上一页</button></div>
+    {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 border-l-2 border-accent bg-accent-glow p-3">
+      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={requestProductionBack} className="text-xs font-bold text-accent">返回上一页</button></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
         <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
-    <div className="flex h-full min-w-0 flex-col bg-white" data-lingshu-guide="customer-workbench">
-      <nav aria-label="客服工作区" className="flex shrink-0 gap-2 border-b border-border p-2 lg:hidden">
-        {([['list', '客户列表'], ['chat', '会话'], ['profile', '客户资料']] as const).map(([panel, label]) => <button key={panel} type="button" aria-pressed={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold ${mobilePanel === panel ? 'bg-cyan-50 text-cyan-800' : 'text-text-secondary'}`}>{label}</button>)}
+    <div className="flex h-full min-w-0 flex-col bg-ink" data-lingshu-guide="customer-workbench">
+      <header className="flex min-h-[68px] shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4 sm:px-5">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">Customer workspace</p>
+          <h1 className="mt-0.5 truncate text-lg font-bold text-text-primary">我的客户</h1>
+        </div>
+        <p className="hidden max-w-md text-right text-xs text-text-muted sm:block">{VIEW_META[view].desc}</p>
+      </header>
+      <nav aria-label="客服工作区" className="flex shrink-0 gap-4 border-b border-border bg-surface px-3 lg:hidden" role="tablist">
+        {([['list', '客户列表'], ['chat', '会话'], ['profile', '客户资料']] as const).map(([panel, label]) => <button key={panel} type="button" role="tab" aria-selected={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`flex-1 border-b-2 px-2 py-3 text-sm font-bold ${mobilePanel === panel ? 'border-accent text-accent' : 'border-transparent text-text-secondary'}`}>{label}</button>)}
       </nav>
       <div data-testid="conversation-workspace-main" className="flex min-h-0 flex-1">
         <div className={mobilePanel === 'list' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
@@ -2602,8 +2624,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       </div>
       {customerServiceStatus?.shouldAskPartialAutoReply && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/35 px-4">
-          <div role="dialog" aria-modal="true" aria-labelledby="partial-auto-reply-title" className="w-full max-w-lg rounded-3xl border border-border bg-white p-6 shadow-2xl">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700">
+          <div ref={partialAutoReplyDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="partial-auto-reply-title" className="w-full max-w-lg rounded-lg border border-border bg-surface p-6 shadow-xl">
+            <div className="flex h-11 w-11 items-center justify-center rounded-md bg-accent-glow text-accent">
               <Bot size={21} />
             </div>
             <h2 id="partial-auto-reply-title" className="mt-4 text-lg font-black text-text-primary">建议模式已经用了 3 天</h2>
@@ -2611,15 +2633,15 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
               要不要把一小部分简单问题交给灵小枢直接回？只有高置信命中你已审批的常见问答才会发送，报价、折扣、付款、交期和风险问题仍然交给你。
             </p>
             {customerServiceStatus.approvedFaqCount < 5 && (
-              <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+              <p className="mt-3 border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs font-semibold leading-5 text-amber">
                 目前已审批 {customerServiceStatus.approvedFaqCount} 条问答。你可以先开放权限，达到 5 条前系统仍只给建议。
               </p>
             )}
             <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('declined')} className="rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-bold text-text-secondary disabled:opacity-50">
+              <button type="button" data-modal-initial-focus disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('declined')} className="rounded-md border border-border bg-surface px-4 py-2.5 text-sm font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">
                 继续只看建议
               </button>
-              <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')} className="rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-black text-white disabled:opacity-50">
+              <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')} className="rounded-md bg-accent px-4 py-2.5 text-sm font-bold text-white hover:bg-accent-dim disabled:opacity-50">
                 开放部分直接回复
               </button>
             </div>
@@ -2630,7 +2652,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <DailyBriefing customers={customers} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
       )}
       {toast && (
-        <div className="fixed bottom-24 left-1/2 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white shadow-lg">
+        <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white shadow-lg">
           {toast}
           {learnCandidate && (
             <button type="button" onClick={() => { setToast(null); setLearnDialogOpen(true); }} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-950">存进知识库</button>
@@ -2639,21 +2661,21 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       )}
       {learnCandidate && learnDialogOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/30 px-4">
-          <div data-lingshu-guide="customer-knowledge-save" className="w-full max-w-lg rounded-3xl border border-border bg-white p-5 shadow-xl">
+          <div ref={knowledgeDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="knowledge-save-title" data-lingshu-guide="customer-knowledge-save" className="w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-xl">
             <div className="mb-4">
-              <p className="text-sm font-black text-text-primary">存进知识库</p>
+              <h2 id="knowledge-save-title" className="text-sm font-bold text-text-primary">存进知识库</h2>
             </div>
             <label className="grid gap-1 text-xs font-bold text-text-secondary">
               Q：客户常问问题
-              <input value={learnCandidate.question} onChange={event => setLearnCandidate(current => current ? { ...current, question: event.target.value } : current)} className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary" />
+              <input value={learnCandidate.question} onChange={event => setLearnCandidate(current => current ? { ...current, question: event.target.value } : current)} className="ui-field !rounded-md bg-surface-2 px-3 py-2 text-sm font-normal" />
             </label>
             <label className="mt-3 grid gap-1 text-xs font-bold text-text-secondary">
               A：标准答案
-              <textarea value={learnCandidate.answer} onChange={event => setLearnCandidate(current => current ? { ...current, answer: event.target.value } : current)} rows={4} className="resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary" />
+              <textarea value={learnCandidate.answer} onChange={event => setLearnCandidate(current => current ? { ...current, answer: event.target.value } : current)} rows={4} className="ui-field !rounded-md bg-surface-2 px-3 py-2 text-sm font-normal" />
             </label>
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => { setLearnCandidate(null); setLearnDialogOpen(false); }} className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold text-text-secondary">取消</button>
-              <button type="button" onClick={() => void saveLearnedFaq()} disabled={learnCandidate.saving || !learnCandidate.question.trim() || !learnCandidate.answer.trim()} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white disabled:opacity-60">
+              <button type="button" data-modal-initial-focus onClick={() => { setLearnCandidate(null); setLearnDialogOpen(false); }} className="rounded-md border border-border bg-surface px-4 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">取消</button>
+              <button type="button" onClick={() => void saveLearnedFaq()} disabled={learnCandidate.saving || !learnCandidate.question.trim() || !learnCandidate.answer.trim()} className="rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-60">
                 {learnCandidate.saving ? '保存中...' : '确认入库'}
               </button>
             </div>
@@ -2661,7 +2683,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         </div>
       )}
       {undoSend && (
-        <div className="fixed bottom-24 left-1/2 z-[80] flex -translate-x-1/2 items-center gap-3 rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white shadow-lg">
+        <div role="status" className="fixed bottom-24 left-1/2 z-[80] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white shadow-lg">
           <span>{'\u5df2\u53d1\u9001\uff0c4 \u79d2\u5185\u53ef\u64a4\u56de'}</span>
           <button type="button" onClick={undoQueuedSend} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-950">{'\u64a4\u56de'}</button>
         </div>

@@ -7,6 +7,7 @@ import {
   Wrench, ShieldCheck, FlaskConical,
 } from 'lucide-react';
 import { SocialPlatformIcon, type SocialBrand } from './SocialPlatformIcon';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 // ── Plugin types & data ───────────────────────────────────────────────────────
 interface Plugin {
@@ -333,6 +334,7 @@ function PluginDrawer({
   onTest: () => void;
 }) {
   const fields = PLUGIN_FIELDS[plugin.pluginKey] ?? [];
+  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const actions = PLUGIN_INTERACTIONS[plugin.pluginKey] ?? [
     { label: '数据读取', desc: '读取授权范围内的数据，用于 Agent 分析和任务执行' },
     { label: '动作执行', desc: '在授权范围内执行同步、发布或消息触达等动作' },
@@ -340,16 +342,21 @@ function PluginDrawer({
 
   return (
     <motion.div
+      ref={dialogRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="plugin-detail-dialog-title"
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
       transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-      className="fixed top-0 right-0 h-full w-[460px] bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl"
+      className="fixed top-0 right-0 z-50 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-2xl sm:w-[460px]"
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
         <div className="text-3xl w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center flex-shrink-0"><PluginIcon plugin={plugin} /></div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-gray-900">{plugin.nameZh}</h3>
+            <h3 id="plugin-detail-dialog-title" className="text-sm font-semibold text-gray-900">{plugin.nameZh}</h3>
             <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${
               plugin.status === 'error' ? 'bg-red-50 text-red-600' : plugin.installed ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
             }`}>
@@ -358,7 +365,7 @@ function PluginDrawer({
           </div>
           <p className="text-xs text-gray-500 mt-1 leading-relaxed">{plugin.description}</p>
         </div>
-        <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
+        <button type="button" data-modal-initial-focus aria-label="关闭插件详情" onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
           <X size={16} />
         </button>
       </div>
@@ -467,6 +474,7 @@ type DrawerTab = 'info' | 'prompt' | 'stages' | 'tools';
 function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) {
   const [tab, setTab] = useState<DrawerTab>('info');
   const [copied, setCopied] = useState(false);
+  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
 
   const copyPrompt = () => {
     if (skill.prompt) {
@@ -485,9 +493,14 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
 
   return (
     <motion.div
+      ref={dialogRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="skill-detail-dialog-title"
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
       transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-      className="fixed top-0 right-0 h-full w-[480px] bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl"
+      className="fixed top-0 right-0 z-50 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-2xl sm:w-[480px]"
     >
       {/* Header */}
       <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
@@ -497,7 +510,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-gray-900">{skill.nameZh}</h3>
+            <h3 id="skill-detail-dialog-title" className="text-sm font-semibold text-gray-900">{skill.nameZh}</h3>
             <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-green-50 text-green-700">已启用</span>
           </div>
           {skill.source && (
@@ -510,7 +523,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
             </a>
           )}
         </div>
-        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
+        <button type="button" data-modal-initial-focus aria-label="关闭技能详情" onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
           <X size={16} />
         </button>
       </div>
@@ -810,6 +823,10 @@ export default function PluginsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeToolKey, setActiveToolKey] = useState<string | null>(null);
   const [toolState, setToolState] = useState<PluginToolState>(DEFAULT_TOOL_STATE);
+  const configDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(configTarget),
+    onClose: () => setConfigTarget(null),
+  });
 
   useEffect(() => { void fetchPlugins(); }, []);
 
@@ -1207,21 +1224,26 @@ export default function PluginsPage() {
         )}
         {configTarget && (
           <motion.div
+            ref={configDialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plugin-config-dialog-title"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
             onClick={() => setConfigTarget(null)}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl w-[460px] p-6"
+              className="mx-4 w-full max-w-[460px] rounded-lg bg-white p-4 sm:p-6"
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-5">
                 <div className="flex items-center gap-3">
                   <span className="text-2xl"><PluginIcon plugin={configTarget} size={24} /></span>
-                  <h3 className="font-semibold text-gray-900">{configTarget.nameZh} 配置</h3>
+                  <h3 id="plugin-config-dialog-title" className="font-semibold text-gray-900">{configTarget.nameZh} 配置</h3>
                 </div>
-                <button type="button" onClick={() => setConfigTarget(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+                <button type="button" data-modal-initial-focus aria-label="关闭插件配置" onClick={() => setConfigTarget(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
               </div>
               <div className="space-y-4">
                 {(PLUGIN_FIELDS[configTarget.pluginKey] ?? []).map(f => (

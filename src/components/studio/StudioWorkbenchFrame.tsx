@@ -168,7 +168,7 @@ export function StudioStepProgress({
 
   return (
     <nav aria-label="内容创作步骤" className="w-full min-w-0">
-      <ol className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1">
+      <ol className="grid grid-cols-3 border-b border-border">
         {steps.map((step, index) => {
           const complete = step.status === 'complete' || index < activeIndex;
           const active = step.status === 'active' || step.id === activeStepId;
@@ -183,20 +183,20 @@ export function StudioStepProgress({
                 aria-current={active ? 'step' : undefined}
                 onClick={() => onStepChange?.(step.id)}
                 className={joinClassNames(
-                  'relative z-10 flex h-9 w-full min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30',
+                  '-mb-px flex h-10 w-full min-w-0 items-center justify-center gap-1.5 border-b-2 px-2 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30',
                   canNavigate && 'cursor-pointer',
                   !canNavigate && 'cursor-default',
-                  active && 'bg-surface shadow-sm',
-                  canNavigate && !active && 'hover:bg-surface/70',
+                  active ? 'border-accent text-text-primary' : 'border-transparent text-text-muted',
+                  canNavigate && !active && 'hover:border-border-bright hover:bg-surface-2/50 hover:text-text-secondary',
                 )}
               >
                 <span
                   className={joinClassNames(
-                    'flex h-5 w-5 items-center justify-center rounded-md text-[9px] font-black transition-colors',
-                    complete && 'bg-emerald-100 text-emerald-700',
-                    active && !complete && 'bg-accent text-white shadow-sm',
-                    !active && !complete && 'bg-surface text-text-muted',
-                    blocked && 'border-red-200 bg-red-50 text-red-600',
+                    'flex h-5 w-5 items-center justify-center text-[9px] font-black transition-colors',
+                    complete && 'text-emerald-700',
+                    active && !complete && 'text-accent',
+                    !active && !complete && 'text-text-muted',
+                    blocked && 'text-red-600',
                   )}
                 >
                   {complete ? <Check size={13} aria-hidden="true" /> : index + 1}
@@ -220,7 +220,7 @@ function MobilePanelTabs({ active, onChange }: { active: MobilePanel; onChange: 
     { id: 'properties', label: '步骤设置', icon: <Settings2 size={15} /> },
   ];
   return (
-    <div className="grid grid-cols-3 gap-1 border-b border-border bg-surface-2 p-1.5 lg:hidden" role="tablist" aria-label="工作台面板">
+    <div className="grid grid-cols-3 border-b border-border bg-surface px-2 xl:hidden" role="tablist" aria-label="工作台面板">
       {items.map(item => (
         <button
           key={item.id}
@@ -229,8 +229,8 @@ function MobilePanelTabs({ active, onChange }: { active: MobilePanel; onChange: 
           aria-selected={active === item.id}
           onClick={() => onChange(item.id)}
           className={joinClassNames(
-            'flex h-9 items-center justify-center gap-1.5 rounded-lg text-xs font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30',
-            active === item.id ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary',
+            '-mb-px flex h-10 items-center justify-center gap-1.5 border-b-2 text-xs font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30',
+            active === item.id ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-secondary',
           )}
         >
           {item.icon}
@@ -288,12 +288,12 @@ export function StudioWorkbenchFrame({
   return (
     <section
       className={joinClassNames(
-        'flex min-h-[calc(100dvh-7rem)] flex-col overflow-hidden bg-surface lg:h-[calc(100dvh-7rem)] lg:min-h-[640px]',
+        'flex min-h-[calc(100dvh-7rem)] flex-col overflow-hidden bg-surface xl:h-[calc(100dvh-7rem)] xl:min-h-[640px]',
         className,
       )}
       aria-label="内容创作工作台"
     >
-      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 lg:grid-cols-[minmax(220px,1fr)_minmax(360px,520px)_minmax(180px,1fr)] lg:px-5">
+      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 xl:grid-cols-[minmax(180px,1fr)_minmax(320px,460px)_minmax(160px,1fr)] xl:px-5">
         <div className="min-w-0">
           {projectTitleIsEditable ? (
             <input
@@ -308,27 +308,27 @@ export function StudioWorkbenchFrame({
           )}
           {projectSubtitle && <p className="truncate px-1.5 text-[10px] text-text-muted">{projectSubtitle}</p>}
         </div>
-        <div className="hidden min-w-0 lg:block">
+        <div className="hidden min-w-0 xl:block">
           <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} />
         </div>
-        <div className="flex items-center gap-3 justify-self-end rounded-full bg-surface-2 px-3 py-1.5">
+        <div className="flex items-center gap-3 justify-self-end">
           <SaveStatusView status={saveStatus} compact />
-          {onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary disabled:opacity-50">保存草稿</button>}
+          {onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-md border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-50">保存草稿</button>}
         </div>
       </header>
 
-      <div className="border-b border-border bg-surface px-3 py-2 lg:hidden">
+      <div className="border-b border-border bg-surface px-3 py-2 xl:hidden">
         <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} />
       </div>
 
       <MobilePanelTabs active={mobilePanel} onChange={setMobilePanel} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 bg-surface-2 lg:grid-cols-[280px_minmax(360px,1fr)_360px] 2xl:grid-cols-[320px_minmax(520px,1fr)_400px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 bg-surface-2 xl:grid-cols-[minmax(220px,0.8fr)_minmax(360px,1.5fr)_minmax(300px,1fr)] 2xl:grid-cols-[320px_minmax(520px,1fr)_400px]">
         <aside
           role="tabpanel"
           aria-label="分镜与脚本"
           className={joinClassNames(
-            'min-h-0 flex-col border-border bg-surface lg:flex lg:border-r',
+            'min-h-0 flex-col border-border bg-surface xl:flex xl:border-r',
             mobilePanel === 'objects' ? 'flex' : 'hidden',
           )}
         >
@@ -340,19 +340,19 @@ export function StudioWorkbenchFrame({
           role="tabpanel"
           aria-label="创作画布"
           className={joinClassNames(
-            'min-h-0 flex-col bg-surface-2 lg:flex',
+            'min-h-0 flex-col bg-surface-2 xl:flex',
             mobilePanel === 'canvas' ? 'flex' : 'hidden',
           )}
         >
           {canvasTitle ? <PanelHeading title={canvasTitle} action={canvasToolbar} /> : canvasToolbar ? <div className="flex min-h-12 shrink-0 items-center justify-end border-b border-border/80 px-4 py-2.5">{canvasToolbar}</div> : null}
-          <div className="flex min-h-[420px] flex-1 items-stretch justify-stretch overflow-hidden p-2.5 sm:p-3 lg:min-h-0">{children}</div>
+          <div className="flex min-h-[420px] flex-1 items-stretch justify-stretch overflow-hidden p-2.5 sm:p-3 xl:min-h-0">{children}</div>
         </main>
 
         <aside
           role="tabpanel"
           aria-label="步骤和属性设置"
           className={joinClassNames(
-            'min-h-0 flex-col border-border bg-surface lg:flex lg:border-l',
+            'min-h-0 flex-col border-border bg-surface xl:flex xl:border-l',
             mobilePanel === 'properties' ? 'flex' : 'hidden',
           )}
         >
@@ -362,7 +362,7 @@ export function StudioWorkbenchFrame({
       </div>
 
       {timelinePanel && (
-        <section className="flex h-[122px] shrink-0 flex-col border-t border-border bg-surface lg:h-[142px]" aria-label={timelineTitle}>
+        <section className="flex h-[122px] shrink-0 flex-col border-t border-border bg-surface xl:h-[142px]" aria-label={timelineTitle}>
           <div className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4">
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="shrink-0 text-[11px] font-black text-text-primary">{timelineTitle}</h2>
@@ -374,7 +374,7 @@ export function StudioWorkbenchFrame({
         </section>
       )}
 
-      <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface/95 px-4 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] backdrop-blur sm:px-5">
+      <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5 shadow-[0_-2px_8px_rgba(15,23,42,0.025)] sm:px-5">
         <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
           <div className="flex min-w-0 items-center gap-3">
             {previousAction && (
@@ -405,7 +405,7 @@ export function StudioWorkbenchFrame({
                 type="button"
                 disabled={previewAction.disabled || previewAction.loading}
                 onClick={previewAction.onClick}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface px-4 text-xs font-bold text-text-secondary transition hover:border-accent/40 hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-4 text-xs font-bold text-text-secondary transition-colors hover:border-accent/40 hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {previewAction.loading ? <Loader2 size={14} className="animate-spin" /> : previewAction.icon || <Play size={14} />}
                 {previewAction.loading ? previewAction.loadingLabel || previewAction.label : previewAction.label}
@@ -417,7 +417,7 @@ export function StudioWorkbenchFrame({
               disabled={primaryAction.disabled || primaryAction.loading}
               onClick={primaryAction.onClick}
               aria-describedby={primaryAction.blockReason ? blockReasonId : undefined}
-              className="inline-flex h-10 min-w-28 items-center justify-center gap-2 rounded-xl bg-accent px-5 text-xs font-black text-white shadow-sm transition hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45"
+              className="inline-flex h-10 min-w-28 items-center justify-center gap-2 rounded-md bg-accent px-5 text-xs font-black text-white transition-colors hover:bg-accent-dim focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {primaryAction.loading ? <Loader2 size={15} className="animate-spin" /> : primaryAction.icon}
               {primaryAction.loading ? primaryAction.loadingLabel || `${primaryAction.label}中` : primaryAction.label}

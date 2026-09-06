@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { studioApi } from '../lib/studioApi';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 export type ContentOpsExecutionIntent = {
   kind: 'recommendation' | 'top-content';
@@ -39,6 +40,7 @@ export function ContentOpsExecutionDialog({ intent, onClose }: {
     `目标平台：${platform === 'instagram' ? 'Instagram' : platform === 'youtube' ? 'YouTube' : platform === 'facebook' ? 'Facebook' : 'TikTok'}；生成 ${quantity} 个草稿`,
     addSchedule ? `同时创建每日 ${scheduleTime} 的创作提醒；不会自动发布` : '仅保存草稿，不创建定时任务，也不会自动发布',
   ] : [], [addSchedule, intent, isClone, platform, quantity, scheduleTime]);
+  const dialogRef = useModalFocus<HTMLDivElement>({ open: Boolean(intent), onClose });
 
   if (!intent) return null;
 
@@ -104,11 +106,11 @@ export function ContentOpsExecutionDialog({ intent, onClose }: {
     }
   };
 
-  return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onClick={onClose}>
+  return <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="content-ops-execution-dialog-title" className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onClick={onClose}>
     <section className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
       <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-        <div><div className="flex items-center gap-2 text-emerald-700"><Sparkles size={16} /><span className="text-xs font-black">AI 执行计划确认</span></div><h2 className="mt-2 text-base font-black text-text-primary">{isClone ? '创建爆款裂变草稿' : '生成创作草稿'}</h2></div>
-        <button type="button" onClick={onClose} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button>
+        <div><div className="flex items-center gap-2 text-emerald-700"><Sparkles size={16} /><span className="text-xs font-black">AI 执行计划确认</span></div><h2 id="content-ops-execution-dialog-title" className="mt-2 text-base font-black text-text-primary">{isClone ? '创建爆款裂变草稿' : '生成创作草稿'}</h2></div>
+        <button type="button" data-modal-initial-focus aria-label="关闭执行计划" onClick={onClose} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button>
       </header>
       <div className="space-y-4 p-5">
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4"><p className="text-xs font-black text-emerald-900">{intent.title}</p><p className="mt-1.5 text-xs leading-5 text-emerald-900/75">{intent.detail}</p></div>

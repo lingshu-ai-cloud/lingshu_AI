@@ -15,6 +15,7 @@ import {
   consumeSessionPrefill,
   type ScriptLibraryActionPrefill,
 } from '../lib/contentActionNavigation';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 type ExactAnalysisDetail = {
   time?: string; timestamp?: string; environment?: string; shot?: string; camera?: string;
@@ -257,14 +258,18 @@ function PageShell({ icon, title, description, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="flex h-full flex-col bg-white">
-      <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border px-5">
-        <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">{icon}</span>
-        <span className="text-sm font-semibold text-text-primary">{title}</span>
+    <div className="workspace-management-page flex h-full flex-col bg-white">
+      <header className="shrink-0 border-b border-border px-5 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-6xl items-start gap-3">
+          <span className="mt-1 flex h-6 w-6 items-center justify-center text-accent">{icon}</span>
+          <div>
+            <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
+            <p className="mt-1 text-xs leading-5 text-text-muted">{description}</p>
+          </div>
+        </div>
       </header>
-      <main className="min-h-0 flex-1 overflow-y-auto bg-surface px-6 py-6">
+      <main className="min-h-0 flex-1 overflow-y-auto bg-[#f8faf7] px-4 py-6 sm:px-6">
         <div className="mx-auto max-w-6xl">
-          <p className="mb-5 text-sm text-text-muted">{description}</p>
           {children}
         </div>
       </main>
@@ -286,6 +291,14 @@ export function ScriptLibraryPage() {
   const [selectedDraft, setSelectedDraft] = useState<StudioProject | null>(null);
   const [draftBusyId, setDraftBusyId] = useState('');
   const [actionError, setActionError] = useState('');
+  const videoAnalysisDialogRef = useModalFocus<HTMLElement>({
+    open: Boolean(selectedVideo),
+    onClose: () => setSelectedVideo(null),
+  });
+  const draftDetailDialogRef = useModalFocus<HTMLElement>({
+    open: Boolean(selectedDraft),
+    onClose: () => setSelectedDraft(null),
+  });
 
   useEffect(() => {
     const prefill = consumeSessionPrefill<ScriptLibraryActionPrefill>(CONTENT_ACTION_STORAGE.scriptLibrary);
@@ -392,16 +405,16 @@ export function ScriptLibraryPage() {
 
   return (
     <PageShell icon={<FileText size={14} />} title="脚本库" description="管理可直接裂变的爆款视频和全部历史创作草稿，让成熟内容可以持续复用。">
-      <div className="mb-4 grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm">
-        <button type="button" onClick={() => { setTab('inspiration'); setQuery(''); }} className={`h-10 rounded-xl text-sm font-black transition ${tab === 'inspiration' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted'}`}>可裂变爆款</button>
-        <button type="button" onClick={() => { setTab('studio'); setQuery(''); }} className={`h-10 rounded-xl text-sm font-black transition ${tab === 'studio' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted'}`}>历史创作</button>
+      <div className="mb-4 flex gap-7 border-b border-border">
+        <button type="button" onClick={() => { setTab('inspiration'); setQuery(''); }} className={`h-11 border-b-2 px-1 text-sm font-semibold transition-colors ${tab === 'inspiration' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>可裂变爆款</button>
+        <button type="button" onClick={() => { setTab('studio'); setQuery(''); }} className={`h-11 border-b-2 px-1 text-sm font-semibold transition-colors ${tab === 'studio' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>历史创作</button>
       </div>
-      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-border bg-white p-3 shadow-sm">
+      <div className="mb-4 flex items-center gap-3 border-b border-border bg-white px-1 py-3">
         <Search size={16} className="text-text-muted" />
         <input value={query} onChange={event => setQuery(event.target.value)} placeholder={tab === 'inspiration' ? '搜索视频标题或脚本详析' : '搜索草稿标题或脚本'} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted" />
         <span className="text-xs font-semibold text-text-muted">{visibleCount} 条</span>
       </div>
-      <div className="mb-4 flex flex-wrap gap-3 rounded-2xl border border-border bg-white p-3 shadow-sm">
+      <div className="mb-4 flex flex-wrap gap-3 border-b border-border bg-white px-1 py-3">
         {tab === 'inspiration' ? <>
           <label className="min-w-44 flex-1"><span className="mb-1 block text-[10px] font-bold text-text-muted">社媒平台</span><select value={platformFilter} onChange={event => setPlatformFilter(event.target.value)} className="w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary"><option value="all">全部平台</option>{availablePlatforms.map(platform => <option key={platform} value={platform}>{platform}</option>)}</select></label>
           <label className="min-w-44 flex-1"><span className="mb-1 block text-[10px] font-bold text-text-muted">入库时间</span><select value={videoTimeFilter} onChange={event => setVideoTimeFilter(event.target.value as 'all' | '7d' | '30d')} className="w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary"><option value="all">全部时间</option><option value="7d">近 7 天</option><option value="30d">近 30 天</option></select></label>
@@ -442,8 +455,8 @@ export function ScriptLibraryPage() {
       )}
       {actionError && <div className="fixed bottom-5 left-1/2 z-[120] -translate-x-1/2 rounded-xl bg-rose-600 px-4 py-3 text-xs font-bold text-white shadow-xl">{actionError}</div>}
       {selectedVideo && <div className="fixed inset-0 z-[100] bg-slate-950/45 backdrop-blur-sm" onClick={() => setSelectedVideo(null)}>
-        <aside className="ml-auto flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
-          <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-base font-black text-text-primary">{selectedVideo.title || '全篇精确分析'}</h2><p className="mt-1 text-xs text-text-muted">{selectedVideo.platform || '社媒视频'} · {selectedVideo.analysis.scriptDetails15s?.length || 0} 个分析分镜</p></div><button type="button" onClick={() => setSelectedVideo(null)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button></header>
+        <aside ref={videoAnalysisDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="script-library-video-dialog-title" className="ml-auto flex h-full w-full max-w-3xl flex-col bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+          <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4"><div><h2 id="script-library-video-dialog-title" className="text-base font-black text-text-primary">{selectedVideo.title || '全篇精确分析'}</h2><p className="mt-1 text-xs text-text-muted">{selectedVideo.platform || '社媒视频'} · {selectedVideo.analysis.scriptDetails15s?.length || 0} 个分析分镜</p></div><button type="button" data-modal-initial-focus aria-label="关闭视频分析" onClick={() => setSelectedVideo(null)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button></header>
           <div className="min-h-0 flex-1 overflow-y-auto p-5"><HoverMedia title={selectedVideo.title || ''} poster={selectedVideo.thumbnailUrl || selectedVideo.analysis.materialPoster} url={selectedVideo.analysis.materialUrl || selectedVideo.videoUrl || selectedVideo.sourceUrl} />
             <section className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{[
               ['平台', selectedVideo.platform || '未记录'],
@@ -465,7 +478,7 @@ export function ScriptLibraryPage() {
             {selectedVideo.analysis.adaptTip && <section className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"><h3 className="text-xs font-black text-emerald-800">改编建议</h3><p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-text-secondary">{selectedVideo.analysis.adaptTip}</p></section>}
           </div><footer className="shrink-0 border-t border-border bg-white p-4"><button type="button" onClick={() => startViralClone(selectedVideo)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white hover:bg-emerald-700"><Sparkles size={16} />开始爆款裂变<ArrowRight size={16} /></button></footer>
         </aside></div>}
-      {selectedDraft && <div className="fixed inset-0 z-[100] bg-slate-950/45 backdrop-blur-sm" onClick={() => setSelectedDraft(null)}><aside className="ml-auto flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={event => event.stopPropagation()}><header className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-base font-black text-text-primary">{selectedDraft.title}</h2><p className="mt-1 text-xs text-text-muted">{modeLabel(selectedDraft.spec?.mode)} · {draftProgress(selectedDraft)} · 更新于 {formatDate(selectedDraft.updatedAt || selectedDraft.createdAt)}</p></div><button type="button" onClick={() => setSelectedDraft(null)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button></header><div className="min-h-0 flex-1 overflow-y-auto p-5"><HoverMedia title={selectedDraft.title} {...firstDraftMedia(selectedDraft)} /><h3 className="mt-5 text-sm font-black text-text-primary">草稿脚本</h3><pre className="mt-2 whitespace-pre-wrap rounded-xl bg-surface-2 p-4 text-xs leading-6 text-text-secondary">{String(selectedDraft.spec?.script || '草稿尚未生成脚本内容')}</pre></div><footer className="flex shrink-0 gap-2 border-t border-border bg-white p-4"><button type="button" onClick={() => continueDraft(selectedDraft)} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white">继续创作<ArrowRight size={15} /></button><button type="button" disabled={draftBusyId === selectedDraft.id} onClick={() => void copyDraft(selectedDraft)} className="flex items-center gap-2 rounded-xl border border-border px-4 text-xs font-bold text-text-secondary"><Copy size={14} />复制</button><button type="button" disabled={draftBusyId === selectedDraft.id} onClick={() => void deleteDraft(selectedDraft)} className="rounded-xl border border-rose-200 px-4 text-rose-600"><Trash2 size={15} /></button></footer></aside></div>}
+      {selectedDraft && <div className="fixed inset-0 z-[100] bg-slate-950/45 backdrop-blur-sm" onClick={() => setSelectedDraft(null)}><aside ref={draftDetailDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="script-library-draft-dialog-title" className="ml-auto flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={event => event.stopPropagation()}><header className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 id="script-library-draft-dialog-title" className="text-base font-black text-text-primary">{selectedDraft.title}</h2><p className="mt-1 text-xs text-text-muted">{modeLabel(selectedDraft.spec?.mode)} · {draftProgress(selectedDraft)} · 更新于 {formatDate(selectedDraft.updatedAt || selectedDraft.createdAt)}</p></div><button type="button" data-modal-initial-focus aria-label="关闭草稿详情" onClick={() => setSelectedDraft(null)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button></header><div className="min-h-0 flex-1 overflow-y-auto p-5"><HoverMedia title={selectedDraft.title} {...firstDraftMedia(selectedDraft)} /><h3 className="mt-5 text-sm font-black text-text-primary">草稿脚本</h3><pre className="mt-2 whitespace-pre-wrap rounded-xl bg-surface-2 p-4 text-xs leading-6 text-text-secondary">{String(selectedDraft.spec?.script || '草稿尚未生成脚本内容')}</pre></div><footer className="flex shrink-0 gap-2 border-t border-border bg-white p-4"><button type="button" onClick={() => continueDraft(selectedDraft)} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white">继续创作<ArrowRight size={15} /></button><button type="button" disabled={draftBusyId === selectedDraft.id} onClick={() => void copyDraft(selectedDraft)} className="flex items-center gap-2 rounded-xl border border-border px-4 text-xs font-bold text-text-secondary"><Copy size={14} />复制</button><button type="button" disabled={draftBusyId === selectedDraft.id} onClick={() => void deleteDraft(selectedDraft)} className="rounded-xl border border-rose-200 px-4 text-rose-600"><Trash2 size={15} /></button></footer></aside></div>}
     </PageShell>
   );
 }
@@ -503,6 +516,15 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<ContentMemory | null>(null);
+  const memoryEditorDialogRef = useModalFocus<HTMLFormElement>({
+    open: Boolean(memoryEditor),
+    onClose: () => { if (!memoryBusy) setMemoryEditor(null); },
+    closeOnEscape: () => !memoryBusy,
+  });
+  const memoryConfirmDialogRef = useModalFocus<HTMLElement>({
+    open: Boolean(memoryConfirm),
+    onClose: () => setMemoryConfirm(null),
+  });
   const tabs: Array<{ id: MemoryTab; label: string; icon: typeof Sparkles }> = [
     { id: 'content', label: '内容运营经验', icon: Sparkles },
     { id: 'style', label: '沟通风格', icon: MessageCircle },
@@ -799,8 +821,8 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
   };
   return (
     <PageShell icon={<BrainCircuit size={14} />} title="智能体记忆" description="查看智能体从真实业务中沉淀的经验，并明确每条记忆的来源、用途与使用边界。">
-      <div className="mb-4 grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-surface-2 p-1 shadow-sm lg:grid-cols-4">
-        {tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setTab(id); setQuery(''); }} className={`flex h-11 items-center justify-center gap-2 rounded-xl text-xs font-black transition ${tab === id ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:text-text-secondary'}`}><Icon size={15} className={tab === id ? 'text-emerald-600' : ''} />{label}</button>)}
+      <div className="mb-4 flex gap-6 overflow-x-auto border-b border-border">
+        {tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setTab(id); setQuery(''); }} className={`flex h-11 shrink-0 items-center justify-center gap-2 border-b-2 px-1 text-xs font-semibold transition-colors ${tab === id ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}><Icon size={15} className={tab === id ? 'text-emerald-600' : ''} />{label}</button>)}
       </div>
       {tab !== 'content' && memoryLoadError && memoryOverview && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800" role="alert"><span>{memoryLoadError} 当前仍显示上次成功加载的数据。</span><button type="button" onClick={() => void loadMemoryGovernance().catch(() => undefined)} className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 font-black">重试</button></div>}
       {tab !== 'content' && memoryLoading ? <section className="rounded-2xl border border-border bg-white p-8 text-center shadow-sm" aria-live="polite"><Loader2 size={22} className="mx-auto animate-spin text-emerald-600" /><p className="mt-3 text-xs font-semibold text-text-muted">正在加载该企业的记忆记录…</p></section> : tab !== 'content' && memoryLoadError && !memoryOverview ? <section className="rounded-2xl border border-rose-100 bg-rose-50/60 p-6 text-center shadow-sm" role="alert"><CircleAlert size={22} className="mx-auto text-rose-600" /><h2 className="mt-3 text-sm font-black text-rose-900">记忆记录没有加载成功</h2><p className="mt-1 text-xs leading-5 text-rose-700">{memoryLoadError}</p><button type="button" onClick={() => void loadMemoryGovernance().catch(() => undefined)} className="mt-4 rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white">重新加载</button></section> : tab === 'content' ? <>
@@ -871,10 +893,10 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
       </> : null}
       {memoryEditor && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 p-4" role="presentation" onMouseDown={event => { if (!memoryBusy && event.currentTarget === event.target) setMemoryEditor(null); }}>
-          <form onSubmit={submitMemoryEditor} role="dialog" aria-modal="true" aria-label="编辑智能体记忆" className="w-full max-w-lg rounded-2xl border border-border bg-white p-5 shadow-2xl">
+          <form ref={memoryEditorDialogRef} tabIndex={-1} onSubmit={submitMemoryEditor} role="dialog" aria-modal="true" aria-labelledby="agent-memory-editor-dialog-title" className="w-full max-w-lg rounded-2xl border border-border bg-white p-5 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
-              <div><h2 className="text-base font-black text-text-primary">{memoryEditor.kind === 'customer-add' ? `记录 ${memoryEditor.customerName} 的偏好` : memoryEditor.kind === 'customer-edit' ? '编辑客户私有记忆' : memoryEditor.kind === 'style-edit' ? '编辑员工最终回复' : '编辑响应策略'}</h2><p className="mt-1 text-xs leading-5 text-text-muted">{memoryEditor.kind === 'strategy-edit' ? '只记录对话方法，不在这里填写价格、MOQ、证书等企业事实。' : '内容会在服务端再次脱敏，并保留审计记录。'}</p></div>
-              <button type="button" disabled={Boolean(memoryBusy)} onClick={() => setMemoryEditor(null)} aria-label="关闭编辑窗口" className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2 disabled:opacity-50"><X size={16} /></button>
+              <div><h2 id="agent-memory-editor-dialog-title" className="text-base font-black text-text-primary">{memoryEditor.kind === 'customer-add' ? `记录 ${memoryEditor.customerName} 的偏好` : memoryEditor.kind === 'customer-edit' ? '编辑客户私有记忆' : memoryEditor.kind === 'style-edit' ? '编辑员工最终回复' : '编辑响应策略'}</h2><p className="mt-1 text-xs leading-5 text-text-muted">{memoryEditor.kind === 'strategy-edit' ? '只记录对话方法，不在这里填写价格、MOQ、证书等企业事实。' : '内容会在服务端再次脱敏，并保留审计记录。'}</p></div>
+              <button type="button" data-modal-initial-focus disabled={Boolean(memoryBusy)} onClick={() => setMemoryEditor(null)} aria-label="关闭编辑窗口" className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2 disabled:opacity-50"><X size={16} /></button>
             </div>
             <div className="mt-5 space-y-4">
               {memoryEditor.kind === 'customer-add' && <label className="block text-xs font-bold text-text-secondary">记忆类型<select value={memoryEditor.key} onChange={event => setMemoryEditor({ ...memoryEditor, key: event.target.value })} className="mt-2 h-11 w-full rounded-xl border border-border bg-white px-3 text-sm outline-none focus:border-emerald-400">{memoryKeyOptions.filter(([value]) => !memoryEditor.existingKeys.includes(value)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
@@ -889,9 +911,9 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
       )}
       {memoryConfirm && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/35 p-4" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) setMemoryConfirm(null); }}>
-          <section role="alertdialog" aria-modal="true" aria-label={memoryConfirm.title} className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
-            <h2 className="text-base font-black text-text-primary">{memoryConfirm.title}</h2><p className="mt-2 text-sm leading-6 text-text-secondary">{memoryConfirm.description}</p>
-            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setMemoryConfirm(null)} className="rounded-xl border border-border px-4 py-2 text-xs font-black text-text-secondary">取消</button><button type="button" onClick={() => void confirmMemoryAction()} className={`rounded-xl px-4 py-2 text-xs font-black text-white ${memoryConfirm.danger ? 'bg-rose-600' : 'bg-slate-950'}`}>{memoryConfirm.confirmLabel}</button></div>
+          <section ref={memoryConfirmDialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="agent-memory-confirm-dialog-title" className="w-full max-w-md rounded-2xl border border-border bg-white p-5 shadow-2xl">
+            <h2 id="agent-memory-confirm-dialog-title" className="text-base font-black text-text-primary">{memoryConfirm.title}</h2><p className="mt-2 text-sm leading-6 text-text-secondary">{memoryConfirm.description}</p>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" data-modal-initial-focus onClick={() => setMemoryConfirm(null)} className="rounded-xl border border-border px-4 py-2 text-xs font-black text-text-secondary">取消</button><button type="button" onClick={() => void confirmMemoryAction()} className={`rounded-xl px-4 py-2 text-xs font-black text-white ${memoryConfirm.danger ? 'bg-rose-600' : 'bg-slate-950'}`}>{memoryConfirm.confirmLabel}</button></div>
           </section>
         </div>
       )}

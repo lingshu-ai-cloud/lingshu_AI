@@ -4,7 +4,7 @@ import {
   Home, Users, LayoutGrid,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send, Target,
+  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send, Target, PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
@@ -12,6 +12,7 @@ import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
 import AccountSettingsModal from './AccountSettingsModal';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
+import { useModalFocus } from '../hooks/useModalFocus';
 
 interface NavSection {
   label: string;
@@ -130,37 +131,25 @@ function NavItem({
   collapsed?: boolean;
 }) {
   return (
-    <motion.button
+    <button
       type="button"
-      whileTap={{ scale: 0.97 }}
       onClick={onClick}
       title={collapsed ? item.label : undefined}
       aria-label={collapsed ? item.label : undefined}
       aria-current={active ? 'page' : undefined}
       data-demo-target={item.id}
-      className={`w-full flex items-center rounded-xl py-2 text-sm font-medium transition-colors cursor-pointer relative ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}`}
+      className={`relative flex w-full items-center border-l-2 py-2 text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} ${active ? 'border-accent bg-[#edf4ef]' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2] hover:text-text-primary'}`}
       style={
         active
-          ? { background: '#ffffff', color: '#0f172a', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }
-          : { color: '#64748b' }
+          ? { color: 'var(--color-text-primary)' }
+          : undefined
       }
     >
-      {active && (
-        <motion.span
-          layoutId="nav-active"
-          className="absolute inset-0 rounded-xl"
-          style={{ background: '#ffffff', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
-          transition={{ type: 'spring', damping: 30, stiffness: 350 }}
-        />
-      )}
       <span aria-hidden="true" className="relative flex-shrink-0" style={{ color: active ? 'var(--color-accent)' : undefined }}>
         {item.icon}
       </span>
       {!collapsed && <span className="relative flex-1 text-left">{item.label}</span>}
-      {active && !collapsed && (
-        <ChevronRight size={13} className="relative flex-shrink-0" style={{ color: '#94a3b8' }} />
-      )}
-    </motion.button>
+    </button>
   );
 }
 
@@ -189,13 +178,13 @@ function ContentCreationNav({
   }
 
   return (
-    <div className="rounded-xl">
+    <div>
       <button
         type="button"
         onClick={() => setExpanded(value => !value)}
         aria-expanded={expanded}
         data-demo-target="smartAssets"
-        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${active ? 'text-text-primary' : 'text-text-secondary hover:bg-white/60'}`}
+        className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-sm font-medium transition-colors ${active ? 'border-accent bg-[#edf4ef] text-text-primary' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2]'}`}
       >
         <span aria-hidden="true" className={active ? 'text-accent' : 'text-text-muted'}><WandSparkles size={16} /></span>
         <span className="min-w-0 flex-1 text-left">内容创作</span>
@@ -210,7 +199,7 @@ function ContentCreationNav({
               type="button"
               onClick={() => onNavigate(item.id)}
               aria-current={itemActive ? 'page' : undefined}
-              className={`relative mt-0.5 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors ${itemActive ? 'bg-white text-text-primary shadow-sm' : 'text-text-secondary hover:bg-white/60 hover:text-text-primary'}`}
+              className={`relative mt-0.5 flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm font-medium transition-colors ${itemActive ? 'border-accent bg-white text-text-primary' : 'border-transparent text-text-secondary hover:bg-white hover:text-text-primary'}`}
             >
               <span aria-hidden="true" className={itemActive ? 'text-accent' : 'text-text-muted'}>{item.icon}</span>
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -295,6 +284,11 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   const [liveSession, setLiveSession] = useState<AuthSession | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const [mobileRightPanelOpen, setMobileRightPanelOpen] = useState(false);
+  const mobileRightPanelRef = useModalFocus<HTMLElement>({
+    open: isInConversation && mobileRightPanelOpen,
+    onClose: () => setMobileRightPanelOpen(false),
+  });
   const [activeContentEntry, setActiveContentEntry] = useState<ContentNavigationEntry>('create');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches) return true;
@@ -322,6 +316,9 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   useEffect(() => {
     setLiveSession(null);
   }, [sessionIdentityScope]);
+  useEffect(() => {
+    if (!isInConversation) setMobileRightPanelOpen(false);
+  }, [isInConversation]);
   useEffect(() => {
     const handler = (event: Event) => {
       const entry = (event as CustomEvent<{ entry?: ContentNavigationEntry }>).detail?.entry;
@@ -395,15 +392,14 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   };
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="app-shell flex h-screen overflow-hidden">
 
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
         initial={false}
         animate={{ width: sidebarCollapsed ? 64 : 220 }}
         transition={{ type: 'spring', damping: 30, stiffness: 320 }}
-        className="relative z-40 flex-shrink-0 flex flex-col border-r border-border overflow-visible"
-        style={{ background: '#f2f3f5' }}
+        className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >
         {/* Logo */}
         <div className={`relative h-14 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4 gap-2.5'}`}>
@@ -414,7 +410,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             onClick={() => setSidebarCollapsed(value => !value)}
             title={sidebarCollapsed ? '展开左侧栏' : '收起左侧栏'}
             aria-label={sidebarCollapsed ? '展开左侧栏' : '收起左侧栏'}
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-white hover:text-text-primary ${sidebarCollapsed ? 'border border-border bg-white shadow-sm' : ''}`}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-white hover:text-text-primary ${sidebarCollapsed ? 'border border-border bg-white' : ''}`}
           >
             {sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
           </button>
@@ -469,7 +465,6 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
 
           {!sidebarCollapsed && <AdminPageGuide page={page} />}
         </div>
-
 
         {/* Bottom user */}
         <div ref={quotaAreaRef} className="relative px-3 py-3 border-t border-border flex-shrink-0">
@@ -601,7 +596,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             {accountMenuOpen && (
               <motion.div initial={{ opacity: 0, y: 8, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: .98 }} className="absolute bottom-[68px] left-3 z-50 w-[260px] rounded-2xl border border-border bg-white p-3 shadow-xl">
                 <div className="flex items-center gap-3 border-b border-border px-2 pb-3">
-                  <span className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'text-white'}`} style={isJiangZheTestAccount ? undefined : { background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}>{isJiangZheTestAccount ? '' : initial}</span>
+                  <span className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'bg-accent text-white'}`}>{isJiangZheTestAccount ? '' : initial}</span>
                   <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate text-[10px] text-text-muted">{activeSession?.user?.email}</p></div>
                 </div>
                 <div className="pt-2">
@@ -619,7 +614,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
               aria-expanded={accountMenuOpen}
               aria-haspopup="menu"
               className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'text-white'}`}
-              style={isJiangZheTestAccount ? undefined : { background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}
+              style={isJiangZheTestAccount ? undefined : { background: 'var(--color-accent)' }}
             >
               {isJiangZheTestAccount ? '' : initial}
             </button>
@@ -637,7 +632,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
       <AccountSettingsModal open={accountSettingsOpen} onClose={() => setAccountSettingsOpen(false)} onLogout={onLogout} />
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="flex-1 min-w-0 overflow-hidden bg-white flex flex-col">
+      <main className="app-main flex min-w-0 flex-1 flex-col overflow-hidden">
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-emerald-200 bg-emerald-50 px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-emerald-950">
@@ -654,6 +649,54 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
       </main>
 
       {/* ── Right panel (only in conversation mode) ── */}
+      {isInConversation && !mobileRightPanelOpen && (
+        <button
+          type="button"
+          onClick={() => setMobileRightPanelOpen(true)}
+          aria-label="打开协作面板"
+          aria-controls="conversation-context-panel-mobile"
+          aria-expanded="false"
+          className="fixed bottom-4 right-4 z-40 inline-flex h-10 items-center gap-1.5 rounded-md border border-border bg-white px-3 text-xs font-semibold text-text-primary shadow-sm md:hidden"
+        >
+          <PanelRightOpen size={15} aria-hidden="true" />
+          协作面板
+        </button>
+      )}
+
+      <AnimatePresence>
+        {isInConversation && mobileRightPanelOpen && (
+          <motion.aside
+            ref={mobileRightPanelRef}
+            tabIndex={-1}
+            id="conversation-context-panel-mobile"
+            initial={{ x: '100%', opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: '100%', opacity: 0 }}
+            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            className={`fixed inset-y-0 right-0 z-50 flex flex-col overflow-hidden bg-white md:hidden ${page === 'agentMonitor' ? 'left-0' : 'left-16'}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="conversation-context-panel-mobile-title"
+          >
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+              <h2 id="conversation-context-panel-mobile-title" className="text-xs font-semibold text-text-primary">协作面板</h2>
+              <button
+                type="button"
+                data-modal-initial-focus
+                onClick={() => setMobileRightPanelOpen(false)}
+                aria-label="关闭协作面板"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-2 hover:text-text-primary"
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <RightPanel conversation={conversation} onAction={onAction} />
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isInConversation && (
           <motion.aside
@@ -661,7 +704,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             animate={{ width: 272, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="flex-shrink-0 bg-white flex flex-col overflow-hidden"
+            className="hidden flex-shrink-0 flex-col overflow-hidden bg-white md:flex"
             style={{ boxShadow: '-6px 0 24px rgba(0,0,0,0.06)' }}
           >
             <RightPanel conversation={conversation} onAction={onAction} />

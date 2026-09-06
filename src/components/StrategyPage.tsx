@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Compass, LayoutGrid, BarChart3 } from 'lucide-react';
+import { LayoutGrid, BarChart3 } from 'lucide-react';
 import AgentWorkspace from './AgentWorkspace';
 import StrategyDataBoard from './StrategyDataBoard';
 import type { AgentAction, ConversationContext, KickoffSignal, Page, RestoreSignal } from '../App';
@@ -25,27 +25,25 @@ export default function StrategyPage({ onAction, onNavigate, includeMockCustomer
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <Compass size={13} />
-          </div>
-          <span className="text-sm font-semibold text-text-primary">首页</span>
+      <header className="home-header flex items-center justify-between gap-4 border-b px-5 py-3 flex-shrink-0 sm:px-6">
+        <div className="min-w-0">
+          <h1 className="truncate text-[18px] font-semibold tracking-[-.025em] text-text-primary">今日概览</h1>
+          <p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">从经营信号中找到今天最重要的动作</p>
         </div>
-        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-2 border border-border">
+        <div className="flex items-center gap-5 self-stretch">
           {([
-            { mode: 'board' as ViewMode, icon: <BarChart3 size={12} />, label: '数据大屏' },
-            { mode: 'workspace' as ViewMode, icon: <LayoutGrid size={12} />, label: 'AI 智囊团' },
+            { mode: 'board' as ViewMode, icon: <BarChart3 size={13} />, label: '经营概览' },
+            { mode: 'workspace' as ViewMode, icon: <LayoutGrid size={12} />, label: '策略工作台' },
           ]).map(({ mode, icon, label }) => (
             <button key={mode} onClick={() => setViewMode(mode)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${viewMode === mode ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
+              className={`flex items-center gap-1.5 border-b-2 px-0 py-1 text-xs font-semibold transition-colors ${viewMode === mode ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>
               {icon}<span>{label}</span>
             </button>
           ))}
         </div>
-      </div>
+      </header>
 
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="home-dashboard flex-1 min-h-0 overflow-hidden">
         <AnimatePresence mode="wait">
           {viewMode === 'board' ? (
             <motion.div key="board" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">

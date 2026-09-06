@@ -1036,13 +1036,13 @@ export default function AdminDeliveryPage() {
 
   return (
     <div className="flex h-full flex-col bg-white">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
+      <header className="flex min-h-[68px] shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3 sm:px-6">
         <div>
-          <p className="text-sm font-black text-text-primary">客户运维</p>
+          <h1 className="text-lg font-semibold text-text-primary">客户运维</h1>
           <p className="text-[11px] text-text-muted">集中处理客户部署、平台授权、验收进度和内容入库异常。</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-bold text-text-secondary">平台配置 {summary.total} 项 · 已交付 {summary.active} · 风险 {summary.risky}</span>
+          <span className="border-l border-border pl-3 text-[11px] font-semibold text-text-secondary">平台配置 {summary.total} 项 · 已交付 {summary.active} · 风险 {summary.risky}</span>
           {visibleTenants.length > 0 && (
             <button type="button" onClick={toggleAllTenants} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">
               {anyTenantExpanded ? <ChevronsUp size={13} /> : <ChevronsDown size={13} />}
@@ -1056,7 +1056,7 @@ export default function AdminDeliveryPage() {
             {refreshing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />} 刷新
           </button>
         </div>
-      </div>
+      </header>
 
       <div
         ref={scrollContainerRef}
