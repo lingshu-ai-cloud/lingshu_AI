@@ -1,3 +1,6 @@
+import { agentRuleFields } from '../lib/agentRuleFields';
+import VideoPlanEditor from './VideoPlanEditor';
+import { normalizeVideoPlan, videoPlanErrors } from '../lib/videoCreationPlan';
 import DeliveryBoard from "./DeliveryBoard";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -718,25 +721,26 @@ function OnboardingPanel({
   onSave: (config: DigitalEmployeeConfig) => void;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
 }) {
+  const restoredRules = useMemo(() => agentRuleFields(initial), [initial.socialCadence, initial.followupCadence, initial.reviewSchedule]);
   const [form, setForm] = useState(() => completeConfig(initial));
   const [dependencyNotice, setDependencyNotice] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [collectionPlatforms, setCollectionPlatforms] = useState("YouTube、TikTok、Instagram、Facebook");
-  const [collectionSources, setCollectionSources] = useState("公开行业关键词、已确认的对标账号");
-  const [collectionKeywords, setCollectionKeywords] = useState("");
-  const [collectionLookback, setCollectionLookback] = useState(7);
-  const [collectionLimit, setCollectionLimit] = useState(20);
-  const [collectionTime, setCollectionTime] = useState("每天 09:00");
-  const [publishCount, setPublishCount] = useState(5);
+  const [collectionPlatforms, setCollectionPlatforms] = useState(restoredRules.collectionPlatforms);
+  const [collectionSources, setCollectionSources] = useState(restoredRules.collectionSources);
+  const [collectionKeywords, setCollectionKeywords] = useState(restoredRules.collectionKeywords);
+  const [collectionLookback, setCollectionLookback] = useState(restoredRules.collectionLookback);
+  const [collectionLimit, setCollectionLimit] = useState(restoredRules.collectionLimit);
+  const [collectionTime, setCollectionTime] = useState(restoredRules.collectionTime);
+  const [publishCount, setPublishCount] = useState(restoredRules.publishCount);
   const [connectedPublishingAccounts, setConnectedPublishingAccounts] = useState<PublishingTarget[]>([]);
   const [publishingAccountsLoading, setPublishingAccountsLoading] = useState(true);
   const [publishingAccountsError, setPublishingAccountsError] = useState("");
-  const [followupGenerateAt, setFollowupGenerateAt] = useState("每周五 09:00");
-  const [followupApproveBy, setFollowupApproveBy] = useState("周五 17:00 前");
-  const [followupWindow, setFollowupWindow] = useState("客户当地工作日 09:00–18:00");
-  const [followupFrequency, setFollowupFrequency] = useState("同一客户 7 天最多 1 次");
-  const [reviewTimezone, setReviewTimezone] = useState("Asia/Shanghai（北京时间）");
-  const [reviewCutoff, setReviewCutoff] = useState("周五 17:00");
+  const [followupGenerateAt, setFollowupGenerateAt] = useState(restoredRules.followupGenerateAt);
+  const [followupApproveBy, setFollowupApproveBy] = useState(restoredRules.followupApproveBy);
+  const [followupWindow, setFollowupWindow] = useState(restoredRules.followupWindow);
+  const [followupFrequency, setFollowupFrequency] = useState(restoredRules.followupFrequency);
+  const [reviewTimezone, setReviewTimezone] = useState(restoredRules.reviewTimezone);
+  const [reviewCutoff, setReviewCutoff] = useState(restoredRules.reviewCutoff);
   const [recommendationApplied, setRecommendationApplied] = useState(false);
   const [profileLoading, setProfileLoading] = useState(mode === "first");
   const [profileSaving, setProfileSaving] = useState(false);
@@ -783,6 +787,21 @@ function OnboardingPanel({
     return next;
   }, [knowledgeProducts.length, profileConfirmed, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
+  useEffect(() => {
+    setCollectionPlatforms(restoredRules.collectionPlatforms);
+    setCollectionSources(restoredRules.collectionSources);
+    setCollectionKeywords(restoredRules.collectionKeywords);
+    setCollectionLookback(restoredRules.collectionLookback);
+    setCollectionLimit(restoredRules.collectionLimit);
+    setCollectionTime(restoredRules.collectionTime);
+    setPublishCount(restoredRules.publishCount);
+    setFollowupGenerateAt(restoredRules.followupGenerateAt);
+    setFollowupApproveBy(restoredRules.followupApproveBy);
+    setFollowupWindow(restoredRules.followupWindow);
+    setFollowupFrequency(restoredRules.followupFrequency);
+    setReviewTimezone(restoredRules.reviewTimezone);
+    setReviewCutoff(restoredRules.reviewCutoff);
+  }, [restoredRules]);
   const set = <K extends keyof DigitalEmployeeConfig>(
     key: K,
     value: DigitalEmployeeConfig[K],
@@ -1059,7 +1078,7 @@ function OnboardingPanel({
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "产品资料写入企业知识库失败");
       setKnowledgeProducts(next);
-      setProductImportMessage(`已从“${file.name}”识别并写入 ${decoded.length} 个产品；现在可以生成 AI 推荐。`);
+      setProductImportMessage(`已从“${file.name}”识别并写入 ${decoded.length} 个产品；现在可以填入基础关键词。`);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品文件解析失败"); }
     finally { setProductImporting(false); }
   };
@@ -1092,9 +1111,9 @@ function OnboardingPanel({
     const completed = {
       ...form,
       team: ["planner", "knowledge", "risk", "review", ...(form.enabledWorkflows.some((item) => contentCreationWorkflows.includes(item)) ? ["content"] : []), ...(form.enabledWorkflows.some((item) => ["customer_segmentation", "batch_followup"].includes(item)) ? ["customer"] : [])],
-      socialCadence: `${collectionPlatforms}；${collectionSources}；关键词：${collectionKeywords || form.focusProducts || form.primaryBusiness}；近 ${collectionLookback} 天；${collectionTime}；每次最多 ${collectionLimit} 条；按链接与标题去重 30 天；每周生成 ${publishCount} 条发布草稿；账号范围：${form.publishingTargets.map(target => `${target.platform}/${target.accountLabel}`).join("、") || "未确认"}；发布前人工审批`,
-      followupCadence: `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
-      reviewSchedule: `周五 17:30（${reviewTimezone}）；数据截止 ${reviewCutoff}；通知审批负责人；仅生成复盘和下周任务草稿`,
+      socialCadence: [collectionPlatforms, collectionSources, collectionKeywords, collectionLookback, collectionLimit, collectionTime, publishCount].every((value, index) => value === [restoredRules.collectionPlatforms, restoredRules.collectionSources, restoredRules.collectionKeywords, restoredRules.collectionLookback, restoredRules.collectionLimit, restoredRules.collectionTime, restoredRules.publishCount][index]) && JSON.stringify(form.publishingTargets) === JSON.stringify(initial.publishingTargets) ? initial.socialCadence : `${collectionPlatforms}；${collectionSources}；关键词：${collectionKeywords || form.focusProducts || form.primaryBusiness}；近 ${collectionLookback} 天；${collectionTime}；每次最多 ${collectionLimit} 条；按链接与标题去重 30 天；每周生成 ${publishCount} 条发布草稿；账号范围：${form.publishingTargets.map(target => `${target.platform}/${target.accountLabel}`).join("、") || "未确认"}；发布前人工审批`,
+      followupCadence: [followupGenerateAt, followupApproveBy, followupWindow, followupFrequency].every((value, index) => value === [restoredRules.followupGenerateAt, restoredRules.followupApproveBy, restoredRules.followupWindow, restoredRules.followupFrequency][index]) ? initial.followupCadence : `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
+      reviewSchedule: reviewTimezone === restoredRules.reviewTimezone && reviewCutoff === restoredRules.reviewCutoff ? initial.reviewSchedule : `周五 17:30（${reviewTimezone}）；数据截止 ${reviewCutoff}；通知审批负责人；仅生成复盘和下周任务草稿`,
     };
     onSave(completed);
   };
@@ -1123,7 +1142,7 @@ function OnboardingPanel({
     <section id="onboarding-focus-products" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-2xl bg-blue-50 p-3 text-blue-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">第二步 · 确认重点产品</p><h2 className="mt-1 text-xl font-bold text-slate-950">本阶段希望数字员工重点经营什么</h2><p className="mt-1 text-sm text-slate-500">产品资料来自企业知识库；这里只选择本期重点，不重复维护详细参数。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">第一步企业档案已完成</span></div>
       {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">企业知识库产品</p><p className="mt-1 text-xs text-slate-500">可以多选；AI 推荐只会从真实产品中选择，不会虚构产品。</p></div><div className="flex flex-wrap gap-2"><label className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品资料<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label><button type="button" onClick={()=>setQuickProductOpen(value=>!value)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700"><Plus size={14} />{quickProductOpen ? "收起快速添加" : "快速添加产品"}</button><button type="button" disabled={!knowledgeProducts.length||productImporting} onClick={recommendProducts} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />AI 推荐重点产品</button></div></div>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">企业知识库产品</p><p className="mt-1 text-xs text-slate-500">可以多选；AI 推荐只会从真实产品中选择，不会虚构产品。</p></div><div className="flex flex-wrap gap-2"><label className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品资料<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label><button type="button" onClick={()=>setQuickProductOpen(value=>!value)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700"><Plus size={14} />{quickProductOpen ? "收起快速添加" : "快速添加产品"}</button><button type="button" disabled={!knowledgeProducts.length||productImporting} onClick={recommendProducts} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />按资料完整度推荐产品</button></div></div>
         <p className="mt-2 text-[11px] text-slate-500">支持 Excel（.xlsx/.xls）和 CSV。系统自动识别产品名称、SKU、规格、价格、MOQ、材质、图片链接和卖点，并直接写入企业知识库。</p>
         {productImportMessage&&<p role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
         {quickProductOpen && <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><p className="text-sm font-bold text-slate-900">快速添加到企业知识库</p><p className="mt-1 text-xs text-slate-500">只填写建档所需的最少信息，详细参数以后在企业知识库完善。</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="产品名称" required><input className={inputClass} value={quickProduct.name} onChange={e=>setQuickProduct({...quickProduct,name:e.target.value})} /></Field><Field label="产品类别" required><input className={inputClass} value={quickProduct.category} onChange={e=>setQuickProduct({...quickProduct,category:e.target.value})} /></Field><Field label="一句话用途"><input className={inputClass} value={quickProduct.description} onChange={e=>setQuickProduct({...quickProduct,description:e.target.value})} /></Field><Field label="目标客户"><input className={inputClass} value={quickProduct.targetCustomer} onChange={e=>setQuickProduct({...quickProduct,targetCustomer:e.target.value})} /></Field><Field label="核心特点" wide><input className={inputClass} value={quickProduct.highlights} onChange={e=>setQuickProduct({...quickProduct,highlights:e.target.value})} /></Field></div><div className="mt-3 flex justify-end"><button type="button" disabled={!quickProduct.name.trim() || !quickProduct.category.trim() || productSaving} onClick={()=>void addQuickProduct()} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:bg-slate-300">添加并选中</button></div></div>}
@@ -1159,7 +1178,7 @@ function OnboardingPanel({
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <div className={`${activeRuleAgent !== "industry" ? "hidden " : ""}md:col-span-2 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4`}>
           <div><p className="text-sm font-bold text-emerald-950">AI 推荐执行范围</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成采集关键词与客户画像；推荐值仍需人工确认。</p></div>
-          <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "生成 AI 推荐"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
+          <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
         </div>
         {mode === "first" && activeRuleAgent === "business" && <div className="md:col-span-2 grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-xs md:grid-cols-3"><div><p className="font-bold text-blue-950">经营目标</p><p className="mt-1 text-blue-700">{form.primaryGoal === "awareness" ? "品牌曝光" : form.primaryGoal === "sales" ? "推进成交" : form.primaryGoal === "reactivation" ? "老客唤醒" : "获取询盘"}</p></div><div><div className="flex items-center justify-between gap-2"><p className="font-bold text-blue-950">重点产品</p><button type="button" onClick={()=>setProductStepSaved(false)} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-50">重新选择</button></div><p className="mt-1 text-blue-700">{form.focusProducts || "本期暂未指定；相关内容分支等待产品资料"}</p></div><div><p className="font-bold text-blue-950">目标市场与客户</p><p className="mt-1 text-blue-700">{form.targetMarkets} · {form.customerProfile}</p></div></div>}
         {mode === "first" && activeRuleAgent === "business" && <Field label="接入目标"><select className={inputClass} value={form.primaryGoal} onChange={event=>set("primaryGoal",event.target.value as DigitalEmployeeConfig["primaryGoal"])}><option value="awareness">品牌曝光</option><option value="leads">获取询盘</option><option value="sales">推进成交</option><option value="reactivation">老客唤醒</option></select></Field>}
@@ -1196,7 +1215,8 @@ function OnboardingPanel({
           <p className="mt-1 text-[10px] text-slate-500">请填写组织与权限中的真实成员；该负责人审批发布、批量跟进和商业承诺。</p>
         </Field>
         </>}
-        {activeRuleAgent === "industry" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">行业采集规则</p><p className="mt-1 text-xs text-slate-500">只采集公开内容，不包含广告投流。</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="AI 推荐关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="点击上方生成 AI 推荐" /></Field><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="每次最多采集（条）"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">采集近 {collectionLookback} 天公开内容，每次最多 {collectionLimit} 条，按链接与标题去重 30 天。</p></div>}
+        {activeRuleAgent === "industry" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">行业采集规则</p><p className="mt-1 text-xs text-slate-500">只采集公开内容，不包含广告投流。</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="AI 推荐关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="点击上方填入基础关键词" /></Field><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="每次最多采集（条）"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">采集近 {collectionLookback} 天公开内容，每次最多 {collectionLimit} 条，按链接与标题去重 30 天。</p></div>}
+        {activeRuleAgent === "content" && <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-3"><Field label="默认创作方式"><select className={inputClass} value={form.videoDefaults?.route || 'product'} onChange={e => set('videoDefaults', { ...form.videoDefaults, route: e.target.value as 'product' | 'material' | 'clone' })}><option value="clone">爆款裂变</option><option value="material">从素材生成</option><option value="product">从产品生成</option></select></Field><Field label="默认语言"><select className={inputClass} value={form.videoDefaults?.language || 'en'} onChange={e => set('videoDefaults', { ...form.videoDefaults, language: e.target.value })}><option value="en">英语</option><option value="zh">中文</option><option value="es">西班牙语</option><option value="fr">法语</option><option value="de">德语</option></select></Field><Field label="默认出镜方式"><select className={inputClass} value={form.videoDefaults?.presenter || 'material'} onChange={e => set('videoDefaults', { ...form.videoDefaults, presenter: e.target.value as 'material' | 'heygen' })}><option value="material">素材视频</option><option value="heygen">HeyGen 数字人口播</option></select></Field><p className="text-xs text-slate-500 md:col-span-3">每条视频在周目标中单独确认；数字人需选择 HeyGen 人物和确认使用权。</p></div>}
         {activeRuleAgent === "content" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-bold text-slate-900">内容生产与发布</p><p className="mt-1 text-xs text-slate-500">只生成自然内容，不包含广告投流；账号必须在制定目标前确认。</p></div><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布授权"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="每周生成草稿（条）"><input className={inputClass} type="number" min={0} value={publishCount} onChange={e=>setPublishCount(Number(e.target.value))} /></Field><div><p className="text-xs font-bold text-slate-700">发布平台与具体账号 <span className="text-red-500">*</span></p><div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2">{publishingAccountsLoading?<p className="px-2 py-3 text-xs text-slate-400">正在读取已连接账号…</p>:connectedPublishingAccounts.length?connectedPublishingAccounts.map(account=>{const checked=form.publishingTargets.some(target=>target.platform===account.platform&&target.accountId===account.accountId);return <label key={`${account.platform}:${account.accountId}`} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${checked?"border-blue-300 bg-blue-50":"border-slate-200 bg-white"}`}><input type="checkbox" checked={checked} onChange={()=>set("publishingTargets",checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/><span className="text-xs font-bold text-slate-800">{contentPlatformLabel[account.platform]} · {account.accountLabel}</span></label>}):<div className="px-2 py-3"><p className="text-xs text-amber-700">尚无可用账号。连接平台后可启用自动或人工待发布链路；系统不会生成虚假账号。</p>{form.enabledWorkflows.includes("content_publish")&&<button type="button" onClick={()=>toggleWorkflow("content_publish")} className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">本周暂不发布，仅生成内容</button>}</div>}</div>{publishingAccountsError&&<p className="mt-1 text-[10px] text-red-600">{publishingAccountsError}</p>}{submitted&&errors.publishingTargets&&<p className="mt-1 text-[10px] font-semibold text-red-600">{errors.publishingTargets}</p>}</div></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowGeneratedVisuals} onChange={e=>set("allowGeneratedVisuals",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">素材不足时允许生成 AI 画面</span><span className="mt-0.5 block text-[10px] text-slate-500">默认关闭。只有知识库存在产品外观锚点时才可补充产品镜头；没有外观依据时仅可生成抽象说明或流程图，禁止虚构产品外观、参数与效果。</span></span></label><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={e=>set("allowRealPublishing",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] text-slate-500">开启：当前版本获批后自动写入日历并由发布 Worker 执行；关闭：审批后停在人工待发布，绝不调用平台接口。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">每周生成 {publishCount} 条内容草稿；无论是否允许真实发布，每条内容都必须先展示账号、文案、成片与时间并获得审批。</p></div>}
         {activeRuleAgent === "customer" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">客户跟进规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="草稿生成时间"><input className={inputClass} value={followupGenerateAt} onChange={e=>setFollowupGenerateAt(e.target.value)} /></Field><Field label="审批截止"><input className={inputClass} value={followupApproveBy} onChange={e=>setFollowupApproveBy(e.target.value)} /></Field><Field label="允许发送时段"><input className={inputClass} value={followupWindow} onChange={e=>setFollowupWindow(e.target.value)} /></Field><Field label="客户触达频控"><input className={inputClass} value={followupFrequency} onChange={e=>setFollowupFrequency(e.target.value)} /></Field></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealCustomerMessages} onChange={e=>set("allowRealCustomerMessages",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发送客服消息</span><span className="mt-0.5 block text-[10px] text-slate-500">未开启时只生成和审批草稿，不调用真实消息渠道；商业承诺仍需逐条人工审批。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">先生成逐客草稿并等待审批，仅在客户当地工作时间发送。</p></div>}
         {activeRuleAgent === "business" && <><Field label="复盘时区"><input className={inputClass} value={reviewTimezone} onChange={e=>setReviewTimezone(e.target.value)} /></Field><Field label="数据截止时间"><input className={inputClass} value={reviewCutoff} onChange={e=>setReviewCutoff(e.target.value)} /></Field>
@@ -1340,13 +1360,14 @@ function GoalPanel({
   businessLine: BusinessLine;
   contentPlatform: ContentPlatform;
 }) {
-  const configuredPlatforms = [...new Set(config.publishingTargets.map(target => target.platform))];
+  const configuredPlatforms = config.enabledWorkflows.includes("content_publish") ? [...new Set(config.publishingTargets.map(target => target.platform))] : (["youtube", "tiktok", "instagram", "facebook"] as const).slice();
   const initialPlatforms = contentPlatform !== "all" && configuredPlatforms.includes(contentPlatform)
     ? [contentPlatform]
-    : configuredPlatforms;
+    : config.enabledWorkflows.includes("content_publish") ? configuredPlatforms : [configuredPlatforms[0]];
   const [form, setForm] = useState<GoalDraft>(() => ({
     ...EMPTY_GOAL,
     businessLine,
+    videoPlans: businessLine === 'customer_conversion' ? [] : [normalizeVideoPlan({ ...config.videoDefaults, route: config.videoDefaults?.route || (config.enabledWorkflows.includes('product_content') ? 'product' : config.enabledWorkflows.includes('material_content') ? 'material' : 'clone'), productName: config.focusProducts.split(/[、，,；;\n]/)[0], platform: initialPlatforms[0], theme: '帮助买家理解一个具体选型问题' })],
     contentPlatforms: initialPlatforms,
     title: businessLine === "customer_conversion" ? "本周客户转化目标" : businessLine === "content_growth" ? "本周内容增长目标" : "本周全链路经营目标",
     objective: businessLine === "customer_conversion" ? "提升高意向客户的报价、跟进与成交转化" : businessLine === "content_growth" ? `以${contentPlatformLabel[contentPlatform]}为范围，完成内容采集、生产、发布与获客` : "打通从内容曝光、询盘承接到成交的本周经营闭环",
@@ -1361,9 +1382,9 @@ function GoalPanel({
     scope: form.scope.trim() ? "" : "请明确业务范围",
     target: form.target > form.baseline ? "" : "目标值必须大于基线",
     dates: form.endsAt >= form.startsAt ? "" : "结束日期不能早于开始日期",
-    contentPlatforms: businessLine !== "customer_conversion" && config.enabledWorkflows.includes("content_publish") && !form.contentPlatforms.length ? "请至少确认一个已绑定账号的平台" : "",
+    contentPlatforms: businessLine !== "customer_conversion" && !form.contentPlatforms.length ? "请至少确认一个已绑定账号的平台" : "",
   };
-  const hasErrors = Object.values(errors).some(Boolean);
+  const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoPlanErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
   const submit = () => {
     setSubmitted(true);
     if (!hasErrors) onSave(form);
@@ -1388,7 +1409,8 @@ function GoalPanel({
         </div>
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        {businessLine !== "customer_conversion" && config.enabledWorkflows.includes("content_publish") && <div className="md:col-span-2 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">确认本期发布平台与账号</p><p className="mt-1 text-xs text-slate-500">只可选择 Agent 设置中已经确认、当前仍保持连接的账号平台。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);return <button key={platform} type="button" aria-pressed={selected} onClick={()=>set("contentPlatforms",selected?form.contentPlatforms.filter(item=>item!==platform):[...form.contentPlatforms,platform])} className={`rounded-xl border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-black">{contentPlatformLabel[platform]}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")}</span></button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
+        {businessLine !== "customer_conversion" && <div className="md:col-span-2 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">确认本期制作平台</p><p className="mt-1 text-xs text-slate-500">仅制作时也需要确认平台；发布时使用已绑定账号。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{!config.enabledWorkflows.includes("content_publish")?"仅制作内容，不发布":config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);return <button key={platform} type="button" aria-pressed={selected} onClick={()=>set("contentPlatforms",selected?form.contentPlatforms.filter(item=>item!==platform):[...form.contentPlatforms,platform])} className={`rounded-xl border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-black">{contentPlatformLabel[platform]}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")}</span></button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
+        {businessLine !== 'customer_conversion' && <div className="md:col-span-2"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} onChange={plans => set('videoPlans', plans)} /></div>}
         <Field
           label="目标名称"
           required
@@ -2721,7 +2743,7 @@ function TodaySnapshotPanel({ data, onPeriodChange, onManageGoal, onConnect, bus
     platformBreakdown: platformData ? [platformData] : [],
   } : social;
   const goalMetric: Record<string, BusinessMetric | undefined> = {
-    approved_content_packages: snapshot?.content.completedWorks,
+    approved_content_packages: snapshot?.content.approvedWorks,
     published_content: snapshot?.content.publishedPosts,
     qualified_inquiries: snapshot?.customer.highIntent,
     won_customers: snapshot?.customer.won,
@@ -3351,7 +3373,7 @@ function WeeklyReviewPanel({
     { owner: "经营 Agent", action: "复盘成交客户的来源内容与跟进节奏", outcome: "形成可复用转化路径", approval: "沉淀前确认" },
   ] : [
     { owner: "经营 Agent", action: `优先修复“${bottleneck?.label || "数据回流"}”环节，并建立下周单独目标`, outcome: "改善全链路最弱转化率", approval: "目标变更需审批" },
-    { owner: "内容 Agent", action: bestPlatform ? `围绕 ${contentPlatformLabel[bestPlatform.platform as ContentPlatform]} 复制高效内容结构` : "先连接发布账号并取得真实曝光与询盘回执，不在无数据时指定领先平台", outcome: bestPlatform ? "扩大有效流量入口" : "建立平台效果基线", approval: "发布前审批" },
+    { owner: "内容 Agent", action: bestPlatform ? `围绕 ${contentPlatformLabel[bestPlatform.platform as ContentPlatform]} 复制高效内容结构` : "先完成本轮内容验收与退回修改，再按授权范围安排下一轮", outcome: bestPlatform ? "扩大有效流量入口" : "建立平台效果基线", approval: "发布前审批" },
     { owner: "客服 Agent", action: "对高意向与已报价客户分别生成跟进策略", outcome: "推动询盘进入成交", approval: "发送与商业承诺审批" },
   ];
   return (
@@ -3487,7 +3509,7 @@ function WeeklyReviewPanel({
             <div>
               <div className="flex items-center gap-2 text-blue-800">
                 <Activity size={19} />
-                <h2 className="font-black">本轮仍在运行：阶段性复盘</h2>
+                <h2 className="font-black">{data.run && ["failed", "cancelled"].includes(data.run.status) ? "本轮已停止：失败与待处理项" : "本轮仍在运行：阶段性复盘"}</h2>
               </div>
               <p className="mt-1 text-xs text-slate-600">
                 这是当前时点的生产状态，只有运行结束并生成复盘后才会形成最终结论。
@@ -3813,7 +3835,7 @@ export default function DigitalEmployeePage({
   const activeRun = Boolean(data?.run && !terminal);
   const canCreateNextGoal = Boolean(
     goal &&
-      ["completed", "cancelled"].includes(goal.status) &&
+      (["completed", "cancelled"].includes(goal.status) || terminal) &&
       (!data?.run || terminal),
   );
   const operatingState = !data?.config
@@ -4238,6 +4260,7 @@ export default function DigitalEmployeePage({
           <div className="mt-5 space-y-5">
             {data.plan && (
               <DeliveryBoard
+                onAccepted={() => { void load(); }}
                 tasks={data.run ? visibleTasks : []}
                 deliveries={data.deliveries}
                 focus={deliveryFocus}
@@ -4410,7 +4433,7 @@ export default function DigitalEmployeePage({
                           }
                           className="rounded-xl border border-red-200 bg-white px-3 py-2.5 text-xs font-bold text-red-700"
                         >
-                          驳回
+                          退回修改
                         </button>
                       </div>
                       <button

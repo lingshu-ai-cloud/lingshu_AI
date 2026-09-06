@@ -1,3 +1,4 @@
+import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../src/lib/videoCreationPlan.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
@@ -20,6 +21,7 @@ export type WorkflowTaskStatus =
   | 'cancelled';
 
 export interface DigitalEmployeeConfig {
+  videoDefaults?: Partial<VideoCreationPlan>;
   companyName: string;
   industry: string;
   primaryBusiness: string;
@@ -56,6 +58,7 @@ export interface DigitalEmployeeConfig {
 }
 
 export interface WeeklyGoalInput {
+  videoPlans?: VideoCreationPlan[];
   businessLine: 'full_funnel' | 'content_growth' | 'customer_conversion';
   contentPlatforms: Array<'facebook' | 'instagram' | 'tiktok' | 'youtube'>;
   title: string;
@@ -143,6 +146,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
   const batchFollowupApproval = true;
   const commercialCommitmentApproval = true;
   return {
+    videoDefaults: normalizeVideoPlan(input.videoDefaults || {}),
     companyName: text(input.companyName, 120),
     industry: text(input.industry, 120),
     primaryBusiness: text(input.primaryBusiness, 500),
@@ -209,6 +213,7 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
     : defaultPlatforms;
   return {
     businessLine,
+    ...(Array.isArray(input.videoPlans) ? { videoPlans: input.videoPlans.slice(0, 30).map(normalizeVideoPlan) } : {}),
     contentPlatforms: contentPlatforms.length ? contentPlatforms : defaultPlatforms,
     title: text(input.title, 160) || `${config.companyName} 本周增长目标`,
     objective: text(input.objective, 1000),
@@ -227,6 +232,7 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
 
 export function validateWeeklyGoal(goal: WeeklyGoalInput): string[] {
   const missing: string[] = [];
+  for (const [index, plan] of (goal.videoPlans || []).entries()) missing.push(...videoPlanErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
   if (!goal.title) missing.push('目标名称');
   if (!goal.objective) missing.push('目标说明');
   if (!goal.metric) missing.push('指标');
@@ -445,7 +451,8 @@ export function buildTaskOutput(
       scope: goal.scope,
       businessLine: goal.businessLine,
       contentPlatforms: goal.contentPlatforms,
-      checkpoints: goal.businessLine === 'content_growth'
+      videoPlans: goal.videoPlans || [],
+      checkpoints: goal.videoPlans?.length ? ['确认每条制作计划', '完整口播与同语言配音字幕', '成片质量检查', '人工验收当前版本', '生成周复盘'] : goal.businessLine === 'content_growth'
         ? ['建立四平台采集', '完成爆款分析与内容生产', '发布回执入库', '归因内容询盘', '生成周复盘']
         : goal.businessLine === 'customer_conversion'
           ? ['冻结客户分层', '生成逐客草稿', '完成人工审批', '按时区发送并回流', '生成周复盘']
@@ -510,7 +517,7 @@ export function buildWeeklyReview(input: ReviewInput): Record<string, unknown> {
     highlights: input.failedTasks
       ? ['已形成完整运行证据链', '存在失败节点，需要在下周计划中优先修复']
       : ['周目标已形成可追溯任务链', '审批边界得到执行', '生产现场事件完整记录'],
-    nextGoalSuggestion: `延续“${input.goal.objective}”，基于本周已批准执行包接入真实渠道结果，并用 ${input.goal.metric} 校准下一周目标。`,
+    nextGoalSuggestion: input.failedTasks ? '先处理本轮失败及退回意见，修订后重新提交；不自动扩大渠道或发送授权。' : `延续“${input.goal.objective}”，先核对本周产物及审批状态，再按已授权范围安排后续动作，并用 ${input.goal.metric} 校准下一周目标。`,
     knowledgeCandidates: ['本周有效的内容主题', '审批人修改意见', '应继续保留的风险边界'],
   };
 }

@@ -1,3 +1,4 @@
+import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { BookOpen, Loader2 } from 'lucide-react';
@@ -210,9 +211,12 @@ export default function App() {
   const [smartAssetsMounted, setSmartAssetsMounted] = useState(() => loadPage() === 'smartAssets');
   const [conversation, setConversation] = useState<ConversationContext | null>(null);
   const [scriptPanelOpen, setScriptPanelOpen] = useState(false);
-  const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>('create');
+  const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>(() => window.__agentProductionTarget?.link.view || 'create');
   const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
-  const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string } | null>(null);
+  const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string } | null>(() => {
+    const target = window.__agentProductionTarget;
+    return target?.link.page === 'smartAssets' ? { runId: target.link.runId, taskId: target.link.taskId, taskKey: target.link.businessRef.taskKey, entityId: target.projectId } : null;
+  });
 
   useEffect(() => {
     if (page === 'smartAssets') setSmartAssetsMounted(true);
@@ -289,7 +293,14 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [session?.user?.id]);
   useEffect(() => {
-    try { localStorage.setItem('ow_page', page); } catch { /* ignore */ }
+    try {
+      localStorage.setItem('ow_page', page);
+      if (window.location.pathname === '/') {
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', page);
+        window.history.replaceState(null, '', url);
+      }
+    } catch { /* ignore */ }
   }, [page]);
   useEffect(() => {
     if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('digitalEmployees');
@@ -516,7 +527,7 @@ export default function App() {
           onDismissToday={dismissBusinessDiagnosisToday}
           onNavigate={handleNavigate}
         />
-        <GlobalAssistant
+        {!isAgentProductionSession() && <GlobalAssistant
           page={page}
           restore={restore}
           kickoff={kickoff}
@@ -524,7 +535,7 @@ export default function App() {
           onKickoffConsumed={() => setKickoff(null)}
           onAction={startAgentTask}
           onSessionRefresh={() => void refreshSession()}
-        />
+        />}
       </Suspense>
       <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
         <Suspense fallback={<PageLoading />}>

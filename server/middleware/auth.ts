@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { auth } from '../storage/index.js';
 import { assetIdentity, verifyAssetToken } from '../lib/assetAccess.js';
+import { browserReadIdentity, isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
 
 export interface AuthLocals {
   userId: string;
@@ -19,6 +20,13 @@ export async function requireAuth(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
+  if (isBrowserReadToken(req.headers.authorization)) {
+    const identity = browserReadIdentity(req);
+    if (!identity) { res.status(403).json({ error: 'agent_browser_read_only' }); return; }
+    Object.assign(res.locals, { userId: identity.userId, tenantId: identity.tenantId });
+    next();
+    return;
+  }
   // Media elements cannot attach the localStorage bearer header. The API call
   // that loads the studio first synchronizes the same token into an HttpOnly,
   // same-site asset session cookie, so proxied video/audio routes can use it.

@@ -77,12 +77,15 @@
     "test:pb-admin": "tsx server/storage/pb.test.ts",
     "test:social-metrics": "tsx server/socialMetrics/aggregation.test.ts",
     "test:digital-employees": "tsx server/lib/materialTruthfulness.test.ts && tsx server/digitalEmployees/configuration.test.ts && tsx server/digitalEmployees/domain.test.ts && tsx server/digitalEmployees/publishingTargets.test.ts && tsx server/digitalEmployees/publishingExecution.test.ts && tsx server/digitalEmployees/publishingIntegration.contract.test.ts && tsx server/digitalEmployees/publishingNoAccountSafety.test.ts && tsx server/digitalEmployees/contentProduction.test.ts && tsx server/digitalEmployees/runtimeSchedule.test.ts && tsx server/digitalEmployees/businessSnapshot.test.ts && tsx server/digitalEmployees/followupSafety.test.ts && tsx server/digitalEmployees/customerMessagingPolicy.test.ts && tsx server/digitalEmployees/customerMessagingIntegration.contract.test.ts && tsx server/digitalEmployees/followupDispatchWorker.test.ts && tsx server/digitalEmployees/whatsappRealSendE2E.contract.test.ts && tsx server/digitalEmployees/e2eAcceptance.test.ts && tsx server/digitalEmployees/e2eCleanup.test.ts && tsx server/digitalEmployees/persistence.contract.test.ts && tsx server/digitalEmployees/route.contract.test.ts && tsx server/digitalEmployees/productionTruthfulness.contract.test.ts && tsx src/components/DigitalEmployeePage.contract.test.ts",
-    "test:production-workflows": "tsx server/routes/schedulerExecutionState.test.ts && tsx server/routes/videoPipelineRecovery.test.ts && tsx src/components/ScheduledPage.contract.test.ts && tsx src/components/AiCreateStudio.workflowContract.test.ts && tsx src/components/TrafficPage.publishQueue.test.ts",
+    "test:production-workflows": "tsx src/lib/agentRuleFields.test.ts && tsx server/routes/schedulerExecutionState.test.ts && tsx server/routes/videoPipelineRecovery.test.ts && tsx src/components/ScheduledPage.contract.test.ts && tsx src/components/AiCreateStudio.workflowContract.test.ts && tsx src/components/TrafficPage.publishQueue.test.ts",
     "test:tenant-sync-smoke": "tsx scripts/verify-tenant-sync.ts",
-    "test": "npm run test:delivery-chain && npm run test:outbound-guard && npm run test:autonomy && npm run test:knowledge-policy && npm run test:strategy-policy && npm run test:script-strategy && npm run test:script-matrix && npm run test:studio-script && npm run test:studio-media && npm run test:tenant-isolation && npm run test:onboarding-reset && npm run test:customer-service-activation && npm run test:external-customer-service-demo && npm run test:schedule-policy && npm run test:scheduled-publishing && npm run test:pb-admin && npm run test:digital-employees && npm run test:production-workflows",
+    "test": "npm run test:journey-fixes && npm run test:delivery-chain && npm run test:outbound-guard && npm run test:autonomy && npm run test:knowledge-policy && npm run test:strategy-policy && npm run test:script-strategy && npm run test:script-matrix && npm run test:studio-script && npm run test:studio-media && npm run test:tenant-isolation && npm run test:onboarding-reset && npm run test:customer-service-activation && npm run test:external-customer-service-demo && npm run test:schedule-policy && npm run test:scheduled-publishing && npm run test:pb-admin && npm run test:digital-employees && npm run test:production-workflows",
     "desktop": "electron desktop/main.cjs",
     "lint": "tsc --noEmit",
-    "migrate:thumbnails-to-pb": "tsx scripts/migrate-thumbnails-to-pb.ts"
+    "migrate:thumbnails-to-pb": "tsx scripts/migrate-thumbnails-to-pb.ts",
+    "test:journey-fixes": "tsx server/digitalEmployees/journeyRegression.test.ts && npm run test:content-lifecycle && tsx server/integrations/heygen.test.ts && tsx server/integrations/heygenLifecycle.test.ts",
+    "test:agent-monitor": "tsx src/lib/agentMonitor.test.ts && tsx src/components/AgentMonitorPage.contract.test.ts && tsx server/digitalEmployees/runEventReplay.test.ts && tsx server/digitalEmployees/browserSessions.test.ts",
+    "test:content-lifecycle": "tsx server/digitalEmployees/contentLifecycle.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1070.0",
@@ -106,6 +109,7 @@
     "motion": "^12.40.0",
     "node-cron": "^4.4.1",
     "openai": "^6.39.1",
+    "playwright-core": "^1.63.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "recharts": "^3.9.0",

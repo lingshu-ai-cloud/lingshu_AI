@@ -1,3 +1,5 @@
+import { useAgentProductionAction } from '../lib/agentProductionSession';
+import CustomerWorkflowPanel from './CustomerWorkflowPanel';
 import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -595,7 +597,7 @@ function CompactCustomerList({
     );
   };
   return (
-    <aside data-testid="conversation-list" className="flex h-full w-52 shrink-0 flex-col border-r border-border bg-white xl:w-56 2xl:w-60">
+    <aside data-testid="conversation-list" className="flex h-full w-full lg:w-52 shrink-0 flex-col border-r border-border bg-white xl:w-56 2xl:w-60">
       <div className="relative z-20 border-b border-border px-3 py-3">
         <div ref={filterMenuRef} className="relative flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -704,6 +706,9 @@ function DraftSuggestionBar({
   knowledgeMiss,
   bridgeOnly,
   onSend,
+  onSave,
+  savingDraft,
+  channelReady,
   onEdit,
   onChangeDraft,
   onDismiss,
@@ -717,6 +722,9 @@ function DraftSuggestionBar({
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   onSend: () => void;
+  onSave: () => void;
+  savingDraft: boolean;
+  channelReady?: boolean;
   onEdit: () => void;
   onChangeDraft: (value: string) => void;
   onDismiss: () => void;
@@ -787,7 +795,8 @@ function DraftSuggestionBar({
           </button>
         )}
         <div className="mt-3 flex justify-end gap-1.5">
-          <button type="button" onClick={onSend} disabled={!templateApproved} className="rounded-lg bg-[#0891b2] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-amber-200 disabled:text-amber-900">
+          <button type="button" onClick={onSave} disabled={savingDraft || !draft.trim()} className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存修改'}</button>
+          <button type="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="rounded-lg bg-[#0891b2] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-amber-200 disabled:text-amber-900">
             {!templateApproved ? '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d' : isTemplate ? '\u53d1\u9001\u6a21\u677f' : '\u76f4\u63a5\u53d1\u9001'}
           </button>
           <button type="button" onClick={onEdit} className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary">{'\u4fee\u6539'}</button>
@@ -862,6 +871,8 @@ function ChatThread({
   onDraftChange,
   onTranslatedInputChange: _onTranslatedInputChange,
   onSend,
+  onSaveDraft,
+  savingDraft,
   onEditDraft,
   onSendDraft,
   onDismissDraft,
@@ -885,6 +896,8 @@ function ChatThread({
   onDraftChange: (value: string) => void;
   onTranslatedInputChange: (value: string) => void;
   onSend: () => void;
+  onSaveDraft: (value: string) => void;
+  savingDraft: boolean;
   onEditDraft: () => void;
   onSendDraft: () => void;
   onDismissDraft: () => void;
@@ -1055,7 +1068,7 @@ function ChatThread({
             );
           })}
           {draftSuggestion && (
-            <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+            <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
           )}
         </div>
       </div>
@@ -1115,6 +1128,7 @@ function ChatThread({
                   {previewOpen ? '隐藏译文' : '显示译文'}
                 </button>
               </div>
+               <button type="button" onClick={() => onSaveDraft(input)} disabled={savingDraft || !input.trim()} className="shrink-0 rounded-lg border border-border px-2 py-2 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存草稿'}</button>
                <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-xl bg-[#0891b2] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
             </div>
           </div>
@@ -1163,6 +1177,7 @@ function CustomerIntentActionPanel({
   autoReplyReady: boolean;
   hasReplyReady: boolean;
 }) {
+  const agentProduction = useAgentProductionAction('customer');
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [dismissTick, setDismissTick] = useState(0);
   const [handoffSummary, setHandoffSummary] = useState('');
@@ -1338,10 +1353,10 @@ function CustomerIntentActionPanel({
           ))}
         </div>
       )}
-      {suggestion.suggestionType !== 'none' && (
+      {(suggestion.suggestionType !== 'none' || agentProduction.action) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <button type="button" onClick={() => void primaryAction()} disabled={isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
-            {isPrimaryLoading ? '草稿生成中…' : primaryLabel[suggestion.suggestionType]}
+          <button type="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && window.__agentProductionTarget?.link.businessRef.taskKey !== 'customer_segmentation' ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
+            {agentProduction.busy || isPrimaryLoading ? '草稿生成中…' : agentProduction.action?.label || primaryLabel[suggestion.suggestionType]}
           </button>
           {secondaryLabel[suggestion.suggestionType] && (
             <button type="button" onClick={secondaryAction} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
@@ -1591,14 +1606,14 @@ function CustomerInfoRail({
 }) {
   if (!customer) {
     return (
-      <aside className="flex h-full w-64 shrink-0 items-center justify-center border-l border-border bg-slate-50 px-6 text-center xl:w-[272px] 2xl:w-72">
+      <aside className="flex h-full w-full lg:w-64 shrink-0 items-center justify-center border-l border-border bg-slate-50 px-6 text-center xl:w-[272px] 2xl:w-72">
         <p className="text-xs font-bold text-text-muted">未选择客户</p>
       </aside>
     );
   }
 
   return (
-    <aside data-testid="customer-info-rail" className="min-h-0 w-64 shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-slate-50 px-3 py-3 [scrollbar-gutter:stable] xl:w-[272px] 2xl:w-72">
+    <aside data-testid="customer-info-rail" className="min-h-0 w-full lg:w-64 shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-slate-50 px-3 py-3 [scrollbar-gutter:stable] xl:w-[272px] 2xl:w-72">
       <div className="grid gap-2.5">
         <CustomerInsightDisclosure customer={customer} />
         <CustomerIntentActionPanel
@@ -1664,6 +1679,7 @@ async function sendCustomerOutbox(customer: CustomerProfile, body: string, outsi
 }
 
 export default function ConversionPage({ onLeaveConversation: _onLeaveConversation, isDemo = false, includeMockCustomers = false, mockCustomerScope = 'admin' }: Props) {
+  const agentProduction = useAgentProductionAction('customer');
   const [view, setView] = useState<CustomerView>(() => {
     try {
       const initialView = localStorage.getItem('lingshu:conversion:initial-view') as CustomerView | null;
@@ -1674,7 +1690,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   });
   const { customers, updateCustomer, appendTimelineEvent, updateTimelineEvent, removeTimelineEvent } = useCustomers(0, includeMockCustomers, mockCustomerScope);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const deliveryHandoff = useDeliveryHandoff('conversion');
+  const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'profile'>('chat');
+  const [savingDraft, setSavingDraft] = useState(false);
+  const navigationHandoff = useDeliveryHandoff('conversion');
+  const deliveryHandoff = agentProduction.active && window.__agentProductionTarget?.link.businessRef.taskKey === 'customer_segmentation' ? window.__agentProductionTarget.link : navigationHandoff;
   const [deliveryDraft, setDeliveryDraft] = useState<{ body: string; version: number; customerId: string } | null>(null);
   const [deliveryError, setDeliveryError] = useState('');
   useEffect(() => {
@@ -1699,6 +1718,24 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [dailyBriefingOpen, setDailyBriefingOpen] = useState(false);
   const [draftSuggestion, setDraftSuggestion] = useState<string | null>(null);
   const [draftMeta, setDraftMeta] = useState<DraftResult | null>(null);
+  useEffect(() => {
+    if (!agentProduction.active) return;
+    const abort = new AbortController();
+    const refresh = async () => {
+      const target = window.__agentProductionTarget;
+      if (!target?.link.runId || !target.customerId) return;
+      const response = await fetch(`/api/overseas/digital-employees/runs/${encodeURIComponent(target.link.runId)}/customer-workspace`, { headers: authHeader(), signal: abort.signal });
+      if (!response.ok) return;
+      const data = await response.json();
+      const item = data.items?.find((row: { customer_id: string }) => row.customer_id === target.customerId);
+      if (!abort.signal.aborted && item?.draft_body) setDraftSuggestion(item.draft_body);
+    };
+    const update = () => { void refresh().catch(() => {}); };
+    update();
+    window.addEventListener('lingshu:agent-business-refresh', update);
+    return () => { abort.abort(); window.removeEventListener('lingshu:agent-business-refresh', update); };
+  }, [agentProduction.active]);
+
   const [learnCandidate, setLearnCandidate] = useState<null | { buyerMessage: string; answer: string; question: string; saving?: boolean }>(null);
   const [learnDialogOpen, setLearnDialogOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -1762,12 +1799,17 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     }
     if (customers.some(customer => customer.id === customerId)) {
       setSelectedId(customerId);
-      setView('leads');
+      const customer = customers.find(item => item.id === customerId)!;
+      setView(customer.stage === 'won' ? 'won' : ['silent30', 'silent60'].includes(customer.stage) ? 'silent' : 'leads');
       deepLinkConsumedRef.current = true;
     }
   }, [customers]);
 
   useEffect(() => {
+    if (agentProduction.active && window.__agentProductionTarget?.customerId) {
+      setSelectedId(window.__agentProductionTarget.customerId);
+      return;
+    }
     if (selectedId && customersInActiveView.some(customer => customer.id === selectedId)) return;
     if (!selectedId && filterEmptySelectionRef.current) return;
     setSelectedId(customersInActiveView[0]?.id ?? null);
@@ -1865,7 +1907,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, []);
 
   useEffect(() => {
-    if (customerPendingCount <= 0) return;
+    if (agentProduction.active || customerPendingCount <= 0) return;
     const today = new Date().toISOString().slice(0, 10);
     const key = 'lingshu:briefing:lastShown';
     if (localStorage.getItem(key) === today) return;
@@ -2379,6 +2421,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const openCustomer = (id: string) => {
+    setMobilePanel('chat');
     setSelectedId(id);
     const customer = customers.find(item => item.id === id);
     if (customer?.hasUnread) persistCustomerPatch(id, { hasUnread: false });
@@ -2411,12 +2454,14 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const focusReplyInput = () => {
+    setMobilePanel('chat');
     const inputEl = document.querySelector<HTMLTextAreaElement>('[data-customer-reply-input]');
     inputEl?.focus();
     inputEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const viewDraftSuggestion = () => {
+    setMobilePanel('chat');
     const draftEl = document.querySelector<HTMLElement>('[data-draft-suggestion]');
     if (draftEl) {
       draftEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2454,15 +2499,20 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   return (
     <>
-    {deliveryHandoff && <section className="mx-4 mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+    {deliveryHandoff?.runId && <CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} />}
+    {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
       <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-blue-800">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: { page: "digitalEmployees" } }))} className="text-xs font-bold text-blue-700">返回交付看板</button></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
         <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
-      </> : <p className="mt-2 text-xs text-slate-500">正在定位关联客户与草稿…</p>}
+      </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
     <div className="flex h-full min-w-0 flex-col bg-white" data-lingshu-guide="customer-workbench">
+      <nav aria-label="客服工作区" className="flex shrink-0 gap-2 border-b border-border p-2 lg:hidden">
+        {([['list', '客户列表'], ['chat', '会话'], ['profile', '客户资料']] as const).map(([panel, label]) => <button key={panel} type="button" aria-pressed={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold ${mobilePanel === panel ? 'bg-cyan-50 text-cyan-800' : 'text-text-secondary'}`}>{label}</button>)}
+      </nav>
       <div data-testid="conversation-workspace-main" className="flex min-h-0 flex-1">
+        <div className={mobilePanel === 'list' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
         <CompactCustomerList
           view={view}
           selectedId={selectedId}
@@ -2475,6 +2525,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             setSelectedId(id);
           }}
         />
+        </div>
+        <div className={mobilePanel === 'chat' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
         <ChatThread
           customer={selected}
           draftSuggestion={draftSuggestion}
@@ -2483,6 +2535,28 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onInputChange={(value) => { translationRequestRef.current += 1; setInput(value); setTranslatedInput(''); if (selected?.pendingDraft !== undefined) updateCustomer(selected.id, { pendingDraft: value || undefined }); }}
           onDraftChange={value => { setDraftSuggestion(value || null); if (selected) updateCustomer(selected.id, { pendingDraft: value || undefined }); if (!value) setDraftMeta(null); }}
           onTranslatedInputChange={setTranslatedInput}
+          savingDraft={savingDraft}
+          onSaveDraft={(value) => {
+            if (!selected || !value.trim() || savingDraft) return;
+            const customer = selected;
+            const pendingDraft = value.trim();
+            setSavingDraft(true);
+            void (async () => {
+              try {
+                if (!customer.isMock) {
+                  const response = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() },
+                    body: JSON.stringify({ pendingDraft }),
+                  });
+                  if (!response.ok) throw new Error('草稿保存失败，请重试；输入内容仍保留。');
+                }
+                updateCustomer(customer.id, { pendingDraft });
+                showToast('草稿已保存，可在客户资料中查看草稿');
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : '草稿保存失败，请重试');
+              } finally { setSavingDraft(false); }
+            })();
+          }}
           onSend={sendReply}
           onEditDraft={editDraft}
           onSendDraft={sendDraftDirectly}
@@ -2499,6 +2573,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           sending={sendingReply}
           channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
         />
+        </div>
+        <div className={mobilePanel === 'profile' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
         <CustomerInfoRail
           customer={selected}
           customerServiceStatus={customerServiceStatus}
@@ -2521,6 +2597,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onToggleCustomerService={(enabled) => void changeCustomerServiceEnabled(enabled)}
           onEnablePartialAutoReply={() => void decidePartialAutoReply('enabled')}
         />
+        </div>
       </div>
       {customerServiceStatus?.shouldAskPartialAutoReply && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/35 px-4">

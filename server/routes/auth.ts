@@ -28,6 +28,7 @@ import {
 } from '../lib/localTenants.js';
 import { encryptRegistrationPassword } from '../lib/registrationCredentials.js';
 import { clearAssetSessionCookie } from '../lib/assetAccess.js';
+import { browserReadIdentity, isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
 
 /* ──────────────────────────────────────────────────────────────────────────
    账号 / 登录（基于 PocketBase）
@@ -586,6 +587,14 @@ authRouter.post('/login', async (req, res) => {
 
 // GET /auth/me  (Authorization: Bearer <token>)
 authRouter.get('/me', async (req, res) => {
+  if (isBrowserReadToken(req.headers.authorization)) {
+    const identity = browserReadIdentity(req);
+    if (!identity) { res.status(403).json({ error: 'agent_browser_read_only' }); return; }
+    const tenant = await pbGet('tenants', identity.tenantId).catch(() => null) || getLocalTenant(identity.tenantId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ user: { id: identity.userId, email: '', name: 'Agent 生产会话', tenantId: identity.tenantId, role: identity.role }, tenant: publicTenant(tenant as Record<string, unknown> | null) });
+    return;
+  }
   const local = parseLocalToken(req.headers.authorization);
   if (local) {
     const name = local.name || local.email?.split('@')[0] || '本地账号';

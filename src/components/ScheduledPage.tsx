@@ -1,3 +1,4 @@
+import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, AlertTriangle, BarChart3, Building2, ChevronDown, CircleDollarSign, Clock, Download, DownloadCloud, ExternalLink, Globe2, Loader, Play, Plus, RefreshCw, Search, Trash2, TrendingUp, X, CheckCircle } from 'lucide-react';
@@ -378,8 +379,9 @@ function normalizeCrawlerLimit(value: string): string {
 export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const agentProduction = useAgentProductionAction('scheduler');
   const [activeGroup, setActiveGroup] = useState<AgentTaskGroup>(() => {
-    if (peekScheduledWorkflowHandoff()) return 'social';
+    if (window.__agentProductionTarget || peekScheduledWorkflowHandoff()) return 'social';
     const saved = window.sessionStorage.getItem('scheduled.activeGroup');
     return saved === 'social' || saved === 'customer' || saved === 'conversion' ? saved : 'conversion';
   });
@@ -471,6 +473,19 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     return () => window.removeEventListener('lingshu:navigate', onNavigate);
   }, []);
 
+  useEffect(() => {
+    if (!agentProduction.active) return;
+    const refresh = () => {
+      void fetchTasks(false);
+      const id = window.__agentProductionTarget?.link.businessRef.entityId;
+      if (id) setExpandedId(id);
+    };
+    const id = window.__agentProductionTarget?.link.businessRef.entityId;
+    if (id) setExpandedId(id);
+    window.addEventListener('lingshu:agent-business-refresh', refresh);
+    return () => window.removeEventListener('lingshu:agent-business-refresh', refresh);
+  }, [agentProduction.active]);
+
   const closeResultPanel = () => {
     // 用户主动关闭后，本次页面生命周期内不再由演示引导自动拉起任务侧栏。
     didAutoOpenDemoTask.current = true;
@@ -505,6 +520,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   }, [activeGroup, socialTaskTab, analysisQueueOpen]);
 
   useEffect(() => {
+    if (resultTaskId) { didAutoOpenDemoTask.current = true; return; }
     if (didAutoOpenDemoTask.current) return;
     const progress = readDemoProgress();
     if (!progress.scheduler || progress.automation_workflow || resultTaskId || tasks.length === 0) return;
@@ -705,6 +721,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   }
 
   async function runTaskNow(id: string) {
+    if (agentProduction.active) { await agentProduction.execute(); return; }
     setRunningId(id);
     setRunNotice({ taskId: id, message: '任务已提交，正在执行…', error: false });
     try {
@@ -1761,6 +1778,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                             <p className="text-sm font-medium text-gray-900 truncate">{task.name}</p>
                             <button
                               type="button"
+                              aria-label={`${task.enabled ? '停用' : '启用'}任务 ${task.name}`}
+                              aria-pressed={task.enabled}
                               onClick={() => toggleTask(task.id)}
                               className={`w-10 h-5 rounded-full transition-colors relative flex-shrink-0 ml-2 ${task.enabled ? 'bg-green-500' : 'bg-gray-200'}`}
                             >
@@ -1826,7 +1845,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         <button
                           type="button"
                           onClick={e => { e.preventDefault(); e.stopPropagation(); void runTaskNow(task.id); }}
-                          disabled={runningId === task.id}
+                          data-agent-action={window.__agentProductionTarget?.link.businessRef.entityId === task.id ? 'scheduler-primary' : undefined}
+                          disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : runningId === task.id}
                           className="h-9 px-3 rounded-lg bg-green-50 text-xs text-green-700 hover:bg-green-100 disabled:opacity-50 whitespace-nowrap"
                         >
                           {runningId === task.id ? '执行中…' : '立即执行'}
@@ -1844,7 +1864,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         >
                           进入页面
                         </button>
-                        <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); void deleteTask(task.id); }} className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0">
+                        <button type="button" aria-label={`删除任务 ${task.name}`} onClick={e => { e.preventDefault(); e.stopPropagation(); void deleteTask(task.id); }} className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0">
                           <Trash2 size={12} />
                         </button>
                       </div>

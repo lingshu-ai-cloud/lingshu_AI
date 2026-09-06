@@ -5247,7 +5247,7 @@ function isGeminiConfigured(): boolean {
 }
 
 function shouldUseQwenFirst(): boolean {
-  return process.env.VIDEO_ANALYSIS_PROVIDER?.trim().toLowerCase() === 'qwen';
+  return (process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').trim().toLowerCase() === 'qwen';
 }
 
 function qwenFallbackTimeoutMs(): number {

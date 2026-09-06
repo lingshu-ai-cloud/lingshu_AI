@@ -1,3 +1,4 @@
+import ContentLibrary from './ContentLibrary';
 import { lazy, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -612,6 +613,7 @@ export default function TrafficPage({
     setViewMode('create');
   };
 
+  const [contentTab, setContentTab] = useState<'create' | 'library' | 'exports'>('create');
   return (
     <div className="flex h-full flex-col">
       <header className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-5">
@@ -672,7 +674,9 @@ export default function TrafficPage({
         </div>
       </div>}
 
-      <main className="relative min-h-0 flex-1 overflow-hidden">
+      {pageTitle === '内容创作' && <nav className="flex gap-2 border-b bg-white px-4 py-2" aria-label="内容创作页面">{([['create','创作工作台'],['library','成片库'],['exports','导出记录']] as const).map(([id,label])=><button key={id} className={'rounded px-4 py-2 text-sm '+(contentTab===id?'bg-blue-50 font-bold text-blue-700':'')} onClick={()=>{setContentTab(id);if(id==='create')setViewMode('create');}}>{label}</button>)}<button className="rounded px-4 py-2 text-sm" onClick={()=>{setContentTab('create');setViewMode('publish');}}>发布设置</button></nav>}
+      {pageTitle === '内容创作' && contentTab !== 'create' && <div className="min-h-0 flex-1"><ContentLibrary exportsOnly={contentTab === 'exports'} onPublish={draft=>{handleGoPublish(draft);setContentTab('create');}}/></div>}
+      <main className={pageTitle === '内容创作' && contentTab !== 'create' ? 'hidden' : 'relative min-h-0 flex-1 overflow-hidden'}>
         {(studioMounted || viewMode === 'create') && (
           <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
             <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} />

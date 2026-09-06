@@ -1,3 +1,4 @@
+import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import { authHeader } from "./auth";
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
@@ -22,6 +23,7 @@ export type DigitalEmployeeWorkflow =
 export type DataAvailability = "available" | "pending" | "unavailable";
 
 export interface DigitalEmployeeConfig {
+  videoDefaults?: Partial<VideoCreationPlan>;
   companyName: string;
   industry: string;
   primaryBusiness: string;
@@ -56,6 +58,7 @@ export interface DigitalEmployeeConfig {
 }
 
 export interface WeeklyGoal {
+  videoPlans?: VideoCreationPlan[];
   id: string;
   businessLine: "full_funnel" | "content_growth" | "customer_conversion";
   contentPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
@@ -226,6 +229,7 @@ export interface BusinessSnapshot {
     exactAnalyses: BusinessMetric;
     contentProjects: BusinessMetric;
     completedWorks: BusinessMetric;
+    approvedWorks?: BusinessMetric;
     scheduledPosts: BusinessMetric;
     publishedPosts: BusinessMetric;
     failedPosts: BusinessMetric;

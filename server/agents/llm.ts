@@ -21,7 +21,7 @@ export interface LLMCallOptions {
 }
 
 function resolveBackend(opts: LLMCallOptions): LLMBackend {
-  return opts.backend ?? (process.env.OVERSEAS_LLM_BACKEND as LLMBackend) ?? 'gemini';
+  return opts.backend ?? (process.env.OVERSEAS_LLM_BACKEND as LLMBackend) ?? 'qwen';
 }
 
 const configuredConcurrency = Number(process.env.LLM_MAX_CONCURRENT_REQUESTS || 6);

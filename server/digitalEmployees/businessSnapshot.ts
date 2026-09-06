@@ -1,3 +1,4 @@
+import { contentAccepted } from './contentAcceptance.js';
 import fs from 'node:fs';
 import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
@@ -34,6 +35,7 @@ export interface BusinessSnapshot {
     exactAnalyses: BusinessMetric;
     contentProjects: BusinessMetric;
     completedWorks: BusinessMetric;
+    approvedWorks?: BusinessMetric;
     scheduledPosts: BusinessMetric;
     publishedPosts: BusinessMetric;
     failedPosts: BusinessMetric;
@@ -370,6 +372,7 @@ export async function buildBusinessSnapshot(
       collectedItems: metric(weekVideos.length, 'trend_videos'),
       exactAnalyses: metric(weekVideos.filter(exactAnalysis).length, 'trend_videos.aiAnalysis'),
       contentProjects: metric(weekProjects.length, 'studio_projects'),
+      approvedWorks: metric(weekProjects.filter(project => completedWorkHasReceipt(project) && contentAccepted(jsonObject(project.spec))).length, 'studio_projects.spec.contentAcceptance + current content fingerprint'),
       completedWorks: metric(weekProjects.filter(completedWorkHasReceipt).length, 'studio_projects.spec.automation.quality + render receipt', 'available', '仅统计存在可核验成片的作品；作品完成不等于平台发布'),
       scheduledPosts: metric(publishingValue(scheduledPosts.length), 'posts.stats.status', publishingAvailability, publishingNote),
       publishedPosts: metric(publishingValue(published.length), 'posts.publishResults', publishingAvailability, publishingNote),

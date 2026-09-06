@@ -142,7 +142,11 @@ function assText(value) {
 
 function subtitleUnit(char) {
   if (/\s/.test(char)) return 0.35;
-  if (/[\x00-\xff]/.test(char)) return 0.55;
+  if (/[ilI.,!:'`|]/.test(char)) return 0.28;
+  if (/[frt()]/.test(char)) return 0.36;
+  if (/[MWmw@]/.test(char)) return 0.82;
+  if (/[A-Z]/.test(char)) return 0.66;
+  if (/[\x00-\xff]/.test(char)) return 0.54;
   return 1;
 }
 
@@ -158,61 +162,83 @@ function subtitleUnits(value) {
 function subtitlePages(value, maxUnitsPerLine = 15, maxLines = 2) {
   const source = assText(value);
   if (!source) return [];
-  const chars = Array.from(source);
-  const lines = [];
-  let line = '';
-  let units = 0;
-  let lastSoftBreak = -1;
-  const flush = () => {
-    const next = line.trim();
-    if (next) lines.push(next);
-    line = '';
-    units = 0;
-    lastSoftBreak = -1;
-  };
-  for (const char of chars) {
-    const nextUnits = units + subtitleUnit(char);
-    if (line && nextUnits > maxUnitsPerLine) {
-      if (lastSoftBreak >= Math.ceil(line.length * 0.45)) {
-        const head = line.slice(0, lastSoftBreak + 1).trim();
-        const tail = line.slice(lastSoftBreak + 1).trimStart();
-        if (head) lines.push(head);
-        line = tail;
-        units = subtitleUnits(tail);
-      } else {
-        flush();
-      }
+  // Keep space-delimited words intact; CJK still permits breaks between glyphs.
+  const tokens = source.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu) || [];
+  const join = words => words.join(' ').replace(/([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}，。！？；：、])\s+(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}，。！？；：、])/gu, '$1');
+  const badEnd = /\b(a|an|the|of|to|for|with|which|your|our|is|are|not|before|while)\s*$/i;
+  const wrap = words => {
+    if (subtitleUnits(join(words)) <= maxUnitsPerLine || words.length === 1) return [join(words)];
+    let best = null, bestCost = Infinity;
+    for (let split = 1; split < words.length; split++) {
+      const left = join(words.slice(0, split)), right = join(words.slice(split));
+      const lw = subtitleUnits(left), rw = subtitleUnits(right);
+      if (lw > maxUnitsPerLine || rw > maxUnitsPerLine) continue;
+      const score = (lw - rw) ** 2 + (badEnd.test(left) ? 25 : 0);
+      if (score < bestCost) { bestCost = score; best = [left, right]; }
     }
-    line += char;
-    units += subtitleUnit(char);
-    if (/[\s，。！？；：、,.!?;:]/.test(char)) lastSoftBreak = line.length - 1;
+    return best;
+  };
+  const cost = Array(tokens.length + 1).fill(Infinity), next = [], layouts = [];
+  cost[tokens.length] = 0;
+  const capacity = maxUnitsPerLine * maxLines;
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    for (let j = i + 1; j <= tokens.length; j++) {
+      const words = tokens.slice(i, j), phrase = join(words), width = subtitleUnits(phrase);
+      if (width > capacity && j > i + 1) break;
+      const lines = wrap(words);
+      if (!lines || lines.length > maxLines) continue;
+      const dangling = j < tokens.length && badEnd.test(phrase);
+      const penalty = capacity * capacity + (capacity - width) ** 2 + (dangling ? 250 : 0);
+      if (penalty + cost[j] < cost[i]) { cost[i] = penalty + cost[j]; next[i] = j; layouts[i] = lines; }
+    }
   }
-  flush();
   const pages = [];
-  for (let index = 0; index < lines.length; index += maxLines) {
-    pages.push(lines.slice(index, index + maxLines));
-  }
+  for (let i = 0; i < tokens.length;) { const j = next[i] || i + 1; pages.push(layouts[i] || [tokens[i]]); i = j; }
   return pages;
+}
+
+function groupSpokenCues(cues, options = {}) {
+  const gapLimit = finiteNumber(options.pauseThreshold, .28);
+  const maxDuration = finiteNumber(options.maxPhraseDuration, 4.2);
+  const groups = [];
+  for (const cue of Array.isArray(cues) ? cues : []) {
+    const text = assText(cue.text), start = Number(cue.start), end = Number(cue.end);
+    if (!text || !Number.isFinite(start) || !Number.isFinite(end) || end <= start || start < 0) continue;
+    const previous = groups.at(-1);
+    const gap = previous ? start - previous.end : Infinity;
+    const terminal = previous && /[.!?。！？]["'”’]?\s*$/.test(previous.text);
+    if (previous && !terminal && gap >= 0 && gap <= gapLimit && end - previous.start <= maxDuration) {
+      previous.text += (/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? '' : ' ') + text;
+      previous.end = end; previous.parts.push({ start, end, text });
+    } else groups.push({ start, end, text, parts: [{ start, end, text }] });
+  }
+  return groups;
 }
 
 function normalizeSubtitleCues(cues, options = {}) {
   const maxUnitsPerLine = Math.max(8, finiteNumber(options.maxUnitsPerLine, 15));
   const maxLines = Math.max(1, Math.min(2, Math.round(finiteNumber(options.maxLines, 2))));
-  return (Array.isArray(cues) ? cues : []).flatMap(cue => {
-    const start = Math.max(0, Number(cue && cue.start) || 0);
-    const end = Math.max(0, Number(cue && cue.end) || 0);
-    const pages = subtitlePages(cue && cue.text, maxUnitsPerLine, maxLines);
-    if (!pages.length || end <= start) return [];
-    const weights = pages.map(page => Math.max(1, subtitleUnits(page.join(''))));
-    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-    let cursor = start;
+  return groupSpokenCues(cues, options).flatMap(group => {
+    const pages = subtitlePages(group.text, maxUnitsPerLine, maxLines);
+    // Preserve measured cue boundaries. A break inside one provider cue is
+    // an estimate within that cue, never a new word-level alignment claim.
+    const units = value => subtitleUnits(value.replace(/\s/g, ''));
+    const parts = group.parts.map(part => ({ ...part, weight: units(part.text) }));
+    const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0);
+    const at = (position, endBoundary) => {
+      let offset = 0;
+      for (const part of parts) {
+        if (position < offset + part.weight - 1e-6 || (endBoundary && position <= offset + part.weight + 1e-6))
+          return part.start + (part.end - part.start) * Math.max(0, Math.min(1, (position - offset) / Math.max(.001, part.weight)));
+        offset += part.weight;
+      }
+      return group.end;
+    };
+    let offset = 0;
     return pages.map((page, index) => {
-      const pageEnd = index === pages.length - 1
-        ? end
-        : cursor + (end - start) * weights[index] / totalWeight;
-      const normalized = { start: cursor, end: pageEnd, text: page.join('\\N') };
-      cursor = pageEnd;
-      return normalized;
+      const start = index === 0 ? group.start : at(offset, false);
+      offset += units(page.join(''));
+      return { start, end: index === pages.length - 1 ? group.end : at(Math.min(totalWeight, offset), true), text: page.join('\\N') };
     });
   });
 }
@@ -225,21 +251,24 @@ function filterPath(value) {
     .replace(/,/g, '\\,');
 }
 
-function cuesToAss(cues, width, height) {
-  const valid = normalizeSubtitleCues(cues)
+function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}) {
+  const fontSize = Math.round(Math.min(width / 15, height / 18) * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1)));
+  const marginX = Math.round(width * .085);
+  const valid = normalizeSubtitleCues(cues, { maxUnitsPerLine: (width - marginX * 2) / fontSize })
     .map(cue => ({
       start: Math.max(0, Number(cue && cue.start) || 0),
       end: Math.max(0, Number(cue && cue.end) || 0),
       text: String(cue && cue.text || '').replace(/[{}]/g, '').trim(),
     }))
     .filter(cue => cue.text && cue.end > cue.start);
-  if (!valid.length) return '';
+  if (!valid.length && !disclaimer) return '';
 
-  const fontSize = Math.max(34, Math.round(width / 22));
-  const marginV = Math.round(height / 3);
+  const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .20)));
+  const outline = Math.max(2, Math.round(width * .003));
   const events = valid.map(cue =>
     `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${cue.text}`
   );
+  if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
   return [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -250,7 +279,7 @@ function cuesToAss(cues, width, height) {
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,Arial Unicode MS,${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,4,1,2,80,80,${marginV},1`,
+    `Style: Default,Arial,${fontSize},&H00FFFFFF,&H00FFFFFF,&HAA000000,&H66000000,-1,0,0,0,100,100,0,0,1,${outline},1,2,${marginX},${marginX},${marginV},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -273,7 +302,9 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
   const spec = (manifest && manifest.spec) || {};
   const duration = Math.max(1, Number(spec.duration) || 20);
-  const [w, h] = resolution(spec.ratio);
+  const [baseW, baseH] = resolution(spec.ratio);
+    const scale = spec.resolution === '720p' ? 2 / 3 : 1;
+    const [w, h] = [Math.round(baseW * scale / 2) * 2, Math.round(baseH * scale / 2) * 2];
   const jobId = (manifest && manifest.jobId) || `job-${Date.now()}`;
   const dir = outDir || path.join(os.homedir(), 'Downloads', 'lingshu-ai-exports');
   fs.mkdirSync(dir, { recursive: true });
@@ -388,7 +419,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const subtitleCues = manifest && manifest.subtitles && manifest.subtitles.mode !== 'off'
       ? manifest.subtitles.cues
       : [];
-    const ass = cuesToAss(subtitleCues, w, h);
+    const ass = cuesToAss(subtitleCues, w, h, manifest.disclaimer || '', duration, manifest.subtitles?.style || {});
     if (ass) {
       const assFile = path.join(tmp, 'subtitles.ass');
       fs.writeFileSync(assFile, ass, 'utf8');
@@ -398,17 +429,18 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     }
 
     // 4) 音轨混音：有配音时把 BGM 压低垫底，配音按用户设置音量叠上
+    const musicNormalize = bgmFile ? 'loudnorm=I=-16:TP=-2:LRA=11,' : '';
     const rawBgmVol = Number(spec.bgmVol);
     const rawVoiceVol = Number(spec.voiceVol);
     const vol = Math.min(1, Math.max(0, (Number.isFinite(rawBgmVol) ? rawBgmVol : 35) / 100));
     const voiceVol = Math.min(1.5, Math.max(0, (Number.isFinite(rawVoiceVol) ? rawVoiceVol : 100) / 100));
     if (voFile) {
       const duck = (vol * 0.5).toFixed(2); // 有人声时 BGM 再降一档
-      filters.push(`[${bgmIdx}:a]volume=${duck},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
+      filters.push(`[${bgmIdx}:a]${musicNormalize}volume=${duck},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
       filters.push(`[${voIdx}:a]volume=${voiceVol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[avo]`);
       filters.push(`[abgm][avo]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[aout]`);
     } else {
-      filters.push(`[${bgmIdx}:a]volume=${vol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[aout]`);
+      filters.push(`[${bgmIdx}:a]${musicNormalize}volume=${vol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[aout]`);
     }
 
     args.push(
@@ -459,4 +491,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, normalizeSubtitleCues, cuesToAss };
+module.exports = { composite, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };

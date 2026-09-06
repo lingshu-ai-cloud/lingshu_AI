@@ -1,3 +1,9 @@
+import { alignQwenFile } from '../integrations/qwenAlignment.js';
+import { contentLibraryRouter } from './contentLibrary.js';
+import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
+import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../src/lib/videoLanguages.js';
+import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
+import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -1739,6 +1745,7 @@ studioRouter.get('/subscription', async (req, res) => {
 });
 
 /* 收费墙：以下所有 AI / 渲染路由都需有效订阅（未启用强制时直通）。 */
+studioRouter.use(contentLibraryRouter);
 studioRouter.use(entitlementGate());
 
 /* ── Seedance 视频生成 ─────────────────────────────────────────────────── */
@@ -2080,6 +2087,12 @@ studioRouter.post('/script', async (req, res) => {
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
   const normalizedVideoTheme = typeof videoTheme === 'object' && videoTheme ? videoTheme as Record<string, unknown> : {};
+  const presentationMode = String(normalizedVideoTheme.presentationMode || 'material');
+  const presentationRule = presentationMode === 'avatar'
+    ? '成片方式：纯数字人口播。每一镜均为所选数字人面对镜头讲述，不插入产品实拍或生成物品动作；产品资料只用于口播事实。'
+    : presentationMode === 'heygen'
+      ? '成片方式：数字人加素材混剪。默认数字人开场和收尾，中段按已选产品素材事实配画；用户可在分镜表修改画面来源，不把整片写成数字人。'
+      : '成片方式：纯素材剪辑。画面只使用已授权素材，不安排生成的数字人。';
   const videoThemeId = String(normalizedVideoTheme.id || 'buyer_pain');
   const videoThemeTitle = String(normalizedVideoTheme.title || '买家痛点');
   const videoThemePainPoint = String(normalizedVideoTheme.painPoint || audience || '').trim();
@@ -2186,6 +2199,7 @@ ${scriptCreativeModeRule(generationMode)}`;
   const productScriptRules = `为选定产品生成 ${productDuration} 秒、${productSceneCount} 段的 ${lang} 分镜稿。
 时间从0开始连续无重叠，按完整口播与动作分配时长；中文约每秒4字并留停顿，不能截断句子。
 ${voiceoverDirective}
+${presentationRule}
 有口播时字幕逐字相同；无口播时字幕可独立传达信息。音效写入配乐字段。
 每段画面写清主体、初始状态、动作和结束状态，并保持人物、产品外观和空间连续。没有现成画面可建议补拍，但产品状态、使用方式和性能结论必须有资料支持。
 多选产品时，每个选定名称至少出现在一段画面中；只写输入支持的商业事实，不把参数扩写成未证实效果。
@@ -2249,7 +2263,7 @@ ${previousCloneScripts.map(item => [...new Set(Array.from(item.matchAll(/^(?:台
     : ''}`;
 
   try {
-    const scriptSystemPrompt = `你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
+    const scriptSystemPrompt = `${presentationRule}\n你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
     // Select a source fact before drafting. An ungrounded draft must
     // not become the source material for a second, increasingly confident rewrite.
     const generatedVoicePlan = generationMode === 'product' && hasNarrationDraft
@@ -2475,7 +2489,7 @@ Requirements:
     const hasLockedDraft = lockedVisualScenes.length > 0 && lockedVisualScenes.length === lockedVoiceLines.length;
     const text = hasLockedDraft
       ? ''
-      : await callLLM(prompt, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
+      : await callLLM(`${presentationRule}\n${prompt}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
     const isStructuredLockedDraft = hasLockedDraft && (generationMode === 'product' || generationMode === 'material');
     let script = isStructuredLockedDraft
       ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(lockedVisualScenes, lockedVoiceLines, generationMode === 'product' ? productDuration : 0), productInfo)
@@ -3576,7 +3590,7 @@ interface RenderSpec {
 
 interface RenderManifest {
   jobId: string;
-  spec: { ratio: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
+  spec: { ratio: string; resolution?: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
   script: string;
   timeline: {
     index: number;
@@ -3616,6 +3630,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
       platform: spec.platform || 'tiktok',
       language: spec.language || 'en',
       bgmVol: spec.bgmVol ?? 35,
+      resolution: (spec as any).resolution || '1080p',
       voiceVol: spec.voiceVol ?? 100,
     },
     script: spec.script ?? '',
@@ -3876,9 +3891,11 @@ interface DigitalHumanQualityReport {
   notes?: string[];
 }
 interface DigitalHumanJob {
+  subtitleCues?: Array<{ start: number; end: number; text: string }>;
   id: string;
   tenantId: string;
   projectId?: string;
+  heygenAvatarId?: string;
   avatarMaterialId: string;
   avatarName: string;
   voiceoverUrl: string;
@@ -3924,6 +3941,7 @@ function updateDigitalHumanJob(id: string, patch: Partial<DigitalHumanJob>): Dig
   const list = loadDigitalHumanJobs();
   const index = list.findIndex(item => item.id === id);
   if (index < 0) throw new Error('digital human job not found');
+  if (list[index]!.provider === 'heygen' && list[index]!.status === 'cancelled' && patch.status !== 'cancelled') return list[index]!;
   const next = { ...list[index]!, ...patch, updatedAt: new Date().toISOString() };
   list[index] = next;
   persistDigitalHumanJobs(list);
@@ -3967,7 +3985,7 @@ function safeProviderOutputUrl(value: unknown): string {
 
 function publicDigitalHumanJob(job: DigitalHumanJob) {
   const { tenantId: _tenantId, voiceoverUrl: _voiceoverUrl, ...safe } = job;
-  return safe;
+  return { ...safe, ...(job.outputUrl?.startsWith('/') ? { outputUrl: signAssetUrl(job.outputUrl.split('?')[0], job.tenantId) } : {}) };
 }
 
 function appAssetUrl(req: Request, value: string): string {
@@ -4027,6 +4045,7 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
     let job = loadDigitalHumanJobs().find(item => item.id === jobId);
     if (!job) throw new Error('digital human job not found');
     if (['completed', 'review', 'failed', 'cancelled'].includes(job.status)) return job;
+    if (job.provider === 'heygen') return advanceHeygenJob(job);
     const { baseUrl, provider } = digitalHumanConfig();
     if (!baseUrl) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'configuration', errorCode: 'PROVIDER_NOT_CONFIGURED', errorMessage: '数字人推理服务尚未配置。' });
 
@@ -4065,6 +4084,10 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
     return finalizeDigitalHumanOutput(job, outputUrl, payload.quality as DigitalHumanQualityReport);
   })().catch(error => {
     const message = error instanceof Error ? error.message : String(error);
+    const current = loadDigitalHumanJobs().find(item => item.id === jobId);
+    if (current?.provider === 'heygen' && current.providerTaskId && /fetch failed|timeout|timed out|aborted|HeyGen (429|5\d\d)/i.test(message)) {
+      return updateDigitalHumanJob(jobId, { status: 'processing', stage: 'heygen_rendering', errorCode: 'PROVIDER_POLL_RETRY', errorMessage: '网络暂时不可用，继续查询原 HeyGen 任务，不重复生成。' });
+    }
     return updateDigitalHumanJob(jobId, { status: 'failed', stage: 'provider', errorCode: 'PROVIDER_ERROR', errorMessage: message });
   }).finally(() => digitalHumanRefreshes.delete(jobId));
   digitalHumanRefreshes.set(jobId, task);
@@ -4075,7 +4098,7 @@ async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<Dig
 // are submitted synchronously by their POST request; only already-submitted jobs
 // are safe to recover here because their signed inputs are no longer needed.
 const digitalHumanRecoveryTimer = setInterval(() => {
-  if (!digitalHumanConfig().baseUrl) return;
+  if (!digitalHumanConfig().baseUrl && !heygenConfigured()) return;
   for (const job of loadDigitalHumanJobs().filter(item => item.providerTaskId && ['processing', 'quality_check'].includes(item.status)).slice(0, 20)) {
     void refreshDigitalHumanJob(job.id);
   }
@@ -4089,25 +4112,73 @@ function validDigitalHumanVoiceoverUrl(value: unknown): string {
   return '';
 }
 
+async function advanceHeygenJob(job: DigitalHumanJob): Promise<DigitalHumanJob> {
+  if (!job.providerTaskId) {
+    const audioPath = path.join(tenantAssetDir(TTS_ROOT, job.tenantId), path.basename(new URL(job.voiceoverUrl, 'http://local').pathname));
+    const providerTaskId = await submitHeygenVideo({ id: job.id, avatarId: job.heygenAvatarId!, audioPath, title: '数字人口播' });
+    job = updateDigitalHumanJob(job.id, { providerTaskId, status: 'processing', stage: 'heygen_rendering', progress: 10 });
+  }
+  const payload = await heygenRequest(`videos/${encodeURIComponent(job.providerTaskId!)}`);
+  const result = payload.data || {};
+  if (result.status === 'failed') return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'provider', errorMessage: String(result.failure_message || 'HeyGen 生成失败') });
+  if (result.status !== 'completed') return job;
+  const subtitleCues = await downloadHeygenSubtitles(String(result.subtitle_url || ''), Number(result.duration), job.scriptSnapshot);
+  const bytes = await downloadHeygenOutput(String(result.video_url || ''));
+  const outputDir = tenantAssetDir(MEDIA_DIR, job.tenantId);
+  fs.mkdirSync(outputDir, { recursive: true });
+  const filename = `${job.id}.mp4`;
+  const outputPath = path.join(outputDir, filename);
+  fs.writeFileSync(outputPath, bytes);
+  const visual = await inspectRenderedVisuals({ outputPath, expectedDuration: Number(result.duration) || 1, expectedUniqueScenes: 1 });
+  if (!visual.passed) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'quality', errorMessage: visual.failures.join('；') });
+  const material = await createGeneratedVideoMaterial({ title: `HeyGen 数字人口播 · ${job.avatarName}`, filename, duration: Number(result.duration) || 0, tenantId: job.tenantId, sourceType: 'digital-human' });
+  if (!material) throw Error('HeyGen 成片素材保存失败');
+  material.folder = 'presenter';
+  persistMaterials(loadMaterials().map(item => item.id === material.id ? material : item));
+  return updateDigitalHumanJob(job.id, { status: 'review', stage: 'human_quality_review', progress: 100, subtitleCues, errorCode: undefined, errorMessage: undefined, outputMaterialId: material.id, outputUrl: material.url || undefined,
+    qualityReport: { passed: false, durationSeconds: Number(result.duration) || 0, notes: ['文件与画面检查通过；请预览确认人物、口型及声音后使用。HeyGen 不提供本系统的口型分数，不伪造分数。'] } });
+}
+
+export function heygenOutputPath(tenantId: string, jobId: string): string { return path.join(tenantAssetDir(MEDIA_DIR, tenantId), `${jobId}.mp4`); }
+
+const heygenCreationQueues = new Map<string, Promise<unknown>>();
+export async function ensureHeygenAutomationJob(input: { tenantId: string; projectId: string; avatarId: string; consent: boolean; voiceoverUrl: string; script: string; language: string }): Promise<DigitalHumanJob> {
+  const key = input.tenantId;
+  const previous = heygenCreationQueues.get(key) || Promise.resolve();
+  const next = previous.catch(() => undefined).then(() => ensureHeygenJobLocked(input));
+  heygenCreationQueues.set(key, next);
+  try { return await next; } finally { if (heygenCreationQueues.get(key) === next) heygenCreationQueues.delete(key); }
+}
+async function ensureHeygenJobLocked(input: { tenantId: string; projectId: string; avatarId: string; consent: boolean; voiceoverUrl: string; script: string; language: string }): Promise<DigitalHumanJob> {
+  if (!input.consent || !input.avatarId) throw Error('请选择 HeyGen 人物并确认使用权');
+  let job = loadDigitalHumanJobs().slice().reverse().find(item => item.tenantId === input.tenantId && item.projectId === input.projectId && item.provider === 'heygen' && item.scriptSnapshot === input.script && item.heygenAvatarId === input.avatarId && item.voiceoverUrl === input.voiceoverUrl);
+  if (!job) {
+    if (loadDigitalHumanJobs().filter(item => item.tenantId === input.tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status)).length >= 2) throw Error('当前已有 2 个数字人任务在运行，请稍后再试');
+    const avatar = (await listHeygenAvatars()).find(item => item.id === input.avatarId);
+    if (!avatar) throw Error('所选 HeyGen 人物不可用，请重新选择');
+    const now = new Date().toISOString();
+    job = { id: randomUUID(), tenantId: input.tenantId, projectId: input.projectId, heygenAvatarId: input.avatarId, avatarMaterialId: '', avatarName: avatar.name,
+      voiceoverUrl: input.voiceoverUrl, scriptSnapshot: input.script, language: input.language, mode: 'quality', consentConfirmed: true, commercialRightsStatus: 'cleared', provider: 'heygen', status: 'queued', stage: 'queued', progress: 0, versionNumber: 1, createdAt: now, updatedAt: now };
+    persistDigitalHumanJobs([...loadDigitalHumanJobs(), job]);
+  }
+  return refreshDigitalHumanJob(job.id);
+}
+
+studioRouter.get('/digital-human/avatars', async (_req, res) => {
+  try { res.json({ items: await listHeygenAvatars() }); } catch (error) { res.status(503).json({ error: error instanceof Error ? error.message : 'HeyGen 人物不可用', items: [] }); }
+});
+studioRouter.post('/digital-human/jobs/:id/approve', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!job || job.provider !== 'heygen' || job.status !== 'review' || !job.outputMaterialId) { res.status(409).json({ error: '没有可确认的 HeyGen 成片' }); return; }
+  if (req.body?.reviewed !== true) { res.status(400).json({ error: '请先预览并确认人物、口型与声音' }); return; }
+  const updated = updateDigitalHumanJob(job.id, { status: 'completed', stage: 'completed', completedAt: new Date().toISOString(), qualityReport: { ...job.qualityReport, passed: true, notes: [...(job.qualityReport?.notes || []), '用户已预览并确认人物、口型与声音'] } });
+  res.json({ ok: true, job: publicDigitalHumanJob(updated) });
+});
+
 function digitalHumanCapabilities() {
-  const config = digitalHumanConfig();
-  return {
-    available: Boolean(config.baseUrl),
-    provider: config.provider,
-    features: config.provider.includes('sadtalker')
-      ? ['lip_sync', 'expression', 'head_motion']
-      : config.provider.includes('musetalk')
-        ? ['lip_sync', 'source_motion', 'neck_shoulder_preservation']
-        : ['lip_sync'],
-    modes: [
-      { id: 'fast', label: '极速模式' },
-      { id: 'quality', label: '高质量模式' },
-    ],
-    output: { ratio: '9:16', container: 'mp4' },
-    qualityGateRequired: true,
-    maxConcurrentJobs: 2,
-    unavailableReason: config.baseUrl ? undefined : '数字人 GPU 推理服务尚未配置',
-  };
+  return { available: heygenConfigured(), provider: 'heygen', features: ['lip_sync'], modes: [{ id: 'quality', label: 'HeyGen 数字人' }], output: { ratio: '9:16', container: 'mp4' }, qualityGateRequired: true, maxConcurrentJobs: 2,
+    unavailableReason: heygenConfigured() ? undefined : '尚未配置 HeyGen 服务（HEYGEN_API_KEY）' };
 }
 
 studioRouter.get('/digital-human/capabilities', (_req, res) => {
@@ -4142,31 +4213,19 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const capabilities = digitalHumanCapabilities();
   if (!capabilities.available) { res.status(503).json({ ok: false, error: capabilities.unavailableReason, code: 'PROVIDER_NOT_CONFIGURED' }); return; }
-  const avatarMaterialId = String(req.body?.avatarMaterialId || '').trim();
-  const avatar = loadMaterials().find(item => item.id === avatarMaterialId && item.tenantId === tenantId && item.scope === 'own' && item.type === 'video');
-  if (!avatar) { res.status(400).json({ ok: false, error: '请选择当前企业拥有的人物视频素材', code: 'INVALID_AVATAR' }); return; }
-  const voiceoverUrl = validDigitalHumanVoiceoverUrl(req.body?.voiceoverUrl);
-  if (!voiceoverUrl) { res.status(400).json({ ok: false, error: '请先生成或上传有效的口播音频', code: 'INVALID_VOICEOVER' }); return; }
-  const scriptSnapshot = String(req.body?.script || '').trim();
-  if (!scriptSnapshot || scriptSnapshot.length > 8000) { res.status(400).json({ ok: false, error: '口播脚本为空或超过 8000 字', code: 'INVALID_SCRIPT' }); return; }
-  if (req.body?.consentConfirmed !== true) { res.status(400).json({ ok: false, error: '必须确认已取得出镜人物授权及商业使用权', code: 'CONSENT_REQUIRED' }); return; }
-  const active = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status));
-  if (active.length >= 2) { res.status(429).json({ ok: false, error: '当前已有 2 个数字人任务在运行，请稍后再试', code: 'CONCURRENCY_LIMIT' }); return; }
-  const mode: DigitalHumanMode = req.body?.mode === 'fast' ? 'fast' : 'quality';
-  const projectId = String(req.body?.projectId || '').trim().slice(0, 160) || undefined;
-  const language = String(req.body?.language || 'zh').trim().slice(0, 24) || 'zh';
-  const siblings = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && item.avatarMaterialId === avatarMaterialId && item.projectId === projectId);
-  const now = new Date().toISOString();
-  const job: DigitalHumanJob = {
-    id: randomUUID(), tenantId, projectId, avatarMaterialId, avatarName: avatar.name,
-    voiceoverUrl, scriptSnapshot, language, mode, consentConfirmed: true,
-    commercialRightsStatus: 'cleared', provider: digitalHumanConfig().provider,
-    status: 'queued', stage: 'queued', progress: 0, versionNumber: siblings.length + 1,
-    createdAt: now, updatedAt: now,
-  };
-  const jobs = loadDigitalHumanJobs(); jobs.push(job); persistDigitalHumanJobs(jobs);
-  void refreshDigitalHumanJob(job.id, req);
-  res.status(202).json({ ok: true, job: publicDigitalHumanJob(job) });
+  if (req.body?.heygenAvatarId) {
+    try {
+      if (req.body.projectId) { const project = await store.getById<any>('studio_projects', String(req.body.projectId)); if (!project || project.tenant_id !== tenantId) { res.status(404).json({ error: '当前企业的制作项目不存在' }); return; } }
+      const voiceoverUrl = validDigitalHumanVoiceoverUrl(req.body.voiceoverUrl);
+      if (!voiceoverUrl || !String(req.body.script || '').trim()) { res.status(400).json({ error: '请先确认口播并生成音频' }); return; }
+      if (String(req.body.script).length > 8000) { res.status(400).json({ error: '口播过长，请缩短后重新确认' }); return; }
+      const job = await ensureHeygenAutomationJob({ tenantId, projectId: String(req.body.projectId || randomUUID()), avatarId: String(req.body.heygenAvatarId), consent: req.body.consentConfirmed === true, voiceoverUrl, script: String(req.body.script), language: String(req.body.language || 'en') });
+      res.status(202).json({ ok: true, job: publicDigitalHumanJob(job) });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'HeyGen 提交失败' }); }
+    return;
+  }
+  res.status(400).json({ error: '请选择 HeyGen 人物', code: 'HEYGEN_AVATAR_REQUIRED' }); return;
+
 });
 
 studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
@@ -4183,9 +4242,14 @@ studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
   const source = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!source) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
   if (!['failed', 'review', 'cancelled'].includes(source.status)) { res.status(409).json({ ok: false, error: '只有失败、待复核或已取消任务可以重试' }); return; }
-  if (!digitalHumanCapabilities().available) { res.status(503).json({ ok: false, error: '数字人 GPU 推理服务尚未配置' }); return; }
+  if (!digitalHumanCapabilities().available) { res.status(503).json({ ok: false, error: 'HeyGen 服务尚未配置' }); return; }
   const active = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status));
   if (active.length >= 2) { res.status(429).json({ ok: false, error: '当前已有 2 个数字人任务在运行，请稍后再试' }); return; }
+  if (source.provider === 'heygen' && source.providerTaskId && source.errorCode === 'PROVIDER_ERROR' && /fetch failed|timeout|timed out|aborted|HeyGen (429|5\d\d)|字幕与已确认口播不一致/i.test(source.errorMessage || '')) {
+    const resumed = updateDigitalHumanJob(source.id, { status: 'processing', stage: 'heygen_rendering', errorCode: undefined, errorMessage: undefined });
+    void refreshDigitalHumanJob(source.id, req);
+    res.status(202).json({ ok: true, job: publicDigitalHumanJob(resumed) }); return;
+  }
   const now = new Date().toISOString();
   const retry: DigitalHumanJob = {
     ...source, id: randomUUID(), parentJobId: source.id, providerTaskId: undefined,
@@ -4203,7 +4267,7 @@ studioRouter.post('/digital-human/jobs/:id/cancel', async (req, res) => {
   const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
   if (['completed', 'failed', 'review', 'cancelled'].includes(job.status)) { res.status(409).json({ ok: false, error: '该任务当前不可取消' }); return; }
-  if (job.providerTaskId && digitalHumanConfig().baseUrl) {
+  if (job.provider !== 'heygen' && job.providerTaskId && digitalHumanConfig().baseUrl) {
     void digitalHumanFetch(`${digitalHumanConfig().baseUrl}/v1/jobs/${encodeURIComponent(job.providerTaskId)}/cancel`, { method: 'POST', headers: digitalHumanProviderHeaders() }).catch(() => undefined);
   }
   const cancelled = updateDigitalHumanJob(job.id, { status: 'cancelled', stage: 'cancelled', errorCode: undefined, errorMessage: undefined });
@@ -4648,16 +4712,16 @@ studioRouter.post('/materials', async (req, res) => {
 });
 
 // POST /studio/materials/:id/analyze-segments
-// Gemini 按动作/主体/镜头功能切片；截取区间来自实际视频时间轴，不再用比例猜测。
+// 按动作/主体/镜头功能切片；截取区间来自实际视频时间轴。
 /**
  * 素材片段分析的模型选择。
  *
  * 此前这里直接调 Gemini，绕过了 VIDEO_ANALYSIS_PROVIDER 开关——对标视频分析早已切到千问，
  * 素材分镜却还在打 Gemini，额度耗尽后固定返回 429。改为与视频分析同一套选择逻辑：
- * 千问吃关键帧（需先抽帧），Gemini 吃整段视频。
+ * 默认千问关键帧分析；千问失败时明确报错，不自动切换 Gemini。
  */
 async function analyzeMaterialVideo(videoPath: string, buffer: Buffer, duration: number) {
-  if (process.env.VIDEO_ANALYSIS_PROVIDER?.trim().toLowerCase() === 'qwen') {
+  if ((process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').trim().toLowerCase() === 'qwen') {
     const frames = await extractQwenAnalysisFrames(videoPath, 30, duration);
     if (frames.length) {
       const strategy = await analyzeVideoFramesWithQwen({ frames, duration, analysisMode: 'strategy' });
@@ -4667,9 +4731,9 @@ async function analyzeMaterialVideo(videoPath: string, buffer: Buffer, duration:
       const exact = await analyzeVideoFramesWithQwen({ frames, duration, analysisMode: 'exact' });
       const exactQuality = analysisDetailsTimelineQuality(exact.scriptDetails15s, duration);
       if (exactQuality.valid) return exact;
-      console.warn(`[studio] 千问精确档时间轴仍不合格，回退 Gemini：${exactQuality.issues.join('；')}`);
+      throw new Error(`千问素材逐镜分析未达到可匹配标准：${exactQuality.issues.join('；')}`);
     } else {
-      console.warn('[studio] 抽帧为空，回退 Gemini 分析素材片段');
+      throw new Error('素材抽帧为空，无法执行千问分析，请检查视频后重试');
     }
   }
   const gemini = await analyzeVideo({ videoBase64: buffer.toString('base64'), mimeType: 'video/mp4' });
@@ -5082,8 +5146,8 @@ studioRouter.post('/cover', async (req, res) => {
   }
 });
 
-/* ── 配音 TTS（Gemini 语音合成 → WAV，本地托管）────────────────────────────
-   把脚本里的"口语内容"抽出来送 Gemini TTS，得到 24kHz PCM，封成 WAV 存 data/tts/。
+/* ── 配音 TTS（千问优先 → WAV，租户隔离托管）────────────────────────────
+   口播使用所选语音服务，逐句测量后保存实际音频时间轴。
    渲染时由 buildManifest 映射成 voiceover.url，桌面端 ffmpeg 把它压过 BGM 混进成片。
 ─────────────────────────────────────────────────────────────────────────── */
 
@@ -5236,54 +5300,44 @@ const SAY_LANGUAGE_VOICE_MAP: Record<string, Record<string, string[]>> = {
     v3: ['Karen', 'Samantha', 'Moira'],
   },
   es: {
-    v1: ['Monica', 'Paulina', 'Samantha'],
+    v1: ['Monica', 'Paulina'],
     v2: ['Jorge', 'Juan', 'Diego'],
-    v3: ['Paulina', 'Monica', 'Samantha'],
+    v3: ['Paulina', 'Monica'],
   },
   ar: {
-    v1: ['Maged', 'Samantha'],
-    v2: ['Maged', 'Daniel'],
-    v3: ['Maged', 'Karen'],
+    v1: ['Maged'],
+    v2: ['Maged'],
+    v3: ['Maged'],
   },
   pt: {
-    v1: ['Luciana', 'Joana', 'Samantha'],
-    v2: ['Felipe', 'Daniel'],
+    v1: ['Luciana', 'Joana'],
+    v2: ['Felipe'],
     v3: ['Joana', 'Luciana'],
   },
   id: {
-    v1: ['Damayanti', 'Samantha'],
-    v2: ['Damayanti', 'Daniel'],
-    v3: ['Damayanti', 'Karen'],
+    v1: ['Damayanti'],
+    v2: ['Damayanti'],
+    v3: ['Damayanti'],
   },
   fr: {
-    v1: ['Amelie', 'Thomas', 'Samantha'],
-    v2: ['Thomas', 'Daniel'],
-    v3: ['Amelie', 'Karen'],
+    v1: ['Amelie', 'Thomas'],
+    v2: ['Thomas'],
+    v3: ['Amelie'],
   },
   de: {
-    v1: ['Anna', 'Markus', 'Samantha'],
-    v2: ['Markus', 'Daniel'],
-    v3: ['Anna', 'Karen'],
+    v1: ['Anna', 'Markus'],
+    v2: ['Markus'],
+    v3: ['Anna'],
   },
 };
 
 function normalizeTtsLanguage(value: unknown): string {
-  const raw = String(value || '').trim().toLowerCase();
-  if (!raw) return 'zh';
-  if (raw.startsWith('zh') || raw.includes('chinese') || raw.includes('中文')) return 'zh';
-  if (raw.startsWith('en') || raw.includes('english')) return 'en';
-  if (raw.startsWith('es') || raw.includes('spanish')) return 'es';
-  if (raw.startsWith('ar') || raw.includes('arabic')) return 'ar';
-  if (raw.startsWith('pt') || raw.includes('portuguese')) return 'pt';
-  if (raw.startsWith('id') || raw.includes('indonesian')) return 'id';
-  if (raw.startsWith('fr') || raw.includes('french')) return 'fr';
-  if (raw.startsWith('de') || raw.includes('german')) return 'de';
-  return raw.split(/[-_]/)[0] || 'zh';
+  return normalizeVideoLanguage(value || 'zh');
 }
 
 function piperModelForLanguage(language: string): string {
   const code = normalizeTtsLanguage(language).toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return process.env[`PIPER_MODEL_${code}`] || process.env.PIPER_MODEL || '';
+  return process.env[`PIPER_MODEL_${code}`] || (normalizeTtsLanguage(process.env.PIPER_LANGUAGE) === normalizeTtsLanguage(language) ? process.env.PIPER_MODEL : '') || '';
 }
 
 function piperConfigForLanguage(language: string, modelPath: string): string {
@@ -5789,7 +5843,7 @@ async function generateLocalSayTts(text: string, voice: string, language: string
   const aiffPath = path.join(scopedStudioAssetDir(TTS_ROOT), aiffFile);
   const wavPath = path.join(scopedStudioAssetDir(TTS_ROOT), wavFile);
   const lang = normalizeTtsLanguage(language);
-  const candidates = SAY_LANGUAGE_VOICE_MAP[lang]?.[voice] ?? SAY_VOICE_MAP[voice] ?? [];
+  const candidates = SAY_LANGUAGE_VOICE_MAP[lang]?.[voice] ?? [];
   const spoken = text.slice(0, 1500);
 
   let made = false;
@@ -5797,7 +5851,7 @@ async function generateLocalSayTts(text: string, voice: string, language: string
     made = await execFileOk('/usr/bin/say', ['-v', candidate, '-o', aiffPath, spoken]);
     if (made && fs.existsSync(aiffPath)) break;
   }
-  if (!made) made = await execFileOk('/usr/bin/say', ['-o', aiffPath, spoken]);
+  // Never fall back to the system's unrelated default language.
   if (!made || !fs.existsSync(aiffPath)) return null;
 
   const converted = await runFfmpeg(['-i', aiffPath, '-ar', '24000', '-ac', '1', '-y', wavPath]);
@@ -5810,11 +5864,11 @@ async function generateLocalSayTts(text: string, voice: string, language: string
 
 function qwenTtsLanguageType(language: string): string {
   const map: Record<string, string> = {
-    zh: 'Chinese', en: 'English', es: 'Spanish', ar: 'Arabic', pt: 'Portuguese',
-    id: 'Indonesian', fr: 'French', de: 'German', ja: 'Japanese', ko: 'Korean',
+    zh: 'Chinese', en: 'English', es: 'Spanish', pt: 'Portuguese',
+    fr: 'French', de: 'German', ja: 'Japanese', ko: 'Korean',
     ru: 'Russian', it: 'Italian',
   };
-  return map[normalizeTtsLanguage(language)] || 'Chinese';
+  return map[normalizeTtsLanguage(language)] || '';
 }
 
 function wavDurationFromBytes(bytes: Buffer): number {
@@ -5841,6 +5895,7 @@ function friendlyTtsProviderError(value: unknown, provider = '语音服务'): st
 }
 
 async function generateQwenTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
+  if (!qwenTtsLanguageType(language)) return null;
   const apiKey = String(process.env.DASHSCOPE_API_KEY || '').trim();
   if (!apiKey) return null;
   const endpoint = process.env.DASHSCOPE_TTS_ENDPOINT
@@ -5908,6 +5963,8 @@ async function generateQwenTts(text: string, voice: string, language: string): P
 }
 
 async function generateTtsAudio(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}): Promise<{ ok: boolean; source: string; url?: string; duration?: number; error?: string; customVoiceStatus?: 'activated'; cues?: AlignedCue[]; alignmentSource?: 'minimax_native' }> {
+  if (spoken.length > 5000) return { ok: false, source: 'text_too_long', error: '口播超过 5000 字符，请拆分视频；配音不会截断正文。' };
+  if (!(normalizeTtsLanguage(language) in VIDEO_LANGUAGES)) return { ok: false, source: 'unsupported_language', error: '当前不支持此配音语言，请重新选择；不会改用中文。' };
   if (String(voice || '').startsWith('custom:')) {
     let minimaxError = '';
     try {
@@ -6023,6 +6080,7 @@ function studioAudioCapabilities() {
   const xtts = Boolean((process.env.XTTS_BIN || process.env.COQUI_TTS_BIN || '').trim());
   const qwen = Boolean(process.env.DASHSCOPE_API_KEY?.trim());
   return {
+    languages: Object.entries(VIDEO_LANGUAGES).map(([code, label]) => ({ code, label, available: Boolean(minimax || (qwen && qwenTtsLanguageType(code)) || process.env[`PIPER_MODEL_${code.toUpperCase()}`]), reason: '需配置支持此语言的配音服务' })),
     customVoice: {
       upload: true,
       synthesis: minimax || xtts,
@@ -6079,9 +6137,18 @@ studioRouter.post('/tts/minimax/diagnose', async (_req, res) => {
   }
 });
 
-async function alignTtsAudio(transcript: string, url: string | undefined, duration: number): Promise<{ cues: AlignedCue[]; source: 'audio_ai' | 'proportional' }> {
-  void url;
-  return { cues: proportionalCues(transcript, duration), source: 'proportional' };
+async function alignTtsAudio(transcript: string, url: string | undefined, duration: number): Promise<{ cues: AlignedCue[]; source: 'audio_ai' }> {
+  if (!url || !localTtsFile(url)) throw Error('找不到当前企业的配音文件');
+  const tenantId = studioTenantContext.getStore()!;
+  const file = path.join(tenantAssetDir(TTS_ROOT, tenantId), path.basename(new URL(url, 'http://local').pathname));
+  try {
+    const cached = JSON.parse(fs.readFileSync(file + '.alignment.json', 'utf8'));
+    if (cached.text === transcript && cached.cues?.length) return { cues: cached.cues, source: 'audio_ai' };
+  } catch {}
+  if (!objectStorageEnabled()) throw Error('该音频需要真实对齐。请重新生成句级配音，或配置私有对象存储后使用千问音频对齐');
+  await persistPrivateStudioAsset('tts', tenantId, file);
+  const signed = await r2SignedGetUrl(tenantPrivateObjectKey('tts', tenantId, path.basename(file)), 15 * 60);
+  return { cues: await alignQwenFile(signed, transcript, duration, file + '.asr.json'), source: 'audio_ai' };
 }
 
 async function rewriteVoiceoverToDuration(text: string, language: string, currentDuration: number, targetDuration: number): Promise<string> {
@@ -6223,11 +6290,16 @@ async function generateFittedTts(spoken: string, voice: string, language: string
 }
 
 async function persistTtsResult<T extends { url?: string }>(result: T, tenantId: string): Promise<T> {
-  if (!result.url || !objectStorageEnabled()) return result;
+  if (!result.url) return result;
   const file = path.basename(new URL(result.url, 'http://local').pathname);
   const filePath = path.join(tenantAssetDir(TTS_ROOT, tenantId), file);
-  if (!fs.existsSync(filePath)) return result;
-  return { ...result, url: await persistPrivateStudioAsset('tts', tenantId, filePath) };
+  if (!fs.existsSync(filePath)) return { ...result, ok: false, url: undefined, error: '配音文件未保存，请重试' };
+  const diagnostics = await new Promise<string>(resolve => execFile(ffmpegStatic || 'ffmpeg', ['-hide_banner', '-i', filePath, '-af', 'volumedetect', '-f', 'null', '-'], { timeout: 30000 }, (_error, _stdout, stderr) => resolve(String(stderr))));
+  const durationMatch = diagnostics.match(/Duration: (\d+):(\d+):([\d.]+)/);
+  const duration = durationMatch ? +durationMatch[1] * 3600 + +durationMatch[2] * 60 + +durationMatch[3] : 0;
+  const volume = Number(diagnostics.match(/max_volume: ([-\d.]+) dB/)?.[1] ?? '-Infinity');
+  if (duration < 0.2 || volume < -60) return { ...result, ok: false, url: undefined, error: '配音为空或接近静音，请选择此语言的其他音色或服务' };
+  return { ...result, duration, ...(objectStorageEnabled() ? { url: await persistPrivateStudioAsset('tts', tenantId, filePath) } : {}) };
 }
 
 /**
@@ -6237,35 +6309,40 @@ async function persistTtsResult<T extends { url?: string }>(result: T, tenantId:
  * session. No publishing side effect happens here.
  */
 export async function synthesizeStudioVoiceForAutomation(input: {
-  tenantId: string;
-  text: string;
-  language?: string;
-  voice?: string;
-  targetDuration?: number;
-}): Promise<{
-  ok: boolean;
-  source?: string;
-  url?: string;
-  localPath?: string;
-  duration?: number;
-  text?: string;
-  error?: string;
-}> {
+  tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
+  style?: TtsStyleOptions;
+}): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string }> {
   return studioTenantContext.run(input.tenantId, async () => {
-    const language = String(input.language || 'zh');
-    const spoken = await repairVoiceoverTargetLanguage(String(input.text || '').trim(), language);
-    if (!spoken) return { ok: false, source: 'empty', error: 'no spoken text' };
-    const generated = await generateFittedTts(spoken, String(input.voice || 'v1'), language, {
-      preset: 'natural',
-      targetDuration: Math.max(1, Math.min(180, Number(input.targetDuration || 20))),
-    });
-    const persisted = await persistTtsResult(generated, input.tenantId);
-    const fileName = persisted.url ? path.basename(new URL(persisted.url, 'http://local').pathname) : '';
-    const localPath = fileName ? path.join(tenantAssetDir(TTS_ROOT, input.tenantId), fileName) : '';
-    return {
-      ...persisted,
-      ...(localPath && fs.existsSync(localPath) ? { localPath } : {}),
-    };
+    const spoken = String(input.text || '').trim();
+    if (!spoken) return { ok: false, error: '口播为空' };
+    // Each sentence is synthesized and measured independently. Boundaries come
+    // from real audio samples, not proportional allocation of the full script.
+    const lines = spoken.split(/(?<=[。！？!?])\s*|(?<=\.)\s+(?=[A-ZÀ-ž])/u).map(x => x.trim()).filter(Boolean);
+    const dir = tenantAssetDir(TTS_ROOT, input.tenantId); fs.mkdirSync(dir, { recursive: true });
+    const files: string[] = [], cues: AlignedCue[] = [];
+    const providers = new Set<string>();
+    let cursor = 0;
+    const speed = Math.max(.8, Math.min(1.2, Number(input.style?.speed) || 1));
+    for (const line of lines) {
+      const audio = await generateTtsAudio(line, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }));
+      if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };
+      if (!['qwen_tts', 'minimax'].includes(audio.source)) return { ok: false, source: audio.source, error: audio.error || '当前只能使用本地兜底音色，不能作为正式成片配音；请检查语音服务配置' };
+      providers.add(audio.source);
+      const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
+      const output = path.join(dir, randomUUID() + '.wav');
+      await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + speed + ',apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', output], 30000);
+      const duration = wavDurationFromBytes(fs.readFileSync(output));
+      if (!(duration > .15)) return { ok: false, error: '无法测量实际配音时长' };
+      cues.push({ start: cursor, end: cursor + duration - .15, text: line });
+      cursor += duration; files.push(output);
+    }
+    const joined = path.join(dir, randomUUID() + '.wav');
+    const inputs = files.flatMap(file => ['-i', file]);
+    await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', ...inputs, '-filter_complex', files.map((_,i) => '['+i+':a]').join('') + 'concat=n=' + files.length + ':v=0:a=1[out]', '-map', '[out]', '-c:a', 'pcm_s16le', joined], 60000);
+    const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration: cursor }, input.tenantId);
+    fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues }));
+    for (const file of files) fs.unlinkSync(file);
+    return { ...result, localPath: joined, text: spoken, cues, source: [...providers].join('+'), alignmentSource: 'synthesized_sentence_audio' };
   });
 }
 
@@ -6278,8 +6355,8 @@ studioRouter.post('/tts', async (req, res) => {
   if (!spoken) { res.status(400).json({ ok: false, error: 'no spoken text' }); return; }
 
   try {
-    const languageSafeSpoken = await repairVoiceoverTargetLanguage(spoken, language);
-    const output = await persistTtsResult(await generateFittedTts(languageSafeSpoken, voice, language, style), tenantId);
+    if (!spokenLanguageMatches(spoken, language)) { res.status(400).json({ ok: false, error: '口播与目标语言不一致，请先修改脚本；配音不会自动翻译。' }); return; }
+    const output = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style) });
     const payload = JSON.stringify(output);
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -6310,7 +6387,7 @@ studioRouter.post('/tts/align', async (req, res) => {
     res.json({ ok: true, ...aligned });
   } catch (error) {
     console.warn('[studio] TTS alignment request fallback:', error instanceof Error ? error.message : error);
-    res.json({ ok: true, ...fallback });
+    res.status(422).json({ ok: false, error: error instanceof Error ? error.message : '音频对齐失败', cues: [] });
   }
 });
 
@@ -6329,7 +6406,7 @@ studioRouter.post('/tts/transcribe', async (req, res) => {
   const qwenConfigured = Boolean(process.env.DASHSCOPE_API_KEY?.trim());
   if (!qwenConfigured) {
     if (transcriptHint) {
-      res.json({ ok: true, text: transcriptHint, cues: proportionalCues(transcriptHint, duration), source: 'proportional' });
+      res.status(503).json({ ok: false, text: transcriptHint, cues: [], error: '音频对齐服务不可用，请重新生成配音' });
     } else {
       res.status(503).json({ ok: false, error: 'DASHSCOPE_API_KEY not set; uploaded audio cannot be transcribed', text: '', cues: [] });
     }
@@ -6340,10 +6417,11 @@ studioRouter.post('/tts/transcribe', async (req, res) => {
     const parsed = await transcribeAudioWithQwen({ audio: media.bytes, fileName: `voice${media.mimeType === 'audio/mpeg' ? '.mp3' : '.wav'}` });
     const text = String(parsed.text || transcriptHint || '').trim();
     if (!text) throw new Error('audio transcription returned no text');
-    res.json({ ok: true, text, cues: proportionalCues(text, duration), source: 'qwen_asr' });
+    const aligned = await alignTtsAudio(text, url, duration);
+    res.json({ ok: true, text, cues: aligned.cues, source: 'audio_ai' });
   } catch (error) {
     if (transcriptHint) {
-      res.json({ ok: true, text: transcriptHint, cues: proportionalCues(transcriptHint, duration), source: 'proportional', error: String(error instanceof Error ? error.message : error).slice(0, 240) });
+      res.status(422).json({ ok: false, text: transcriptHint, cues: [], error: String(error instanceof Error ? error.message : error).slice(0, 240) });
     } else {
       res.status(502).json({ ok: false, error: String(error instanceof Error ? error.message : error).slice(0, 240), text: '', cues: [] });
     }
@@ -6358,7 +6436,7 @@ studioRouter.post('/tts/batch', async (req, res) => {
   const input = Array.isArray(items) ? items.slice(0, 8) : [];
   if (input.length === 0) { res.status(400).json({ ok: false, error: 'items required', audios: {} }); return; }
 
-  const audios: Record<string, { ok: boolean; source: string; url?: string; duration?: number; error?: string }> = {};
+  const audios: Record<string, Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>>> = {};
   for (const item of input) {
     const code = String(item?.code || item?.language || '').trim() || 'zh';
     const language = String(item?.language || code).trim() || code;
@@ -6368,8 +6446,8 @@ studioRouter.post('/tts/batch', async (req, res) => {
       continue;
     }
     try {
-      const languageSafeSpoken = await repairVoiceoverTargetLanguage(spoken.slice(0, 1500), language);
-      audios[code] = await persistTtsResult(await generateFittedTts(languageSafeSpoken, voice, language, style), tenantId);
+      if (!spokenLanguageMatches(spoken, language)) throw Error('口播与目标语言不一致，请先修改脚本');
+      audios[code] = await synthesizeStudioVoiceForAutomation({ tenantId, text: spoken, voice, language, style: normalizeTtsStyle(style) });
     } catch (error) {
       audios[code] = {
         ok: false,
@@ -6632,6 +6710,20 @@ function withRecommendedBgmNames(list: BgmTrack[]): BgmTrack[] {
     scope: track.scope || (!track.tenantId ? 'shared' : 'tenant'),
     uploadedBy: track.uploadedBy || (!track.tenantId ? '灵枢管理员上传' : '客户上传'),
   }));
+}
+
+export function automationBgmCatalog(tenantId: string) {
+  return withRecommendedBgmNames(userBgms(tenantId)).map(({ id, name, mood }) => ({ id, name, mood }));
+}
+export async function automationBgmAudio(tenantId: string, id: string): Promise<string> {
+  const track = userBgms(tenantId).find(item => item.id === id);
+  if (!track) throw Error('所选配乐已不可用，请在生产现场更换');
+  if (track.objectKey) return r2SignedGetUrl(track.objectKey, materialSignedUrlTtlSeconds());
+  const relative = track.url.replace(/^\/bgm\//, '');
+  const root = path.resolve(BGM_ROOT);
+  const file = path.resolve(root, relative);
+  if (!file.startsWith(root + path.sep) || !fs.existsSync(file)) throw Error('配乐文件缺失，请在生产现场更换');
+  return 'data:audio/mpeg;base64,' + fs.readFileSync(file).toString('base64');
 }
 
 // GET /studio/bgm → BgmTrack[]（仅用户上传音乐）

@@ -53,6 +53,7 @@ export type StudioWorkbenchFrameProps = {
   onProjectTitleChange?: (title: string) => void;
   projectTitlePlaceholder?: string;
   saveStatus: StudioSaveStatus;
+  onSave?: () => void;
   steps?: StudioWorkbenchStep[];
   activeStepId: StudioWorkbenchStep['id'];
   onStepChange?: (stepId: StudioWorkbenchStep['id']) => void;
@@ -258,6 +259,7 @@ export function StudioWorkbenchFrame({
   onProjectTitleChange,
   projectTitlePlaceholder = '未命名项目',
   saveStatus,
+  onSave,
   steps = defaultSteps,
   activeStepId,
   onStepChange,
@@ -309,8 +311,9 @@ export function StudioWorkbenchFrame({
         <div className="hidden min-w-0 lg:block">
           <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} />
         </div>
-        <div className="hidden justify-self-end rounded-full bg-surface-2 px-3 py-1.5 sm:block">
+        <div className="flex items-center gap-3 justify-self-end rounded-full bg-surface-2 px-3 py-1.5">
           <SaveStatusView status={saveStatus} compact />
+          {onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-lg border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary disabled:opacity-50">保存草稿</button>}
         </div>
       </header>
 
@@ -409,6 +412,7 @@ export function StudioWorkbenchFrame({
               </button>
             )}
             <button
+              data-agent-action="studio-primary"
               type={primaryAction.type || 'button'}
               disabled={primaryAction.disabled || primaryAction.loading}
               onClick={primaryAction.onClick}

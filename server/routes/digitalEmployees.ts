@@ -1,13 +1,20 @@
+import { reviseContent } from '../digitalEmployees/contentRevision.js';
+import { automationBgmCatalog } from './studio.js';
+import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
+import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
+import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
-import type { WorkflowTask } from '../../src/lib/digitalEmployees.js';
+import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
+import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type BrowserProductionTarget } from '../digitalEmployees/browserSessions.js';
+import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
-import { advanceAutomatedContentProduction, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
+import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
 import { buildContentBatchPlan, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import {
@@ -292,7 +299,8 @@ function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; status:
     unit: String(record.unit || ''),
     startsAt: String(record.starts_at || ''),
     endsAt: String(record.ends_at || ''),
-    scope: String(jsonObject(record.scope, record.scope || '')),
+    scope: typeof jsonObject(record.scope, record.scope || '') === 'object' ? String(jsonObject<any>(record.scope, {}).description || '') : String(jsonObject(record.scope, record.scope || '')),
+    videoPlans: jsonObject<any>(record.scope, {}).videoPlans,
     constraints: jsonObject<string[]>(record.constraints, []),
     status: String(record.status || 'draft'),
     version: Number(record.version || 1),
@@ -506,6 +514,57 @@ async function appendEvent(input: {
   }
 }
 
+agentBrowserSessions.setTelemetry(async (scope, action) => {
+  await appendEvent({ ...scope, type: `agent.ui.${action.kind}`, summary: action.label,
+    payload: { uiAction: { ...action, page: 'agent-task-workspace' }, source: 'browser_worker' } });
+});
+
+export async function browserTaskWorkspace(scope: BrowserScope): Promise<BrowserProductionTarget> {
+  const [run, tasks] = await Promise.all([
+    tenantRecord<RunRecord>(COLLECTION.runs, scope.runId, scope.tenantId),
+    store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: scope.tenantId, run_id: scope.runId }, sort: 'sequence', perPage: 100 }),
+  ]);
+  const task = tasks.items.find(item => item.id === scope.taskId);
+  if (!run || !task) throw new Error('task_run_not_found');
+  const normalized = tasks.items.map(item => ({ ...item, business_refs: jsonObject(item.business_refs, []), depends_on: jsonObject(item.depends_on, []), output: jsonObject(item.output, {}) })) as WorkflowTask[];
+  const resources = await buildDeliveryResources(scope.tenantId, normalized, '');
+  const linked = resources.filter(resource => resource.taskIds.includes(task.id));
+  const selected = linked.find(resource => resource.column === 'active' && resource.link) || linked.find(resource => resource.link);
+  const customerTask = task.agent_role === 'customer' || task.business_domain === 'customer';
+  const mappedLink = buildTaskDeepLink(normalized.find(item => item.id === task.id)!, undefined, run.id);
+  const page = customerTask ? 'conversion' : selected?.link?.page || mappedLink.page;
+  const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, scope.tenantId);
+  const projectId = page === 'smartAssets' && selected?.id.startsWith('studio_project:') ? selected.id.slice('studio_project:'.length) : undefined;
+  const project = projectId ? await store.getById<StoredRecord>('studio_projects', projectId) : null;
+  const spec = jsonObject<Record<string, unknown>>(project?.spec, {});
+  const automation = jsonObject<Record<string, unknown>>(spec.automation, {});
+  const taskRefs = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []);
+  const customerRef = taskRefs.find(ref => ref.type === 'customer');
+  const scheduledRef = taskRefs.find(ref => ref.type === 'scheduled_task');
+  let customerId = customerTask ? String(selected?.link?.businessRef.entityId || customerRef?.id || '') || undefined : undefined;
+  if (customerTask && !customerId) {
+    const segment = await first<StoredRecord & { tenant_id: string }>(COLLECTION.segments, { tenant_id: scope.tenantId, run_id: scope.runId }, '-version');
+    if (segment) customerId = (await getCustomerSegmentMembers(scope.tenantId, segment.id)).find(member => member.membership === 'included')?.customer_id;
+  }
+  return { userId: goal?.owner_id || 'digital_employee_agent', projectId, customerId,
+    stage: String(automation.stage || ''), revision: String(project?.updated_at || task.updated_at),
+    link: { page, view: mappedLink.view || selected?.link?.view, runId: scope.runId, taskId: scope.taskId,
+      businessRef: { ...selected?.link?.businessRef, taskKey: task.task_key, ...(projectId ? { entityId: projectId } : customerId ? { entityId: customerId } : scheduledRef ? { entityId: String(scheduledRef.id) } : {}) } } };
+
+}
+
+async function executeInTaskBrowser<T>(input: { tenantId: string; run: RunRecord; task: TaskRecord }, label: string, action: () => Promise<T>): Promise<T> {
+  if (!browserExecutionEnabled()) return action();
+  const scope = { tenantId: input.tenantId, runId: input.run.id, taskId: input.task.id };
+  const read = () => browserTaskWorkspace(scope);
+  if (input.task.task_key === 'content_production') {
+    const target = await read();
+    const stageLabels: Record<string, string> = { script: '生成脚本', material_match: '匹配分镜素材', voice_subtitles: '生成配音与字幕', heygen: '生成数字人口播', render: '生成成片', quality: '检查成片质量' };
+    label = target.projectId ? stageLabels[target.stage || ''] || label : '创建制作项目';
+  }
+  return agentBrowserSessions.perform(scope, read, label, action);
+}
+
 onFollowupWorkerEvent(async event => {
   await appendEvent({
     tenantId: event.tenantId,
@@ -620,7 +679,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const runId = run?.id || '';
   const [tasks, events, approvals, handoffs, review] = runId ? await Promise.all([
     store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: runId }, sort: 'sequence', perPage: 100 }),
-    store.list<EventRecord>(COLLECTION.events, { where: { tenant_id: tenantId, run_id: runId }, sort: 'sequence', perPage: 500 }),
+    store.list<EventRecord>(COLLECTION.events, { where: { tenant_id: tenantId, run_id: runId }, sort: '-sequence', perPage: 500 }),
     store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: runId }, sort: '-created_at', perPage: 100 }),
     store.list<HandoffRecord>(COLLECTION.handoffs, { where: { tenant_id: tenantId, run_id: runId }, sort: '-started_at', perPage: 100 }),
     first<StoredRecord & { tenant_id: string; run_id: string; summary: unknown; status: string; created_at: string }>(COLLECTION.reviews, { tenant_id: tenantId, run_id: runId }),
@@ -650,7 +709,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     run,
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
-    events: events?.items.map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],
+    events: events?.items.slice().reverse().map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],
     approvals: approvals?.items.map(approval => ({ ...approval, evidence: jsonObject(approval.evidence, {}) })) || [],
     handoffs: handoffs?.items.map(handoff => ({ ...handoff, snapshot: jsonObject(handoff.snapshot, {}) })) || [],
     review: review ? { ...review, summary: jsonObject(review.summary, {}) } : null,
@@ -736,7 +795,7 @@ async function approvalPreflight(
 }
 
 async function createApproval(tenantId: string, goal: GoalRecord, run: RunRecord, task: TaskRecord, allTasks: TaskRecord[]): Promise<ApprovalRecord> {
-  const existing = await first<ApprovalRecord>(COLLECTION.approvals, { tenant_id: tenantId, task_id: task.id });
+  const existing = await first<ApprovalRecord>(COLLECTION.approvals, { tenant_id: tenantId, task_id: task.id, status: 'pending' }, '-created_at');
   const approvalCreatedAt = existing?.status === 'pending' && existing.created_at ? existing.created_at : new Date().toISOString();
   const scope = taskScope(task, allTasks);
   const evidence: Array<Record<string, unknown>> = allTasks
@@ -790,7 +849,8 @@ async function createApproval(tenantId: string, goal: GoalRecord, run: RunRecord
     content_hash: contentHash,
   };
   let approval: ApprovalRecord;
-  if (!existing) {
+  if (!existing || Number(existing.subject_version) !== subjectVersion || String(existing.content_hash || '') !== contentHash) {
+    if (existing) await store.update(COLLECTION.approvals, existing.id, { status: 'superseded', decided_at: new Date().toISOString() });
     approval = await requiredCreate<ApprovalRecord>(COLLECTION.approvals, payload);
   } else {
     const updated = await store.update(COLLECTION.approvals, existing.id, payload);
@@ -1067,7 +1127,8 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
         blockedReason: `内容生产资料待补齐：${persistedGaps.map(ref => String(ref.label || ref.key || '')).filter(Boolean).join('；')}`,
       };
     }
-    const matching = task.task_key === 'content_quality_gate' ? scoped.filter(studioProjectCompleted) : scoped.filter(studioProjectRendered);
+    const requiresAcceptance = task.task_key === 'content_quality_gate' && (await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId))?.metric === 'approved_content_packages';
+    const matching = task.task_key === 'content_quality_gate' ? scoped.filter(item => studioProjectCompleted(item) && (!requiresAcceptance || contentAccepted(jsonObject(item.spec, {})))) : scoped.filter(studioProjectRendered);
     const result = scopedProof(
       task.task_key === 'content_quality_gate' ? 'completedWorks' : 'contentProjects',
       task.task_key === 'content_quality_gate' ? 'studio_projects.spec.automation.quality + workflow scope' : 'studio_projects.spec.automation.renderOutputPath + workflow scope',
@@ -1081,7 +1142,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     result.ready = scoped.length > 0 && matching.length === scoped.length;
     result.proof = { ...result.proof, value: matching.length, status: result.ready ? 'available' : 'pending' };
     const blocker = scoped.map(item => String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(item.spec, {}).automation, {}).blocker || '').trim()).find(Boolean) || '';
-    return { ...result, blockedReason: blocker };
+    return { ...result, blockedReason: blocker || (requiresAcceptance && !result.ready ? '请在交付看板预览成片并确认当前版本；机器通过不计为人工批准' : '') };
   }
   if (task.task_key === 'publishing_calendar') {
     const posts = await store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 });
@@ -1171,6 +1232,40 @@ async function prepareObserveBusinessResource(input: {
   task: TaskRecord;
   config: DigitalEmployeeConfig;
   snapshot: BusinessSnapshot;
+}): Promise<boolean> {
+  // Set up the scheduled record before opening its existing production control.
+  // This only saves configuration; runScheduledTaskNow remains behind the click.
+  if (browserExecutionEnabled() && input.task.task_key === 'scheduled_source_collection'
+    && !jsonObject<Array<Record<string, unknown>>>(input.task.business_refs, []).some(ref => ref.type === 'scheduled_task')) {
+    const schedule = socialScheduleFromCadence(input.config.socialCadence);
+    const ensured = ensureDigitalEmployeeSocialCollectionTask({ tenantId: input.tenantId,
+      workflowRunId: input.run.id, workflowTaskId: input.task.id,
+      keywords: input.config.focusProducts || goalInput(input.goal).scope || input.config.primaryBusiness,
+      ...schedule });
+    const refs = [{ type: 'scheduled_task', id: ensured.task.id, taskType: ensured.task.taskType, cronExpr: ensured.task.cronExpr }];
+    await store.update(COLLECTION.tasks, input.task.id, { business_refs: refs, updated_at: new Date().toISOString() });
+    input.task.business_refs = refs;
+    if (ensured.created || ensured.updated) {
+      await appendEvent({ tenantId: input.tenantId, runId: input.run.id, taskId: input.task.id,
+        type: 'business.resource.prepared', level: 'info', summary: '已准备原定时采集配置，等待浏览器点击执行',
+        payload: { businessRefs: refs, schedule, externalPublishPerformed: false } });
+      await appendAudit({ tenantId: input.tenantId, userId: input.goal.owner_id || 'digital_employee_agent',
+        action: 'digital_employee.scheduler.prepared', targetType: 'scheduled_task', targetId: ensured.task.id,
+        metadata: { runId: input.run.id, taskId: input.task.id, schedule } });
+    }
+  }
+  // Work starts at a real production-page button click. Observer-only checks
+  // and approval decisions retain their existing authorization paths.
+  if (['scheduled_source_collection', 'content_production', 'customer_segmentation', 'followup_batch_draft'].includes(input.task.task_key)) {
+    const labels: Record<string, string> = { scheduled_source_collection: '执行社媒采集', content_production: '执行下一步制作', customer_segmentation: '生成客户分层', followup_batch_draft: '生成跟进草稿' };
+    return executeInTaskBrowser(input, labels[input.task.task_key], () => prepareObserveBusinessResourceDirect(input));
+  }
+  return prepareObserveBusinessResourceDirect(input);
+}
+
+async function prepareObserveBusinessResourceDirect(input: {
+  tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord;
+  config: DigitalEmployeeConfig; snapshot: BusinessSnapshot;
 }): Promise<boolean> {
   const { tenantId, goal, run, task, config, snapshot } = input;
   const actorId = goal.owner_id || 'digital_employee_agent';
@@ -1458,7 +1553,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       continue;
     }
     if (task.task_key === 'content_mode_routing') {
-      const batch = await ensureContentBatchPlan({ tenantId, goal, run, task, plan, config });
+      const batch = await executeInTaskBrowser({ tenantId, run, task }, '生成内容制作订单', () => ensureContentBatchPlan({ tenantId, goal, run, task, plan, config }));
       const refs = [{ type: 'content_batch_plan', id: batch.record.id, orderCount: batch.draft.orders.length }, ...batch.draft.orders.map(order => ({ type: 'content_order', id: order.id, batchPlanId: batch.record.id, route: order.route, platform: order.platform, productId: order.productId }))];
       const output = { ...buildTaskOutput(task.task_key, goalInput(goal), config), batchPlanId: batch.record.id, orders: batch.draft.orders, routing: { eligibleRoutes: batch.draft.eligibleRoutes, disabledRoutes: batch.draft.disabledRoutes }, dataStatus: batch.draft.status };
       if (batch.draft.status === 'blocked') {
@@ -1773,6 +1868,105 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   res.json(await buildOverview(tenantId));
 });
 
+digitalEmployeesRouter.get('/content-projects/:projectId/production', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+  if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+  const spec = jsonObject<Record<string, any>>(project.spec, {});
+  res.json({ projectId: project.id, hash: contentAcceptanceHash(spec), spec: { lang: spec.lang, duration: spec.duration, voice: spec.contentOrder?.videoPlan?.voice || spec.voice, voiceStyle: spec.voiceStyle, voiceoverUrl: spec.voiceoverUrl, bgm: spec.bgm, bgmVol: spec.bgmVol, bgmSelection: spec.bgmSelection, voiceSelection: spec.voiceSelection, scenePlan: spec.contentOrder?.videoPlan?.scenePlan, sceneSourcePlan: spec.sceneSourcePlan, materialIds: spec.automation?.routePlan?.assetIds || [], sceneOverrides: spec.sceneOverrides, cues: spec.alignedCuesByLang?.[spec.lang] || [], subtitleStyle: spec.subtitleStyle, subtitleAlignmentSource: spec.subtitleAlignmentSource, coverTitle: spec.coverTitle, coverFrameTime: spec.coverFrameTime, exportSpec: spec.exportSpec, ratio: spec.ratio, stage: spec.automation?.stage }, managed: spec.automation?.managedBy === 'digital_employee' });
+});
+digitalEmployeesRouter.post('/content-projects/:projectId/revise', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const original = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+  const initial = jsonObject<Record<string, any>>(original?.spec, {});
+  if (!original || !initial.workflowRunId) { res.status(404).json({ error: 'project_not_found' }); return; }
+  await withDigitalEmployeeRunLock(tenantId, initial.workflowRunId, async () => {
+    try {
+      const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+      const spec = jsonObject<Record<string, any>>(project?.spec, {});
+      const run = await tenantRecord<RunRecord>(COLLECTION.runs, initial.workflowRunId, tenantId);
+      if (!project || !run || run.status === 'cancelled' || spec.publishedAt || spec.publishingReceipt) { res.status(409).json({ error: '已发布或已取消的任务请复制为新计划' }); return; }
+      const posted = await store.list<any>('posts', { where: { tenant_id: tenantId }, perPage: 500 });
+      if (posted.items.some(post => { const stats=jsonObject<Record<string, any>>(post.stats, {}); return stats.sourceProjectId===project.id && ['published','partial'].includes(stats.status); })) { res.status(409).json({ error: '该项目已有真实发布结果，请复制为新计划' }); return; }
+      if (req.body.hash !== contentAcceptanceHash(spec)) { res.status(409).json({ error: '后台已更新项目，请刷新后修改' }); return; }
+      if (req.body.node === 'music' && req.body.values?.bgm && !automationBgmCatalog(tenantId).some(track => track.id === req.body.values.bgm)) throw Error('配乐不属于当前企业可用曲库');
+      const next = reviseContent(spec, req.body.node, req.body.values || {});
+      const now = new Date().toISOString();
+      if (!await store.update('studio_projects', project.id, { status: 'draft', spec: next, updated_at: now })) throw Error('项目保存失败');
+      await invalidatePublishingApprovalForProject(tenantId, project.id);
+      const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
+      for (const task of tasks.items.filter(t => ['content_production', 'content_quality_gate', 'weekly_review'].includes(t.task_key))) await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, updated_at: now });
+      await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', completed_at: '', pause_reason: '' });
+      if (run.goal_id) await store.update(COLLECTION.goals, run.goal_id, { status: 'active', updated_at: now });
+      await appendAudit({ tenantId, userId, action: 'content.node_revised', targetType: 'studio_project', targetId: project.id, metadata: { node: req.body.node, version: next.automation.contentVersion } });
+      res.json({ ok: true, stage: next.automation.stage });
+    } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+  });
+});
+
+digitalEmployeesRouter.post('/content-projects/:projectId/narration', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const original = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+  const originalSpec = jsonObject<Record<string, any>>(original?.spec, {});
+  if (!original || !originalSpec.workflowRunId) { res.status(404).json({ error: 'project_not_found' }); return; }
+  await withDigitalEmployeeRunLock(tenantId, originalSpec.workflowRunId, async () => {
+    const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+    const spec = jsonObject<Record<string, any>>(project?.spec, {});
+    const run = await tenantRecord<RunRecord>(COLLECTION.runs, originalSpec.workflowRunId, tenantId);
+    if (!project || !run || ['cancelled', 'succeeded'].includes(run.status) || project.status === 'published') { res.status(409).json({ error: '当前运行不能修改，请复制为新的制作计划' }); return; }
+    if (req.body?.hash !== contentAcceptanceHash(spec)) { res.status(409).json({ error: '口播版本已变化，请刷新' }); return; }
+    const lines = req.body?.lines;
+    if (!Array.isArray(lines) || lines.length < 3 || lines.length > 8 || lines.some(line => typeof line !== 'string' || !line.trim() || /[\r\n]/.test(line)) || lines.join(' ').length > 5000 || !spokenLanguageMatches(lines.join(' '), String(spec.lang))) { res.status(400).json({ error: '请保留每段完整口播，使用制作计划的语言，总长不超过 5000 字符' }); return; }
+    try {
+      const script = freezeStoryboardNarration(String(spec.script || ''), lines.map(line => line.trim()));
+      const now = new Date().toISOString();
+      await store.update('studio_projects', project.id, { status: 'draft', updated_at: now, spec: { ...spec, script, narrationHistory: [...(Array.isArray(spec.narrationHistory) ? spec.narrationHistory : []), { script: spec.script, version: Number(spec.automation?.contentVersion || 1), changedAt: now }].slice(-20), contentAcceptance: null, productionDirection: null, subtitleAlignmentSource: '', voiceoverUrl: '', voiceoverDur: 0, alignedCuesByLang: {}, renderOutputPath: '', automation: { ...spec.automation, contentVersion: Number(spec.automation?.contentVersion || 1) + 1, stage: 'voice_subtitles', status: 'queued', blocker: '', narrationFeedback: '', narrationReviewPassed: false, heygenJobId: '', voiceLocalPath: '', quality: {}, renderOutputPath: '', renderedAt: '', completedAt: '' } } });
+      await invalidatePublishingApprovalForProject(tenantId, project.id);
+      const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
+      for (const task of tasks.items.filter(task => ['content_production', 'content_quality_gate', 'weekly_review'].includes(task.task_key))) await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, updated_at: now });
+      await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', completed_at: '', pause_reason: '' });
+      if (run.goal_id) await store.update(COLLECTION.goals, run.goal_id, { status: 'active', updated_at: now });
+      await appendAudit({ tenantId, userId, action: 'content.narration_revised', targetType: 'studio_project', targetId: project.id, metadata: { priorHash: contentAcceptanceHash(spec), version: Number(spec.automation?.contentVersion || 1) + 1 } });
+      res.json({ ok: true });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '口播修改失败' }); }
+  });
+});
+
+digitalEmployeesRouter.post('/content-projects/:projectId/approve', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const initial = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+  if (!initial) { res.status(404).json({ error: 'project_not_found' }); return; }
+  const initialSpec = jsonObject<Record<string, any>>(initial.spec, {});
+  await withDigitalEmployeeRunLock(tenantId, initialSpec.workflowRunId || initial.id, async () => {
+    const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+    if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+    const spec = jsonObject<Record<string, any>>(project.spec, {});
+    if (spec.automation?.stage !== 'completed' || spec.automation?.quality?.passed !== true || spec.automation?.quality?.ruleVersion !== CONTENT_SCRIPT_QUALITY_RULE_VERSION) { res.status(409).json({ error: '成片质检尚未通过' }); return; }
+    const hash = contentAcceptanceHash(spec);
+    if (req.body?.hash !== hash) { res.status(409).json({ error: '成片版本已变化，请刷新并重新预览' }); return; }
+    const saved = await store.update('studio_projects', project.id, { spec: { ...spec, contentAcceptance: { hash, approvedBy: userId, approvedAt: new Date().toISOString() } } });
+    if (!saved) { res.status(503).json({ error: '审批保存失败' }); return; }
+    await appendAudit({ tenantId, userId, action: 'content.accepted', targetType: 'studio_project', targetId: project.id, metadata: { hash } });
+    res.json({ ok: true });
+  });
+});
+
+digitalEmployeesRouter.get('/planning-options', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const config = await configForTenant(tenantId);
+  const resolved = await resolveCurrentConfiguration(tenantId, config);
+  if (!resolved) { res.status(409).json({ error: 'onboarding_required' }); return; }
+  const evidence = await contentRoutingEvidence(tenantId, resolved.config);
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  const assets = (profile.products?.items || []).flatMap((product: any, index) => {
+    const groups = ['images', 'videos', 'factoryImages', 'packagingImages', 'sceneImages', 'brandAssets'].map(key => Array.isArray(product[key]) ? product[key] : []);
+    if (String(product.imageUrl || '').trim()) groups.unshift([{ url: product.imageUrl, name: '产品封面' }]);
+    return groups.flat().map((asset: any, assetIndex: number) => ({ id: enterpriseAssetStableId(index, assetIndex, String(asset.url || '')), name: asset.name || '产品素材' }));
+  });
+  const videos = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
+  res.json({ ...evidence, assets, references: videos.items.filter(exactVideoAnalysis).map(item => ({ id: item.id, name: String(item.title || item.id) })) });
+});
+
 digitalEmployeesRouter.post('/goals', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const configRecord = await configForTenant(tenantId);
@@ -1808,7 +2002,7 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
     unit: goal.unit,
     starts_at: goal.startsAt,
     ends_at: goal.endsAt,
-    scope: goal.scope,
+    scope: goal.videoPlans ? { description: goal.scope, videoPlans: goal.videoPlans } : goal.scope,
     constraints: goal.constraints,
     owner_id: userId,
     status: 'draft',
@@ -1841,7 +2035,7 @@ digitalEmployeesRouter.post('/goals/:goalId/approve', async (req, res) => {
     store.list<RunRecord>(COLLECTION.runs, { where: { tenant_id: tenantId }, sort: '-started_at', perPage: 500 }),
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
   ]);
-  const overlappingGoal = tenantGoals.items.find(item => item.id !== goal.id && ['active', 'paused'].includes(item.status));
+  const overlappingGoal = tenantGoals.items.find(item => item.id !== goal.id && ['active', 'paused'].includes(item.status) && !tenantRuns.items.some(run => run.goal_id === item.id && ['failed', 'cancelled', 'succeeded'].includes(run.status)));
   const overlappingRun = tenantRuns.items.find(item => item.goal_id !== goal.id && !['succeeded', 'failed', 'cancelled'].includes(item.status));
   if (overlappingGoal || overlappingRun) {
     res.status(409).json({
@@ -2098,6 +2292,7 @@ digitalEmployeesRouter.post('/runs/:runId/customer-segments', async (req, res) =
   await withLocalQueue(customerWorkflowQueues, `${tenantId}:${req.params.runId}:segment`, async () => {
     const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
     if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
+    if (['succeeded', 'cancelled'].includes(run.status)) { res.status(409).json({ error: '历史运行只可查看，请新建目标' }); return; }
     const [goal, tasks] = await Promise.all([
       tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId),
       store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 }),
@@ -2143,6 +2338,7 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
     ]);
     const task = tasks.items.find(item => item.task_key === 'followup_batch_draft');
     if (!run || !goal || !task) { res.status(409).json({ error: 'followup_batch_context_missing' }); return; }
+    if (['succeeded', 'cancelled'].includes(run.status)) { res.status(409).json({ error: '历史运行只可查看，请新建目标' }); return; }
     const result = await createFollowupBatch({
       tenantId,
       goalId: goal.id,
@@ -2162,6 +2358,52 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
     await advanceRun(tenantId, run.id);
     res.status(201).json(await buildOverview(tenantId, goal.id));
   });
+});
+
+digitalEmployeesRouter.get('/runs/:runId/customer-workspace', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
+  if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
+  const segment = await first<StoredRecord & { tenant_id: string }>('customer_segments', { tenant_id: tenantId, run_id: run.id }, '-version');
+  const batch = await first<FollowupBatchRecord>(COLLECTION.followupBatches, { tenant_id: tenantId, run_id: run.id }, '-version');
+  res.json({ readOnly: ['succeeded', 'cancelled'].includes(run.status), segment, members: segment ? await getCustomerSegmentMembers(tenantId, segment.id) : [], batch, items: batch ? await getFollowupBatchItems(tenantId, batch.id) : [] });
+});
+
+digitalEmployeesRouter.post('/followup-batches/:batchId/revise', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const batch = await getFollowupBatch(tenantId, req.params.batchId);
+  if (!batch) { res.status(404).json({ error: 'followup_batch_not_found' }); return; }
+  await withDigitalEmployeeRunLock(tenantId, batch.run_id, () => withLocalQueue(customerWorkflowQueues, `${tenantId}:${batch.run_id}:followup`, async () => {
+    const run = await tenantRecord<RunRecord>(COLLECTION.runs, batch.run_id, tenantId);
+    if (!run || ['cancelled', 'succeeded'].includes(run.status)) { res.status(409).json({ error: 'run_not_editable' }); return; }
+    const latest = await first<FollowupBatchRecord>(COLLECTION.followupBatches, { tenant_id: tenantId, run_id: run.id }, '-version');
+    if (latest?.id !== batch.id || Number(req.body?.version) !== Number(batch.version)) { res.status(409).json({ error: 'batch_version_changed' }); return; }
+    if (!['draft', 'rejected', 'pending_approval'].includes(String(latest.status))) { res.status(409).json({ error: '当前批次已批准或进入执行，不能直接覆盖，请先终止发送' }); return; }
+    const oldItems = await getFollowupBatchItems(tenantId, batch.id);
+    const overrides: Record<string, string> = {};
+    if (req.body?.regenerate !== true) {
+      for (const item of oldItems) {
+        const body = req.body?.drafts?.[item.customer_id];
+        if (typeof body !== 'string' || !body.trim() || body.length > 2000) { res.status(400).json({ error: '请填写所有客户的有效回复' }); return; }
+        overrides[item.customer_id] = body;
+      }
+    }
+    try {
+      const result = await createFollowupBatch({ tenantId, goalId: batch.goal_id, runId: batch.run_id, taskId: batch.task_id, segmentId: batch.segment_id, userId,
+        idempotent: false, revisionNote: String(req.body?.note || '').slice(0, 1500), draftOverrides: req.body?.regenerate === true ? undefined : overrides, deliveryPolicy: jsonObject(batch.delivery_policy, {}) });
+      const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
+      for (const task of tasks.items.filter(task => ['followup_batch_draft', 'followup_batch_approval', 'followup_dispatch', 'weekly_review'].includes(task.task_key))) {
+        await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, business_refs: task.task_key === 'followup_batch_draft' ? [{ type: 'followup_batch', id: result.batch.id }] : [], updated_at: new Date().toISOString() });
+      }
+      const approvals = await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, perPage: 100 });
+      for (const approval of approvals.items.filter(approval => tasks.items.some(task => task.id === approval.task_id && task.task_key === 'followup_batch_approval'))) await store.update(COLLECTION.approvals, approval.id, { status: 'superseded' });
+      await store.update(COLLECTION.runs, run.id, { status: 'running', completed_at: '', pause_reason: '', current_controller: 'agent' });
+      await store.update(COLLECTION.goals, run.goal_id, { status: 'active' });
+      await appendAudit({ tenantId, userId, action: 'followup_batch.revised', targetType: 'followup_batch', targetId: result.batch.id, metadata: { priorBatchId: batch.id, version: result.batch.version } });
+      await advanceRun(tenantId, run.id);
+      res.json(await buildOverview(tenantId, run.goal_id));
+    } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : '修订失败' }); }
+  }));
 });
 
 digitalEmployeesRouter.get('/followup-batches/:batchId', async (req, res) => {
@@ -2215,8 +2457,33 @@ digitalEmployeesRouter.get('/runs/:runId/events', async (req, res) => {
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
   if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
   const after = Math.max(0, Number(req.query.after || 0));
-  const result = await store.list<EventRecord>(COLLECTION.events, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 500 });
-  res.json({ events: result.items.filter(event => Number(event.sequence) > after) });
+  res.json({ events: await listRunEventsAfter<EventRecord>(tenantId, run.id, after) });
+});
+
+digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/browser-stream', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const scope = { tenantId, runId: req.params.runId, taskId: req.params.taskId };
+  const [run, task] = await Promise.all([
+    tenantRecord<RunRecord>(COLLECTION.runs, scope.runId, tenantId),
+    tenantRecord<TaskRecord>(COLLECTION.tasks, scope.taskId, tenantId),
+  ]);
+  if (!run || !task || task.run_id !== run.id) { res.status(404).json({ error: 'task_run_not_found' }); return; }
+  if (!browserExecutionEnabled()) { res.status(503).json({ error: '此环境尚未启用浏览器执行与直播' }); return; }
+  res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  let closed = false;
+  let unwatch: (() => void) | undefined;
+  const heartbeat = setInterval(() => { if (!closed) res.write(': heartbeat\n\n'); }, 10_000);
+  res.on('close', () => { closed = true; clearInterval(heartbeat); unwatch?.(); });
+  try {
+    unwatch = await agentBrowserSessions.watch(scope, () => browserTaskWorkspace(scope), packet => {
+      // Slow viewers skip intermediate frames instead of accumulating video in RAM.
+      if (!closed && (packet.type !== 'frame' || res.writableLength < 512_000)) res.write(`data: ${JSON.stringify(packet)}\n\n`);
+    });
+    if (closed) unwatch();
+  } catch (error) {
+    if (!closed) { res.write(`data: ${JSON.stringify({ type: 'status', state: 'error', message: error instanceof Error ? error.message : '浏览器直播启动失败' })}\n\n`); res.end(); }
+  }
 });
 
 digitalEmployeesRouter.post('/runs/:runId/tasks/:taskId/ui-events', async (req, res) => {
@@ -2290,17 +2557,21 @@ digitalEmployeesRouter.get('/runs/:runId/stream', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
   const after = Math.max(0, Number(req.query.after || 0));
-  const persisted = await store.list<EventRecord>(COLLECTION.events, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 500 });
-  for (const event of persisted.items.filter(item => Number(item.sequence) > after)) sendEvent(res, event);
   const clients = streamClients.get(run.id) || new Set<Response>();
   clients.add(res);
   streamClients.set(run.id, clients);
+  // Subscribe before reading persisted events; overlap is deduplicated by id
+  // in the client, while events arriving during the read cannot fall in a gap.
   const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15_000);
-  req.on('close', () => {
+  res.on('close', () => {
     clearInterval(heartbeat);
     clients.delete(res);
     if (!clients.size) streamClients.delete(run.id);
   });
+  try {
+    const persisted = await listRunEventsAfter<EventRecord>(tenantId, run.id, after);
+    for (const event of persisted.filter(item => Number(item.sequence) > after)) if (!res.destroyed) sendEvent(res, event);
+  } catch { res.end(); }
 });
 
 digitalEmployeesRouter.post('/approvals/:approvalId/decide', async (req, res) => {
@@ -2381,10 +2652,10 @@ digitalEmployeesRouter.post('/approvals/:approvalId/decide', async (req, res) =>
   if (decision === 'rejected') {
     await Promise.all([
       store.update(COLLECTION.tasks, task.id, { status: 'failed', blocked_reason: note || '审批驳回', updated_at: now }),
-      store.update(COLLECTION.runs, run.id, { status: 'failed', current_controller: 'human', pause_reason: note || '审批驳回', completed_at: now }),
-      store.update(COLLECTION.goals, goal.id, { status: 'paused', updated_at: now }),
+      store.update(COLLECTION.runs, run.id, { status: 'waiting_external', current_controller: 'agent', pause_reason: '审批退回修改，其他分支可继续', completed_at: '' }),
+      store.update(COLLECTION.goals, goal.id, { status: 'active', updated_at: now }),
     ]);
-    await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'approval.decided', level: 'error', summary: '审批已驳回，运行已停止', payload: { decision, note } });
+    await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'approval.decided', level: 'error', summary: '审批已退回修改，仅阻塞本审批与下游外部动作', payload: { decision, note } });
   } else {
     await Promise.all([
       store.update(COLLECTION.tasks, task.id, { status: 'succeeded', output: { decision, note, approvedAt: now, publishingEntries }, blocked_reason: '', updated_at: now }),

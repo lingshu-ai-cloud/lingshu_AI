@@ -1,3 +1,4 @@
+import { contentAcceptanceHash, contentAccepted } from './contentAcceptance.js';
 import { createHash } from 'node:crypto';
 import { listSocialMetricSnapshots } from '../socialMetrics/store.js';
 import { currentMetricTotal } from '../socialMetrics/aggregation.js';
@@ -28,7 +29,7 @@ export function projectDelivery(project: RecordData, tasks: WorkflowTask[], vide
   const related = tasks.filter(task => contentKeys.includes(task.task_key));
   const task = related.find(task => task.id === spec.workflowTaskId) || related.find(task => task.task_key === 'content_production')!;
   const base = fallbackDelivery(task, '');
-  const stageNames: Record<string, string> = { script: '编写脚本', material_match: '匹配分镜素材', voice_subtitles: '生成配音与字幕', render: '渲染成片', quality: '质量检查', completed: '成片与质检结果已就绪', blocked: '制作受阻' };
+  const stageNames: Record<string, string> = { script: '编写脚本', material_match: '匹配分镜素材', voice_subtitles: '生成配音与字幕', heygen: 'HeyGen 数字人生成与预览确认', render: '渲染成片', quality: '质量检查', completed: '成片与质检结果已就绪', blocked: '制作受阻' };
   const blocked = automation.status === 'blocked' || automation.stage === 'blocked';
   const ready = Boolean(videoUrl) && quality.passed === true && automation.stage === 'completed';
   const artifacts: DeliveryArtifact[] = [];
@@ -38,10 +39,10 @@ export function projectDelivery(project: RecordData, tasks: WorkflowTask[], vide
   if (Object.keys(quality).length) artifacts.push({ id: 'quality', label: '质检结果', kind: 'text', text: `${quality.passed === true ? '质检通过' : '质检尚未通过'}\n${Array.isArray(quality.failures) ? quality.failures.join('\n') : ''}\n${string(quality.checkedAt)}`.trim() });
   const stages = ['script', 'material_match', 'voice_subtitles', 'render', 'quality'];
   const current = stages.indexOf(blocked ? automation.resumeStage : automation.stage);
-  return { ...base, id: `studio_project:${project.id}`, taskIds: related.map(item => item.id), kind: '内容成片',
+  return { ...base, ...(spec.script ? { narrationEdit: { hash: contentAcceptanceHash(spec), lines: String(spec.script).split('\n').flatMap(line => { const match = line.trim().match(/^(?:台词|口播|voiceover|vo)[：:]\s*(.+)$/i); return match ? [match[1]] : []; }) } } : {}), ...(ready ? { contentApproval: { hash: contentAcceptanceHash(spec), approved: contentAccepted(spec) } } : {}), id: `studio_project:${project.id}`, taskIds: related.map(item => item.id), kind: '内容成片',
     title: order.productName && object(order.theme).label ? `${order.productName} · ${object(order.theme).label}` : string(project.title) || '内容创作项目', subject: [string(order.accountLabel), string(order.productName) || string(object(automation.routePlan).productName), string(spec.platform)].filter(Boolean).join(' · ') || '内容项目',
     acceptance: '成片可播放、可下载，且质量检查通过',
-    stage: stageNames[automation.stage] || '等待制作', column: ready ? 'done' : blocked || automation.stage === 'completed' ? 'human' : automation.status === 'queued' && current <= 0 && !string(spec.script) ? 'todo' : 'active',
+    stage: ready && !contentAccepted(spec) ? '等待人工确认成片' : stageNames[automation.stage] || '等待制作', column: ready ? contentAccepted(spec) ? 'done' : 'human' : blocked || automation.stage === 'completed' ? 'human' : automation.status === 'queued' && current <= 0 && !string(spec.script) ? 'todo' : 'active',
     reason: string(automation.blocker) || (automation.stage === 'completed' && !videoUrl ? '成片文件不可访问，请重新导出或恢复文件。' : ''),
     exception: blocked || (automation.stage === 'completed' && !videoUrl),
     updatedAt: string(project.updated_at) || string(automation.updatedAt), deliveredAt: ready ? string(automation.completedAt) || string(project.updated_at) : undefined,
@@ -99,7 +100,9 @@ export async function buildDeliveryResources(tenantId: string, tasks: WorkflowTa
     return cache.get(key)!;
   };
   const add = (card: DeliveryResource) => { cards.push(card); card.taskIds.forEach(id => covered.add(id)); };
-  const projectIds = [...new Set(refs.filter(ref => ref.type === 'studio_project').map(ref => String(ref.id)))];
+  const runProjects = (await allRecords('studio_projects', { tenant_id: tenantId })).filter(project => object(project.spec).workflowRunId === tasks[0].run_id);
+  for (const project of runProjects) cache.set(`studio_project:${project.id}`, Promise.resolve(project));
+  const projectIds = [...new Set([...runProjects.map(project => project.id), ...refs.filter(ref => ref.type === 'studio_project').map(ref => String(ref.id))])];
   for (const id of projectIds) {
     const project = await get('studio_project', id);
     if (!project || !tasks.some(t => t.task_key === 'content_production')) continue;

@@ -1,3 +1,4 @@
+import { type VideoCreationPlan, videoPlanErrors } from '../../src/lib/videoCreationPlan.js';
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';
@@ -9,6 +10,7 @@ export interface ContentRoutingEvidence {
 }
 
 export interface ContentOrder {
+  videoPlan?: VideoCreationPlan;
   id: string;
   goalId: string;
   productId: string;
@@ -49,10 +51,10 @@ function requestedCount(cadence: string): number {
 }
 
 function ctaFor(goal: DigitalEmployeeConfig['primaryGoal']): string {
-  if (goal === 'awareness') return '查看企业官方资料了解更多';
+  if (goal === 'awareness') return '提出一个与买家判断有关的讨论问题，邀请评论';
   if (goal === 'sales') return '联系业务人员确认真实产品与交付条件';
-  if (goal === 'reactivation') return '回复消息获取最新资料';
-  return '私信获取详细方案';
+  if (goal === 'reactivation') return '回复消息说明当前需求是否有变化';
+  return '私信说说当前选型需求，不承诺提供额外资料或方案';
 }
 
 export function buildContentBatchPlan(input: {
@@ -67,6 +69,34 @@ export function buildContentBatchPlan(input: {
   const eligibleRoutes: ContentRoute[] = [];
   const enabled = new Set(input.config.enabledWorkflows);
   const productsWithMaterial = input.evidence.products.filter(product => product.materialIds.length > 0);
+  if (input.goal.videoPlans?.length) {
+    const orders: ContentOrder[] = [];
+    const errors: string[] = [];
+    input.goal.videoPlans.forEach((plan, index) => {
+      const prefix = `第 ${index + 1} 条：`;
+      errors.push(...videoPlanErrors(plan).map(error => prefix + error));
+      const workflow = { clone: 'viral_clone', product: 'product_content', material: 'material_content' }[plan.route];
+      if (!enabled.has(workflow as DigitalEmployeeConfig['enabledWorkflows'][number])) errors.push(prefix + '此创作方式未在 Agent 配置中开启');
+      const product = input.evidence.products.find(product => product.name === plan.productName || product.id === plan.productName);
+      if (!product) { errors.push(prefix + '指定产品不在重点产品资料中'); return; }
+      const ids = plan.materialIds.length ? plan.materialIds : product.materialIds;
+      if (ids.some(id => !product.materialIds.includes(id))) errors.push(prefix + '所选素材不存在或不属于指定产品');
+      if (!ids.length && plan.presenter === 'material' && plan.route !== 'product') errors.push(prefix + `${product.name} 缺少画面素材，请补充或明确选择数字人口播`);
+      if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) errors.push(prefix + '参考视频尚无有效精确分析');
+      const account = input.config.publishingTargets.find(target => target.platform === plan.platform);
+      if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
+      if (enabled.has('content_publish') && !account) errors.push(prefix + '缺少已确认发布账号');
+      orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
+        theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || '仅内容生产，不分发',
+        route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: ctaFor(input.config.primaryGoal),
+        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints])],
+        evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned' });
+    });
+    return { status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes };
+  }
+  const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
+  if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };
+
   if (enabled.has('viral_clone') && input.evidence.exactAnalysisIds.length && productsWithMaterial.length) eligibleRoutes.push('clone');
   else if (enabled.has('viral_clone')) disabledRoutes.push({ route: 'clone', reason: '缺少全片精确分析或真实产品' });
   if (enabled.has('product_content') && productsWithMaterial.length) eligibleRoutes.push('product');

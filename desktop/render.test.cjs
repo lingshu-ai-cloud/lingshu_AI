@@ -5,7 +5,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { composite, ffmpegPath, extensionForAsset, isImageAsset, subtitlePages, normalizeSubtitleCues, cuesToAss } = require('./render.cjs');
+const { composite, ffmpegPath, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss } = require('./render.cjs');
 
 async function main() {
   assert.ok(ffmpegPath, 'ffmpeg-static is required');
@@ -21,6 +21,23 @@ async function main() {
   const ass = cuesToAss([{ start: 0, end: 4, text: longSubtitle }], 1080, 1920);
   assert.match(ass, /\\N/, 'ASS output must contain an explicit safe line break');
   assert.match(ass, /WrapStyle: 0/, 'ASS output must permit renderer wrapping as a final safety net');
+  const spokenCues = [
+    { start: 0.2, end: 1.2, text: 'Then check the product' },
+    { start: 1.26, end: 2.1, text: 'specifications' },
+    { start: 2.16, end: 2.8, text: 'separately.' },
+    { start: 3.4, end: 4.2, text: 'Next question.' },
+  ];
+  const phrases = groupSpokenCues(spokenCues);
+  assert.equal(phrases.length, 2, 'short fragments merge but sentence pauses remain');
+  const mobileCues = normalizeSubtitleCues(spokenCues, { maxUnitsPerLine: 12.45 });
+  assert.equal(mobileCues[0].start, 0.2);
+  assert.equal(mobileCues[0].end, 2.8);
+  assert.equal(mobileCues[1].start, 3.4, 'do not fill the audible pause');
+  assert.equal(mobileCues.map(cue => cue.text.replace(/\\N/g, ' ')).join(' '), spokenCues.map(cue => cue.text).join(' '));
+  assert.ok(subtitlePages('product specifications separately', 12.45).flat().join(' ').includes('specifications'), 'English words are never split');
+  assert.equal(subtitlePages('한국어 문장을 유지합니다', 12.45).flat().join(' '), '한국어 문장을 유지합니다', 'Korean word spacing survives layout');
+  assert.match(ass, /Style: Default,Arial,72,/, 'mobile font scales with canvas width');
+  assert.match(ass, /,92,92,384,1/, 'captions sit below the face, above bottom UI');
   const audio = fs.readFileSync(path.join(__dirname, '../server/assets/bgm/tech-pulse.mp3'));
   const server = http.createServer((req, res) => {
     if (req.url === '/voice.mp3' || req.url === '/bgm.mp3') {

@@ -10,6 +10,8 @@ export interface DeliveryArtifact {
   version?: string;
 }
 export interface DeliveryResource {
+  narrationEdit?: { hash: string; lines: string[] };
+  contentApproval?: { hash: string; approved: boolean };
   id: string;
   taskIds: string[];
   taskId: string;

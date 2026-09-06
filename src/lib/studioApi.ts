@@ -776,12 +776,14 @@ export const studioApi = {
   },
   deleteMaterial: (id: string) => del(`materials/${id}`),
 
+  digitalHumanAvatars: () => get<{ items: Array<{ id: string; name: string }> }>('digital-human/avatars', { items: [] }),
+  approveDigitalHumanJob: (id: string) => post<{ ok: boolean; job?: DigitalHumanJob }>(`digital-human/jobs/${encodeURIComponent(id)}/approve`, { reviewed: true }, { ok: false }),
   digitalHumanCapabilities: () => get<DigitalHumanCapabilities>('digital-human/capabilities', {
     available: false, provider: 'unconfigured', modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],
     output: { ratio: '9:16', container: 'mp4' }, qualityGateRequired: true, maxConcurrentJobs: 2,
     unavailableReason: '无法连接数字人服务',
   }),
-  createDigitalHumanJob: (body: { projectId?: string; avatarMaterialId: string; voiceoverUrl: string; script: string; language: string; mode: 'fast' | 'quality'; consentConfirmed: boolean }) =>
+  createDigitalHumanJob: (body: { projectId?: string; avatarMaterialId?: string; heygenAvatarId?: string; voiceoverUrl: string; script: string; language: string; mode: 'fast' | 'quality'; consentConfirmed: boolean }) =>
     post<{ ok: boolean; job?: DigitalHumanJob; error?: string; code?: string }>('digital-human/jobs', body, { ok: false, error: '数字人任务提交失败' }),
   getDigitalHumanJob: (id: string) =>
     get<{ ok: boolean; job?: DigitalHumanJob; outputMaterial?: Material; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}`, { ok: false, error: '数字人任务查询失败' }),
@@ -968,6 +970,8 @@ export interface TransformationAssessment {
 }
 
 export interface DigitalHumanJob {
+  voiceoverUrl: string;
+  subtitleCues?: Array<{ start: number; end: number; text: string }>;
   id: string;
   projectId?: string;
   avatarMaterialId: string;
