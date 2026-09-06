@@ -20,6 +20,7 @@ interface Session {
   touchedAt: number; pending?: PendingAction; executing: boolean; closed: boolean;
   read: () => Promise<BrowserProductionTarget>; refresh?: Promise<void>; workspaceKey?: string; navigationKey?: string;
   credential: ReturnType<typeof createBrowserReadSession>;
+  watchTimer?: ReturnType<typeof setInterval>;
   flushTimer?: ReturnType<typeof setTimeout>; queuedFrame?: { image: string; capturedAt: string };
 }
 const keyFor = (scope: BrowserScope) => JSON.stringify([scope.tenantId, scope.runId, scope.taskId]);
@@ -117,7 +118,7 @@ export class AgentBrowserSessions {
         if (frame !== page.mainFrame() || action.kind !== 'click' || !Number.isFinite(action.x) || !Number.isFinite(action.y)) return;
         await this.telemetry?.(scope, { kind: 'click', label: String(action.label || '点击工作页面').slice(0, 200), x: Number(action.x), y: Number(action.y), viewportWidth: 1100, viewportHeight: 700 });
       });
-      page.on('close', () => { session.closed = true; if (session.flushTimer) clearTimeout(session.flushTimer); this.sessions.delete(keyFor(scope)); this.broadcast(session, { type: 'status', state: 'closed', message: '浏览器会话已关闭' }); });
+      page.on('close', () => { session.closed = true; if (session.watchTimer) clearInterval(session.watchTimer); if (session.flushTimer) clearTimeout(session.flushTimer); this.sessions.delete(keyFor(scope)); this.broadcast(session, { type: 'status', state: 'closed', message: '浏览器会话已关闭' }); });
       cdp.on('Page.screencastFrame', event => {
         void cdp.send('Page.screencastFrameAck', { sessionId: event.sessionId }).catch(() => {});
         session.queuedFrame = { image: event.data, capturedAt: new Date().toISOString() };
@@ -133,7 +134,7 @@ export class AgentBrowserSessions {
           this.broadcast(session, session.frame);
         }, Math.max(0, 100 - (Date.now() - session.lastFrameAt)));
       });
-      await this.refresh(session);
+      await this.refresh(session, target);
       await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 75, maxWidth: 1100, maxHeight: 700, everyNthFrame: 1 });
       // Initial still is also a real screenshot, never an artifact substituted for a browser frame.
       if (!session.frame) session.frame = { type: 'frame', image: (await page.screenshot({ type: 'jpeg', quality: 75 })).toString('base64'), sequence: ++session.frameSequence, capturedAt: new Date().toISOString(), width: 1100, height: 700, executing: false };
@@ -141,11 +142,11 @@ export class AgentBrowserSessions {
       return session;
     } catch (error) { await context.close(); throw error; }
   }
-  private refresh(session: Session) {
+  private refresh(session: Session, initialTarget?: BrowserProductionTarget) {
     if (session.refresh) return session.refresh;
     session.refresh = (async () => {
       session.credential.touch();
-      const target = await session.read();
+      const target = initialTarget || await session.read();
       const appOrigin = this.options.appOrigin || process.env.AGENT_BROWSER_APP_ORIGIN || `http://127.0.0.1:${process.env.PORT || 8790}`;
       const url = new URL('/', appOrigin);
       url.searchParams.set('page', target.link.page);
@@ -175,8 +176,8 @@ export class AgentBrowserSessions {
     session.listeners.add(listener);
     listener({ type: 'status', state: session.executing ? 'executing' : 'ready', message: session.executing ? '浏览器正在执行任务' : '已连接任务浏览器' });
     if (session.frame) listener(session.frame);
-    const timer = setInterval(() => { session.touchedAt = Date.now(); if (!session.executing) void this.refresh(session).catch(() => this.broadcast(session, { type: 'status', state: 'error', message: '任务工作页面暂时无法更新' })); }, 5_000);
-    return () => { clearInterval(timer); session.listeners.delete(listener); session.touchedAt = Date.now(); };
+    session.watchTimer ??= setInterval(() => { session.touchedAt = Date.now(); if (!session.executing) void this.refresh(session).catch(() => this.broadcast(session, { type: 'status', state: 'error', message: '任务工作页面暂时无法更新' })); }, 5_000);
+    return () => { session.listeners.delete(listener); if (!session.listeners.size) { clearInterval(session.watchTimer); session.watchTimer = undefined; } session.touchedAt = Date.now(); };
   }
   async perform<T>(scope: BrowserScope, read: Session['read'], label: string, execute: () => Promise<T>): Promise<T> {
     const session = await this.ensure(scope, read);

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { store } from '../storage/index.js';
-import { dispatchFollowupBatch, followupDispatchPreflightBlockedReason, ingestFollowupDeliveryStatuses, nextFollowupDeliveryWindow, preflightFollowupBatchDispatch } from './followupDispatchWorker.js';
-import type { FollowupBatchItemRecord, FollowupBatchRecord } from './customerWorkflow.js';
+import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, ingestFollowupDeliveryStatuses, nextFollowupDeliveryWindow, preflightFollowupBatchDispatch } from './followupDispatchWorker.js';
+import { followupItemContentHash, type FollowupBatchItemRecord, type FollowupBatchRecord } from './customerWorkflow.js';
 
 const now = new Date('2026-09-03T04:00:00.000Z');
 const tenantId = 'tenant_worker_test';
@@ -271,9 +271,74 @@ try {
       sendText: async () => { throw Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }); },
     },
   });
-  assert.equal(retry.retryScheduled, 1);
-  assert.equal(item.status, 'retry_wait');
-  assert.equal(item.scheduled_at, new Date(now.getTime() + 30_000).toISOString());
+  assert.equal(retry.retryScheduled, 0);
+  assert.equal(item.status, 'blocked');
+  assert.equal(item.exclusion_reason, 'send_outcome_unknown', 'connection reset does not prove provider rejection');
+
+  batch.status = 'approved'; item.status = 'sending'; item.provider_receipt = { claimToken: 'crashed', claimedAt: new Date(now.getTime() - 11 * 60_000).toISOString() }; item.provider_message_id = '';
+  assert.equal(await recoverStaleFollowupSending(batch, now), 1);
+  assert.equal(item.status, 'blocked'); assert.equal(batch.status, 'needs_attention');
+  assert.equal(item.exclusion_reason, 'send_outcome_unknown');
+  batch.status = 'approved';
+  const recoveredDispatch = await dispatchFollowupBatch(tenantId, batch.id, {dependencies:{now:()=>now, authorization, recipientDelayMs:0, sendText:async()=>{ throw new Error('must not resend'); }}});
+  assert.equal(recoveredDispatch.claimed, 0);
+  batch.status = 'approved'; item.status = 'sending'; item.provider_receipt = {claimedAt:now.toISOString()};
+  assert.equal(await recoverStaleFollowupSending(batch, now), 0, 'live sender is not recovered prematurely');
+
+  batch.status='approved'; item.status='approved'; item.provider_receipt={}; item.provider_message_id=''; item.sent_at=''; item.attempts=0; item.scheduled_at=new Date(now.getTime()-1000).toISOString(); item.exclusion_reason='';
+  const throttled=await dispatchFollowupBatch(tenantId,batch.id,{dependencies:{now:()=>now, customers:()=>[customer],guard:async()=>({allowed:true}),recordOutbound:()=>{},authorization,recipientDelayMs:0,
+    sendText:async()=>{throw Object.assign(new Error('rate limit'),{response:{status:429}});}}});
+  assert.equal(throttled.retryScheduled,1,'explicit rejected throttling can safely retry');
+  assert.equal(item.status,'retry_wait');
+  batch.status='approved'; item.status='approved'; item.provider_receipt={}; item.provider_message_id=''; item.sent_at=''; item.scheduled_at=new Date(now.getTime()-1000).toISOString();
+  const historyFailure=await dispatchFollowupBatch(tenantId,batch.id,{dependencies:{now:()=>now,customers:()=>[customer],guard:async()=>({allowed:true}),authorization,recipientDelayMs:0,
+    recordOutbound:()=>{throw new Error('local history unavailable');},sendText:async(_t,_n,_b,progress)=>{const receipt={messageId:'wamid.accepted',recipientId:item.wa_number,raw:{}}; await progress?.({receipt,message:body,index:0,total:1});return {messages:[body],receipts:[receipt]};}}});
+  assert.equal(historyFailure.sent,1); assert.equal(item.status,'sent'); assert.equal(item.provider_message_id,'wamid.accepted');
+  assert.equal((item.provider_receipt as any).localHistoryPending,true,'local errors must preserve accepted provider evidence');
+  assert.equal(batch.status,'needs_attention','incomplete local business writeback is not batch completion');
+  assert.equal(await recoverStaleFollowupSending(batch, now, ()=>{throw new Error('still unavailable');}),0);
+  assert.equal((item.provider_receipt as any).localHistoryPending,true);
+  let localWrites=0;
+  assert.equal(await recoverStaleFollowupSending(batch, now, (input)=>{localWrites++;assert.equal(input.providerReceipts?.[0]?.messageId,'wamid.accepted');}),1);
+  assert.equal(localWrites,1); assert.equal(item.provider_message_id,'wamid.accepted'); assert.equal(batch.status,'completed');
+  assert.equal((item.provider_receipt as any).localHistoryPending,false);
+  assert.equal(await recoverStaleFollowupSending(batch,now,()=>{throw new Error('duplicate history call');}),0);
+
+
+  batch.status='approved'; item.status='approved'; item.provider_receipt={}; item.provider_message_id=''; item.sent_at=''; item.send_mode='template'; item.template_name='hello'; item.template_status='approved'; item.template_language='en_US'; item.template_variables=['Maya']; item.draft_body='Hello Maya'; item.content_hash=followupItemContentHash(item);
+  const templatePreflight=await preflightFollowupBatchDispatch(tenantId,batch.id,{dependencies:{now:()=>now,customers:()=>[customer],guard:async()=>({allowed:true}),authorization,
+    resolveTemplate:async()=>({id:'official',name:'hello',language:'en_US',status:'APPROVED',body:'Changed {{1}}',variableCount:1})}});
+  assert.equal(templatePreflight.ready,false); assert.equal(templatePreflight.blockers.whatsapp_template_content_changed,1);
+  const templateSent=await dispatchFollowupBatch(tenantId,batch.id,{dependencies:{now:()=>now,customers:()=>[customer],guard:async()=>({allowed:true}),authorization,recipientDelayMs:0,recordOutbound:()=>{},
+    resolveTemplate:async()=>({id:'official',name:'hello',language:'en_US',status:'APPROVED',body:'Hello {{1}}',variableCount:1}),
+    sendTemplate:async()=>({messageId:'wamid.template',recipientId:item.wa_number,raw:{}})}});
+  assert.equal(templateSent.sent,1); assert.equal(item.provider_message_id,'wamid.template');
+
+  // A verified provider callback can recover an acceptance lost before the first
+  // local receipt. Recipient, attempt and immutable content must all match.
+  const claimToken='11111111-1111-4111-8111-111111111111';
+  item.status='blocked'; item.exclusion_reason='send_outcome_unknown'; item.provider_message_id='';
+  item.provider_receipt={claimToken,claimedAt:now.toISOString(),approvedContentHash:item.content_hash,approvedBatchVersion:1,expectedMessages:['Hello Maya']};
+  const callbackPayload=(recipient=item.wa_number,token=claimToken)=>({entry:[{changes:[{value:{statuses:[{id:'wamid.recovered',status:'delivered',recipient_id:recipient,biz_opaque_callback_data:`followup:${token}:0`,timestamp:String(now.getTime()/1000)}]}}]}]});
+  assert.equal(await ingestFollowupDeliveryStatuses(tenantId,callbackPayload()),0,'unsigned endpoint cannot recover an unknown receipt');
+  assert.equal(await ingestFollowupDeliveryStatuses(tenantId,callbackPayload('15550000000'),{verifiedSignature:true}),0,'recipient must match');
+  assert.equal(await ingestFollowupDeliveryStatuses(tenantId,callbackPayload(item.wa_number,'22222222-2222-4222-8222-222222222222'),{verifiedSignature:true}),0,'wrong attempt is not evidence');
+  assert.equal(await ingestFollowupDeliveryStatuses(tenantId,callbackPayload(),{verifiedSignature:true}),1);
+  assert.equal(item.status,'delivered'); assert.equal(item.provider_message_id,'wamid.recovered'); assert.equal(item.exclusion_reason,'');
+  assert.equal(batch.approved_version,1,'receipt recovery never changes approval');
+  assert.equal(await ingestFollowupDeliveryStatuses(tenantId,callbackPayload(),{verifiedSignature:true}),1);
+  assert.equal((item.provider_receipt as any).messages.length,1,'replayed receipt cannot duplicate messages');
+
+  batch.status='approved'; item.status='approved'; item.provider_receipt={}; item.provider_message_id=''; item.sent_at=''; item.exclusion_reason='';
+  const updating = store.update;
+  store.update = (async (collection: string, id: string, patch: Record<string, unknown>) => collection === 'followup_batch_items' ? false : updating(collection, id, patch)) as typeof store.update;
+  let unsafeSends=0;
+  await assert.rejects(() => dispatchFollowupBatch(tenantId,batch.id,{dependencies:{now:()=>now,customers:()=>[customer],guard:async()=>({allowed:true}),authorization,recipientDelayMs:0,
+    resolveTemplate:async()=>({id:'official',name:'hello',language:'en_US',status:'APPROVED',body:'Hello {{1}}',variableCount:1}),
+    sendTemplate:async()=>{unsafeSends++;throw Error('must never send');}}}), /persistence_failed/);
+  assert.equal(unsafeSends,0,'provider cannot be called until attempt is durable');
+  store.update=updating;
+
 } finally {
   store.getById = originalGetById;
   store.list = originalList;

@@ -26,8 +26,9 @@ const publishing = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.equal(publishing.status, 'blocked');
-assert.match(publishing.blocker, /发布账号/);
+assert.equal(publishing.status, 'planned', 'publishing credentials must not block content production');
+assert.ok(publishing.orders.every(order => order.accountId === '' && order.accountLabel.includes('待绑定')));
+assert.deepEqual([...new Set(publishing.orders.map(order => order.platform))].sort(), [...goal.contentPlatforms].sort(), 'unbound target platforms must not be silently omitted');
 
 const noEvidence = buildContentBatchPlan({
   goalId: 'goal-1', goal, config,

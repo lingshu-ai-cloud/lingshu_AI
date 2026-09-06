@@ -134,7 +134,7 @@ type SocialStrategy = { enabledRoutes: CooperationRoute[]; routeStrategies: Part
 interface Profile {
   company: { name: string; industry: string; companyType?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
   socialStrategy?: SocialStrategy;
-  products: { categories: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
+  products: { categories: string; searchKeywords?: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
   brand: { tone: string; style: string; taboos: string; usp: string; preferredLanguages?: string };
   strategy?: { currentGoal?: string; focusProducts?: string; focusMarkets?: string; excludedMarkets?: string; pricingStrategy?: string; minMargin?: string; agentAutonomy?: string; aiAutonomy?: AutonomyLevel };
   customers?: { targetProfiles?: string; highValueSignals?: string; lowQualitySignals?: string; commonQuestions?: string; followupStyle?: string };
@@ -1885,6 +1885,12 @@ export default function EnterprisePage() {
               <Field label="主营品类">
                 <OptionSelector value={profile.products.categories} options={CATEGORY_OPTIONS} onChange={value => set('products')('categories', value)} placeholder="选择主营品类" />
               </Field>
+              <Field label="社媒采集搜索词">
+                <textarea className={textareaCls} rows={3} value={profile.products.searchKeywords ?? ''}
+                  onChange={e => set('products')('searchKeywords', e.target.value)}
+                  placeholder={"每行一个搜索词，也可用逗号分隔，例如：linen shirt\n服装穿搭"} />
+                <p className="mt-1 text-[11px] text-text-muted">经营任务包优先使用这些词搜索参考内容；留空时，系统根据产品名称和品类自动生成。</p>
+              </Field>
               <Field label="认证资质">
                 <OptionSelector value={profile.products.certifications} options={CERTIFICATION_OPTIONS} onChange={value => set('products')('certifications', value)} placeholder="选择认证资质" />
               </Field>
@@ -2618,6 +2624,12 @@ export default function EnterprisePage() {
               <Field label="主营品类">
                 <input className={inputCls} placeholder="美妆个护、家居日用、消费电子" value={profile.products.categories}
                   onChange={e => set('products')('categories', e.target.value)} />
+              </Field>
+              <Field label="社媒采集搜索词">
+                <textarea className={textareaCls} rows={3} value={profile.products.searchKeywords ?? ''}
+                  onChange={e => set('products')('searchKeywords', e.target.value)}
+                  placeholder={"每行一个搜索词，也可用逗号分隔，例如：linen shirt\n服装穿搭"} />
+                <p className="mt-1 text-[11px] text-text-muted">经营任务包优先使用这些词搜索参考内容；留空时，系统根据产品名称和品类自动生成。</p>
               </Field>
               <Field label="价格区间">
                 <input className={inputCls} placeholder="$5 - $500 USD" value={profile.products.priceRange}

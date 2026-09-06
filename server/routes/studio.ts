@@ -1,3 +1,4 @@
+import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
 import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
@@ -648,7 +649,8 @@ export function ensureSelectedProductNamesInScript(script: string, productInfo: 
   for (const name of names) {
     if (!name || normalizeProductIdentity(next).includes(normalizeProductIdentity(name))) continue;
     const blocks = next.split(/(?=^\[[^\]\r\n]+\][ \t]*$)/m);
-    const index = blocks.findIndex(block => /^\[[^\]]+\]/.test(block) && /^画面[：:]/m.test(block));
+    const index = blocks.findIndex(block => /^\[[^\]]+\]/.test(block) && /^画面[：:]/m.test(block)
+      && !/^画面[：:]\s*数字人[：:]/m.test(block));
     if (index < 0) continue;
     // Put identity in a visual direction, not the subtitle. Subtitles are
     // mechanically synchronized from voiceover later and would otherwise
@@ -2093,6 +2095,7 @@ studioRouter.post('/script', async (req, res) => {
     : presentationMode === 'heygen'
       ? '成片方式：数字人加素材混剪。默认数字人开场和收尾，中段按已选产品素材事实配画；用户可在分镜表修改画面来源，不把整片写成数字人。'
       : '成片方式：纯素材剪辑。画面只使用已授权素材，不安排生成的数字人。';
+  const mixedRules = mixedStoryboardRules(presentationMode, normalizedMaterialInfos);
   const videoThemeId = String(normalizedVideoTheme.id || 'buyer_pain');
   const videoThemeTitle = String(normalizedVideoTheme.title || '买家痛点');
   const videoThemePainPoint = String(normalizedVideoTheme.painPoint || audience || '').trim();
@@ -2263,7 +2266,7 @@ ${previousCloneScripts.map(item => [...new Set(Array.from(item.matchAll(/^(?:台
     : ''}`;
 
   try {
-    const scriptSystemPrompt = `${presentationRule}\n你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
+    const scriptSystemPrompt = `${presentationRule}\n${mixedRules}\n你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
     // Select a source fact before drafting. An ungrounded draft must
     // not become the source material for a second, increasingly confident rewrite.
     const generatedVoicePlan = generationMode === 'product' && hasNarrationDraft
@@ -2331,17 +2334,18 @@ ${narrationBudget}
       : '';
     const generatedVisualScenes = generationMode === 'product' && lockedVoiceLines.length
       ? parseLockedStoryboardScenes(await callLLM(`为以下锁定口播片段写可执行分镜，恰好 ${lockedVoiceLines.length} 段。
+成片约束：${presentationRule}\n${mixedRules}
 产品名称：${selectedProductNames(product).join('、')}
 本条事实：${spokenFact}
 主题：${videoThemeTitle}
 已选素材观察：${structuredMaterials || '未提供已分析素材；画面必须标为“建议补拍”，不声称已有素材。'}
 锁定口播：${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}
 后期文案仅从锁定口播与本条选中事实中取用，不把上下文里的其他卖点塞进画面。行动只用锁定口播的 CTA 文字，不新增二维码、联系方式、立牌或扫码行动。
-镜头要求：用画面帮助理解口播，相邻镜头推进信息。没有实拍依据时，创意落在取景、呈现顺序、人手指示和后期文字上，设备保持静态；不通过虚构设备运行、界面或反馈来证明能力。抽象能力用产品实拍配资料原文提示，后期文字注明是后期叠加。
-示例（仅学形式）：资料只有“可选双工位”，可写“建议补拍：镜头从整机推进；后期出现‘双工位可选’，产品结构以实物为准”，不编排两工位同步加工或产能变化。每镜只写一个主要动作（初始状态→动作→结束状态），画面不超过80字，镜头功能只写短语。景别和运镜分开填写，保持主体与道具连续；配乐可写“无”。
-没有素材证明的镜头写“建议补拍”；未知设备细节保持未知：只拍整机及实际可见外观，不指定接口、传感器、屏幕、铭牌或指示灯位置。资料说明功能，不证明这些硬件可见。用取景变化承接口播；后期信息不能画成设备自带界面。不得输出台词、字幕或时间戳。
+镜头要求：用画面帮助理解口播，相邻镜头推进信息。${presentationMode === 'heygen' ? '数字人讲述与已观察素材交替；素材没有的动作不能添加，尤其禁止人手指示。' : '没有实拍依据时，创意落在取景、呈现顺序、人手指示和后期文字上，设备保持静态；'}不通过虚构设备运行、界面或反馈来证明能力。后期文字注明是后期叠加。
+${presentationMode === 'heygen' ? '示例：数字人：面向镜头讲述；素材《完整素材名》；源片截取：0-3s；展示观察确认的可见外观。' : '示例（仅学形式）：资料只有“可选双工位”，可写“建议补拍：镜头从整机推进；后期出现双工位可选，产品结构以实物为准”，不编排两工位同步加工或产能变化。'}每镜只写一个主要动作（初始状态→动作→结束状态），画面不超过80字，镜头功能只写短语。景别和运镜分开填写，保持主体与道具连续；配乐可写“无”。
+${presentationMode === 'heygen' ? '混剪禁止补拍建议，缺少素材证明的镜头必须拒绝，不能添加手部或假定同一物件；' : '没有素材证明的镜头写“建议补拍”；'}未知设备细节保持未知：只拍整机及实际可见外观，不指定接口、传感器、屏幕、铭牌或指示灯位置。资料说明功能，不证明这些硬件可见。用取景变化承接口播；后期信息不能画成设备自带界面。不得输出台词、字幕或时间戳。
 只输出 JSON，字段含义如下（替换占位内容，不把动作写进景别）：
-{"scenes":[{"environment":"拍摄地点；未知写按实物环境","shot":"仅景别名称，如特写","camera":"仅运镜名称，如固定","composition":"主体位置与朝向","purpose":"本镜作用短语","visual":"完整动作描述；无素材时以建议补拍开头，不能只写建议补拍","music":"音乐或无"}]}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), lockedVoiceLines.length)
+{"scenes":[{"environment":"拍摄地点；未知写按实物环境","shot":"仅景别名称，如特写","camera":"仅运镜名称，如固定","composition":"主体位置与朝向","purpose":"本镜作用短语","visual":"${presentationMode === 'heygen' ? '以数字人：或素材《完整素材名》；源片截取：a-bs；开头，后接已验证画面描述' : '完整动作描述；无素材时以建议补拍开头，不能只写建议补拍'}","music":"音乐或无"}]}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), lockedVoiceLines.length)
       : [];
     if (generationMode === 'product' && lockedVoiceLines.length && generatedVisualScenes.length !== lockedVoiceLines.length) {
       throw new Error('分镜模型未返回完整的结构化画面');
@@ -2589,6 +2593,7 @@ Requirements:
     const repairableIssues = (candidate: string): string[] => {
       const unsupported = unsupportedNumericClaims(candidate, productInfo);
       const issues = unsupported.length ? [`资料外数字：${unsupported.join('、')}`] : [];
+      issues.push(...mixedStoryboardIssues(candidate, presentationMode, normalizedMaterialInfos));
       if (/不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(candidate)) {
         issues.push('绝对化或不可验证承诺');
       }
@@ -2631,6 +2636,8 @@ ${product || '无。不得写任何产品事实。'}
 ${issues.map(issue => `- ${issue}`).join('\n')}
 
 保留本条创意和模式边界：
+${presentationRule}
+${mixedRules}
 ${generationMode === 'clone' ? scriptCreativeModeRule('clone') : contentGoal === 'reach' ? endingRules : strategyPlanRules}
 
 修复规则：
@@ -2755,7 +2762,9 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       ? storyboardReferenceLeakIssues(script, forbiddenTerms, forbiddenIndustryTerms)
       : [];
     const leakedReference = referenceLeakIssues.length > 0;
+    const mixedIssues = mixedStoryboardIssues(script, presentationMode, normalizedMaterialInfos);
     const validationIssues = [
+      ...mixedIssues,
       missingProduct ? '缺少产品信息' : '',
       missingSelectedProduct ? `脚本未完整覆盖选定产品名称：${selectedNames.join('、')}` : '',
       unsupportedNumberClaims.length ? `出现产品资料未提供的数字：${unsupportedNumberClaims.join('、')}` : '',
@@ -2779,6 +2788,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const nonBlockingQualityIssues = Array.from(new Set(validationIssues.filter(isNonBlockingScriptQualityIssue)));
     const materialStrictHardIssues = strictCommercialIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
     const materialHardIssues = Array.from(new Set([
+      ...mixedIssues,
       ...(materialQualityV2?.hardIssues || []),
       missingProduct ? '缺少产品信息' : '',
       missingSelectedProduct ? `脚本未完整覆盖选定产品名称：${selectedNames.join('、')}` : '',
@@ -2816,7 +2826,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         script,
         qualityStatus: 'rejected',
         qualityChecks: {
-          materialGrounded: groundingIssues.length === 0,
+          materialGrounded: groundingIssues.length === 0 && mixedIssues.length === 0,
+          presentationGrounded: mixedIssues.length === 0,
           timelineGrounded: timelineIssues.length === 0,
           productGrounded: !missingProduct && !missingSelectedProduct && unsupportedNumberClaims.length === 0,
           dialogueFits: speechIssues.length === 0,
@@ -2843,7 +2854,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       script,
       qualityStatus,
       qualityChecks: {
-        materialGrounded: groundingIssues.length === 0,
+        materialGrounded: groundingIssues.length === 0 && mixedIssues.length === 0,
+          presentationGrounded: mixedIssues.length === 0,
         timelineGrounded: timelineIssues.length === 0,
         productGrounded: !missingProduct && !missingSelectedProduct && unsupportedNumberClaims.length === 0,
         dialogueFits: speechIssues.length === 0,
@@ -4242,6 +4254,13 @@ studioRouter.post('/digital-human/jobs/:id/retry', async (req, res) => {
   const source = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!source) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
   if (!['failed', 'review', 'cancelled'].includes(source.status)) { res.status(409).json({ ok: false, error: '只有失败、待复核或已取消任务可以重试' }); return; }
+  // A repeated click/replayed request against one parent is the same retry.
+  // To retry a failed child again the caller must explicitly target that child.
+  // Resolve this before capacity checks, which may already include this child.
+  const existingRetry = loadDigitalHumanJobs().find(item => item.tenantId === tenantId && item.parentJobId === source.id);
+  if (existingRetry) {
+    res.status(202).json({ ok: true, job: publicDigitalHumanJob(existingRetry) }); return;
+  }
   if (!digitalHumanCapabilities().available) { res.status(503).json({ ok: false, error: 'HeyGen 服务尚未配置' }); return; }
   const active = loadDigitalHumanJobs().filter(item => item.tenantId === tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status));
   if (active.length >= 2) { res.status(429).json({ ok: false, error: '当前已有 2 个数字人任务在运行，请稍后再试' }); return; }
@@ -6308,6 +6327,10 @@ async function persistTtsResult<T extends { url?: string }>(result: T, tenantId:
  * public URL so the background renderer does not need to forge an HTTP user
  * session. No publishing side effect happens here.
  */
+export function splitStudioNarrationSentences(spoken: string): string[] {
+  return spoken.split(/(?<=[。！？!?])\s*|(?<=\.)\s+(?=[¿¡]?[A-ZÀ-ž])/u).map(value => value.trim()).filter(Boolean);
+}
+
 export async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
   style?: TtsStyleOptions;
@@ -6317,7 +6340,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     if (!spoken) return { ok: false, error: '口播为空' };
     // Each sentence is synthesized and measured independently. Boundaries come
     // from real audio samples, not proportional allocation of the full script.
-    const lines = spoken.split(/(?<=[。！？!?])\s*|(?<=\.)\s+(?=[A-ZÀ-ž])/u).map(x => x.trim()).filter(Boolean);
+    const lines = splitStudioNarrationSentences(spoken);
     const dir = tenantAssetDir(TTS_ROOT, input.tenantId); fs.mkdirSync(dir, { recursive: true });
     const files: string[] = [], cues: AlignedCue[] = [];
     const providers = new Set<string>();

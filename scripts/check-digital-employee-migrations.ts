@@ -14,6 +14,7 @@ export const DIGITAL_EMPLOYEE_MIGRATIONS = [
   '1788480000_connect_followup_dispatch_worker.js',
   '1788825600_version_digital_employee_configuration.js',
   '1788912600_create_content_batch_plans.js',
+  '1788999000_create_review_todo_boards.js',
 ] as const;
 
 type BlockerCode = 'missing_migration' | 'uncommitted_migration' | 'historical_content_conflict' | 'incomplete_git_history';

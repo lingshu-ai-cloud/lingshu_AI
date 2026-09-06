@@ -14,7 +14,24 @@ export function parseNarration(raw: string, language: string, duration: number):
   if (units > duration * rate * 1.35 || units < duration * rate * 0.5) throw Error(`口播长度 ${units}，目标时长 ${duration} 秒允许 ${Math.ceil(duration * rate * 0.5)}–${Math.floor(duration * rate * 1.35)} 字词`);
   return lines;
 }
+/** Require substantive product evidence before spending on narration or approving legacy output. */
+export function narrationEvidenceIssues(facts: string, spoken = ''): string[] {
+  const substantive = facts.split(/[；;\n]/).map(value => value.trim()).filter(value => value && !/^(?:产品|product|SKU|型号)\s*[:：]/i.test(value));
+  if (!substantive.length || substantive.every(value => /[:：]\s*(?:无|暂无|未知|待补充|unknown|n\/a)?$/i.test(value))) {
+    return ['产品资料缺少已确认的类别、材质、特点或规格，无法核验口播；请补充企业知识库产品事实'];
+  }
+  const unsupported = [
+    { claim: /voltage|电压/i, evidence: /voltage|电压/i, name: '电压' },
+    { claim: /temperature|温度/i, evidence: /temperature|温度/i, name: '温度' },
+    { claim: /response time|响应时间/i, evidence: /response time|响应时间/i, name: '响应时间' },
+    { claim: /derat(?:e|ing)|降额/i, evidence: /derat(?:e|ing)|降额/i, name: '降额性能' },
+  ].filter(rule => rule.claim.test(spoken) && !rule.evidence.test(facts));
+  return unsupported.map(rule => `口播涉及未提供依据的${rule.name}，需补充对应事实或移除该内容`);
+}
+
 export async function generateNarration(input: { facts: string; theme: string; audience: string; language: string; duration: number; cta: string; constraints: string[]; reference?: string }): Promise<string[]> {
+  const evidenceIssues = narrationEvidenceIssues(input.facts);
+  if (evidenceIssues.length) throw new Error(evidenceIssues.join('；'));
   const units = Math.floor(input.duration * (narrationRate(input.language) * 0.87));
   const languageName = VIDEO_LANGUAGES[input.language as keyof typeof VIDEO_LANGUAGES] || input.language;
   const prompt = `写一段纯${languageName}（${input.language}） 社媒口播，目标 ${input.duration} 秒、约 ${units} ${['zh', 'ja'].includes(input.language) ? '字' : '词'}。先完整想清表达，再按自然语意分成3–8句。
@@ -37,6 +54,8 @@ ${input.reference ? '参考只迁移表达顺序，不复制事实：' + input.r
   throw Error('口播生成失败');
 }
 export async function reviewFinalNarration(input: { spoken: string; facts: string; language: string; constraints: string[] }): Promise<string[]> {
+  const evidenceIssues = narrationEvidenceIssues(input.facts, input.spoken);
+  if (evidenceIssues.length) return evidenceIssues;
   if (!spokenLanguageMatches(input.spoken, input.language)) return ['最终口播语言与制作计划不符'];
   const { text: raw } = await callVideoModel(`审核最终口播，首先检查正文是否为目标语言 ${input.language}（品牌、型号可保留原文），包括区分英语、西语、法语等拉丁字母语言。再检查会改变事实或理解的问题：未提供依据的数字/效果/承诺，条件或否定丢失，要求“这几个问题”却未列出，制作审稿腔。不要按个人文风改写。私信领取清单/指南/方案等也属于服务承诺，事实中未明确提供则指出。只检查口播，不检查画面标识是否出现或出现位置；画面标识由渲染单独验证。
 已确认事实：${input.facts}

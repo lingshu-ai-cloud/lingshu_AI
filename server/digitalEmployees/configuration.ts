@@ -142,7 +142,7 @@ export function resolveDigitalEmployeeConfiguration(input: {
   return {
     config,
     configVersion: Math.max(1, Math.trunc(Number(input.configVersion) || 1)),
-    policyVersion: fingerprint(runtimePolicy),
+    policyVersion: fingerprint({ ...runtimePolicy, continuationPolicy: config.continuationPolicy }),
     knowledgeBinding,
     runtimePolicy,
   };

@@ -76,6 +76,7 @@ async function nextTrackCode(tenantId: string): Promise<string> {
 export async function createTrackedPostDraft(
   tenantId: string,
   input: PostDraftInput,
+  initialState?: Pick<PostRecord, 'published_at' | 'stats'>,
 ): Promise<PostRecord & { trackingEnabled: boolean; needsWaNumberSetup: boolean }> {
   const enabled = input.enabled !== false;
   const now = new Date().toISOString();
@@ -90,10 +91,10 @@ export async function createTrackedPostDraft(
     platform: text(input.platform),
     platform_post_id: '',
     title: text(input.title),
-    published_at: now,
+    published_at: initialState?.published_at || now,
     track_code: code,
     wa_link: link,
-    stats: {},
+    stats: initialState?.stats || {},
     inquiries: 0,
     deals: 0,
   });

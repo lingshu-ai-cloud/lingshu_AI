@@ -44,6 +44,10 @@ try {
   const preparations = await buildDeliveryResources('tenant-a', tasks, '新品推广');
   assert.equal(preparations.length, 1, 'internal content steps become one preparation card before projects exist');
   assert.equal(preparations[0].taskIds.length, 3);
+  const queried: string[] = [];
+  store.list = async (collection: string) => { queried.push(collection); return { items: [], page: 1, perPage: 200, totalItems: 0, totalPages: 1 }; };
+  await buildDeliveryResources('tenant-a', drafts, '客服目标');
+  assert.ok(!queried.includes('studio_projects'), 'customer workspace must not scan video projects');
   const internal = await buildDeliveryResources('tenant-a', [{ ...task('goal_decomposition', 'succeeded'), output: { objective: '获得询盘', target: 5 } }], '经营目标');
   assert.equal(internal[0].column, 'done', 'real internal business results can be delivered without an external file');
   assert.match(internal[0].artifacts[0].text!, /获得询盘/);

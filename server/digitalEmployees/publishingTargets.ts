@@ -1,3 +1,4 @@
+import { validTimeZone } from './continuationPolicy.js';
 import { store } from '../storage/index.js';
 import type { PublishingPlatform, PublishingTarget } from './domain.js';
 
@@ -68,7 +69,8 @@ export async function bindPublishingTargets(
       continue;
     }
     if (!targets.some(target => target.platform === account.platform && target.accountId === account.accountId)) {
-      targets.push({ platform: account.platform, accountId: account.accountId, accountLabel: account.accountLabel });
+      if (requestedTarget.timezone && !validTimeZone(requestedTarget.timezone)) throw new Error('invalid_publishing_timezone');
+      targets.push({ platform: account.platform, accountId: account.accountId, accountLabel: account.accountLabel, ...(requestedTarget.timezone ? { timezone: requestedTarget.timezone } : {}) });
     }
   }
   return { targets, invalidAccountIds: invalidAccountIds.filter(Boolean) };

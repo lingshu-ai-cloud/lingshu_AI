@@ -30,7 +30,7 @@ try {
   const clean = checkDigitalEmployeeMigrations(fixture);
   assert.equal(clean.status, 'passed');
   assert.equal(clean.scope, 'read_only_repository_preflight');
-  assert.equal(clean.checkedMigrations, 5);
+  assert.equal(clean.checkedMigrations, DIGITAL_EMPLOYEE_MIGRATIONS.length);
   assert.match(clean.limitations.join(' '), /real PocketBase/);
   assert.match(clean.limitations.join(' '), /does not establish schema compatibility/);
 

@@ -14,6 +14,7 @@ import { crawlImagePostsForTenant, crawlVideosForTenant, getVideoPipelineStats }
 import { createCrawlWorkerJob } from './crawlWorker.js';
 import type { Platform } from '../types/index.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { resolveCrawlKeywords } from '../lib/crawlKeywords.js';
 import { normalizeKeywordInput, type KeywordPlatform } from '../../src/lib/keywordInput.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,7 +38,7 @@ export interface ScheduledTask {
   createdAt: string;
 }
 
-export type ScheduledExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline';
+export type ScheduledExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
 export interface ScheduledRunOutcome {
   taskId: string;
@@ -764,6 +765,11 @@ export function scheduledExecutionState(
   const queued = /执行状态：已排队|执行状态：处理中|等待\s*(?:Mac\s*)?(?:本地\s*)?Worker|等待\/处理中/.test(text);
   if (queued && options.workerOnline === false) return 'worker_offline';
   if (queued) return 'queued';
+  if (/执行状态：部分成功/.test(text)) return 'partial';
+  if (/执行状态：已采集，待分析/.test(text)) return 'collected';
+  if (/执行状态：暂无结果/.test(text)) return 'no_data';
+  if (/执行状态：执行失败/.test(text)) return 'failed';
+  if (/公开采集未找到可入库的真实视频：[\s\S]*(?:search failed|SSL|HTTP [45]\d\d|ECONN|timed out)/i.test(text) && !/新增 [1-9]\d* 条/.test(text)) return 'failed';
   if (/执行状态：(?:执行成功|部分成功)|任务执行完成|采集已结束|已完成/.test(text)) return 'succeeded';
   if (/执行状态：执行失败|执行失败[:：]|任务均执行失败|全部失败/.test(text)) return 'failed';
   return 'idle';
@@ -1017,6 +1023,17 @@ function normalizedKeywordList(value: string | undefined, platform: Platform, fa
 
 async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const tenantId = await resolveSchedulerTenantId(task);
+  const requestedKeywords = task.config.keywordSource ? (task.config.keywordInput || '') : (task.config.keywords || task.config.keyword || '');
+  const selection = resolveCrawlKeywords(requestedKeywords, await readTenantEnterpriseProfile(tenantId));
+  const resolvedKeywords = selection.keywords.join(', ');
+  if (selection.source !== 'explicit') {
+    const tasks = load();
+    const saved = tasks.find(item => item.id === task.id && item.tenantId === tenantId);
+    if (saved) {
+      saved.config = { ...saved.config, keywords: resolvedKeywords, keywordInput: requestedKeywords, keywordSource: selection.source, keywordEvidence: selection.evidence.join('、') };
+      save(tasks);
+    }
+  }
   const platforms = splitConfigList(task.config.platforms, ['youtube'])
     .filter((platform): platform is Platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
   const displayedKeywords = new Set<string>();
@@ -1032,7 +1049,7 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const workerBatch = `scheduler:${task.id}:run:${randomUUID()}`;
 
   for (const platform of platforms) {
-    const keywords = normalizedKeywordList(task.config.keywords || task.config.keyword, platform);
+    const keywords = normalizedKeywordList(resolvedKeywords, platform, []);
     for (const keyword of keywords) {
       displayedKeywords.add(keyword);
       try {
@@ -1044,6 +1061,8 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
             mode: 'keyword',
             keyword,
             limit,
+            dateFrom,
+            dateTo,
           });
           if (!job) throw new Error('Mac 本地采集任务创建失败');
           queued += 1;
@@ -1059,9 +1078,8 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
           dateTo,
           disableBackfill: task.config.smokeTest === '1',
         });
-        if (result.items.length === 0 && result.imported === 0 && /未找到|无可用|失败|blocked|degraded/i.test(result.message)) {
-          throw new Error(result.message);
-        }
+        await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'keyword', keyword, limit,
+          completed: { result: { ...result, items: undefined } } });
         imported += result.imported;
         returned += result.items.length;
         existing += result.returnedExisting;
@@ -1069,6 +1087,8 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
         lines.push(`${platform} / ${keyword}: 当前可见 ${result.items.length} 条，新增候选 ${result.imported} 条，库内已有 ${result.returnedExisting} 条`);
       } catch (e) {
         failed += 1;
+        await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'keyword', keyword, limit,
+          completed: { error: e instanceof Error ? e.message : String(e) } });
         lines.push(`${platform} / ${keyword}: 执行失败 - ${e instanceof Error ? e.message : String(e)}`);
       }
     }
@@ -1081,7 +1101,7 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
     `平台：${platforms.join(', ')}；关键词：${[...displayedKeywords].join('、')}；每组数量：${limit}`,
     `汇总：当前可见 ${returned} 条，新增候选 ${imported} 条，库内已有 ${existing} 条`,
     ...lines,
-    ...(queued > 0 ? [`队列批次：${workerBatch}`] : []),
+    `队列批次：${workerBatch}`,
   ].join('\n');
 }
 
@@ -1159,15 +1179,16 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
         cloudFallback: true,
         disableBackfill: task.config.smokeTest === '1',
       });
-      if (result.items.length === 0 && result.imported === 0 && /未找到|无可用|失败|blocked|degraded/i.test(result.message)) {
-        throw new Error(result.message);
-      }
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit,
+        completed: { result: { ...result, items: undefined } } });
       imported += result.imported;
       succeeded += 1;
       await store.update('competitor_accounts', String(account.id), { lastCrawledAt: new Date().toISOString(), lastCrawlCount: result.imported });
       lines.push(`${accountName}: 返回 ${result.items.length} 条，新增 ${result.imported} 条`);
     } catch (e) {
       failed += 1;
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit,
+        completed: { error: e instanceof Error ? e.message : String(e) } });
       lines.push(`${accountName}: 执行失败 - ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -1175,7 +1196,7 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
     `【${platform} 对标账号自动采集】账号 ${accounts.items.length} 个；每账号最多 ${limit} 条`,
     `执行状态：${queued > 0 ? `已排队（${queued} 个账号等待 Worker）` : succeeded > 0 ? '执行成功' : '执行失败'}${failed > 0 ? `（另有 ${failed} 个账号提交失败）` : ''}`,
     `本次结论：${queued > 0 ? '采集请求已进入队列，Worker 完成后自动回写最终结果' : succeeded === 0 ? '账号采集请求均未完成，请根据账号错误处理后重试' : imported > 0 ? `已新增 ${imported} 条对标内容` : '已完成账号检索，本次暂无新增内容'}`,
-    `汇总：新增 ${imported} 条`, ...lines, ...(queued > 0 ? [`队列批次：${workerBatch}`] : []),
+    `汇总：新增 ${imported} 条`, ...lines, `队列批次：${workerBatch}`,
   ].join('\n');
 }
 
@@ -1188,35 +1209,44 @@ export async function reconcileScheduledCrawlBatch(requestedBy: string): Promise
     where: { requestedBy }, sort: 'createdAt', page: 1, perPage: 200,
   });
   if (!jobs.items.length) return;
-  const counts = { queued: 0, running: 0, done: 0, failed: 0 };
-  let imported = 0;
-  const details: string[] = [];
-  for (const job of jobs.items) {
-    const status = String(job.status || 'queued') as keyof typeof counts;
-    if (status in counts) counts[status] += 1;
-    let result: Record<string, any> = {};
-    try { result = job.resultJson ? JSON.parse(String(job.resultJson)) : {}; } catch { /* keep empty */ }
-    imported += Number(result.imported || 0);
-    const label = String(job.keyword || job.accountName || job.accountUrl || job.platform || '采集任务');
-    if (status === 'done') details.push(`${label}: 已完成，新增 ${Number(result.imported || 0)} 条${result.message ? `（${result.message}）` : ''}`);
-    else if (status === 'failed') details.push(`${label}: 执行失败 - ${String(job.error || 'worker_failed')}`);
-  }
-  const pending = counts.queued + counts.running;
-  const state = pending > 0
-    ? `处理中（排队 ${counts.queued}，执行中 ${counts.running}，已完成 ${counts.done}，失败 ${counts.failed}）`
-    : counts.done > 0 && counts.failed === 0 ? '执行成功'
-      : counts.done > 0 ? `部分成功（成功 ${counts.done}，失败 ${counts.failed}）` : '执行失败';
-  const resultText = [
-    '【本地 Worker 采集结果】', `执行状态：${state}`,
-    `本次结论：${pending > 0 ? 'Worker 正在处理，完成后会继续自动更新' : counts.done > 0 ? `采集已结束，共新增 ${imported} 条` : '采集任务均执行失败，请检查 Worker 日志后重试'}`,
-    `汇总：新增 ${imported} 条；总任务 ${jobs.items.length} 个`, ...details,
-    `队列批次：${requestedBy}`,
-  ].join('\n');
+  const resultText = scheduledCrawlBatchResult(jobs.items, requestedBy);
   const tasks = load();
   const idx = tasks.findIndex(task => task.id === taskId && task.lastResult?.includes(`队列批次：${requestedBy}`));
   if (idx === -1) return; // A newer run already owns the visible result.
   tasks[idx].lastResult = resultText;
   save(tasks);
+}
+
+export function scheduledCrawlBatchResult(jobs: Record<string, any>[], requestedBy: string): string {
+  const counts = { queued: 0, running: 0, done: 0, failed: 0, no_data: 0 };
+  let imported = 0;
+  let analysisPending = false;
+  const details: string[] = [];
+  for (const job of jobs) {
+    let status = String(job.status || 'queued') as keyof typeof counts;
+    let result: Record<string, any> = {};
+    try { result = job.resultJson ? JSON.parse(String(job.resultJson)) : {}; } catch { /* keep empty */ }
+    if (status === 'done' && result.outcome === 'no_data') status = 'no_data';
+    if (status === 'done' && /公开采集未找到可入库的真实视频：[\s\S]*(?:search failed|SSL|HTTP [45]\d\d|ECONN|timed out)/i.test(String(result.message || ''))) status = 'failed';
+    if (status in counts) counts[status] += 1;
+    analysisPending ||= status === 'done' && result.analysisPending === true;
+    imported += Number(result.imported || 0);
+    const label = String(job.keyword || job.accountName || job.accountUrl || job.platform || '采集任务');
+    if (status === 'done') details.push(`${label}: 已完成，新增 ${Number(result.imported || 0)} 条${result.message ? `（${result.message}）` : ''}`);
+    else if (status === 'no_data') details.push(`${label}: 暂无符合条件的结果（${result.message || '请调整关键词或日期范围'}）`);
+    else if (status === 'failed') details.push(`${label}: 执行失败 - ${String(job.error || result.message || 'worker_failed')}`);
+  }
+  const pending = counts.queued + counts.running;
+  const state = pending > 0
+    ? `处理中（排队 ${counts.queued}，执行中 ${counts.running}，已完成 ${counts.done}，失败 ${counts.failed}）`
+    : counts.done > 0 && counts.failed === 0 ? (analysisPending ? '已采集，待分析' : '执行成功')
+      : counts.done > 0 ? `部分成功（成功 ${counts.done}，失败 ${counts.failed}）` : counts.failed > 0 ? '执行失败' : '暂无结果';
+  return [
+    '【本地 Worker 采集结果】', `执行状态：${state}`,
+    `本次结论：${pending > 0 ? 'Worker 正在处理，完成后会继续自动更新' : counts.done > 0 ? `采集已结束，共新增 ${imported} 条` : counts.failed > 0 ? '本批次未取得可用结果，请查看各平台失败原因及检索结果' : '检索已完成，暂无符合条件的内容，请调整关键词或日期范围'}`,
+    `汇总：新增 ${imported} 条；总任务 ${jobs.length} 个`, ...details,
+    `队列批次：${requestedBy}`,
+  ].join('\n');
 }
 
 async function executeTask(task: ScheduledTask): Promise<string> {
@@ -1269,8 +1299,8 @@ export async function runScheduledTaskNow(input: {
   const refreshed = findTenantTask(input.taskId, input.tenantId);
   return {
     taskId: input.taskId,
-    state: scheduledExecutionState(result),
-    result,
+    state: scheduledExecutionState(refreshed?.lastResult || result),
+    result: refreshed?.lastResult || result,
     lastRun: refreshed?.lastRun,
   };
 }
@@ -1338,10 +1368,10 @@ export function ensureDigitalEmployeeSocialCollectionTask(input: {
   const platforms = (input.platforms || ['youtube'])
     .map(platform => String(platform).toLowerCase())
     .filter(platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
-  const config = {
+  const config: Record<string, string> = {
     tenantId: input.tenantId,
     platforms: [...new Set(platforms.length ? platforms : ['youtube'])].join(','),
-    keywords: String(input.keywords || 'industry trends'),
+    keywords: String(input.keywords || ''),
     limit: normalizeCrawlerLimit(input.limit ?? 20),
     dateWindowDays: String(Math.max(1, Math.min(30, Number(input.dateWindowDays || 7)))),
     dedupeWindowDays: String(Math.max(1, Math.min(365, Number(input.dedupeWindowDays || 30)))),
@@ -1357,6 +1387,10 @@ export function ensureDigitalEmployeeSocialCollectionTask(input: {
     (task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_'))
   ));
   if (existing) {
+    // Keep the evidence-derived query until the plan's requested product changes.
+    if (existing.config.keywordSource && existing.config.keywordInput === config.keywords) {
+      for (const key of ['keywords', 'keywordInput', 'keywordSource', 'keywordEvidence']) config[key] = existing.config[key] || '';
+    }
     const next: ScheduledTask = {
       ...existing,
       name: '数字员工 · 社媒内容采集',

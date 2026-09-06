@@ -11,12 +11,16 @@ import {
 } from '../lib/digitalEmployees.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const reviewSource = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'utf8');
+const insightSource = fs.readFileSync('src/lib/reviewInsights.ts', 'utf8');
+const packageSource = fs.readFileSync('src/components/WeeklyPackagePanel.tsx', 'utf8');
+const productionSource = fs.readFileSync('src/components/ProductionProgressPanel.tsx', 'utf8');
 const boardSource = fs.readFileSync('src/components/DeliveryBoard.tsx', 'utf8');
 const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 
-for (const label of ['经营总览', '执行中心', '经营复盘']) {
+for (const label of ['今天要做', '生产与交付', '任务执行', '复盘']) {
   assert.match(pageSource, new RegExp(label), `Digital Employee workspace must expose the ${label} view`);
 }
 for (const label of ['全链路经营', '内容增长', '客户转化', 'Facebook', 'Instagram', 'TikTok', 'YouTube']) {
@@ -24,30 +28,25 @@ for (const label of ['全链路经营', '内容增长', '客户转化', 'Faceboo
 }
 assert.match(pageSource, /businessLine=\{businessLine\}[\s\S]{0,120}contentPlatform=\{contentPlatform\}/, 'overview and review panels must receive the shared business-line context');
 assert.match(pageSource, /<DeliveryBoard[\s\S]{0,200}tasks=\{data\.run \? visibleTasks : \[\]\}/, 'the execution center must feed business-line-filtered persisted tasks into the kanban without fabricating pre-run tasks');
-assert.match(pageSource, /方法论沉淀/, 'weekly review must expose reviewable methodology candidates');
+assert.match(insightSource, /knowledgeCandidates/, 'review must retain reviewable knowledge candidates');
 assert.match(libSource, /contentPlatforms:[\s\S]{0,100}facebook[\s\S]{0,100}youtube/, 'weekly goals must persist the selected content-platform scope');
 assert.doesNotMatch(pageSource, /aria-label="经营视角切换"[\s\S]{0,200}fixed bottom-5/, 'business-line switching must not cover dashboard content');
-assert.match(pageSource, /<OperatingContextBar[\s\S]{0,150}<BusinessLineNav/, 'the business-line switcher must follow the shared operating context');
-for (const label of ['经营数据总览', '实际经营重点结论', '流量转化漏斗', '内容经营', '客户转化']) {
-  assert.match(pageSource, new RegExp(label), `operating overview must expose ${label}`);
+for (const label of ['生产与交付', '爆款裂变成片', '数字人成片', '待审核作品', '发布执行', '客户跟进执行']) {
+  assert.match(productionSource, new RegExp(label), `production view must expose ${label}`);
 }
 for (const period of ['本周', '上周', '本月', '上月']) {
-  assert.match(pageSource, new RegExp(period), `operating overview must support the ${period} period`);
+  assert.match(productionSource, new RegExp(period), `production view must support ${period}`);
 }
-assert.doesNotMatch(pageSource, /<BusinessLoopMap onOpen=\{openBusiness\}/, 'operating overview must prioritize business data instead of the explanatory workflow map');
-assert.match(pageSource, /本周目标 · \{data\.goal\.title\}[\s\S]{0,500}实际 \{goalValue/, 'the overview must visually distinguish the weekly target from actual operating data');
+assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
 assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
-assert.match(pageSource, /调整 Agent 边界/, 'regular operation must expose a direct secondary entry for the four Agent boundaries');
-assert.match(pageSource, /<OperatingContextBar data=\{presentedData \|\| data\}/, 'overview, execution and review must share the same displayed operating context strip');
+assert.match(pageSource, /workspaceView === "overview" && <BusinessLineNav/, 'legacy business filters belong only to production; review has insight categories');
 assert.doesNotMatch(pageSource, /frontend_preview|BUSINESS_PREVIEW|PreviewExecutionPanel|示例数据预览中|查看示例数据/, 'the production cockpit must not contain or expose synthetic operating receipts');
 assert.doesNotMatch(pageSource, /<dt className="inline text-slate-400">(?:目标版本|计划锁定配置)/, 'the operating context strip must not expose technical record metadata');
-assert.match(pageSource, /更新 \{snapshotTime/, 'the compact operating context must retain the latest data timestamp');
-assert.match(pageSource, /data\.plan\?\.configSnapshot/, 'the UI must identify the exact config snapshot persisted with the current plan');
 assert.match(libSource, /configSnapshot\?: DigitalEmployeeConfig/, 'the plan API contract must retain its immutable config snapshot');
-assert.match(pageSource, /当前设置已变更，本轮仍按锁定快照执行/, 'editing Agent rules during a run must not imply the active plan changed');
 assert.match(pageSource, /useState<WorkspaceView>\(["']today["']\)/, 'regular login must land on Today Overview by default');
-assert.match(pageSource, /workspaceView === ["']today["'][\s\S]{0,5000}<TodaySnapshotPanel/, 'Today Overview must have its own render branch');
+assert.match(pageSource, /workspaceView === ["']today["'][\s\S]{0,5000}<TodayFocusPanel/, 'Today view must prioritize one next action before detailed operating data');
+assert.match(pageSource, /workspaceView === ["']overview["'][\s\S]{0,5000}<ProductionProgressPanel/, 'Business progress must keep detailed operating data in a dedicated view');
 assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<ProductionScene/, 'Live Production must have its own render branch');
 assert.match(pageSource, /workspaceView === ["']review["'][\s\S]{0,5000}<WeeklyReviewPanel/, 'Weekly Review must have its own render branch');
 assert.match(pageSource, /workspaceView === ["']rules["'][\s\S]{0,8000}(?:OnboardingPanel|approvalPolicy|\u89c4\u5219)/, 'Rules and Permissions must have its own render branch');
@@ -57,7 +56,7 @@ for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u4f7f\u7528\
 }
 assert.match(pageSource, /\u6570\u5b57\u5458\u5de5\u4efb\u52a1\u6d41\u8f6c\u56fe/, 'the business-native task-flow diagram must remain visible');
 assert.match(pageSource, /displayedReadiness\.map[\s\S]{0,5000}item\.status === ["']ready["']/, 'first login must render readiness from saved facts and the latest business snapshot instead of inventing it');
-assert.match(pageSource, /本周计划待启动/, 'first-run goal approval must expose one compact plan launch area');
+assert.match(packageSource, /确认范围并启动/, 'first-run goal approval must expose the package scope confirmation');
 assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan preview must translate each task status source instead of collapsing every task to a generic placeholder');
 assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'focus products must be loaded from the tenant enterprise knowledge profile');
 assert.match(pageSource, /aria-multiselectable="true"/, 'focus product selector must expose a multi-select listbox');
@@ -93,10 +92,7 @@ for (const label of ['\u7ea0\u504f\u5f53\u524d\u4efb\u52a1', '\u4ec5\u672c\u6b21
 assert.match(pageSource, /digitalEmployeeApi\.correctTask\(/, 'submitting a correction must call the persisted correction endpoint');
 assert.match(libSource, /correctTask:[\s\S]{0,350}instruction:[\s\S]{0,100}scope:[\s\S]{0,100}rerunDownstream/, 'correction API must preserve all three contract fields');
 
-for (const label of ['\u771f\u5b9e\u53d1\u5e03', '\u5185\u5bb9\u8be2\u76d8', '\u5185\u5bb9\u6210\u4ea4', '\u9ad8\u610f\u5411\u5ba2\u6237', '\u5df2\u62a5\u4ef7\u5ba2\u6237', '\u5df2\u6210\u4ea4\u5ba2\u6237', '\u8ddf\u8fdb\u5df2\u53d1\u9001', '\u8ddf\u8fdb\u5931\u8d25']) {
-  assert.match(pageSource, new RegExp(label), `Weekly Review must include the real-business metric ${label}`);
-}
-assert.match(pageSource, /available\s*\/\s*pending\s*\/\s*unavailable/, 'weekly metrics must distinguish measured, waiting, and unavailable data');
+assert.match(insightSource, /status === 'available'/, 'review findings must use available receipts');
 assert.match(pageSource, /\u6279\u51c6\u7684\u662f\u9010\u5ba2\u8349\u7a3f\u6279\u6b21\uff0c\u4e0d\u7b49\u4e8e\u6d88\u606f\u5df2\u7ecf\u53d1\u51fa/, 'batch approval must not be presented as delivery');
 assert.match(pageSource, /\u53d1\u9001\u6267\u884c\u670d\u52a1\u5f53\u524d\u4e3a\u624b\u52a8\u89e6\u53d1\u6a21\u5f0f/, 'the batch panel must distinguish manual mode from a ready automatic worker');
 assert.match(pageSource, /\u771f\u5b9e\u53d1\u9001\u56de\u6267/, 'the batch panel must wait for provider evidence');
@@ -106,9 +102,10 @@ assert.match(pageSource, /digitalEmployeeApi\.dispatchFollowupBatch/, 'the manua
 assert.match(pageSource, /function ConversionFunnelChart/, 'overview must render a dedicated funnel chart');
 assert.match(pageSource, /尚无可用数据，接入后显示真实数量与阶段比例/, 'the conversion visualization must explain missing data instead of fabricating a funnel');
 assert.doesNotMatch(pageSource, /Agent \u7ecf\u8425\u8d21\u732e/, 'overview must remove the redundant Agent contribution action area');
-for (const label of ['经营 Agent 结论', '核心瓶颈', '增长机会', '经营归因', '尚未证明的原因', '下周优先动作', '结论依据']) {
-  assert.match(pageSource, new RegExp(label), `weekly review must expose the conclusion-first section ${label}`);
+for (const label of ['本期值得行动', '全部洞察', '判断依据', '建议下一步', '执行与交付记录']) {
+  assert.ok(reviewSource.includes(label), `review must expose ${label}`);
 }
+assert.doesNotMatch(reviewSource, /经营归因|下周优先动作|方法论沉淀/, 'review must remove redundant generic advice sections');
 
 function task(taskKey: string, kind = 'execution'): WorkflowTask {
   return {
@@ -183,8 +180,8 @@ assert.doesNotMatch(pageSource, /rulesStepSaved/, 'onboarding must not keep a re
 assert.match(pageSource, /activeRun && newGoal[\s\S]{0,120}setNewGoal\(false\)/, 'an active run must close any duplicate goal form');
 assert.match(pageSource, /完成或取消当前运行后才能制定下一周目标/, 'the UI must explain why a second active goal is unavailable');
 assert.match(pageSource, /requiredReadiness[\s\S]{0,300}firstMissingReadiness/, 'plan approval must derive its blocker from real resource readiness');
-assert.match(pageSource, /approvalBlocked[\s\S]{0,1600}补齐\{firstMissingReadiness\.label\}/, 'missing required resources must replace launch with one concrete remediation action');
-assert.match(pageSource, /goal\?\.status === ["']draft["'] && data\.plan[\s\S]{0,160}<DraftPlanPreview plan=\{data\.plan\} onOpen=\{openBusiness\}/, 'a draft goal must render its real task plan before approval');
+assert.match(packageSource, /issues.length > 0/, 'invalid packages must block launch and explain missing dependencies');
+assert.match(pageSource, /<WeeklyPackagePanel/, 'the execution view must expose the editable weekly business package');
 assert.doesNotMatch(pageSource, /required\.add\(["'](?:products|viral_library|customers)["']\)/, 'new tenants must not be blocked from starting merely because products, inspiration, or customers are still empty');
 
 for (const label of ['重试任务', '跳过并继续', '登记人工完成', '任务受阻，需要处理']) {
@@ -202,11 +199,10 @@ assert.match(pageSource, /const saved = await onSubmit[\s\S]{0,500}纠偏尚未�
 assert.match(libSource, /digitalEmployee\.returnContext/, 'business deep links must persist a return-to-live context');
 assert.match(pageSource, /consumeDigitalEmployeeReturnContext/, 'returning from a business workspace must restore the production task context');
 assert.match(pageSource, /完成业务操作后返回“数字员工”即可继续/, 'business CTAs must tell the user how to return');
-assert.match(pageSource, /liveReview/, 'an active run must use the server live review rather than fake a final review');
-assert.match(pageSource, /本轮仍在运行：阶段性复盘/, 'the review view must label active-run results as provisional');
-assert.match(pageSource, /const customerGap = \/客户\|WhatsApp\|询盘\|报价\|成交\|跟进\|客群\|批次\|触达\//, 'customer conclusions must only use customer-conversion data gaps');
-assert.match(pageSource, /aria-label="经营数据周期"/, 'the overview period selector must expose an accessible group label');
-assert.match(pageSource, /aria-pressed=\{period===id\}/, 'the selected overview period must be machine-readable');
+assert.match(reviewSource, /liveReview/, 'an active run must use the server live review rather than fake a final review');
+assert.match(reviewSource, /本轮仍在运行，以下为阶段性发现/, 'the review view must label active-run results as provisional');
+assert.match(productionSource, /aria-label="生产统计周期"/, 'the overview period selector must expose an accessible group label');
+assert.match(productionSource, /aria-pressed=\{period === id\}/, 'the selected overview period must be machine-readable');
 assert.match(pageSource, /dispatch\?\.blocked_reason/, 'the follow-up truth panel must display the server preflight field from dispatch preflight');
 assert.match(pageSource, /manualFollowupSendAllowed/, 'the manual send CTA must be gated by the tenant/provider authorization facts');
 assert.match(pageSource, /真实发送未就绪/, 'the UI must state that real sending is unavailable instead of implying it only waits for time or receipt');

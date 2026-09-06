@@ -84,7 +84,7 @@ assert.doesNotMatch(
 );
 assert.match(studioSource, /validateStudioScriptGenerationInput\(\{/);
 assert.match(studioSource, /Agent 任务上下文/);
-assert.match(studioSource, /projectWorkflowContext\.preview \? '计划预览' : '内容 Agent'/, 'Studio must distinguish draft-plan preview from an executing Agent task');
+assert.match(studioSource, /sourceWorkflowContext\.preview \? '计划预览' : '内容 Agent'/, 'Studio must distinguish draft-plan preview from an executing Agent task');
 assert.match(studioSource, /焦点产品/);
 assert.match(studioSource, /workflowRunId:\s*projectWorkflowContext\?\.runId/, 'saved studio projects must retain their own originating workflow run');
 assert.match(studioSource, /workflowTaskId:\s*projectWorkflowContext\?\.taskId/, 'saved studio projects must retain their own originating workflow task');
@@ -126,7 +126,7 @@ assert.match(conversionSource, /真实客户 · 通道已连接/);
 
 const workerSource = readFileSync(new URL('../../scripts/local-crawl-worker.ts', import.meta.url), 'utf8');
 assert.match(workerSource, /CRAWL_WORKER_HEARTBEAT_MS/);
-assert.match(workerSource, /heartbeatJob\(job\.id\)/);
+assert.match(workerSource, /heartbeatJob\(job\)/);
 assert.match(workerSource, /localCrawlWorkerFailureMessage\(error\)/);
 
 console.log('content execution workspace contract tests passed');

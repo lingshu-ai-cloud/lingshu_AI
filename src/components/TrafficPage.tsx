@@ -1,4 +1,3 @@
-import ContentLibrary from './ContentLibrary';
 import { lazy, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -613,7 +612,6 @@ export default function TrafficPage({
     setViewMode('create');
   };
 
-  const [contentTab, setContentTab] = useState<'create' | 'library' | 'exports'>('create');
   return (
     <div className="flex h-full flex-col">
       <header className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2 sm:px-5">
@@ -674,9 +672,7 @@ export default function TrafficPage({
         </div>
       </div>}
 
-      {pageTitle === '内容创作' && <nav className="flex gap-2 border-b bg-white px-4 py-2" aria-label="内容创作页面">{([['create','创作工作台'],['library','成片库'],['exports','导出记录']] as const).map(([id,label])=><button key={id} className={'rounded px-4 py-2 text-sm '+(contentTab===id?'bg-blue-50 font-bold text-blue-700':'')} onClick={()=>{setContentTab(id);if(id==='create')setViewMode('create');}}>{label}</button>)}<button className="rounded px-4 py-2 text-sm" onClick={()=>{setContentTab('create');setViewMode('publish');}}>发布设置</button></nav>}
-      {pageTitle === '内容创作' && contentTab !== 'create' && <div className="min-h-0 flex-1"><ContentLibrary exportsOnly={contentTab === 'exports'} onPublish={draft=>{handleGoPublish(draft);setContentTab('create');}}/></div>}
-      <main className={pageTitle === '内容创作' && contentTab !== 'create' ? 'hidden' : 'relative min-h-0 flex-1 overflow-hidden'}>
+      <main className="relative min-h-0 flex-1 overflow-hidden">
         {(studioMounted || viewMode === 'create') && (
           <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
             <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} />
@@ -707,8 +703,12 @@ export default function TrafficPage({
   );
 }
 
+export function isPublishingCalendarNode(taskKey?: string): boolean {
+  return taskKey === 'publishing_calendar' || taskKey === 'platform_publish';
+}
+
 function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowContext, storageScope }: { onNavigate?: (p: Page) => void; draft?: PublishDraft | null; onReturnToPreview?: (projectId?: string) => void; workflowContext?: DigitalEmployeeWorkflowContext; storageScope?: string }) {
-  const [workspaceTab, setWorkspaceTab] = useState<'schedule' | 'publish'>(() => draft || readStoredPublishDraft(storageScope) ? 'publish' : 'schedule');
+  const [workspaceTab, setWorkspaceTab] = useState<'schedule' | 'publish'>(() => isPublishingCalendarNode(workflowContext?.taskKey) ? 'schedule' : draft || readStoredPublishDraft(storageScope) ? 'publish' : 'schedule');
   const [accounts, setAccounts] = useState<PublishAccount[]>([]);
   const [items, setItems] = useState<PublishQueueItem[]>(() => {
     // A direct Digital Employee handoff must not adopt an arbitrary draft left
@@ -716,6 +716,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     const incomingDraft = draft || (workflowContext ? null : readStoredPublishDraft(storageScope));
     const incoming = createPublishItems(incomingDraft, [], workflowContext);
     const stored = readStoredPublishQueue(storageScope);
+    // Inspecting schedules or receipts must not create a new publishing draft.
+    if (isPublishingCalendarNode(workflowContext?.taskKey)) return stored;
     if (incomingDraft && incoming.length) return mergePublishItems(stored, incoming);
     if (workflowContext) return [createPublishItem(null, [], workflowContext), ...stored];
     return stored.length ? stored : [createPublishItem(null)];
@@ -748,6 +750,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       : '';
     if (!key || handledWorkflowContextRef.current === key) return;
     handledWorkflowContextRef.current = key;
+    if (isPublishingCalendarNode(workflowContext?.taskKey)) {
+      setWorkspaceTab('schedule');
+      return;
+    }
     const attributedItem = createPublishItem(null, [], workflowContext);
     setItems((current) => {
       const existing = current.find(
@@ -1002,7 +1008,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
   const openCalendarPost = (post: CalendarPost) => {
     if (post.status === 'awaiting_reapproval') {
-      setError('这条内容或排期已经变更，原审批已失效；请返回经营驾驶舱重新发起审批。');
+      setError('这条内容或排期已经变更，原审批已失效；请返回智能经营重新发起审批。');
       setWorkspaceTab('schedule');
       return;
     }
@@ -1505,7 +1511,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               aria-pressed={workspaceTab === 'publish'}
               className={`h-10 rounded-xl px-4 text-sm font-black transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${workspaceTab === 'publish' ? 'bg-white text-text-primary shadow-sm ring-1 ring-border' : 'text-text-muted hover:bg-white/60'}`}
             >
-              发布设置
+              新建发布
             </button>
           </div>
         </div>

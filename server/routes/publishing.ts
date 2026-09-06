@@ -1,3 +1,4 @@
+import { publishingMutationBlocked, assertNoUnresolvedPublishing } from '../publishing/pendingPublishGuard.js';
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -170,7 +171,7 @@ function hasPublishedTargets(post: PostRecord): boolean {
 
 function isPublishingPost(post: PostRecord): boolean {
   const stats = parseJson<Record<string, unknown>>(post.stats, {});
-  return text(stats.status) === 'publishing';
+  return publishingMutationBlocked(post);
 }
 
 function presetSchedule(preset: PostingScheduleRecord['preset'] = 'standard'): Array<{ weekday: number; time: string }> {
@@ -417,6 +418,9 @@ publishingRouter.post('/calendar', async (req, res) => {
     });
     return;
   }
+  try {
+    await assertNoUnresolvedPublishing({ tenantId, platform, accountIds: Array.isArray(req.body?.targetAccountIds) ? req.body.targetAccountIds.map(String) : [], contentId: text(req.body?.contentId), videoPath: text(req.body?.videoPath), videoUrl: text(req.body?.videoUrl) });
+  } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : '已有待核对发布' }); return; }
   const tracked = await createTrackedPostDraft(tenantId, {
     contentId: text(req.body?.contentId),
     platform,
@@ -462,6 +466,7 @@ publishingRouter.post('/calendar/:id/retry', async (req, res) => {
     return;
   }
   const stats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (publishingMutationBlocked(post)) { res.status(409).json({ error: '平台结果待核对，不能重新发布' }); return; }
   if (!['failed', 'partial'].includes(text(stats.status))) {
     res.status(409).json({ error: 'post_is_not_retryable' });
     return;

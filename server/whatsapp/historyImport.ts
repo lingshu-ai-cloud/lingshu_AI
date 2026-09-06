@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,6 +16,7 @@ import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLib
 import { r2Upload } from '../storage/r2.js';
 import { store } from '../storage/index.js';
 import { sendTenantWhatsAppTextWithReceipts } from './send.js';
+import { deliverAutoReply } from './autoReplyDelivery.js';
 import { isRealWhatsAppNumber } from './customerVisibility.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 import {
@@ -228,7 +230,8 @@ export function dedupeWhatsAppInteractionRecords(items: StoredInteraction[]): St
     const tenantId = String(item?.tenantId || '').trim();
     const id = String(item?.id || '').trim();
     if (!tenantId || !id) { invalid.push(item); continue; }
-    const key = `${tenantId}\u0000${id}`;
+    const providerId = whatsappInteractionProviderId(item);
+    const key = `${tenantId}\u0000${providerId ? 'provider:' + providerId : 'local:' + id}`;
     const prior = records.get(key);
     records.set(key, prior ? mergeStoredInteractions(prior, item) : item);
   }
@@ -764,11 +767,14 @@ function upsertCustomer(input: { tenantId: string; waNumber: string; name?: stri
   return next;
 }
 
+export function whatsappInteractionProviderId(item: Pick<StoredInteraction, 'metaMessageId' | 'meta' | 'audit'>): string {
+  return String(item.metaMessageId || item.meta?.providerMessageId || item.audit?.providerMessageId || '').trim();
+}
+
 function addInteraction(item: StoredInteraction): boolean {
   const list = interactions();
-  const exists = item.metaMessageId
-    ? list.some(existing => existing.tenantId === item.tenantId && existing.metaMessageId === item.metaMessageId)
-    : list.some(existing => existing.tenantId === item.tenantId && existing.id === item.id);
+  const providerId = whatsappInteractionProviderId(item);
+  const exists = list.some(existing => existing.tenantId === item.tenantId && (existing.id === item.id || (providerId && whatsappInteractionProviderId(existing) === providerId)));
   if (exists) return false;
   list.push(item);
   list.sort((a, b) => a.timestamp - b.timestamp);
@@ -963,6 +969,9 @@ function evaluateCustomerHandoff(customer: StoredCustomer, input: Parameters<typ
 }
 
 async function handleInboundMessage(tenantId: string, message: IncomingMessage, options: { skipAutonomy?: boolean } = {}): Promise<void> {
+  // Meta retries the same event. Do not re-open inbox tasks, advance customer
+  // qualification, or send another reply for an already recorded message.
+  if (interactions().some(item => item.tenantId === tenantId && whatsappInteractionProviderId(item) === message.id)) return;
   const existingCustomer = customers().find(item => item.tenantId === tenantId && item.id === customerId(tenantId, message.waNumber));
   let attributedPost: PostRecord | null = null;
   const attributionPatch: Partial<StoredCustomer> = {};
@@ -1003,7 +1012,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
       ...(!message.fromBusiness ? { hasUnread: true, todoCompletedAt: undefined } : {}),
     },
   });
-  addInteraction({
+  const inserted = addInteraction({
     id: `${customer.id}-${message.id}`,
     tenantId,
     customerId: customer.id,
@@ -1014,6 +1023,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     timestamp: message.timestamp,
     audit: {},
   });
+  if (!inserted) return; // Another request may have won while attribution awaited.
   const conversationForQualification = recentConversationForCustomer(tenantId, customer.id);
   const qualification = assessBant({
     turns: conversationForQualification,
@@ -1202,48 +1212,23 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     let bridgeSent = false;
     let bridgeMessages: string[] = [];
     let bridgeReceipts: Array<{ messageId: string; recipientId?: string; raw?: unknown }> = [];
+    let bridgeFailureReason = '';
     if (shouldAutoBridge) {
-      try {
-        const delivered = await sendTenantWhatsAppTextWithReceipts(tenantId, message.waNumber, gapPlan.draft);
-        if (!delivered.receipts.length || delivered.receipts.some(receipt => !receipt.messageId)) {
-          throw new Error('whatsapp_provider_message_id_missing');
-        }
-        bridgeMessages = delivered.messages;
-        bridgeReceipts = delivered.receipts;
-        bridgeSent = true;
-        const sentAt = Date.now();
-        bridgeMessages.forEach((body, index) => addInteraction({
-          id: `${customer.id}-knowledge-gap-bridge-${sentAt}-${index}`,
-          tenantId,
-          customerId: customer.id,
-          waNumber: message.waNumber,
-          type: 'msg_out_ai',
-          body,
-          timestamp: sentAt + index,
-          autoSent: true,
-          audit: {
-            knowledgeMiss: context.knowledgeMiss,
-            buyerMessage: message.body,
-            scenario: gapPlan.scenario,
-            bridgeOnly: true,
-            handoff: true,
-            translatedDraft: gapPlan.draftZh,
-            replyConfidence: gapPlan.replyConfidence,
-            evidence: context.evidence,
-            providerMessageId: bridgeReceipts[index]?.messageId,
-            providerRecipientId: bridgeReceipts[index]?.recipientId,
-            messageIndex: index,
-            messageCount: bridgeMessages.length,
-          },
-          meta: {
-            provider: 'whatsapp',
-            providerMessageId: bridgeReceipts[index]?.messageId,
-            providerRecipientId: bridgeReceipts[index]?.recipientId,
-          },
-        }));
-      } catch {
-        bridgeSent = false;
-      }
+      const delivery = await deliverAutoReply({ tenantId, to: message.waNumber, body: gapPlan.draft,
+        recordAccepted: ({ message: body, receipt, index, total }) => {
+          bridgeMessages.push(body); bridgeReceipts.push(receipt);
+          addInteraction({ id: `${customer.id}-ai-${receipt.messageId}`, tenantId, customerId: customer.id,
+            waNumber: message.waNumber, type: 'msg_out_ai', body, timestamp: Date.now(), autoSent: true,
+            audit: { knowledgeMiss: context.knowledgeMiss, buyerMessage: message.body, scenario: gapPlan.scenario,
+              bridgeOnly: true, handoff: true, translatedDraft: gapPlan.draftZh, replyConfidence: gapPlan.replyConfidence,
+              evidence: context.evidence, providerMessageId: bridgeReceipts[index]?.messageId,
+              providerRecipientId: receipt.recipientId, messageIndex: index, messageCount: total },
+            meta: { provider: 'whatsapp', providerMessageId: receipt.messageId, providerRecipientId: receipt.recipientId },
+          });
+        },
+      }, sendTenantWhatsAppTextWithReceipts);
+      bridgeSent = delivery.complete;
+      bridgeFailureReason = delivery.reason;
     }
     addInteraction({
       id: `${customer.id}-knowledge-gap-handoff-${Date.now()}`,
@@ -1253,6 +1238,7 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
       type: 'system',
       body: bridgeSent
         ? `AI 已先承接客户并转人工：${gapPlan.handlingReason}`
+        : bridgeFailureReason ? `自动承接回复未完整确认，请先核对已发送记录，已转人工：${gapPlan.handlingReason}`
         : `已生成安全承接草稿并转人工：${gapPlan.handlingReason}`,
       timestamp: Date.now(),
       audit: {
@@ -1283,8 +1269,8 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
       patch: {
         handlingMode: 'human_needed',
         handlingReason: gapPlan.handlingReason,
-        pendingDraft: bridgeSent ? undefined : gapPlan.draft,
-        blockedAutoReplyReason: guard.allowed ? 'knowledge_gap_handoff' : guard.matchedRule || 'knowledge_gap_guard',
+        pendingDraft: bridgeSent || bridgeFailureReason ? undefined : gapPlan.draft,
+        blockedAutoReplyReason: bridgeFailureReason || (guard.allowed ? 'knowledge_gap_handoff' : guard.matchedRule || 'knowledge_gap_guard'),
         knowledgeMissStreak: nextMissStreak,
         fallbackCount: nextFallbackCount,
         handoffDueAt: gapPlan.followUpDueAt,
@@ -1492,21 +1478,27 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
     if (guard.allowed) {
       let sentMessages: string[] = [];
       let sentReceipts: Array<{ messageId: string; recipientId?: string; raw?: unknown }> = [];
-      try {
-        const delivered = await sendTenantWhatsAppTextWithReceipts(tenantId, message.waNumber, draft);
-        if (!delivered.receipts.length || delivered.receipts.some(receipt => !receipt.messageId)) {
-          throw new Error('whatsapp_provider_message_id_missing');
-        }
-        sentMessages = delivered.messages;
-        sentReceipts = delivered.receipts;
-      } catch (error) {
+      const delivery = await deliverAutoReply({ tenantId, to: message.waNumber, body: draft,
+        recordAccepted: ({ message: body, receipt, index, total }) => {
+          sentMessages.push(body); sentReceipts.push(receipt);
+          addInteraction({ id: `${customer.id}-ai-${receipt.messageId}`, tenantId, customerId: customer.id,
+            waNumber: message.waNumber, type: 'msg_out_ai', body, timestamp: Date.now(), autoSent: true,
+            audit: { action, risk: decision.rule.risk, autonomy, evidence: context.evidence,
+              providerMessageId: sentReceipts[index]?.messageId, providerRecipientId: receipt.recipientId,
+              messageIndex: index, messageCount: total },
+            meta: { provider: 'whatsapp', providerMessageId: receipt.messageId, providerRecipientId: receipt.recipientId },
+          });
+        },
+      }, sendTenantWhatsAppTextWithReceipts);
+      if (!delivery.complete) {
+        const error = new Error(delivery.error);
         addInteraction({
           id: `${customer.id}-send-failed-${Date.now()}`,
           tenantId,
           customerId: customer.id,
           waNumber: message.waNumber,
           type: 'system',
-          body: `AI 自动回复发送失败，已降级为待确认草稿：${error instanceof Error ? error.message : 'WhatsApp send failed'}`,
+          body: `AI 自动回复未完整确认，已停止自动发送；请先核对平台和已发送记录：${error instanceof Error ? error.message : 'WhatsApp send failed'}`,
           timestamp: Date.now(),
           audit: { action, risk: decision.rule.risk, autonomy, evidence: context.evidence, sendError: error instanceof Error ? error.message : String(error) },
         });
@@ -1514,10 +1506,10 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
           tenantId,
           waNumber: message.waNumber,
           patch: {
-            handlingMode: 'ai_draft',
-            handlingReason: 'AI 自动回复未真正发出，需要你确认后重发',
-            pendingDraft: draft,
-            blockedAutoReplyReason: error instanceof Error ? error.message : 'WhatsApp send failed',
+            handlingMode: 'human_needed',
+            handlingReason: '自动回复未完整确认，请先核对已发送记录，避免重复发送',
+            pendingDraft: delivery.pendingDraft,
+            blockedAutoReplyReason: delivery.reason,
             knowledgeMissStreak: nextMissStreak,
           },
         });
@@ -1529,32 +1521,6 @@ async function handleInboundMessage(tenantId: string, message: IncomingMessage, 
         }).catch(() => undefined);
         return;
       }
-      const sentAt = Date.now();
-      sentMessages.forEach((body, index) => addInteraction({
-        id: `${customer.id}-ai-${sentAt}-${index}`,
-        tenantId,
-        customerId: customer.id,
-        waNumber: message.waNumber,
-        type: 'msg_out_ai',
-        body,
-        timestamp: sentAt + index,
-        autoSent: true,
-        audit: {
-          action,
-          risk: decision.rule.risk,
-          autonomy,
-          evidence: context.evidence,
-          providerMessageId: sentReceipts[index]?.messageId,
-          providerRecipientId: sentReceipts[index]?.recipientId,
-          messageIndex: index,
-          messageCount: sentMessages.length,
-        },
-        meta: {
-          provider: 'whatsapp',
-          providerMessageId: sentReceipts[index]?.messageId,
-          providerRecipientId: sentReceipts[index]?.recipientId,
-        },
-      }));
       if (night.active) recordNightModeEvent({ tenantId, customerId: customer.id, kind: 'auto' });
       upsertCustomer({
         tenantId,
@@ -1649,16 +1615,18 @@ export function markWhatsAppHumanReply(input: {
   messages?: string[];
   waNumber?: string;
   providerReceipts?: Array<{ messageId?: string; recipientId?: string; raw?: unknown }>;
-}): void {
-  const customer = customers().find(item => item.tenantId === input.tenantId && item.id === input.customerId);
+}, dependencies: { customers?: typeof customers; addInteraction?: typeof addInteraction; upsertCustomer?: typeof upsertCustomer; now?: () => number; preserveCustomerState?: boolean } = {}): void {
+  const customer = (dependencies.customers || customers)().find(item => item.tenantId === input.tenantId && item.id === input.customerId);
   const waNumber = input.waNumber || customer?.waNumber;
-  if (!customer || !waNumber) return;
+  if (!customer || !waNumber) throw new Error('whatsapp_history_customer_missing');
   const sentMessages = input.messages?.length ? input.messages : [input.body];
-  const baseTimestamp = Date.now();
+  const baseTimestamp = (dependencies.now || Date.now)();
   sentMessages.forEach((body, index) => {
     const receipt = input.providerReceipts?.[index];
-    addInteraction({
-      id: `${customer.id}-human-${baseTimestamp}-${index}`,
+    const providerId = String(receipt?.messageId || '').trim();
+    (dependencies.addInteraction || addInteraction)({
+      id: providerId ? `wa-out-${createHash('sha256').update(JSON.stringify([input.tenantId, providerId])).digest('hex').slice(0, 40)}` : `${customer.id}-human-${baseTimestamp}-${index}`,
+      ...(providerId ? { metaMessageId: providerId } : {}),
       tenantId: input.tenantId,
       customerId: customer.id,
       waNumber,
@@ -1679,7 +1647,8 @@ export function markWhatsAppHumanReply(input: {
       } : undefined,
     });
   });
-  upsertCustomer({
+  if (dependencies.preserveCustomerState) return;
+  (dependencies.upsertCustomer || upsertCustomer)({
     tenantId: input.tenantId,
     waNumber,
     patch: {

@@ -1,0 +1,59 @@
+import type { ReviewTodo } from './reviewTodos';
+import type { VideoCreationPlan } from './videoCreationPlan';
+
+import type { Maturity, OperatingAssessment } from './operatingMaturity';
+export { maturityLabels } from './operatingMaturity';
+export type { Maturity } from './operatingMaturity';
+export type Participation = 'agent' | 'team';
+export const TASK_TEMPLATES = [
+  { id: 'readiness', title: '准备企业与产品资料', description: '核对产品资料、账号和执行授权。', outcome: '资料与账号具备执行条件', keys: ['context_readiness'], page: 'enterprise' },
+  { id: 'collection', title: '采集行业与对标内容', description: '按已确认的关键词和平台建立采集任务。', outcome: '建立可追溯的采集任务', keys: ['scheduled_source_collection'], page: 'scheduled' },
+  { id: 'inspiration', title: '筛选内容选题', description: '分析已有对标内容，筛选可用参考。', outcome: '获得有分析依据的内容参考', keys: ['viral_analysis'], page: 'socialInspiration' },
+  { id: 'production', title: '制作产品视频', description: '按产品和主题制作可发布的成片。', outcome: '完成计划中的视频并通过质量检查', keys: ['content_mode_routing', 'content_production', 'content_quality_gate'], page: 'smartAssets' },
+  { id: 'publishing', title: '发布内容', description: '将作品发布到指定账号，并核验平台回执。', outcome: '取得真实平台发布回执', keys: ['content_release_approval', 'publishing_calendar', 'platform_publish'], page: 'smartAssets' },
+  { id: 'customers', title: '整理客户分层', description: '整理客户来源与当前阶段，形成跟进客群。', outcome: '保存客户分层快照', keys: ['customer_attribution', 'customer_segmentation'], page: 'conversion' },
+  { id: 'followup', title: '跟进潜在客户', description: '为指定客户生成草稿并跟进，记录实际回执。', outcome: '取得跟进记录和渠道回执', keys: ['followup_batch_draft', 'followup_batch_approval', 'followup_dispatch'], page: 'conversion' },
+  { id: 'review', title: '复盘本周工作', description: '汇总人工与 Agent 的实际交付和待解决问题。', outcome: '形成有真实数据依据的本周复盘', keys: ['weekly_review'], page: 'digitalEmployees' },
+] as const;
+export type TemplateId = typeof TASK_TEMPLATES[number]['id'];
+export interface PackageTask {
+  templateId: TemplateId;
+  title: string;
+  ownerId: string; // Empty means Agent; membership is checked on the server.
+  ownerName: string;
+  dueAt: string;
+  notes: string;
+  videoPlans?: VideoCreationPlan[];
+  sourceProjectIds: string[];
+}
+export interface PackageAuthorization {
+  mode: 'each' | 'bounded';
+  accountIds: string[];
+  maxPublishItems: number;
+  customerIds: string[];
+  maxCustomerMessages: number;
+}
+export interface WeeklyPackage {
+  reviewTodos?: ReviewTodo[];
+  revision: number;
+  maturity: Maturity;
+  operatingAssessment?: OperatingAssessment;
+  participation: Participation;
+  tasks: PackageTask[];
+  authorization: PackageAuthorization;
+}
+export function packageIssues(pack: WeeklyPackage, startsAt: string, endsAt: string): string[] {
+  const issues: string[] = [];
+  const ids = new Set(pack.tasks.map(t => t.templateId));
+  if (!pack.tasks.length) issues.push('请至少添加一项任务');
+  if (ids.size !== pack.tasks.length) issues.push('同类任务请在现有卡片中调整，不要重复添加');
+  if (ids.has('publishing') && !ids.has('production') && !pack.tasks.find(t => t.templateId === 'publishing')?.sourceProjectIds.length) issues.push('发布内容需要制作任务，或选择已有作品');
+  if (ids.has('followup') && !ids.has('customers')) issues.push('客户跟进需要先加入客户分层任务');
+  for (const task of pack.tasks) {
+    if (!TASK_TEMPLATES.some(t => t.id === task.templateId)) issues.push('包含不支持的任务模板');
+    if (!task.title.trim()) issues.push('请填写任务标题');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(task.dueAt) || task.dueAt < startsAt || task.dueAt > endsAt) issues.push(`${task.title || '任务'}的完成日期须在本周周期内`);
+    if (task.templateId === 'production' && !task.videoPlans?.length) issues.push('制作视频需要至少一条具体视频安排');
+  }
+  return [...new Set(issues)];
+}

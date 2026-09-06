@@ -100,7 +100,9 @@ export async function buildDeliveryResources(tenantId: string, tasks: WorkflowTa
     return cache.get(key)!;
   };
   const add = (card: DeliveryResource) => { cards.push(card); card.taskIds.forEach(id => covered.add(id)); };
-  const runProjects = (await allRecords('studio_projects', { tenant_id: tenantId })).filter(project => object(project.spec).workflowRunId === tasks[0].run_id);
+  const runProjects = tasks.some(task => task.task_key === 'content_production')
+    ? (await allRecords('studio_projects', { tenant_id: tenantId })).filter(project => object(project.spec).workflowRunId === tasks[0].run_id)
+    : [];
   for (const project of runProjects) cache.set(`studio_project:${project.id}`, Promise.resolve(project));
   const projectIds = [...new Set([...runProjects.map(project => project.id), ...refs.filter(ref => ref.type === 'studio_project').map(ref => String(ref.id))])];
   for (const id of projectIds) {

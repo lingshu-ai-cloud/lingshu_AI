@@ -31,7 +31,7 @@ assert.doesNotMatch(browserSource, /setContent\(|browserWorkspaceHtml/, "the wor
 assert.match(browserSource, /session\.page\.goto\(url\.href/, "the worker must navigate to the original application");
 assert.match(browserSource, /button\.click\(/, "the worker must dispatch actual browser input");
 assert.match(monitorSource, /buildTaskDeepLink\(task, planTask, runId \|\| task\.run_id\)/, "every monitor window must retain the real business deep link");
-assert.match(monitorSource, /dispatchDigitalEmployeeDeepLink\(link\)/, "the monitor work-page control must execute the deep link");
+assert.match(monitorSource, /dispatchDigitalEmployeeDeepLink\(\{ \.\.\.link, \.\.\.target\.link \}\)/, "the monitor work-page control must execute the deep link");
 assert.match(monitorSource, /当前没有可监控的真实任务/, "an empty account must disclose that no monitorable tasks exist");
 assert.match(monitorSource, /任务等待或暂停时，鼠标也会停下来/, "idle tasks must not be advertised as ongoing clicks");
 assert.doesNotMatch(monitorSource, /setInterval[\s\S]{0,300}(?:cursor|mouse)|Math\.random\(\)/, "the monitor must never animate a fabricated cursor");

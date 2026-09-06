@@ -1,3 +1,7 @@
+import type { ContinuationPolicy } from './continuationPolicy';
+import type { ReviewTodoBoard } from './reviewTodos';
+import { type OperatingAssessment } from './operatingMaturity';
+import type { WeeklyPackage } from "./weeklyPackage";
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import { authHeader } from "./auth";
 
@@ -9,6 +13,7 @@ export interface PublishingTarget {
   platform: PublishingPlatform;
   accountId: string;
   accountLabel: string;
+  timezone?: string;
 }
 
 export type DigitalEmployeeWorkflow =
@@ -23,6 +28,10 @@ export type DigitalEmployeeWorkflow =
 export type DataAvailability = "available" | "pending" | "unavailable";
 
 export interface DigitalEmployeeConfig {
+  continuationPolicy?: ContinuationPolicy;
+  operatingMaturity?: "starting" | "growing" | "established";
+  operatingAssessment?: OperatingAssessment;
+  defaultParticipation?: "agent" | "team";
   videoDefaults?: Partial<VideoCreationPlan>;
   companyName: string;
   industry: string;
@@ -56,6 +65,9 @@ export interface DigitalEmployeeConfig {
     customer: { batchFollowup: boolean; commercialCommitment: boolean };
   };
 }
+
+export type BusinessLine = "full_funnel" | "content_growth" | "customer_conversion";
+export type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "youtube";
 
 export interface WeeklyGoal {
   videoPlans?: VideoCreationPlan[];
@@ -104,6 +116,7 @@ export interface PlanTask {
 }
 
 export interface WeeklyPlan {
+  businessPackage?: WeeklyPackage;
   id: string;
   status: string;
   strategy: string;
@@ -115,6 +128,19 @@ export interface WeeklyPlan {
   tasks: PlanTask[];
   /** The immutable operating rules captured when this plan was created. */
   configSnapshot?: DigitalEmployeeConfig;
+}
+
+/** Legacy snapshots remain authoritative; missing fields must not inherit new permissions. */
+export function planConfigForDisplay(snapshot: DigitalEmployeeConfig | undefined, current: DigitalEmployeeConfig): DigitalEmployeeConfig {
+  const source = snapshot || current;
+  return {
+    ...source,
+    publishingTargets: Array.isArray(source.publishingTargets) ? source.publishingTargets : [],
+    enabledWorkflows: Array.isArray(source.enabledWorkflows) ? source.enabledWorkflows : [],
+    constraints: Array.isArray(source.constraints) ? source.constraints : [],
+    allowRealPublishing: source.allowRealPublishing === true,
+    allowRealCustomerMessages: source.allowRealCustomerMessages === true,
+  };
 }
 
 function canonicalJson(value: unknown): string {
@@ -229,6 +255,12 @@ export interface BusinessSnapshot {
     exactAnalyses: BusinessMetric;
     contentProjects: BusinessMetric;
     completedWorks: BusinessMetric;
+    production?: {
+      status: DataAvailability;
+      note: string;
+      projects: Array<{ id: string; title: string; route: string; digitalPresenter: boolean; platform: string; completed: boolean; approved: boolean; blocked: boolean }>;
+    };
+
     approvedWorks?: BusinessMetric;
     scheduledPosts: BusinessMetric;
     publishedPosts: BusinessMetric;
@@ -696,6 +728,9 @@ export const digitalEmployeeApi = {
       method: "POST",
       body: JSON.stringify(config),
     }),
+  reviewTodos: (week: string) => request<ReviewTodoBoard>(`/review-todos?week=${encodeURIComponent(week)}`),
+  saveReviewTodos: (board: ReviewTodoBoard) => request<ReviewTodoBoard>('/review-todos', { method: 'PUT', body: JSON.stringify(board) }),
+  dispatchReviewTodos: (week: string, revision: number) => request<ReviewTodoBoard>('/review-todos/dispatch', { method: 'POST', body: JSON.stringify({ week, revision }) }),
   createGoal: (
     goal: Omit<
       WeeklyGoal,
@@ -706,10 +741,14 @@ export const digitalEmployeeApi = {
       method: "POST",
       body: JSON.stringify(goal),
     }),
-  approveGoal: (goalId: string) =>
+  recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),
+  savePackage: (goalId: string, pack: WeeklyPackage) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package`, { method: "PUT", body: JSON.stringify(pack) }),
+  linkTaskProject: (runId: string, taskId: string, projectId: string) => request<DigitalEmployeeOverview>(`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/link-project`, { method: "POST", body: JSON.stringify({ projectId }) }),
+  packageOptions: () => request<{ members: Array<{ id: string; name: string }>; projects: Array<{ id: string; title: string }>; customers: Array<{ id: string; name: string }> }>("/package-options"),
+  approveGoal: (goalId: string, packageRevision?: number) =>
     request<DigitalEmployeeOverview>(
       `/goals/${encodeURIComponent(goalId)}/approve`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify({ packageRevision }) },
     ),
   decideApproval: (
     approvalId: string,

@@ -9,7 +9,7 @@ const page = fs.readFileSync(new URL('../../src/components/DigitalEmployeePage.t
 
 assert.match(route, /get\('\/publishing-accounts'[\s\S]*listConnectedPublishingAccounts\(tenantId\)/, 'account choices must come from tenant-scoped connected records');
 assert.match(route, /bindPublishingTargets\(tenantId, submittedConfig\.publishingTargets\)/, 'onboarding must not trust browser-provided account metadata');
-assert.match(route, /goal_publishing_targets_mismatch/, 'a goal must reject platforms outside the configured targets');
+assert.match(route, /key: 'selected_publishing_accounts'[\s\S]*packageAccountIds.every\(accountId => connectedIds.has\(accountId\)\)/, 'runtime publishing preflight must reject missing or disconnected selected accounts without preventing independent tasks from starting');
 assert.match(route, /publishing_approval_package/, 'content approval must carry its itemized immutable package');
 assert.match(route, /currentPublishingPackage\.contentHash !== String\(approval\.content_hash/, 'changed content must invalidate approval');
 assert.match(route, /const connectedAccounts = await listConnectedPublishingAccounts\(tenantId\)/, 'the selected accounts must still be connected when the approval is decided');

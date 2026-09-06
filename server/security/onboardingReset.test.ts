@@ -35,9 +35,9 @@ assert.match(authRoutes, /authRouter\.get\('\/me'[\s\S]*?accountGuideState\([\s\
 assert.match(authRoutes, /authRouter\.post\('\/guide-seen'[\s\S]*?consumeDemoGuide\(email\)/, 'the guide trigger must be consumed only after the client reports it shown');
 
 const app = read('src/App.tsx');
-assert.match(app, /if \(!s\?\.demo\?\.guideTrigger\) return;[\s\S]*?BUSINESS_DIAGNOSIS_SEEN_KEY[\s\S]*?setBusinessDiagnosisOpen\(true\)/, 'the pending trigger must open the reception guide');
-assert.match(app, /diagnosisScopeFor = \(s:[\s\S]*?s\?\.demo\?\.guideScope/, 'the reset scope must bypass an old browser seen marker');
-assert.match(app, /setBusinessDiagnosisOpen\(true\);[\s\S]*?authApi\.guideSeen\(\)/, 'the one-time server trigger must be consumed only after the guide is opened');
+assert.doesNotMatch(app, /BusinessDiagnosisModal|setBusinessDiagnosisOpen|showBusinessDiagnosisFor/, 'login must not reopen a duplicate reception configuration');
+const customerConfig = read('src/components/DigitalEmployeePage.tsx');
+assert.match(customerConfig, /activeRuleAgent === "customer"[\s\S]*?<KnowledgeIntakePanel/, 'customer Agent configuration must retain reception knowledge intake');
 
 const resetScript = read('scripts/reset-account-guide.ts');
 assert.match(resetScript, /pbListStrict[\s\S]*?resetAccountGuide\(email/, 'the reset command must verify the real account before changing guide state');

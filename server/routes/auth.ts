@@ -732,17 +732,22 @@ authRouter.post('/change-password', async (req, res) => {
   res.json({ ok: true });
 });
 
-authRouter.get('/employees', async (req, res) => {
-  const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  const local = parseLocalToken(req.headers.authorization);
+export async function listTenantEmployees(authorization: string | undefined) {
+  const identity = await auth.verifyToken(authorization);
+  if (!identity || identity.supportAccess) throw new Error('登录已失效，请重新登录');
+  const local = parseLocalToken(authorization);
   if (local) {
     const employees = readLocalAccounts().filter(account => account.tenantId === identity.tenantId).map(account => ({ id: account.userId, email: account.email, name: account.name, role: normalizedRole(account.role), isCurrent: account.userId === identity.userId, created: account.createdAt }));
     if (!employees.some(employee => employee.id === identity.userId)) employees.unshift({ id: identity.userId, email: local.email || '', name: local.name || local.email?.split('@')[0] || '企业管理员', role: normalizedRole(local.role), isCurrent: true, created: '' });
-    res.json({ employees }); return;
+    return employees;
   }
-  const result = await pbList<PbUser & Record<string, unknown>>('users', { filter: `tenantId = "${identity.tenantId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`, sort: 'created', perPage: 100 });
-  res.json({ employees: result.items.map(item => ({ id: item.id, email: item.email ?? '', name: item.name ?? '', role: normalizedRole(item.role), isCurrent: item.id === identity.userId, created: String(item.created ?? '') })) });
+  const result = await pbList<PbUser & Record<string, unknown>>('users', { filter: 'tenantId = ' + JSON.stringify(identity.tenantId), sort: 'created', perPage: 100 });
+  return result.items.map(item => ({ id: item.id, email: item.email ?? '', name: item.name ?? '', role: normalizedRole(item.role), isCurrent: item.id === identity.userId, created: String(item.created ?? '') }));
+}
+
+authRouter.get('/employees', async (req, res) => {
+  try { res.json({ employees: await listTenantEmployees(req.headers.authorization) }); }
+  catch { res.status(401).json({ error: '登录已失效，请重新登录' }); }
 });
 
 authRouter.post('/employees', async (req, res) => {

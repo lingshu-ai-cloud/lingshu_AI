@@ -1,6 +1,7 @@
 import { contentAccepted } from './contentAcceptance.js';
 import fs from 'node:fs';
-import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
+import { paidOrder } from '../../shared/orderLifecycle.js';
+import { readOrders, readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { store } from '../storage/index.js';
 import { buildDailyTotals, type SocialMetricKey } from '../socialMetrics/aggregation.js';
@@ -35,6 +36,12 @@ export interface BusinessSnapshot {
     exactAnalyses: BusinessMetric;
     contentProjects: BusinessMetric;
     completedWorks: BusinessMetric;
+    production?: {
+      status: DataAvailability;
+      note: string;
+      projects: Array<{ id: string; title: string; route: string; digitalPresenter: boolean; platform: string; completed: boolean; approved: boolean; blocked: boolean }>;
+    };
+
     approvedWorks?: BusinessMetric;
     scheduledPosts: BusinessMetric;
     publishedPosts: BusinessMetric;
@@ -236,6 +243,22 @@ function contentProjectReady(record: GenericRecord): boolean {
     && evidenceAssetIds.length > 0;
 }
 
+export function productionProject(record: GenericRecord) {
+  const spec = jsonObject(record.spec);
+  const automation = jsonObject(spec.automation);
+  const plan = jsonObject(jsonObject(spec.contentOrder).videoPlan);
+  const completed = completedWorkHasReceipt(record);
+  return {
+    id: String(record.id), title: String(record.title || '未命名作品'),
+    route: String(plan.route || automation.route || spec.mode || 'unknown'),
+    digitalPresenter: ['heygen', 'avatar'].includes(String(plan.presenter)) || spec.presenterMode === 'digital',
+    platform: String(spec.platform || jsonObject(automation.routePlan).platform || ''),
+    completed,
+    approved: completed && contentAccepted(spec),
+    blocked: ['blocked', 'failed'].includes(String(record.status)) || ['blocked', 'failed'].includes(String(automation.status)) || Boolean(automation.blocker),
+  };
+}
+
 export async function buildBusinessSnapshot(
   tenantId: string,
   range?: { startsAt?: string; endsAt?: string },
@@ -246,11 +269,11 @@ export async function buildBusinessSnapshot(
   const nowMs = now.getTime();
   const nextDay = nowMs + 24 * 60 * 60 * 1000;
 
-  const [profile, scheduledResult, videoResult, projectResult, postResult, socialResult, youtubeResult, segmentResult, batchResult, recipientResult, socialMetricSnapshots] = await Promise.all([
+  const [profile, scheduledResult, videoResult, projectResult, postResult, socialResult, youtubeResult, segmentResult, batchResult, recipientResult, socialMetricSnapshots, orderResult] = await Promise.all([
     readTenantEnterpriseProfile(tenantId).catch(() => null),
     store.list<GenericRecord>('scheduled_tasks', { where: { tenant_id: tenantId }, perPage: 500 }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('trend_videos', { where: { tenantId }, perPage: 500, sort: '-crawledAt' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
-    store.list<GenericRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500, sort: '-updated_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
+    store.list<GenericRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500, sort: '-updated_at' }).catch(() => ({ items: [], failed: true })),
     store.list<GenericRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500, sort: '-published_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('social_accounts', { where: { tenantId }, perPage: 100 }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('youtube_accounts', { where: { tenantId }, perPage: 100 }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
@@ -258,6 +281,7 @@ export async function buildBusinessSnapshot(
     store.list<GenericRecord>('followup_batches', { where: { tenant_id: tenantId }, perPage: 200, sort: '-created_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('followup_batch_items', { where: { tenant_id: tenantId }, perPage: 1000, sort: '-created_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     listSocialMetricSnapshots(tenantId).catch(() => []),
+    readOrders(tenantId).then(items => ({ items, failed: false })).catch(() => ({ items: [], failed: true })),
   ]);
 
   const customers = getWhatsAppCustomers(tenantId);
@@ -277,6 +301,10 @@ export async function buildBusinessSnapshot(
   const weekBatches = batches.filter(item => inRange(item.created_at || item.created, startsAt, endsAt));
   const weekRecipients = recipients.filter(item => inRange(item.created_at || item.created, startsAt, endsAt));
   const published = weekPosts.filter(hasPublishedReceipt);
+  const receiptPostIds = new Set(posts.filter(hasPublishedReceipt).map(item => item.id));
+  const attributedPaidOrders = orderResult.items.filter(order => !syntheticRecord(order as unknown as Record<string, unknown>)
+    && paidOrder(order) && receiptPostIds.has(String(order.sourcePostId || ''))
+    && inRange(order.paidAt || `${order.orderDate}T00:00:00+08:00`, startsAt, endsAt));
   const failed = weekPosts.filter(item => publicPostStatus(item) === 'failed');
   const scheduledPosts = weekPosts.filter(item => publicPostStatus(item) === 'scheduled');
   const productItems = profile?.products?.items || [];
@@ -344,6 +372,8 @@ export async function buildBusinessSnapshot(
   next24Hours.sort((left, right) => time(left.scheduledAt) - time(right.scheduledAt));
 
   const dataGaps: string[] = [];
+  if (orderResult.failed) dataGaps.push('订单台账读取失败，成交指标不可用');
+  if (orderResult.items.some(order => paidOrder(order) && !order.sourcePostId)) dataGaps.push('部分已付款订单未绑定来源内容，暂不计入内容成交归因');
   if (!enterpriseReady) dataGaps.push('企业资料不完整，内容与客服任务只能使用有限上下文');
   if (!socialAccounts.length) dataGaps.push('尚未连接社媒账号，无法取得真实发布回执');
   if (!videos.length) dataGaps.push('爆款库暂无真实记录，不能计算分析成功率');
@@ -372,13 +402,18 @@ export async function buildBusinessSnapshot(
       collectedItems: metric(weekVideos.length, 'trend_videos'),
       exactAnalyses: metric(weekVideos.filter(exactAnalysis).length, 'trend_videos.aiAnalysis'),
       contentProjects: metric(weekProjects.length, 'studio_projects'),
+      production: {
+        status: 'failed' in projectResult || ('totalItems' in projectResult && Number(projectResult.totalItems) > projectResult.items.length) ? 'unavailable' : 'available',
+        note: '按所选周期内更新的作品统计当前状态，每个项目计一件；创作方式与数字人出镜可重叠，作品数量不等于发布次数。',
+        projects: weekProjects.map(productionProject),
+      },
       approvedWorks: metric(weekProjects.filter(project => completedWorkHasReceipt(project) && contentAccepted(jsonObject(project.spec))).length, 'studio_projects.spec.contentAcceptance + current content fingerprint'),
       completedWorks: metric(weekProjects.filter(completedWorkHasReceipt).length, 'studio_projects.spec.automation.quality + render receipt', 'available', '仅统计存在可核验成片的作品；作品完成不等于平台发布'),
       scheduledPosts: metric(publishingValue(scheduledPosts.length), 'posts.stats.status', publishingAvailability, publishingNote),
       publishedPosts: metric(publishingValue(published.length), 'posts.publishResults', publishingAvailability, publishingNote),
       failedPosts: metric(publishingValue(failed.length), 'posts.publishResults', publishingAvailability, publishingNote),
       inquiries: metric(publishingValue(published.reduce((sum, item) => sum + Number(item.inquiries || 0), 0)), 'published posts with provider receipt + posts.inquiries', publishingAvailability, publishingNote),
-      deals: metric(publishingValue(published.reduce((sum, item) => sum + Number(item.deals || 0), 0)), 'published posts with provider receipt + posts.deals', publishingAvailability, publishingNote),
+      deals: metric(orderResult.failed ? null : attributedPaidOrders.length, 'tenant_orders.sourcePostId + paid status + posts provider receipt', orderResult.failed ? 'unavailable' : 'available', '人工维护订单台账，按付款日（历史订单使用订单日）统计当前未退款的归因订单；不代表已核验支付网关回执'),
     },
     customer: {
       total: metric(customers.length, 'whatsapp_customers', customers.length ? 'available' : 'unavailable'),

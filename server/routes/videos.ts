@@ -1,3 +1,5 @@
+import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analysisLease.js';
+import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -851,9 +853,16 @@ export interface CrawlVideosInput {
   cloudFallback?: boolean;
   /** One-shot diagnostics must never fan out into automatic replacement crawls. */
   disableBackfill?: boolean;
+  /** Scheduled collection finishes after persistence; analysis owns its own queue. */
+  deferAnalysis?: boolean;
 }
 
+class NoCrawlResultsError extends Error {}
+
 export interface CrawlVideosResult {
+  outcome?: 'collected' | 'no_data';
+  candidateIds?: string[];
+  analysisPending?: boolean;
   platform: Platform;
   keyword: string;
   imported: number;
@@ -1170,21 +1179,21 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       const beforeDateFilter = items.length;
       items = filterDateRangeItems(items, dateFrom, dateTo);
       if (items.length === 0 && hasDateRange(dateFrom, dateTo)) {
-        throw new Error(`没有找到发布时间在 ${dateFrom || '不限'} 至 ${dateTo || '不限'} 内的公开视频（候选 ${beforeDateFilter} 条已过滤）`);
+        throw new NoCrawlResultsError(`没有找到发布时间在 ${dateFrom || '不限'} 至 ${dateTo || '不限'} 内的公开视频（候选 ${beforeDateFilter} 条已过滤）`);
       }
     }
     if (!directUrlInput) {
       const beforeRealMediaFilter = items.length;
       items = filterRealMediaItems(items);
       if (items.length === 0) {
-        throw new Error(`没有拿到带真实封面的公开视频（候选 ${beforeRealMediaFilter} 条已过滤）`);
+        throw new NoCrawlResultsError(`没有拿到带真实封面的公开视频（候选 ${beforeRealMediaFilter} 条已过滤）`);
       }
     }
     if (!directUrlInput) {
       const beforeFilter = items.length;
       items = filterKeywordRelevantItems(items, keyword);
       if (items.length === 0) {
-        throw new Error(`没有找到与关键词「${keyword}」相关的公开视频（候选 ${beforeFilter} 条已过滤）`);
+        throw new NoCrawlResultsError(`没有找到与关键词「${keyword}」相关的公开视频（候选 ${beforeFilter} 条已过滤）`);
       }
     }
     if (!directUrlInput && items.length < target) {
@@ -1196,6 +1205,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
       }
     }
   } catch (e) {
+    if (!(e instanceof NoCrawlResultsError)) throw e;
     crawlerMessage = e instanceof Error
       ? `${platform} 公开采集未找到可入库的真实视频：${e.message}`
       : `${platform} 公开采集未找到可入库的真实视频`;
@@ -1318,7 +1328,15 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
   const returnedNew = Math.min(records.length, resultRecords.length);
   let returnedExisting = Math.max(0, resultRecords.length - returnedNew);
   let visibleNewCount = 0;
-  if (testTenant) {
+  const candidateIds = resultRecords.map(record => String((record as Record<string, unknown>).id));
+  if (testTenant && input.deferAnalysis) {
+    for (const record of resultRecords) {
+      await queueTestTenantVideoLevelAnalysis(record as Record<string, unknown>);
+    }
+    // Do not expose metadata-only records as analysis-ready results.
+    resultRecords = [];
+    returnedExisting = 0;
+  } else if (testTenant) {
     // A repeated keyword commonly finds URLs that were inserted by an earlier
     // run but whose video-level analysis did not finish.  They are still real
     // crawl candidates and must be resumed instead of being silently skipped.
@@ -1346,7 +1364,9 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
     await enqueueCrawledRecordsForAnalysis(resultRecords);
   }
 
-  const message = testTenant
+  const message = input.deferAnalysis && candidateIds.length > 0
+    ? `已采集 ${candidateIds.length} 条真实候选（新增 ${imported} 条）；视频分析在后台继续，分析通过后才可作为参考。`
+    : testTenant
     ? (crawlerMessage || (resultRecords.length === 0
       ? `采集完成：本次新增 ${imported} 条候选，跳过已入库 ${skippedExisting} 条；暂无新增视频级可用结果，后台继续按同关键词补位，失败/不可分析结果已隐藏并进入人工处理。`
       : resultRecords.length < target
@@ -1360,6 +1380,9 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
           : `采集完成：返回 ${resultRecords.length} 条（新增 ${imported} 条，库内已有 ${returnedExisting} 条）${crawlerTopUpMessage}${visibleNewCount > 0 ? `；已返回 ${visibleNewCount} 条视频级可用结果` : ''}`);
 
   return {
+    outcome: candidateIds.length > 0 ? 'collected' : 'no_data',
+    candidateIds,
+    analysisPending: candidateIds.length > 0 && (input.deferAnalysis === true || (testTenant && resultRecords.length < candidateIds.length)),
     platform,
     keyword,
     imported,
@@ -2992,12 +3015,11 @@ async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: 
   let released = 0;
   for (const record of candidates) {
     const recordId = String(record.id || '');
-    if (!recordId || inFlight.has(recordId)) continue;
+    if (!recordId || inFlight.has(recordId) || activeAnalysisRecords.has(recordId) || durableAnalysisRecords.has(recordId)) continue;
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
     const startedAt = Date.parse(String(analysis.reanalyzeQueuedAt || record.updated || ''));
-    // On process startup no in-process analysis can still be alive. Release the
-    // persisted lock immediately so a container restart never leaves the UI in
-    // "generating" for the normal 30-minute stall window.
+    // The durable ownership check above also protects work in sibling local
+    // processes. Only ownerless work can be released immediately on startup.
     if (!forceInterrupted && Number.isFinite(startedAt) && now - startedAt < EXACT_ANALYSIS_STALL_MS) continue;
     await store.update(COL, recordId, {
       aiAnalysis: JSON.stringify({
@@ -3270,6 +3292,16 @@ async function withDownloadSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+const activeAnalysisRecords = new RecordWorkRegistry();
+const durableAnalysisRecords = new AnalysisLeaseRegistry(path.join(__dirname, '../../data/analysis-locks'));
+
+export type SourceAnalysisAdapters = {
+  lease?: AnalysisLeaseRegistry;
+  download?: typeof downloadVideoForAnalysis;
+  analyze?: typeof analyzeDownloadedVideoWithFallback;
+  compressPreview?: typeof compressPocketBasePreview;
+};
+
 export async function analyzeSourceVideoJob(input: {
   record: Record<string, unknown> | null;
   sourceUrl: string;
@@ -3280,8 +3312,10 @@ export async function analyzeSourceVideoJob(input: {
   skipYoutubeUrlAnalysis?: boolean;
   suppressVisibleBackfill?: boolean;
   forceManualFailure?: boolean;
-}): Promise<unknown> {
-  return withDownloadSlot(() => analyzeSourceVideoJobInner(input));
+}, adapters: SourceAnalysisAdapters = {}): Promise<unknown> {
+  const key = String(input.record?.id || '');
+  const execute = () => withDownloadSlot(() => analyzeSourceVideoJobInner(input, adapters));
+  return key ? activeAnalysisRecords.run(key, () => (adapters.lease || durableAnalysisRecords).run(key, execute)) : execute();
 }
 
 async function analyzeSourceVideoJobInner(input: {
@@ -3294,7 +3328,7 @@ async function analyzeSourceVideoJobInner(input: {
   skipYoutubeUrlAnalysis?: boolean;
   suppressVisibleBackfill?: boolean;
   forceManualFailure?: boolean;
-}): Promise<unknown> {
+}, adapters: SourceAnalysisAdapters = {}): Promise<unknown> {
   const recordId = input.record?.id ? String(input.record.id) : '';
   const inputAnalysis = parseJsonRecord<Record<string, unknown>>(input.record?.aiAnalysis, {});
   const requestedMode = inputAnalysis.requestedAnalysisMode;
@@ -3352,7 +3386,7 @@ async function analyzeSourceVideoJobInner(input: {
       });
     }
 
-    const downloaded = await downloadVideoForAnalysis(input);
+    const downloaded = await (adapters.download || downloadVideoForAnalysis)(input);
     tempPath = downloaded.filePath;
     // Precise analysis previously deleted its temporary file without attaching a
     // playable copy to the record.  Persist a compact preview first so a record
@@ -3361,7 +3395,7 @@ async function analyzeSourceVideoJobInner(input: {
       if (!await stillOwnsRun()) return null;
       let previewPath = '';
       try {
-        previewPath = await compressPocketBasePreview(downloaded.filePath);
+        previewPath = await (adapters.compressPreview || compressPocketBasePreview)(downloaded.filePath);
         const pocketBaseFilename = await uploadCrawlerCosObject(recordId, 'video', fs.readFileSync(previewPath), 'video/mp4');
         if (!pocketBaseFilename) throw new Error('PocketBase analysis preview persistence failed');
         const latest = await store.getById(COL, recordId);
@@ -3422,7 +3456,7 @@ async function analyzeSourceVideoJobInner(input: {
       });
     }
 
-    const videoAnalysis = await analyzeDownloadedVideoWithFallback({
+    const videoAnalysis = await (adapters.analyze || analyzeDownloadedVideoWithFallback)({
       filePath: downloaded.filePath,
       mimeType: downloaded.mimeType,
       title: String(input.record?.title || input.title),
@@ -3441,7 +3475,7 @@ async function analyzeSourceVideoJobInner(input: {
       }
       const latest = await store.getById(COL, recordId);
       const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
-      await store.update(COL, recordId, {
+      const persisted = await store.update(COL, recordId, {
         status: 'analyzed' as VideoStatus,
         aiAnalysis: JSON.stringify({
           ...previous,
@@ -3453,6 +3487,7 @@ async function analyzeSourceVideoJobInner(input: {
           }),
         }),
       });
+      if (!persisted) throw new Error('video_analysis_writeback_failed');
     }
     return videoAnalysis.analysis;
   } catch (e) {
@@ -4734,12 +4769,12 @@ async function downloadVideoToMaterial(input: {
   return material;
 }
 
-async function downloadVideoForAnalysis(input: {
+export async function downloadVideoForAnalysis(input: {
   sourceUrl: string;
   title: string;
   platform: Platform;
   record?: Record<string, unknown> | null;
-}): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+}, executeDownload = execFileAsync, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
   fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
   const tenantId = apifyTenantIdFromRecord(input.record);
   // Facebook's public page frequently blocks yt-dlp or makes it retry several
@@ -4747,8 +4782,10 @@ async function downloadVideoForAnalysis(input: {
   // playable CDN URL, so use it first for an explicit analysis request.
   if (input.platform === 'facebook' && canUseApifyVideoFallback(tenantId, 'facebook')) {
     try {
-      return await downloadFacebookVideoViaApify(input.sourceUrl, tenantId);
+      return await downloadFacebookVideoViaApify(input.sourceUrl, tenantId, budget);
     } catch (error) {
+      budget.record('Apify', error);
+      budget.remaining();
       console.warn('[videos] Facebook Apify analysis video fallback failed, trying yt-dlp:', error instanceof Error ? error.message : error);
     }
   }
@@ -4757,15 +4794,16 @@ async function downloadVideoForAnalysis(input: {
   // KVS, which we immediately copy into our own PocketBase-backed pipeline.
   if (input.platform === 'youtube' && canUseApifyVideoFallback(tenantId, 'youtube')) {
     try {
-      return await downloadYouTubeVideoViaApify(input.sourceUrl, tenantId);
+      return await downloadYouTubeVideoViaApify(input.sourceUrl, tenantId, budget);
     } catch (error) {
+      budget.record('Apify', error);
+      budget.remaining();
       console.warn('[videos] YouTube Apify analysis video fallback failed, trying yt-dlp:', error instanceof Error ? error.message : error);
     }
   }
   const id = randomUUID();
   const outTpl = path.join(ANALYSIS_DIR, `${id}.%(ext)s`);
   const clipSeconds = Math.max(30, Number(process.env.VIDEO_ANALYSIS_CLIP_SECONDS || 180));
-  const downloadTimeoutMs = Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000));
   const baseDownloadArgs = [
     '--no-playlist',
     '--merge-output-format', 'mp4',
@@ -4791,41 +4829,48 @@ async function downloadVideoForAnalysis(input: {
       ...(candidate.format ? ['-f', candidate.format] : []),
     ];
     try {
-      await execFileAsync('python3', buildYtDlpArgs(downloadArgs, input.sourceUrl, false), { maxBuffer: 4 * 1024 * 1024, timeout: downloadTimeoutMs, env: crawlerExecEnv() });
+      await executeDownload('python3', buildYtDlpArgs(downloadArgs, input.sourceUrl, false), { maxBuffer: 4 * 1024 * 1024, timeout: budget.remaining(), env: crawlerExecEnv() });
       lastError = null;
       break;
     } catch (e) {
       lastError = e;
+      budget.record(candidate.label, e);
+      if (terminalDownloadFailure(e)) break;
       if (usesServerCookiesForCrawl(input.platform) && (cookieBrowsers().length > 0 || cookieFiles().length > 0)) {
         try {
-          await execYtDlpWithCookieFallback(downloadArgs, input.sourceUrl, downloadTimeoutMs, 4 * 1024 * 1024);
+          await execYtDlpWithCookieFallback(downloadArgs, input.sourceUrl, budget.remaining(), 4 * 1024 * 1024, budget);
           lastError = null;
           break;
         } catch (cookieError) {
           lastError = cookieError;
+          if (terminalDownloadFailure(cookieError)) break;
         }
       }
+      try { budget.remaining(); } catch (error) { lastError = error; break; }
       console.warn(`[videos] analysis download attempt failed (${candidate.label}):`, lastError instanceof Error ? lastError.message : lastError);
     }
   }
   if (lastError) {
+    cleanupDownloadedFilesById(id, ANALYSIS_DIR);
     if (input.platform === 'tiktok' && canUseApifyVideoFallback(tenantId, 'tiktok')) {
       try {
         console.warn('[videos] TikTok yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
-        return await downloadTikTokVideoViaApify(input.sourceUrl, tenantId);
+        return await downloadTikTokVideoViaApify(input.sourceUrl, tenantId, budget);
       } catch (apifyError) {
+        budget.record('Apify', apifyError);
         console.warn('[videos] TikTok Apify analysis video fallback failed:', apifyError instanceof Error ? apifyError.message : apifyError);
       }
     }
     if (input.platform === 'instagram' && canUseApifyVideoFallback(tenantId, 'instagram')) {
       try {
         console.warn('[videos] Instagram yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
-        return await downloadInstagramVideoViaApify(input.sourceUrl, tenantId);
+        return await downloadInstagramVideoViaApify(input.sourceUrl, tenantId, budget);
       } catch (apifyError) {
+        budget.record('Apify', apifyError);
         console.warn('[videos] Instagram Apify analysis video fallback failed:', apifyError instanceof Error ? apifyError.message : apifyError);
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('yt-dlp failed for all analysis formats');
+    throw budget.error(lastError instanceof Error ? lastError.message.slice(0, 200) : 'yt-dlp failed for all analysis formats');
   }
   const downloaded = pickDownloadedVideoFile(id, ANALYSIS_DIR);
   if (!downloaded) {
@@ -4858,7 +4903,7 @@ function cleanupDownloadedFilesById(id: string, dir: string): void {
   }
 }
 
-async function downloadTikTokVideoViaApify(sourceUrl: string, tenantId?: string): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+async function downloadTikTokVideoViaApify(sourceUrl: string, tenantId?: string, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   if (!canUseApifyVideoFallback(tenantId)) throw new Error('Apify video fallback daily limit reached for this account or server');
@@ -4876,7 +4921,7 @@ async function downloadTikTokVideoViaApify(sourceUrl: string, tenantId?: string)
   };
   const runUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?clean=true&token=${encodeURIComponent(token)}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 180_000));
+  const timer = setTimeout(() => controller.abort(), Math.min(budget.remaining(), Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 180_000)));
   try {
     const r = await fetch(runUrl, {
       method: 'POST',
@@ -4890,7 +4935,7 @@ async function downloadTikTokVideoViaApify(sourceUrl: string, tenantId?: string)
     const row = Array.isArray(rows) ? rows[0] as Record<string, unknown> | undefined : undefined;
     const videoUrl = row ? findApifyVideoDownloadUrl(row) : '';
     if (!videoUrl) throw new Error('Apify did not return a downloadable video URL');
-    const videoRes = await fetch(videoUrl);
+    const videoRes = await fetch(videoUrl, { signal: AbortSignal.timeout(budget.remaining()) });
     if (!videoRes.ok) throw new Error(`Apify video download HTTP ${videoRes.status}`);
     const buf = Buffer.from(await videoRes.arrayBuffer());
     if (buf.length < 1024) throw new Error('Apify returned an empty video file');
@@ -4910,7 +4955,7 @@ async function downloadTikTokVideoViaApify(sourceUrl: string, tenantId?: string)
   }
 }
 
-async function downloadYouTubeVideoViaApify(sourceUrl: string, tenantId?: string): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+async function downloadYouTubeVideoViaApify(sourceUrl: string, tenantId?: string, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   if (!canUseApifyVideoFallback(tenantId, 'youtube')) throw new Error('Apify YouTube fallback daily limit reached for this account or server');
@@ -4921,11 +4966,11 @@ async function downloadYouTubeVideoViaApify(sourceUrl: string, tenantId?: string
     preferredQuality: '360p',
     preferredFormat: 'mp4',
     filenameTemplateParts: [],
-  }, Number(process.env.APIFY_YOUTUBE_VIDEO_TIMEOUT_MS || 300_000), 'YouTube video');
+  }, Math.min(budget.remaining(), Number(process.env.APIFY_YOUTUBE_VIDEO_TIMEOUT_MS || 300_000)), 'YouTube video');
   const videoUrl = String(rows[0]?.downloadedFileUrl || '').trim();
   if (!videoUrl) throw new Error('Apify did not return a downloaded YouTube video URL');
   const videoRes = await fetch(`${videoUrl}${videoUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`, {
-    signal: AbortSignal.timeout(Number(process.env.APIFY_YOUTUBE_FILE_TIMEOUT_MS || 120_000)),
+    signal: AbortSignal.timeout(Math.min(budget.remaining(), Number(process.env.APIFY_YOUTUBE_FILE_TIMEOUT_MS || 120_000))),
   });
   if (!videoRes.ok) throw new Error(`Apify YouTube video download HTTP ${videoRes.status}`);
   const buf = Buffer.from(await videoRes.arrayBuffer());
@@ -4943,7 +4988,7 @@ async function downloadYouTubeVideoViaApify(sourceUrl: string, tenantId?: string
   };
 }
 
-async function downloadInstagramVideoViaApify(sourceUrl: string, tenantId?: string): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+async function downloadInstagramVideoViaApify(sourceUrl: string, tenantId?: string, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   if (!canUseApifyVideoFallback(tenantId, 'instagram')) throw new Error('Apify video fallback daily limit reached for this account or server');
@@ -4954,13 +4999,13 @@ async function downloadInstagramVideoViaApify(sourceUrl: string, tenantId?: stri
     resultsLimit: 1,
     addParentData: false,
   };
-  const rows = await runApifyActorDatasetItems(actor, input, Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 240_000), 'Instagram video');
+  const rows = await runApifyActorDatasetItems(actor, input, Math.min(budget.remaining(), Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 240_000)), 'Instagram video');
   const row = rows[0];
   // IG 的 videoUrl 是 cdninstagram 签名直链（无扩展名），findApifyVideoDownloadUrl 的
   // 扩展名/白名单规则匹配不到，这里优先直接读 videoUrl 字段，再退回通用查找。
   const videoUrl = String(row?.videoUrl || '').trim() || (row ? findApifyVideoDownloadUrl(row) : '');
   if (!videoUrl) throw new Error('Apify did not return a downloadable video URL');
-  const videoRes = await fetch(videoUrl);
+  const videoRes = await fetch(videoUrl, { signal: AbortSignal.timeout(budget.remaining()) });
   if (!videoRes.ok) throw new Error(`Apify video download HTTP ${videoRes.status}`);
   const buf = Buffer.from(await videoRes.arrayBuffer());
   if (buf.length < 1024) throw new Error('Apify returned an empty video file');
@@ -5002,7 +5047,7 @@ function findFacebookPlayableUrl(value: unknown, depth = 0): string {
   return '';
 }
 
-async function downloadFacebookVideoViaApify(sourceUrl: string, tenantId?: string): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+async function downloadFacebookVideoViaApify(sourceUrl: string, tenantId?: string, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
   if (!process.env.APIFY_TOKEN?.trim()) throw new Error('APIFY_TOKEN is not configured');
   if (!canUseApifyVideoFallback(tenantId, 'facebook')) throw new Error('Apify video fallback daily limit reached for this account or server');
   const actor = process.env.APIFY_FACEBOOK_ACTOR?.trim() || 'apify/facebook-posts-scraper';
@@ -5010,10 +5055,10 @@ async function downloadFacebookVideoViaApify(sourceUrl: string, tenantId?: strin
     startUrls: [{ url: sourceUrl }],
     resultsLimit: 1,
     maxPosts: 1,
-  }, Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 180_000), 'Facebook video');
+  }, Math.min(budget.remaining(), Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 180_000)), 'Facebook video');
   const videoUrl = rows[0] ? findFacebookPlayableUrl(rows[0]) : '';
   if (!videoUrl) throw new Error('Apify did not return a downloadable Facebook video URL');
-  const videoRes = await fetch(videoUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(90_000) });
+  const videoRes = await fetch(videoUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(Math.min(90_000, budget.remaining())) });
   if (!videoRes.ok) throw new Error(`Apify Facebook video download HTTP ${videoRes.status}`);
   const buf = Buffer.from(await videoRes.arrayBuffer());
   if (buf.length < 1024) throw new Error('Apify returned an empty Facebook video file');
@@ -5033,7 +5078,7 @@ async function downloadFacebookVideoViaApify(sourceUrl: string, tenantId?: strin
 async function runApifyActorDatasetItems(actor: string, input: Record<string, unknown>, timeoutMs: number, label: string): Promise<Record<string, unknown>[]> {
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
-  const deadline = Date.now() + Math.max(30_000, timeoutMs);
+  const deadline = Date.now() + Math.max(1, timeoutMs);
   const startUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/runs?token=${encodeURIComponent(token)}`;
   const start = await apifyJsonRequest(startUrl, {
     method: 'POST',
@@ -5050,7 +5095,7 @@ async function runApifyActorDatasetItems(actor: string, input: Record<string, un
   let status = String(run.status || '').toUpperCase();
   while (!['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(status)) {
     if (Date.now() >= deadline) throw new Error(`Apify ${label} timed out while waiting for run ${runId}`);
-    await delay(Math.min(pollIntervalMs, Math.max(250, deadline - Date.now())));
+    await delay(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())));
     const current = await apifyJsonRequest(
       `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
       { method: 'GET' },
@@ -5074,7 +5119,8 @@ async function runApifyActorDatasetItems(actor: string, input: Record<string, un
 
 async function apifyJsonRequest(url: string, init: RequestInit, deadline: number, label: string): Promise<unknown> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1000, deadline - Date.now()));
+  if (deadline <= Date.now()) throw new Error(`Apify ${label} 下载累计超时`);
+  const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()));
   try {
     const r = await fetch(url, { ...init, signal: controller.signal });
     const text = await r.text();
@@ -7294,7 +7340,7 @@ export function platformReferer(url: string): string {
   return '';
 }
 
-async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout: number, maxBuffer: number): Promise<string> {
+async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout: number, maxBuffer: number, budget = new DownloadBudget(timeout)): Promise<string> {
   let lastError: unknown = null;
   for (const cookieFile of cookieFiles()) {
     try {
@@ -7302,10 +7348,12 @@ async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout
       const proxy = proxyUrl();
       const insertAt = proxy ? args.indexOf('--proxy') : args.length - 1;
       args.splice(insertAt, 0, '--cookies', cookieFile);
-      const { stdout } = await execFileAsync('python3', args, { maxBuffer, timeout, env: crawlerExecEnv() });
+      const { stdout } = await execFileAsync('python3', args, { maxBuffer, timeout: budget.remaining(), env: crawlerExecEnv() });
       return stdout;
     } catch (e) {
       lastError = e;
+      budget.record('cookie-file', e);
+      if (terminalDownloadFailure(e)) throw budget.error();
     }
   }
   const browsers = cookieBrowsers();
@@ -7319,13 +7367,15 @@ async function execYtDlpWithCookieFallback(extra: string[], url: string, timeout
       const proxy = proxyUrl();
       const insertAt = proxy ? args.indexOf('--proxy') : args.length - 1;
       args.splice(insertAt, 0, '--cookies-from-browser', browser);
-      const { stdout } = await execFileAsync('python3', args, { maxBuffer, timeout, env: crawlerExecEnv() });
+      const { stdout } = await execFileAsync('python3', args, { maxBuffer, timeout: budget.remaining(), env: crawlerExecEnv() });
       return stdout;
     } catch (e) {
       lastError = e;
+      budget.record(browser, e);
+      if (terminalDownloadFailure(e)) throw budget.error();
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('yt-dlp cookie fallback failed');
+  throw budget.error('yt-dlp cookie fallback failed');
 }
 
 function browserCookiesLikelyAvailable(browser: string): boolean {
@@ -7336,17 +7386,20 @@ function browserCookiesLikelyAvailable(browser: string): boolean {
   if (normalized === 'safari') {
     return fs.existsSync(path.join(home, 'Library', 'Cookies', 'Cookies.binarycookies'));
   }
-  if (normalized === 'chrome') {
-    return fs.existsSync(path.join(support, 'Google', 'Chrome'));
-  }
-  if (normalized === 'brave') {
-    return fs.existsSync(path.join(support, 'BraveSoftware', 'Brave-Browser'));
-  }
-  if (normalized === 'edge') {
-    return fs.existsSync(path.join(support, 'Microsoft Edge'));
-  }
-  if (normalized === 'firefox') {
-    return fs.existsSync(path.join(support, 'Firefox', 'Profiles'));
+  const roots: Record<string, string> = {
+    chrome: path.join(support, 'Google', 'Chrome'),
+    brave: path.join(support, 'BraveSoftware', 'Brave-Browser'),
+    edge: path.join(support, 'Microsoft Edge'),
+    firefox: path.join(support, 'Firefox', 'Profiles'),
+  };
+  const root = roots[normalized];
+  if (root) {
+    try {
+      return fs.readdirSync(root, { withFileTypes: true }).some(entry => entry.isDirectory() && (
+        fs.existsSync(path.join(root, entry.name, normalized === 'firefox' ? 'cookies.sqlite' : 'Cookies'))
+        || fs.existsSync(path.join(root, entry.name, 'Network', 'Cookies'))
+      ));
+    } catch { return false; }
   }
   return true;
 }
@@ -7748,6 +7801,7 @@ export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: bo
         skipped += 1;
         continue;
       }
+      if (activeAnalysisRecords.has(task.recordId) || durableAnalysisRecords.has(task.recordId)) { skipped += 1; continue; }
       const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
       if (previous.analysisQuality === 'video' && previous.requestedAnalysisMode !== 'exact') {
         updateCrawlerOpsTask(task.id, { status: 'resolved', lastStrategy: 'already_video' });
@@ -7792,6 +7846,11 @@ export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: bo
           opsTaskId: task.id,
           suppressOpsRequeue: true,
         });
+        const completed = await store.getById(COL, task.recordId);
+        const evidence = parseJsonRecord<Record<string, unknown>>(completed?.aiAnalysis, {});
+        if (evidence.analysisQuality !== 'video' || !evidence.gemini) {
+          throw new Error(String(evidence.analysisError || evidence.downloadError || 'video_analysis_missing: metadata is not video-level analysis'));
+        }
         updateCrawlerOpsTask(task.id, {
           status: 'resolved',
           lastStrategy: strategy,
@@ -7799,70 +7858,17 @@ export async function runCrawlerOpsWorkerOnce(options: { recoverInterrupted?: bo
         });
         resolved += 1;
       } catch (e) {
+        if (e instanceof AnalysisAlreadyRunningError) {
+          updateCrawlerOpsTask(task.id, { status: 'queued', attempts: task.attempts, lastError: 'analysis_already_running' });
+          skipped += 1;
+          continue;
+        }
         const errorMessage = e instanceof Error ? e.message : String(e);
         const compactError = compactVideoPipelineError(errorMessage);
         const compactReason = compactVideoPipelineError(classifyCrawlerFailure(errorMessage), 360);
-        const apifyVideoPlatform = task.platform === 'instagram'
-          ? 'instagram'
-          : task.platform === 'tiktok'
-            ? 'tiktok'
-            : task.platform === 'facebook'
-              ? 'facebook'
-              : null;
-        const shouldTryApify = Boolean(apifyVideoPlatform)
-          && attemptNo >= Math.max(1, Number(process.env.APIFY_TIKTOK_VIDEO_AFTER_ATTEMPTS || 2))
-          && canUseApifyVideoFallback(apifyTenantIdFromRecord(record), apifyVideoPlatform || 'tiktok');
-        if (shouldTryApify) {
-          try {
-            const downloaded = apifyVideoPlatform === 'instagram'
-              ? await downloadInstagramVideoViaApify(task.sourceUrl, apifyTenantIdFromRecord(record))
-              : apifyVideoPlatform === 'facebook'
-                ? await downloadFacebookVideoViaApify(task.sourceUrl, apifyTenantIdFromRecord(record))
-                : await downloadTikTokVideoViaApify(task.sourceUrl, apifyTenantIdFromRecord(record));
-            const videoAnalysis = await analyzeDownloadedVideoWithFallback({
-              filePath: downloaded.filePath,
-              mimeType: downloaded.mimeType,
-              title: task.title,
-              platform: task.platform,
-              duration: Number(record.duration || 0),
-              sourceLabel: 'gemini-apify-video',
-              analysisMode: previous.requestedAnalysisMode === 'exact' ? 'exact' : 'strategy',
-            });
-            cleanupTempVideo(downloaded.filePath);
-            const latest = await store.getById(COL, task.recordId);
-            const latestAnalysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? record.aiAnalysis, {});
-            await store.update(COL, task.recordId, {
-              status: 'analyzed' as VideoStatus,
-              aiAnalysis: JSON.stringify({
-                ...latestAnalysis,
-                ...videoLevelSuccessPatch({
-                  analysis: videoAnalysis.analysis,
-                  source: videoAnalysis.source,
-                  videoFetchStatus: 'fetched',
-                  extra: {
-                    crawlerOpsStatus: 'resolved',
-                    crawlerOpsTaskId: task.id,
-                    analysisMode: previous.requestedAnalysisMode === 'exact' ? 'exact' : 'strategy',
-                    requestedAnalysisMode: undefined,
-                    apifyVideoFallbackAt: new Date().toISOString(),
-                    analysisFileSize: humanSize(downloaded.size),
-                    tempVideoDeleted: true,
-                  },
-                }),
-              }),
-            });
-            updateCrawlerOpsTask(task.id, {
-              status: 'resolved',
-              lastStrategy: `${strategy} apify-video`,
-              apifyFallbackAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            });
-            resolved += 1;
-            continue;
-          } catch (apifyError) {
-            console.warn(`[crawler-ops] ${task.platform} Apify video fallback failed:`, apifyError instanceof Error ? apifyError.message : apifyError);
-          }
-        }
+        // Every platform fallback already ran under downloadVideoForAnalysis's
+        // single deadline and ownership lock. Do not start a second independent
+        // actor/download chain here after the attempt has exhausted its budget.
         const canRetry = attemptNo < maxAttempts;
         updateCrawlerOpsTask(task.id, {
           status: canRetry ? 'queued' : 'failed',
@@ -7919,9 +7925,15 @@ function pendingCrawlerOpsTasks(maxAttempts: number, visibleRecordIds?: Set<stri
 
 async function enqueueOpsTasksFromRecords(recoverInterrupted = false, tenantId?: string, maxAttempts = Math.max(1, Number(process.env.CRAWLER_OPS_MAX_ATTEMPTS || 5))): Promise<void> {
   const maxScan = Math.max(50, Number(process.env.CRAWLER_OPS_SCAN_LIMIT || 300));
-  const records = await store.list<Record<string, unknown>>(COL, { where: tenantId ? { tenantId } : undefined, sort: '-crawledAt', page: 1, perPage: maxScan });
+  const records: Record<string, unknown>[] = [];
+  for (let page = 1; ; page += 1) {
+    const result = await store.list<Record<string, unknown>>(COL, { where: tenantId ? { tenantId } : undefined, sort: '-crawledAt', page, perPage: maxScan });
+    records.push(...result.items);
+    if (page >= result.totalPages || !result.items.length) break;
+  }
   const now = Date.now();
-  for (const record of records.items) {
+  for (const record of records) {
+    if (activeAnalysisRecords.has(String(record.id || '')) || durableAnalysisRecords.has(String(record.id || ''))) continue;
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
     if (analysis.analysisQuality === 'video' && analysis.requestedAnalysisMode !== 'exact') continue;
     const downloadStatus = String(analysis.downloadStatus || '');

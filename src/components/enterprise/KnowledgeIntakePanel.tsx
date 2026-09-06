@@ -432,7 +432,7 @@ export default function KnowledgeIntakePanel({ mode = 'center', compact = false,
           {preview.evidence.length > 0 && <div className="rounded-lg bg-surface-2 p-3 text-[11px] leading-5 text-text-muted"><p className="font-bold text-text-secondary">AI 整理依据</p>{preview.evidence.map(item => <p key={item}>· {item}</p>)}</div>}
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-4">
-          <p className="text-[11px] text-text-muted">保存后仍可在企业中心逐项修改。</p>
+          <p className="text-[11px] text-text-muted">保存后全系统共用，可在客服 Agent 配置中继续完善。</p>
           <button type="button" onClick={() => void confirmPreview()} disabled={saving || !canConfirmPreview} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}确认并充能</button>
         </div>
       </section>
@@ -522,7 +522,7 @@ export default function KnowledgeIntakePanel({ mode = 'center', compact = false,
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><Bot size={19} /></span>
           <div>
             <div className="flex flex-wrap items-center gap-2"><h2 className="text-base font-black text-text-primary">{mode === 'onboarding' ? '最后一步：让 AI 先会接待' : '快速采集：让 AI 学会怎么替你回复'}</h2><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700">不用填长表</span></div>
-            <p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">{mode === 'onboarding' ? '任选一项就能开始，也可以直接完成诊断，稍后再到企业中心补充。' : '这是资料采集入口，不是另一套设置。AI 会把聊天、产品或访谈整理进下方同一份企业资料，你确认后才会生效。'}</p>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-text-muted">{mode === 'onboarding' ? '任选一项就能开始，也可以直接完成诊断，稍后再到企业中心补充。' : '复用已录入的企业和产品资料，AI 将聊天或补充回答整理为接待知识；确认后写入同一份企业资料，全系统共用。'}</p>
           </div>
         </div>
         {mode === 'center' && <span className="rounded-full bg-surface-2 px-3 py-1 text-xs font-black text-text-secondary">AI 能力 {Object.values(completion.capabilities).filter(item => item.unlocked).length}/4</span>}

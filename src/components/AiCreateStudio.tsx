@@ -1,3 +1,6 @@
+import ProductionTaskScene from './ProductionTaskScene';
+import { requestProductionBack } from '../lib/productionNavigation';
+import ContentLibrary from './ContentLibrary';
 import ProductionRevisionPanel from './ProductionRevisionPanel';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreationPlan';
@@ -4048,7 +4051,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   useEffect(() => {
     if (showProjects) {
       projectsPanelWasOpenRef.current = true;
-      return;
+      const frame = requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('lingshu:content-view-changed', { detail: { entry: 'works' } })));
+      return () => cancelAnimationFrame(frame);
     }
     if (!projectsPanelWasOpenRef.current) return;
     projectsPanelWasOpenRef.current = false;
@@ -7781,7 +7785,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         if (!workflowContext && new URLSearchParams(location.search).get('page') === 'smartAssets') {
           const url = new URL(location.href);
           url.searchParams.set('project', project.id);
-          history.replaceState(null, '', url);
+          history.replaceState(history.state, '', url);
         }
       }
       setAutosaveStatus('saved');
@@ -7816,7 +7820,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const openProjects = async () => {
     setShowProjects(true);
     const [nextProjects, nextBatches] = await Promise.all([studioApi.listProjects(), studioApi.listVariationBatches()]);
-    if (workflowContext?.taskKey === 'content_production') {
+    if (workflowContext?.entityId && !workflowContext.runId && !workflowContext.taskId) {
+      setProjects(nextProjects); setVariationBatches(nextBatches);
+      const project = nextProjects.find(item => item.id === workflowContext.entityId);
+      if (project) { loadProject(project); setShowProjects(false); }
+      else setModeNotice('该作品已不存在或当前账号无权查看，请从作品列表重新选择。');
+      return;
+    }
+    if (workflowContext?.runId && workflowContext?.taskId) {
       const entry = resolveStudioWorkflowProjectEntry(nextProjects, workflowContext);
       setProjects(entry.projects);
       setVariationBatches([]);
@@ -7835,6 +7846,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
     setProjects(nextProjects); setVariationBatches(nextBatches);
   };
+  useEffect(() => {
+    if (!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || workflowContext?.entityId)) void openProjects().catch(error => setModeNotice(error.message));
+  }, [workflowContext?.runId, workflowContext?.taskId, workflowContext?.entityId]);
   useEffect(() => {
     if (!openProjectsSignal || openProjectsSignal <= handledOpenProjectsSignalRef.current) return;
     handledOpenProjectsSignalRef.current = openProjectsSignal;
@@ -7922,6 +7936,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       try { localStorage.removeItem(STUDIO_OPEN_PROJECT_KEY); } catch { /* ignore */ }
       return;
     }
+    let disposed = false;
     let raw = '';
     try {
       raw = localStorage.getItem(STUDIO_OPEN_PROJECT_KEY) || '';
@@ -7936,6 +7951,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const state = JSON.parse(raw) as { at?: number; projectId?: string };
       if (!state.at || Date.now() - state.at > 10 * 60 * 1000 || !state.projectId) return;
       void studioApi.listProjects().then(list => {
+        if (disposed) return;
         setProjects(list);
         const project = list.find(item => item.id === state.projectId && item.status === 'draft');
         if (!project) {
@@ -7953,7 +7969,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     } catch {
       // Ignore malformed navigation payloads from older local builds.
     }
-  }, [workflowContext?.runId, workflowContext?.taskId]);
+    return () => { disposed = true; };
+  }, [workflowContext?.runId, workflowContext?.taskId, workflowContext?.entityId]);
 
   const reuseProject = async (p: StudioProject) => {
     if (voiceDraftLoading || ttsLoading || savingProj) return;
@@ -12001,8 +12018,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     publishing_calendar: '发布日历',
     platform_publish: '平台发布',
   };
-  const agentSourceContext = projectWorkflowContext?.taskKey
-    ? `${projectWorkflowContext.preview ? '计划预览' : '内容 Agent'} · ${workflowTaskLabel[projectWorkflowContext.taskKey] || projectWorkflowContext.taskKey}`
+  const sourceWorkflowContext = agentProduction.active ? workflowContext : projectWorkflowContext;
+  const agentSourceContext = sourceWorkflowContext?.taskId
+    ? `${sourceWorkflowContext.preview ? '计划预览' : '内容 Agent'} · ${workflowTaskLabel[sourceWorkflowContext.taskKey || 'content_production'] || sourceWorkflowContext.taskKey}`
     : studioAgentSourceLabel(videoKickoff?.actionContext?.source || videoKickoff?.source);
   const focusProductContext = activeProductLabel || '待选择企业产品';
   const activeSlotTime = activeWorkbenchSlot && activeWorkbenchSlot.end > activeWorkbenchSlot.start
@@ -12206,14 +12224,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   return (
     <div className="flex flex-col h-full relative">
+      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} />}
+      {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
       {managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
         <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
-        <button type="button" className="shrink-0 font-semibold underline" onClick={() => onNavigate?.('digitalEmployees')}>返回交付看板</button>
+        <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
       </div>}
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
+      <div className={showProjects ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
         projectTitle={projectTitle}
@@ -12625,6 +12646,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           )}
         </div>
       </StudioWorkbenchFrame>
+      </div>
 
       {managedProductionProjectRef.current && projectId && <details className="mx-4 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>}
       {/* ── 我的作品 / 草稿 列表浮层 ─────────────────────── */}
@@ -12704,6 +12726,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             currentId={projectId}
             workflowContext={workflowContext?.taskKey === 'content_production' ? workflowContext : undefined}
             onClose={() => setShowProjects(false)}
+            onPublish={draft => { setShowProjects(false); onGoPublish?.(draft); }}
             onLoad={loadProject}
             onDelete={removeProject}
             onReview={reviewVariationItem}
@@ -12717,7 +12740,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 }
 
 /* ── 我的作品 / 草稿 浮层 ─────────────────────────────────────────────── */
-function ProjectsOverlay({ projects, batches, materials, currentId, workflowContext, onClose, onLoad, onDelete, onReview, onReuseProject, onReuse }: {
+function ProjectsOverlay({ projects, batches, materials, currentId, workflowContext, onClose, onLoad, onDelete, onReview, onReuseProject, onReuse, onPublish }: {
   projects: StudioProject[];
   batches: VariationBatch[];
   materials: Clip[];
@@ -12729,7 +12752,9 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
   onReview: (batchId: string, itemId: string, status: 'approved' | 'rejected') => void;
   onReuseProject: (p: StudioProject) => void | Promise<void>;
   onReuse: (batch: VariationBatch) => void;
+  onPublish: (draft: any) => void;
 }) {
+  const [collection, setCollection] = useState<'projects' | 'finished'>('projects');
   const drafts = projects.filter(p => p.status === 'draft');
   const works = projects.filter(p => p.status === 'ready_for_approval' || p.status === 'published');
 
@@ -12739,7 +12764,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
       {items.length === 0 ? (
         <p className="text-xs text-text-muted py-3 text-center">暂无</p>
       ) : (
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {items.map(p => (
             <div key={p.id}
               className="card !rounded-xl overflow-hidden group cursor-pointer relative"
@@ -12781,12 +12806,11 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
-      onClick={onClose}>
+      className="absolute inset-0 z-50 flex bg-surface">
       <motion.div
         initial={{ scale: 0.96, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 10 }}
         transition={{ type: 'spring', damping: 26, stiffness: 320 }}
-        className="w-[560px] max-h-[80%] flex flex-col rounded-2xl border border-border bg-surface shadow-2xl overflow-hidden"
+        className="h-full w-full flex flex-col bg-surface overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
@@ -12797,10 +12821,14 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
             </div>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭我的创作" title="关闭" className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
-            <X size={15} />
+            返回创作
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex shrink-0 gap-6 border-b border-border px-6" role="tablist" aria-label="我的创作分类">
+          {(['projects', 'finished'] as const).filter(tab => !workflowContext || tab === 'projects').map(tab => <button key={tab} role="tab" aria-selected={collection === tab} onClick={() => setCollection(tab)} className={`border-b-2 py-4 text-sm font-semibold ${collection === tab ? 'border-accent text-accent' : 'border-transparent text-text-muted'}`}>{tab === 'projects' ? '草稿与项目' : '已完成成片'}</button>)}
+        </div>
+        {collection === 'finished' && <div className="min-h-0 flex-1"><ContentLibrary onPublish={onPublish} /></div>}
+        <div className={collection === 'projects' ? "flex-1 overflow-y-auto p-6" : "hidden"}>
           {drafts.length === 0 && works.length === 0 && batches.length === 0 ? (
             <div className="text-center py-12">
               <FolderOpen size={28} className="mx-auto text-text-muted mb-3 opacity-30" />
@@ -12809,8 +12837,8 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
             </div>
           ) : (
             <>
-              <Section title="作品集草稿" items={drafts} />
-              <Section title="已完成 / 待审核作品" items={works} />
+              <Section title="继续创作" items={drafts} />
+              <Section title="已完成项目 · 可继续编辑" items={works} />
               {batches.length > 0 && (
                 <div className="mb-5">
                   <p className="mb-2 text-xs font-semibold text-text-secondary">裂变批次 · {batches.length}</p>

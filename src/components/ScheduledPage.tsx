@@ -13,7 +13,7 @@ import {
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
 
-export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline';
+export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
 export type ScheduledWorkflowHandoff = {
   runId: string;
@@ -176,6 +176,10 @@ export function scheduledTaskExecutionState(
   if (queued && options.workerOnline === false) return 'worker_offline';
   if (serverState) return serverState;
   if (queued) return 'queued';
+  if (/执行状态：部分成功/.test(text)) return 'partial';
+  if (/执行状态：已采集，待分析/.test(text)) return 'collected';
+  if (/执行状态：暂无结果/.test(text)) return 'no_data';
+  if (/执行状态：执行失败/.test(text)) return 'failed';
   if (/\u6267\u884c\u72b6\u6001\uff1a(?:\u6267\u884c\u6210\u529f|\u90e8\u5206\u6210\u529f)|\u4efb\u52a1\u6267\u884c\u5b8c\u6210|\u91c7\u96c6\u5df2\u7ed3\u675f/.test(text)) return 'succeeded';
   if (/\u6267\u884c\u72b6\u6001\uff1a\u6267\u884c\u5931\u8d25|\u6267\u884c\u5931\u8d25[:\uff1a]|\u4efb\u52a1\u5747\u6267\u884c\u5931\u8d25/.test(text)) return 'failed';
   return 'idle';
@@ -185,6 +189,9 @@ const TASK_EXECUTION_META: Record<ScheduledTaskExecutionState, { label: string; 
   idle: { label: '待执行', style: 'bg-gray-100 text-gray-600' },
   queued: { label: '已入队', style: 'bg-amber-50 text-amber-700' },
   running: { label: '执行中', style: 'bg-blue-50 text-blue-700' },
+  partial: { label: '部分成功', style: 'bg-amber-50 text-amber-700' },
+  collected: { label: '已采集，待分析', style: 'bg-blue-50 text-blue-700' },
+  no_data: { label: '暂无结果', style: 'bg-gray-100 text-gray-600' },
   succeeded: { label: '成功', style: 'bg-green-50 text-green-700' },
   failed: { label: '失败', style: 'bg-red-50 text-red-700' },
   worker_offline: { label: 'Worker 离线', style: 'bg-red-50 text-red-700' },
@@ -751,7 +758,13 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
             ? `执行中（${time}），页面每 5 秒自动刷新。`
             : visibleState === 'failed'
               ? `执行失败（${time}），请展开结果查看原因后重试。`
-              : `执行成功（${time}），结果已刷新。`;
+              : visibleState === 'no_data'
+                ? `暂无符合条件的结果（${time}），请展开查看检索范围。`
+                : visibleState === 'collected'
+                  ? `已采集，视频分析在后台继续（${time}）。`
+                  : visibleState === 'partial'
+                    ? `部分成功（${time}），请展开查看未完成的平台和原因。`
+                    : `执行成功（${time}），结果已刷新。`;
       setRunNotice({ taskId: id, message, error: visibleState === 'failed' || visibleState === 'worker_offline' });
       window.setTimeout(() => { void fetchTasks(false); }, 800);
     } catch (error) {

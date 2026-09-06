@@ -1,3 +1,4 @@
+import { presenterApprovalForProject, presenterApprovalResumesQuality } from './presenterApprovalRecovery.js';
 import { finishContent } from './contentFinish.js';
 import { directContent, selectedSegments } from './contentDirection.js';
 import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
@@ -5,7 +6,7 @@ import { chooseMusic } from './automaticMusic.js';
 import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
 import { buildPresentationTimeline } from './presenterMix.js';
 import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../src/lib/videoCreationPlan.js';
-import { generateNarration, reviewFinalNarration } from './narration.js';
+import { generateNarration, reviewFinalNarration, narrationEvidenceIssues } from './narration.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -32,7 +33,7 @@ const { composite } = require('../../desktop/render.cjs') as {
 
 export type ContentProductionRoute = 'clone' | 'product' | 'material';
 type ProductionStage = 'script' | 'material_match' | 'voice_subtitles' | 'heygen' | 'render' | 'quality' | 'completed' | 'blocked';
-export const CONTENT_SCRIPT_QUALITY_RULE_VERSION = 7;
+export const CONTENT_SCRIPT_QUALITY_RULE_VERSION = 8;
 export const CONTENT_PRODUCTION_SCHEMA_VERSION = 2;
 export const CONTENT_PRODUCTION_MAX_CONCURRENCY = 2;
 
@@ -189,6 +190,16 @@ function sceneIntent(script: string, start: number, end: number): string {
   return block.split('\n').filter(line => /^(?:环境|镜头功能|画面)[：:]/.test(line.trim())).join('；').slice(0, 1_000);
 }
 
+export function sceneHasVisualEvidence(intent: string, asset: AssetCandidate): boolean {
+  const observations = asset.visualObservations.filter(value => !/^企业知识库产品.+的已上传(?:视频|图片)$/.test(value));
+  if (!observations.length) return false;
+  const ignore = new Set([...normalizedTokens(asset.productName || ''), 'product', 'scene', 'the', 'and', 'with', 'show', '画面', '展示', '镜头', '环境', '产品']);
+  const observed = observations.join(' ').toLowerCase();
+  const chinese = [...intent.matchAll(/[\u3400-\u9fff]{2,}/g)].flatMap(match => Array.from({ length: match[0].length - 1 }, (_, index) => match[0].slice(index, index + 2)));
+  const tokens = [...normalizedTokens(intent), ...chinese].filter(token => !ignore.has(token));
+  return tokens.some(token => observed.includes(token.toLowerCase()));
+}
+
 /**
  * Selects only semantically related assets. Product routes have a hard product
  * ownership boundary; a high keyword score can never cross that boundary.
@@ -213,7 +224,7 @@ export function matchSceneSources(input: {
   const plan = input.scenes.flatMap((scene, sceneIndex) => {
     const intent = sceneIntent(input.script, scene.start, scene.end);
     const tokens = normalizedTokens(intent);
-    const ranked = candidates.map(asset => {
+    const ranked = candidates.filter(asset => sceneHasVisualEvidence(intent, asset)).map(asset => {
       const haystack = [asset.name, asset.productName, ...asset.visualObservations, ...asset.tags].filter(Boolean).join(' ').toLowerCase();
       const hits = tokens.filter(token => haystack.includes(token.toLowerCase()));
       const ownership = input.productId && asset.productId === input.productId ? 60 : input.route === 'material' ? 40 : 0;
@@ -224,7 +235,7 @@ export function matchSceneSources(input: {
     }).sort((a, b) => b.score - a.score || a.asset.id.localeCompare(b.asset.id));
     const best = ranked[0];
     if (!best) {
-      gaps.push(`第 ${sceneIndex + 1} 镜头没有相关素材`);
+      gaps.push(`第 ${sceneIndex + 1} 镜头缺少支持该画面描述的视觉观察，需补充相关真实素材`);
       return [];
     }
     used.set(best.asset.id, (used.get(best.asset.id) || 0) + 1);
@@ -309,13 +320,56 @@ export function containsInternalContentMarker(value: unknown): boolean {
 export function subtitleCuesAreSafe(value: unknown, duration: number): boolean {
   const cues = Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
   if (!cues.length) return false;
+  let previousEnd = 0;
   return cues.every(cue => {
     const start = Number(cue.start);
     const end = Number(cue.end);
     const content = text(cue.text, 500);
-    return Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= duration + 0.1
+    const valid = Number.isFinite(start) && Number.isFinite(end) && start >= previousEnd && end > start && end <= duration + 0.1
       && content.length > 0 && content.length <= 80 && !containsInternalContentMarker(content);
+    previousEnd = end;
+    return valid;
   });
+}
+
+/** Split only inside each existing audio-aligned interval; never truncate speech or extend timing. */
+export function paginateAlignedCues(value: unknown, duration: number): Array<{ start: number; end: number; text: string }> | null {
+  if (!Array.isArray(value) || !value.length) return null;
+  const result: Array<{ start: number; end: number; text: string }> = [];
+  let previousEnd = 0;
+  for (const cue of value) {
+    if (!cue || typeof cue.text !== 'string') return null;
+    const start = Number(cue.start), end = Number(cue.end), content = cue.text;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < previousEnd || end <= start || end > duration + 0.1 || !content.trim() || containsInternalContentMarker(content)) return null;
+    const chunks: string[] = [];
+    let remaining = content;
+    while (remaining.length > 80) {
+      // Balance all pages instead of filling the first to 80 characters and
+      // leaving a fleeting final word. Preserve the original aligned interval.
+      const pagesLeft = Math.ceil(remaining.length / 80);
+      const target = remaining.length / pagesLeft;
+      const minimum = Math.max(1, remaining.length - (pagesLeft - 1) * 80);
+      const boundaries: number[] = [];
+      for (let index = minimum; index <= 80; index += 1) {
+        if (/\s|[，。！？；、]/u.test(remaining[index - 1])) boundaries.push(index);
+      }
+      // Very distant word boundaries are worse than balanced hard wrapping,
+      // e.g. a sentence ending in one unusually long identifier.
+      const nearby = boundaries.filter(index => Math.abs(index - target) <= target / 3);
+      let cut = nearby.length ? nearby.reduce((best, index) => Math.abs(index - target) < Math.abs(best - target) ? index : best) : Math.round(target);
+      if (/[\uD800-\uDBFF]/.test(remaining[cut - 1])) cut += cut < 80 ? 1 : -1;
+      chunks.push(remaining.slice(0, cut)); remaining = remaining.slice(cut);
+    }
+    if (remaining) chunks.push(remaining);
+    let consumed = 0;
+    for (const chunk of chunks) {
+      const chunkStart = start + (end - start) * consumed / content.length;
+      consumed += chunk.length;
+      result.push({ start: chunkStart, end: consumed === content.length ? end : start + (end - start) * consumed / content.length, text: chunk });
+    }
+    previousEnd = end;
+  }
+  return subtitleCuesAreSafe(result, duration) ? result : null;
 }
 
 function enabledRoutes(config: DigitalEmployeeConfig): ContentProductionRoute[] {
@@ -324,6 +378,19 @@ function enabledRoutes(config: DigitalEmployeeConfig): ContentProductionRoute[] 
   if (config.enabledWorkflows.includes('product_content')) routes.push('product');
   if (config.enabledWorkflows.includes('material_content')) routes.push('material');
   return routes;
+}
+
+/** Configuration enables capabilities; only this batch's selected routes require evidence. */
+export function requiredContentRoutes(input: {
+  frozenOrders?: Array<{ route: ContentProductionRoute }>;
+  videoPlans?: Array<{ route: ContentProductionRoute }>;
+  projectRoutes?: ContentProductionRoute[];
+  enabled: ContentProductionRoute[];
+}): ContentProductionRoute[] {
+  const selected = input.frozenOrders?.length ? input.frozenOrders.map(order => order.route)
+    : input.videoPlans?.length ? input.videoPlans.map(plan => plan.route)
+      : input.projectRoutes?.length ? input.projectRoutes : input.enabled;
+  return [...new Set(selected)];
 }
 
 export function contentProductionKnowledgeGaps(input: { enabled: ContentProductionRoute[]; evidence: ContentRouteEvidence }) {
@@ -692,7 +759,8 @@ async function updateProject(record: StoredRecord, spec: Record<string, unknown>
   if (!ok) throw new Error('studio_project_update_failed');
 }
 
-function retryable(stage: Record<string, unknown>): boolean {
+export function contentProjectRetryable(stage: Record<string, unknown>): boolean {
+  if (stage.retryPolicy === 'input_required') return false;
   const next = Date.parse(text(stage.retryAfter, 80));
   return !Number.isFinite(next) || next <= Date.now();
 }
@@ -729,7 +797,7 @@ export function resumeContentProjectForTaskControl(input: {
   const resumeStage: ProductionStage = ['script', 'material_match', 'voice_subtitles', 'heygen', 'render', 'quality'].includes(requestedStage)
     ? requestedStage
     : 'script';
-  const { retryAfter: _retryAfter, resumeStage: _resumeStage, blocker: _blocker, ...preserved } = automation;
+  const { retryPolicy: _retryPolicy, retryAfter: _retryAfter, resumeStage: _resumeStage, blocker: _blocker, ...preserved } = automation;
   return {
     ...spec,
     automation: {
@@ -795,9 +863,10 @@ async function generateScript(input: {
   const brief = normalizeVideoPlan(input.contentOrder?.videoPlan || input.config.videoDefaults || {});
   const lines = await generateNarration({ facts, theme: input.contentOrder?.theme?.label || input.goal.objective, audience: input.config.customerProfile,
     language: brief.language, duration: brief.duration, cta: input.contentOrder?.cta || '引导买家讨论当前问题，不承诺额外服务',
-    constraints: [...(input.contentOrder?.constraints || input.goal.constraints), ...(brief.presenter === 'heygen' ? [`必须恰好分为 ${brief.scenePlan?.length || 4} 段口播，对应用户分镜画面安排；数字人段简短，素材段展开解释。`] : [])], reference: referenceSummary });
+    constraints: [...(input.contentOrder?.constraints || input.goal.constraints), ...(brief.reviewRequirements?.length ? ['第一段口播必须能在3秒内自然读完，与首镜钩子对应；其余段落展开解释。'] : []), ...(brief.presenter === 'heygen' ? [`必须恰好分为 ${brief.scenePlan?.length || 4} 段口播，对应用户分镜画面安排；数字人段简短，素材段展开解释。`] : [])], reference: referenceSummary });
   if (brief.presenter === 'heygen' && brief.scenePlan?.length && lines.length !== brief.scenePlan.length) throw Error('口播段数与用户指定分镜数量不一致，请重新生成');
-  const step = brief.duration / lines.length;
+  const hookEnd = brief.reviewRequirements?.length ? 3 : 0;
+  const step = hookEnd ? (brief.duration - hookEnd) / (lines.length - 1) : brief.duration / lines.length;
   const prompt = `你是严谨的 B2B 短视频分镜导演。根据已确认事实生成一条 ${brief.duration} 秒视频脚本。
 生产路径：${routeTitle(input.route)}
 目标：${input.goal.objective}
@@ -831,7 +900,7 @@ ${scriptCreativeModeRule(input.route)}
 
 ${usesDigitalPresenter(brief) ? `成片画面安排：${presentationScenes(brief, lines.length).map((scene, i) => `第${i + 1}镜：${scene.source === 'avatar' ? '数字人面对镜头口播，不插入产品实拍' : `产品素材 ${scene.materialId ? input.assets.find(asset => asset.id === scene.materialId)?.name || '指定素材缺失' : '按已选素材事实匹配'}`}`).join('；')}。逐镜遵守，不增加或替换画面来源。素材段沿用同一数字人声音作为画外音。` : '成片画面全部使用已授权产品素材，不出现生成的数字人。'}
 口播已经确认，不得改写、翻译或删减。恰好 ${lines.length} 段，时间线从 0 到 ${brief.duration} 秒连续。逐段口播与时间：
-${lines.map((line, index) => `[${(index * step).toFixed(2)}-${((index + 1) * step).toFixed(2)}s] 台词：${line}`).join('\n')}
+${lines.map((line, index) => `[${(hookEnd ? index === 0 ? 0 : hookEnd + (index - 1) * step : index * step).toFixed(2)}-${(hookEnd ? index === 0 ? hookEnd : hookEnd + index * step : (index + 1) * step).toFixed(2)}s] 台词：${line}`).join('\n')}
 字段名保持中文，台词/字幕使用 ${brief.language}，严格逐字复用以上口播。每段格式：
 [start-end s]
 环境：<只写素材已证明或可执行的环境>
@@ -850,6 +919,7 @@ ${lines.map((line, index) => `[${(index * step).toFixed(2)}-${((index + 1) * ste
     const generatedScript = await callVideoModel(prompt, { timeoutMs: 90_000, systemPrompt: '你必须遵守封闭世界事实约束。产品事实与视觉素材证据严格分离；未明确提供的纯度、合规、认证、标签文字、二维码、邮箱、VI 和画面动作一律不得生成。缺少证据时使用保守场景或明确待匹配，不得虚构。' });
     const script = freezeStoryboardNarration(generatedScript.text.trim(), lines);
     if (!script) throw new Error('脚本服务未返回内容，请重试');
+    if (brief.reviewRequirements?.length) { const first = storyboardSceneRanges(script)[0]; if (!first || first.start !== 0 || first.end !== 3) throw Error('复盘要求的首镜必须覆盖0–3秒，请重新生成分镜'); }
     if (voiceoverText(script).replace(/\s/g, '') !== lines.join('').replace(/\s/g, '')) throw new Error('分镜改变了已确认口播，需重新生成分镜');
     return { script, source: 'llm', degradedReason: generatedScript.fallbackReason };
   } catch (error) { throw error; }
@@ -873,12 +943,14 @@ async function advanceOneProject(input: {
   const routeAssets = routePlan.assetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
   let stage = text(automation.stage) as ProductionStage;
   if (stage === 'blocked') {
-    if (!retryable(automation)) return { changed: false, blocker: text(automation.blocker) };
+    const approvalChanged = presenterApprovalResumesQuality(automation, presenterApprovalForProject(input.tenantId, input.record.id, spec, automation));
+    if (!approvalChanged && !contentProjectRetryable(automation)) return { changed: false, blocker: text(automation.blocker) };
     stage = text(automation.resumeStage) as ProductionStage || 'script';
   }
   const block = async (resumeStage: ProductionStage, reason: string, details: Record<string, unknown> = {}) => {
+    if (resumeStage === 'material_match') details = { ...details, retryPolicy: 'input_required' };
     const semanticRepeat = contentProjectBlockIsSemanticallyUnchanged({ automation, resumeStage, reason });
-    const next = { ...spec, automation: stagePatch(automation, 'blocked', { ...details, status: 'blocked', blocker: reason, resumeStage, retryAfter: new Date(Date.now() + 15 * 60_000).toISOString() }) };
+    const next = { ...spec, automation: stagePatch(automation, 'blocked', { ...details, status: 'blocked', blocker: reason, resumeStage, retryAfter: details.retryPolicy === 'input_required' ? '' : new Date(Date.now() + 15 * 60_000).toISOString() }) };
     await updateProject(input.record, next);
     // retryAfter remains operational state and is refreshed after a real retry,
     // but it must not produce another identical business progress event.
@@ -886,6 +958,8 @@ async function advanceOneProject(input: {
   };
 
   try {
+    const evidenceIssues = narrationEvidenceIssues(productFacts(input.profile, input.config, routePlan.productId), voiceoverText(text(spec.script, 30_000)));
+    if (evidenceIssues.length) return block('script', evidenceIssues.join('；'), { retryPolicy: 'input_required' });
     if (stage === 'render' || stage === 'heygen') {
       if (!Object.prototype.hasOwnProperty.call(spec, 'bgm')) {
         const catalog = automationBgmCatalog(input.tenantId);
@@ -903,6 +977,18 @@ async function advanceOneProject(input: {
     if (stage === 'script') {
       const referenceId = text(automation.referenceAnalysisId);
       const reference = input.analyses.find(item => item.id === referenceId);
+      if (route === 'clone' && routePlan.gap === '批次订单引用的精确参考结构不存在或不可解析' && reference && referenceStructure(reference)) {
+        // Recheck the same user-selected reference after analysis finishes;
+        // never substitute another reference or switch the production route.
+        const { gap: _gap, ...resolvedPlan } = routePlan;
+        const referenceEvidence = referenceStructure(reference);
+        const previousSnapshot = json<Record<string, unknown>>(spec.evidenceSnapshot, {});
+        const snapshot = { ...previousSnapshot, reference: referenceEvidence, capturedAt: new Date().toISOString(),
+          hash: stableHash({ productId: routePlan.productId || '', assets: previousSnapshot.assets || [], reference: referenceEvidence }) };
+        await updateProject(input.record, { ...spec, evidenceSnapshot: snapshot,
+          automation: stagePatch(automation, 'script', { status: 'queued', blocker: '', retryAfter: '', routePlan: resolvedPlan, evidenceSnapshotHash: snapshot.hash }) });
+        return { changed: true, blocker: '' };
+      }
       if (routePlan.gap) return block('script', routePlan.gap);
       if (route === 'clone' && (!reference || !referenceStructure(reference))) return block('script', '爆款裂变缺少可解析的精确参考结构');
       if (!routeAssets.length && !usesDigitalPresenter(brief) && route !== 'product') return block('script', route === 'material' ? '素材路径在写脚本前必须先锁定一条已授权素材' : '缺少属于当前产品的已授权素材');
@@ -1023,7 +1109,7 @@ async function advanceOneProject(input: {
       if (duration > brief.duration * 1.2 || duration < brief.duration * 0.5) return block('script', `实际朗读 ${duration.toFixed(1)} 秒，目标 ${brief.duration} 秒；请按建议重写口播`, { narrationFeedback: `上一版实际朗读 ${duration.toFixed(1)} 秒，目标 ${brief.duration} 秒。请将整段口播调整为约 ${Math.max(10, Math.round(spoken.split(/\s+/).length * brief.duration / duration * 0.9))} 词，优先服从此实测长度，不删条件、不新增事实。` });
       await updateProject(input.record, {
         ...spec, ...(mixedPlan ? { sceneSourcePlan: mixedPlan, selectedMaterialIds: [...new Set(mixedPlan.map(item => item.assetId))] } : {}), lang: brief.language, duration, requestedDuration: brief.duration, voiceoverMode: 'ai', voiceoverUrl: voice.url, voiceoverDur: duration,
-        alignedCuesByLang: { [brief.language]: voice.cues || [] }, subtitleAlignmentSource: voice.alignmentSource, subtitlesOn: true, subMode: 'target',
+        alignedCuesByLang: { [brief.language]: paginateAlignedCues(voice.cues || [], duration) || [] }, subtitleAlignmentSource: voice.alignmentSource, subtitlesOn: true, subMode: 'target',
         automation: stagePatch(automation, usesDigitalPresenter(brief) ? 'heygen' : 'render', { blocker: '', voiceSource: voice.source, voiceLocalPath: voice.localPath, spokenText: spoken, narrationHash: stableHash(spoken), narrationReviewPassed: true }),
       });
       return { changed: true, blocker: '' };
@@ -1040,6 +1126,8 @@ async function advanceOneProject(input: {
       const videoPath = heygenOutputPath(input.tenantId, job.id);
       const voicePath = text(automation.voiceLocalPath, 2000);
       const duration = Number(job.qualityReport?.durationSeconds || spec.voiceoverDur || spec.duration);
+      const presenterCues = paginateAlignedCues(spec.subtitleAlignmentSource === 'human_reviewed' ? (spec.alignedCuesByLang as any)?.[brief.language] : job.subtitleCues, duration);
+      if (!presenterCues) return block('heygen', '数字人字幕时间轴无效，请复核原音频对齐', { retryPolicy: 'input_required' });
       const scenes = storyboardSceneRanges(text(spec.script, 30000));
       const timing = productionTiming({ duration, voiceoverDur: duration }, scenes);
       const matching = resolvePresentationMaterials(brief, text(spec.script, 30000), scenes, routeAssets, route, routePlan);
@@ -1060,16 +1148,16 @@ async function advanceOneProject(input: {
       const result = await composite({ jobId: `de-${input.record.id}-v${Number(automation.contentVersion || 1)}`, requireVisualAssets: true, disclaimer,
         spec: { ratio: text(spec.ratio) || '9:16', resolution: (spec.exportSpec as any)?.resolution || '1080p', duration, platform: routePlan.platform, language: brief.language, bgmVol: musicVolume, voiceVol: 100 },
         timeline, bgm: music, voiceover: { url: `data:${mimeFromFile(voicePath)};base64,${fs.readFileSync(voicePath).toString('base64')}` },
-        subtitles: { mode: 'target', cues: spec.subtitleAlignmentSource === 'human_reviewed' ? (spec.alignedCuesByLang as any)?.[brief.language] : job.subtitleCues, style: spec.subtitleStyle || {} },
+        subtitles: { mode: 'target', cues: presenterCues, style: spec.subtitleStyle || {} },
       }, undefined, outputDir);
       if (!result.ok || !result.outputPath) return block('heygen', result.error || '数字人混剪合成失败');
-      await updateProject(input.record, { ...spec, duration, disclaimer, alignedCuesByLang: { [brief.language]: spec.subtitleAlignmentSource === 'human_reviewed' ? (spec.alignedCuesByLang as any)?.[brief.language] : job.subtitleCues }, subtitleAlignmentSource: spec.subtitleAlignmentSource === 'human_reviewed' ? 'human_reviewed' : 'heygen_audio', presenterMode: 'digital', selectedMaterialIds: [...new Set([job.outputMaterialId, ...middleAssets.map(asset => asset.id)])],
+      await updateProject(input.record, { ...spec, duration, disclaimer, alignedCuesByLang: { [brief.language]: presenterCues }, subtitleAlignmentSource: spec.subtitleAlignmentSource === 'human_reviewed' ? 'human_reviewed' : 'heygen_audio', presenterMode: 'digital', selectedMaterialIds: [...new Set([job.outputMaterialId, ...middleAssets.map(asset => asset.id)])],
         presentationMode: brief.presenter,
         sceneSourcePlan: scenes.map((scene, index) => choices[index].source === 'avatar'
           ? { sceneIndex: index, ...scene, intent: '用户指定数字人镜头', assetId: job.outputMaterialId, score: 100, reasons: ['HeyGen 人物片段按原音频时间裁切，随完整成片人工验收'] }
           : { ...matching.plan.find(item => item.sceneIndex === index)!, sceneIndex: index }),
         selectedMaterialEvidence: [...new Map(middleAssets.map(asset => [asset.id, asset])).values()].map(asset => evidenceAssetSnapshot(asset)),
-        renderOutputPath: result.outputPath, automation: stagePatch(automation, 'quality', { heygenJobId: job.id, heygenApproved: job.status === 'completed', renderedAt: new Date().toISOString(), blocker: '', renderOutputPath: result.outputPath }) });
+        renderOutputPath: result.outputPath, automation: stagePatch(automation, 'quality', { heygenJobId: job.id, heygenOutputMaterialId: job.outputMaterialId, heygenApproved: job.status === 'completed', renderedAt: new Date().toISOString(), blocker: '', renderOutputPath: result.outputPath }) });
       return { changed: true, blocker: '' };
     }
     if (stage === 'render') {
@@ -1116,6 +1204,20 @@ async function advanceOneProject(input: {
       return { changed: true, blocker: '' };
     }
     if (stage === 'quality') {
+      // Approval is persisted on the job after the mixed review copy is rendered.
+      // Always re-read and validate that exact tenant/project/audio/output binding.
+      if (usesDigitalPresenter(brief)) automation.heygenApproved = presenterApprovalForProject(input.tenantId, input.record.id, spec, automation);
+      const originalCues = json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language];
+      if (!subtitleCuesAreSafe(originalCues, Number(spec.duration || 20))) {
+        const repaired = paginateAlignedCues(originalCues, Number(spec.duration || 20));
+        if (repaired) {
+          await updateProject(input.record, { ...spec,
+            alignedCuesByLang: { ...json<Record<string, unknown>>(spec.alignedCuesByLang, {}), [brief.language]: repaired },
+            automation: stagePatch(automation, usesDigitalPresenter(brief) ? 'heygen' : 'render', { status: 'queued', blocker: '', approvalState: 'not_ready',
+              retryPolicy: '', retryAfter: '', qualityRevalidationReason: '按原配音时间区间拆分过长字幕并重新渲染' }) });
+          return { changed: true, blocker: '' };
+        }
+      }
       // Old projects may contain cues for the full voice track but a render
       // truncated to the original brief. Re-render; never just relax the gate.
       if (Number(spec.voiceoverDur) > Number(spec.duration || 20) + 0.1) {
@@ -1171,10 +1273,13 @@ async function advanceOneProject(input: {
       const ranges = storyboardSceneRanges(text(spec.script, 30_000));
       const cues = json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language];
       const pathDifference = json<{ pathDifference?: boolean }>(automation.pathDifferenceCheck, {});
-      const semanticAlignment = sourcePlan.length === ranges.length && sourcePlan.every(item => item.assetId && Number.isFinite(item.score) && item.reasons.length > 0);
+      const semanticAlignment = sourcePlan.length === ranges.length && sourcePlan.every((item, index) => {
+        const asset = routeAssets.find(candidate => candidate.id === item.assetId);
+        if (usesDigitalPresenter(brief) && item.assetId === automation.heygenOutputMaterialId) return Boolean(automation.heygenApproved);
+        return Boolean(asset && assetEligible(asset) && sceneHasVisualEvidence(sceneIntent(text(spec.script, 30_000), ranges[index].start, ranges[index].end), asset));
+      });
       const routeDifferentiation = pathDifference.pathDifference === true;
-      const availableSceneAssets = new Set(routePlan.assetIds).size;
-      const sceneDiversity = brief.presenter === 'avatar' || (!usesDigitalPresenter(brief) && availableSceneAssets < 2) || new Set(sourcePlan.map(item => item.assetId)).size >= 2;
+      const sceneDiversity = brief.presenter === 'avatar' || new Set(sourcePlan.map(item => item.assetId)).size >= 2 || visualQuality?.passed === true;
       const internalMarkerFree = !containsInternalContentMarker({ title: input.record.title, script: spec.script, cues, evidence: spec.selectedMaterialEvidence });
       const subtitleSafe = subtitleCuesAreSafe(cues, Number(spec.duration || 20));
       const platformBriefApplied = Boolean(text(spec.platformBrief, 1_000) && text(routePlan.platformBrief, 1_000));
@@ -1185,6 +1290,7 @@ async function advanceOneProject(input: {
         !spec.voiceoverUrl ? '未生成配音' : '',
         !automation.narrationReviewPassed || automation.narrationHash !== stableHash(voiceoverText(text(spec.script, 30_000))) ? '最终口播尚未通过事实与完整性审核' : '',
         !spokenLanguageMatches(text(automation.spokenText, 30000), brief.language) || text(spec.lang) !== brief.language ? '最终语言与制作计划不符' : '',
+        usesDigitalPresenter(brief) && !automation.heygenApproved ? '当前数字人成片尚未获得与本项目、配音及素材版本一致的人工确认' : '',
         !semanticAlignment ? '逐镜头素材语义匹配证据不完整' : '',
         !routeDifferentiation ? '内容路径差异检查未通过' : '',
         !sceneDiversity ? '存在多个相关素材但分镜仍只循环单一素材' : '',
@@ -1193,7 +1299,8 @@ async function advanceOneProject(input: {
         !subtitleSafe ? '字幕时间轴、长度或内部标记安全检查未通过' : '',
         !platformBriefApplied ? '未应用目标平台差异化创作要求' : '',
       ].filter(Boolean);
-      if (failures.length) return block('quality', `成片质检未通过：${failures.join('；')}`, {
+      if (failures.length) return block('quality', `成片质检未通过：${failures.join('；')}；请修正素材或制作配置后重试`, {
+        retryPolicy: 'input_required',
         quality: {
           passed: false, ruleVersion: CONTENT_SCRIPT_QUALITY_RULE_VERSION,
           checkedAt: new Date().toISOString(), failures,
@@ -1281,6 +1388,9 @@ export async function advanceAutomatedContentProduction(input: {
     return { changed: false, ready: false, projectRefs: [], knowledgeGaps: [], blocker: '内容批次订单为空、重复或包含无效路径', summary: '内容生产未启动' };
   }
   const missingOrders = contentOrderCoverage(projects, frozenOrders.map(order => order.id)).missing;
+  const requiredRoutes = requiredContentRoutes({ frozenOrders, videoPlans: input.goal.videoPlans,
+    projectRoutes: projects.map(project => text(projectAutomation(project).route) as ContentProductionRoute).filter(route => ['clone', 'product', 'material'].includes(route)),
+    enabled: enabledRoutes(input.config) });
 
   let changed = false;
   if (!projects.length || missingOrders.length > 0) {
@@ -1289,9 +1399,9 @@ export async function advanceAutomatedContentProduction(input: {
       const route = text(projectAutomation(record).route) as ContentProductionRoute;
       if (['clone', 'product', 'material'].includes(route)) priorCounts[route] = Number(priorCounts[route] || 0) + 1;
     }
-    const plan = allocateBalancedContentRoutes({ count: requestedDraftCount(input.config, input.goal), enabled: enabledRoutes(input.config), evidence, priorCounts });
+    const plan = allocateBalancedContentRoutes({ count: requestedDraftCount(input.config, input.goal), enabled: requiredRoutes, evidence, priorCounts });
     if (!frozenOrders.length && !plan.allocations.length) {
-      const gaps = contentProductionKnowledgeGaps({ enabled: enabledRoutes(input.config), evidence });
+      const gaps = contentProductionKnowledgeGaps({ enabled: requiredRoutes, evidence });
       return { changed: false, ready: false, projectRefs: [], knowledgeGaps: gaps, blocker: plan.blockers.join('；') || gaps.map(item => item.label).join('；') || '未启用内容生产路径', summary: '内容生产未启动' };
     }
     const now = new Date().toISOString();
@@ -1398,7 +1508,9 @@ export async function advanceAutomatedContentProduction(input: {
   }
 
   const pending = selectContentProjectsForTick(projects.map(project => ({
-    project, stage: text(projectAutomation(project).stage), retryable: retryable(projectAutomation(project)),
+    project, stage: text(projectAutomation(project).stage),
+    retryable: contentProjectRetryable(projectAutomation(project)) || presenterApprovalResumesQuality(projectAutomation(project),
+      presenterApprovalForProject(input.tenantId, project.id, json<Record<string, unknown>>(project.spec, {}), projectAutomation(project))),
   }))).map(item => item.project);
   const advancedResults = await Promise.all(pending.map(project => advanceOneProject({
     tenantId: input.tenantId, record: project, config: input.config, goal: input.goal, profile, assets, analyses, allProjects: projects,
@@ -1429,7 +1541,7 @@ export async function advanceAutomatedContentProduction(input: {
     changed,
     ready,
     projectRefs,
-    knowledgeGaps: contentProductionKnowledgeGaps({ enabled: enabledRoutes(input.config), evidence }),
+    knowledgeGaps: contentProductionKnowledgeGaps({ enabled: requiredRoutes, evidence }),
     blocker: coverageBlocker || blocker || blocked[0] || (ready ? '' : '内容 Agent 正在后台推进脚本、素材、配音、渲染与质检'),
     summary: ready ? `已完成 ${projectRefs.length} 个可审批成片` : `内容生产进度 ${projectRefs.filter(ref => ref.stage === 'completed').length}/${projectRefs.length}`,
   };

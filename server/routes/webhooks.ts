@@ -41,10 +41,16 @@ webhookRouter.post('/meta/:tenantId', async (req, res) => {
     return;
   }
 
-  void Promise.all([
-    handleMetaWebhook(tenantId, req.body),
-    ingestFollowupDeliveryStatuses(tenantId, req.body),
-  ]).catch(error => console.error('[meta-webhook-ingest]', error));
+  try {
+    await Promise.all([
+      handleMetaWebhook(tenantId, req.body),
+      ingestFollowupDeliveryStatuses(tenantId, req.body, { verifiedSignature: true }),
+    ]);
+  } catch (error) {
+    console.error('[meta-webhook-ingest]', error);
+    res.status(500).json({ error: 'webhook_persistence_failed' });
+    return;
+  }
   console.log('[meta-webhook]', tenantId, JSON.stringify(req.body).slice(0, 500));
   res.json({ ok: true });
 });

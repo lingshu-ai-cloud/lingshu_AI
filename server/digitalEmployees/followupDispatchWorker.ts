@@ -1,23 +1,32 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
+import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
+import { followupOutcome } from './executionDiagnostics.js';
+import { randomUUID } from 'node:crypto';
 import { guardOutbound } from '../autonomy/outboundGuard.js';
 import { store } from '../storage/index.js';
 import { isRealWhatsAppNumber } from '../whatsapp/customerVisibility.js';
 import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppTemplateWithReceipt, sendTenantWhatsAppTextWithReceipts } from '../whatsapp/send.js';
 import {
+  followupItemContentHash,
   getFollowupBatch,
   getFollowupBatchItems,
   type FollowupBatchItemRecord,
   type FollowupBatchRecord,
 } from './customerWorkflow.js';
 import { followupWorkerIntervalMs, followupWorkerMaxAttempts, followupWorkerMode } from './followupWorkerConfig.js';
-import { digitalEmployeeRunBlockedReason, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from './runControl.js';
+import { digitalEmployeeRunBlockedReason, withDigitalEmployeeRunLock, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from './runControl.js';
 import {
   readCustomerMessagingAuthorization,
   type CustomerMessagingAuthorization,
 } from './customerMessagingPolicy.js';
 
 type StoredRecord = { id: string; [key: string]: unknown };
+
+async function persistFollowupItem(id: string, patch: Record<string, unknown>): Promise<true> {
+  if (!await store.update('followup_batch_items', id, patch)) throw new Error('followup_item_persistence_failed');
+  return true;
+}
 
 export interface FollowupWorkerEvent {
   tenantId: string;
@@ -83,6 +92,8 @@ const PREFLIGHT_BLOCKER_LABELS: Record<string, string> = {
   whatsapp_template_required: '已超出 24 小时会话窗口，需要获批模板',
   approved_whatsapp_template_required: 'WhatsApp 模板尚未获批',
   unsupported_send_mode: '发送模式不受支持',
+  send_outcome_unknown: '发送结果不明，需要核对平台回执，禁止自动重发',
+  whatsapp_template_content_changed: '平台模板正文已变化，需要重新选择并审批',
 };
 
 export function followupDispatchPreflightFacts(preflight: FollowupDispatchPreflight): string[] {
@@ -106,6 +117,7 @@ export function followupDispatchPreflightBlockedReason(preflight: FollowupDispat
 
 interface DispatchDependencies {
   now: () => Date;
+  resolveTemplate: typeof resolveTenantFollowupTemplate;
   sendText: typeof sendTenantWhatsAppTextWithReceipts;
   sendTemplate: typeof sendTenantWhatsAppTemplateWithReceipt;
   customers: (tenantId: string) => Array<Record<string, unknown>>;
@@ -135,13 +147,6 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.map(item => String(item || '').trim()).filter(Boolean) : [];
 }
 
-function hash(value: unknown): string {
-  // Batch creation fingerprints every payload through JSON.stringify, including
-  // primitive strings. Dispatch must use the identical representation or an
-  // untouched, approved draft will be rejected as if it had changed.
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
 function safeError(error: unknown): { code: string; message: string; retryable: boolean } {
   const record = error && typeof error === 'object' ? error as Record<string, any> : {};
   const response = jsonObject(record.response);
@@ -152,7 +157,7 @@ function safeError(error: unknown): { code: string; message: string; retryable: 
   const message = String(providerError.message || (error instanceof Error ? error.message : 'WhatsApp send failed'))
     .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
     .slice(0, 1000);
-  const retryable = status === 0 || status === 408 || status === 429 || status >= 500;
+  const retryable = status === 429; // Only explicit provider throttling proves the request was rejected.
   return { code, message, retryable };
 }
 
@@ -233,6 +238,10 @@ async function runtimeSafety(tenantId: string, item: FollowupBatchItemRecord, no
     if (!inboundAt || now.getTime() - inboundAt >= 24 * 60 * 60 * 1000) return { allowed: false, reason: 'whatsapp_template_required' };
   } else if (item.send_mode === 'template') {
     if (!item.template_name || item.template_status !== 'approved') return { allowed: false, reason: 'approved_whatsapp_template_required' };
+    const template = await dependencies.resolveTemplate(tenantId, item.template_name, item.template_language || 'en_US');
+    if (!template || template.status !== 'APPROVED') return { allowed: false, reason: 'approved_whatsapp_template_required' };
+    const variables = Array.isArray(item.template_variables) ? item.template_variables : [];
+    if (variables.length !== template.variableCount || template.body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => String(variables[Number(n)-1] || '')) !== item.draft_body) return { allowed: false, reason: 'whatsapp_template_content_changed' };
   } else {
     return { allowed: false, reason: 'unsupported_send_mode' };
   }
@@ -283,16 +292,44 @@ async function refreshBatchCounts(batch: FollowupBatchRecord): Promise<Record<st
     read: count(['read']),
     failed: count(['failed']),
   };
-  const deliverable = items.filter(item => !['blocked', 'rejected', 'superseded', 'cancelled'].includes(item.status));
-  const settled = deliverable.every(item => ['sent', 'delivered', 'read', 'failed', 'partial_sent'].includes(item.status));
+  const outcome = followupOutcome(items);
   let status = batch.status;
-  if (settled && deliverable.length) {
-    if (counts.failed === deliverable.length) status = 'failed';
-    else if (counts.failed || counts.partial) status = 'partial_failed';
-    else status = 'completed';
-  }
+  if (items.some(i => jsonObject(i.provider_receipt).localHistoryPending)) status = 'needs_attention';
+  else if (outcome.complete) status = 'completed';
+  else if (outcome.settled) status = outcome.blocked ? 'needs_attention' : outcome.sent || outcome.partial ? 'partial_failed' : 'failed';
   await store.update('followup_batches', batch.id, { counts, status, updated_at: new Date().toISOString() });
   return counts;
+}
+
+/** A crashed sender may already have reached the provider. Never reclaim it as a fresh send. */
+export async function recoverStaleFollowupSending(batch: FollowupBatchRecord, now = new Date(), recordOutbound: typeof markWhatsAppHumanReply = markWhatsAppHumanReply): Promise<number> {
+  const items = await getFollowupBatchItems(batch.tenant_id, batch.id);
+  let recovered = 0;
+  for (const item of items) {
+    const receipt = jsonObject(item.provider_receipt);
+    if (receipt.localHistoryPending) {
+      const accepted = receiptMessages(receipt);
+      if (!accepted.length || accepted.some(m => !m.messageId)) continue;
+      try {
+        recordOutbound({ tenantId: batch.tenant_id, customerId: item.customer_id, waNumber: item.wa_number,
+          body: accepted.map(m => String(m.body || '')).join('\n'), messages: accepted.map(m => String(m.body || '')),
+          providerReceipts: accepted.map(m => ({ messageId: String(m.messageId), recipientId: String(m.recipientId || ''), raw: m.raw })) }, { preserveCustomerState: true });
+        await persistFollowupItem(item.id, { provider_receipt: { ...receipt, localHistoryPending: false }, last_error: item.status === 'partial_sent' ? item.last_error : '', updated_at: now.toISOString() });
+        recovered += 1;
+      } catch { /* Preserve pending evidence and retry only local history on the next scan. */ }
+    }
+    if (item.status !== 'sending') continue;
+    const claimed = timestamp(jsonObject(item.provider_receipt).claimedAt || item.updated_at);
+    if (claimed && now.getTime() - claimed < 10 * 60_000) continue;
+    await persistFollowupItem(item.id, {
+      status: 'blocked', exclusion_reason: 'send_outcome_unknown',
+      last_error: '发送进程中断或超过 10 分钟未回写，需人工核对平台回执，禁止自动重发。',
+      updated_at: now.toISOString(),
+    });
+    recovered += 1;
+  }
+  if (recovered) await refreshBatchCounts(batch);
+  return recovered;
 }
 
 async function dispatchTaskId(batch: FollowupBatchRecord): Promise<string> {
@@ -304,6 +341,7 @@ function defaultDependencies(): DispatchDependencies {
   const delay = Number(process.env.FOLLOWUP_WORKER_RECIPIENT_DELAY_MS || 1000);
   return {
     now: () => new Date(),
+    resolveTemplate: resolveTenantFollowupTemplate,
     sendText: sendTenantWhatsAppTextWithReceipts,
     sendTemplate: sendTenantWhatsAppTemplateWithReceipt,
     customers: tenantId => getWhatsAppCustomers(tenantId) as Array<Record<string, unknown>>,
@@ -355,6 +393,7 @@ export async function preflightFollowupBatchDispatch(
   let skipped = 0;
   const items = await getFollowupBatchItems(tenantId, batch.id);
   for (const item of items) {
+    if (['blocked', 'partial_sent', 'failed', 'rejected'].includes(item.status)) { blocked += 1; addBlocker(item.exclusion_reason || `followup_item_${item.status}`); continue; }
     if (!['approved', 'retry_wait'].includes(item.status)) { skipped += 1; continue; }
     const now = dependencies.now();
     if (timestamp(item.scheduled_at) > now.getTime()) { future += 1; continue; }
@@ -362,7 +401,7 @@ export async function preflightFollowupBatchDispatch(
       future += 1;
       continue;
     }
-    if (hash(item.draft_body) !== item.content_hash) {
+    if (followupItemContentHash(item) !== item.content_hash) {
       blocked += 1;
       addBlocker('draft_content_hash_changed');
       continue;
@@ -400,6 +439,7 @@ export async function dispatchFollowupBatch(
     const dependencies = { ...defaultDependencies(), ...(options.dependencies || {}) } as DispatchDependencies;
     const batch = await getFollowupBatch(tenantId, batchId);
     if (!batch) throw new Error('followup_batch_not_found');
+    await recoverStaleFollowupSending(batch, dependencies.now(), dependencies.recordOutbound);
     const hasApprovalEvidence = Boolean(batch.approval_id) || batch.approved_by === 'approval_policy';
     if (batch.status !== 'approved' || Number(batch.approved_version || 0) !== Number(batch.version || 0) || !hasApprovalEvidence) {
       throw new Error('followup_batch_not_approved_for_current_version');
@@ -429,62 +469,76 @@ export async function dispatchFollowupBatch(
       if (!item || item.tenant_id !== tenantId || item.batch_id !== batch.id || !['approved', 'retry_wait'].includes(item.status)) continue;
       const safeWindow = nextFollowupDeliveryWindow(item.time_zone, batch.delivery_policy, now);
       if (safeWindow.getTime() > now.getTime()) {
-        await store.update('followup_batch_items', item.id, { scheduled_at: safeWindow.toISOString(), updated_at: now.toISOString() });
+        await persistFollowupItem(item.id, { scheduled_at: safeWindow.toISOString(), updated_at: now.toISOString() });
         result.future += 1;
         continue;
       }
-      if (hash(item.draft_body) !== item.content_hash) {
-        await store.update('followup_batch_items', item.id, { status: 'blocked', exclusion_reason: 'draft_content_hash_changed', updated_at: now.toISOString() });
+      if (followupItemContentHash(item) !== item.content_hash) {
+        await persistFollowupItem(item.id, { status: 'blocked', exclusion_reason: 'draft_content_hash_changed', updated_at: now.toISOString() });
         result.blocked += 1;
         continue;
       }
       const safety = await runtimeSafety(tenantId, item, now, dependencies, batch.delivery_policy);
       if (!safety.allowed) {
-        await store.update('followup_batch_items', item.id, { status: 'blocked', exclusion_reason: safety.reason, last_error: '', updated_at: now.toISOString() });
+        await persistFollowupItem(item.id, { status: 'blocked', exclusion_reason: safety.reason, last_error: '', updated_at: now.toISOString() });
         result.blocked += 1;
         await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.blocked', level: 'warning', summary: `${item.customer_name || '客户'} 跟进已被发送前安全检查拦截`, payload: { reason: safety.reason } });
         continue;
       }
 
+      const approvedContentHash = item.content_hash;
+      const approvedBatchVersion = Number(batch.version);
       const attempt = Number(item.attempts || 0) + 1;
       const previousStatus = item.status;
       const previousReceipt = item.provider_receipt;
       const claimToken = randomUUID();
       const claimedAt = now.toISOString();
-      await store.update('followup_batch_items', item.id, {
+      const claimReceipt = { ...jsonObject(item.provider_receipt), claimToken, claimedAt, workerMode: options.mode || 'manual',
+        approvedBatchVersion, approvedContentHash,
+        expectedMessages: item.send_mode === 'template' ? [item.draft_body] : planMobileChatMessages(item.draft_body).messages };
+      if (!await persistFollowupItem(item.id, {
         status: 'sending', attempts: attempt, last_error: '',
-        provider_receipt: { ...jsonObject(item.provider_receipt), claimToken, claimedAt, workerMode: options.mode || 'manual' },
+        provider_receipt: claimReceipt,
         updated_at: claimedAt,
-      });
+      })) throw new Error('无法保存发送尝试，尚未调用 WhatsApp');
       result.claimed += 1;
       await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.claimed', level: 'info', summary: `${item.customer_name || '客户'} 跟进已进入真实发送`, payload: { attempt, idempotencyKey: item.idempotency_key } });
 
       const accepted: Array<Record<string, unknown>> = receiptMessages(item.provider_receipt);
+      let providerComplete = false;
       try {
         await withDigitalEmployeeExternalAction(tenantId, batch.run_id, async () => {
+        const currentBatch = await getFollowupBatch(tenantId, batch.id);
+        const currentItem = await store.getById<FollowupBatchItemRecord>('followup_batch_items', item.id);
+        if (!currentBatch || currentBatch.status !== 'approved' || Number(currentBatch.version) !== approvedBatchVersion || Number(currentBatch.approved_version) !== approvedBatchVersion || !currentItem || currentItem.content_hash !== approvedContentHash) {
+          throw new WorkflowRunBlockedError('followup_approval_changed_before_send');
+        }
         if (item.send_mode === 'template') {
           const variables = Array.isArray(item.template_variables) ? item.template_variables.map(value => String(value || '')) : [];
-          const receipt = await dependencies.sendTemplate({ tenantId, to: item.wa_number, templateName: item.template_name, languageCode: item.template_language || 'en_US', variables });
+          const receipt = await dependencies.sendTemplate({ tenantId, to: item.wa_number, templateName: item.template_name, languageCode: item.template_language || 'en_US', variables, callbackData: `followup:${claimToken}:0` });
           if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
-          accepted.push({ body: item.draft_body, messageId: receipt.messageId, recipientId: receipt.recipientId, raw: receipt.raw, acceptedAt: dependencies.now().toISOString() });
+          accepted.push({ index: 0, body: item.draft_body, messageId: receipt.messageId, recipientId: receipt.recipientId, raw: receipt.raw, acceptedAt: dependencies.now().toISOString() });
+          providerComplete = true;
         } else {
           await dependencies.sendText(tenantId, item.wa_number, item.draft_body, async progress => {
             if (!progress.receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
-            accepted.push({ body: progress.message, messageId: progress.receipt.messageId, recipientId: progress.receipt.recipientId, raw: progress.receipt.raw, acceptedAt: dependencies.now().toISOString() });
-            await store.update('followup_batch_items', item.id, {
+            accepted.push({ index: progress.index, body: progress.message, messageId: progress.receipt.messageId, recipientId: progress.receipt.recipientId, raw: progress.receipt.raw, acceptedAt: dependencies.now().toISOString() });
+            providerComplete = progress.total > 0 && progress.index + 1 === progress.total;
+            await persistFollowupItem(item.id, {
               provider_message_id: String(accepted[0]?.messageId || ''),
-              provider_receipt: { claimToken, claimedAt, status: 'accepting', messages: accepted },
+              provider_receipt: { ...claimReceipt, status: 'accepting', messages: accepted },
               updated_at: dependencies.now().toISOString(),
             });
-          });
+          }, index => `followup:${claimToken}:${index}`);
         }
         const sentAt = dependencies.now().toISOString();
-        await store.update('followup_batch_items', item.id, {
+        await persistFollowupItem(item.id, {
           status: 'sent', provider_message_id: String(accepted[0]?.messageId || ''),
-          provider_receipt: { claimToken, claimedAt, status: 'accepted', messages: accepted },
+          provider_receipt: { ...claimReceipt, status: 'accepted', messages: accepted, localHistoryPending: true },
           sent_at: sentAt, last_error: '', updated_at: sentAt,
         });
         dependencies.recordOutbound({ tenantId, customerId: item.customer_id, body: item.draft_body, messages: accepted.map(entry => String(entry.body || '')).filter(Boolean), waNumber: item.wa_number, providerReceipts: accepted.map(entry => ({ messageId: String(entry.messageId || ''), recipientId: String(entry.recipientId || ''), raw: entry.raw })) });
+        await persistFollowupItem(item.id, { provider_receipt: { ...claimReceipt, status: 'accepted', messages: accepted, localHistoryPending: false } });
         result.sent += 1;
         await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.sent', level: 'success', summary: `${item.customer_name || '客户'} 跟进已被 WhatsApp 接受`, payload: { providerMessageIds: accepted.map(entry => entry.messageId), attempt } });
         });
@@ -492,8 +546,8 @@ export async function dispatchFollowupBatch(
         if (error instanceof WorkflowRunBlockedError && !accepted.length) {
           // Human control won the lock before any provider call. Do not consume
           // an attempt, discard approval, or invent a failed/sent receipt.
-          await store.update('followup_batch_items', item.id, {
-            status: previousStatus, attempts: attempt - 1, provider_receipt: previousReceipt,
+          await persistFollowupItem(item.id, {
+            status: error.reason === 'followup_approval_changed_before_send' ? 'draft' : previousStatus, attempts: attempt - 1, provider_receipt: previousReceipt,
             last_error: error.reason, updated_at: dependencies.now().toISOString(),
           });
           result.claimed -= 1;
@@ -503,22 +557,37 @@ export async function dispatchFollowupBatch(
         }
         const failure = safeError(error);
         const failedAt = dependencies.now();
-        if (accepted.length) {
-          await store.update('followup_batch_items', item.id, {
+        if (providerComplete && accepted.length) {
+          await persistFollowupItem(item.id, {
+            status: 'sent', provider_message_id: String(accepted[0]?.messageId || ''),
+            provider_receipt: { ...claimReceipt, status: 'accepted', messages: accepted, localHistoryPending: true },
+            sent_at: failedAt.toISOString(), last_error: `local_followup_writeback_failed: ${failure.code}`, updated_at: failedAt.toISOString(),
+          });
+          result.sent += 1;
+          await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, type: 'worker.receipt', level: 'warning', summary: '平台已接受全部跟进消息，本地历史回写需处理，不会重复发送', payload: { reason: 'local_followup_writeback_failed' } });
+        } else if (accepted.length) {
+          await persistFollowupItem(item.id, {
             status: 'partial_sent', provider_message_id: String(accepted[0]?.messageId || ''),
-            provider_receipt: { claimToken, claimedAt, status: 'accepted_partial', messages: accepted },
+            provider_receipt: { ...claimReceipt, status: 'accepted_partial', messages: accepted, localHistoryPending: true },
             sent_at: failedAt.toISOString(), last_error: `${failure.code}: ${failure.message}`, updated_at: failedAt.toISOString(),
           });
+          try {
           dependencies.recordOutbound({ tenantId, customerId: item.customer_id, body: accepted.map(entry => String(entry.body || '')).join('\n'), messages: accepted.map(entry => String(entry.body || '')), waNumber: item.wa_number, providerReceipts: accepted.map(entry => ({ messageId: String(entry.messageId || ''), recipientId: String(entry.recipientId || ''), raw: entry.raw })) });
+            await persistFollowupItem(item.id, { provider_receipt: { ...claimReceipt, status: 'accepted_partial', messages: accepted, localHistoryPending: false } });
+          } catch { /* The recorded pending flag is recovered without sending again. */ }
           result.partial += 1;
           await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.partial_sent', level: 'error', summary: `${item.customer_name || '客户'} 仅部分消息被 WhatsApp 接受，已停止自动重试`, payload: { providerMessageIds: accepted.map(entry => entry.messageId), errorCode: failure.code, attempt } });
+        } else if (!jsonObject((error as { response?: unknown })?.response).status || Number(jsonObject((error as { response?: unknown })?.response).status) >= 500 || Number(jsonObject((error as { response?: unknown })?.response).status) === 408) {
+          await persistFollowupItem(item.id, { status: 'blocked', exclusion_reason: 'send_outcome_unknown', last_error: `${failure.code}: ${failure.message}`, updated_at: failedAt.toISOString() });
+          result.blocked += 1;
+          await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.blocked', level: 'warning', summary: '发送结果不明，需核对平台回执；已停止自动重发', payload: { reason: 'send_outcome_unknown', attempt } });
         } else if (failure.retryable && attempt < followupWorkerMaxAttempts()) {
           const retryAt = new Date(failedAt.getTime() + Math.min(30 * 60_000, 30_000 * (2 ** (attempt - 1))));
-          await store.update('followup_batch_items', item.id, { status: 'retry_wait', scheduled_at: retryAt.toISOString(), last_error: `${failure.code}: ${failure.message}`, updated_at: failedAt.toISOString() });
+          await persistFollowupItem(item.id, { status: 'retry_wait', scheduled_at: retryAt.toISOString(), last_error: `${failure.code}: ${failure.message}`, updated_at: failedAt.toISOString() });
           result.retryScheduled += 1;
           await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.retry_scheduled', level: 'warning', summary: `${item.customer_name || '客户'} 跟进发送失败，已安排安全重试`, payload: { errorCode: failure.code, attempt, retryAt: retryAt.toISOString() } });
         } else {
-          await store.update('followup_batch_items', item.id, { status: 'failed', last_error: `${failure.code}: ${failure.message}`, updated_at: failedAt.toISOString() });
+          await persistFollowupItem(item.id, { status: 'failed', last_error: `${failure.code}: ${failure.message}`, updated_at: failedAt.toISOString() });
           result.failed += 1;
           await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.failed', level: 'error', summary: `${item.customer_name || '客户'} 跟进发送失败`, payload: { errorCode: failure.code, attempt, retryable: failure.retryable } });
         }
@@ -544,18 +613,58 @@ function metaStatuses(payload: unknown): Array<Record<string, unknown>> {
 
 const RECEIPT_RANK: Record<string, number> = { sent: 1, delivered: 2, read: 3, failed: 4 };
 
-export async function ingestFollowupDeliveryStatuses(tenantId: string, payload: unknown): Promise<number> {
+export async function ingestFollowupDeliveryStatuses(tenantId: string, payload: unknown, options: { verifiedSignature?: boolean } = {}): Promise<number> {
   const statuses = metaStatuses(payload);
   if (!statuses.length) return 0;
-  const allItems = await store.list<FollowupBatchItemRecord>('followup_batch_items', { where: { tenant_id: tenantId }, perPage: 2000, sort: '-updated_at' });
+  const allItems: { items: FollowupBatchItemRecord[] } = { items: [] };
+  for (let page = 1; ; page += 1) {
+    const batchPage = await store.list<FollowupBatchItemRecord>('followup_batch_items', { where: { tenant_id: tenantId }, page, perPage: 500, sort: '-updated_at' });
+    allItems.items.push(...batchPage.items);
+    if (!batchPage.items.length || page >= batchPage.totalPages) break;
+  }
   let updated = 0;
   const touchedBatches = new Set<string>();
   for (const status of statuses) {
     const messageId = String(status.id || '');
     const nextStatus = String(status.status || '').toLowerCase();
     if (!messageId || !RECEIPT_RANK[nextStatus]) continue;
-    const item = allItems.items.find(candidate => candidate.provider_message_id === messageId || receiptMessages(candidate.provider_receipt).some(entry => entry.messageId === messageId));
-    if (!item) continue;
+    let listed = allItems.items.find(candidate => candidate.provider_message_id === messageId || receiptMessages(candidate.provider_receipt).some(entry => entry.messageId === messageId));
+    if (!listed && options.verifiedSignature) {
+      const callback = String(status.biz_opaque_callback_data || '').match(/^followup:([0-9a-f-]{36}):(\d+)$/i);
+      const candidate = callback && allItems.items.find(row => jsonObject(row.provider_receipt).claimToken === callback[1]);
+      if (candidate) {
+        const batch = await getFollowupBatch(tenantId, candidate.batch_id);
+        if (batch) await withDigitalEmployeeRunLock(tenantId, batch.run_id, async () => {
+          const fresh = await store.getById<FollowupBatchItemRecord>('followup_batch_items', candidate.id);
+          if (!fresh || fresh.tenant_id !== tenantId) return;
+          const receipt = jsonObject(fresh.provider_receipt);
+          const expected = Array.isArray(receipt.expectedMessages) ? receipt.expectedMessages.map(String) : [];
+          const index = Number(callback![2]);
+          if (receipt.claimToken !== callback![1] || receipt.approvedContentHash !== fresh.content_hash
+            || !Number.isInteger(index) || index >= expected.length || index < 0
+            || String(status.recipient_id || '').replace(/\D/g, '') !== fresh.wa_number.replace(/\D/g, '')) return;
+          const messages = receiptMessages(receipt);
+          if (messages.some(entry => Number(entry.index) === index && entry.messageId !== messageId)) return;
+          if (!messages.some(entry => entry.messageId === messageId)) messages.push({ index, messageId, body: expected[index], recipientId: status.recipient_id, acceptedAt: new Date().toISOString(), recoveredFromSignedWebhook: true });
+          const complete = expected.length > 0 && expected.every((_, i) => messages.some(entry => Number(entry.index) === i));
+          if (!await persistFollowupItem(fresh.id, {
+            provider_message_id: String(messages[0]?.messageId || ''),
+            provider_receipt: { ...receipt, messages, localHistoryPending: true },
+            status: complete ? 'sent' : 'partial_sent',
+            exclusion_reason: complete && fresh.exclusion_reason === 'send_outcome_unknown' ? '' : fresh.exclusion_reason,
+            sent_at: fresh.sent_at || new Date().toISOString(), updated_at: new Date().toISOString(),
+          })) throw new Error('无法保存恢复回执');
+          listed = fresh;
+        });
+      }
+    }
+    if (!listed) continue;
+    const owningBatch = await getFollowupBatch(tenantId, listed.batch_id);
+    if (!owningBatch) continue;
+    const listedId = listed.id;
+    await withDigitalEmployeeRunLock(tenantId, owningBatch.run_id, async () => {
+    const item = await store.getById<FollowupBatchItemRecord>('followup_batch_items', listedId);
+    if (!item || item.tenant_id !== tenantId) return;
     const current = String(item.status || 'sent');
     const occurredAt = timestamp(status.timestamp) ? new Date(timestamp(status.timestamp)).toISOString() : new Date().toISOString();
     const receipt = jsonObject(item.provider_receipt);
@@ -564,14 +673,14 @@ export async function ingestFollowupDeliveryStatuses(tenantId: string, payload: 
       .filter(entry => entry.messageId === messageId)
       .map(entry => String(entry.status || 'sent'))
       .sort((left, right) => (RECEIPT_RANK[right] || 0) - (RECEIPT_RANK[left] || 0))[0];
-    if (priorMessageStatus && (RECEIPT_RANK[nextStatus] || 0) < (RECEIPT_RANK[priorMessageStatus] || 0)) continue;
+    if (priorMessageStatus && (RECEIPT_RANK[nextStatus] || 0) < (RECEIPT_RANK[priorMessageStatus] || 0)) return;
     const nextStatuses = [...receiptStatuses.filter(entry => entry.messageId !== messageId), { messageId, status: nextStatus, occurredAt, conversation: status.conversation || {}, pricing: status.pricing || {}, errors: status.errors || [] }];
     const nextReceipt = { ...receipt, statuses: nextStatuses };
     const messageIds = receiptMessages(receipt).map(entry => String(entry.messageId || '')).filter(Boolean);
     const statusByMessage = new Map(nextStatuses.map(entry => [String(entry.messageId || ''), String(entry.status || 'sent')]));
     const aggregateStatuses = messageIds.map(id => statusByMessage.get(id) || 'sent');
-    const aggregateStatus = current === 'partial_sent'
-      ? 'partial_sent'
+    const aggregateStatus = current === 'partial_sent' || item.exclusion_reason === 'send_outcome_unknown'
+      ? current
       : aggregateStatuses.some(value => value === 'failed')
         ? 'failed'
         : aggregateStatuses.length && aggregateStatuses.every(value => value === 'read')
@@ -582,13 +691,14 @@ export async function ingestFollowupDeliveryStatuses(tenantId: string, payload: 
     const patch: Record<string, unknown> = { status: aggregateStatus, provider_receipt: nextReceipt, updated_at: occurredAt };
     if (aggregateStatus === 'delivered' || aggregateStatus === 'read') patch.delivered_at = item.delivered_at || occurredAt;
     if (aggregateStatus === 'failed') patch.last_error = JSON.stringify(status.errors || []).slice(0, 1000) || 'provider_delivery_failed';
-    await store.update('followup_batch_items', item.id, patch);
+    await persistFollowupItem(item.id, patch);
     const batch = await getFollowupBatch(tenantId, item.batch_id);
     if (batch) {
       touchedBatches.add(batch.id);
       await emit({ tenantId, runId: batch.run_id, taskId: await dispatchTaskId(batch), batchId: batch.id, itemId: item.id, customerId: item.customer_id, type: 'worker.receipt', level: nextStatus === 'failed' ? 'error' : 'success', summary: `${item.customer_name || '客户'} WhatsApp 回执：${nextStatus}`, payload: { providerMessageId: messageId, status: nextStatus, occurredAt } });
     }
     updated += 1;
+    });
   }
   for (const batchId of touchedBatches) {
     const batch = await getFollowupBatch(tenantId, batchId);
@@ -614,8 +724,15 @@ export async function runFollowupDispatchScan(): Promise<number> {
   if (scanRunning) return 0;
   scanRunning = true;
   try {
-    const batches = await store.list<FollowupBatchRecord>('followup_batches', { where: { status: 'approved' }, sort: 'updated_at', perPage: 500 });
-    for (const batch of batches.items) {
+    const batches: FollowupBatchRecord[] = [];
+    for (let page = 1; ; page += 1) {
+      const result = await store.list<FollowupBatchRecord>('followup_batches', { sort: 'updated_at', page, perPage: 500 });
+      batches.push(...result.items.filter(batch => ['approved', 'needs_attention'].includes(batch.status)));
+      if (page >= result.totalPages || !result.items.length) break;
+    }
+    for (const batch of batches) {
+      await recoverStaleFollowupSending(batch);
+      if ((await getFollowupBatch(batch.tenant_id, batch.id))?.status !== 'approved') continue;
       await dispatchFollowupBatch(batch.tenant_id, batch.id, { mode: 'scheduled' }).catch(error => {
         const failure = safeError(error);
         if (!failure.code.startsWith('customer_message_send_not_authorized:')) {
@@ -623,7 +740,7 @@ export async function runFollowupDispatchScan(): Promise<number> {
         }
       });
     }
-    return batches.items.length;
+    return batches.length;
   } finally { scanRunning = false; }
 }
 

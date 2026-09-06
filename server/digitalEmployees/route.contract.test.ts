@@ -18,7 +18,9 @@ const createGoal = routeBlock("digitalEmployeesRouter.post('/goals'");
 assert.match(createGoal, /business_line:\s*goal\.businessLine/, 'weekly goals must persist their business line');
 assert.match(createGoal, /content_platforms:\s*goal\.contentPlatforms/, 'content goals must persist their platform scope');
 
-const approveGoal = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
+const goalApprovalRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
+assert.match(goalApprovalRoute, /approveGoalForReview/, 'manual approval must call the same validated activation as review scheduling');
+const approveGoal = source.slice(source.indexOf('async function ensureReviewRunTasks'), source.indexOf("digitalEmployeesRouter.post('/goals/:goalId/approve'"));
 for (const [stored, planned] of [
   ['business_domain', 'businessDomain'],
   ['capability_key', 'capabilityKey'],
@@ -32,8 +34,8 @@ for (const [stored, planned] of [
 }
 assert.match(approveGoal, /task_version:\s*1/, 'new workflow tasks must start at an explicit immutable version');
 assert.match(approveGoal, /correction_version:\s*0/, 'new workflow tasks must start before the first correction');
-assert.match(approveGoal, /missingGoalResources/, 'goal approval must enforce server-side business resource readiness');
-assert.match(approveGoal, /missing_required_resources/, 'missing goal resources need a stable HTTP error contract');
+assert.doesNotMatch(approveGoal, /missingGoalResources/, 'missing delivery resources must not block independent branches from starting');
+assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts_invalid/, 'delivery checks belong to runtime tasks, not whole-plan activation');
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
 
 const streamRoute = routeBlock("digitalEmployeesRouter.get('/runs/:runId/stream'");

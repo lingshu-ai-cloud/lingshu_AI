@@ -1,3 +1,5 @@
+import { resolveTenantFollowupTemplate } from '../whatsapp/templates.js';
+import { withDigitalEmployeeRunLock } from './runControl.js';
 import { callLLM } from '../agents/llm.js';
 import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { createHash } from 'node:crypto';
@@ -201,6 +203,7 @@ function customerAuthenticityBand(customer: Record<string, unknown>): string {
 function segmentMembership(customer: Record<string, unknown>, criteria: CustomerSegmentCriteria, nowMs: number) {
   const id = String(customer.id || '');
   const hardExclusions: string[] = [];
+  if (customerHasOptedOut(customer)) hardExclusions.push('customer_opted_out_or_blacklisted');
   if ((criteria.excludeCustomerIds || []).includes(id)) hardExclusions.push('explicitly_excluded');
   if ((criteria.excludeStages || []).includes(String(customer.stage || ''))) hardExclusions.push(`excluded_stage:${String(customer.stage || '')}`);
   if ((criteria.includeCustomerIds || []).length && !(criteria.includeCustomerIds || []).includes(id)) hardExclusions.push('not_in_explicit_allowlist');
@@ -227,6 +230,11 @@ function segmentMembership(customer: Record<string, unknown>, criteria: Customer
     inclusionReasons: included ? applied.filter(test => test.passes).map(test => test.reason) : [],
     exclusionReasons: included ? [] : [...hardExclusions, ...applied.filter(test => !test.passes).map(test => `criteria_mismatch:${test.reason}`)],
   };
+}
+
+export function eligibleFollowupCustomerIds(customers: Array<Record<string, unknown>>, criteria: unknown, now = Date.now()): string[] {
+  const normalized = normalizeCustomerSegmentCriteria(criteria);
+  return customers.filter(customer => segmentMembership(customer, normalized, now).included).map(customer => String(customer.id || '')).filter(Boolean);
 }
 
 function maskWhatsAppNumber(value: unknown): string {
@@ -298,7 +306,7 @@ export async function createCustomerSegmentSnapshot(input: {
   name?: string;
   criteria?: unknown;
   idempotent?: boolean;
-}): Promise<{ segment: CustomerSegmentRecord; members: CustomerSegmentMemberRecord[]; created: boolean }> {
+}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers): Promise<{ segment: CustomerSegmentRecord; members: CustomerSegmentMemberRecord[]; created: boolean }> {
   if (input.idempotent !== false) {
     const existing = await store.list<CustomerSegmentRecord>(COLLECTION.segments, {
       where: { tenant_id: input.tenantId, run_id: input.runId, task_id: input.taskId }, sort: '-version', page: 1, perPage: 100,
@@ -313,7 +321,7 @@ export async function createCustomerSegmentSnapshot(input: {
   });
   const version = Number(allVersions.items[0]?.version || 0) + 1;
   const now = new Date();
-  const customers = getWhatsAppCustomers(input.tenantId) as Array<Record<string, unknown>>;
+  const customers = customersForTenant(input.tenantId);
   const evaluated = customers.map(customer => ({ customer, membership: segmentMembership(customer, criteria, now.getTime()) }));
   const exclusionSummary: Record<string, number> = {};
   for (const item of evaluated) {
@@ -468,7 +476,7 @@ export async function createFollowupBatch(input: {
   deliveryPolicy?: Partial<FollowupDeliveryPolicy>;
   revisionNote?: string;
   draftOverrides?: Record<string, string>;
-}): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
+}, customersForTenant: (tenantId: string) => Array<Record<string, unknown>> = getWhatsAppCustomers): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[]; created: boolean }> {
   if (input.idempotent !== false) {
     const existing = await store.list<FollowupBatchRecord>(COLLECTION.batches, {
       where: { tenant_id: input.tenantId, run_id: input.runId, task_id: input.taskId }, sort: '-version', page: 1, perPage: 100,
@@ -479,7 +487,7 @@ export async function createFollowupBatch(input: {
   const segment = await getCustomerSegment(input.tenantId, input.segmentId);
   if (!segment || segment.run_id !== input.runId) throw new Error('customer_segment_not_found');
   const members = (await getCustomerSegmentMembers(input.tenantId, segment.id)).filter(member => member.membership === 'included');
-  const customerMap = new Map((getWhatsAppCustomers(input.tenantId) as Array<Record<string, unknown>>).map(customer => [String(customer.id || ''), customer]));
+  const customerMap = new Map(customersForTenant(input.tenantId).map(customer => [String(customer.id || ''), customer]));
   const deliveryPolicy = normalizeDeliveryPolicy(input.deliveryPolicy);
   const priorItems = await store.list<FollowupBatchItemRecord>(COLLECTION.items, {
     where: { tenant_id: input.tenantId }, sort: '-sent_at', page: 1, perPage: 2000,
@@ -654,7 +662,8 @@ export async function applyFollowupBatchDecision(input: {
     blocked: items.filter(item => item.status === 'blocked').length,
     approved: items.filter(item => item.status === 'approved').length,
     rejected: items.filter(item => item.status === 'rejected').length,
-    sent: items.filter(item => ['sent', 'delivered', 'read', 'partial_sent'].includes(item.status) && Boolean(item.provider_message_id)).length,
+    sent: items.filter(item => ['sent', 'delivered', 'read'].includes(item.status) && Boolean(item.provider_message_id)).length,
+    partial: items.filter(item => item.status === 'partial_sent').length,
     failed: items.filter(item => item.status === 'failed').length,
   };
   await store.update(COLLECTION.batches, batch.id, {
@@ -689,4 +698,46 @@ export async function followupRunHasExternalReceipt(tenantId: string, runId: str
     })) return true;
   }
   return false;
+}
+
+/** Fingerprint exactly what the provider will send. Legacy session-message hashes remain compatible. */
+export function followupItemContentHash(item: Pick<FollowupBatchItemRecord, 'draft_body' | 'send_mode' | 'template_name' | 'template_language' | 'template_variables'>): string {
+  return createHash('sha256').update(JSON.stringify(item.send_mode === 'template'
+    ? { body: item.draft_body, mode: item.send_mode, name: item.template_name, language: item.template_language, variables: item.template_variables }
+    : item.draft_body)).digest('hex');
+}
+
+export async function configureFollowupItemTemplate(input: {
+  tenantId: string; batchId: string; itemId: string; templateName: string; language: string; variables: string[];
+}, resolveTemplate = resolveTenantFollowupTemplate): Promise<{ batch: FollowupBatchRecord; items: FollowupBatchItemRecord[] }> {
+  const initial = await getFollowupBatch(input.tenantId, input.batchId);
+  if (!initial) throw new Error('followup_batch_not_found');
+  return withDigitalEmployeeRunLock(input.tenantId, initial.run_id, async () => {
+    const batch = await getFollowupBatch(input.tenantId, input.batchId);
+    if (!batch || ['superseded', 'cancelled', 'completed'].includes(batch.status)) throw new Error('followup_batch_not_editable');
+    const items = await getFollowupBatchItems(input.tenantId, batch.id);
+    if (items.some(i => i.status === 'sending')) throw new Error('followup_batch_sending');
+    const item = items.find(i => i.id === input.itemId);
+    if (!item) throw new Error('followup_item_not_found');
+    if (item.provider_message_id || item.sent_at || Object.keys(jsonObject(item.provider_receipt)).length) throw new Error('followup_item_has_send_attempt');
+    const template = await resolveTemplate(input.tenantId, input.templateName, input.language);
+    if (!template || template.status !== 'APPROVED') throw new Error('approved_whatsapp_template_required');
+    if (!Array.isArray(input.variables) || input.variables.length !== template.variableCount || input.variables.some(v => typeof v !== 'string' || !v.trim() || v.length > 1000)) throw new Error('whatsapp_template_variables_invalid');
+    const body = template.body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => input.variables[Number(n)-1]);
+    const guard = guardOutboundSync(body);
+    if (!guard.allowed) throw new Error('whatsapp_template_content_blocked');
+    if ((await getFollowupBatchItems(input.tenantId, batch.id)).some(i => i.status === 'sending')) throw new Error('followup_batch_sending');
+    const now = new Date().toISOString();
+    // Revoke authorization before changing any item. A partial storage failure cannot leave a changed payload approved.
+    await store.update(COLLECTION.batches, batch.id, { status: 'draft', version: Number(batch.version) + 1, approved_version: 0, approval_id: '', approved_by: '', approved_at: '', updated_at: now });
+    for (const entry of items) {
+      if (['approved', 'retry_wait'].includes(entry.status)) await store.update(COLLECTION.items, entry.id, { status: 'draft', approved_at: '', updated_at: now });
+    }
+    const remainingReasons = String(item.exclusion_reason || '').split(/[;,]/).map(s => s.trim()).filter(s => s && !['whatsapp_template_required', 'approved_whatsapp_template_required', 'draft_generation_failed'].includes(s));
+    const next = { ...item, send_mode: 'template', template_name: template.name, template_status: 'approved', template_language: template.language, template_variables: input.variables, draft_body: body };
+    await store.update(COLLECTION.items, item.id, { ...next, content_hash: followupItemContentHash(next), draft_version: Number(item.draft_version) + 1, status: remainingReasons.length ? 'blocked' : 'draft', exclusion_reason: remainingReasons.join(';'), approved_at: '', updated_at: now });
+    const freshItems = await getFollowupBatchItems(input.tenantId, batch.id);
+    await store.update(COLLECTION.batches, batch.id, { content_hash: createHash('sha256').update(JSON.stringify(freshItems.map(i => i.content_hash))).digest('hex'), counts: { total: freshItems.length, draft: freshItems.filter(i => i.status === 'draft').length, blocked: freshItems.filter(i => i.status === 'blocked').length, sent: freshItems.filter(i => ['sent','delivered','read'].includes(i.status) && Boolean(i.provider_message_id)).length } });
+    return { batch: (await getFollowupBatch(input.tenantId, batch.id))!, items: freshItems };
+  });
 }

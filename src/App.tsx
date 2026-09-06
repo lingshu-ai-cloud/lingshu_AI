@@ -1,7 +1,7 @@
+import { pushProductionLocation, requestProductionBack } from './lib/productionNavigation';
 import { isAgentProductionSession } from './lib/agentProductionSession';
-import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
-import { BookOpen, Loader2 } from 'lucide-react';
+import { Activity, Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
 import { authApi, type AuthSession } from './lib/auth';
@@ -20,7 +20,6 @@ const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
 const ScheduledPage = lazy(() => import('./components/ScheduledPage'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const AdminDeliveryPage = lazy(() => import('./components/AdminDeliveryPage'));
-const BusinessDiagnosisModal = lazy(() => import('./components/BusinessDiagnosisModal'));
 const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
 const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
@@ -87,7 +86,6 @@ const ALL_PAGES: Page[] = [
   'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
   'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
 ];
-const BUSINESS_DIAGNOSIS_SEEN_KEY = 'ow_business_diagnosis_seen_scope_v3';
 const isAdminSession = (session: AuthSession | null) => Boolean(session && !session.supportAccess && (
   session.user.email === 'lingshu-admin@local.test' ||
   session.tenant?.subscriptionPlan === 'admin' ||
@@ -208,6 +206,31 @@ export default function App() {
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(loadPage);
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const [monitorMounted, setMonitorMounted] = useState(() => loadPage() === 'agentMonitor');
+  useEffect(() => { if (page === 'agentMonitor') setMonitorMounted(true); }, [page]);
+  useEffect(() => {
+    window.history.replaceState({ ...window.history.state, productionPage: pageRef.current, productionDepth: 0 }, '');
+    const restorePage = (event: PopStateEvent) => {
+      const previous = event.state?.productionPage;
+      if (ALL_PAGES.includes(previous)) {
+        setPage(previous);
+        if (event.state?.productionDetail) {
+          const detail = event.state.productionDetail;
+          try { sessionStorage.setItem('digitalEmployee.businessDeepLink', JSON.stringify({ ...detail, issuedAt: Date.now() })); } catch { /* optional storage */ }
+          window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...detail, restoreHistory: true } }));
+        }
+      }
+    };
+    const back = () => {
+      if (window.history.state?.productionDepth > 0) window.history.back();
+      else setPage('digitalEmployees');
+    };
+    window.addEventListener('popstate', restorePage);
+    window.addEventListener('lingshu:back', back);
+    return () => { window.removeEventListener('popstate', restorePage); window.removeEventListener('lingshu:back', back); };
+  }, []);
   const [smartAssetsMounted, setSmartAssetsMounted] = useState(() => loadPage() === 'smartAssets');
   const [conversation, setConversation] = useState<ConversationContext | null>(null);
   const [scriptPanelOpen, setScriptPanelOpen] = useState(false);
@@ -215,7 +238,12 @@ export default function App() {
   const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
   const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string } | null>(() => {
     const target = window.__agentProductionTarget;
-    return target?.link.page === 'smartAssets' ? { runId: target.link.runId, taskId: target.link.taskId, taskKey: target.link.businessRef.taskKey, entityId: target.projectId } : null;
+    if (target?.link.page === 'smartAssets') return { runId: target.link.runId, taskId: target.link.taskId, taskKey: target.link.businessRef.taskKey, entityId: target.projectId };
+    const detail = window.history.state?.productionDetail;
+    if (loadPage() !== 'smartAssets' || detail?.page !== 'smartAssets') return null;
+    const runId = String(detail.workflowRunId || '');
+    const taskId = String(detail.workflowTaskId || '');
+    return runId && taskId || detail.businessRef?.entityId ? { runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId } : null;
   });
 
   useEffect(() => {
@@ -238,37 +266,8 @@ export default function App() {
   // 账号会话
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [businessDiagnosisOpen, setBusinessDiagnosisOpen] = useState(false);
-  const businessDiagnosisDocked = false;
 
   const progressScopeFor = (s: AuthSession | null) => s?.demo?.guideScope || (s?.demo?.expiresAt ? `${s.user.id}:${s.demo.expiresAt}` : s?.user?.id || s?.tenant?.id || null);
-  const diagnosisScopeFor = (s: AuthSession | null) => s?.demo?.guideScope || s?.user?.id || s?.tenant?.id || 'guest';
-  const showBusinessDiagnosisFor = (s: AuthSession | null) => {
-    if (!s?.demo?.guideTrigger) return;
-    const scope = diagnosisScopeFor(s);
-    try {
-      if (localStorage.getItem(BUSINESS_DIAGNOSIS_SEEN_KEY) === scope) return;
-    } catch { /* ignore */ }
-    setBusinessDiagnosisOpen(true);
-    void authApi.guideSeen();
-  };
-  const closeBusinessDiagnosis = () => {
-    if (session) {
-      try {
-        localStorage.setItem(BUSINESS_DIAGNOSIS_SEEN_KEY, diagnosisScopeFor(session));
-      } catch { /* ignore */ }
-    }
-    setBusinessDiagnosisOpen(false);
-  };
-  const dismissBusinessDiagnosisToday = () => {
-    if (session) {
-      try {
-        localStorage.setItem(BUSINESS_DIAGNOSIS_SEEN_KEY, diagnosisScopeFor(session));
-      } catch { /* ignore */ }
-    }
-    setBusinessDiagnosisOpen(false);
-  };
-  const reopenBusinessDiagnosis = () => setBusinessDiagnosisOpen(true);
 
   useEffect(() => {
     if (isRegistrationEntry) {
@@ -278,7 +277,6 @@ export default function App() {
     authApi.me().then(s => {
       setDemoProgressScope(progressScopeFor(s));
       setSession(s);
-      showBusinessDiagnosisFor(s);
       setAuthLoading(false);
     });
   }, [isRegistrationEntry]);
@@ -298,7 +296,7 @@ export default function App() {
       if (window.location.pathname === '/') {
         const url = new URL(window.location.href);
         url.searchParams.set('page', page);
-        window.history.replaceState(null, '', url);
+        window.history.replaceState(window.history.state, '', url);
       }
     } catch { /* ignore */ }
   }, [page]);
@@ -367,6 +365,9 @@ export default function App() {
   };
 
   const handleNavigate = useCallback((p: Page) => {
+    const next = p === 'retention' ? 'conversion' : p;
+    if (next !== pageRef.current) pushProductionLocation(next);
+    else window.history.replaceState({ ...window.history.state, productionDetail: undefined }, '');
     setConversation(null); setRestore(null); setKickoff(null);
     activeIdRef.current = null; setActiveConvId(null);
     if (p === 'smartAssets') {
@@ -379,13 +380,14 @@ export default function App() {
       } catch { /* ignore */ }
     }
     setPage(p === 'retention' ? 'conversion' : p);
-    if (p === 'adminDelivery') window.history.replaceState(null, '', '/admin/delivery');
-    else if (window.location.pathname === '/admin/delivery') window.history.replaceState(null, '', '/');
+    if (p === 'adminDelivery') window.history.replaceState(window.history.state, '', '/admin/delivery');
+    else if (window.location.pathname === '/admin/delivery') window.history.replaceState(window.history.state, '', '/');
   }, []);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{
+        restoreHistory?: boolean;
         page?: Page;
         view?: 'create' | 'publish';
         studioPanel?: 'projects';
@@ -395,7 +397,11 @@ export default function App() {
       }>).detail;
       const nextPage = detail?.page;
       if (!nextPage || !ALL_PAGES.includes(nextPage)) return;
-      handleNavigate(nextPage);
+      if (!detail.restoreHistory) {
+        if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
+        handleNavigate(nextPage);
+        window.history.replaceState({ ...window.history.state, productionDetail: detail }, '');
+      }
       if (nextPage === 'smartAssets') {
         setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
@@ -403,7 +409,7 @@ export default function App() {
         const taskId = String(detail.workflowTaskId || '').trim();
         const taskKey = String(detail.businessRef?.taskKey || '').trim();
         const preview = detail.businessRef?.preview === true;
-        if ((runId && taskId) || (preview && taskKey)) {
+        if ((runId && taskId) || detail.businessRef?.entityId || (preview && taskKey)) {
           setSmartAssetsWorkflowContext({ runId, taskId, taskKey, entityId: detail.businessRef?.entityId, ...(preview ? { preview: true } : {}) });
         }
       }
@@ -432,14 +438,12 @@ export default function App() {
     } catch { /* ignore browser persistence failures */ }
     setDemoProgressScope(progressScopeFor(s));
     setSession(s);
-    showBusinessDiagnosisFor(s);
   };
   const refreshSession = async () => {
     const latest = await authApi.me();
     if (!latest) {
       setDemoProgressScope(null);
       setSession(null);
-      setBusinessDiagnosisOpen(false);
       return;
     }
     setDemoProgressScope(progressScopeFor(latest));
@@ -448,7 +452,6 @@ export default function App() {
   const handleLogout = () => {
     authApi.logout();
     setDemoProgressScope(null);
-    setBusinessDiagnosisOpen(false);
     setSession(null);
   };
   const handleSupportSessionStarted = (supportSession: AuthSession) => {
@@ -491,42 +494,10 @@ export default function App() {
   return (
     <Layout page={page} onNavigate={handleNavigate} conversation={conversation} session={session} onLogout={handleLogout}
       onSessionUpdate={setSession}
-      onOpenBusinessDiagnosis={reopenBusinessDiagnosis}
       demoGuideActive={false}
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={scriptPanelOpen} onAction={startAgentTask}>
-      <AnimatePresence>
-        {page !== 'agentMonitor' && businessDiagnosisDocked && !businessDiagnosisOpen && (
-          <motion.button
-            type="button"
-            layoutId="business-diagnosis-surface"
-            initial={{ opacity: 0.72, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0.72, scale: 0.92 }}
-            transition={{
-              layout: { type: 'spring', damping: 30, stiffness: 360, mass: 0.8 },
-              opacity: { duration: 0.14, ease: 'easeOut' },
-              scale: { duration: 0.18, ease: 'easeOut' },
-            }}
-            onClick={reopenBusinessDiagnosis}
-            className="fixed bottom-5 right-5 z-[70] flex flex-col items-center gap-1 rounded-2xl border border-border bg-white px-3 py-3 text-text-secondary shadow-[0_16px_38px_rgba(15,23,42,0.18)] transition-colors hover:border-green-200 hover:text-green-700"
-            title="打开经营日报"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-green-50 text-green-700">
-              <BookOpen size={18} />
-            </span>
-            <span className="text-[11px] font-semibold">经营日报</span>
-          </motion.button>
-        )}
-      </AnimatePresence>
       <Suspense fallback={null}>
-        <BusinessDiagnosisModal
-          open={businessDiagnosisOpen}
-          session={session}
-          onClose={closeBusinessDiagnosis}
-          onDismissToday={dismissBusinessDiagnosisToday}
-          onNavigate={handleNavigate}
-        />
         {!isAgentProductionSession() && <GlobalAssistant
           page={page}
           restore={restore}
@@ -537,10 +508,13 @@ export default function App() {
           onSessionRefresh={() => void refreshSession()}
         />}
       </Suspense>
+      {!isAgentProductionSession() && page !== 'agentMonitor' && window.history.state?.productionDepth > 0 && <button type="button" onClick={requestProductionBack} className="shrink-0 border-b bg-white px-5 py-2 text-left text-sm font-semibold text-blue-700">← 返回上一页（保留查看位置）</button>}
       <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
         <Suspense fallback={<PageLoading />}>
-          {page === 'digitalEmployees' && <DigitalEmployeePage onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
-          {page === 'agentMonitor' && <AgentMonitorPage onBack={() => handleNavigate('digitalEmployees')} />}
+          <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
+            <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />
+          </Activity>
+          {monitorMounted && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {page === 'strategy' && (
             <StrategyPage
               onEnterConversation={enterConversation}

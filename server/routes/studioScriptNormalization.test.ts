@@ -446,3 +446,9 @@ assert.deepEqual(
 );
 
 console.log('studio script normalization tests passed');
+
+const presenterIdentityDraft = '[0-4s]\n画面：数字人：面对镜头讲述\n台词：看这些细节。\n[4-8s]\n画面：素材《板件》；源片截取：0-4s；元件特写\n台词：留意元件。';
+const presenterIdentityResult = ensureSelectedProductNamesInScript(presenterIdentityDraft, '产品名称：测试板');
+assert.ok(!presenterIdentityResult.split('[4-8s]')[0].includes('展示 测试板'));
+assert.ok(presenterIdentityResult.split('[4-8s]')[1].includes('展示 测试板'));
+assert.equal(ensureSelectedProductNamesInScript('[0-4s]\n画面：数字人：面对镜头讲述', '产品名称：测试板'), '[0-4s]\n画面：数字人：面对镜头讲述');

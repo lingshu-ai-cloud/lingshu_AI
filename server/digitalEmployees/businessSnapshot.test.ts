@@ -91,6 +91,12 @@ try {
     { id: 'post-fake-published', tenant_id: tenantId, title: '仅状态成功', platform: 'facebook', published_at: '2026-09-03T01:00:00.000Z', inquiries: 99, deals: 9, stats: { status: 'published' } },
     { id: 'post-receipt', tenant_id: tenantId, title: '真实发布', platform: 'facebook', published_at: '2026-09-03T01:30:00.000Z', inquiries: 2, deals: 1, stats: { status: 'published', publishResults: { 'account-connected': { postId: 'provider-post-1' } } } },
   ]);
+  fixtures.set('tenant_orders', [
+    { id: 'order-paid', tenant_id: tenantId, order: { buyer: 'Buyer', product: 'Switch', amount: 100, status: '已付款', sourcePostId: 'post-receipt', orderDate: '2026-09-03' } },
+    { id: 'order-refunded', tenant_id: tenantId, order: { buyer: 'Buyer', product: 'Switch', amount: 100, status: '退款', sourcePostId: 'post-receipt', orderDate: '2026-09-03' } },
+    { id: 'order-unattributed', tenant_id: tenantId, order: { buyer: 'Buyer', product: 'Switch', amount: 100, status: '已付款', orderDate: '2026-09-03' } },
+    { id: 'order-old', tenant_id: tenantId, order: { buyer: 'Buyer', product: 'Switch', amount: 100, status: '已付款', sourcePostId: 'post-receipt', orderDate: '2026-08-01' } },
+  ]);
   fixtures.set('followup_batches', [{
     id: 'batch-1', tenant_id: tenantId, run_id: 'run-1', status: 'approved', created_at: '2026-09-03T00:00:00.000Z',
   }]);
@@ -108,9 +114,29 @@ try {
   assert.equal(scheduled.content.scheduledPosts.value, 1);
   assert.equal(scheduled.content.publishedPosts.value, 1, 'only the post with a provider receipt is published');
   assert.equal(scheduled.content.inquiries.value, 2, 'unreceipted post counters must not inflate inquiries');
-  assert.equal(scheduled.content.deals.value, 1, 'unreceipted post counters must not inflate deals');
+  assert.equal(scheduled.content.deals.value, 1, 'only in-period nonrefunded tenant orders attributed to receipted posts count as deals');
   assert.equal(scheduled.customer.outreachBatches.status, 'available');
   assert.equal(scheduled.customer.followupDrafts.value, 1);
+
+  fixtures.set('studio_projects', [
+    { id: 'clone-digital', title: '双属性作品', status: 'completed', updated_at: '2026-09-03T00:00:00Z', spec: { mode: 'clone', presenterMode: 'digital', videoPath: 'https://example.com/video.mp4' } },
+    { id: 'unfinished-digital', title: '尚未生成', status: 'draft', updated_at: '2026-09-03T00:00:00Z', spec: { mode: 'product', presenterMode: 'digital' } },
+    { id: 'no-receipt', title: '无回执', status: 'completed', updated_at: '2026-09-03T00:00:00Z', spec: { mode: 'clone' } },
+    { id: 'old', title: '周期外作品', status: 'completed', updated_at: '2026-08-01T00:00:00Z', spec: { mode: 'clone', videoPath: 'https://example.com/old.mp4' } },
+  ]);
+  const production = (await buildBusinessSnapshot(tenantId, { startsAt: '2026-08-31', endsAt: '2026-09-06' }, now)).content.production!;
+  assert.equal(production.status, 'available');
+  assert.equal(production.projects.length, 3, 'exclude projects outside selected period');
+  assert.equal(production.projects.filter(item => item.completed).length, 1, 'status alone and planned digital presenters are not completed videos');
+  assert.equal(production.projects[0].route, 'clone');
+  assert.equal(production.projects[0].digitalPresenter, true, 'a clone video may also use a digital presenter');
+  assert.equal(production.projects[0].approved, false, 'render completion does not imply editorial approval');
+  const fixtureList = store.list;
+  store.list = (async (collection: string, ...args: any[]) => {
+    if (collection === 'studio_projects') throw new Error('storage unavailable');
+    return (fixtureList as any)(collection, ...args);
+  }) as typeof store.list;
+  assert.equal((await buildBusinessSnapshot(tenantId, undefined, now)).content.production?.status, 'unavailable', 'read failures must not become measured zero production');
 } finally {
   (store as unknown as { list: typeof store.list }).list = originalList;
 }

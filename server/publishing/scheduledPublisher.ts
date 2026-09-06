@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
 import { publishVideoToAccount } from './platformPublisher.js';
@@ -17,7 +18,9 @@ const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 const SUPPORTED_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
 
 type PublishResult = {
-  status: 'published' | 'failed';
+  status: 'published' | 'failed' | 'in_flight' | 'unknown';
+  attemptId?: string;
+  startedAt?: string;
   platformPostId?: string;
   publishedAt?: string;
   error?: string;
@@ -57,7 +60,13 @@ export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean 
   // tenant authorization in addition to the human content approval.
   if (text(stats.workflowRunId) && stats.realPublishingAuthorized !== true) return false;
   const scheduledAt = Date.parse(text(post.published_at));
-  if (!Number.isFinite(scheduledAt) || scheduledAt > now || attemptsOf(stats) >= MAX_ATTEMPTS) return false;
+  if (!Number.isFinite(scheduledAt) || scheduledAt > now) return false;
+  if (Object.values(resultMap(stats)).some(result => result.status === 'unknown')) return false;
+  if (status === 'finalize_pending') {
+    const retryAt = Date.parse(text(stats.nextPublishAttemptAt));
+    return !Number.isFinite(retryAt) || retryAt <= now;
+  }
+  if (attemptsOf(stats) >= MAX_ATTEMPTS) return false;
   if (status === 'scheduled') return true;
   if (status === 'failed') {
     const retryAt = Date.parse(text(stats.nextPublishAttemptAt));
@@ -86,10 +95,13 @@ async function markFailed(post: PostRecord, stats: Record<string, unknown>, atte
   const exhausted = attempts >= MAX_ATTEMPTS;
   const results = resultMap(stats);
   const hasSuccess = Object.values(results).some(result => result.status === 'published');
+  const unknown = Object.values(results).some(result => ['unknown', 'in_flight'].includes(result.status));
+  if (unknown) for (const result of Object.values(results)) { if (result.status === 'in_flight') result.status = 'unknown'; }
   await store.update('posts', post.id, {
     stats: {
       ...stats,
-      status: exhausted ? (hasSuccess ? 'partial' : 'failed') : 'failed',
+      status: unknown ? 'needs_attention' : exhausted ? (hasSuccess ? 'partial' : 'failed') : 'failed',
+      publishResults: results,
       publishAttempts: attempts,
       publishError: message,
       warnings: [message],
@@ -102,7 +114,7 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
   const initialStats = statsOf(post);
   const workflowRunId = text(initialStats.workflowRunId);
   if (workflowRunId && await digitalEmployeeRunBlockedReason(post.tenant_id, workflowRunId)) return;
-  const attempts = attemptsOf(initialStats) + 1;
+  const attempts = attemptsOf(initialStats) + (text(initialStats.status) === 'finalize_pending' ? 0 : 1);
   const attemptStartedAt = new Date().toISOString();
   const lockedStats = {
     ...initialStats,
@@ -113,7 +125,7 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
     publishError: '',
     warnings: [],
   };
-  await store.update('posts', post.id, { stats: lockedStats });
+  if (!await store.update('posts', post.id, { stats: lockedStats })) throw new Error('无法保存发布执行状态，尚未调用平台');
 
   const platform = text(post.platform) as PublishPlatform;
   const accountIds = Array.isArray(initialStats.targetAccountIds)
@@ -141,6 +153,15 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
   const results = resultMap(initialStats);
   for (const accountId of accountIds) {
     if (results[accountId]?.status === 'published') continue;
+    if (results[accountId]?.status === 'in_flight' || results[accountId]?.status === 'unknown'
+      || (text(initialStats.status) === 'publishing' && !results[accountId])) {
+      results[accountId] = { ...results[accountId], status: 'unknown', error: '平台发布结果不明，需核对回执，禁止自动重发' };
+      await store.update('posts', post.id, { stats: { ...lockedStats, status: 'needs_attention', publishResults: results, publishError: results[accountId].error } });
+      return;
+    }
+    const attemptId = randomUUID();
+    results[accountId] = { status: 'in_flight', attemptId, startedAt: attemptStartedAt };
+    if (!await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: { ...results } } })) throw new Error('无法保存平台发送尝试，尚未调用平台');
     try {
       const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
@@ -156,17 +177,20 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
         trackWaLink: initialStats.trackWaLink !== false,
         trackingPost: post,
         finalizeTracking: false,
+        publishAttemptId: attemptId,
       });
       const result = workflowRunId
         ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, publish)
         : await publish();
+      if (!text(result.platformPostId)) throw new Error('平台未返回有效发布回执');
       results[accountId] = {
-        status: 'published',
+        status: 'published', attemptId, startedAt: attemptStartedAt,
         platformPostId: result.platformPostId,
         publishedAt: new Date().toISOString(),
       };
     } catch (error) {
       if (error instanceof WorkflowRunBlockedError) {
+        delete results[accountId];
         await store.update('posts', post.id, { stats: {
           ...lockedStats, status: 'scheduled', publishAttempts: attempts - 1,
           publishResults: results, workflowBlockedReason: error.reason,
@@ -174,12 +198,16 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
         return;
       }
       results[accountId] = {
-        status: 'failed',
+        status: 'unknown', attemptId, startedAt: attemptStartedAt,
         error: errorMessage(error),
         failedAt: new Date().toISOString(),
       };
     }
-    await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: results } });
+    if (!await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: { ...results } } })) throw new Error('平台回执保存失败');
+    if (results[accountId].status === 'unknown') {
+      await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: results, status: 'needs_attention', publishError: '平台结果不明，需核对回执，禁止自动重发' } });
+      return;
+    }
   }
 
   const failures = accountIds.filter(accountId => results[accountId]?.status !== 'published');
@@ -192,19 +220,32 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
   }
 
   const firstPlatformPostId = accountIds.map(accountId => text(results[accountId]?.platformPostId)).find(Boolean) || '';
-  await dependencies.finalize(post.id, {
-    platformPostId: firstPlatformPostId,
-    title: text(post.title),
-    stats: {
-      ...lockedStats,
-      status: 'published',
-      publishResults: results,
-      publishedAt: new Date().toISOString(),
-      publishError: '',
-      nextPublishAttemptAt: '',
-      warnings: [],
-    },
-  });
+  try {
+    await dependencies.finalize(post.id, {
+      platformPostId: firstPlatformPostId,
+      title: text(post.title),
+      stats: {
+        ...lockedStats,
+        status: 'published',
+        publishResults: results,
+        publishedAt: new Date().toISOString(),
+        publishError: '',
+        nextPublishAttemptAt: '',
+        warnings: [],
+      },
+    });
+    const finalized = await store.getById<PostRecord>('posts', post.id);
+    if (!finalized || text(statsOf(finalized).status) !== 'published') throw new Error('发布已完成，但本地最终回写未成功');
+  } catch (error) {
+    // All external receipts already exist. Retry local finalization only, even
+    // if delivery exhausted its retry budget; never overwrite them with the
+    // stale queue snapshot in the outer catch.
+    await store.update('posts', post.id, { stats: {
+      ...lockedStats, status: 'finalize_pending', publishResults: results,
+      publishError: errorMessage(error),
+      nextPublishAttemptAt: new Date(Date.now() + scheduledRetryDelay(1)).toISOString(),
+    } });
+  }
 }
 
 let cycleRunning = false;
@@ -213,15 +254,30 @@ export async function runScheduledPublishingCycle(now = Date.now(), dependencies
   if (cycleRunning) return 0;
   cycleRunning = true;
   try {
-    const result = await store.list<PostRecord>('posts', { perPage: 500, sort: 'published_at' });
-    const duePosts = result.items.filter(post => isScheduledPostDue(post, now)).slice(0, 20);
+    const duePosts: PostRecord[] = [];
+    for (let page = 1; duePosts.length < 20; page += 1) {
+      const result = await store.list<PostRecord>('posts', { page, perPage: 500, sort: 'published_at' });
+      for (const post of result.items) {
+        if (!isScheduledPostDue(post, now)) continue;
+        const runId = text(statsOf(post).workflowRunId);
+        if (runId && await digitalEmployeeRunBlockedReason(post.tenant_id, runId)) continue;
+        duePosts.push(post);
+        if (duePosts.length >= 20) break;
+      }
+      if (page >= result.totalPages || !result.items.length) break;
+    }
     for (const post of duePosts) {
       try {
         await publishScheduledPost(post, dependencies);
       } catch (error) {
-        const stats = statsOf(post);
-        const attempts = Math.max(attemptsOf(stats) + 1, 1);
-        await markFailed(post, stats, attempts, errorMessage(error)).catch(() => undefined);
+        const latest = await store.getById<PostRecord>('posts', post.id).catch(() => null);
+        // If the latest state cannot be read, leave it for recovery instead of
+        // overwriting potentially persisted provider receipts.
+        if (latest) {
+          const stats = statsOf(latest);
+          const attempts = Math.max(attemptsOf(stats), 1);
+          await markFailed(latest, stats, attempts, errorMessage(error)).catch(() => undefined);
+        }
         console.error(`[publishing-worker] post ${post.id} failed:`, error);
       }
     }

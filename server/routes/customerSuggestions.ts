@@ -124,6 +124,9 @@ customerSuggestionsRouter.patch('/:id', (req, res) => {
     res.status(400).json({ error: 'customer_id_required' });
     return;
   }
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'orders')) {
+    res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
+  }
   const customer = patchWhatsAppCustomer({
     tenantId,
     customerId,

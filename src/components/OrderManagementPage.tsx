@@ -1,3 +1,4 @@
+import { orderStatuses, orderTransitions, paidOrder, type OrderStatus, type AfterSales } from '../../shared/orderLifecycle';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -29,7 +30,7 @@ import { authHeader } from '../lib/auth';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { normalizeSocialBrand, SocialPlatformIcon } from './SocialPlatformIcon';
 
-type OrderStatus = '待付款' | '已付款' | '生产中' | '已发货' | '已完成' | '退款';
+
 
 interface OrderRecord {
   id: string;
@@ -46,6 +47,12 @@ interface OrderRecord {
   owner: string;
   source?: string;
   sourceRef?: string;
+  sourcePostId?: string;
+  idempotencyKey?: string;
+  customerSyncStatus?: string;
+  customerId?: string;
+  audit?: unknown[];
+  afterSales?: AfterSales;
   importedAt?: string;
   updatedAt?: string;
 }
@@ -62,7 +69,7 @@ const EMPTY_DRAFT: DraftOrder = {
   quantity: 100,
   amount: 0,
   cost: 0,
-  status: '已付款',
+  status: '待付款',
   orderDate: today,
   owner: 'Mia',
 };
@@ -74,9 +81,10 @@ const STATUS_STYLE: Record<OrderStatus, { bg: string; fg: string }> = {
   已发货: { bg: '#DCFCE7', fg: '#166534' },
   已完成: { bg: '#D1FAE5', fg: '#047857' },
   退款: { bg: '#FEE2E2', fg: '#B91C1C' },
+  已取消: { bg: '#F1F5F9', fg: '#64748B' },
 };
 
-const statusList: OrderStatus[] = ['待付款', '已付款', '生产中', '已发货', '已完成', '退款'];
+const statusList = orderStatuses;
 const markets = ['全部', '中东', '东南亚', '拉美', '北美', '欧洲', '东亚'];
 const channels = ['全部', 'WhatsApp', 'TikTok Shop', 'Facebook', 'Instagram', 'Shopify', 'Email', 'TikTok'];
 
@@ -86,15 +94,11 @@ const tooltipNumber = (value: unknown) => Number(value ?? 0);
 
 function loadOrders(): OrderRecord[] { return []; }
 
-function nextOrderNo(date: string, length: number) {
-  const compact = date.replaceAll('-', '');
-  return `LS-${compact}-${String(length + 1).padStart(3, '0')}`;
-}
 
 export default function OrderManagementPage() {
   const [orders, setOrders] = useState<OrderRecord[]>(loadOrders);
   const [loading, setLoading] = useState(true);
-  const [draft, setDraft] = useState<DraftOrder>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<DraftOrder>(() => ({ ...EMPTY_DRAFT, idempotencyKey: crypto.randomUUID() }));
   const [query, setQuery] = useState('');
   const [market, setMarket] = useState('全部');
   const [channel, setChannel] = useState('全部');
@@ -120,7 +124,7 @@ export default function OrderManagementPage() {
   }, [orders, query, market, channel, status]);
 
   const summary = useMemo(() => {
-    const paidLike = filtered.filter(order => order.status !== '待付款' && order.status !== '退款');
+    const paidLike = filtered.filter(paidOrder);
     const gmv = paidLike.reduce((sum, order) => sum + order.amount, 0);
     const cost = paidLike.reduce((sum, order) => sum + order.cost, 0);
     const pending = filtered.filter(order => order.status === '已付款' || order.status === '生产中').length;
@@ -139,7 +143,7 @@ export default function OrderManagementPage() {
   const dailyTrend = useMemo(() => {
     const map = new Map<string, { day: string; gmv: number; orders: number }>();
     filtered.forEach(order => {
-      if (order.status === '待付款' || order.status === '退款') return;
+      if (!paidOrder(order)) return;
       const day = order.orderDate.slice(5);
       const current = map.get(day) ?? { day, gmv: 0, orders: 0 };
       current.gmv += order.amount;
@@ -152,7 +156,7 @@ export default function OrderManagementPage() {
   const marketBars = useMemo(() => {
     const map = new Map<string, number>();
     filtered.forEach(order => {
-      if (order.status === '待付款' || order.status === '退款') return;
+      if (!paidOrder(order)) return;
       map.set(order.market, (map.get(order.market) ?? 0) + order.amount);
     });
     return [...map.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
@@ -164,29 +168,49 @@ export default function OrderManagementPage() {
     if (!canSave) return;
     const payload = {
       ...draft,
-      orderNo: nextOrderNo(draft.orderDate, orders.length),
       quantity: Math.max(1, Number(draft.quantity) || 1),
       amount: Math.max(0, Number(draft.amount) || 0),
       cost: Math.max(0, Number(draft.cost) || 0),
       source: '手工录入',
     };
+    try {
     const next = await fetch('/api/overseas/enterprise/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify(payload),
-    }).then(r => r.json());
+    }).then(async r => { const body = await r.json(); if (!r.ok) throw new Error(body.error || '保存失败'); return body; });
     setOrders(prev => [next, ...prev.filter(order => order.orderNo !== next.orderNo)]);
-    setDraft(EMPTY_DRAFT);
+    setDraft({ ...EMPTY_DRAFT, idempotencyKey: crypto.randomUUID() });
+    } catch (error) { setFeedback((error as Error).message); }
   };
 
   const setOrderStatus = async (id: string, nextStatus: OrderStatus) => {
+    const evidence = ['已付款', '退款'].includes(nextStatus) ? window.prompt('填写付款/退款凭证（仅登记已发生的交易，不会扣款或退款）') : '';
+    if (evidence === null) return;
+    try {
     const updated = await fetch(`/api/overseas/enterprise/orders/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
-      body: JSON.stringify({ status: nextStatus }),
-    }).then(r => r.json());
+      body: JSON.stringify({ status: nextStatus, evidence }),
+    }).then(async r => { const body = await r.json(); if (!r.ok) throw new Error(body.error || '更新失败'); return body; });
     setOrders(prev => prev.map(order => order.id === id ? updated : order));
     setFeedback(`订单 ${updated.orderNo} 已更新为${updated.status}`);
+    } catch (error) { setFeedback((error as Error).message); }
+  };
+
+  const handleAfterSales = async (order: OrderRecord) => {
+    const status = order.afterSales?.status === 'open' ? 'resolved' : 'open';
+    const text = window.prompt(status === 'open' ? '填写售后原因' : '填写售后处理结果（退款需另行登记凭证）');
+    if (!text?.trim()) return;
+    try {
+      const response = await fetch(`/api/overseas/enterprise/orders/${encodeURIComponent(order.id)}/aftersales`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ status, text }),
+      });
+      const updated = await response.json();
+      if (!response.ok) throw new Error(updated.error || '售后保存失败');
+      setOrders(prev => prev.map(item => item.id === order.id ? updated : item));
+      setFeedback(status === 'open' ? '已登记售后' : '已保存售后处理结果');
+    } catch (error) { setFeedback((error as Error).message); }
   };
 
   const removeOrder = async (order: OrderRecord) => {
@@ -320,6 +344,8 @@ export default function OrderManagementPage() {
             <select aria-label="订单状态" value={draft.status} onChange={e => setDraft(s => ({ ...s, status: e.target.value as OrderStatus }))} className={smallInput}>
               {statusList.map(x => <option key={x} value={x}>{x}</option>)}
             </select>
+            <input aria-label="来源内容 ID" value={draft.sourcePostId || ''} onChange={e => setDraft(s => ({ ...s, sourcePostId: e.target.value }))} placeholder="来源内容 ID（可选，用于成交归因）" className={smallInput} />
+            <input aria-label="付款或来源凭证" value={draft.sourceRef || ''} onChange={e => setDraft(s => ({ ...s, sourceRef: e.target.value }))} placeholder="付款或来源凭证" className={smallInput} />
             <input aria-label="负责人" value={draft.owner} onChange={e => setDraft(s => ({ ...s, owner: e.target.value }))} placeholder="负责人" className={smallInput} />
             <button type="button" onClick={addOrder} disabled={!canSave} className="btn-primary flex h-9 items-center justify-center gap-2 !px-3 !py-0 disabled:cursor-not-allowed disabled:opacity-50 lg:col-span-2">
               <Save size={14} />
@@ -388,9 +414,11 @@ export default function OrderManagementPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
                         <select aria-label={`${order.orderNo} 订单状态：${order.status}`} value={order.status} onChange={e => setOrderStatus(order.id, e.target.value as OrderStatus)} className="rounded-md border border-border bg-white px-2 py-1 text-[11px] outline-none">
-                          {statusList.map(x => <option key={x} value={x}>{x}</option>)}
+                          {[order.status, ...orderTransitions[order.status]].map(x => <option key={x} value={x}>{x}</option>)}
                         </select>
-                        <button type="button" onClick={() => void removeOrder(order)} aria-label={`删除订单 ${order.orderNo}`} title="删除误录订单" className="rounded-md border border-red-100 p-1.5 text-red-600 hover:bg-red-50">
+                        <button type="button" onClick={() => void handleAfterSales(order)} className="ml-2 text-xs text-emerald-700">{order.afterSales?.status === 'open' ? '处理售后' : '登记售后'}</button>
+                        {order.afterSales && <span className="block text-xs text-slate-500">{order.afterSales.reason}{order.afterSales.resolution ? ` · ${order.afterSales.resolution}` : ' · 待处理'}</span>}
+                        <button type="button" disabled={order.status !== '待付款' || Boolean(order.customerId) || Boolean(order.audit?.length)} onClick={() => void removeOrder(order)} aria-label={`删除订单 ${order.orderNo}`} title="删除误录订单" className="rounded-md border border-red-100 p-1.5 text-red-600 hover:bg-red-50">
                           <Trash2 size={13} />
                         </button>
                         </div>

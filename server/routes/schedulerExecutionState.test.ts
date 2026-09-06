@@ -11,7 +11,7 @@ assert.equal(
 );
 assert.equal(
   scheduledExecutionState('执行状态：部分成功（成功 1，失败 1）\n关键词 B: 执行失败 - upstream'),
-  'succeeded',
+  'partial',
   '明确的部分成功不能被明细中的失败文本覆盖',
 );
 assert.equal(scheduledExecutionState('执行状态：执行失败\n本次任务均执行失败'), 'failed');

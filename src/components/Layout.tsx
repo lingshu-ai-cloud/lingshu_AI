@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Home, Users, LayoutGrid,
   Building2, PlugZap,
-  ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, BookOpen, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
+  ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
   Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send, Target,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
@@ -18,7 +18,7 @@ interface NavSection {
   items: { id: Page; label: string; icon: ReactNode }[];
 }
 
-const HOME_NAV_ITEM = { id: 'digitalEmployees' as Page, label: '经营驾驶舱', icon: <Home size={16} /> };
+const HOME_NAV_ITEM = { id: 'strategy' as Page, label: '首页', icon: <Home size={16} /> };
 
 type ContentNavigationEntry = 'create' | 'works' | 'publish';
 
@@ -31,7 +31,7 @@ const CONTENT_NAV_ITEMS: Array<{ id: ContentNavigationEntry; label: string; icon
 const OPERATIONS_NAV: NavSection = {
   label: '经营管理',
   items: [
-    { id: 'strategy', label: '经营策略顾问', icon: <Target size={16} /> },
+    { id: 'digitalEmployees', label: '智能经营', icon: <Target size={16} /> },
   ],
 };
 
@@ -103,7 +103,6 @@ interface LayoutProps {
   onSessionUpdate?: (session: AuthSession | null) => void;
   demoGuideActive?: boolean;
   onDemoGuideShown?: () => void;
-  onOpenBusinessDiagnosis?: () => void;
 }
 
 const relTime = (ts: number) => {
@@ -286,7 +285,7 @@ function AdminPageGuide({ page }: { page: Page }) {
   );
 }
 
-export default function Layout({ page, onNavigate, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown, onOpenBusinessDiagnosis }: LayoutProps) {
+export default function Layout({ page, onNavigate, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown }: LayoutProps) {
   const isInConversation = conversation !== null && !suppressRightPanel;
   const [quotaOpen, setQuotaOpen] = useState(false);
   const quotaAreaRef = useRef<HTMLDivElement>(null);
@@ -471,20 +470,6 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           {!sidebarCollapsed && <AdminPageGuide page={page} />}
         </div>
 
-
-        {onOpenBusinessDiagnosis && (
-          <div className="px-3 pb-2">
-            <button
-              type="button"
-              onClick={onOpenBusinessDiagnosis}
-              className={`flex w-full items-center rounded-xl border border-emerald-100 bg-white py-2 text-left text-xs font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-200 hover:bg-emerald-50 ${sidebarCollapsed ? 'justify-center px-2' : 'gap-2 px-3'}`}
-              title="打开 AI 接待设置"
-            >
-              <BookOpen size={14} />
-              {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate">AI 接待设置</span>}
-            </button>
-          </div>
-        )}
 
         {/* Bottom user */}
         <div ref={quotaAreaRef} className="relative px-3 py-3 border-t border-border flex-shrink-0">

@@ -1,3 +1,4 @@
+import { boundedPublishingSlots } from './continuationPolicy.js';
 import { createHash } from 'node:crypto';
 import { createTrackedPostDraft } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
@@ -28,24 +29,18 @@ const text = (value: unknown): string => String(value ?? '').trim();
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
 function outputPaths(spec: Record<string, unknown>): string[] {
-  const paths: string[] = [];
   const automation = record(spec.automation);
-  if (text(automation.renderOutputPath)) paths.push(text(automation.renderOutputPath));
-  for (const value of Object.values(record(spec.languageRenderOutputs))) {
-    const item = record(value);
-    if (text(item.status) === 'done' && text(item.path)) paths.push(text(item.path));
+  // Automation owns a single current deliverable. Historical render versions
+  // remain in the library, but are never implicit approval subjects.
+  if (text(automation.renderOutputPath)) return [text(automation.renderOutputPath)];
+  const outputs = record(spec.languageRenderOutputs);
+  if (Object.keys(outputs).length) {
+    return [...new Set(Object.values(outputs).map(record)
+      .filter(item => text(item.status) === 'done' && text(item.path))
+      .map(item => text(item.path)))];
   }
-  for (const value of Object.values(record(spec.languageRenderVersions))) {
-    if (!Array.isArray(value)) continue;
-    for (const version of value) {
-      const item = record(version);
-      if (text(item.status) === 'done' && text(item.path)) paths.push(text(item.path));
-    }
-  }
-  for (const key of ['renderOutputPath', 'videoPath', 'outputPath']) {
-    if (text(spec[key])) paths.push(text(spec[key]));
-  }
-  return [...new Set(paths)];
+  const legacy = ['renderOutputPath', 'videoPath', 'outputPath'].map(key => text(spec[key])).find(Boolean);
+  return legacy ? [legacy] : [];
 }
 
 function nextDailySlot(index: number, now: Date): string {
@@ -66,6 +61,7 @@ export function buildPublishingApprovalPackage(input: {
   goalPlatforms: PublishingPlatform[];
   allowRealPublishing: boolean;
   now?: Date;
+  scheduling?: { startsAt: string; endsAt: string; timezone: 'account' | 'Asia/Shanghai' };
 }): PublishingApprovalPackage {
   const now = input.now || new Date();
   const selectedPlatforms = new Set(input.goalPlatforms);
@@ -91,7 +87,28 @@ export function buildPublishingApprovalPackage(input: {
       }
     }
   }
+  if (input.scheduling) {
+    // Schedule independently per account. A group spanning zones must not share one UTC slot.
+    const expanded = items.flatMap(item => item.accountIds.map((id, index) => ({ ...item, accountIds: [id], accountLabels: [item.accountLabels[index]] })));
+    for (const target of input.targets) {
+      const own = expanded.filter(item => item.accountIds[0] === target.accountId);
+      if (!own.length) continue;
+      const timezone = input.scheduling.timezone === 'account' ? target.timezone || '' : 'Asia/Shanghai';
+      const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: own.length, now });
+      own.forEach((item, index) => { item.scheduledAt = slots[index]; });
+    }
+    items.splice(0, items.length, ...expanded);
+  }
   return { schemaVersion: 1, contentHash: contentFingerprint(items, input.allowRealPublishing), allowRealPublishing: input.allowRealPublishing, items };
+}
+
+async function tenantPosts(tenantId: string): Promise<any[]> {
+  const posts: any[] = [];
+  for (let page = 1; ; page += 1) {
+    const result = await store.list<any>('posts', { where: { tenant_id: tenantId }, page, perPage: 500 });
+    posts.push(...result.items);
+    if (page >= result.totalPages || !result.items.length) return posts;
+  }
 }
 
 /** Idempotently materialize an approved package in the publishing calendar. */
@@ -103,19 +120,24 @@ export async function createPublishingCalendarEntries(input: {
   approvedContentHash: string;
   package: PublishingApprovalPackage;
 }): Promise<Array<{ id: string; status: string }>> {
-  if (input.package.contentHash !== input.approvedContentHash) throw new Error('approval_subject_changed');
-  const existing = await store.list<any>('posts', { where: { tenant_id: input.tenantId }, perPage: 500 });
+  if (input.package.contentHash !== input.approvedContentHash
+    || contentFingerprint(input.package.items, input.package.allowRealPublishing) !== input.approvedContentHash) throw new Error('approval_subject_changed');
+  return withDigitalEmployeeRunLock(input.tenantId, input.runId, async () => {
+  const existing = await tenantPosts(input.tenantId);
   const result: Array<{ id: string; status: string }> = [];
   for (const item of input.package.items) {
-    const found = existing.items.find(post => {
+    const found = existing.find(post => {
       const stats = record(post.stats);
       return text(stats.workflowRunId) === input.runId && text(stats.sourceProjectId) === item.sourceProjectId
-        && text(post.platform) === item.platform && text(stats.approvedContentHash) === input.approvedContentHash;
+        && text(post.platform) === item.platform && text(stats.approvedContentHash) === input.approvedContentHash
+        && text(stats.videoPath) === item.videoPath
+        && (!Array.isArray(stats.targetAccountIds) || JSON.stringify(stats.targetAccountIds.slice().sort()) === JSON.stringify([...item.accountIds].sort()));
     });
     if (found) { result.push({ id: found.id, status: text(record(found.stats).status) }); continue; }
-    const tracked = await createTrackedPostDraft(input.tenantId, { contentId: item.sourceProjectId, platform: item.platform, title: item.title, enabled: true });
     const status = input.package.allowRealPublishing ? 'scheduled' : 'awaiting_manual_publish';
-    await store.update('posts', tracked.id, {
+    // Save the approval identity and complete calendar subject in the same create.
+    // A failed or ambiguously completed write can then be recovered by its identity.
+    const tracked = await createTrackedPostDraft(input.tenantId, { contentId: item.sourceProjectId, platform: item.platform, title: item.title, enabled: true }, {
       published_at: item.scheduledAt,
       stats: {
         status, description: item.description, videoPath: item.videoPath,
@@ -126,9 +148,11 @@ export async function createPublishingCalendarEntries(input: {
         realPublishingAuthorized: input.package.allowRealPublishing,
       },
     });
+    existing.push(tracked);
     result.push({ id: tracked.id, status });
   }
   return result;
+  });
 }
 
 /** Stop future delivery when an already approved source project changes. */
@@ -136,8 +160,8 @@ export async function invalidatePublishingApprovalForProject(
   tenantId: string,
   projectId: string,
 ): Promise<number> {
-  const posts = await store.list<any>('posts', { where: { tenant_id: tenantId }, perPage: 500 });
-  const affected = posts.items.filter(post => {
+  const posts = await tenantPosts(tenantId);
+  const affected = posts.filter(post => {
     const stats = record(post.stats);
     return text(stats.sourceProjectId) === projectId
       && Boolean(text(stats.approvalId))

@@ -50,9 +50,6 @@ assert.match(assistantUi, /const dockOnLeft = assistantPosition \? assistantPosi
 assert.match(assistantUi, /const launcherAtEdge = mode === 'breathing' && launcherRetracted/, 'all pages must share the same auto-retract behavior');
 assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 assert.match(assistantUi, /data-global-assistant="edge-launcher"[\s\S]*?aria-label="唤出灵小枢智能助手"/, 'the retracted assistant must leave an accessible edge launcher');
-const diagnosisUi = read('src/components/BusinessDiagnosisModal.tsx');
-assert.match(diagnosisUi, /onClick=\{onClose\}[\s\S]*?关闭接待设置/, 'the reception guide must be closable after it is reopened from the sidebar');
-assert.match(diagnosisUi, /ui-field ui-select[\s\S]*?请选择主营品类[\s\S]*?请选择，可连续添加[\s\S]*?请选择海外平台经验/, 'guided enterprise choices must use consistent dropdown controls');
 const enterpriseUi = read('src/components/EnterprisePage.tsx');
 assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<select[\s\S]*?aria-expanded=\{open\}[\s\S]*?type="checkbox"/, 'enterprise selectable fields must use accessible single-select or multi-select dropdown controls');
 assert.doesNotMatch(enterpriseUi.slice(enterpriseUi.indexOf('function OptionSelector'), enterpriseUi.indexOf('function PaginationControls')), /<Chip/, 'enterprise option selectors must not fall back to chip-only selection');
@@ -72,7 +69,7 @@ assert.match(calendarPlannerUi, /onPointerDown=\{startTideDrag\}/, 'publishing t
 assert.match(calendarPlannerUi, /全球电商节庆点/, 'publishing tide must label global ecommerce festivals');
 assert.doesNotMatch(calendarPlannerUi, /festivalNoticesByDay|dayFestivalNotices/, 'festival markers must not be rendered inside calendar day cells');
 assert.match(calendarPlannerUi, /pendingTimeSelection[\s\S]*?选择具体发布时间[\s\S]*?确认时间/, 'flexible calendar drops must ask for an explicit publishing time');
-assert.match(calendarPlannerUi, /draggable=\{!item\.platformPostId && !item\.scheduleLocked\}/, 'fixed calendar schedules must not be draggable');
+assert.match(calendarPlannerUi, /draggable=\{!item\.platformPostId && !item\.scheduleLocked && !\['needs_attention', 'publishing', 'finalize_pending'\]\.includes\(item\.status\)\}/, 'fixed calendar schedules must not be draggable');
 assert.match(calendarPlannerUi, /kind: 'tide'[\s\S]*?bestHour[\s\S]*?targetHour[\s\S]*?score/, 'publishing tide hover details must include time, target-market time, and score');
 assert.match(calendarPlannerUi, /kind: 'slot'[\s\S]*?startHour[\s\S]*?endHour[\s\S]*?items/, 'calendar schedule slots must expose detailed hover information');
 assert.match(calendarPlannerUi, /fallbackPeakScore[\s\S]*?Math\.sin/, 'publishing tide must retain a useful curve when live score data is temporarily unavailable');

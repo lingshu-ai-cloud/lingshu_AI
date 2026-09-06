@@ -1,3 +1,4 @@
+import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, ChevronDown, ListChecks, Target, TrendingUp, Users, Zap, MessageSquare, ArrowUpRight, CircleDollarSign, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -137,6 +138,7 @@ export default function StrategyDataBoard({
   mockCustomerScope?: string;
 }) {
   const [tab, setTab] = useState<TabId>('traffic');
+  useEffect(() => { const scope = consumeBusinessPageContext('home'); if (scope) setTab(scope); }, []);
   const [exposure, setExposure] = useState<{ loaded: boolean; ready: boolean; value: number; accountCount: number; source: 'account' | 'workspace' | 'none' }>({ loaded: false, ready: false, value: 0, accountCount: 0, source: 'none' });
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [advisor, setAdvisor] = useState<AdvisorResult | null>(null);
@@ -364,6 +366,7 @@ export default function StrategyDataBoard({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-black text-text-primary">当前获客经营总览</h2>
+                <button type="button" onClick={() => { saveBusinessPageContext('production', tab); onNavigate?.('digitalEmployees'); }} className="mt-2 text-xs font-semibold text-emerald-700">{tab === 'traffic' ? '查看内容生产与发布' : '查看客户跟进执行'} →</button>
                 <p className="mt-1 text-[11px] text-text-muted">从内容曝光到成交推进，先看趋势，再看渠道和待办。</p>
               </div>
               <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-[10px] font-bold text-green-700 transition hover:border-green-300 hover:bg-green-100" title="前往社媒运营 · 账号管理">

@@ -1,3 +1,6 @@
+import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
+import { getWhatsAppCustomers, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
+import { orderStatuses, transitionOrder, updateAfterSales, type OrderStatus, type OrderAudit, type AfterSales } from '../../shared/orderLifecycle.js';
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -26,7 +29,7 @@ const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
 // 生成的 productApi 密钥单独存放，不进 data/enterprise.json（避免和会被提交/覆盖的企业资料文件混在一起）。
 const PRODUCT_API_FILE = path.join(DATA_DIR, 'product-api.json');
 
-type OrderStatus = '待付款' | '已付款' | '生产中' | '已发货' | '已完成' | '退款';
+
 
 type QuoteMode = '' | 'range' | 'human_only';
 type BargainPolicy = '' | 'no' | 'limited' | 'open';
@@ -109,7 +112,18 @@ export interface SalesStyleProfile {
   sample_pairs?: Array<{ trigger: string; final: string; evidence?: string }>;
 }
 
-interface OrderRecord {
+export interface OrderRecord {
+  idempotencyKey?: string;
+  customerSyncStatus?: 'pending' | 'done' | 'failed';
+  customerSyncError?: string;
+  sourcePostId?: string;
+  customerId?: string;
+  paidAt?: string;
+  refundedAt?: string;
+  refundAmount?: number;
+  audit?: OrderAudit[];
+  afterSales?: AfterSales;
+  afterSalesHistory?: AfterSales[];
   id: string;
   orderNo: string;
   buyer: string;
@@ -128,7 +142,7 @@ interface OrderRecord {
   updatedAt: string;
 }
 
-const ORDER_STATUSES: OrderStatus[] = ['待付款', '已付款', '生产中', '已发货', '已完成', '退款'];
+const ORDER_STATUSES: readonly OrderStatus[] = orderStatuses;
 
 export interface EnterpriseProfile {
   digitalEmployeeOnboarding?: {
@@ -153,6 +167,7 @@ export interface EnterpriseProfile {
   };
   products: {
     categories: string;
+    searchKeywords?: string;
     priceRange: string;
     moq: string;
     certifications: string;
@@ -351,15 +366,20 @@ function localTenantOrdersFile(tenantId: string): string {
 function readLocalTenantOrders(tenantId: string): OrderRecord[] {
   try {
     const parsed = JSON.parse(fs.readFileSync(localTenantOrdersFile(tenantId), 'utf8'));
-    return Array.isArray(parsed) ? parsed.map(normalizeOrder).filter(Boolean) as OrderRecord[] : [];
-  } catch {
-    return [];
+    if (!Array.isArray(parsed)) throw new Error('订单台账格式无效');
+    return parsed.map(normalizeOrder).filter(Boolean) as OrderRecord[];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
   }
 }
 
 function writeLocalTenantOrders(tenantId: string, orders: OrderRecord[]): void {
   fs.mkdirSync(TENANT_ORDERS_DIR, { recursive: true });
-  fs.writeFileSync(localTenantOrdersFile(tenantId), JSON.stringify(orders, null, 2), 'utf8');
+  const destination = localTenantOrdersFile(tenantId);
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(orders, null, 2), 'utf8');
+  fs.renameSync(temporary, destination);
 }
 
 function storedOrder(value: unknown): OrderRecord | null {
@@ -389,14 +409,14 @@ async function listStoredTenantOrders(tenantId: string): Promise<Record<string, 
   return records;
 }
 
-async function readOrders(tenantId: string): Promise<OrderRecord[]> {
+export async function readOrders(tenantId: string): Promise<OrderRecord[]> {
   if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) return readLocalTenantOrders(tenantId);
   const records = await listStoredTenantOrders(tenantId);
   const orders = records.map(storedOrder).filter(Boolean) as OrderRecord[];
   return orders;
 }
 
-async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
+async function persistOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
   if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) {
     const orders = readLocalTenantOrders(tenantId);
     writeLocalTenantOrders(tenantId, [order, ...orders.filter(item => item.orderNo !== order.orderNo)]);
@@ -410,6 +430,31 @@ async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolea
   const existing = result.items[0];
   if (existing?.id) return store.update('tenant_orders', String(existing.id), { order });
   return Boolean(await store.create('tenant_orders', { tenant_id: tenantId, order_no: order.orderNo, order }));
+}
+
+async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
+  if (order.customerId) { order.customerSyncStatus = 'pending'; order.customerSyncError = ''; }
+  const stored = await persistOrder(tenantId, order);
+  if (!stored) return false;
+  if (!order.customerId) return true;
+  try {
+    const customer = getWhatsAppCustomers(tenantId).find(item => item.id === order.customerId);
+    if (!customer) throw new Error('客户已不存在');
+    const canonical = (await readOrders(tenantId)).filter(item => item.customerId === order.customerId);
+    const orderNumbers = new Set(canonical.map(item => item.orderNo));
+    const projected = patchWhatsAppCustomer({ tenantId, customerId: order.customerId, patch: { orders: [
+      ...canonical.map(item => ({ id: item.orderNo, status: item.status === '退款' ? 'refunded' : item.status === '已取消' ? 'cancelled' : item.status === '待付款' ? 'pending' : 'paid', total: `$${item.amount}`, createdAt: item.orderDate, items: [{ name: item.product, qty: item.quantity }] })),
+      ...(customer.orders || []).filter((item: { id: string }) => !orderNumbers.has(item.id)),
+    ] } });
+    if (!projected) throw new Error('客户摘要补写失败');
+    order.customerSyncStatus = 'done';
+  } catch (error) {
+    order.customerSyncStatus = 'failed'; order.customerSyncError = (error as Error).message;
+  }
+  // The canonical order already exists. A failed projection must never make a
+  // caller create another order; pending is durable before projection begins.
+  try { await persistOrder(tenantId, order); } catch { /* pending record can be retried idempotently */ }
+  return true;
 }
 
 async function deleteOrder(tenantId: string, orderId: string): Promise<boolean> {
@@ -438,9 +483,10 @@ function normalizeStatus(value: unknown): OrderStatus {
   const raw = String(value || '').trim();
   if (ORDER_STATUSES.includes(raw as OrderStatus)) return raw as OrderStatus;
   const lower = raw.toLowerCase();
-  if (/paid|已付款|付款/.test(lower)) return '已付款';
+  if (/^(paid|已付款|付款)$/.test(lower)) return '已付款';
   if (/ship|fulfilled|已发|发货/.test(lower)) return '已发货';
   if (/complete|done|完成/.test(lower)) return '已完成';
+  if (/cancel|取消/.test(lower)) return '已取消';
   if (/refund|退款/.test(lower)) return '退款';
   if (/production|生产/.test(lower)) return '生产中';
   return '待付款';
@@ -478,9 +524,14 @@ function normalizeOrder(input: Partial<OrderRecord>): OrderRecord | null {
     orderDate,
     owner: String(input.owner || '').trim() || '未分配',
     source: String(input.source || '手工录入').trim(),
+    idempotencyKey: String(input.idempotencyKey || '').trim().slice(0, 120), customerSyncStatus: input.customerSyncStatus, customerSyncError: input.customerSyncError,
+    sourcePostId: String(input.sourcePostId || '').trim(),
+    customerId: String(input.customerId || '').trim(),
+    paidAt: input.paidAt, refundedAt: input.refundedAt, refundAmount: input.refundAmount,
+    audit: input.audit, afterSales: input.afterSales, afterSalesHistory: input.afterSalesHistory,
     sourceRef: String(input.sourceRef || '').trim(),
     importedAt: input.importedAt || now,
-    updatedAt: now,
+    updatedAt: input.updatedAt || now,
   };
 }
 
@@ -756,7 +807,7 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     company,
     operations,
     strategy,
-    products: { ...products, items },
+    products: { ...products, searchKeywords: text(products.searchKeywords), items },
     bizRules,
     faq,
     notifications,
@@ -1839,56 +1890,130 @@ enterpriseRouter.post('/notifications/test', async (req, res) => {
   res.json({ ok: true, lastTestAt: notifications.lastTestAt, notifications });
 });
 
+const orderMutations = new Map<string, Promise<void>>();
+enterpriseRouter.use('/orders', async (req, res, next) => {
+  if (req.method === 'GET') { next(); return; }
+  if (isBrowserReadToken(req.headers.authorization)) { res.status(403).json({ error: 'agent_browser_read_only' }); return; }
+  const tenantId = await authenticatedTenantId(req);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const previous = orderMutations.get(tenantId) || Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  orderMutations.set(tenantId, current);
+  await previous;
+  const finish = () => { release(); if (orderMutations.get(tenantId) === current) orderMutations.delete(tenantId); };
+  res.once('finish', finish); res.once('close', finish);
+  next();
+});
+
 enterpriseRouter.get('/orders', async (req, res) => {
+  try {
   const tenantId = await authenticatedTenantId(req);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   res.json({ items: await readOrders(tenantId) });
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.post('/orders', async (req, res) => {
+  try {
   const tenantId = await authenticatedTenantId(req);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-  const order = normalizeOrder({ ...(req.body || {}), source: req.body?.source || '手工录入' });
+  const order = normalizeOrder({ ...(req.body || {}), id: undefined, audit: [], afterSales: undefined, afterSalesHistory: [], paidAt: undefined, refundedAt: undefined, refundAmount: undefined, source: req.body?.source || '手工录入' });
   if (!order) {
     res.status(400).json({ error: 'invalid order payload' });
     return;
   }
+  const existingOrders = await readOrders(tenantId);
+  const repeated = order.idempotencyKey && existingOrders.find(item => item.idempotencyKey === order.idempotencyKey);
+  if (repeated) {
+    if (repeated.buyer !== order.buyer || repeated.product !== order.product || repeated.amount !== order.amount || repeated.customerId !== order.customerId) { res.status(409).json({ error: '相同请求标识对应不同订单内容，请重新发起录入' }); return; }
+    if (repeated.customerSyncStatus !== 'done') await upsertOrder(tenantId, repeated);
+    res.json(repeated); return;
+  }
+  if (order.customerId) {
+    const customer = getWhatsAppCustomers(tenantId).find(item => item.id === order.customerId);
+    if (!customer) { res.status(422).json({ error: '客户不存在或不属于当前租户' }); return; }
+    if (!order.sourcePostId) order.sourcePostId = customer.sourcePostId || '';
+  }
+  if (req.body?.status && !ORDER_STATUSES.includes(req.body.status)) { res.status(422).json({ error: '无效订单状态' }); return; }
+  if (!['待付款', '已取消'].includes(order.status)) {
+    const evidence = String(req.body?.evidence || order.sourceRef || '').trim();
+    if (!evidence) { res.status(422).json({ error: '已付款/退款等历史状态需提供来源凭证' }); return; }
+    order.audit = [{ at: order.importedAt, from: '导入', to: order.status, evidence, source: 'manual_record' }];
+  }
+  if (existingOrders.some(item => item.orderNo === order.orderNo)) { res.status(409).json({ error: '订单号已存在' }); return; }
   if (!await upsertOrder(tenantId, order)) {
     res.status(503).json({ error: 'order storage unavailable' });
     return;
   }
   res.status(201).json(order);
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.patch('/orders/:id/status', async (req, res) => {
+  try {
   const tenantId = await authenticatedTenantId(req);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-  const status = normalizeStatus(req.body?.status);
+  const status = req.body?.status;
   const orders = await readOrders(tenantId);
   const index = orders.findIndex(order => order.id === req.params.id);
   if (index < 0) {
     res.status(404).json({ error: 'order not found' });
     return;
   }
-  orders[index] = { ...orders[index], status, updatedAt: new Date().toISOString() };
+  try { orders[index] = transitionOrder(orders[index], status, String(req.body?.evidence || '')); }
+  catch (error) { res.status(422).json({ error: (error as Error).message }); return; }
   if (!await upsertOrder(tenantId, orders[index])) {
     res.status(503).json({ error: 'order storage unavailable' });
     return;
   }
   res.json(orders[index]);
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
+});
+
+enterpriseRouter.post('/orders/:id/sync-customer', async (req, res) => {
+  try {
+  const tenantId = await authenticatedTenantId(req);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const order = (await readOrders(tenantId)).find(item => item.id === req.params.id);
+  if (!order) { res.status(404).json({ error: 'order not found' }); return; }
+  if (!await upsertOrder(tenantId, order)) { res.status(503).json({ error: 'order storage unavailable' }); return; }
+  res.json(order);
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
+});
+
+enterpriseRouter.patch('/orders/:id/aftersales', async (req, res) => {
+  try {
+  const tenantId = await authenticatedTenantId(req);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const order = (await readOrders(tenantId)).find(item => item.id === req.params.id);
+  if (!order) { res.status(404).json({ error: 'order not found' }); return; }
+  try {
+    const updated = updateAfterSales(order, req.body?.status, String(req.body?.text || ''));
+    if (!await upsertOrder(tenantId, updated)) { res.status(503).json({ error: 'order storage unavailable' }); return; }
+    res.json(updated);
+  } catch (error) { res.status(422).json({ error: (error as Error).message }); }
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.delete('/orders/:id', async (req, res) => {
+  try {
   const tenantId = await authenticatedTenantId(req);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const target = (await readOrders(tenantId)).find(item => item.id === req.params.id);
+  if (target && (target.status !== '待付款' || target.audit?.length || target.customerId)) {
+    res.status(422).json({ error: '已关联客户或已有交易记录的订单请保留审计记录，通过取消/退款维护状态' }); return;
+  }
   if (!await deleteOrder(tenantId, req.params.id)) {
     res.status(404).json({ error: 'order not found' });
     return;
   }
   res.status(204).end();
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.post('/orders/import', async (req, res) => {
+  try {
   const tenantId = await authenticatedTenantId(req);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const { csv } = req.body as { csv?: string };
@@ -1899,15 +2024,17 @@ enterpriseRouter.post('/orders/import', async (req, res) => {
   const result = importOrdersFromCsv(csv);
   const existing = await readOrders(tenantId);
   const merged = new Map<string, OrderRecord>();
-  [...existing, ...result.imported].forEach(order => merged.set(order.orderNo, order));
+  existing.forEach(order => merged.set(order.orderNo, order));
+  const additions = result.imported.filter(order => !merged.has(order.orderNo) && Boolean(merged.set(order.orderNo, order)));
   const items = [...merged.values()].sort((a, b) => b.orderDate.localeCompare(a.orderDate));
-  for (const order of result.imported) {
+  for (const order of additions) {
     if (!await upsertOrder(tenantId, order)) {
       res.status(503).json({ error: 'order storage unavailable' });
       return;
     }
   }
-  res.json({ ok: true, imported: result.imported.length, skipped: result.skipped, total: items.length });
+  res.json({ ok: true, imported: additions.length, skipped: result.skipped + result.imported.length - additions.length, total: items.length });
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.get('/product-api', async (req, res) => {

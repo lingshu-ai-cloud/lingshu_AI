@@ -72,6 +72,7 @@ export function buildContentBatchPlan(input: {
   if (input.goal.videoPlans?.length) {
     const orders: ContentOrder[] = [];
     const errors: string[] = [];
+    const referenceErrors: string[] = [];
     input.goal.videoPlans.forEach((plan, index) => {
       const prefix = `第 ${index + 1} 条：`;
       errors.push(...videoPlanErrors(plan).map(error => prefix + error));
@@ -82,17 +83,19 @@ export function buildContentBatchPlan(input: {
       const ids = plan.materialIds.length ? plan.materialIds : product.materialIds;
       if (ids.some(id => !product.materialIds.includes(id))) errors.push(prefix + '所选素材不存在或不属于指定产品');
       if (!ids.length && plan.presenter === 'material' && plan.route !== 'product') errors.push(prefix + `${product.name} 缺少画面素材，请补充或明确选择数字人口播`);
-      if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) errors.push(prefix + '参考视频尚无有效精确分析');
+      if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) referenceErrors.push(prefix + '参考视频尚无有效精确分析');
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform);
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
-      if (enabled.has('content_publish') && !account) errors.push(prefix + '缺少已确认发布账号');
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
-        theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || '仅内容生产，不分发',
+        theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
         route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: ctaFor(input.config.primaryGoal),
-        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints])],
+        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
         evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned' });
     });
-    return { status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes };
+    // A mixed batch keeps each requested route. Missing clone evidence blocks
+    // that project in production; it must never substitute a product route.
+    if (!orders.some(order => order.route !== 'clone')) errors.push(...referenceErrors);
+    return { status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes: [...disabledRoutes, ...referenceErrors.map(reason => ({ route: 'clone' as const, reason }))] };
   }
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
   if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };
@@ -105,10 +108,7 @@ export function buildContentBatchPlan(input: {
   else if (enabled.has('material_content')) disabledRoutes.push({ route: 'material', reason: '缺少真实企业素材或关联产品' });
 
   const connectedTargets = input.config.publishingTargets.filter(target => input.goal.contentPlatforms.includes(target.platform));
-  if (input.config.enabledWorkflows.includes('content_publish') && !connectedTargets.length) {
-    return { status: 'blocked', orders: [], blocker: '缺少本周目标平台对应的已确认发布账号', eligibleRoutes, disabledRoutes };
-  }
-  const targets = connectedTargets.length ? connectedTargets : input.goal.contentPlatforms.map(platform => ({ platform, accountId: '', accountLabel: '仅内容生产，不分发' }));
+  const targets = input.goal.contentPlatforms.map(platform => connectedTargets.find(target => target.platform === platform) || { platform, accountId: '', accountLabel: enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发' });
   if (!eligibleRoutes.length) return { status: 'blocked', orders: [], blocker: disabledRoutes.map(item => `${item.route}：${item.reason}`).join('；') || '没有可执行的内容路径', eligibleRoutes, disabledRoutes };
 
   const count = requestedCount(input.config.socialCadence);

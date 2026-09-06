@@ -1,3 +1,4 @@
+import { requestProductionBack } from '../lib/productionNavigation';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import CustomerWorkflowPanel from './CustomerWorkflowPanel';
 import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
@@ -1355,7 +1356,7 @@ function CustomerIntentActionPanel({
       )}
       {(suggestion.suggestionType !== 'none' || agentProduction.action) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <button type="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && window.__agentProductionTarget?.link.businessRef.taskKey !== 'customer_segmentation' ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
+          <button type="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && !['customer_segmentation', 'followup_batch_draft'].includes(window.__agentProductionTarget?.link.businessRef.taskKey || '') ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-70">
             {agentProduction.busy || isPrimaryLoading ? '草稿生成中…' : agentProduction.action?.label || primaryLabel[suggestion.suggestionType]}
           </button>
           {secondaryLabel[suggestion.suggestionType] && (
@@ -1693,7 +1694,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'profile'>('chat');
   const [savingDraft, setSavingDraft] = useState(false);
   const navigationHandoff = useDeliveryHandoff('conversion');
-  const deliveryHandoff = agentProduction.active && window.__agentProductionTarget?.link.businessRef.taskKey === 'customer_segmentation' ? window.__agentProductionTarget.link : navigationHandoff;
+  const deliveryHandoff = agentProduction.active ? window.__agentProductionTarget?.link : navigationHandoff;
   const [deliveryDraft, setDeliveryDraft] = useState<{ body: string; version: number; customerId: string } | null>(null);
   const [deliveryError, setDeliveryError] = useState('');
   useEffect(() => {
@@ -1907,13 +1908,13 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, []);
 
   useEffect(() => {
-    if (agentProduction.active || customerPendingCount <= 0) return;
+    if (agentProduction.active || deliveryHandoff || customerPendingCount <= 0) return;
     const today = new Date().toISOString().slice(0, 10);
     const key = 'lingshu:briefing:lastShown';
     if (localStorage.getItem(key) === today) return;
     localStorage.setItem(key, today);
     setDailyBriefingOpen(true);
-  }, [customerPendingCount]);
+  }, [customerPendingCount, deliveryHandoff, agentProduction.active]);
 
   useEffect(() => {
     const handler = () => setDailyBriefingOpen(true);
@@ -2501,7 +2502,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     <>
     {deliveryHandoff?.runId && <CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} />}
     {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
-      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-blue-800">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: { page: "digitalEmployees" } }))} className="text-xs font-bold text-blue-700">返回交付看板</button></div>
+      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-blue-800">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={requestProductionBack} className="text-xs font-bold text-blue-700">返回上一页</button></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
         <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>

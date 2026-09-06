@@ -9,6 +9,7 @@ export const crawlWorkerRouter = Router();
 
 const COL = 'crawl_jobs';
 const WORKER_TOKEN_HEADER = 'x-crawl-worker-token';
+const MAX_ATTEMPTS = 3;
 const WORKER_LEASE_MS = 10 * 60 * 1000;
 let cloudFallbackTimer: NodeJS.Timeout | null = null;
 let cloudFallbackActive = false;
@@ -26,6 +27,8 @@ interface CrawlJob {
   accountUrl: string;
   accountName: string;
   limit: number;
+  dateFrom?: string;
+  dateTo?: string;
   status: CrawlJobStatus;
   workerId: string;
   attempts: number;
@@ -46,6 +49,9 @@ export type CreateCrawlWorkerJobInput = {
   accountUrl?: string;
   accountName?: string;
   limit?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  completed?: { result?: Record<string, unknown>; error?: string };
 };
 
 function workerToken(): string {
@@ -72,6 +78,8 @@ function publicJob(job: CrawlJob) {
     accountUrl: job.accountUrl,
     accountName: job.accountName,
     limit: Number(job.limit || 0),
+    dateFrom: job.dateFrom,
+    dateTo: job.dateTo,
     status: job.status,
     workerId: job.workerId || '',
     attempts: Number(job.attempts || 0),
@@ -118,8 +126,8 @@ function cloudFallbackPollMs(): number {
 }
 
 function shouldCloudFallback(job: CrawlJob): boolean {
-  if (!supportedWorkerPlatform(job.platform)) return false;
-  if (job.status === 'failed') return job.workerId !== 'cloud-fallback';
+  if (!supportedWorkerPlatform(job.platform) || job.attempts >= MAX_ATTEMPTS) return false;
+  if (job.status === 'failed') return !['cloud-fallback', 'inline'].includes(job.workerId);
   if (job.status === 'queued') {
     const createdAt = Date.parse(job.createdAt || '');
     return Number.isFinite(createdAt) && Date.now() - createdAt >= cloudFallbackAfterMs();
@@ -127,10 +135,11 @@ function shouldCloudFallback(job: CrawlJob): boolean {
   return job.status === 'running' && isLeaseExpired(job);
 }
 
-async function runCloudFallbackJob(job: CrawlJob): Promise<void> {
+export async function runCloudFallbackJob(job: CrawlJob, crawl = crawlVideosForTenant): Promise<void> {
   const started = Date.now();
   const workerId = 'cloud-fallback';
   const startedAt = nowIso();
+  const attempts = Number(job.attempts || 0) + 1;
   await store.update(COL, job.id, {
     status: 'running',
     workerId,
@@ -140,8 +149,19 @@ async function runCloudFallbackJob(job: CrawlJob): Promise<void> {
     error: '',
   });
 
+  const ownsLease = async () => {
+    const current = await store.getById<CrawlJob>(COL, job.id);
+    return current?.status === 'running' && current.workerId === workerId && current.attempts === attempts;
+  };
+  const heartbeat = setInterval(() => {
+    void (async () => {
+      if (await ownsLease()) await store.update(COL, job.id, { leasedUntil: new Date(Date.now() + WORKER_LEASE_MS).toISOString(), updatedAt: nowIso() });
+    })().catch(error => console.warn('[crawl-worker] fallback heartbeat failed:', error));
+  }, 60_000);
+  heartbeat.unref?.();
+  await notifyScheduler(job.requestedBy);
   try {
-    const result = await crawlVideosForTenant({
+    const result = await crawl({
       tenantId: job.tenantId,
       platform: job.platform,
       mode: job.mode,
@@ -149,13 +169,21 @@ async function runCloudFallbackJob(job: CrawlJob): Promise<void> {
       accountUrl: job.accountUrl || '',
       accountName: job.accountName || '',
       limit: job.limit || 10,
+      dateFrom: job.dateFrom,
+      dateTo: job.dateTo,
       cloudFallback: true,
+      deferAnalysis: true,
+      disableBackfill: true,
     });
+    if (!await ownsLease()) return;
     const finishedAt = nowIso();
     await store.update(COL, job.id, {
       status: 'done',
       workerId,
       resultJson: JSON.stringify({
+        outcome: result.outcome,
+        candidateIds: result.candidateIds,
+        analysisPending: result.analysisPending,
         platform: result.platform,
         requested: result.requested,
         imported: result.imported,
@@ -175,6 +203,7 @@ async function runCloudFallbackJob(job: CrawlJob): Promise<void> {
     });
     await notifyScheduler(job.requestedBy);
   } catch (error) {
+    if (!await ownsLease()) return;
     const finishedAt = nowIso();
     await store.update(COL, job.id, {
       status: 'failed',
@@ -186,6 +215,8 @@ async function runCloudFallbackJob(job: CrawlJob): Promise<void> {
       leasedUntil: '',
     });
     await notifyScheduler(job.requestedBy);
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -199,16 +230,33 @@ async function notifyScheduler(requestedBy: string): Promise<void> {
   }
 }
 
+async function expireExhaustedJobs(jobs: CrawlJob[]): Promise<void> {
+  for (const job of jobs) {
+    if (job.attempts < MAX_ATTEMPTS || (job.status !== 'queued' && !(job.status === 'running' && isLeaseExpired(job)))) continue;
+    const finishedAt = nowIso();
+    await store.update(COL, job.id, { status: 'failed', workerId: 'cloud-fallback', error: '采集多次中断且执行锁已过期，已停止自动重试，请重新执行。', finishedAt, updatedAt: finishedAt, leasedUntil: '' });
+    job.status = 'failed';
+    job.workerId = 'cloud-fallback';
+    await notifyScheduler(job.requestedBy);
+  }
+}
+
+async function listCrawlWorkerJobs(): Promise<CrawlJob[]> {
+  const jobs: CrawlJob[] = [];
+  for (let page = 1; ; page += 1) {
+    const result = await store.list<CrawlJob>(COL, { sort: 'createdAt', page, perPage: 100 });
+    jobs.push(...result.items);
+    if (page >= result.totalPages || result.items.length < 100) return jobs;
+  }
+}
+
 async function runCloudFallbackOnce(): Promise<void> {
   if (!cloudFallbackEnabled() || cloudFallbackActive) return;
   cloudFallbackActive = true;
   try {
-    const result = await store.list<CrawlJob>(COL, {
-      sort: 'createdAt',
-      page: 1,
-      perPage: 100,
-    });
-    const job = result.items.find(shouldCloudFallback);
+    const jobs = await listCrawlWorkerJobs();
+    await expireExhaustedJobs(jobs);
+    const job = jobs.find(shouldCloudFallback);
     if (!job) return;
     console.warn(`[crawl-worker] cloud fallback taking over ${job.id} ${job.platform} ${job.mode}`);
     await runCloudFallbackJob(job);
@@ -238,15 +286,17 @@ export async function createCrawlWorkerJob(input: CreateCrawlWorkerJobInput): Pr
     accountUrl: String(input.accountUrl || '').trim(),
     accountName: String(input.accountName || '').trim(),
     limit: Math.min(30, Math.max(1, Number(input.limit) || 10)),
-    status: 'queued',
-    workerId: '',
+    dateFrom: input.dateFrom || '',
+    dateTo: input.dateTo || '',
+    status: input.completed ? (input.completed.error ? 'failed' : 'done') : 'queued',
+    workerId: input.completed ? 'inline' : '',
     attempts: 0,
-    resultJson: '',
-    error: '',
+    resultJson: input.completed?.result ? JSON.stringify(input.completed.result) : '',
+    error: input.completed?.error || '',
     createdAt,
     updatedAt: createdAt,
     leasedUntil: '',
-    finishedAt: '',
+    finishedAt: input.completed ? createdAt : '',
   });
 }
 
@@ -302,12 +352,9 @@ crawlWorkerRouter.get('/jobs', requireAuth, async (_req, res) => {
 crawlWorkerRouter.get('/next', async (req, res) => {
   if (!requireWorker(req as any, res)) return;
   const workerId = String(req.query.workerId || req.headers['x-crawl-worker-id'] || 'mac-worker').slice(0, 80);
-  const result = await store.list<CrawlJob>(COL, {
-    sort: 'createdAt',
-    page: 1,
-    perPage: 100,
-  });
-  const job = result.items.find(item => item.status === 'queued' || (item.status === 'running' && isLeaseExpired(item)));
+  const jobs = await listCrawlWorkerJobs();
+  await expireExhaustedJobs(jobs);
+  const job = jobs.find(item => item.status === 'queued' || (item.status === 'running' && isLeaseExpired(item)));
   if (!job) {
     res.json({ job: null });
     return;
@@ -336,6 +383,12 @@ crawlWorkerRouter.get('/next', async (req, res) => {
   });
 });
 
+function workerOwnsJob(job: CrawlJob, req: any): boolean {
+  return job.status === 'running' && !isLeaseExpired(job)
+    && job.workerId === String(req.headers['x-crawl-worker-id'] || '')
+    && job.attempts === Number(req.body?.attempts);
+}
+
 crawlWorkerRouter.post('/jobs/:id/heartbeat', async (req, res) => {
   if (!requireWorker(req as any, res)) return;
   const job = await store.getById<CrawlJob>(COL, req.params.id);
@@ -343,6 +396,7 @@ crawlWorkerRouter.post('/jobs/:id/heartbeat', async (req, res) => {
     res.status(404).json({ error: 'job_not_found' });
     return;
   }
+  if (!workerOwnsJob(job, req)) { res.status(409).json({ error: 'stale_worker_lease' }); return; }
   const leasedUntil = new Date(Date.now() + WORKER_LEASE_MS).toISOString();
   await store.update(COL, job.id, { leasedUntil, updatedAt: nowIso() });
   res.json({ ok: true, leasedUntil });
@@ -355,6 +409,7 @@ crawlWorkerRouter.post('/jobs/:id/complete', async (req, res) => {
     res.status(404).json({ error: 'job_not_found' });
     return;
   }
+  if (!workerOwnsJob(job, req)) { res.status(409).json({ error: 'stale_worker_lease' }); return; }
   const ok = req.body?.ok !== false && !req.body?.error;
   const finishedAt = nowIso();
   await store.update(COL, job.id, {

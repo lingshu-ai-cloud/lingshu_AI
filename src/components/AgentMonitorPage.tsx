@@ -1,3 +1,5 @@
+import { pushProductionLocation } from '../lib/productionNavigation';
+import { authHeader } from '../lib/auth';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -29,7 +31,7 @@ import {
 } from "../lib/digitalEmployees";
 
 import AgentBrowserViewport from "./AgentBrowserViewport";
-import { mergeMonitorEvents } from "../lib/agentMonitor";
+import { groupMonitorEvents, mergeMonitorEvents } from "../lib/agentMonitor";
 
 type MonitorFilter = "all" | "content" | "customer";
 type MonitorStatusFilter = "all" | "active" | "attention";
@@ -75,11 +77,24 @@ function relativeSignalTime(value?: string) {
   return minutes < 60 ? `${minutes} 分钟前` : `${Math.floor(minutes / 60)} 小时前`;
 }
 
-function MonitorWindow({ task, events, planTasks, runId, onFocus }: { task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onFocus?: () => void }) {
+function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = true }: { liveEnabled?: boolean; task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onFocus?: () => void }) {
   const group = taskMonitorGroup(task);
   const latestEvent = events.at(-1);
+  const routingCheck = task.output?.routingCheck as { count?: number; reason?: string } | undefined;
   const planTask = planTasks.find((item) => item.key === task.task_key);
   const link = buildTaskDeepLink(task, planTask, runId || task.run_id);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState('');
+  const openWorkPage = async () => {
+    setOpening(true); setOpenError('');
+    try {
+      const response = await fetch(`/api/overseas/digital-employees/runs/${encodeURIComponent(runId || task.run_id)}/tasks/${encodeURIComponent(task.id)}/workspace`, { headers: authHeader() });
+      if (!response.ok) throw new Error('工作页面加载失败，请重试');
+      const target = await response.json();
+      dispatchDigitalEmployeeDeepLink({ ...link, ...target.link });
+    } catch (error) { setOpenError(error instanceof Error ? error.message : '无法打开工作页'); }
+    finally { setOpening(false); }
+  };
   const active = ["running", "planning"].includes(task.status);
 
   return (
@@ -92,14 +107,16 @@ function MonitorWindow({ task, events, planTasks, runId, onFocus }: { task: Work
           </div>
           <p className="mt-0.5 truncate text-[9px] text-slate-500">{group === "customer" ? "客服 Agent" : "内容 Agent"} · {statusLabel[task.status] || task.status}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">{onFocus && <button type="button" onClick={onFocus} className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:border-emerald-500 hover:text-white" aria-label={`放大查看${task.title}`}><Maximize2 size={11}/></button>}<button type="button" onClick={() => dispatchDigitalEmployeeDeepLink(link)} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] font-bold text-slate-200 transition hover:border-emerald-500 hover:text-white">工作页 <ExternalLink size={10} /></button></div>
+        <div className="flex shrink-0 items-center gap-1">{onFocus && <button type="button" onClick={onFocus} className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:border-emerald-500 hover:text-white" aria-label={`放大查看${task.title}`}><Maximize2 size={11}/></button>}<button type="button" disabled={opening} onClick={() => void openWorkPage()} className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-[9px] font-bold text-slate-200 transition hover:border-emerald-500 hover:text-white">工作页 <ExternalLink size={10} /></button></div>
       </header>
 
-      <AgentBrowserViewport runId={runId || task.run_id} taskId={task.id} taskStatus={task.status} />
+      {openError && <p role="alert" className="p-3 text-xs text-red-300">{openError}</p>}
+      <AgentBrowserViewport enabled={liveEnabled} runId={runId || task.run_id} taskId={task.id} taskStatus={task.status} />
 
+      {task.status === 'waiting_external' && routingCheck?.count && <p className="mb-2 text-xs text-amber-300">等待条件：{routingCheck.reason} · 已检查 {routingCheck.count} 次</p>}
       <details className="border-t border-slate-800 px-3 py-2">
         <summary className="cursor-pointer text-[10px] font-bold text-slate-500">执行记录 · {events.length} 条</summary>
-        <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">{events.length ? [...events].reverse().slice(0, 5).map(event => <div key={event.id} className="flex items-start gap-3 text-[10px] leading-5"><time className="shrink-0 text-slate-600">{new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</time><p className={event.level === "error" ? "text-red-300" : "text-slate-300"}>{event.summary}</p></div>) : <p className="text-[11px] text-slate-500">尚无执行事件</p>}</div>
+        <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">{events.length ? groupMonitorEvents(events).reverse().slice(0, 5).map(event => <div key={event.id} className="flex items-start gap-3 text-[10px] leading-5"><time className="shrink-0 text-slate-600">{new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</time><p className={event.level === "error" ? "text-red-300" : "text-slate-300"}>{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-slate-400">（连续 {event.repeatCount} 次）</span>}</p></div>) : <p className="text-[11px] text-slate-500">尚无执行事件</p>}</div>
       </details>
 
       <footer className="flex items-center justify-between gap-3 px-3 py-2.5 text-[9px] text-slate-500">
@@ -117,7 +134,7 @@ function FocusedMonitor({ task, events, planTasks, runId, onClose }: { task: Wor
       <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-400">Focused live session</p><h2 className="mt-1 text-sm font-black text-white">{task.title}</h2></div><button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label="关闭放大监控"><X size={15}/></button></header>
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="self-start"><MonitorWindow task={task} events={events} planTasks={planTasks} runId={runId}/></div>
-        <aside className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"><div className="flex items-center justify-between"><h3 className="text-xs font-black text-white">实时操作轨迹</h3><span className="text-[9px] text-slate-500">{actions.length} 条 UI 操作</span></div><div className="mt-3 space-y-2">{events.length ? [...events].reverse().slice(0,20).map((event) => { const action = agentUiActionFromEvent(event); return <div key={event.id} className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5"><div className="flex items-start gap-2">{action ? <MousePointer2 size={12} className="mt-0.5 shrink-0 text-emerald-400"/> : <Clock3 size={12} className="mt-0.5 shrink-0 text-slate-600"/>}<div className="min-w-0"><p className="text-[10px] font-bold leading-4 text-slate-200">{event.summary}</p><p className="mt-1 text-[8px] text-slate-600">{action?.kind || event.type} · {new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</p></div></div></div>; }) : <p className="rounded-xl border border-dashed border-slate-800 px-3 py-10 text-center text-[10px] text-slate-600">尚无真实事件</p>}</div></aside>
+        <aside className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"><div className="flex items-center justify-between"><h3 className="text-xs font-black text-white">实时操作轨迹</h3><span className="text-[9px] text-slate-500">{actions.length} 条 UI 操作</span></div><div className="mt-3 space-y-2">{events.length ? groupMonitorEvents(events).reverse().slice(0,20).map((event) => { const action = agentUiActionFromEvent(event); return <div key={event.id} className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2.5"><div className="flex items-start gap-2">{action ? <MousePointer2 size={12} className="mt-0.5 shrink-0 text-emerald-400"/> : <Clock3 size={12} className="mt-0.5 shrink-0 text-slate-600"/>}<div className="min-w-0"><p className="text-[10px] font-bold leading-4 text-slate-200">{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-slate-400">（连续 {event.repeatCount} 次）</span>}</p><p className="mt-1 text-[8px] text-slate-600">{action?.kind || event.type} · {new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</p></div></div></div>; }) : <p className="rounded-xl border border-dashed border-slate-800 px-3 py-10 text-center text-[10px] text-slate-600">尚无真实事件</p>}</div></aside>
       </div>
     </div>
   </div>;
@@ -130,6 +147,20 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [lastSignalAt, setLastSignalAt] = useState("");
   const [focusedTaskId, setFocusedTaskId] = useState("");
+  const focusTask = (id: string) => {
+    pushProductionLocation('agentMonitor', { monitorTaskId: id });
+    setFocusedTaskId(id);
+  };
+  const closeFocus = () => {
+    if (window.history.state?.monitorTaskId) window.history.back();
+    else setFocusedTaskId('');
+  };
+  useEffect(() => {
+    const restoreFocus = () => { if (window.history.state?.productionPage === 'agentMonitor') setFocusedTaskId(window.history.state?.monitorTaskId || ''); };
+    restoreFocus();
+    window.addEventListener('popstate', restoreFocus);
+    return () => window.removeEventListener('popstate', restoreFocus);
+  }, []);
   const [fullscreen, setFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -209,7 +240,7 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
   }, []);
   useEffect(() => {
     const closeFocusedMonitor = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && focusedTaskId && !document.fullscreenElement) setFocusedTaskId("");
+      if (event.key === "Escape" && focusedTaskId && !document.fullscreenElement) closeFocus();
     };
     window.addEventListener("keydown", closeFocusedMonitor);
     return () => window.removeEventListener("keydown", closeFocusedMonitor);
@@ -255,7 +286,7 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
       <header className="sticky top-0 z-30 rounded-2xl border border-slate-800 bg-slate-950/95 px-4 py-3 shadow-2xl backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <button type="button" onClick={onBack} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label="返回经营驾驶舱"><ArrowLeft size={16} /></button>
+            <button type="button" onClick={onBack} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white" aria-label="返回智能经营"><ArrowLeft size={16} /></button>
             <div className="min-w-0"><div className="flex items-center gap-2"><MonitorPlay size={18} className="text-emerald-400" /><h1 className="truncate text-base font-black">Agent 实时生产监控大屏</h1></div><p className="mt-0.5 text-[10px] text-slate-500">每个窗口都是独立的任务浏览器 · 实际鼠标操作与工作页面同步直播</p></div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -278,14 +309,14 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
 
       {monitoredTasks.length ? (
         <section className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {monitoredTasks.map((task) => <MonitorWindow key={task.id} task={task} events={eventsByTask.get(task.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || task.run_id} onFocus={() => setFocusedTaskId(task.id)} />)}
+          {monitoredTasks.map((task) => <MonitorWindow key={task.id} liveEnabled={!focusedTaskId} task={task} events={eventsByTask.get(task.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || task.run_id} onFocus={() => focusTask(task.id)} />)}
         </section>
       ) : (
         <section className="mt-4 flex min-h-[520px] items-center justify-center rounded-3xl border border-dashed border-slate-800 bg-slate-900/30 px-6 text-center">
           <div className="max-w-lg"><CheckCircle2 size={30} className="mx-auto text-slate-700" /><h2 className="mt-4 text-base font-black text-slate-300">当前没有可监控的真实任务</h2><p className="mt-2 text-xs leading-6 text-slate-500">批准经营计划后，内容和客服任务会自动出现在这里。每个窗口直播真实浏览器；任务等待或暂停时，鼠标也会停下来。</p></div>
         </section>
       )}
-      {focusedTask && <FocusedMonitor task={focusedTask} events={eventsByTask.get(focusedTask.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || focusedTask.run_id} onClose={() => setFocusedTaskId("")}/>} 
+      {focusedTask && <FocusedMonitor task={focusedTask} events={eventsByTask.get(focusedTask.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || focusedTask.run_id} onClose={closeFocus}/>}
     </main>
   );
 }

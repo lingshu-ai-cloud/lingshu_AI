@@ -1,3 +1,4 @@
+import PublishingReceiptRecovery from './PublishingReceiptRecovery';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
@@ -141,6 +142,8 @@ function isSameDay(left: Date, right: Date): boolean {
 }
 
 function statusMeta(item: CalendarPost): { label: string; className: string; Icon: typeof Clock } {
+  if (item.status === 'needs_attention') return { label: '结果待核对', className: 'border-amber-300 bg-amber-50 text-amber-900', Icon: Flag };
+  if (item.status === 'finalize_pending') return { label: '回执已收·待回写', className: 'border-sky-200 bg-sky-50 text-sky-700', Icon: RefreshCw };
   if (item.platformPostId || item.status === 'published') {
     return { label: '已发布', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', Icon: CheckCircle2 };
   }
@@ -263,6 +266,8 @@ export function CalendarPlanner({
   const [pendingTimeSelection, setPendingTimeSelection] = useState<{ id: string; title: string; day: Date; time: string } | null>(null);
   const [pendingTimeSaving, setPendingTimeSaving] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [recoveryPost, setRecoveryPost] = useState<CalendarPost | null>(null);
+  const openPost = (post: CalendarPost) => { if (post.status === 'needs_attention') { setHoveredContent(null); setRecoveryPost(post); } else onOpenPost?.(post); };
   const [error, setError] = useState('');
   const [scoreSource, setScoreSource] = useState('平台参考');
   const calendarTopRef = useRef<HTMLDivElement>(null);
@@ -869,7 +874,7 @@ export function CalendarPlanner({
                                     key={item.id}
                                     type="button"
                                     data-calendar-post={item.id}
-                                    draggable={!item.platformPostId && !item.scheduleLocked}
+                                    draggable={!item.platformPostId && !item.scheduleLocked && !['needs_attention', 'publishing', 'finalize_pending'].includes(item.status)}
                                     title={item.scheduleLocked ? '定点排期已锁定；点击可编辑发布内容' : '拖动可调整日期，发布时间保持不变'}
                                     onDragStart={event => {
                                       setDragId(item.id);
@@ -878,7 +883,7 @@ export function CalendarPlanner({
                                     onMouseEnter={event => previewAt(event, { kind: 'post', post: item })}
                                     onMouseMove={event => previewAt(event, { kind: 'post', post: item })}
                                     onMouseLeave={() => setHoveredContent(null)}
-                                    onClick={() => onOpenPost?.(item)}
+                                    onClick={() => openPost(item)}
                                     className={`w-full rounded-lg border px-1.5 py-1 text-left shadow-sm transition hover:-translate-y-0.5 ${meta.className}`}
                                   >
                                     <span className="flex items-center justify-between gap-1 text-[8px] font-black"><PlatformBadge platform={item.platform} compact /><span className="inline-flex items-center gap-0.5">{item.scheduleLocked && <LockKeyhole size={8} />}{new Date(item.publishedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></span>
@@ -903,7 +908,7 @@ export function CalendarPlanner({
                             onMouseEnter={event => previewAt(event, { kind: 'post', post: item })}
                             onMouseMove={event => previewAt(event, { kind: 'post', post: item })}
                             onMouseLeave={() => setHoveredContent(null)}
-                            onClick={() => onOpenPost?.(item)}
+                            onClick={() => openPost(item)}
                             className={`w-full rounded-xl border p-1.5 text-left shadow-sm ${meta.className}`}
                           >
                             <span className="flex items-center justify-between gap-1 text-[9px] font-black"><PlatformBadge platform={item.platform} compact /><span>{new Date(item.publishedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></span>
@@ -973,6 +978,14 @@ export function CalendarPlanner({
           </div>
         </div>
       )}
+
+      {recoveryPost && <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="核对平台发布回执">
+        <div className="max-h-[85vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+          <div className="flex items-center justify-between gap-4"><h3 className="font-bold">核对发布回执</h3><button type="button" onClick={() => setRecoveryPost(null)} className="rounded border px-3 py-1">关闭</button></div>
+          <p className="text-sm font-semibold">{recoveryPost.title}</p>
+          <PublishingReceiptRecovery postId={recoveryPost.id} onRecovered={() => load(true)} />
+        </div>
+      </div>}
 
       {hoveredContent && (
         <div

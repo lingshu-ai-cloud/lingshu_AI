@@ -40,6 +40,7 @@ export async function sendTenantWhatsAppTextWithReceipts(
   to: string,
   body: string,
   onReceipt?: (progress: { message: string; receipt: WhatsAppSendReceipt; index: number; total: number }) => void | Promise<void>,
+  callbackData?: (index: number) => string,
 ): Promise<{ messages: string[]; receipts: WhatsAppSendReceipt[] }> {
   const waNumber = text(to);
   const content = text(body);
@@ -52,7 +53,7 @@ export async function sendTenantWhatsAppTextWithReceipts(
   const receipts: WhatsAppSendReceipt[] = [];
   for (let index = 0; index < messages.length; index += 1) {
     if (index > 0) await wait(pacingDelayMs());
-    const receipt = await sendWhatsAppText(config, waNumber, messages[index]);
+    const receipt = await sendWhatsAppText(config, waNumber, messages[index], callbackData?.(index));
     receipts.push(receipt);
     await onReceipt?.({ message: messages[index], receipt, index, total: messages.length });
   }
@@ -65,6 +66,7 @@ export async function sendTenantWhatsAppTemplate(input: {
   templateName: string;
   languageCode?: string;
   variables?: string[];
+  callbackData?: string;
 }): Promise<void> {
   await sendTenantWhatsAppTemplateWithReceipt(input);
 }
@@ -75,6 +77,7 @@ export async function sendTenantWhatsAppTemplateWithReceipt(input: {
   templateName: string;
   languageCode?: string;
   variables?: string[];
+  callbackData?: string;
 }): Promise<WhatsAppSendReceipt> {
   const to = text(input.to);
   const templateName = text(input.templateName);
@@ -88,5 +91,5 @@ export async function sendTenantWhatsAppTemplateWithReceipt(input: {
     : [];
 
   const config = await getTenantWhatsAppConfig(input.tenantId);
-  return sendWhatsAppTemplate(config, to, templateName, input.languageCode || 'en_US', components);
+  return sendWhatsAppTemplate(config, to, templateName, input.languageCode || 'en_US', components, input.callbackData);
 }

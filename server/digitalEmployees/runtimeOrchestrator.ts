@@ -1,7 +1,9 @@
+import { normalizeContinuationPolicy } from '../../src/lib/continuationPolicy.js';
+import { reviewTodoService } from './reviewTodos.js';
 import { store } from '../storage/index.js';
 import { normalizeDigitalEmployeeConfig, type DigitalEmployeeConfig } from './domain.js';
 import { beijingDate, latestDueReviewSlot, reviewScheduleFromCadence } from './runtimeSchedule.js';
-import { generateScheduledRunReview, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
+import { allocateReviewTodos, generateScheduledRunReview, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
 
 type StoredRecord = { id: string; [key: string]: unknown };
 type RuntimeRun = StoredRecord & {
@@ -38,7 +40,7 @@ function integerEnv(name: string, fallback: number, min: number, max: number): n
   return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback;
 }
 
-async function listRuns(limit: number): Promise<RuntimeRun[]> {
+async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
   const byId = new Map<string, RuntimeRun>();
   // Active work is queried explicitly so a large history of completed runs can
   // never hide a still-running workflow outside the global newest page.
@@ -54,12 +56,28 @@ async function listRuns(limit: number): Promise<RuntimeRun[]> {
     }
     if (byId.size >= limit) break;
   }
-  for (const status of ['waiting_human', 'succeeded', 'failed']) {
-    if (byId.size >= limit) break;
-    const result = await store.list<RuntimeRun>('workflow_runs', {
-      where: { status }, page: 1, perPage: Math.min(100, limit - byId.size), sort: '-started_at',
-    });
-    result.items.forEach(run => byId.set(run.id, run));
+  // Historical completion volume must not consume the current-cycle budget.
+  for (const status of ['succeeded', 'waiting_human', 'failed']) {
+    let page = 1;
+    while (byId.size < limit) {
+      const result = await store.list<RuntimeRun>('workflow_runs', {
+        where: { status }, page, perPage: 100, sort: '-started_at',
+      });
+      for (const run of result.items) {
+        const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id);
+        if (!goal) continue;
+        const config = await runConfig(run);
+        const reopenCandidate = status === 'succeeded' && reviewSlotIsInGoal(now, goal) && normalizeContinuationPolicy(config?.continuationPolicy).newCustomers === 'reopen';
+        const schedule = config ? reviewScheduleFromCadence(config.reviewSchedule) : null;
+        const slot = schedule ? latestDueReviewSlot(schedule, now) : null;
+        const reviewCandidate = slot && slot.getTime() >= Date.parse(run.started_at || '') && reviewSlotIsInGoal(slot, goal);
+        if (!reopenCandidate && !reviewCandidate) continue;
+        byId.set(run.id, run);
+        if (byId.size >= limit) break;
+      }
+      if (!result.items.length || page >= result.totalPages) break;
+      page += 1;
+    }
   }
   return [...byId.values()].sort((left, right) => Date.parse(right.started_at || '') - Date.parse(left.started_at || ''));
 }
@@ -102,11 +120,12 @@ async function reviewIfDue(run: RuntimeRun, now: Date): Promise<boolean> {
 /** One bounded, tenant-safe pass. Each run fails independently. */
 export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<RuntimeCycleResult> {
   const maxRuns = integerEnv('DIGITAL_EMPLOYEE_RUNTIME_MAX_RUNS', 200, 1, 1000);
-  const runs = (await listRuns(maxRuns)).filter(run => run.id && run.tenant_id && REVIEWABLE_STATUSES.has(run.status));
+  const runs = (await listRuns(maxRuns, now)).filter(run => run.id && run.tenant_id && REVIEWABLE_STATUSES.has(run.status));
   const result: RuntimeCycleResult = { scanned: runs.length, reconciled: 0, reviewsGenerated: 0, errors: [] };
   for (const run of runs) {
     try {
-      if (RECONCILABLE_STATUSES.has(run.status)) {
+      const canReopen = run.status === 'succeeded' && normalizeContinuationPolicy((await runConfig(run))?.continuationPolicy).newCustomers === 'reopen' && await (async () => { const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id); return goal ? reviewSlotIsInGoal(now, goal) : false; })();
+      if (RECONCILABLE_STATUSES.has(run.status) || canReopen) {
         await reconcileDigitalEmployeeRun(run.tenant_id, run.id);
         result.reconciled += 1;
       }
@@ -127,6 +146,7 @@ async function guardedCycle(): Promise<void> {
   if (cycleRunning) return;
   cycleRunning = true;
   try {
+    try { await reviewTodoService.runDue(allocateReviewTodos); } catch (error) { console.error('[review-todos] scheduler unavailable:', (error as Error).message); }
     const result = await runDigitalEmployeeRuntimeCycle();
     if (result.reconciled || result.reviewsGenerated || result.errors.length) {
       console.log(`[digital-employee-runtime] scanned=${result.scanned} reconciled=${result.reconciled} reviews=${result.reviewsGenerated} errors=${result.errors.length}`);

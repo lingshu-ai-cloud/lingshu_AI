@@ -1,6 +1,5 @@
 import { authHeader } from '../lib/auth';
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ArrowRight, CheckCircle2, Clock3, ExternalLink, FileText, MonitorPlay, X, AlertTriangle, Download } from 'lucide-react';
 import { fallbackDelivery, filterDeliveries, isDeliveryStale, safeDeliveryUrl, type DeliveryArtifact, type DeliveryResource } from '../lib/delivery';
 import { agentUiActionFromEvent } from '../lib/digitalEmployees';
@@ -65,7 +64,7 @@ export default function DeliveryBoard({ tasks, deliveries, events, goalTitle, no
   useEffect(() => {
     if (!selectedId) return;
     previousFocus.current = document.activeElement as HTMLElement;
-    dialog.current?.focus();
+    dialog.current?.focus({ preventScroll: true });
     const old = document.body.style.overflow; document.body.style.overflow = 'hidden';
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setSelectedId('');
@@ -76,7 +75,7 @@ export default function DeliveryBoard({ tasks, deliveries, events, goalTitle, no
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     };
     document.addEventListener('keydown', onKey);
-    return () => { document.body.style.overflow = old; document.removeEventListener('keydown', onKey); previousFocus.current?.focus(); };
+    return () => { document.body.style.overflow = old; document.removeEventListener('keydown', onKey); previousFocus.current?.focus({ preventScroll: true }); };
   }, [selectedId]);
   useEffect(() => { if (selectedId && !selected) setSelectedId(''); }, [selectedId, selected]);
   const open = (card: DeliveryResource, artifact?: DeliveryArtifact) => { setArtifactId(artifact?.id || ''); setSelectedId(card.id); };
@@ -128,14 +127,14 @@ export default function DeliveryBoard({ tasks, deliveries, events, goalTitle, no
         </div>;
       })}
     </div>
-    {selected && createPortal(<div className="fixed inset-0 z-[100] flex justify-end bg-slate-950/40" onClick={event => { if (event.target === event.currentTarget) setSelectedId(''); }}>
+    {selected && <div className="fixed inset-0 z-[100] flex justify-end bg-slate-950/40" onClick={event => { if (event.target === event.currentTarget) setSelectedId(''); }}>
       <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="delivery-detail-title" className="h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl outline-none">
         <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5"><div><p className="text-xs font-bold text-blue-700">{selected.kind} · {columns.find(column => column.id === selected.column)?.label}</p><h2 id="delivery-detail-title" className="mt-1 text-xl font-black text-slate-950">{selected.title}</h2><p className="mt-1 text-xs text-slate-500">{selected.subject}</p></div><button type="button" aria-label="关闭交付详情" onClick={() => setSelectedId('')} className="rounded-lg p-2 hover:bg-slate-100"><X size={20}/></button></header>
         <div className="space-y-6 p-6">
           <section><h3 className="text-sm font-bold text-slate-900">交付目标</h3><p className="mt-2 text-sm leading-6 text-slate-600">{selected.acceptance}</p><p className="mt-2 text-xs text-slate-400">所属目标：{goalTitle}</p></section>
           <section className="rounded-2xl bg-slate-50 p-4"><h3 className="text-sm font-bold text-slate-900">生产实况 · {selected.stage}</h3><p className="mt-1 text-xs text-slate-400">最近更新 {date(selected.updatedAt)}</p><div className="mt-3 flex flex-wrap gap-2">{selected.steps.map(step => <span key={step.label} className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs ${step.state === 'done' ? 'bg-emerald-50 text-emerald-700' : step.state === 'active' ? 'bg-blue-50 text-blue-700' : 'bg-white text-slate-400'}`}>{step.state === 'done' ? <CheckCircle2 size={12}/> : <Clock3 size={12}/>} {step.label}</span>)}</div>
             {selected.reason && <p className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-800"><AlertTriangle size={16} className="mt-1 shrink-0"/>{selected.reason}</p>}
-            <div className="mt-4 flex flex-wrap gap-2">{selected.column === 'human' && <button type="button" onClick={() => process(selected)} className="rounded-xl bg-blue-700 px-4 py-2 text-xs font-bold text-white">{selected.kind === '客服草稿' ? '审核所属批次' : '处理当前问题'}</button>}{selected.link && <button type="button" onClick={() => { setSelectedId(''); onOpenTask({ ...selected.link!, businessRef: { ...selected.link!.businessRef, deliveryId: selected.id } }); }} className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-xs font-bold text-blue-700">{selected.actionLabel}<ExternalLink size={12}/></button>}<button type="button" onClick={() => process(selected)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs text-slate-600">查看任务记录与纠偏</button></div>
+            <div className="mt-4 flex flex-wrap gap-2">{selected.column === 'human' && <button type="button" onClick={() => process(selected)} className="rounded-xl bg-blue-700 px-4 py-2 text-xs font-bold text-white">{selected.kind === '客服草稿' ? '审核所属批次' : '处理当前问题'}</button>}{selected.link && <button type="button" onClick={() => { onOpenTask({ ...selected.link!, businessRef: { ...selected.link!.businessRef, deliveryId: selected.id } }); }} className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-xs font-bold text-blue-700">{selected.actionLabel}<ExternalLink size={12}/></button>}<button type="button" onClick={() => process(selected)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs text-slate-600">查看任务记录与纠偏</button></div>
           </section>
           {latestScreen?.screenshotUrl && <section><h3 className="mb-3 text-sm font-bold text-slate-900">最近一次生产现场</h3><img src={safeDeliveryUrl(latestScreen.screenshotUrl)} alt={latestScreen.label || "生产现场截图"} className="w-full rounded-xl border border-slate-200"/></section>}
           <section><h3 className="text-sm font-bold text-slate-900">{selected.column === 'done' ? '交付结果' : '当前产物与版本'}</h3>{selected.artifacts.length ? <><div className="my-3 flex flex-wrap gap-2">{selected.artifacts.map(item => <button type="button" aria-pressed={artifact?.id === item.id} key={item.id} onClick={() => setArtifactId(item.id)} className={`rounded-lg border px-3 py-2 text-xs ${artifact?.id === item.id ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>{item.label} {item.version}</button>)}</div>{artifact && <><ArtifactPreview artifact={artifact}/><div className="mt-3">{artifact.kind === 'text' ? <button type="button" onClick={() => downloadText(artifact)} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700"><Download size={13}/>下载{artifact.label}</button> : artifact.kind !== 'link' && safeDeliveryUrl(artifact.url) && <a href={safeDeliveryUrl(artifact.url)} download target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-bold text-blue-700"><Download size={13}/>下载 / 打开{artifact.label}</a>}</div></>}</> : <p className="mt-3 rounded-xl border border-dashed border-slate-200 p-6 text-sm text-slate-500">尚未产生可查看的产物。{selected.reason}</p>}</section>
@@ -145,6 +144,6 @@ export default function DeliveryBoard({ tasks, deliveries, events, goalTitle, no
           <section><h3 className="text-sm font-bold text-slate-900">执行记录</h3><div className="mt-3 space-y-3">{events.filter(event => selected.taskIds.includes(event.task_id)).slice(-8).reverse().map(event => <div key={event.id} className="border-l-2 border-slate-200 pl-3"><p className="text-xs leading-5 text-slate-600">{event.summary}</p><p className="text-[10px] text-slate-400">{date(event.occurred_at)}</p></div>)}{!events.some(event => selected.taskIds.includes(event.task_id)) && <p className="text-xs text-slate-400">尚无执行记录</p>}</div></section>
         </div>
       </div>
-    </div>, document.body)}
+    </div>}
   </section>;
 }

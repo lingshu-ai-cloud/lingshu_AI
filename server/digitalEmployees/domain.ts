@@ -1,3 +1,5 @@
+import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../src/lib/continuationPolicy.js';
+import { normalizeAssessment, type OperatingAssessment } from '../../src/lib/operatingMaturity.js';
 import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../src/lib/videoCreationPlan.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 
@@ -7,6 +9,7 @@ export interface PublishingTarget {
   platform: PublishingPlatform;
   accountId: string;
   accountLabel: string;
+  timezone?: string;
 }
 export type WeeklyGoalStatus = 'draft' | 'pending_approval' | 'active' | 'paused' | 'completed' | 'cancelled';
 export type WorkflowTaskStatus =
@@ -21,6 +24,10 @@ export type WorkflowTaskStatus =
   | 'cancelled';
 
 export interface DigitalEmployeeConfig {
+  continuationPolicy?: ContinuationPolicy;
+  operatingMaturity?: "starting" | "growing" | "established";
+  operatingAssessment?: OperatingAssessment;
+  defaultParticipation?: "agent" | "team";
   videoDefaults?: Partial<VideoCreationPlan>;
   companyName: string;
   industry: string;
@@ -135,6 +142,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
         platform: String(item?.platform || '') as PublishingPlatform,
         accountId: text(item?.accountId, 160),
         accountLabel: text(item?.accountLabel, 200),
+        ...(item?.timezone ? { timezone: text(item.timezone, 100) } : {}),
       }))
       .filter((item): item is PublishingTarget => allowedPublishingPlatforms.has(item.platform) && Boolean(item.accountId))
       .filter((item, index, items) => items.findIndex(candidate => candidate.platform === item.platform && candidate.accountId === item.accountId) === index)
@@ -146,6 +154,10 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
   const batchFollowupApproval = true;
   const commercialCommitmentApproval = true;
   return {
+    continuationPolicy: normalizeContinuationPolicy(input.continuationPolicy),
+    operatingMaturity: ["starting", "growing", "established"].includes(String(input.operatingMaturity)) ? input.operatingMaturity : "growing",
+    operatingAssessment: normalizeAssessment(input.operatingAssessment),
+    defaultParticipation: input.defaultParticipation === "team" ? "team" : "agent",
     videoDefaults: normalizeVideoPlan(input.videoDefaults || {}),
     companyName: text(input.companyName, 120),
     industry: text(input.industry, 120),
@@ -190,7 +202,6 @@ export function validateDigitalEmployeeConfig(config: DigitalEmployeeConfig): st
   if (!config.targetMarkets) missing.push('目标市场');
   if (!config.customerProfile) missing.push('核心客户');
   if (!config.approvalOwner) missing.push('审批负责人');
-  if (config.enabledWorkflows.includes('content_publish') && !config.publishingTargets.length) missing.push('发布平台与账号');
   return missing;
 }
 
@@ -386,7 +397,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     publishing_calendar: ['content_release_approval'],
     platform_publish: ['publishing_calendar'],
     customer_attribution: ['platform_publish'],
-    customer_segmentation: [hasPublishing ? 'customer_attribution' : 'goal_decomposition'],
+    customer_segmentation: ['goal_decomposition'],
     followup_batch_draft: ['customer_segmentation'],
     followup_batch_approval: ['followup_batch_draft'],
     followup_dispatch: ['followup_batch_approval'],

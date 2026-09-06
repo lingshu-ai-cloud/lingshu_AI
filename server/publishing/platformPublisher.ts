@@ -1,3 +1,4 @@
+import { assertNoUnresolvedPublishing } from './pendingPublishGuard.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -57,6 +58,7 @@ export interface PublishToAccountInput {
   trackWaLink?: boolean;
   trackingPost?: PostRecord;
   finalizeTracking?: boolean;
+  publishAttemptId?: string;
 }
 
 export interface PublishToAccountResult {
@@ -195,6 +197,7 @@ async function finalizeIfRequested(input: PublishToAccountInput, tracked: PostRe
 
 export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
   if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
+  await assertNoUnresolvedPublishing({ tenantId: input.tenantId, platform: input.platform, accountIds: [input.accountId], contentId: input.contentId, videoPath: input.videoPath, videoUrl: input.videoUrl, currentPostId: input.trackingPost?.id, currentAttemptId: input.publishAttemptId });
   if (input.platform === 'youtube') {
     const account = await store.getById<YouTubeAccountRecord>('youtube_accounts', input.accountId);
     if (!account || account.tenantId !== input.tenantId) throw publishError('YouTube account not found', 404);

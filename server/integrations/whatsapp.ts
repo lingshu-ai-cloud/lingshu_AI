@@ -24,10 +24,10 @@ function sendReceipt(data: unknown): WhatsAppSendReceipt {
   };
 }
 
-export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text: string): Promise<WhatsAppSendReceipt> {
+export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text: string, callbackData?: string): Promise<WhatsAppSendReceipt> {
   const response = await axios.post(
     `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
-    { messaging_product: 'whatsapp', to, type: 'text', text: { body: text } },
+    { messaging_product: 'whatsapp', to, type: 'text', text: { body: text }, ...(callbackData ? { biz_opaque_callback_data: callbackData } : {}) },
     { headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' } }
   );
   return sendReceipt(response.data);
@@ -38,7 +38,8 @@ export async function sendWhatsAppTemplate(
   to: string,
   templateName: string,
   languageCode: string,
-  components: object[] = []
+  components: object[] = [],
+  callbackData?: string
 ): Promise<WhatsAppSendReceipt> {
   const response = await axios.post(
     `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
@@ -46,6 +47,7 @@ export async function sendWhatsAppTemplate(
       messaging_product: 'whatsapp',
       to,
       type: 'template',
+      ...(callbackData ? { biz_opaque_callback_data: callbackData } : {}),
       template: { name: templateName, language: { code: languageCode }, components },
     },
     { headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' } }

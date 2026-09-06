@@ -31,8 +31,8 @@ const base = normalizeDigitalEmployeeConfig({
 });
 
 assert.ok(
-  validateDigitalEmployeeConfig(base).includes('发布平台与账号'),
-  'a tenant with no connected publishing account must not activate content publishing, even if the consent flag was posted as true',
+  !validateDigitalEmployeeConfig(base).includes('发布平台与账号'),
+  'missing publishing accounts must not prevent configuration and independent content preparation',
 );
 
 const contentOnly = normalizeDigitalEmployeeConfig({

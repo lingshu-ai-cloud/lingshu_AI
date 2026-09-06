@@ -1,6 +1,7 @@
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from './videoLanguages';
 /** Frozen user choices shared by planning, script, voice and rendering. */
 export interface VideoCreationPlan {
+  reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
   route: 'clone' | 'material' | 'product';
   productName: string;
   theme: string;
@@ -41,6 +42,7 @@ export function presentationScenes(plan: VideoCreationPlan, count: number): Vide
 export const VIDEO_ROUTES = { clone: '爆款裂变', material: '从素材生成', product: '从产品生成' } as const;
 export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCreationPlan {
   return {
+    ...(Array.isArray(value.reviewRequirements) ? { reviewRequirements: value.reviewRequirements.slice(0, 5).map(r => ({ todoId: String(r.todoId || '').slice(0, 80), reference: String(r.reference || '').slice(0, 4000), scene: 1, startsAt: 0, endsAt: 3, requirements: String(r.requirements || '').slice(0, 4000), materials: String(r.materials || '').slice(0, 4000), acceptance: String(r.acceptance || '').slice(0, 4000) })) } : {}),
     route: ['clone', 'material', 'product'].includes(String(value.route)) ? value.route! : 'product',
     productName: String(value.productName || '').trim().slice(0, 180), theme: String(value.theme || '').trim().slice(0, 500),
     language: normalizeVideoLanguage(value.language || 'en'), duration: Math.max(10, Math.min(180, Number(value.duration) || 30)),
