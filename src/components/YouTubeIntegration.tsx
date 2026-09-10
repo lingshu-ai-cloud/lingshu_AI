@@ -1020,10 +1020,10 @@ export function ChannelOverview() {
   return (
     <div className="flex h-full flex-col gap-4 sm:gap-5">
       <div className="flex items-center justify-between gap-3 border-b border-border">
-        <div className="flex min-w-0 gap-5 overflow-x-auto" role="tablist" aria-label="频道平台">
+        <div className="flex min-w-0 gap-5 overflow-x-auto overflow-y-hidden" role="tablist" aria-label="频道平台">
           {platforms.map(p => (
             <button key={p.id} type="button" onClick={() => setPlatform(p.id)} role="tab" aria-selected={platform === p.id}
-              className={`-mb-px inline-flex shrink-0 items-center gap-1.5 border-b-2 px-1 pb-3 pt-1 text-xs font-semibold transition-colors ${platform === p.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'}`}>
+              className={`inline-flex shrink-0 items-center gap-1.5 border-b-2 px-1 pb-3 pt-1 text-xs font-semibold transition-colors ${platform === p.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'}`}>
               <SocialPlatformIcon platform={p.id} size={15} /> {p.label}{p.count > 0 ? ` ${p.count}` : ''}
             </button>
           ))}

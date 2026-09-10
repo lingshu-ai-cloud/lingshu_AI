@@ -1,3 +1,4 @@
+import '../server/loadEnvironment.js';
 /**
  * Idempotent PocketBase provisioning for the overseas-workbench backend.
  *
@@ -120,11 +121,17 @@ const COLLECTIONS: { name: string; fields: Field[]; indexes?: string[] }[] = [
       { name: 'usage', type: 'text', required: true },
       { name: 'sourceType', type: 'text' },
       { name: 'sourceName', type: 'text' },
+      { name: 'productId', type: 'text' },
+      { name: 'productName', type: 'text' },
+      { name: 'sourceUrl', type: 'text' },
+      { name: 'licenseEvidence', type: 'text' },
+      { name: 'visualObservations', type: 'json', maxSize: 200000 },
       { name: 'videoFile', type: 'file', required: true, maxSelect: 1, maxSize: 104857600 },
       { name: 'posterFile', type: 'file', required: true, maxSelect: 1, maxSize: 5242880 },
       // 分镜匹配所需：素材要先切成片段，才能与对标视频的分镜比对。
       // 缺这三个字段时云端素材永远进不了匹配池，可复制性恒为「弱」。
       { name: 'pinned', type: 'bool' },
+      { name: 'analysisSourceRevision', type: 'text' },
       { name: 'segmentAnalysisStatus', type: 'text' },
       { name: 'segmentAnalysisError', type: 'text' },
       { name: 'segments', type: 'json', maxSize: 2000000 },

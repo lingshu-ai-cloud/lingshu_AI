@@ -234,7 +234,12 @@ export default function App() {
   const [smartAssetsMounted, setSmartAssetsMounted] = useState(() => loadPage() === 'smartAssets');
   const [conversation, setConversation] = useState<ConversationContext | null>(null);
   const [scriptPanelOpen, setScriptPanelOpen] = useState(false);
-  const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>(() => window.__agentProductionTarget?.link.view || 'create');
+  const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>(() => {
+    const target = window.__agentProductionTarget;
+    if (target?.link.page === 'smartAssets') return target.link.view || 'create';
+    const detail = window.history.state?.productionDetail;
+    return loadPage() === 'smartAssets' && detail?.page === 'smartAssets' && detail.view === 'publish' ? 'publish' : 'create';
+  });
   const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
   const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string } | null>(() => {
     const target = window.__agentProductionTarget;

@@ -1,3 +1,7 @@
+import { materialShotPlan } from '../lib/materialShotPlan';
+import { ensureMaterialAnalysis } from '../lib/studioApi';
+import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
+import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import ProductionTaskScene from './ProductionTaskScene';
 import { requestProductionBack } from '../lib/productionNavigation';
 import ContentLibrary from './ContentLibrary';
@@ -288,7 +292,7 @@ const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: num
 const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
-  segmentAnalysisStatus: m.segmentAnalysisStatus, segments: m.segments,
+  segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
 });
 
 type StepId = 'mode' | 'material' | 'script' | 'bgm' | 'cover' | 'preview' | 'poster';
@@ -436,6 +440,8 @@ interface Clip {
   applicability?: string;
   tags?: string;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
+  segmentAnalysisError?: string;
+  visualObservations?: string[];
   segments?: MaterialSegment[];
 }
 
@@ -1122,6 +1128,36 @@ export function fitTimelineToVoiceover<T extends {
       ...item,
       targetStart: +targetStart.toFixed(3),
       targetEnd: +(isLast ? voiceoverDuration : cursor).toFixed(3),
+      targetDuration: +targetDuration.toFixed(3),
+      speed: sourceClipDuration > 0 ? Math.max(0.25, Math.min(4, sourceClipDuration / targetDuration)) : item.speed,
+    };
+  });
+}
+
+/** Align one narration cue with one storyboard shot for each language version. */
+export function fitTimelineToVoiceoverCues<T extends {
+  trimStart?: number;
+  trimEnd?: number;
+  speed?: number;
+  targetStart?: number;
+  targetEnd?: number;
+  targetDuration: number;
+}>(timeline: T[], voiceoverDuration: number, cues?: SubCue[]): T[] {
+  if (!cues?.length || cues.length !== timeline.length) return fitTimelineToVoiceover(timeline, voiceoverDuration);
+  if (!Number.isFinite(voiceoverDuration) || voiceoverDuration <= 0) return timeline;
+  const boundaries = [0, ...cues.slice(1).map(cue => Number(cue.start)), voiceoverDuration];
+  if (boundaries.some((value, index) => !Number.isFinite(value) || value < 0 || (index > 0 && value <= boundaries[index - 1]))) {
+    return fitTimelineToVoiceover(timeline, voiceoverDuration);
+  }
+  return timeline.map((item, index) => {
+    const targetStart = boundaries[index];
+    const targetEnd = boundaries[index + 1];
+    const targetDuration = targetEnd - targetStart;
+    const sourceClipDuration = Math.max(0, (Number(item.trimEnd) || 0) - (Number(item.trimStart) || 0));
+    return {
+      ...item,
+      targetStart: +targetStart.toFixed(3),
+      targetEnd: +targetEnd.toFixed(3),
       targetDuration: +targetDuration.toFixed(3),
       speed: sourceClipDuration > 0 ? Math.max(0.25, Math.min(4, sourceClipDuration / targetDuration)) : item.speed,
     };
@@ -2655,7 +2691,7 @@ function buildMaterialInfosForScript(clips: Clip[], totalDuration: number, hookM
     );
     const targetStart = +cursor.toFixed(1);
     const targetEnd = +Math.min(totalDuration, cursor + effectiveDuration).toFixed(1);
-    const observations = (clip.segments || []).slice(0, 6).map(segment => [
+    const observations = [...(clip.visualObservations || []), ...(clip.segments || []).filter(segment => !segment.needsReview && Number(segment.confidence) >= .65).slice(0, 6).map(segment => [
       `${segment.start}-${segment.end}s`,
       segment.action,
       segment.shot,
@@ -2664,7 +2700,7 @@ function buildMaterialInfosForScript(clips: Clip[], totalDuration: number, hookM
       segment.productVisible ? `产品清晰度${segment.productClarity}` : '',
       segment.ocrText ? `OCR:${segment.ocrText.slice(0, 120)}` : '',
       segment.needsReview && !segment.manualConfirmed ? '待人工复核' : '',
-    ].filter(Boolean).join('；'));
+    ].filter(Boolean).join('；'))];
     result.push({
       name: clip.name,
       type: clip.type,
@@ -4868,7 +4904,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           languageIndex,
           bgmId,
           script: scriptForRenderLanguage(code),
-          timeline: fitTimelineToVoiceover<(typeof timeline)[number]>(timeline, audioDuration),
+          timeline: fitTimelineToVoiceoverCues<(typeof timeline)[number]>(timeline, audioDuration, alignedCuesByLang[code]),
         };
       });
     });
@@ -4989,7 +5025,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
     let outputTimeline = voiceoverMode === 'none'
       ? requestedTimeline
-      : fitTimelineToVoiceover<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur);
+      : fitTimelineToVoiceoverCues<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur, renderOverride?.cues ?? alignedCuesByLang[outputLanguage]);
     if (presentationMode !== 'material') {
       if (!digitalHumanJob?.outputUrl || !['review', 'completed'].includes(digitalHumanJob.status)) throw new Error('请先生成所选数字人视频，不能自动切换为素材成片');
       if (!outputVoiceoverUrl || new URL(digitalHumanJob.voiceoverUrl, location.origin).pathname !== new URL(outputVoiceoverUrl, location.origin).pathname) throw new Error('本语言配音与数字人视频不一致，请按当前配音重新生成数字人');
@@ -5401,21 +5437,29 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setModeActionStatus('正在快速匹配本地素材…');
     setModeNotice('');
     try {
-      const pool = selectedVisualClips;
+      let pool = selectedVisualClips;
       if (pool.length === 0) {
         setModeNotice('请先在创作设置中明确选择本次要使用的视频或图片，再生成脚本。');
         setShowSetupMaterialPicker(true);
         return false;
       }
+      const editable = pool.filter(item => item.scope !== 'shared' && item.usage !== 'reference_only');
+      const analyzed = await ensureMaterialAnalysis(editable.map(item => item.id), isCurrentRequest, setModeActionStatus);
+      if (!isCurrentRequest()) return false;
+      const fresh = new Map(analyzed.map(item => [item.id, materialToClip(item)]));
+      pool = pool.map(item => fresh.get(item.id) || item);
+      setMaterials(current => current.map(item => fresh.get(item.id) || item));
       const preferred = pool.map(item => item.id);
       const hookOnly = hookMaterialId && pool.some(item => item.id === hookMaterialId);
       const selectResp = hookOnly ? { selectedIds: [hookMaterialId] } : pickMaterialClipsLocally(pool, duration, preferred);
       const nextSelected = (selectResp.selectedIds || []).filter(id => pool.some(item => item.id === id));
-      const finalSelected = nextSelected.length ? nextSelected : preferred;
+      const finalSelected = hookOnly ? [hookMaterialId] : preferred;
       const selectedMaterialsForScript = finalSelected.map(id => pool.find(item => item.id === id)).filter(Boolean) as Clip[];
       if (hookMaterialId) selectedMaterialsForScript.sort((a, b) => Number(b.id === hookMaterialId) - Number(a.id === hookMaterialId));
       const names = selectedMaterialsForScript.map(item => item.name);
-      const materialInfos = buildMaterialInfosForScript(selectedMaterialsForScript, duration, hookMaterialId);
+      const materialInfos: ReturnType<typeof buildMaterialInfosForScript> = !hookOnly && selectedMaterialsForScript.every(item=>item.type==='video')
+        ? materialShotPlan(selectedMaterialsForScript,duration)
+        : buildMaterialInfosForScript(selectedMaterialsForScript, duration, hookMaterialId);
       if (hookOnly && materialInfos.length && materialInfos[0]!.targetEnd < duration - 0.5) {
         let cursor = materialInfos[0]!.targetEnd;
         let index = 2;
@@ -6689,9 +6733,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   /* ── 素材库：只拉取真实素材 ──────────────────────── */
   const refreshMaterials = async () => {
-    const real = await studioApi.listMaterials();
-    const realClips = real.map(materialToClip);
-    setMaterials(current => mergeClipLists(realClips, current.filter(item => item.sourceType === 'project-snapshot' || item.sourceType === 'historical-kickoff')));
+    try {
+      const real = await studioApi.listMaterials();
+      const realClips = real.map(materialToClip);
+      setMaterials(current => mergeClipLists(realClips, current.filter(item => item.sourceType === 'project-snapshot' || item.sourceType === 'historical-kickoff')));
+    } catch { /* retain the last inventory; MaterialLibraryStatus offers retry */ }
   };
   const materialSourceRefreshesRef = useRef(new Set<string>());
   const refreshMaterialSource = async (materialId: string): Promise<Clip | undefined> => {
@@ -6704,7 +6750,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const next = materialToClip(refreshed);
       setMaterials(current => current.map(item => item.id === materialId ? { ...item, url: next.url, poster: next.poster } : item));
       return next;
-    } finally {
+    } catch { return undefined; } finally {
       materialSourceRefreshesRef.current.delete(materialId);
     }
   };
@@ -8477,6 +8523,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   </div>
                 </div>
               )}
+              <section aria-label="输出语言与配乐说明" className="space-y-2 border-t border-border px-4 py-3">
+                <p className="text-xs font-black text-text-primary">输出语言与配乐</p>
+                <label className="block text-[11px] font-bold text-text-secondary">原文语言
+                  <select aria-label="原文语言" value={voiceLangs[0] || lang} disabled={Boolean(script.trim())} onChange={event => { const code = event.target.value; setVoiceLangs(current => [code, ...current.slice(1).filter(item => item !== code)]); setLang(code); setActiveVoiceLang(code); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs disabled:opacity-60">
+                    {LANGS.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}
+                  </select>
+                </label>
+                <p className="text-[11px] leading-5 text-text-secondary">原文语言：{LANGS.find(item => item.code === (voiceLangs[0] || lang))?.label || lang}。在下一步“脚本与声音”添加翻译语种，分别生成配音、字幕和成片。</p>
+                <p className="text-[11px] leading-5 text-text-secondary">在“脚本与声音 → 配乐”选择音乐和音量；未选音乐时，导出不会自动添加配乐。</p>
+                {selectedVisualClips.filter(clip => clip.type === 'video').length > 0 && selectedVisualClips.filter(clip => clip.type === 'video').length < 3 && <p role="status" className="rounded-lg bg-amber-50 p-2 text-[11px] leading-5 text-amber-800">当前只有 {selectedVisualClips.filter(clip => clip.type === 'video').length} 段视频。不同截取时间不代表不同画面；自动选材不会循环使用同一视频。需要更多分镜时，请补充不同角度、动作或场景的素材。</p>}
+              </section>
               <div className="overflow-hidden border-y border-border bg-surface">
                 <button
                   type="button"
@@ -8813,6 +8870,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                           </div>
                           <div className="p-2">
                             <p className="text-[11px] font-medium text-text-primary truncate">{c.name}</p>
+                            <MaterialAnalysisStatus material={c} onRefresh={refreshMaterials} />
                             <p className="text-[10px] text-text-muted mt-0.5">{posterFolderName(c.folder)} · {c.size}</p>
                           </div>
                         </button>
@@ -9307,6 +9365,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 	                    )}
 	                  </div>
 	                )}
+	                <MaterialLibraryStatus onRetry={refreshMaterials} />
 	                <div className="grid grid-cols-1 gap-3">
 	                  {visible.map(c => {
                     const displaySelection = activeFolder === 'recommend' ? recommendationSource : selected;
@@ -9365,6 +9424,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         </div>
 	                        <div className="p-2">
 	                          <p className="text-[11px] font-medium text-text-primary truncate">{c.name}</p>
+                            <MaterialAnalysisStatus material={c} onRefresh={refreshMaterials} />
 	                          <p className="text-[10px] text-text-muted mt-0.5">{c.folder === 'presenter' ? '真人口播素材 · ' : ''}{c.size}</p>
 	                          {(c.industry || c.shotFunction) && (
 	                            <p className="mt-1 truncate text-[9px] text-text-muted">{[c.industry, c.shotFunction].filter(Boolean).join(' · ')}</p>
@@ -11476,7 +11536,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-black text-text-primary">视频版本</p>
-                      <p className="mt-0.5 text-xs text-text-muted">仅显示具备有效脚本和完整有效分镜的版本；配音、配乐为可选项。</p>
+                      <p className="mt-0.5 text-xs text-text-muted">每种已生成的语言对应独立成片。请核对语言与配乐；未选音乐的版本将无背景配乐。</p>
                     </div>
                     <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-text-muted">
                       {batchRenderingLangs ? '正在生成选中版本' : '选定版本后使用底部主按钮生成'}

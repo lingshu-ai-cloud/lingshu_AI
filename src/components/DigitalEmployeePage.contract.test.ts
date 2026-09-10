@@ -20,6 +20,9 @@ const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 
+assert.match(pageSource, /自动交付语言/);
+assert.match(pageSource, /相同 sceneId 翻译、配音、加字幕和配乐/);
+
 for (const label of ['今天要做', '生产与交付', '任务执行', '复盘']) {
   assert.match(pageSource, new RegExp(label), `Digital Employee workspace must expose the ${label} view`);
 }
@@ -229,3 +232,8 @@ assert.equal(digitalEmployeeConfigFingerprint({ ...fingerprintConfig }), fingerp
 assert.notEqual(digitalEmployeeConfigFingerprint({ ...fingerprintConfig, targetMarkets: '德国' }), fingerprint, 'material config changes must produce a different display identifier');
 
 console.log('DigitalEmployeePage contract tests passed');
+
+for (const key of ['content_release_approval', 'publishing_calendar', 'platform_publish']) {
+  const stale = { ...task(key, 'activation'), destination: 'smartAssets' as const, destination_view: 'create' as const };
+  assert.equal(buildTaskDeepLink(stale, undefined, 'run-publish').view, 'publish', `${key} must open publishing despite an obsolete create destination`);
+}

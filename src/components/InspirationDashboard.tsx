@@ -1,3 +1,5 @@
+import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
+import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -28,7 +30,7 @@ type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
-type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import';
+type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 
 const MATERIAL_INDUSTRY_LABELS: Record<string, string> = {
@@ -47,11 +49,12 @@ const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
 };
 const MATERIAL_SOURCE_LABELS: Record<MaterialSourceFilter, string> = {
   all: '全部来源', local_upload: '本地上传', seedance: 'Seedance 生成',
-  gemini: 'Gemini 生成', official_import: '官方爆款导入',
+  gemini: 'Gemini 生成', official_import: '官方爆款导入', licensed_stock: '授权图库',
 };
 
 function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'all'> {
   const source = String(material.sourceType || '').toLowerCase();
+  if (source.includes('licensed-stock') || source.includes('licensed_stock')) return 'licensed_stock';
   if (source.includes('seedance')) return 'seedance';
   if (source.includes('gemini')) return 'gemini';
   if (source.includes('official') || source.includes('viral') || material.folder === 'hot' || material.scope === 'shared') return 'official_import';
@@ -2916,6 +2919,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [manageTarget, setManageTarget] = useState<(({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action: 'edit' | 'delete' }) | null>(null);
   const [manageName, setManageName] = useState('');
   const [manageTags, setManageTags] = useState('');
+  const [manageProductId, setManageProductId] = useState('');
+  const [materialProducts, setMaterialProducts] = useState<Array<{id:string;name:string}>>([]);
   const [manageBusy, setManageBusy] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const previewMaterialDialogRef = useModalFocus<HTMLDivElement>({
@@ -2967,10 +2972,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   useEffect(() => () => { onScriptPanelClose?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshMaterials = async () => {
-    setMaterialsLoading(true);
+    if (!localMaterials.length) setMaterialsLoading(true);
     try {
       setLocalMaterials(await studioApi.listMaterials());
-    } finally {
+    } catch { /* keep last successful items; show connection status */ } finally {
       setMaterialsLoading(false);
     }
   };
@@ -3287,14 +3292,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }
       setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个素材到社媒素材库`);
-      const analysisResults = await Promise.allSettled(uploadedVideos.map(material => studioApi.analyzeMaterialSegments(material.id)));
       await refreshMaterials();
       window.dispatchEvent(new Event('lingshu:materials-updated'));
       if (uploadingScriptGapId && uploadedIds.length) updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
-      const analyzedCount = analysisResults.filter(result => result.status === 'fulfilled' && result.value.ok).length;
-      const failedCount = uploadedVideos.length - analyzedCount;
       setMaterialMessage(uploadedVideos.length
-        ? `已上传 ${files.length} 个素材，${analyzedCount} 个视频已完成分镜分析${failedCount ? `，${failedCount} 个分析失败可稍后重试` : ''}`
+        ? `已上传 ${files.length} 个素材，视频已进入分析队列，可在素材卡片查看进度`
         : `已上传 ${files.length} 个素材到社媒素材库`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
@@ -3595,6 +3597,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const openManageDialog = (target: ({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action?: 'edit' | 'delete' }) => {
     if (!target.item.canManage) return;
     setManageTarget({ ...target, action: target.action || 'edit' });
+    setManageProductId(target.kind === 'material' ? target.item.productId || '' : '');
+    if (target.kind === 'material') void studioApi.materialProducts().then(result => setMaterialProducts(result.items));
     setManageName(target.kind === 'video' ? target.item.title : target.item.name);
     setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : String(target.item.tags || ''));
   };
@@ -3617,7 +3621,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           ? { ...item, title: manageName.trim(), tags: manageTags.split(/[,，]/).map(tag => tag.trim()).filter(Boolean) }
           : item));
       } else {
-        const result = await studioApi.updateMaterial(manageTarget.item.id, { name: manageName.trim(), tags: manageTags.trim() });
+        const result = await studioApi.updateMaterial(manageTarget.item.id, { name: manageName.trim(), tags: manageTags.trim(), productId: manageProductId });
         if (!result.ok) throw new Error(result.error || '编辑失败');
         await refreshMaterials();
       }
@@ -3698,26 +3702,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       <div className="transition-all duration-300">
         <div className="px-4 py-5 sm:px-6 lg:py-6">
           <div className="mb-4 border-b border-border">
-            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">Creative intelligence</p>
-                <h1 className="mt-0.5 text-xl font-bold text-text-primary">灵感中心</h1>
-                <p className="mt-0.5 text-xs text-text-muted">找灵感、管素材、补缺口，在一处完成创作前准备。</p>
-              </div>
-              {innerView === 'inspiration' && (
-                <button
-                  type="button"
-                  onClick={() => { setSelectedVideo(null); setShowAccountsModal(true); }}
-                  aria-haspopup="dialog"
-                  className="inline-flex h-10 items-center gap-2 rounded-md bg-accent px-3.5 text-sm font-bold text-white transition-colors hover:bg-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30"
-                  title="添加并抓取对标账号内容"
-                >
-                  <Users size={15} />
-                  添加内容来源
-                </button>
-              )}
-            </div>
-            <nav className="-mb-px flex gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
+            <nav className="-mb-px flex min-w-0 max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
               {([
                 { id: 'inspiration' as const, label: '爆款灵感', count: tenantVideoTotalItems || visibleVideos.length, icon: <Flame size={16} /> },
                 { id: 'library' as const, label: '我的素材', count: localMaterials.length, icon: <Film size={16} /> },
@@ -3959,7 +3944,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <div className="flex flex-col justify-between gap-4 border-y border-border bg-surface py-4 sm:py-5 lg:flex-row lg:items-center">
                 <div>
                   <h3 className="text-base font-bold text-text-primary">社媒素材库</h3>
-                  <p className="mt-1 text-sm text-text-muted">本地拍摄、Seedance 2.0 生成、Gemini 生成、官方爆款导入的素材统一保存在这里。</p>
+                  <p className="mt-1 text-sm text-text-muted">这里汇总当前账号的素材和可使用的共享素材，分析完成后可用于分镜与成片。</p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <button
@@ -4055,6 +4040,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <MaterialLibraryStatus onRetry={refreshMaterials} />
                 {materialsLoading ? (
                   <div className="col-span-full flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
@@ -4118,6 +4104,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </div>
                     <div className="p-3">
                       <p className="truncate text-sm font-bold text-text-primary">{material.name}</p>
+                      <MaterialAnalysisStatus material={material} onRefresh={refreshMaterials} />
                   {material.canManage && (
                     <div className="mt-2 flex gap-2 border-t border-border pt-2">
                       <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-accent"><Pencil size={12} />编辑</button>
@@ -4303,6 +4290,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
               <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
               <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              {manageTarget.kind === 'material' && <label className="mt-3 block text-xs font-bold text-text-secondary">关联产品
+                <select aria-label="素材关联产品" value={manageProductId} onChange={event => setManageProductId(event.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
+                  <option value="">通用素材 / 未关联产品</option>
+                  {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select><span className="mt-1 block font-normal text-text-muted">仅将真实属于该产品的素材关联到产品；授权图库画面可作为行业示意。</span>
+              </label>}
               <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
             </> : <p className="mt-4 border-l-2 border-red bg-red/5 p-3 text-sm text-red">确认删除“{manageName}”？删除后无法恢复。</p>}
             <div className="mt-5 flex items-center justify-end gap-2">

@@ -36,6 +36,8 @@ const config = normalizeDigitalEmployeeConfig({
 
 assert.deepEqual(validateDigitalEmployeeConfig(config), []);
 assert.equal(config.allowGeneratedVisuals, false, 'generated visuals require explicit consent');
+assert.deepEqual(config.videoLanguages, ['en'], 'legacy configuration keeps one autonomous output language');
+assert.deepEqual(normalizeDigitalEmployeeConfig({ ...config, videoLanguages: ['zh', 'en', 'zh', 'invalid'] }).videoLanguages, ['zh', 'en']);
 assert.deepEqual(config.team, ['business', 'industry', 'content', 'customer'], 'only the four business-facing Agents may be exposed');
 assert.deepEqual(validateDigitalEmployeeConfig({ ...config, companyName: '', approvalOwner: '' }), ['企业名称', '审批负责人']);
 

@@ -1,3 +1,7 @@
+import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
+import { productIdentity } from '../digitalEmployees/contentProduction.js';
+import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive } from '../lib/materialLibraryAnalysis.js';
+import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
@@ -9,7 +13,7 @@ import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFile, spawn } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
@@ -2376,6 +2380,9 @@ ${product || '未选择产品。只能围绕素材做保守剪辑建议，不得
 补充卖点：${sellingPoints || '仅使用产品信息中已提供的卖点'}
 风格：${tone || '真实、可拍、素材优先、询盘导向'}
 
+台词与字幕必须使用 ${lang}，不得因为产品资料是中文而输出中文台词。画面说明和字段名使用简体中文。
+这次选择的是已有素材，只陈述可见外观；禁止从排列、反光、走线或焊点推断生产工艺、治具校准、良率、品质或测试结果。
+每个素材区间可以有独立分镜，同名素材的不同时间区间必须分别保留。不得把多个分镜合并为一镜。
 请直接输出按素材逐段绑定的时间戳脚本。`
       : generationMode === 'product'
       ? `${productScriptRules}
@@ -2694,6 +2701,9 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       // are reported by the final gate instead of replacing the entire concept.
       script = stripStoryboardReferenceLeaks(script, forbiddenTerms, forbiddenIndustryTerms);
     }
+    if (generationMode === 'material' && voiceoverMode === 'ai') {
+      script = await finalizeMaterialScript({script,facts:productInfo,language,infos:normalizedMaterialInfos.map(info=>({...info,name:info.name || ''}))});
+    }
     let materialQualityV2: ReturnType<typeof assessScriptQualityV2> | null = null;
     if (generationMode === 'material') {
       // First make the configured CTA deterministic, then neutralize any scene
@@ -2788,6 +2798,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const nonBlockingQualityIssues = Array.from(new Set(validationIssues.filter(isNonBlockingScriptQualityIssue)));
     const materialStrictHardIssues = strictCommercialIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
     const materialHardIssues = Array.from(new Set([
+      voiceoverMode !== 'none' && !spokenLanguageMatches(spokenText(script), language) ? '口播语言与所选目标语言不一致，请重新生成' : '',
       ...mixedIssues,
       ...(materialQualityV2?.hardIssues || []),
       missingProduct ? '缺少产品信息' : '',
@@ -3824,6 +3835,8 @@ interface Material {
   shotFunction?: string;
   applicability?: string;
   tags?: string;
+  productId?: string;
+  productName?: string;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
@@ -3876,16 +3889,8 @@ async function extractPoster(videoPath: string, outPath: string, atSec = 1): Pro
   return ok && fs.existsSync(outPath);
 }
 
-function loadMaterials(): Material[] {
-  try {
-    return JSON.parse(fs.readFileSync(MATERIALS_FILE, 'utf8')) as Material[];
-  } catch {
-    return [];
-  }
-}
-function persistMaterials(list: Material[]): void {
-  fs.writeFileSync(MATERIALS_FILE, JSON.stringify(list, null, 2), 'utf8');
-}
+function loadMaterials(): Material[] { return readLocalMaterials() as Material[]; }
+function persistMaterials(list: Material[]): void { saveLocalMaterials(list); }
 
 type DigitalHumanJobStatus = 'queued' | 'submitting' | 'processing' | 'quality_check' | 'review' | 'completed' | 'failed' | 'cancelled';
 type DigitalHumanMode = 'fast' | 'quality';
@@ -4406,16 +4411,24 @@ function analysisDetailToSegment(material: Material, detail: NonNullable<Awaited
   };
 }
 
+/** Shared conversion for automated production and the material library. */
+export function productionAnalysisSegments(id: string, duration: number, analysis: Awaited<ReturnType<typeof analyzeVideo>>): Array<Record<string, unknown>> {
+  let cursor = 0;
+  return (analysis.scriptDetails15s || []).map((detail, index) => {
+    const segment = analysisDetailToSegment({ id, duration } as Material, detail, index, cursor);
+    cursor = segment.end;
+    return { ...segment, observedFacts: detail.observedFacts || '' };
+  });
+}
+
 // GET /studio/materials?scope=shared|own&purpose=library|reference|all
 // 默认只返回可剪辑素材；reference 专供对标分析。reference_only 永不进入 shared 公共库。
 studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
-  let list = [
-    ...(await listCloudMaterials(tenantId)).filter(m => !isSyntheticMaterial(m as unknown as Record<string, unknown>)),
-    ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
-  ] as Material[];
+  const inventory = await readMaterialLibrary(tenantId);
+  let list = inventory.items as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
@@ -4424,9 +4437,12 @@ studioRouter.get('/materials', async (req, res) => {
   const response = await Promise.all(sorted.map(async m => ({
     ...(await materialResponse(m, tenantId)),
     usage: materialUsage(m),
+    ...(['pending','analyzing'].includes(m.segmentAnalysisStatus || '') && !isMaterialAnalysisActive(tenantId,m.id)
+      ? {segmentAnalysisStatus:'failed' as const, segmentAnalysisError:'分析任务已中断，请重试以继续处理原片'} : {}),
   })));
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  res.json(response);
+  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response });
+  else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }
 });
 
 studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
@@ -4626,6 +4642,7 @@ studioRouter.post('/materials/file', async (req, res) => {
   const list = loadMaterials();
   list.push(material);
   persistMaterials(list);
+  if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
   res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
 });
 
@@ -4727,7 +4744,14 @@ studioRouter.post('/materials', async (req, res) => {
   const list = loadMaterials();
   list.push(material);
   persistMaterials(list);
+  if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
   res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
+});
+
+studioRouter.post('/materials/:id/analysis', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try { res.status(202).json({ ok: true, ...(await requestMaterialAnalysis(tenantId, req.params.id, req.body?.retry === true)) }); }
+  catch (error) { res.status(409).json({ ok: false, error: error instanceof Error ? error.message : '素材分析无法启动' }); }
 });
 
 // POST /studio/materials/:id/analyze-segments
@@ -4739,7 +4763,7 @@ studioRouter.post('/materials', async (req, res) => {
  * 素材分镜却还在打 Gemini，额度耗尽后固定返回 429。改为与视频分析同一套选择逻辑：
  * 默认千问关键帧分析；千问失败时明确报错，不自动切换 Gemini。
  */
-async function analyzeMaterialVideo(videoPath: string, buffer: Buffer, duration: number) {
+export async function analyzeMaterialVideo(videoPath: string, buffer: Buffer, duration: number) {
   if ((process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').trim().toLowerCase() === 'qwen') {
     const frames = await extractQwenAnalysisFrames(videoPath, 30, duration);
     if (frames.length) {
@@ -4820,79 +4844,12 @@ async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Pro
 
 studioRouter.post('/materials/:id/analyze-segments', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  if (req.params.id.startsWith('pb-')) {
-    const result = await analyzeCloudMaterialSegments(req.params.id.slice(3), tenantId);
-    res.status(result.status).json(result.body);
-    return;
-  }
-  const list = loadMaterials();
-  const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId);
-  if (!material) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
-  if (material.type !== 'video') { res.status(400).json({ ok: false, error: '仅视频素材支持片段分析' }); return; }
-  const tempDir = path.join(MEDIA_DIR, '../analysis-temp');
-  fs.mkdirSync(tempDir, { recursive: true });
-  const mediaPath = material.objectKey ? path.join(tempDir, `tenant-material-${material.id}${path.extname(material.file) || '.mp4'}`) : path.join(MEDIA_DIR, material.file);
-  let mediaBuffer: Buffer;
-  if (material.objectKey) {
-    const downloaded = await r2Download(material.objectKey);
-    if (!downloaded?.buf.length) { res.status(404).json({ ok: false, error: 'COS 素材文件不存在' }); return; }
-    mediaBuffer = downloaded.buf;
-    fs.writeFileSync(mediaPath, mediaBuffer);
-  } else {
-    if (!fs.existsSync(mediaPath)) { res.status(404).json({ ok: false, error: '素材文件不存在' }); return; }
-    mediaBuffer = fs.readFileSync(mediaPath);
-  }
-
-  material.segmentAnalysisStatus = 'analyzing';
-  material.segmentAnalysisError = undefined;
-  persistMaterials(list);
   try {
-    const extension = path.extname(material.file).slice(1).toLowerCase();
-    const mimeType = extension === 'mov' ? 'video/quicktime' : extension === 'webm' ? 'video/webm' : 'video/mp4';
-    const analysis = await analyzeMaterialVideo(mediaPath, mediaBuffer, material.duration);
-    const details = analysis.scriptDetails15s || [];
-    if (!details.length) throw new Error('模型未返回可用的片段时间轴');
-    const segments: MaterialSegment[] = [];
-    let fallbackStart = 0;
-    for (let index = 0; index < details.length; index++) {
-      const segment = analysisDetailToSegment(material, details[index]!, index, fallbackStart);
-      const posterName = `${material.id}.segment-${index + 1}.jpg`;
-      const posterFile = tenantAssetRelativePath(tenantId, posterName);
-      const posterPath = material.objectKey ? path.join(tempDir, posterName) : path.join(MEDIA_DIR, posterFile);
-      if (await extractPoster(mediaPath, posterPath, Math.min(segment.end, segment.start + 0.2))) {
-        if (material.objectKey) {
-          segment.posterObjectKey = materialAssetObjectKey(tenantId, posterName);
-          await r2Upload({ key: segment.posterObjectKey, body: fs.readFileSync(posterPath), contentType: 'image/jpeg' });
-          fs.rmSync(posterPath, { force: true });
-        } else segment.poster = `/media/${posterFile}`;
-      }
-      segments.push(segment);
-      fallbackStart = segment.end;
-    }
-    material.segments = segments;
-    const classificationText = `${material.name} ${JSON.stringify(analysis)} ${segments.map(segment => `${segment.subject.join(' ')} ${segment.action} ${segment.shot}`).join(' ')}`.toLowerCase();
-    material.industry = /护肤|面膜|精华|面霜|防晒|洗发|沐浴|美容|skin|serum|cream|shampoo|beauty/.test(classificationText)
-      ? 'beauty_skincare'
-      : /服装|面料|纺织|衣服|apparel|textile|fabric/.test(classificationText)
-        ? 'apparel_textile'
-        : /金属|五金|机加工|焊接|metal|welding|machining/.test(classificationText)
-          ? 'metalworking'
-          : 'universal_manufacturing';
-    material.applicability = material.industry === 'universal_manufacturing' ? 'cross_industry' : 'industry_specific';
-    material.shotFunction = [...new Set(segments.flatMap(segment => segment.recommendedFunctions || []))].slice(0, 5).join(',');
-    material.tags = [...new Set(segments.flatMap(segment => [...segment.subject, segment.action, segment.shot]).map(value => String(value || '').trim()).filter(Boolean))].slice(0, 10).join(',');
-    material.segmentAnalysisStatus = 'completed';
-    material.segmentAnalysisError = undefined;
-    persistMaterials(list);
-    const responseMaterial = await materialResponse(material, tenantId);
+    const material = await waitForMaterialAnalysis(tenantId, req.params.id);
+    const responseMaterial = await materialResponse(material as Material, tenantId);
     res.json({ ok: true, material: responseMaterial, segments: responseMaterial.segments });
-  } catch (error: any) {
-    material.segmentAnalysisStatus = 'failed';
-    material.segmentAnalysisError = String(error?.message || error || '片段分析失败').slice(0, 500);
-    persistMaterials(list);
-    res.status(500).json({ ok: false, error: material.segmentAnalysisError });
-  } finally {
-    if (material.objectKey) fs.rmSync(mediaPath, { force: true });
+  } catch (error) {
+    res.status(409).json({ ok: false, error: error instanceof Error ? error.message : '素材分析失败' });
   }
 });
 
@@ -4905,9 +4862,6 @@ studioRouter.post('/materials/:id/classify', async (req, res) => {
   const tempDir = path.join(MEDIA_DIR, '../analysis-temp');
   fs.mkdirSync(tempDir, { recursive: true });
   const mediaPath = material.objectKey ? path.join(tempDir, `classify-${material.id}${path.extname(material.file) || '.mp4'}`) : path.join(MEDIA_DIR, material.file);
-  material.segmentAnalysisStatus = 'analyzing';
-  material.segmentAnalysisError = undefined;
-  persistMaterials(list);
   try {
     if (material.objectKey) {
       const downloaded = await r2Download(material.objectKey);
@@ -4920,35 +4874,38 @@ studioRouter.post('/materials/:id/classify', async (req, res) => {
     material.applicability = classified.applicability;
     material.shotFunction = classified.shotFunctions.join(',');
     material.tags = classified.tags.join(',');
-    material.segmentAnalysisStatus = 'completed';
-    material.segmentAnalysisError = undefined;
-    persistMaterials(list);
+    updateLocalMaterial(material.id, tenantId, { industry: material.industry, applicability: material.applicability, shotFunction: material.shotFunction, tags: material.tags });
     res.json({ ok: true, material: await materialResponse(material, tenantId) });
   } catch (error) {
-    material.segmentAnalysisStatus = 'failed';
-    material.segmentAnalysisError = String(error instanceof Error ? error.message : error).slice(0, 500);
-    persistMaterials(list);
-    res.status(500).json({ ok: false, error: material.segmentAnalysisError });
+    res.status(500).json({ ok: false, error: String(error instanceof Error ? error.message : error).slice(0, 500) });
   } finally {
     if (material.objectKey) fs.rmSync(mediaPath, { force: true });
   }
 });
 
 // PATCH /studio/materials/:id/segments/:segmentId — 人工修正并确认 AI 片段标签。
-studioRouter.patch('/materials/:id/segments/:segmentId', (req, res) => {
+studioRouter.patch('/materials/:id/segments/:segmentId', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const list = loadMaterials();
-  const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId);
-  const segment = material?.segments?.find(item => item.id === req.params.segmentId);
-  if (!material || !segment) { res.status(404).json({ ok: false, error: 'Material segment not found' }); return; }
-  const editable = ['start', 'end', 'subject', 'action', 'productVisible', 'productClarity', 'shot', 'angle', 'composition', 'camera', 'environment', 'quality', 'ocrText', 'hasPerson', 'hasLogo', 'logoText', 'recommendedFunctions', 'authenticity', 'needsReview', 'manualConfirmed'] as const;
-  for (const key of editable) if (key in (req.body || {})) (segment as any)[key] = req.body[key];
-  segment.start = Math.max(0, Number(segment.start) || 0);
-  segment.end = Math.max(segment.start + 0.3, Number(segment.end) || segment.start + 0.3);
-  segment.duration = +(segment.end - segment.start).toFixed(2);
-  if (segment.manualConfirmed) segment.needsReview = false;
-  persistMaterials(list);
-  res.json({ ok: true, material, segment });
+  try {
+    const inventory = await readMaterialLibrary(tenantId);
+    const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared');
+    const segments = structuredClone(material?.segments || []) as MaterialSegment[];
+    const segment = segments.find(item => item.id === req.params.segmentId);
+    if (!material || !segment) { res.status(404).json({ok:false,error:'素材片段不存在或不可编辑'}); return; }
+    const editable = ['start','end','subject','action','shot','camera','environment','needsReview','manualConfirmed'] as const;
+    for (const key of editable) if (key in (req.body || {})) (segment as any)[key] = req.body[key];
+    const start = Number(segment.start), end = Number(segment.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > Number(material.duration)) {
+      res.status(400).json({ok:false,error:'片段时间必须位于原视频范围内'}); return;
+    }
+    segment.start=start; segment.end=end; segment.duration=end-start;
+    if (segment.manualConfirmed === true) { segment.needsReview=false; segment.confidence=Math.max(.65,Math.min(1,Number(segment.confidence)||0)); }
+    const saved = material.id.startsWith('pb-')
+      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3),tenantId)) && await updateCloudMaterial(material.id.slice(3),{segments})
+      : updateLocalMaterial(material.id,tenantId,{segments});
+    if (!saved) throw Error('片段修改保存失败');
+    res.json({ok:true,material:await materialResponse({...material,segments} as Material,tenantId),segment});
+  } catch(error) {res.status(503).json({ok:false,error:error instanceof Error ? error.message : '片段修改失败'});}
 });
 
 studioRouter.patch('/materials/:id/pin', async (req, res) => {
@@ -4972,20 +4929,37 @@ studioRouter.patch('/materials/:id/pin', async (req, res) => {
 });
 
 
-// PATCH /studio/materials/:id - tenant-owned local material metadata only
+studioRouter.get('/material-products', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    res.json({items: (profile.products.items || []).map((item,index) => ({id:productIdentity(item,index),name:item.name})).filter(item => item.name)});
+  } catch { res.status(503).json({error:'产品资料暂不可读取，请稍后重试'}); }
+});
+
 studioRouter.patch('/materials/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const list = loadMaterials();
-  const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId);
-  if (!material) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
-  if (material.scope === 'shared') { res.status(403).json({ ok: false, error: 'Shared materials are read-only' }); return; }
-
-  const name = String(req.body?.name ?? '').trim().slice(0, 120);
-  if (!name) { res.status(400).json({ ok: false, error: 'Material name is required' }); return; }
-  material.name = name;
-  if ('tags' in (req.body || {})) material.tags = String(req.body?.tags ?? '').trim().slice(0, 500);
-  persistMaterials(list);
-  res.json({ ok: true, material: await materialResponse(material, tenantId) });
+  try {
+    const inventory = await readMaterialLibrary(tenantId);
+    const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared');
+    if (!material) { res.status(404).json({ok:false,error:'素材不存在或不可编辑'}); return; }
+    const name = String(req.body?.name ?? '').trim().slice(0,120);
+    if (!name) { res.status(400).json({ok:false,error:'请填写素材名称'}); return; }
+    const changes: Record<string,unknown> = {name};
+    if ('tags' in (req.body || {})) changes.tags = String(req.body.tags || '').trim().slice(0,500);
+    if ('productId' in (req.body || {})) {
+      const id = String(req.body.productId || '');
+      const profile = await readTenantEnterpriseProfile(tenantId);
+      const product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === id);
+      if (id && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
+      changes.productId = id; changes.productName = product?.name || '';
+    }
+    const saved = material.id.startsWith('pb-')
+      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,title:name})
+      : updateLocalMaterial(material.id,tenantId,changes);
+    if (!saved) throw Error('素材修改保存失败');
+    res.json({ok:true,material:await materialResponse({...material,...changes} as Material,tenantId)});
+  } catch (error) { res.status(503).json({ok:false,error:error instanceof Error ? error.message : '素材修改失败'}); }
 });
 
 // DELETE /studio/materials/:id
@@ -5981,7 +5955,31 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   };
 }
 
-async function generateTtsAudio(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}): Promise<{ ok: boolean; source: string; url?: string; duration?: number; error?: string; customVoiceStatus?: 'activated'; cues?: AlignedCue[]; alignmentSource?: 'minimax_native' }> {
+type CachedTtsResult = Awaited<ReturnType<typeof generateTtsAudioUncached>>;
+const inFlightTts = new Map<string,Promise<CachedTtsResult>>();
+async function generateTtsAudio(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}): Promise<CachedTtsResult> {
+  const tenantId = studioTenantContext.getStore();
+  // Custom voice lifecycle is managed by the clone registry, not a text cache.
+  if (!tenantId || voice.startsWith('custom:')) return generateTtsAudioUncached(spoken,voice,language,style);
+  const key = createHash('sha256').update(JSON.stringify([tenantId,spoken,voice,language,normalizeTtsStyle(style),process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd',process.env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`],minimaxVoiceFor(voice,language)])).digest('hex');
+  const dir = tenantAssetDir(TTS_ROOT,tenantId);
+  const cacheFile = path.join(dir,`sentence-${key}.json`);
+  try {
+    const cached = JSON.parse(fs.readFileSync(cacheFile,'utf8')) as CachedTtsResult;
+    const file = cached.url ? path.join(dir,path.basename(new URL(cached.url,'http://local').pathname)) : '';
+    if (cached.ok && ['qwen_tts','minimax'].includes(cached.source) && file && fs.existsSync(file) && fs.statSync(file).size > 44) return cached;
+  } catch { /* missing/invalid cache is regenerated */ }
+  const existing = inFlightTts.get(key); if(existing) return existing;
+  const pending = generateTtsAudioUncached(spoken,voice,language,style).then(result=>{
+    if(result.ok && ['qwen_tts','minimax'].includes(result.source)) {
+      fs.mkdirSync(dir,{recursive:true});const tmp=cacheFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify(result),{mode:0o600});fs.renameSync(tmp,cacheFile);
+    }
+    return result;
+  }).finally(()=>inFlightTts.delete(key));
+  inFlightTts.set(key,pending);return pending;
+}
+
+async function generateTtsAudioUncached(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}): Promise<{ ok: boolean; source: string; url?: string; duration?: number; error?: string; customVoiceStatus?: 'activated'; cues?: AlignedCue[]; alignmentSource?: 'minimax_native' }> {
   if (spoken.length > 5000) return { ok: false, source: 'text_too_long', error: '口播超过 5000 字符，请拆分视频；配音不会截断正文。' };
   if (!(normalizeTtsLanguage(language) in VIDEO_LANGUAGES)) return { ok: false, source: 'unsupported_language', error: '当前不支持此配音语言，请重新选择；不会改用中文。' };
   if (String(voice || '').startsWith('custom:')) {

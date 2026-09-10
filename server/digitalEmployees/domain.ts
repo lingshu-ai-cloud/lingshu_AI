@@ -1,5 +1,6 @@
 import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../src/lib/continuationPolicy.js';
 import { normalizeAssessment, type OperatingAssessment } from '../../src/lib/operatingMaturity.js';
+import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../src/lib/videoLanguages.js';
 import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../src/lib/videoCreationPlan.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 
@@ -29,6 +30,8 @@ export interface DigitalEmployeeConfig {
   operatingAssessment?: OperatingAssessment;
   defaultParticipation?: "agent" | "team";
   videoDefaults?: Partial<VideoCreationPlan>;
+  /** Languages generated autonomously for every content order. */
+  videoLanguages: string[];
   companyName: string;
   industry: string;
   primaryBusiness: string;
@@ -153,12 +156,18 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
   const contentPublishApproval = true;
   const batchFollowupApproval = true;
   const commercialCommitmentApproval = true;
+  const defaultVideoLanguage = normalizeVideoLanguage(input.videoDefaults?.language || 'en');
+  const requestedVideoLanguages = Array.isArray(input.videoLanguages) ? input.videoLanguages : [defaultVideoLanguage];
+  const videoLanguages = [...new Set(requestedVideoLanguages.map(normalizeVideoLanguage))]
+    .filter(code => code in VIDEO_LANGUAGES)
+    .slice(0, 5);
   return {
     continuationPolicy: normalizeContinuationPolicy(input.continuationPolicy),
     operatingMaturity: ["starting", "growing", "established"].includes(String(input.operatingMaturity)) ? input.operatingMaturity : "growing",
     operatingAssessment: normalizeAssessment(input.operatingAssessment),
     defaultParticipation: input.defaultParticipation === "team" ? "team" : "agent",
     videoDefaults: normalizeVideoPlan(input.videoDefaults || {}),
+    videoLanguages: videoLanguages.length ? videoLanguages : [defaultVideoLanguage in VIDEO_LANGUAGES ? defaultVideoLanguage : 'en'],
     companyName: text(input.companyName, 120),
     industry: text(input.industry, 120),
     primaryBusiness: text(input.primaryBusiness, 500),

@@ -11,6 +11,8 @@ export interface ContentRoutingEvidence {
 
 export interface ContentOrder {
   videoPlan?: VideoCreationPlan;
+  /** Frozen autonomous deliverable languages for this approved order. */
+  languages?: string[];
   id: string;
   goalId: string;
   productId: string;
@@ -31,6 +33,7 @@ export interface ContentBatchPlanDraft {
   status: 'planned' | 'blocked';
   orders: ContentOrder[];
   blocker: string;
+  coverage?: ReturnType<typeof contentPlanCoverage>;
   eligibleRoutes: ContentRoute[];
   disabledRoutes: Array<{ route: ContentRoute; reason: string }>;
 }
@@ -48,6 +51,13 @@ export function enterpriseAssetStableId(productIndex: number, assetIndex: number
 function requestedCount(cadence: string): number {
   const match = String(cadence || '').match(/(?:每周|week)[^\d]{0,8}(\d{1,2})\s*(?:条|posts?)/i);
   return Math.max(1, Math.min(30, Number(match?.[1] || 3)));
+}
+
+export function contentPlanCoverage(config: DigitalEmployeeConfig, goal: WeeklyGoalInput, planned: number) {
+  const cadence = String(config.socialCadence || '').match(/(?:每周|week)[^\d]{0,8}(\d{1,2})\s*(?:条|posts?)/i);
+  const target = cadence ? Number(cadence[1]) : goal.metric === 'approved_content_packages' ? goal.target : planned;
+  const missing = Math.max(0, target - planned);
+  return { target, planned, missing, message: missing ? `本周独立内容计划覆盖 ${planned}/${target}，还缺 ${missing} 条；请补齐差异化制作计划或调整目标，平台分发次数不计为独立成片。` : `本周独立内容计划覆盖 ${planned}/${target}` };
 }
 
 function ctaFor(goal: DigitalEmployeeConfig['primaryGoal']): string {
@@ -87,6 +97,7 @@ export function buildContentBatchPlan(input: {
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform);
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
+        languages: input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
         route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: ctaFor(input.config.primaryGoal),
         constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
@@ -95,7 +106,7 @@ export function buildContentBatchPlan(input: {
     // A mixed batch keeps each requested route. Missing clone evidence blocks
     // that project in production; it must never substitute a product route.
     if (!orders.some(order => order.route !== 'clone')) errors.push(...referenceErrors);
-    return { status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes: [...disabledRoutes, ...referenceErrors.map(reason => ({ route: 'clone' as const, reason }))] };
+    return { coverage: contentPlanCoverage(input.config, input.goal, errors.length ? 0 : orders.length), status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes: [...disabledRoutes, ...referenceErrors.map(reason => ({ route: 'clone' as const, reason }))] };
   }
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
   if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };
@@ -134,6 +145,7 @@ export function buildContentBatchPlan(input: {
       : [productMaterial];
     return {
       id: `content_order_${index + 1}`,
+      languages: input.config.videoLanguages,
       goalId: input.goalId,
       productId: product.id,
       productName: product.name,

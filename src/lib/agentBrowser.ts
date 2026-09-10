@@ -36,3 +36,13 @@ export async function streamAgentBrowser(runId: string, taskId: string, signal: 
     }
   } finally { signal.removeEventListener('abort', cancel); reader.releaseLock(); }
 }
+
+export async function refreshAgentBrowser(runId: string, taskId: string): Promise<{ refreshedAt: string; sequence: number }> {
+  const response = await fetch(`/api/overseas/digital-employees/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/browser-refresh`, {
+    method: 'POST',
+    headers: authHeader(),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || '任务工作页面刷新失败');
+  return body;
+}

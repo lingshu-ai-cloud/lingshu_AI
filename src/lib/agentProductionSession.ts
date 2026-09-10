@@ -5,6 +5,7 @@ export interface AgentProductionTarget {
   link: DigitalEmployeeDeepLink;
   stage?: string;
   projectId?: string;
+  inputBlocker?: string;
   customerId?: string;
 }
 interface Action { id: string; label: string; surface: 'studio' | 'customer' | 'scheduler' }

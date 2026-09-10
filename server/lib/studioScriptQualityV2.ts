@@ -24,6 +24,9 @@ export type StudioScriptQualityV2Result = {
 };
 
 const PRODUCT_FACT_CLAIM_GROUPS: string[][] = [
+  ['治具校准', 'fixture calibration'],
+  ['良率', 'yield rate', 'defect rate'],
+  ['无补焊', '无飞线', 'rework-free'],
   ['高纯度', '高纯', '纯度', 'high purity', 'purity'],
   ['符合美国市场基础合规要求', '符合美国市场合规要求', '美国市场合规', 'us market compliance', 'us compliant'],
   ['合规要求', '合规标准', '基础合规', 'regulatory requirements', 'compliance requirements'],
@@ -150,7 +153,7 @@ export function materialCoverageForScript(
   materialInfos: StudioScriptMaterialInfo[],
 ): MaterialCoverage {
   const storyboardScenes = storyboardSceneRanges(script).length;
-  const selectedMaterials = materialInfos.length;
+  const selectedMaterials = new Set(materialInfos.map((info,index)=>info.name || `unnamed-${index}`)).size;
   const availableSceneSlots = materialInfos.reduce((total, info) => (
     total + Math.max(1, info.observations?.filter(Boolean).length || 0)
   ), 0);

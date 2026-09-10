@@ -88,6 +88,11 @@ try {
   assert.equal(clicks.length, 0);
   assert.ok(frames.length);
   assert.equal(Buffer.from(frames[0].image, 'base64').subarray(0, 2).toString('hex'), 'ffd8');
+  const framesBeforeRefresh = frames.length;
+  const refreshedFrame = await manager.forceRefresh(scope, read);
+  assert.ok(refreshedFrame.sequence > 0);
+  assert.ok(frames.length > framesBeforeRefresh, 'manual refresh broadcasts a newly captured frame');
+  assert.equal(Buffer.from(refreshedFrame.image, 'base64').subarray(0, 2).toString('hex'), 'ffd8');
   assert.equal(await manager.perform(scope, read, '验证原页面点击', async () => { executions++; return 'clicked'; }), 'clicked');
   assert.equal(executions, 1);
   assert.equal(clicks.length, 1);
@@ -120,7 +125,7 @@ try {
   await manager.perform(schedulerScope, schedulerRead, '执行采集回归', async () => { executions++; });
   assert.equal(executions, 4);
   stopScheduler();
-  // A regular user opens an attributed work page, sees the real worker stream,
+  // A regular user opens an attributed completed task, sees its saved result,
   // and retains that attribution after refresh. Watching starts no business work.
   const browser = await (manager as unknown as { browser: Promise<Browser> }).browser;
   const viewer = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -134,7 +139,8 @@ try {
     await page.evaluate(({ runId, taskId, projectId }) => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', workflowRunId: runId, workflowTaskId: taskId, businessRef: { taskKey: 'content_production', entityId: projectId } } })), { runId: scope.runId, taskId: scope.taskId, projectId });
     const scene = page.getByTestId('production-task-scene');
     await scene.getByText('已生成脚本并保存到项目').waitFor();
-    await scene.getByRole('img', { name: 'Agent 实际操作的任务浏览器直播画面' }).waitFor();
+    await scene.getByRole('region', { name: '任务执行结果' }).waitFor();
+    assert.equal(await scene.getByRole('img', { name: 'Agent 实际操作的任务浏览器直播画面' }).count(), 0);
     assert.equal(executions, 4, 'opening a scene must not execute a task');
     const beforeLiveClick = clicks.length;
     await manager.perform(scope, read, '现场观看真实操作', async () => { executions++; });
@@ -162,7 +168,7 @@ try {
   await navigationPage.getByRole('dialog').getByRole('button', { name: '工作页' }).click();
   await navigationPage.getByRole('heading', { name: 'Agent 实时生产监控大屏' }).waitFor({ state: 'hidden' });
   await navigationPage.getByRole('button', { name: '返回上一页（保留查看位置）' }).click();
-  await navigationPage.getByRole('dialog', { name: '客户任务 8放大监控' }).waitFor();
+  await navigationPage.getByRole('dialog', { name: '客户任务 8' }).waitFor();
   assert.equal(await navigationPage.getByRole('button', { name: '客服 Agent', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.ok(Math.abs(await navigationPage.locator('main').last().evaluate(element => element.scrollTop) - scrollBefore) <= 4, 'return must preserve the scroll position within browser layout rounding');
   await navigationPage.getByRole('button', { name: '关闭放大监控' }).click();

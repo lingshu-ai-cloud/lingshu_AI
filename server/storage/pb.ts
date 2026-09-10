@@ -17,7 +17,7 @@ function adminCreds(): { email: string; password: string } | null {
   return { email, password };
 }
 
-export async function getPbAdminToken(): Promise<string | null> {
+export async function getPbAdminToken(signal?: AbortSignal | null): Promise<string | null> {
   const creds = adminCreds();
   if (!creds) return null;
 
@@ -38,7 +38,7 @@ export async function getPbAdminToken(): Promise<string | null> {
       const res = await fetch(`${pbUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body,
+        body, signal,
       });
       if (!res.ok) continue;
       const json = (await res.json()) as { token?: string };
@@ -64,7 +64,7 @@ export async function adminFetch(
   options: RequestInit = {},
 ): Promise<Response> {
   const perform = async (): Promise<Response> => {
-    const token = await getPbAdminToken();
+    const token = await getPbAdminToken(options.signal);
     const headers: Record<string, string> = {
       ...(options.headers as Record<string, string> ?? {}),
       ...(token ? { Authorization: token } : {}),

@@ -138,7 +138,7 @@ export class AgentBrowserSessions {
       await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 75, maxWidth: 1100, maxHeight: 700, everyNthFrame: 1 });
       // Initial still is also a real screenshot, never an artifact substituted for a browser frame.
       if (!session.frame) session.frame = { type: 'frame', image: (await page.screenshot({ type: 'jpeg', quality: 75 })).toString('base64'), sequence: ++session.frameSequence, capturedAt: new Date().toISOString(), width: 1100, height: 700, executing: false };
-      await this.telemetry?.(scope, { kind: 'navigation', label: `打开业务页面：${target.link.page === 'conversion' ? '客服会话' : target.link.page === 'scheduled' ? '定时任务' : 'AI 智能创作'}`, viewportWidth: 1100, viewportHeight: 700 });
+      await this.telemetry?.(scope, { kind: 'navigation', label: `打开业务页面：${target.link.page === 'conversion' ? '客服会话' : target.link.page === 'scheduled' ? '定时任务' : target.link.page === 'socialInspiration' ? '灵感中心' : target.link.view === 'publish' ? '内容发布' : 'AI 智能创作'}`, viewportWidth: 1100, viewportHeight: 700 });
       return session;
     } catch (error) { await context.close(); throw error; }
   }
@@ -179,6 +179,29 @@ export class AgentBrowserSessions {
     session.watchTimer ??= setInterval(() => { session.touchedAt = Date.now(); if (!session.executing) void this.refresh(session).catch(() => this.broadcast(session, { type: 'status', state: 'error', message: '任务工作页面暂时无法更新' })); }, 5_000);
     return () => { session.listeners.delete(listener); if (!session.listeners.size) { clearInterval(session.watchTimer); session.watchTimer = undefined; } session.touchedAt = Date.now(); };
   }
+  async forceRefresh(scope: BrowserScope, read: Session['read']): Promise<BrowserFrame> {
+    const session = await this.ensure(scope, read);
+    const target = await read();
+    await this.refresh(session, target);
+    await session.page.evaluate(target => {
+      (window as any).__agentProductionTarget = target;
+      window.dispatchEvent(new CustomEvent('lingshu:agent-business-refresh'));
+    }, target);
+    const frame: BrowserFrame = {
+      type: 'frame',
+      image: (await session.page.screenshot({ type: 'jpeg', quality: 75 })).toString('base64'),
+      sequence: ++session.frameSequence,
+      capturedAt: new Date().toISOString(),
+      width: 1100,
+      height: 700,
+      executing: session.executing,
+    };
+    session.frame = frame;
+    session.lastFrameAt = Date.now();
+    session.touchedAt = Date.now();
+    this.broadcast(session, frame);
+    return frame;
+  }
   async perform<T>(scope: BrowserScope, read: Session['read'], label: string, execute: () => Promise<T>): Promise<T> {
     const session = await this.ensure(scope, read);
     if (session.pending || session.executing) throw new Error('该任务浏览器已有步骤执行中');
@@ -192,6 +215,7 @@ export class AgentBrowserSessions {
     try {
       await this.refresh(session);
       const target = await session.read();
+      if (target.inputBlocker) throw new Error(`production_input_required: ${target.inputBlocker}`);
       const surface = target.link.page === 'conversion' ? 'customer' : target.link.page === 'scheduled' ? 'scheduler' : 'studio';
       await session.page.evaluate(action => {
         (window as any).__agentProductionAction = action;
@@ -199,6 +223,8 @@ export class AgentBrowserSessions {
       }, { id: pending.id, label, surface });
       const button = session.page.locator(`[data-agent-action="${surface}-primary"]`).filter({ visible: true }).first();
       await button.waitFor({ state: 'visible', timeout: 30_000 });
+      const inputReason = await button.getAttribute('data-agent-block-reason');
+      if (inputReason && !await button.isEnabled()) throw new Error(`production_input_required: ${inputReason}`);
       await session.page.waitForFunction(selector => { const button = document.querySelector(selector) as HTMLButtonElement | null; return button && !button.disabled; }, `[data-agent-action="${surface}-primary"]`, { timeout: 30_000 });
       await button.scrollIntoViewIfNeeded();
       const box = await button.boundingBox();

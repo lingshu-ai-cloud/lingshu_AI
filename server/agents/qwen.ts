@@ -393,3 +393,36 @@ Schema:
     uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties.map(String).slice(0, 12) : [],
   };
 }
+
+/** Small, grounded contract for reusable footage, independent of viral-reference scoring. */
+export async function analyzeMaterialFramesWithQwen(opts: {
+  frames: Array<{ base64: string; mimeType: string; timeLabel: string }>; duration: number;
+}): Promise<unknown> {
+  if (!opts.frames.length) throw Error('素材抽帧为空');
+  const completion = await client().chat.completions.create({
+    model: (process.env.QWEN_MATERIAL_VL_MODEL || QWEN_EXACT_VL_MODEL()).trim(),
+    messages: [
+      { role: 'system', content: `你是素材库视觉索引员。仅记录采样帧中可见事实，供后续剪辑选择原片区间。不要写广告脚本，不推断产品性能、材质、品牌、型号、认证、音频或隐藏动作。文件名不作为证据。相邻采样点之间不确定的动作不要补写。输出简体中文 JSON：{"segments":[{"start":0,"end":10,"subject":["主体"],"observedFacts":["可见事实"],"action":"可观察到的变化或静止","shot":"景别","camera":"可观察到的运镜","environment":"可见背景","confidence":0.9,"needsReview":false}]}。时间单位秒，位于给定真实时长内、按时间递增、不可重叠。只在主体、状态、构图或运镜明显改变时切段；连续长镜头可以只有一段，绝不能为了数量拆假镜头。不能判断的区间可跳过。confidence 是视觉证据可信度；模糊、遮挡、主体无法识别的片段 needsReview=true。画面清晰且可观察事实可靠可设为false；没有音频不影响纯视觉事实可信度。` },
+      { role: 'user', content: [
+        { type:'text', text:`原视频时长 ${opts.duration} 秒。下列每张图片前标明它的原片时间。识别可安全剪辑的视觉区间。` },
+        ...opts.frames.flatMap(frame => [{type:'text',text:frame.timeLabel}, {type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}]),
+      ] as any },
+    ], response_format: {type:'json_object'}, max_tokens:2400,
+  }, {signal: AbortSignal.timeout(120000), maxRetries:0});
+  if (completion.choices[0]?.finish_reason === 'length') throw Error('素材分析输出被截断，请分段分析');
+  const raw = completion.choices[0]?.message?.content || '';
+  try { return JSON.parse(raw); } catch { throw Error('素材分析返回格式无效，请重试'); }
+}
+
+export async function verifyMaterialFramesWithQwen(opts: {
+  frames: Array<{base64:string;mimeType:string;timeLabel:string}>; duration:number; draft:unknown;
+}): Promise<unknown> {
+  const completion = await client().chat.completions.create({
+    model: (process.env.QWEN_MATERIAL_VL_MODEL || QWEN_EXACT_VL_MODEL()).trim(),
+    messages:[{role:'system',content:`你是严格的视觉事实复核员。对照原片采样帧审查素材索引。保持输入 segments 的时间区间和数量，不增加任何细节。逐条删除不能直接从画面证实的 observedFacts，修正错误的物体命名为保守外观描述（颜色、形状、位置、可见运动）。反光、虚焦、焊点不等于液体；不能凭外观推断性能、用途、物质成分或隐藏结构。不确定的运动方向应改成“缓慢移动”或留空。不要把景深变化写成物体变化。删除同样不受支持的subject/action/environment/camera内容。只有保留的事实都清楚可见才 needsReview=false，否则true并降低confidence。返回同一 JSON 结构 {segments:[{start,end,subject,observedFacts,action,shot,camera,environment,confidence,needsReview}]}。observedFacts至少包含一条确定可见的宽泛外观；若整段无法确认则needsReview=true。`},
+      {role:'user',content:[{type:'text',text:`真实时长${opts.duration}秒。待复核索引：${JSON.stringify(opts.draft)}`}, ...opts.frames.flatMap(frame=>[{type:'text',text:frame.timeLabel},{type:'image_url',image_url:{url:`data:${frame.mimeType};base64,${frame.base64}`}}])] as any}],
+    response_format:{type:'json_object'},max_tokens:2400,
+  },{signal:AbortSignal.timeout(120000),maxRetries:0});
+  if(completion.choices[0]?.finish_reason==='length') throw Error('素材事实复核被截断，请重试');
+  try { return JSON.parse(completion.choices[0]?.message?.content || ''); } catch {throw Error('素材事实复核格式无效');}
+}

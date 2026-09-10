@@ -343,44 +343,66 @@ export function CalendarPlanner({
     }
     const controller = new AbortController();
     calendarRequestRef.current = controller;
-    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    let timedOut = false;
+    const isCurrent = () => calendarRequestRef.current === controller;
+    const canCommit = () => isCurrent() && !controller.signal.aborted;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 15_000);
     if (!silent) {
       setLoading(true);
       setError('');
     }
-    try {
-      const weekdays = [0, 1, 2, 3, 4, 5, 6];
-      const [calendar, scoreRows] = await Promise.all([
-        api<{ items: CalendarPost[] }>(`/api/overseas/publishing/calendar?from=${encodeURIComponent(iso(range.from))}&to=${encodeURIComponent(iso(range.to))}`, { signal: controller.signal }),
-        Promise.all(weekdays.map(weekday =>
-          api<BestTimeResponse>(
-            `/api/overseas/publishing/best-time?platform=${encodeURIComponent(selectedPlatform)}&weekday=${weekday}&utcOffset=${encodeURIComponent(String(utcOffset))}`,
-            { signal: controller.signal },
-          ),
-        )),
-      ]);
-      setItems(calendar.items || []);
+    // Recommendations are optional: they must not prevent real posts from loading.
+    const calendarLoad = api<{ items: CalendarPost[] }>(`/api/overseas/publishing/calendar?from=${encodeURIComponent(iso(range.from))}&to=${encodeURIComponent(iso(range.to))}`, { signal: controller.signal })
+      .then(calendar => {
+        if (!canCommit()) return;
+        setItems(calendar.items || []);
+        setError('');
+      })
+      .catch(loadError => {
+        if (!isCurrent() || (controller.signal.aborted && !timedOut)) return;
+        setError(timedOut ? '日历读取超时，请稍后重试' : calendarErrorMessage(loadError));
+      });
+    const scoreLoad = Promise.all([0, 1, 2, 3, 4, 5, 6].map(weekday =>
+      api<BestTimeResponse>(
+        `/api/overseas/publishing/best-time?platform=${encodeURIComponent(selectedPlatform)}&weekday=${weekday}&utcOffset=${encodeURIComponent(String(utcOffset))}`,
+        { signal: controller.signal },
+      ),
+    )).then(scoreRows => {
+      if (!canCommit()) return;
       setScores(Object.fromEntries(scoreRows.map(row => [row.weekday, row.scores])));
       setScoreSource(scoreRows.some(row => row.source === 'account_history') ? '账号真实数据' : '平台参考');
-    } catch (loadError) {
-      if (!silent) setError(controller.signal.aborted ? '日历读取超时，请稍后重试' : calendarErrorMessage(loadError));
+    }).catch(() => {
+      if (!isCurrent() || (controller.signal.aborted && !timedOut)) return;
+      setScores({});
+      setScoreSource('平台参考');
+    });
+    try {
+      await Promise.all([calendarLoad, scoreLoad]);
     } finally {
       window.clearTimeout(timeout);
-      if (calendarRequestRef.current === controller) {
+      if (isCurrent()) {
         calendarRequestRef.current = null;
-        if (!silent) setLoading(false);
+        setLoading(false);
       }
     }
   };
 
   useEffect(() => {
     void load();
+    const refresh = () => { void load(); };
+    window.addEventListener('lingshu:agent-business-refresh', refresh);
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void load(true);
     }, 30_000);
     return () => {
       window.clearInterval(timer);
-      calendarRequestRef.current?.abort();
+      window.removeEventListener('lingshu:agent-business-refresh', refresh);
+      const controller = calendarRequestRef.current;
+      calendarRequestRef.current = null;
+      controller?.abort();
     };
   }, [range.from.toISOString(), range.to.toISOString(), mode, selectedPlatform, utcOffset, refreshKey]);
 

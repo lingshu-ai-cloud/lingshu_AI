@@ -12,46 +12,46 @@ function canAccessCloudMaterial(item: Record<string, unknown>, tenantId: string)
   return scope === 'shared' || Boolean(tenantId && materialTenantId(item) === tenantId);
 }
 
-export async function listCloudMaterials(tenantId: string): Promise<Array<Record<string, unknown>>> {
+export type MaterialSourceStatus = { source: 'server' | 'database'; state: 'ready' | 'unavailable' | 'unauthorized'; message: string };
+export async function readCloudMaterialLibrary(tenantId: string, request: typeof adminFetch = adminFetch): Promise<{ items: Array<Record<string, unknown>>; source: MaterialSourceStatus }> {
   try {
-    const response = await adminFetch('/api/collections/materials/records?perPage=500');
-    if (!response.ok) return [];
-    const data = await response.json() as { items?: CloudMaterialRecord[] };
-    return (data.items || []).filter(item => canAccessCloudMaterial(item, tenantId)).map(item => ({
-    id: `pb-${item.id}`,
-    name: String(item.title || item.sourceName || '云端素材'),
-    folder: String(item.folder || 'upload'),
-    type: 'video',
-    duration: Number(item.duration || 0),
-    size: humanSize(Number(item.sizeBytes || 0)),
-    file: String(item.videoFile || ''),
-    // 使用中性的同源媒体路径。部分隐私/广告拦截器会直接阻止
-    // `/cloud-files/.../signed/...`，表现为封面灰块且视频 0:00。
-    url: `/studio-media/${item.id}/media.mp4`,
-    poster: `/studio-media/${item.id}/poster.jpg`,
-    scope: String(item.scope || 'own'),
-    tenantId: materialTenantId(item),
-    usage: String(item.usage || 'editable'),
-    sourceType: String(item.sourceType || 'licensed_upload'),
-    sourceUrl: '',
-    industry: String(item.industry || ''),
-    shotFunction: String(item.shotFunction || ''),
-    applicability: String(item.applicability || ''),
-    tags: String(item.tags || ''),
-    createdAt: String(item.created || new Date().toISOString()),
-    // 分镜匹配池要求 pinned + segmentAnalysisStatus==='completed' + segments 非空。
-    // 这三个字段此前没被映射出来，云端素材因此永远不参与匹配。
-    pinned: Boolean(item.pinned),
-    segmentAnalysisStatus: item.segmentAnalysisStatus ? String(item.segmentAnalysisStatus) : undefined,
-    segmentAnalysisError: item.segmentAnalysisError ? String(item.segmentAnalysisError) : undefined,
-      segments: parseSegments(item.segments),
+    const rows: CloudMaterialRecord[] = [];
+    const signal = AbortSignal.timeout(8000);
+    for (let page = 1; ; page++) {
+      const response = await request(`/api/collections/materials/records?perPage=500&page=${page}`, { signal });
+      if (!response.ok) return { items: [], source: { source: 'database', state: [401,403].includes(response.status) ? 'unauthorized' : 'unavailable',
+        message: [401,403].includes(response.status) ? '素材数据库访问权限异常，请联系管理员' : '素材数据库暂时不可用，请重试' } };
+      const data = await response.json() as { items?: CloudMaterialRecord[]; totalPages?: number };
+      if (!Array.isArray(data.items)) throw Error('invalid_material_response');
+      rows.push(...data.items.filter(item => canAccessCloudMaterial(item, tenantId)));
+      if (page >= Number(data.totalPages || 1)) break;
+      if (page >= 100) throw Error('material_pagination_limit');
+    }
+    const items = rows.map(item => ({
+      id: `pb-${item.id}`, name: String(item.title || item.sourceName || item.name || '云端素材'),
+      folder: String(item.folder || 'upload'), type: String(item.type || 'video'), duration: Number(item.duration || 0),
+      size: humanSize(Number(item.sizeBytes || 0)), file: String(item.videoFile || ''),
+      url: `/studio-media/${item.id}/media.mp4`, poster: `/studio-media/${item.id}/poster.jpg`,
+      scope: String(item.scope || 'own'), tenantId: materialTenantId(item), usage: String(item.usage || 'editable'),
+      sourceType: String(item.sourceType || 'licensed_upload'), sourceUrl: String(item.sourceUrl || ''),
+      productId: String(item.productId || ''), productName: String(item.productName || ''),
+      licenseEvidence: String(item.licenseEvidence || item.license || ''),
+      industry: String(item.industry || ''), shotFunction: String(item.shotFunction || ''),
+      applicability: String(item.applicability || ''), tags: String(item.tags || ''),
+      createdAt: String(item.created || ''), updatedAt: String(item.updated || ''),
+      analysisSourceRevision: String(item.analysisSourceRevision || ''), sourceRevision: String(item.sha256 || item.videoFile || ''),
+      pinned: Boolean(item.pinned), segmentAnalysisStatus: item.segmentAnalysisStatus ? String(item.segmentAnalysisStatus) : undefined,
+      segmentAnalysisError: item.segmentAnalysisError ? String(item.segmentAnalysisError) : undefined,
+      visualObservations: parseSegments(item.visualObservations), segments: parseSegments(item.segments),
     }));
-  } catch (error) {
-    // PocketBase is optional in local development. A temporarily unavailable
-    // cloud material store must not crash the whole API process.
-    console.warn('[cloud-materials] list unavailable:', error instanceof Error ? error.message : error);
-    return [];
+    return { items, source: { source: 'database', state: 'ready', message: '素材数据库已连接' } };
+  } catch {
+    return { items: [], source: { source: 'database', state: 'unavailable', message: '素材数据库连接失败，当前仅能使用已读取的服务端素材；请重试或联系管理员' } };
   }
+}
+/** Legacy consumers retain the array API; user-facing inventory uses the status envelope. */
+export async function listCloudMaterials(tenantId: string): Promise<Array<Record<string, unknown>>> {
+  return (await readCloudMaterialLibrary(tenantId)).items;
 }
 
 export async function getCloudMaterialRecord(id: string, tenantId?: string): Promise<Record<string, unknown> | null> {

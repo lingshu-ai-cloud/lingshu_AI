@@ -25,6 +25,7 @@ export function reviseContent(spec: Record<string, any>, node: RevisionNode, val
     if (plan.presenter === 'heygen' && (!values.scenes.some((s: any) => s.source === 'avatar') || !values.scenes.some((s: any) => s.source === 'material'))) throw Error('混剪需要同时包含数字人和素材');
     plan.scenePlan = values.scenes.map((s: any) => ({ source: s.source, materialId: s.materialId || '' }));
     plan.materialIds = [...allowed];
+    next.scenePlanOrigin = 'user';
     next.sceneOverrides = values.scenes; next.productionDirection = spec.productionDirection || { source: 'human', reason: '人工确认分镜素材与起点' };
     stage = 'material_match';
   } else if (node === 'subtitles') {
@@ -52,7 +53,7 @@ export function reviseContent(spec: Record<string, any>, node: RevisionNode, val
   next.contentAcceptance = null;
   next.revisionHistory = [...(spec.revisionHistory || []), { node, values, snapshot: { script: spec.script, caption: spec.caption, lang: spec.lang, duration: spec.duration, alignedCuesByLang: spec.alignedCuesByLang, coverImagePath: spec.coverImagePath, exportSpec: spec.exportSpec, bgm: spec.bgm, bgmVol: spec.bgmVol }, reason: String(values.reason || '用户在生产现场修正').slice(0, 240), hash: contentAcceptanceHash(spec), version: spec.automation?.contentVersion || 1, renderOutputPath: spec.renderOutputPath, changedAt: new Date().toISOString() }].slice(-30);
   if (stage !== 'quality') { next.renderOutputPath = ''; next.languageRenderOutputs = {}; next.coverImagePath = ''; }
-  next.automation = { ...spec.automation, stage, status: 'queued', blocker: '', retryAfter: '', quality: {}, renderedAt: '', completedAt: '', contentVersion: Number(spec.automation?.contentVersion || 1) + 1,
+  next.automation = { ...spec.automation, ...(node === 'shots' ? { sceneRepairAttempts: 0, sceneRepairHistory: [] } : {}), stage, status: 'queued', blocker: '', retryAfter: '', quality: {}, renderedAt: '', completedAt: '', contentVersion: Number(spec.automation?.contentVersion || 1) + 1,
     ...(stage !== 'quality' ? { renderOutputPath: '' } : {}), ...(node === 'voice' ? { heygenJobId: '', voiceLocalPath: '', narrationReviewPassed: false } : {}) };
   return next;
 }

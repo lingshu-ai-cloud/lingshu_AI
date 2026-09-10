@@ -702,16 +702,8 @@ export const studioApi = {
   },
 
   // 素材库
-  listMaterials: async (): Promise<Material[]> => {
-    try {
-      const r = await fetch('/api/overseas/studio/materials', { headers: authHeader(), cache: 'no-store' });
-      if (!r.ok) throw new Error(String(r.status));
-      const data = await r.json();
-      return Array.isArray(data) ? (data as Material[]) : [];
-    } catch {
-      return [];
-    }
-  },
+  listMaterialLibrary: fetchMaterialLibrary,
+  listMaterials: async (): Promise<Material[]> => (await fetchMaterialLibrary()).items,
   uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (
@@ -750,6 +742,7 @@ export const studioApi = {
       };
     }
   },
+  startMaterialAnalysis: (id: string, retry = false) => post<{ ok: boolean; status?: string; error?: string }>(`materials/${encodeURIComponent(id)}/analysis`, { retry }, { ok: false }),
   analyzeMaterialSegments: (id: string) =>
     post<{ ok: boolean; material?: Material; segments?: MaterialSegment[]; error?: string }>(`materials/${id}/analyze-segments`, {}, { ok: false, error: '片段分析失败' }),
   classifyMaterial: (id: string) =>
@@ -762,7 +755,8 @@ export const studioApi = {
       return await response.json() as { ok: boolean; material?: Material; segment?: MaterialSegment; error?: string };
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
-  updateMaterial: async (id: string, changes: { name: string; tags?: string }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+  materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
+  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
         method: 'PATCH',
@@ -868,9 +862,12 @@ export interface Material {
   shotFunction?: string;
   applicability?: string;
   tags?: string;
+  productId?: string;
+  productName?: string;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
+  visualObservations?: string[];
   createdAt: string;
 }
 
@@ -993,4 +990,50 @@ export interface DigitalHumanJob {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+}
+
+export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }> };
+let latestMaterialLibraryState: MaterialLibraryState | null = null;
+export const getMaterialLibraryState = () => latestMaterialLibraryState;
+function publishMaterialLibraryState(state: MaterialLibraryState) { latestMaterialLibraryState = state; window.dispatchEvent(new CustomEvent('lingshu:material-library-status', { detail: state })); }
+export async function fetchMaterialLibrary(): Promise<MaterialLibraryState & { items: Material[] }> {
+  try {
+    const response = await fetch('/api/overseas/studio/materials?envelope=1', { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    if (response.status === 401) throw Error('登录已失效，请重新登录后读取素材');
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.items)) throw Error(data.error || '素材库暂时无法读取，请重试');
+    publishMaterialLibraryState(data);
+    return data;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '素材库读取失败';
+    publishMaterialLibraryState({ status: 'unavailable', sources: [{ source: 'server', state: 'unavailable', message: /timeout|abort|fetch|network/i.test(message) ? '素材库连接中断或超时，请重试' : message }] });
+    throw error;
+  }
+}
+
+/** Wait only for explicitly selected assets; server deduplicates repeated requests. */
+export async function ensureMaterialAnalysis(ids: string[], isCurrent: () => boolean, progress: (message: string) => void): Promise<Material[]> {
+  for (const id of [...new Set(ids)]) {
+    if (!isCurrent()) throw Error('本次生成已取消');
+    const result = await studioApi.startMaterialAnalysis(id);
+    if (!result.ok) throw Error(result.error || '素材分析无法启动');
+  }
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    if (!isCurrent()) throw Error('本次生成已取消');
+    const inventory = await fetchMaterialLibrary();
+    const records = ids.map(id => inventory.items.find(item => item.id === id));
+    if (records.some(item => !item)) throw Error('所选素材暂不可读取，请检查素材库连接');
+    const failed = records.find(item => item?.segmentAnalysisStatus === 'failed');
+    if (failed) throw Error(`「${failed.name}」分析失败：${failed.segmentAnalysisError || '请在素材库重试分析'}`);
+    const completed = records.filter(item => item?.segmentAnalysisStatus === 'completed').length;
+    progress(`正在分析所选素材 ${completed}/${ids.length}，完成后生成分镜…`);
+    if (completed === ids.length) {
+      const unconfirmed = records.find(item => item?.type === 'video' && !item.segments?.some(segment => !segment.needsReview && Number(segment.confidence) >= .65));
+      if (unconfirmed) throw Error(`「${unconfirmed.name}」暂没有可信的可用片段，请在素材库查看分析结果并复核`);
+      return records as Material[];
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 3000));
+  }
+  throw Error('素材分析仍在后台进行，请稍后从素材库查看进度，再继续生成');
 }

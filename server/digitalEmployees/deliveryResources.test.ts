@@ -56,3 +56,7 @@ console.log('Delivery resource behavior tests passed');
 
 const progressing = projectDelivery({ id: 'progressing', spec: { workflowTaskId: tasks[1].id, script: '真实已生成脚本', automation: { status: 'queued', stage: 'voice_subtitles' } } }, tasks, '');
 assert.equal(progressing.column, 'active', 'persisted production progress overrides a stale queued marker');
+
+const rejectedVideo = projectDelivery({ id: 'failed-sample', spec: { workflowTaskId: tasks[1].id, automation: { stage: 'blocked', status: 'blocked', quality: { passed: false, failures: ['镜头重复'] } } } }, tasks, '/api/failed.mp4');
+assert.equal(rejectedVideo.artifacts.find(item => item.kind === 'video')?.label, '质检失败样片');
+assert.notEqual(rejectedVideo.column, 'done');

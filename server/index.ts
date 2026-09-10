@@ -1,11 +1,10 @@
+import './loadEnvironment.js';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath } from 'url';
-import { execFileSync, spawn } from 'child_process';
-import dotenv from 'dotenv';
+import { spawn } from 'child_process';
 import express from 'express';
 import compression from 'compression';
-import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
+import { configureNetworkProxy } from './lib/networkEnvironment.js';
 import { copywritingRouter } from './routes/copywriting.js';
 import { translationRouter } from './routes/translation.js';
 import { competitorRouter } from './routes/competitor.js';
@@ -52,11 +51,6 @@ import { initFollowupDispatchWorker } from './digitalEmployees/followupDispatchW
 import { initDigitalEmployeeRuntime } from './digitalEmployees/runtimeOrchestrator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
-// 跨版本共用的本机密钥配置。项目文件优先，统一配置只补齐缺失项。
-dotenv.config({ path: path.join(os.homedir(), '.config', 'lingshu-ai', '.env') });
-dotenv.config({ path: path.join(os.homedir(), '.config', 'lingshu-ai', '.env.local') });
-dotenv.config({ path: path.join(__dirname, '..', '.env.local'), override: true });
 await ensureLocalPocketBase();
 configureNetworkProxy();
 try {
@@ -78,6 +72,7 @@ async function ensureLocalPocketBase(): Promise<void> {
   const dataDir = process.env.PB_DATA_DIR || '';
   if (!bin || !dataDir) { console.warn('[pb] auto-start skipped: PB_BIN/PB_DATA_DIR missing'); return; }
   const parsed = new URL(url);
+  if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname)) { console.warn('[pb] auto-start requires a loopback database URL'); return; }
   const child = spawn(bin, ['serve', `--http=${parsed.hostname}:${parsed.port || '8090'}`, `--dir=${dataDir}`], { cwd: path.dirname(bin), stdio: 'ignore', detached: true });
   child.unref();
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -85,75 +80,6 @@ async function ensureLocalPocketBase(): Promise<void> {
     try { if ((await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(800) })).ok) { console.log(`[pb] auto-started at ${url}`); return; } } catch { /* retry */ }
   }
   console.error(`[pb] auto-start failed at ${url}`);
-}
-
-function configureNetworkProxy(): void {
-  const configured = process.env.GEMINI_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy || process.env.CRAWLER_PROXY;
-  // Prefer a healthy direct connection. A listening local port is not enough to
-  // prove that it is an HTTP proxy (other apps commonly occupy these ports).
-  // Gemini and YouTube can have different reachability on the same network.
-  // Only stay on the direct route when both services are reachable.
-  const proxy = configured || (canReachGoogleDirectly() && canReachYouTubeDirectly() ? '' : detectLocalProxy());
-  if (!proxy) return;
-  process.env.HTTPS_PROXY ||= proxy;
-  process.env.HTTP_PROXY ||= proxy;
-  process.env.https_proxy ||= proxy;
-  process.env.http_proxy ||= proxy;
-  process.env.CRAWLER_PROXY ||= proxy;
-  process.env.NODE_USE_ENV_PROXY ||= '1';
-  // ProxyAgent 涓嶈 NO_PROXY锛屼細鎶婂彂寰€ localhost锛圥ocketBase 绛夛級鐨勮姹備篃濉炶繘浠ｇ悊瀵艰嚧闈欓粯澶辫触锛?
-  // EnvHttpProxyAgent 鎸?NO_PROXY 缁曡鏈湴鍜?PB 涓绘満銆?
-  const pbHost = (() => { try { return new URL(process.env.PB_URL || 'http://localhost:8090').hostname; } catch { return ''; } })();
-  const noProxy = ['localhost', '127.0.0.1', '::1', pbHost].filter(Boolean).join(',');
-  process.env.NO_PROXY = process.env.NO_PROXY ? `${process.env.NO_PROXY},${noProxy}` : noProxy;
-  process.env.no_proxy = process.env.NO_PROXY;
-  setGlobalDispatcher(new EnvHttpProxyAgent());
-  console.log(`[network] using proxy ${proxy} (NO_PROXY=${process.env.NO_PROXY})`);
-}
-
-function curlCanReach(args: string[]): boolean {
-  try {
-    const status = execFileSync('curl', [
-      '-sS', '-o', '/dev/null', '-w', '%{http_code}',
-      '--connect-timeout', '2', '--max-time', '6', ...args,
-      'https://generativelanguage.googleapis.com/',
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 7000 }).trim();
-    return status !== '' && status !== '000';
-  } catch {
-    return false;
-  }
-}
-
-function canReachGoogleDirectly(): boolean {
-  return curlCanReach(['--noproxy', '*']);
-}
-
-function canReachYouTubeDirectly(): boolean {
-  try {
-    const status = execFileSync('curl', [
-      '-sS', '-o', '/dev/null', '-w', '%{http_code}',
-      '--connect-timeout', '2', '--max-time', '6', '--noproxy', '*',
-      'https://www.youtube.com/',
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 7000 }).trim();
-    return status !== '' && status !== '000';
-  } catch {
-    return false;
-  }
-}
-
-function detectLocalProxy(): string {
-  if (process.env.NODE_ENV === 'production') return '';
-  // Clash Verge defaults to 7897 for its mixed proxy. Prefer it over 7890,
-  // which may belong to another local proxy process that accepts connections
-  // but cannot establish a valid TLS tunnel to YouTube.
-  for (const port of [7897, 7890, 1087, 1080, 20171]) {
-    try {
-      execFileSync('nc', ['-z', '127.0.0.1', String(port)], { stdio: 'ignore', timeout: 600 });
-      const proxy = `http://127.0.0.1:${port}`;
-      if (curlCanReach(['--proxy', proxy])) return proxy;
-    } catch { /* try next */ }
-  }
-  return '';
 }
 
 // 璺宠繃 SSE 娴佸紡鍝嶅簲锛坱ext/event-stream锛夛紝鍚﹀垯 gzip 缂撳啿浼氭嫋鎱㈤瀛?

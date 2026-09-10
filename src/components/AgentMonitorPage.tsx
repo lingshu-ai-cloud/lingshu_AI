@@ -78,7 +78,7 @@ function relativeSignalTime(value?: string) {
   return minutes < 60 ? `${minutes} 分钟前` : `${Math.floor(minutes / 60)} 小时前`;
 }
 
-function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = true }: { liveEnabled?: boolean; task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onFocus?: () => void }) {
+function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = true, refreshKey = 0 }: { liveEnabled?: boolean; refreshKey?: number; task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onFocus?: () => void }) {
   const group = taskMonitorGroup(task);
   const latestEvent = events.at(-1);
   const routingCheck = task.output?.routingCheck as { count?: number; reason?: string } | undefined;
@@ -106,7 +106,7 @@ function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = 
             <span className={`h-2 w-2 shrink-0 rounded-full ${active ? "bg-accent" : task.status === "failed" ? "bg-red" : "bg-border-bright"}`} />
             <p className="truncate text-xs font-bold text-text-primary">{task.title}</p>
           </div>
-          <p className="mt-0.5 truncate text-[10px] text-text-muted">{group === "customer" ? "客服 Agent" : "内容 Agent"} · {statusLabel[task.status] || task.status}</p>
+          <p className="mt-0.5 truncate text-[10px] text-text-muted">{group === "customer" ? "客服 Agent" : "内容 Agent"} · {task.status === 'failed' && (task.output?.waitState as { kind?: string } | undefined)?.kind === 'input' ? '待补充资料' : statusLabel[task.status] || task.status}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onFocus && <button type="button" onClick={onFocus} className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition hover:border-accent/40 hover:text-accent" aria-label={`放大查看${task.title}`}><Maximize2 size={11}/></button>}
@@ -115,7 +115,7 @@ function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = 
       </header>
 
       {openError && <p role="alert" className="border-t border-red/15 bg-red/5 p-3 text-xs text-red">{openError}</p>}
-      <AgentBrowserViewport enabled={liveEnabled} runId={runId || task.run_id} taskId={task.id} taskStatus={task.status} />
+      <AgentBrowserViewport enabled={liveEnabled} refreshKey={refreshKey} runId={runId || task.run_id} taskId={task.id} taskStatus={task.status} taskKey={task.task_key} />
 
       {task.status === 'waiting_external' && routingCheck?.count && <p className="border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs text-amber">等待条件：{routingCheck.reason} · 已检查 {routingCheck.count} 次</p>}
       <details className="border-t border-border px-3 py-2">
@@ -131,7 +131,7 @@ function MonitorWindow({ task, events, planTasks, runId, onFocus, liveEnabled = 
   );
 }
 
-function FocusedMonitor({ task, events, planTasks, runId, onClose }: { task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onClose: () => void }) {
+function FocusedMonitor({ task, events, planTasks, runId, onClose, refreshKey = 0 }: { task: WorkflowTask; events: RunEvent[]; planTasks: PlanTask[]; runId: string; onClose: () => void; refreshKey?: number }) {
   const actions = events.map(agentUiActionFromEvent).filter(Boolean);
   const dialogRef = useModalFocus<HTMLDivElement>({
     open: true,
@@ -142,7 +142,7 @@ function FocusedMonitor({ task, events, planTasks, runId, onClose }: { task: Wor
     <div className="mx-auto flex h-full max-w-[1800px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
       <header className="flex items-center justify-between border-b border-border px-4 py-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-accent">Focused live session</p><h2 id="focused-monitor-dialog-title" className="mt-1 text-sm font-bold text-text-primary">{task.title}</h2></div><button type="button" data-modal-initial-focus onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-muted transition hover:bg-surface-2 hover:text-text-primary" aria-label="关闭放大监控"><X size={15}/></button></header>
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto bg-surface-2/40 p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="self-start"><MonitorWindow task={task} events={events} planTasks={planTasks} runId={runId}/></div>
+        <div className="self-start"><MonitorWindow task={task} events={events} planTasks={planTasks} runId={runId} refreshKey={refreshKey}/></div>
         <aside className="rounded-lg border border-border bg-surface p-4"><div className="flex items-center justify-between"><h3 className="text-xs font-bold text-text-primary">实时操作轨迹</h3><span className="text-[10px] text-text-muted">{actions.length} 条 UI 操作</span></div><div className="mt-3 divide-y divide-border border-y border-border">{events.length ? groupMonitorEvents(events).reverse().slice(0,20).map((event) => { const action = agentUiActionFromEvent(event); return <div key={event.id} className="px-1 py-2.5"><div className="flex items-start gap-2">{action ? <MousePointer2 size={12} className="mt-0.5 shrink-0 text-accent"/> : <Clock3 size={12} className="mt-0.5 shrink-0 text-text-muted"/>}<div className="min-w-0"><p className="text-[11px] font-bold leading-4 text-text-secondary">{event.summary}{event.repeatCount > 1 && <span className="ml-2 text-text-muted">（连续 {event.repeatCount} 次）</span>}</p><p className="mt-1 text-[9px] text-text-muted">{action?.kind || event.type} · {new Date(event.occurred_at).toLocaleTimeString("zh-CN")}</p></div></div></div>; }) : <p className="border-dashed px-3 py-10 text-center text-[10px] text-text-muted">尚无真实事件</p>}</div></aside>
       </div>
     </div>
@@ -173,11 +173,14 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshedAt, setRefreshedAt] = useState("");
   const initialEventsRef = useRef<RunEvent[]>([]);
   const loadInFlight = useRef(false);
 
   const load = useCallback(async () => {
-    if (loadInFlight.current) return;
+    if (loadInFlight.current) return false;
     loadInFlight.current = true;
     try {
       const overview = await digitalEmployeeApi.overview();
@@ -186,13 +189,26 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
         return { ...overview, events };
       });
       setError("");
+      return true;
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "监控数据加载失败");
+      return false;
     } finally {
       loadInFlight.current = false;
       setLoading(false);
     }
   }, []);
+
+  const refreshMonitor = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    const loaded = await load();
+    if (loaded) {
+      setRefreshKey(value => value + 1);
+      setRefreshedAt(new Date().toISOString());
+    }
+    setRefreshing(false);
+  };
 
   useEffect(() => {
     initialEventsRef.current = data?.events || [];
@@ -288,14 +304,15 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <button type="button" onClick={onBack} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent" aria-label="返回智能经营"><ArrowLeft size={16} /></button>
-            <div className="min-w-0"><div className="flex items-center gap-2"><MonitorPlay size={18} className="text-accent" /><h1 className="truncate text-base font-bold">Agent 实时生产监控大屏</h1></div><p className="mt-0.5 text-[11px] text-text-muted">每个窗口都是独立的任务浏览器 · 实际鼠标操作与工作页面同步直播</p></div>
+            <div className="min-w-0"><div className="flex items-center gap-2"><MonitorPlay size={18} className="text-accent" /><h1 className="truncate text-base font-bold">Agent 实时生产监控大屏</h1></div><p className="mt-0.5 text-[11px] text-text-muted">按任务展示工作现场与结果 · 生产过程显示浏览器直播，选路与质检显示任务记录</p></div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`inline-flex items-center gap-1.5 border-r border-border pr-3 text-[10px] font-bold ${connection === "live" ? "text-accent" : connection === "offline" ? "text-red" : "text-text-muted"}`}>{connection === "live" ? <Wifi size={11}/> : <WifiOff size={11}/>} {connectionLabel[connection]}{lastSignalAt ? ` · ${relativeSignalTime(lastSignalAt)}` : ""}</span>
             <span className="border-r border-border pr-3 text-[10px] font-bold text-text-muted">{monitoredTasks.length} 个窗口</span>
             <span className="border-r border-border pr-3 text-[10px] font-bold text-accent">{activeCount} 执行中</span>
             <span className="text-[10px] font-bold text-amber">{humanCount} 待人工</span>
-            <button type="button" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent" aria-label="刷新监控大屏"><RefreshCcw size={14} /></button>
+            {refreshedAt && <span role="status" className="text-[10px] font-bold text-text-muted">已刷新 {new Date(refreshedAt).toLocaleTimeString('zh-CN')}</span>}
+            <button type="button" disabled={refreshing} onClick={() => void refreshMonitor()} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent disabled:cursor-wait disabled:opacity-60" aria-label={refreshing ? "正在刷新监控大屏" : "刷新监控大屏"} title={refreshing ? "正在刷新" : "刷新任务、结果和可见工作页面"}><RefreshCcw size={14} className={refreshing ? 'animate-spin' : ''} /></button>
             <button type="button" onClick={() => void toggleFullscreen()} className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition hover:border-accent/40 hover:text-accent" aria-label={fullscreen ? "退出全屏" : "进入全屏"}>{fullscreen ? <Minimize2 size={14}/> : <Maximize2 size={14}/>}</button>
           </div>
         </div>
@@ -310,14 +327,14 @@ export default function AgentMonitorPage({ onBack }: { onBack: () => void }) {
 
       {monitoredTasks.length ? (
         <section className="mt-4 grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {monitoredTasks.map((task) => <MonitorWindow key={task.id} liveEnabled={!focusedTaskId} task={task} events={eventsByTask.get(task.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || task.run_id} onFocus={() => focusTask(task.id)} />)}
+          {monitoredTasks.map((task) => <MonitorWindow key={task.id} liveEnabled={!focusedTaskId} refreshKey={refreshKey} task={task} events={eventsByTask.get(task.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || task.run_id} onFocus={() => focusTask(task.id)} />)}
         </section>
       ) : (
         <section className="mt-4 flex min-h-[520px] items-center justify-center rounded-lg border border-dashed border-border bg-surface px-6 text-center">
-          <div className="max-w-lg"><CheckCircle2 size={30} className="mx-auto text-border-bright" /><h2 className="mt-4 text-base font-bold text-text-secondary">当前没有可监控的真实任务</h2><p className="mt-2 text-xs leading-6 text-text-muted">批准经营计划后，内容和客服任务会自动出现在这里。每个窗口直播真实浏览器；任务等待或暂停时，鼠标也会停下来。</p></div>
+          <div className="max-w-lg"><CheckCircle2 size={30} className="mx-auto text-border-bright" /><h2 className="mt-4 text-base font-bold text-text-secondary">当前没有可监控的真实任务</h2><p className="mt-2 text-xs leading-6 text-text-muted">批准经营计划后，内容和客服任务会自动出现在这里。生产任务显示真实浏览器；选路、质检和已结束任务显示各自的结果记录。</p></div>
         </section>
       )}
-      {focusedTask && <FocusedMonitor task={focusedTask} events={eventsByTask.get(focusedTask.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || focusedTask.run_id} onClose={closeFocus}/>}
+      {focusedTask && <FocusedMonitor task={focusedTask} events={eventsByTask.get(focusedTask.id) || []} planTasks={data?.plan?.tasks || []} runId={data?.run?.id || focusedTask.run_id} refreshKey={refreshKey} onClose={closeFocus}/>}
     </main>
   );
 }

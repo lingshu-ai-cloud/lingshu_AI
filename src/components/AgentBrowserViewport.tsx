@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, MonitorPlay, Radio, WifiOff } from 'lucide-react';
-import { streamAgentBrowser, type BrowserStreamPacket } from '../lib/agentBrowser';
+import TaskMonitorResult from './TaskMonitorResult';
+import { taskMonitorView } from '../lib/taskMonitorView';
+import { refreshAgentBrowser, streamAgentBrowser, type BrowserStreamPacket } from '../lib/agentBrowser';
 
 /** The cursor is captured inside the worker browser, from trusted pointer events.
  * This viewer never draws a cursor or starts a business action. */
-export default function AgentBrowserViewport({ runId, taskId, taskStatus, enabled = true }: { enabled?: boolean; runId: string; taskId: string; taskStatus: string }) {
+export default function AgentBrowserViewport({ runId, taskId, taskStatus, taskKey, enabled = true, refreshKey = 0 }: { taskKey?: string; enabled?: boolean; refreshKey?: number; runId: string; taskId: string; taskStatus: string }) {
+  const view = taskMonitorView(taskKey, taskStatus);
   const host = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [frame, setFrame] = useState<Extract<BrowserStreamPacket, { type: 'frame' }> | null>(null);
@@ -19,7 +22,15 @@ export default function AgentBrowserViewport({ runId, taskId, taskStatus, enable
   }, []);
   useEffect(() => { setFrame(null); }, [runId, taskId]);
   useEffect(() => {
-    if (!visible || !enabled) return;
+    if (!refreshKey || !visible || !enabled || view !== 'browser') return;
+    setMessage('正在刷新任务工作页面');
+    void refreshAgentBrowser(runId, taskId).catch(error => {
+      setConnection('offline');
+      setMessage(error instanceof Error ? error.message : '任务工作页面刷新失败');
+    });
+  }, [refreshKey, visible, enabled, view, runId, taskId]);
+  useEffect(() => {
+    if (!visible || !enabled || view !== 'browser') return;
     let disposed = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
@@ -48,7 +59,9 @@ export default function AgentBrowserViewport({ runId, taskId, taskStatus, enable
     };
     void connect();
     return () => { disposed = true; controller.abort(); if (retry) clearTimeout(retry); };
-  }, [visible, enabled, runId, taskId]);
+  }, [visible, enabled, runId, taskId, view]);
+
+  if (view !== 'browser') return <div ref={host}><TaskMonitorResult runId={runId} taskId={taskId} view={view} enabled={visible && enabled} refreshKey={refreshKey} /></div>;
 
   const stopped = ['paused', 'cancelled', 'failed', 'waiting_human', 'handed_off', 'waiting_approval', 'succeeded', 'completed'].includes(taskStatus);
   return <div ref={host} className="relative aspect-[11/7] overflow-hidden bg-slate-900" data-testid="agent-browser-viewport">

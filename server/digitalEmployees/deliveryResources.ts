@@ -35,7 +35,7 @@ export function projectDelivery(project: RecordData, tasks: WorkflowTask[], vide
   const artifacts: DeliveryArtifact[] = [];
   if (string(spec.script)) artifacts.push({ id: 'script', label: '脚本', kind: 'text', text: spec.script, version: string(spec.scriptVersion) });
   if (safeDeliveryUrl(spec.voiceoverUrl)) artifacts.push({ id: 'voice', label: '配音试听', kind: 'audio', url: safeDeliveryUrl(spec.voiceoverUrl) });
-  if (videoUrl) artifacts.push({ id: 'video', label: ready ? '成片' : '成片待检', kind: 'video', url: videoUrl });
+  if (videoUrl) artifacts.push({ id: 'video', label: ready ? '成片' : quality.passed === false ? '质检失败样片' : '成片待检', kind: 'video', url: videoUrl });
   if (Object.keys(quality).length) artifacts.push({ id: 'quality', label: '质检结果', kind: 'text', text: `${quality.passed === true ? '质检通过' : '质检尚未通过'}\n${Array.isArray(quality.failures) ? quality.failures.join('\n') : ''}\n${string(quality.checkedAt)}`.trim() });
   const stages = ['script', 'material_match', 'voice_subtitles', 'render', 'quality'];
   const current = stages.indexOf(blocked ? automation.resumeStage : automation.stage);

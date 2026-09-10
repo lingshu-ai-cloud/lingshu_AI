@@ -1,3 +1,5 @@
+import { productionQualitySummary } from '../digitalEmployees/productionQualitySummary.js';
+import { productionFailureState } from '../digitalEmployees/productionPreflight.js';
 import { reopenNoDataCustomerBranch } from '../digitalEmployees/customerReentry.js';
 import { normalizeContinuationPolicy } from '../../src/lib/continuationPolicy.js';
 import { cyclesOverlap, followupDraftDue } from '../digitalEmployees/continuationPolicy.js';
@@ -29,7 +31,7 @@ import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './en
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
-import { buildContentBatchPlan, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
+import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import {
   configurationSnapshot,
@@ -443,6 +445,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
     const draft: ContentBatchPlanDraft = {
       status: existing.status === 'planned' ? 'planned' : 'blocked',
       orders: jsonObject(existing.orders, []),
+      coverage: contentPlanCoverage(input.config, goalInput(input.goal), jsonObject<any[]>(existing.orders, []).length),
       blocker: String(routing.blocker || ''),
       eligibleRoutes: routing.eligibleRoutes || [],
       disabledRoutes: routing.disabledRoutes || [],
@@ -477,13 +480,13 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
   if (existing?.status === 'planned') return { record: existing, created: false, draft };
   const now = new Date().toISOString();
   if (existing) {
-    const patch = { status: draft.status, orders: draft.orders, routing: { blocker: draft.blocker, eligibleRoutes: draft.eligibleRoutes, disabledRoutes: draft.disabledRoutes }, updated_at: now };
+    const patch = { status: draft.status, orders: draft.orders, routing: { blocker: draft.blocker, coverage: draft.coverage, eligibleRoutes: draft.eligibleRoutes, disabledRoutes: draft.disabledRoutes }, updated_at: now };
     await store.update(COLLECTION.contentBatchPlans, existing.id, patch);
     return { record: { ...existing, ...patch }, created: false, draft };
   }
   const record = await requiredCreate<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, {
     tenant_id: input.tenantId, goal_id: input.goal.id, plan_id: input.run.plan_id, run_id: input.run.id, task_id: input.task.id,
-    status: draft.status, orders: draft.orders, routing: { blocker: draft.blocker, eligibleRoutes: draft.eligibleRoutes, disabledRoutes: draft.disabledRoutes },
+    status: draft.status, orders: draft.orders, routing: { blocker: draft.blocker, coverage: draft.coverage, eligibleRoutes: draft.eligibleRoutes, disabledRoutes: draft.disabledRoutes },
     config_version: Number(planBody.configVersion || 1), policy_version: String(planBody.policyVersion || 'unknown'), facts_version: String(knowledgeBinding.factsVersion || 'unknown'),
     created_at: now, updated_at: now,
   });
@@ -588,6 +591,7 @@ export async function browserTaskWorkspace(scope: BrowserScope): Promise<Browser
     if (segment) customerId = (await getCustomerSegmentMembers(scope.tenantId, segment.id)).find(member => member.membership === 'included')?.customer_id;
   }
   return { userId: goal?.owner_id || 'digital_employee_agent', projectId, customerId,
+    ...(automation.stage === 'blocked' && automation.retryPolicy === 'input_required' ? { inputBlocker: String(automation.blocker || '请补充制作资料') } : {}),
     stage: String(automation.stage || ''), revision: String(project?.updated_at || task.updated_at),
     link: { page, view: mappedLink.view || selected?.link?.view, runId: scope.runId, taskId: scope.taskId,
       businessRef: { ...selected?.link?.businessRef, taskKey: task.task_key, ...(projectId ? { entityId: projectId } : customerId ? { entityId: customerId } : scheduledRef ? { entityId: String(scheduledRef.id) } : {}) } } };
@@ -1523,7 +1527,8 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '' });
   let businessSnapshot: BusinessSnapshot | null = null;
   for (const task of taskResult.items) {
-    if (['succeeded', 'skipped', 'cancelled', 'handed_off', 'failed'].includes(task.status)) continue;
+    if (['succeeded', 'skipped', 'cancelled', 'handed_off'].includes(task.status)) continue;
+    if (task.status === 'failed' && !jsonObject<Record<string, any>>(task.output, {}).executionFailure?.retryAt) continue;
     if (!dependenciesReady(task, taskResult.items)) continue;
     if (task.task_key.startsWith('review_todo_')) {
       const reason = '请按本任务的执行要求完成业务操作，并提交验收记录；尚未自动完成。';
@@ -1699,14 +1704,17 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
           : task.task_key === 'followup_dispatch'
           ? '真实发送预检：尚未取得可核验的发送条件或渠道回执'
           : `等待真实业务结果，请前往「${destinationLabel(metadata.destination)}」完成或检查该节点`);
+        const needsInput = diagnostic.kind === 'input' && ['content_production', 'content_quality_gate'].includes(task.task_key);
+        const waitingStatus = needsInput ? 'failed' : 'waiting_external';
+        if (needsInput) output.dataStatus = 'input_required';
         await Promise.all([
-          store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() }),
-          store.update(COLLECTION.runs, run.id, { status: 'waiting_external', current_controller: 'agent', pause_reason: blockedReason }),
+          store.update(COLLECTION.tasks, task.id, { status: waitingStatus, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() }),
+          store.update(COLLECTION.runs, run.id, { status: needsInput ? 'waiting_human' : 'waiting_external', current_controller: needsInput ? 'human' : 'agent', pause_reason: blockedReason }),
         ]);
-        if (task.status !== 'waiting_external') {
-          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.waiting_external', level: 'warning', summary: `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
+        if (task.status !== waitingStatus) {
+          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: needsInput ? 'task.input_required' : 'task.waiting_external', level: 'warning', summary: needsInput ? `${task.title}：${blockedReason}` : `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
         }
-        task.status = 'waiting_external';
+        task.status = waitingStatus;
         task.output = output;
         task.business_refs = canonicalBusinessRefs;
         task.blocked_reason = blockedReason;
@@ -1742,7 +1750,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         ? await ensureContentBatchPlan(input, prepared)
         : await executeInTaskBrowser({ tenantId, run, task }, '生成内容制作订单', () => ensureContentBatchPlan(input, prepared));
       const refs = [{ type: 'content_batch_plan', id: batch.record.id, orderCount: batch.draft.orders.length }, ...batch.draft.orders.map(order => ({ type: 'content_order', id: order.id, batchPlanId: batch.record.id, route: order.route, platform: order.platform, productId: order.productId }))];
-      const output = { ...buildTaskOutput(task.task_key, goalInput(goal), config), batchPlanId: batch.record.id, orders: batch.draft.orders, routing: { eligibleRoutes: batch.draft.eligibleRoutes, disabledRoutes: batch.draft.disabledRoutes }, dataStatus: batch.draft.status };
+      const output = { ...buildTaskOutput(task.task_key, goalInput(goal), config), batchPlanId: batch.record.id, orders: batch.draft.orders, coverage: batch.draft.coverage, routing: { eligibleRoutes: batch.draft.eligibleRoutes, disabledRoutes: batch.draft.disabledRoutes }, dataStatus: batch.draft.status };
       if (batch.draft.status === 'blocked') {
         await Promise.all([
           store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, business_refs: refs, blocked_reason: batch.draft.blocker, updated_at: new Date().toISOString() }),
@@ -1774,12 +1782,11 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       // A failed step must not abort independent branches in the same run.
       // Do not automatically repeat uncertain writes or external effects.
       const failure = nextTaskFailure(previousFailure, metadata.externalEffect === 'none' && metadata.executionMode !== 'draft_executor');
-      const reason = failure.retryAt
-        ? `执行服务异常，${failure.attempts === 1 ? "1" : "5"} 分钟后重试；其他独立任务继续。`
-        : '执行服务异常，请查看任务记录后重试；其他独立任务继续。';
-      const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'execution_failed', executionFailure: failure, waitState: waitState('service', reason), availableActions: availableTaskActions(task) };
-      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, blocked_reason: reason, updated_at: new Date().toISOString() });
-      task.status = 'waiting_external'; task.output = output; task.blocked_reason = reason;
+      const failed = productionFailureState(error, failure.retryAt);
+      const reason = failed.reason;
+      const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'execution_failed', executionFailure: failure, waitState: waitState(failed.kind, reason), availableActions: availableTaskActions(task) };
+      await store.update(COLLECTION.tasks, task.id, { status: failed.status, output, blocked_reason: reason, updated_at: new Date().toISOString() });
+      task.status = failed.status; task.output = output; task.blocked_reason = reason;
       await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.execution_failed', level: 'error', summary: `${task.title}：执行异常`, payload: { attempts: failure.attempts, retryAt: failure.retryAt, error: error instanceof Error ? error.message.slice(0, 500) : 'task_execution_failed' } });
     }
   }
@@ -1802,10 +1809,11 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       ...directBlocks.map(task => task.blocked_reason || `${task.title}：${task.status}`),
       ...dependencyBlocks,
     ])];
-    const status = handedOff ? 'waiting_human' : waitingApproval ? 'waiting_approval' : 'waiting_external';
+    const failedTask = remaining.find(task => task.status === 'failed' && !jsonObject<Record<string, any>>(task.output, {}).executionFailure?.retryAt);
+    const status = handedOff || failedTask ? 'waiting_human' : waitingApproval ? 'waiting_approval' : 'waiting_external';
     await store.update(COLLECTION.runs, run.id, {
       status,
-      current_controller: handedOff || waitingApproval ? 'human' : 'agent',
+      current_controller: handedOff || failedTask || waitingApproval ? 'human' : 'agent',
       pause_reason: reasons.slice(0, 6).join('；'),
     });
     return;
@@ -2764,7 +2772,16 @@ digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/workspace', async (req, r
     const target = await browserTaskWorkspace({ tenantId, runId: req.params.runId, taskId: req.params.taskId });
     const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
     const events = await listRunEventsAfter<EventRecord>(tenantId, req.params.runId, 0);
-    res.json({ link: target.link, stage: target.stage, task: task ? { id: task.id, title: task.title, status: task.status, blocker_reason: task.blocker_reason } : null, events: events.filter(event => event.task_id === req.params.taskId).slice(-80) });
+    const output = jsonObject<Record<string, any>>(task?.output, {});
+    if (task?.task_key === 'content_mode_routing' && Array.isArray(output.orders)) {
+      const [goal, configRecord] = await Promise.all([tenantRecord<GoalRecord>(COLLECTION.goals, task.goal_id, tenantId), configForTenant(tenantId)]);
+      if (goal && configRecord) output.coverage = contentPlanCoverage(normalizeDigitalEmployeeConfig(jsonObject(configRecord.config, {})), goalInput(goal), output.orders.length);
+    }
+    if (target.projectId && task && ['content_production', 'content_quality_gate'].includes(task.task_key)) {
+      const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', target.projectId, tenantId);
+      if (project) output.production = productionQualitySummary(jsonObject<Record<string, any>>(project.spec, {}));
+    }
+    res.json({ link: target.link, stage: target.stage, task: task ? { id: task.id, task_key: task.task_key, title: task.title, status: task.status, blocker_reason: task.blocked_reason || task.blocker_reason, output } : null, events: events.filter(event => event.task_id === req.params.taskId).slice(-80) });
   } catch (error) {
     res.status(error instanceof Error && error.message === 'task_run_not_found' ? 404 : 500).json({ error: '无法加载任务工作页面' });
   }
@@ -2793,6 +2810,23 @@ digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/browser-stream', async (r
     if (closed) unwatch();
   } catch (error) {
     if (!closed) { res.write(`data: ${JSON.stringify({ type: 'status', state: 'error', message: error instanceof Error ? error.message : '浏览器直播启动失败' })}\n\n`); res.end(); }
+  }
+});
+
+digitalEmployeesRouter.post('/runs/:runId/tasks/:taskId/browser-refresh', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const scope = { tenantId, runId: req.params.runId, taskId: req.params.taskId };
+  const [run, task] = await Promise.all([
+    tenantRecord<RunRecord>(COLLECTION.runs, scope.runId, tenantId),
+    tenantRecord<TaskRecord>(COLLECTION.tasks, scope.taskId, tenantId),
+  ]);
+  if (!run || !task || task.run_id !== run.id) { res.status(404).json({ error: 'task_run_not_found' }); return; }
+  if (!browserExecutionEnabled()) { res.status(503).json({ error: '此环境尚未启用浏览器执行与直播' }); return; }
+  try {
+    const frame = await agentBrowserSessions.forceRefresh(scope, () => browserTaskWorkspace(scope));
+    res.json({ refreshedAt: frame.capturedAt, sequence: frame.sequence });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : '任务工作页面刷新失败' });
   }
 });
 

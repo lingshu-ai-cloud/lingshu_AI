@@ -3,6 +3,7 @@ import {
   automaticStoryboardTrim,
   fitStoryboardSlotsToDuration,
   fitTimelineToVoiceover,
+  fitTimelineToVoiceoverCues,
   matchMaterialsToStoryboardLocally,
 } from './AiCreateStudio.js';
 
@@ -81,5 +82,13 @@ assert.equal(
   15,
   '配音更长时应延展画面，避免旁白被截断',
 );
+const englishCues = [
+  { start: 0, end: 2.31, text: 'First line.' },
+  { start: 2.46, end: 5.74, text: 'Second line.' },
+];
+const alignedTimeline = fitTimelineToVoiceoverCues(approvedTimeline, 5.89, englishCues);
+assert.equal(alignedTimeline[0]?.targetEnd, 2.46, '第二镜必须从第二句真实开始时间切入');
+assert.equal(alignedTimeline[1]?.targetStart, 2.46, '镜头和口播必须共享同一个边界');
+assert.equal(alignedTimeline.at(-1)?.targetEnd, 5.89, '各语言成片应结束于该语言真实音频结尾');
 
 console.log('studio material matching regression passed');

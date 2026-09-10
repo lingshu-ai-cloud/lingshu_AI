@@ -201,3 +201,32 @@ export async function inspectRenderedVisuals(input: {
 
   return { passed: failures.length === 0, failures, metrics, evidenceFrames };
 }
+
+export type SceneVisualIssue = { sceneIndex: number; start: number; end: number; code: 'decode' | 'blank' | 'blur' | 'duplicate'; reason: string; duplicateOf?: number };
+/** Sample each actual render interval so a brief broken shot cannot hide between global samples. */
+export async function inspectRenderedScenes(input: {
+  outputPath: string; scenes: Array<{ start: number; end: number }>; requireDistinct?: boolean;
+}): Promise<{ passed: boolean; issues: SceneVisualIssue[]; checkedScenes: number }> {
+  const issues: SceneVisualIssue[] = [];
+  const previous: Array<{ sceneIndex: number; frames: Buffer[] }> = [];
+  if (!input.scenes.length || input.scenes.length > 32) return { passed: false, issues: [{ sceneIndex: 0, start: 0, end: 0, code: 'decode', reason: '缺少有效分镜时间轴或超过32镜检查上限' }], checkedScenes: 0 };
+  for (const [sceneIndex, scene] of input.scenes.entries()) {
+    const add = (code: SceneVisualIssue['code'], reason: string, duplicateOf?: number) => issues.push({ sceneIndex, ...scene, code, reason, ...(duplicateOf !== undefined ? { duplicateOf } : {}) });
+    const duration = scene.end - scene.start;
+    if (!Number.isFinite(scene.start) || !Number.isFinite(duration) || scene.start < 0 || duration <= 0) { add('decode', '分镜时间区间无效'); continue; }
+    const decoded = await runVisualFfmpeg(['-ss', String(scene.start), '-i', input.outputPath, '-t', String(duration), '-map', '0:v:0',
+      '-vf', `fps=${3 / duration},crop=iw:floor(ih*0.5):0:0,scale=${WIDTH}:${HEIGHT}:flags=area,format=gray`,
+      '-frames:v', '3', '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1'], true);
+    const frames = Array.from({ length: Math.min(3, Math.floor(decoded.stdout.length / FRAME_BYTES)) }, (_, i) => decoded.stdout.subarray(i * FRAME_BYTES, (i + 1) * FRAME_BYTES));
+    if (!decoded.ok || frames.length < 3) { add('decode', '镜头帧无法完整解码，可能缺失或被截断'); continue; }
+    const measured = frames.map(frameMetrics);
+    if (measured.filter(m => m.mean < 5 || m.mean > 250 || m.deviation < 6 || m.edgeRatio < .004 || m.modalRatio > .97).length >= 2) add('blank', '镜头多数抽样帧缺少可辨识内容');
+    else if (measured.filter(m => m.deviation >= 10 && m.edgeRatio >= .008).length < 2) add('blur', '镜头多数抽样帧清晰度不足');
+    if (input.requireDistinct) {
+      const duplicate = previous.find(other => frames.every((frame, i) => difference(frame, other.frames[i]) < 1.25));
+      if (duplicate) add('duplicate', `画面与第 ${duplicate.sceneIndex + 1} 镜重复`, duplicate.sceneIndex);
+    }
+    previous.push({ sceneIndex, frames });
+  }
+  return { passed: issues.length === 0, issues, checkedScenes: previous.length };
+}

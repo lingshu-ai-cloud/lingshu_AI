@@ -33,6 +33,8 @@ export interface DigitalEmployeeConfig {
   operatingAssessment?: OperatingAssessment;
   defaultParticipation?: "agent" | "team";
   videoDefaults?: Partial<VideoCreationPlan>;
+  /** Languages generated autonomously for every content order. */
+  videoLanguages?: string[];
   companyName: string;
   industry: string;
   primaryBusiness: string;
@@ -588,10 +590,9 @@ export function buildTaskDeepLink(
     page,
     view:
       page === "smartAssets"
-        ? task.destination_view ||
-          planTask?.destinationView ||
-          mapped.view ||
-          "create"
+        ? (['content_release_approval', 'publishing_calendar', 'platform_publish'].includes(task.task_key)
+          ? 'publish'
+          : task.destination_view || planTask?.destinationView || mapped.view || "create")
         : undefined,
     studioPanel:
       page === "smartAssets" && task.task_key === "content_production"

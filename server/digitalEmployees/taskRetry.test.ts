@@ -27,11 +27,11 @@ store.update=(async(collection:string,id:string,patch:any)=>{if(collection==='wo
 store.create=(async(collection:string,body:any)=>{const record={id:`created-${(records[collection]||[]).length}`, ...body};(records[collection]||=[]).push(record);return structuredClone(record);}) as typeof store.create;
 try {
  await reconcileDigitalEmployeeRun(tenant,run.id);
- assert.equal(tasks[0].status,'waiting_external');
+ assert.equal(tasks[0].status,'failed');
  assert.equal((tasks[0].output as any).executionFailure.attempts,1);
  assert.equal(tasks[1].status,'succeeded','an exception must not prevent an independent task from executing');
  await reconcileDigitalEmployeeRun(tenant,run.id);
- assert.equal(tasks[0].status,'waiting_external','retry interval must be honored');
+ assert.equal(tasks[0].status,'failed','retry interval must be honored');
  (tasks[0].output as any).executionFailure.retryAt=new Date(now-1).toISOString();
  // Keep another pending dependency so this test exercises task execution, not a real business review.
  records.workflow_tasks.push({...makeTask('later','weekly_review'),depends_on:['not-present']});

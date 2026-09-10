@@ -413,6 +413,7 @@ export function StudioWorkbenchFrame({
             )}
             <button
               data-agent-action="studio-primary"
+              data-agent-block-reason={primaryAction.blockReason || undefined}
               type={primaryAction.type || 'button'}
               disabled={primaryAction.disabled || primaryAction.loading}
               onClick={primaryAction.onClick}
