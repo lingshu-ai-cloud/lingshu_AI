@@ -9,6 +9,7 @@ import { maturityLabels, maturityProfiles, assessMaturity, gapLabels } from '../
 import ProductionProgressPanel from './ProductionProgressPanel';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import WeeklyPackagePanel from "./WeeklyPackagePanel";
+import { nodeDeepLink } from './WeeklyExecutionNodes';
 import { agentRuleFields } from '../lib/agentRuleFields';
 import VideoPlanEditor from './VideoPlanEditor';
 import { normalizeVideoPlan, videoPlanErrors } from '../lib/videoCreationPlan';
@@ -1606,9 +1607,15 @@ function outputSummary(task: WorkflowTask): string {
 function EventTimeline({
   events,
   activeTaskId,
+  actionEventId,
+  actionLabel,
+  onAction,
 }: {
   events: RunEvent[];
   activeTaskId?: string;
+  actionEventId?: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="space-y-4">
@@ -1643,6 +1650,13 @@ function EventTimeline({
               第 {event.sequence} 条 ·{" "}
               {eventTypeLabel[event.type] || "工作状态已更新"}
             </p>
+            {event.id === actionEventId && actionLabel && onAction && <button
+              type="button"
+              onClick={onAction}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800"
+            >
+              {actionLabel} <ArrowRight size={13} />
+            </button>}
           </div>
         </div>
       ))}
@@ -2205,6 +2219,8 @@ function taskBusinessAction(link: DigitalEmployeeDeepLink): string {
   if (link.page === "scriptLibrary") return "打开跟进话术";
   if (link.page === "smartAssets" && link.view === "publish")
     return "核对发布清单";
+  if (link.page === "smartAssets" && link.businessRef.taskKey === 'content_quality_gate')
+    return "查看成片并处理";
   if (link.page === "smartAssets") return "继续内容制作";
   if (link.page === "conversion")
     return link.businessRef.taskKey === "customer_segmentation"
@@ -2360,6 +2376,7 @@ function ProductionScene({
   onRetry,
   onSkip,
   onComplete,
+  deepLink,
 }: {
   task?: WorkflowTask;
   planTask?: PlanTask;
@@ -2377,11 +2394,16 @@ function ProductionScene({
   onRetry: () => Promise<boolean>;
   onSkip: (note: string) => Promise<boolean>;
   onComplete: (note: string) => Promise<boolean>;
+  deepLink?: DigitalEmployeeDeepLink;
 }) {
   const taskEvents = task
     ? events.filter((event) => event.task_id === task.id)
     : events;
-  const link = task ? buildTaskDeepLink(task, planTask, runId) : null;
+  const link = deepLink || (task ? buildTaskDeepLink(task, planTask, runId) : null);
+  const isQualityReview = task?.task_key === 'content_quality_gate' && taskNeedsAttention(task);
+  const actionEventId = isQualityReview
+    ? [...taskEvents].reverse().find(event => !agentUiActionFromEvent(event))?.id
+    : undefined;
   const evidence: Array<[string, unknown]> = task
     ? (
         [
@@ -2488,7 +2510,7 @@ function ProductionScene({
                 </p>
               </div>
             </div>
-            <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+            {!isQualityReview && <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
               <div className="flex items-center gap-2 text-blue-800">
                 <BrainCircuit size={15} />
                 <p className="text-xs font-black">执行依据</p>
@@ -2512,8 +2534,8 @@ function ProductionScene({
                   该任务尚未返回能力映射或事实来源，不能据此宣称业务动作已完成。
                 </p>
               )}
-            </div>
-            <div className="mt-5">
+            </div>}
+            {!isQualityReview && <div className="mt-5">
               <p className="text-xs font-bold text-slate-700">中间产物</p>
               {Object.keys(task.output || {}).length ? (
                 <div className="mt-2 space-y-2">
@@ -2536,7 +2558,11 @@ function ProductionScene({
                   Agent 产出会在执行过程中持续写入
                 </div>
               )}
-            </div>
+            </div>}
+            {isQualityReview && <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-xs font-black text-amber-900">需要你观看成片并做判断</p>
+              <p className="mt-2 text-xs leading-5 text-amber-800">{task.blocked_reason || '请确认当前成片是否可以进入发布；如果不通过，可直接修改配乐、配音、分镜素材、字幕、封面或导出规格。'}</p>
+            </div>}
             {link && (
               <div className="mt-4">
                 <button
@@ -2552,7 +2578,7 @@ function ProductionScene({
               </div>
             )}
             {!readOnly &&
-              taskNeedsAttention(task) && (
+              taskNeedsAttention(task) && !isQualityReview && (
                 <BlockedTaskActions
                   key={task.id}
                   task={task}
@@ -2562,7 +2588,7 @@ function ProductionScene({
                   onComplete={onComplete}
                 />
               )}
-            {!readOnly ? (
+            {!isQualityReview && (!readOnly ? (
               <CorrectionPanel
                 key={task.id}
                 busy={correcting}
@@ -2572,17 +2598,23 @@ function ProductionScene({
               <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
                 正在查看历史运行；可查看业务证据，但不会对历史任务执行纠偏或恢复操作。
               </p>
-            )}
+            ))}
           </div>
           <div className="max-h-[620px] overflow-y-auto p-5">
-            <AgentOperationFeed task={task} events={taskEvents} />
+            {!isQualityReview && <AgentOperationFeed task={task} events={taskEvents} />}
             <div className="mb-4 flex items-center justify-between">
               <p className="mt-5 text-xs font-bold text-slate-700">现场事件</p>
               <span className="text-[10px] text-slate-400">
                 {taskEvents.length} 条已持久化
               </span>
             </div>
-            <EventTimeline events={taskEvents} activeTaskId={task.id} />
+            <EventTimeline
+              events={taskEvents}
+              activeTaskId={task.id}
+              actionEventId={actionEventId}
+              actionLabel={isQualityReview ? '查看成片并处理' : undefined}
+              onAction={isQualityReview && link ? () => onOpenTask(link) : undefined}
+            />
           </div>
         </div>
       )}
@@ -4124,6 +4156,7 @@ export default function DigitalEmployeePage({
                           ].includes(busy),
                       )}
                       onOpenTask={dispatchDigitalEmployeeDeepLink}
+                      deepLink={selectedTask ? nodeDeepLink(selectedPlanTask, selectedTask, data.run.id, data.deliveries) : undefined}
                       onCorrect={async (input) =>
                         Boolean(
                           selectedTask &&

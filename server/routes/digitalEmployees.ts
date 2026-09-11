@@ -20,10 +20,13 @@ import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/cont
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
 import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type BrowserProductionTarget } from '../digitalEmployees/browserSessions.js';
 import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { signAssetUrl } from '../lib/assetAccess.js';
 import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { currentExecutionAdapters } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers: typeof defaultGetWhatsAppCustomers = (tenantId) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
@@ -2085,7 +2088,17 @@ digitalEmployeesRouter.get('/content-projects/:projectId/production', async (req
   const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
   if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
   const spec = jsonObject<Record<string, any>>(project.spec, {});
-  res.json({ projectId: project.id, hash: contentAcceptanceHash(spec), spec: { lang: spec.lang, duration: spec.duration, voice: spec.contentOrder?.videoPlan?.voice || spec.voice, voiceStyle: spec.voiceStyle, voiceoverUrl: spec.voiceoverUrl, bgm: spec.bgm, bgmVol: spec.bgmVol, bgmSelection: spec.bgmSelection, voiceSelection: spec.voiceSelection, scenePlan: spec.contentOrder?.videoPlan?.scenePlan, sceneSourcePlan: spec.sceneSourcePlan, materialIds: spec.automation?.routePlan?.assetIds || [], sceneOverrides: spec.sceneOverrides, cues: spec.alignedCuesByLang?.[spec.lang] || [], subtitleStyle: spec.subtitleStyle, subtitleAlignmentSource: spec.subtitleAlignmentSource, coverTitle: spec.coverTitle, coverFrameTime: spec.coverFrameTime, exportSpec: spec.exportSpec, ratio: spec.ratio, stage: spec.automation?.stage }, managed: spec.automation?.managedBy === 'digital_employee' });
+  const outputPath = String(spec.automation?.renderOutputPath || spec.renderOutputPath || '').trim();
+  const assetRoot = path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantId.replace(/[^\w.-]+/g, '-'));
+  const resolvedOutput = outputPath ? path.resolve(outputPath) : '';
+  const outputAccessible = Boolean(resolvedOutput && fs.existsSync(assetRoot) && fs.existsSync(resolvedOutput)
+    && fs.statSync(resolvedOutput).isFile() && path.dirname(resolvedOutput) === assetRoot
+    && path.dirname(fs.realpathSync(resolvedOutput)) === fs.realpathSync(assetRoot));
+  const videoUrl = outputAccessible
+    ? signAssetUrl(`/api/overseas/publishing/local-videos/${encodeURIComponent(path.basename(resolvedOutput))}`, tenantId)
+    : '';
+  const hash = contentAcceptanceHash(spec);
+  res.json({ projectId: project.id, hash, videoUrl, approved: contentAccepted(spec), qualityPassed: spec.automation?.quality?.passed === true, spec: { lang: spec.lang, duration: spec.duration, voice: spec.contentOrder?.videoPlan?.voice || spec.voice, voiceStyle: spec.voiceStyle, voiceoverUrl: spec.voiceoverUrl, bgm: spec.bgm, bgmVol: spec.bgmVol, bgmSelection: spec.bgmSelection, voiceSelection: spec.voiceSelection, scenePlan: spec.contentOrder?.videoPlan?.scenePlan, sceneSourcePlan: spec.sceneSourcePlan, materialIds: spec.automation?.routePlan?.assetIds || [], sceneOverrides: spec.sceneOverrides, cues: spec.alignedCuesByLang?.[spec.lang] || [], subtitleStyle: spec.subtitleStyle, subtitleAlignmentSource: spec.subtitleAlignmentSource, coverTitle: spec.coverTitle, coverFrameTime: spec.coverFrameTime, exportSpec: spec.exportSpec, ratio: spec.ratio, stage: spec.automation?.stage }, managed: spec.automation?.managedBy === 'digital_employee' });
 });
 digitalEmployeesRouter.post('/content-projects/:projectId/revise', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;

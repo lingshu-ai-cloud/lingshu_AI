@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { callLLM } from '../agents/llm.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { signAssetUrl } from '../lib/assetAccess.js';
+import { assetIdentity, signAssetUrl, verifyAssetToken } from '../lib/assetAccess.js';
 import { getBestTimeScores } from '../publishing/bestTime.js';
 import {
   PUBLISH_COPY_PLATFORMS,
@@ -222,10 +222,14 @@ function fallbackQueueSuggestion(input: {
   return selected;
 }
 
-publishingRouter.use(requireAuth);
-
-publishingRouter.get('/local-videos/:filename', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+publishingRouter.get('/local-videos/:filename', async (req, res) => {
+  const identity = await assetIdentity(req);
+  const signed = identity ? null : verifyAssetToken(req.query.assetToken, `${req.baseUrl}${req.path}`);
+  const tenantId = identity?.tenantId || signed?.tenantId || '';
+  if (!tenantId) {
+    res.status(401).end();
+    return;
+  }
   const filename = path.basename(String(req.params.filename || ''));
   const filePath = localPublishingVideo(tenantId, path.join(publishingUploadDir(tenantId), filename));
   if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
@@ -235,6 +239,8 @@ publishingRouter.get('/local-videos/:filename', (req, res) => {
   res.setHeader('Cache-Control', 'private, max-age=300');
   res.sendFile(filePath);
 });
+
+publishingRouter.use(requireAuth);
 
 publishingRouter.post('/local-videos', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;

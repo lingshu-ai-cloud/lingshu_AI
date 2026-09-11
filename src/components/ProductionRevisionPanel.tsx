@@ -70,6 +70,41 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
       当前节点：{({ script: '脚本', material_match: '分镜素材', voice_subtitles: '配音与字幕', heygen: '数字人及混剪合成', render: '合成', quality: '质检', completed: '待验收', blocked: '需要处理' } as any)[data.spec.stage] || data.spec.stage}。保存后撤销旧审批并从受影响节点重新制作。
     </p>
 
+    <section aria-labelledby="current-review-video" className="space-y-3 rounded-md border border-border bg-surface-2 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h4 id="current-review-video" className="text-sm font-bold text-text-primary">当前待验收成片</h4>
+          <p className="mt-1 text-xs text-text-muted">先完整观看当前版本，再确认通过或在下方修改后重新制作。</p>
+        </div>
+        <span className={`rounded-sm px-2 py-1 text-xs font-bold ${data.approved ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-dim text-amber'}`}>{data.approved ? '当前版本已确认' : '等待人工判断'}</span>
+      </div>
+      {data.videoUrl
+        ? <video aria-label="当前待验收成片" controls preload="metadata" className="max-h-[32rem] w-full bg-black object-contain" src={data.videoUrl} />
+        : <p role="status" className="border-l-2 border-amber bg-amber-dim px-3 py-3 text-sm text-amber">当前版本没有可播放的成片文件，请先重新制作。</p>}
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={busy || data.approved || !data.videoUrl || !data.qualityPassed}
+          className={primaryButton}
+          onClick={async () => {
+            setBusy(true);
+            setNotice('');
+            try {
+              await api(base + encodeURIComponent(projectId) + '/approve', { hash: data.hash });
+              setNotice('已确认当前成片版本，质量门将继续执行。');
+              await load();
+              onSaved?.();
+            } catch (error) {
+              setNotice((error as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >{data.approved ? '当前版本已确认' : '成片通过，确认当前版本'}</button>
+        {!data.qualityPassed && <p className="text-xs text-amber">机器质检尚未通过，请先修改并重新制作。</p>}
+      </div>
+    </section>
+
     <nav aria-label="生产配置节点" className="flex flex-wrap border-b border-border">
       {[
         ['music', '配乐'],

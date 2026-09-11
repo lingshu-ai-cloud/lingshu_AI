@@ -20,9 +20,16 @@ const boardSource = fs.readFileSync('src/components/DeliveryBoard.tsx', 'utf8');
 const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.tsx', 'utf8');
 
 assert.match(pageSource, /自动交付语言/);
 assert.match(pageSource, /相同 sceneId 翻译、配音、加字幕和配乐/);
+assert.match(pageSource, /需要你观看成片并做判断/, 'the quality gate must explain the exact human decision');
+assert.match(pageSource, /查看成片并处理/, 'the quality gate must expose a direct review action');
+assert.match(pageSource, /nodeDeepLink\(selectedPlanTask, selectedTask, data\.run\.id, data\.deliveries\)/, 'the production scene must use the delivery-enriched project deep link');
+assert.match(revisionSource, /当前待验收成片/, 'the revision workspace must put the final video before editing controls');
+assert.match(revisionSource, /<video[^>]+aria-label="当前待验收成片"/, 'the revision workspace must render the actual final video');
+assert.match(revisionSource, /成片通过，确认当前版本/, 'the revision workspace must allow the user to complete the human quality decision');
 
 for (const label of ['今天要做', '生产与交付', '任务执行', '复盘']) {
   assert.match(pageSource, new RegExp(label), `Digital Employee workspace must expose the ${label} view`);
