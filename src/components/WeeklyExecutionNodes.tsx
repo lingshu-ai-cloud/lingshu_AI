@@ -1,5 +1,6 @@
 import { ArrowRight, FileText, Settings2 } from 'lucide-react';
 import { buildTaskDeepLink, type DigitalEmployeeOverview, type DigitalEmployeeDeepLink, type PlanTask, type WorkflowTask } from '../lib/digitalEmployees';
+import type { DeliveryResource } from '../lib/delivery';
 import { TASK_TEMPLATES, type PackageTask } from '../lib/weeklyPackage';
 import { taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 
@@ -26,8 +27,24 @@ export function weeklyExecutionNodes(data: DigitalEmployeeOverview) {
       (TASK_TEMPLATES.find(template => template.id === t.templateId)?.keys as readonly string[] | undefined)?.includes(key)),
   })).sort((a, b) => (a.runtime?.sequence ?? a.planned?.sequence ?? Infinity) - (b.runtime?.sequence ?? b.planned?.sequence ?? Infinity));
 }
-export function nodeDeepLink(planned: PlanTask | undefined, runtime: WorkflowTask | undefined, runId: string): DigitalEmployeeDeepLink {
-  if (runtime) return buildTaskDeepLink(runtime, planned, runId || runtime.run_id);
+export function nodeDeepLink(planned: PlanTask | undefined, runtime: WorkflowTask | undefined, runId: string, deliveries: DeliveryResource[] = []): DigitalEmployeeDeepLink {
+  if (runtime) {
+    const link = buildTaskDeepLink(runtime, planned, runId || runtime.run_id);
+    if (runtime.task_key !== 'content_quality_gate' || link.businessRef.entityId) return link;
+    const project = deliveries.find(item => item.id.startsWith('studio_project:') && item.taskIds.includes(runtime.id));
+    if (!project) return link;
+    const entityId = project.id.slice('studio_project:'.length);
+    return {
+      ...link,
+      studioPanel: 'projects',
+      businessRef: {
+        ...link.businessRef,
+        entityId,
+        deliveryId: project.id,
+        resources: [{ type: 'studio_project', id: entityId }],
+      },
+    };
+  }
   return {
     page: planned?.destination || 'digitalEmployees', view: planned?.destinationView,
     runId, taskId: '', businessRef: {
@@ -79,7 +96,7 @@ export default function WeeklyExecutionNodes({ data, onOpen, onDetails, onConfig
         <ol aria-label={`${group.title}节点`} className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {group.nodes.map(({ key, planned, runtime, number }) => {
             const state = nodeState(runtime);
-            const link = nodeDeepLink(planned, runtime, data.run?.id || '');
+            const link = nodeDeepLink(planned, runtime, data.run?.id || '', data.deliveries);
             const destination = link.page === 'digitalEmployees' ? key === 'weekly_review' ? '本周复盘' : '目标与执行计划'
               : link.page === 'smartAssets' ? link.view === 'publish' ? '内容发布' : '内容创作' : pageLabels[link.page] || '业务页面';
             const title = runtime?.title || planned?.title || key;

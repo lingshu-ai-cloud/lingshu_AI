@@ -9,8 +9,8 @@ const stages: Record<string, string> = { script: '生成脚本', material_match:
 type Snapshot = { task: { id: string; task_key?: string; title: string; status: string; blocker_reason?: string; output?: { production?: { analysisMessage?: string; repairAttempts?: number; problems?: Array<{shot: number; timeRange: string; reason: string}>; lastRepair?: {shots: number[]; message: string} } } }; stage?: string; events: RunEvent[] };
 
 /** Shows the worker browser, never an animation or a second editable production session. */
-export default function ProductionTaskScene({ runId, taskId }: { runId: string; taskId: string }) {
-  const [expanded, setExpanded] = useState(true);
+export default function ProductionTaskScene({ runId, taskId, initialExpanded = true }: { runId: string; taskId: string; initialExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(initialExpanded);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {

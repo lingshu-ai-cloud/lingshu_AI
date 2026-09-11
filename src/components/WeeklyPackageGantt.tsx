@@ -36,7 +36,7 @@ export default function WeeklyPackageGantt({ data, onOpen, onDetails, onConfigur
             {group.nodes.map(({ key, planned, runtime, packageTask, number }) => {
               const title = runtime?.title || planned?.title || key;
               const state = nodeState(runtime);
-              const link = nodeDeepLink(planned, runtime, data.run?.id || '');
+              const link = nodeDeepLink(planned, runtime, data.run?.id || '', data.deliveries);
               const due = calendarDay(packageTask?.dueAt) ?? days[days.length - 1];
               const plan = ganttSpan(days[0], due, days);
               const record = ganttRecordRange(runtime, data.events || []);

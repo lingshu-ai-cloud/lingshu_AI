@@ -1,4 +1,5 @@
 import { productionQualitySummary } from '../digitalEmployees/productionQualitySummary.js';
+import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { productionFailureState } from '../digitalEmployees/productionPreflight.js';
 import { reopenNoDataCustomerBranch } from '../digitalEmployees/customerReentry.js';
 import { normalizeContinuationPolicy } from '../../src/lib/continuationPolicy.js';
@@ -411,8 +412,9 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
   const [profile, analyses, materials] = await Promise.all([
     readTenantEnterpriseProfile(tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 }),
-    store.list<StoredRecord>('materials', { where: { tenantId }, perPage: 500 }).catch(() => ({ items: [] as StoredRecord[], page: 1, perPage: 500, totalItems: 0, totalPages: 0 })),
+    readMaterialLibrary(tenantId),
   ]);
+  if (materials.status === 'unavailable') throw Error('素材库暂时不可用，请稍后重试');
   const rawProducts = Array.isArray(profile.products?.items) ? profile.products.items as Array<Record<string, unknown>> : [];
   const focused = config.focusProducts.split(/[\n,，;；、]/).map(item => item.trim().toLowerCase()).filter(Boolean);
   const selectedProducts = focused.length ? rawProducts.filter(product => focused.some(value => [product.name, product.sku].some(field => String(field || '').trim().toLowerCase() === value))) : [];
@@ -593,7 +595,9 @@ export async function browserTaskWorkspace(scope: BrowserScope): Promise<Browser
   return { userId: goal?.owner_id || 'digital_employee_agent', projectId, customerId,
     ...(automation.stage === 'blocked' && automation.retryPolicy === 'input_required' ? { inputBlocker: String(automation.blocker || '请补充制作资料') } : {}),
     stage: String(automation.stage || ''), revision: String(project?.updated_at || task.updated_at),
-    link: { page, view: mappedLink.view || selected?.link?.view, runId: scope.runId, taskId: scope.taskId,
+    link: { page, view: mappedLink.view || selected?.link?.view,
+      ...(page === 'smartAssets' && projectId ? { studioPanel: 'projects' as const } : {}),
+      runId: scope.runId, taskId: scope.taskId,
       businessRef: { ...selected?.link?.businessRef, taskKey: task.task_key, ...(projectId ? { entityId: projectId } : customerId ? { entityId: customerId } : scheduledRef ? { entityId: String(scheduledRef.id) } : {}) } } };
 
 }
@@ -1019,9 +1023,11 @@ function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string
   while (changed) {
     changed = false;
     for (const candidate of tasks) {
-      if (!keys.has(candidate.task_key)) continue;
+      if (!keys.has(candidate.task_key) && !taskIds.has(candidate.id)) continue;
       for (const dependency of jsonObject<string[]>(candidate.depends_on, [])) {
-        if (!keys.has(dependency)) { keys.add(dependency); changed = true; }
+        const dependencyTask = tasks.find(item => item.id === dependency || item.task_key === dependency);
+        if (dependencyTask && !taskIds.has(dependencyTask.id)) { taskIds.add(dependencyTask.id); changed = true; }
+        if (dependencyTask && !keys.has(dependencyTask.task_key)) { keys.add(dependencyTask.task_key); changed = true; }
       }
     }
   }
@@ -1168,7 +1174,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
       task.task_key === 'content_quality_gate' ? 'completedWorks' : 'contentProjects',
       task.task_key === 'content_quality_gate' ? 'studio_projects.spec.automation.quality + workflow scope' : 'studio_projects.spec.automation.renderOutputPath + workflow scope',
       matching,
-      matching.map(item => ({
+      scoped.map(item => ({
         type: 'studio_project', id: item.id, status: String(item.status || ''),
         stage: String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(item.spec, {}).automation, {}).stage || ''),
       })),
@@ -2336,7 +2342,16 @@ async function approveGoalForReview(tenantId: string, userId: string, goalId: st
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
   ]);
   const allowDisjoint = normalizeContinuationPolicy(publicConfig(configRecord)?.continuationPolicy).overlappingCycles === 'allow_disjoint';
-  const conflicts = (otherId: string) => { const other = tenantGoals.items.find(g => g.id === otherId); return !allowDisjoint || !other || cyclesOverlap(goal, other); };
+  // Hybrid storage may list migrated goals while a legacy run still refers to
+  // a goal available only through the tenant-scoped record fallback.
+  const goalsById = new Map(tenantGoals.items.map(item => [item.id, item]));
+  if (allowDisjoint) {
+    const missingIds = [...new Set(tenantRuns.items.filter(item => !['succeeded', 'failed', 'cancelled'].includes(item.status))
+      .map(item => item.goal_id).filter(id => id !== goal.id && !goalsById.has(id)))];
+    const missingGoals = await Promise.all(missingIds.map(id => tenantRecord<GoalRecord>(COLLECTION.goals, id, tenantId)));
+    for (const other of missingGoals) if (other) goalsById.set(other.id, other);
+  }
+  const conflicts = (otherId: string) => { const other = goalsById.get(otherId); return !allowDisjoint || !other || cyclesOverlap(goal, other); };
   const overlappingGoal = tenantGoals.items.find(item => item.id !== goal.id && conflicts(item.id) && ['active', 'paused'].includes(item.status) && !tenantRuns.items.some(run => run.goal_id === item.id && ['failed', 'cancelled', 'succeeded'].includes(run.status)));
   const overlappingRun = tenantRuns.items.find(item => item.goal_id !== goal.id && conflicts(item.goal_id) && !['succeeded', 'failed', 'cancelled'].includes(item.status));
   if (overlappingGoal || overlappingRun) {
@@ -3058,7 +3073,7 @@ async function applyTaskControl(input: {
       validatedInputRefs.push(validated);
     }
     if (run.status === 'cancelled') throw new TaskControlError(409, 'run_cancelled', { message: '已取消的运行不能再纠偏。' });
-    if (['paused', 'waiting_human'].includes(run.status)) throw new TaskControlError(409, 'run_controlled_by_human', { message: '请先恢复运行或将人工接管任务交还数字员工。' });
+    if (run.status === 'paused') throw new TaskControlError(409, 'run_controlled_by_human', { message: '请先恢复运行。' });
     if (allTasks.items.some(item => item.id === task.id && item.status === 'handed_off')) {
       throw new TaskControlError(409, 'task_handed_off', { message: '请先将人工接管任务交还数字员工。' });
     }

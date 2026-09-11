@@ -527,8 +527,11 @@ export function resolveStudioWorkflowProjectEntry(
 ): { projects: StudioProject[]; project: StudioProject | null; openList: boolean } {
   const matches = projects.filter(project => {
     const projectContext = studioWorkflowContextFromSpec(project.spec);
-    return projectContext?.runId === context.runId && projectContext.taskId === context.taskId
-      && (!context.entityId || project.id === context.entityId);
+    if (context.entityId) {
+      return project.id === context.entityId
+        && (!context.runId || projectContext?.runId === context.runId);
+    }
+    return projectContext?.runId === context.runId && projectContext.taskId === context.taskId;
   });
   return {
     projects: matches,
@@ -4049,7 +4052,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
   const [showProjects, setShowProjects] = useState(false);
   const [workflowProjectSelectionPending, setWorkflowProjectSelectionPending] = useState(
-    () => workflowContext?.taskKey === 'content_production',
+    () => ['content_production', 'content_quality_gate'].includes(workflowContext?.taskKey || ''),
   );
   const projectsPanelWasOpenRef = useRef(false);
   const handledOpenProjectsSignalRef = useRef(0);
@@ -4083,7 +4086,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     // never relabel an unrelated project that happened to be open in Studio.
     setProjectId(null);
     setProjectWorkflowContext(workflowContext);
-    if (workflowContext.taskKey === 'content_production') {
+    if (['content_production', 'content_quality_gate'].includes(workflowContext.taskKey || '')) {
       setProjects([]);
       setShowProjects(true);
       setWorkflowProjectSelectionPending(true);
@@ -6372,7 +6375,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const voiceEl = previewVoiceAudioRef.current;
     const bgmUrl = selectedBgmTrack?.url || '';
     const currentVoiceUrl = previewVoiceOn ? activeVoiceoverUrl : '';
-    const bgmGain = previewBgmOn ? Math.max(0, Math.min(1, (bgmVol || 0) / 100)) * (currentVoiceUrl ? 0.5 : 1) : 0;
+    const bgmGain = previewBgmOn ? Math.max(0, Math.min(1, (bgmVol || 0) / 100)) : 0;
     const voiceGain = previewVoiceOn ? Math.max(0, Math.min(1, (voiceVol || 0) / 100)) : 0;
 
     if (bgmEl) {
@@ -7524,7 +7527,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const applySpec = (s: Record<string, unknown>) => {
     studioSettingsEditedRef.current = true;
     managedProductionProjectRef.current = Boolean(s.workflowRunId && (s.automation as { managedBy?: string } | undefined)?.managedBy === 'digital_employee');
-    setProjectWorkflowContext(studioWorkflowContextFromSpec(s));
+    setProjectWorkflowContext(
+      workflowContext?.taskKey === 'content_quality_gate'
+        ? workflowContext
+        : studioWorkflowContextFromSpec(s),
+    );
     studioSpecEpochRef.current += 1;
     scriptTaskRequestRef.current += 1;
     productScriptAbortRef.current?.abort();
@@ -11054,7 +11061,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             <div className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5">
               <p className="truncate text-xs font-bold text-text-primary">{selectedBgmTrack?.name || '当前未选择配乐'}</p>
               <p className="mt-1 text-[10px] text-text-muted">
-                {previewVoiceOn && activeVoiceoverUrl && bgm ? '口播出现时，配乐按当前设置自动降低' : bgm ? `配乐音量 ${bgmVol}%` : '选择一首音乐即可试听混剪效果'}
+                {bgm ? `配乐最终混音音量 ${bgmVol}%` : '选择一首音乐即可试听混剪效果'}
               </p>
             </div>
             {previewNote && <p className="mt-2 text-[11px] leading-relaxed text-amber-600">素材缺少可播放源文件，请返回上一步更换或上传素材。</p>}
@@ -12290,13 +12297,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   return (
     <div className="flex flex-col h-full relative">
-      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} />}
+      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
       {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
       {managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
         <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
         <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
       </div>}
+      {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
+        ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
+        : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
@@ -12714,7 +12724,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       </StudioWorkbenchFrame>
       </div>
 
-      {managedProductionProjectRef.current && projectId && <details className="mx-4 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>}
       {/* ── 我的作品 / 草稿 列表浮层 ─────────────────────── */}
       <AnimatePresence>
         {existingSourceDraftPrompt && (
@@ -12792,7 +12801,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             batches={variationBatches}
             materials={materials}
             currentId={projectId}
-            workflowContext={workflowContext?.taskKey === 'content_production' ? workflowContext : undefined}
+            workflowContext={['content_production', 'content_quality_gate'].includes(workflowContext?.taskKey || '') ? workflowContext : undefined}
             onClose={() => setShowProjects(false)}
             onPublish={draft => { setShowProjects(false); onGoPublish?.(draft); }}
             onLoad={loadProject}

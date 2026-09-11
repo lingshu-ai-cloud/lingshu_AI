@@ -428,15 +428,16 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       filters.push(`${vlabel}null[vout]`);
     }
 
-    // 4) 音轨混音：有配音时把 BGM 压低垫底，配音按用户设置音量叠上
+    // 4) 音轨混音：bgmVol 表示最终混音增益，必须与界面显示一致。
+    // 默认值本身已经按“口播垫底”设置，不能在有配音时再静默减半，
+    // 否则界面 18% 实际只剩 9%，音轨虽存在却几乎听不见。
     const musicNormalize = bgmFile ? 'loudnorm=I=-16:TP=-2:LRA=11,' : '';
     const rawBgmVol = Number(spec.bgmVol);
     const rawVoiceVol = Number(spec.voiceVol);
     const vol = Math.min(1, Math.max(0, (Number.isFinite(rawBgmVol) ? rawBgmVol : 35) / 100));
     const voiceVol = Math.min(1.5, Math.max(0, (Number.isFinite(rawVoiceVol) ? rawVoiceVol : 100) / 100));
     if (voFile) {
-      const duck = (vol * 0.5).toFixed(2); // 有人声时 BGM 再降一档
-      filters.push(`[${bgmIdx}:a]${musicNormalize}volume=${duck},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
+      filters.push(`[${bgmIdx}:a]${musicNormalize}volume=${vol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
       filters.push(`[${voIdx}:a]volume=${voiceVol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[avo]`);
       filters.push(`[abgm][avo]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[aout]`);
     } else {

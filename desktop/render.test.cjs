@@ -52,6 +52,14 @@ async function main() {
   const origin = `http://127.0.0.1:${address.port}`;
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-render-test-'));
   try {
+    const bgmTone = path.join(outDir, 'bgm-tone.wav');
+    const voiceWithPauses = path.join(outDir, 'voice-with-pauses.wav');
+    const bgmBuild = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=1.2', '-y', bgmTone], { encoding: 'utf8' });
+    const voiceBuild = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'aevalsrc=0.5*sin(2*PI*880*t)*between(t\\,0.4\\,0.8):s=44100:d=1.2', '-y', voiceWithPauses], { encoding: 'utf8' });
+    assert.equal(bgmBuild.status, 0, bgmBuild.stderr);
+    assert.equal(voiceBuild.status, 0, voiceBuild.stderr);
+    const bgmDataUrl = `data:audio/wav;base64,${fs.readFileSync(bgmTone).toString('base64')}`;
+    const voiceDataUrl = `data:audio/wav;base64,${fs.readFileSync(voiceWithPauses).toString('base64')}`;
     const productImage = path.join(outDir, 'owned-product.png');
     const imageBuild = spawnSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x320:r=1', '-frames:v', '1', '-y', productImage], { encoding: 'utf8' });
     assert.equal(imageBuild.status, 0, imageBuild.stderr);
@@ -77,8 +85,8 @@ async function main() {
       jobId: 'voiceover-regression',
       spec: { ratio: '1:1', duration: 1.2, bgmVol: 20, voiceVol: 100 },
       timeline: [],
-      bgm: { url: `${origin}/bgm.mp3` },
-      voiceover: { url: `${origin}/voice.mp3` },
+      bgm: { url: bgmDataUrl },
+      voiceover: { url: voiceDataUrl },
       subtitles: { mode: 'off', cues: [] },
     }, () => {}, outDir);
     assert.equal(result.ok, true, result.error || 'render should succeed');
@@ -87,6 +95,9 @@ async function main() {
     assert.equal(probe.status, 0, probe.stderr);
     const mean = Number((probe.stderr.match(/mean_volume:\s*(-?[\d.]+) dB/) || [])[1]);
     assert.ok(Number.isFinite(mean) && mean > -70, `voiceover mix should not be silent (mean=${mean})`);
+    const quietProbe = spawnSync(ffmpegPath, ['-hide_banner', '-ss', '0.1', '-t', '0.2', '-i', result.outputPath, '-map', '0:a:0', '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' });
+    const quietMean = Number((quietProbe.stderr.match(/mean_volume:\s*(-?[\d.]+) dB/) || [])[1]);
+    assert.ok(Number.isFinite(quietMean) && quietMean >= -34, `20% BGM must remain audible at its displayed final-mix level during voice pauses (mean=${quietMean})`);
 
     const failed = await composite({
       jobId: 'missing-voiceover-regression',

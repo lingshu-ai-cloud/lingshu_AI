@@ -23,6 +23,7 @@ import {
   platformCreativeBrief,
   productionTiming,
   resolveEnterpriseAssetLocation,
+  sceneIntent,
   resumeContentProjectForTaskControl,
   selectExplicitFocusProducts,
   selectContentProjectsForTick,
@@ -62,6 +63,12 @@ const evidence = {
   productNames: ['Product A'],
   assetIds: ['asset-1'],
 };
+assert.equal(
+  sceneIntent('[0.00-4.00s]\n环境：室内工作台\n镜头功能：观察元件\n画面：绿色电路板与连接器\n台词：test\n\n[4.00-8.00s]\n环境：板面\n画面：银色焊点', 0, 4),
+  '环境：室内工作台；镜头功能：观察元件；画面：绿色电路板与连接器',
+  'decimal timestamp formatting must not erase scene intent',
+);
+assert.equal(sceneIntent('[0-4s]\n环境：工作台\n画面：元件', 0, 4), '环境：工作台；画面：元件');
 assert.deepEqual(selectExplicitFocusProducts([{ name: 'Product A', sku: 'A-1' }], ''), [], 'an empty focus-product selection means no current focus, not every knowledge-base product');
 assert.deepEqual(selectExplicitFocusProducts([{ name: 'Product A', sku: 'A-1' }, { name: 'Product B', sku: 'B-1' }], 'B-1').map(item => item.name), ['Product B']);
 

@@ -27,8 +27,9 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
   const [values, setValues] = useState<any>({});
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
-  const load = () => api(base + encodeURIComponent(projectId) + '/production').then(setData).catch(error => setNotice(error.message));
+  const load = () => api(base + encodeURIComponent(projectId) + '/production').then(value => { setData(value); setDirty(false); }).catch(error => setNotice(error.message));
 
   useEffect(() => {
     void load();
@@ -52,7 +53,7 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
               : { scenes: (spec.sceneSourcePlan || []).map((row: any, index: number) => ({ source: spec.scenePlan?.[index]?.source || (/数字人/.test(row.intent) ? 'avatar' : 'material'), materialId: row.assetId, trimStart: spec.sceneOverrides?.[index]?.trimStart || 0 })) });
   }, [data, node]);
 
-  const set = (key: string, value: any) => setValues((current: any) => ({ ...current, [key]: value }));
+  const set = (key: string, value: any) => { setDirty(true); setValues((current: any) => ({ ...current, [key]: value })); };
 
   if (!data) return <p role="status" className="border-y border-border bg-surface py-8 text-center text-sm text-text-muted">{notice || '正在读取生产配置…'}</p>;
 
@@ -99,11 +100,12 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
             </select>
           </label>
           <label className={fieldLabel}>
-            音量 <span className="font-medium text-accent">{values.volume}%</span>
+            最终混音音量 <span className="font-medium text-accent">{values.volume}%</span>
             <input aria-label="配乐音量" className="mt-3 w-full accent-accent" type="range" min="0" max="100" value={values.volume || 0} onChange={event => set('volume', Number(event.target.value))} />
           </label>
         </div>
         {tracks.find(track => track.id === values.bgm)?.url && <audio controls className="h-10 w-full" src={tracks.find(track => track.id === values.bgm).url} />}
+        <p className="border-l-2 border-border-bright pl-3 text-xs leading-5 text-text-muted">这里试听的是原曲；上方成片会在保存并重新制作完成后更新，显示百分比就是最终混音增益。</p>
         {data.spec.bgmSelection?.reason && <p className="border-l-2 border-border-bright pl-3 text-xs leading-5 text-text-muted">{data.spec.bgmSelection.reason}</p>}
       </div>}
 
@@ -231,6 +233,7 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
         {busy ? '保存中…' : '保存并继续原任务'}
       </button>
       {!data.managed && <p className="text-xs text-text-muted">手动创作请在工作台编辑后重新生成。</p>}
+      {dirty && <p className="text-xs font-medium text-amber">当前修改尚未进入上方成片，请保存并等待重新制作。</p>}
     </footer>
 
     {notice && <p role="status" className="border-l-2 border-amber bg-amber-dim px-3 py-2 text-sm text-amber">{notice}</p>}

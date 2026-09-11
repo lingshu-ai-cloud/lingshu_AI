@@ -9,6 +9,7 @@ import {
   type PlanTask,
   type WorkflowTask,
 } from '../lib/digitalEmployees.js';
+import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const reviewSource = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'utf8');
@@ -154,6 +155,24 @@ const contentLink = buildTaskDeepLink(task('content_production', 'production'), 
 assert.equal(contentLink.page, 'smartAssets');
 assert.equal(contentLink.view, 'create');
 assert.equal(contentLink.studioPanel, 'projects', 'content production must enter the task project list instead of a remembered draft');
+
+const qualityLink = buildTaskDeepLink({
+  ...task('content_quality_gate', 'analysis'),
+  status: 'failed',
+  business_refs: [{ type: 'studio_project', id: 'failed-project', stage: 'blocked' }],
+}, undefined, 'run-content');
+assert.equal(qualityLink.page, 'smartAssets');
+assert.equal(qualityLink.studioPanel, 'projects', 'quality failures must enter the task project list');
+assert.equal(qualityLink.businessRef.entityId, 'failed-project', 'quality failures must open the affected project');
+assert.equal(qualityLink.businessRef.deliveryId, 'studio_project:failed-project');
+
+const recoveredQualityLink = nodeDeepLink(
+  { key: 'content_quality_gate', title: '质量门', description: '', agentRole: 'content', kind: 'analysis', sequence: 7, priority: 'high', requiresApproval: false, dependsOn: ['content_production'], expectedMinutes: 1 },
+  task('content_quality_gate', 'analysis'),
+  'run-content',
+  [{ id: 'studio_project:legacy-project', taskIds: ['task-content_quality_gate'], taskId: 'task-content_production', runId: 'run-content', kind: '内容成片', title: '旧运行成片', subject: '', acceptance: '', stage: '', column: 'human', reason: '', exception: true, updatedAt: '2026-09-03T00:00:00.000Z', artifacts: [], steps: [], actionLabel: '修正制作内容', effect: '', metrics: [] }],
+);
+assert.equal(recoveredQualityLink.businessRef.entityId, 'legacy-project', 'legacy quality tasks recover their project from the delivery board');
 
 const customerLink = buildTaskDeepLink(task('followup_batch_draft'), undefined, 'run-3');
 assert.equal(customerLink.page, 'conversion', 'customer segmentation and follow-up must open the existing customer workspace');

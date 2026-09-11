@@ -220,12 +220,13 @@ function normalizedTokens(value: string): string[] {
   return [...new Set([...latin, ...chinese])].slice(0, 80);
 }
 
-function sceneIntent(script: string, start: number, end: number): string {
-  const marker = `[${start}-${end}s]`;
-  const from = script.indexOf(marker);
-  if (from < 0) return '';
-  const next = script.indexOf('\n[', from + marker.length);
-  const block = script.slice(from, next < 0 ? undefined : next);
+export function sceneIntent(script: string, start: number, end: number): string {
+  const markers = [...script.matchAll(/^\[\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*s\s*\]\s*$/gim)];
+  const markerIndex = markers.findIndex(match => Math.abs(Number(match[1]) - start) < 0.001 && Math.abs(Number(match[2]) - end) < 0.001);
+  if (markerIndex < 0) return '';
+  const from = markers[markerIndex]!.index!;
+  const next = markers[markerIndex + 1]?.index;
+  const block = script.slice(from, next);
   return block.split('\n').filter(line => /^(?:环境|镜头功能|画面)[：:]/.test(line.trim())).join('；').slice(0, 1_000);
 }
 
@@ -757,10 +758,11 @@ export async function translateStoryboardFromMaster(
   sourceLanguage: string,
   targetLanguage: string,
   invoke: typeof callVideoModel = callVideoModel,
+  guidance = '',
 ): Promise<{ script: string; bindings: Array<{ sceneId: string; sourceText: string; translatedText: string }> }> {
   const sourceLines = storyboardVoiceLines(masterScript);
   if (!sourceLines.length || storyboardSceneRanges(masterScript).length !== sourceLines.length) throw Error('主语言分镜与口播数量不一致');
-  const response = await invoke(`将以下短视频逐镜口播从 ${sourceLanguage} 翻译为 ${targetLanguage}。保持 sceneId、顺序、事实、CTA 和语气，不增删信息，不合并或拆分句子。只返回 JSON：{"scenes":[{"sceneId":"scene-1","text":"译文"}]}。\n${JSON.stringify(sourceLines.map((sourceText, index) => ({ sceneId: `scene-${index + 1}`, sourceText })))}`, { timeoutMs: 60_000 });
+  const response = await invoke(`将以下短视频逐镜口播从 ${sourceLanguage} 翻译为 ${targetLanguage}。保持 sceneId、顺序、事实、CTA 和语气，不增删信息，不合并或拆分句子。${guidance ? `额外制作反馈：${guidance}。在语义等价前提下使用更紧凑、自然的表达。` : ''}只返回 JSON：{"scenes":[{"sceneId":"scene-1","text":"译文"}]}。\n${JSON.stringify(sourceLines.map((sourceText, index) => ({ sceneId: `scene-${index + 1}`, sourceText })))}`, { timeoutMs: 60_000 });
   const parsed = parseModelJson(response.text);
   const scenes = Array.isArray(parsed.scenes) ? parsed.scenes as Array<Record<string, unknown>> : [];
   const translated = sourceLines.map((_, index) => {
@@ -772,7 +774,16 @@ export async function translateStoryboardFromMaster(
   if (!spokenLanguageMatches(translated.join(' '), targetLanguage)) throw Error('翻译结果与目标语言不符');
   const review = await invoke(`核对逐镜翻译是否逐条语义等价。不得接受新增、删减、调换事实、产品结论、CTA 或 sceneId。只返回 JSON：{"passed":true,"issues":[]}。\n${JSON.stringify(sourceLines.map((sourceText, index) => ({ sceneId: `scene-${index + 1}`, sourceText, translatedText: translated[index] })))}`, { timeoutMs: 60_000 });
   const reviewed = parseModelJson(review.text);
-  if (reviewed.passed !== true || (Array.isArray(reviewed.issues) && reviewed.issues.length)) throw Error('多语言逐镜语义审核未通过');
+  if (reviewed.passed !== true || (Array.isArray(reviewed.issues) && reviewed.issues.length)) {
+    const details = Array.isArray(reviewed.issues) ? reviewed.issues.map(issue => {
+      if (issue && typeof issue === 'object') {
+        const row = issue as Record<string, unknown>;
+        return [text(row.sceneId, 40), text(row.issue || row.reason || row.message, 360)].filter(Boolean).join('：') || JSON.stringify(row).slice(0, 400);
+      }
+      return text(issue, 400);
+    }).filter(Boolean).slice(0, 5).join('；') : '';
+    throw Error(`多语言逐镜语义审核未通过${details ? `：${details}` : ''}`);
+  }
   const bindings = sourceLines.map((sourceText, index) => ({ sceneId: `scene-${index + 1}`, sourceText, translatedText: translated[index]! }));
   return { script: freezeStoryboardNarration(masterScript, translated), bindings };
 }
@@ -944,6 +955,10 @@ export function resumeContentProjectForTaskControl(input: {
       status: 'queued',
       retryRequestedAt: input.now,
       updatedAt: input.now,
+      autoNarrationRepairAttempts: 0,
+      autoNarrationReviewAttempts: 0,
+      autoTimingRematchAttempts: 0,
+      autoTranslationRepairAttempts: 0,
     },
   };
 }
@@ -1135,7 +1150,15 @@ export async function advanceOneProject(input: {
         if (asset && !evidenceClips(asset).some(clip => start >= clip.start && (asset.type === 'image' || start + timings.sceneDurations[index] <= clip.end + .05)
           && visualEvidenceScore(item.intent, clip.observations) > 0)) issues.push(`第 ${index + 1} 镜使用区间超出已确认的语义匹配片段，请重新匹配`);
       }
-      if (issues.length) return block('material_match', issues.join('；'));
+      if (issues.length) {
+        const attempts = Number(automation.autoTimingRematchAttempts || 0);
+        if (attempts < 2) {
+          await updateProject(input.record, { ...spec, sceneSourcePlan: [], sceneOverrides: [], selectedMaterialIds: [], renderOutputPath: '',
+            automation: stagePatch(automation, 'material_match', { status: 'queued', blocker: '', autoTimingRematchAttempts: attempts + 1, timingRematchReason: issues.join('；') }) });
+          return { changed: true, blocker: '' };
+        }
+        return block('material_match', `按真实配音重新匹配 ${attempts} 次后仍失败：${issues.join('；')}`, { retryPolicy: 'input_required' });
+      }
     }
     if (stage === 'render' || stage === 'heygen') {
       if (!Object.prototype.hasOwnProperty.call(spec, 'bgm')) {
@@ -1187,7 +1210,8 @@ export async function advanceOneProject(input: {
         const masterScript = text(masterSpec.script, 30_000);
         if (!master || !masterScript || !masterSpec.productionDirection) throw Error('multilingual_master_pending');
         if (!usesDigitalPresenter(brief) && (!Array.isArray(masterSpec.sceneSourcePlan) || !masterSpec.sceneSourcePlan.length)) throw Error('multilingual_master_pending');
-        const translated = await translateStoryboardFromMaster(masterScript, text(contentOrder?.masterLanguage, 20) || text(masterSpec.lang, 20), brief.language);
+        const translationGuidance = [text(automation.narrationFeedback, 1_000), text(automation.translationRepairReason, 1_000)].filter(Boolean).join('；');
+        const translated = await translateStoryboardFromMaster(masterScript, text(contentOrder?.masterLanguage, 20) || text(masterSpec.lang, 20), brief.language, callVideoModel, translationGuidance);
         languageBindings = translated.bindings;
         masterProjectId = master.id;
         masterDerivedSpec = {
@@ -1338,12 +1362,30 @@ export async function advanceOneProject(input: {
       if (!spoken) return block('script', '脚本中没有可合成的口播台词');
       if (!spokenLanguageMatches(spoken, brief.language)) return block('script', '口播语言与本条制作计划不符');
       const issues = await reviewFinalNarration({ spoken, facts: productFacts(input.profile, input.config, routePlan.productId), language: brief.language, constraints: contentOrder?.constraints || input.goal.constraints });
-      if (issues.length) return block('script', `口播需要修改：${issues.join('；')}`, { narrationFeedback: `上一版需修正：${issues.join('；')}` });
+      if (issues.length) {
+        const attempts = Number(automation.autoNarrationReviewAttempts || 0);
+        const narrationFeedback = `上一版需修正：${issues.join('；')}`;
+        if (attempts < 2) {
+          await updateProject(input.record, { ...spec, voiceoverUrl: '', voiceoverDur: 0, alignedCuesByLang: {}, subtitleAlignmentSource: '', renderOutputPath: '',
+            automation: stagePatch(automation, 'script', { status: 'queued', blocker: '', narrationFeedback, autoNarrationReviewAttempts: attempts + 1 }) });
+          return { changed: true, blocker: '' };
+        }
+        return block('script', `口播自动事实修复 ${attempts} 次后仍未通过：${issues.join('；')}`, { narrationFeedback, retryPolicy: 'input_required' });
+      }
       const voice = await synthesizeStudioVoiceForAutomation({ tenantId: input.tenantId, text: spoken, language: brief.language, voice: brief.voice, targetDuration: brief.duration, style: spec.voiceStyle as any });
       if (!voice.ok || !voice.localPath || !fs.existsSync(voice.localPath)) return block('voice_subtitles', `配音服务不可用：${voice.error || '未返回可用音频文件'}`);
       const duration = Math.max(1, Number(voice.duration || brief.duration));
       if (String(voice.text || spoken) !== spoken) return block('voice_subtitles', '配音文本发生变化，需要重新确认口播');
-      if (duration > brief.duration * 1.2 || duration < brief.duration * 0.5) return block('script', `实际朗读 ${duration.toFixed(1)} 秒，目标 ${brief.duration} 秒；请按建议重写口播`, { narrationFeedback: `上一版实际朗读 ${duration.toFixed(1)} 秒，目标 ${brief.duration} 秒。请将整段口播调整为约 ${Math.max(10, Math.round(spoken.split(/\s+/).length * brief.duration / duration * 0.9))} 词，优先服从此实测长度，不删条件、不新增事实。` });
+      if (duration > brief.duration * 1.2 || duration < brief.duration * 0.5) {
+        const attempts = Number(automation.autoNarrationRepairAttempts || 0);
+        const narrationFeedback = `上一版实际朗读 ${duration.toFixed(1)} 秒，目标 ${brief.duration} 秒。请将整段口播调整为约 ${Math.max(10, Math.round(spoken.split(/\s+/).length * brief.duration / duration * 0.9))} 词，优先服从此实测长度，不删条件、不新增事实。`;
+        if (attempts < 2) {
+          await updateProject(input.record, { ...spec, voiceoverUrl: '', voiceoverDur: 0, alignedCuesByLang: {}, subtitleAlignmentSource: '', renderOutputPath: '',
+            automation: stagePatch(automation, 'script', { status: 'queued', blocker: '', narrationFeedback, autoNarrationRepairAttempts: attempts + 1, lastMeasuredNarrationDuration: duration }) });
+          return { changed: true, blocker: '' };
+        }
+        return block('script', `实际朗读 ${duration.toFixed(1)} 秒，目标 ${brief.duration} 秒；自动重写 ${attempts} 次后仍不合格`, { narrationFeedback, retryPolicy: 'input_required' });
+      }
       const sceneVoiceCues = bindVoiceCuesToScenes(storyboardVoiceLines(text(spec.script, 30_000)), voice.cues || []);
       if (!sceneVoiceCues) return block('voice_subtitles', '配音句子无法按 sceneId 对齐，请重新生成本语言配音');
       await updateProject(input.record, {
@@ -1597,7 +1639,7 @@ export async function advanceOneProject(input: {
           evidenceFrames: visualQuality?.evidenceFrames || [],
         },
       });
-      const finished = await finishContent(outputPath, spec);
+      const finished = await finishContent(outputPath, { ...spec, voiceLocalPath: text(automation.voiceLocalPath, 2_000) });
       await updateProject(input.record, {
         ...spec, ...finished,
         automation: stagePatch(automation, 'completed', {
@@ -1625,6 +1667,15 @@ export async function advanceOneProject(input: {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (reason === 'multilingual_master_pending') return { changed: false, blocker: '' };
+    if (stage === 'script' && /多语言.*(?:翻译|语义审核)/.test(reason)) {
+      const attempts = Number(automation.autoTranslationRepairAttempts || 0);
+      if (attempts < 2) {
+        await updateProject(input.record, { ...spec, voiceoverUrl: '', voiceoverDur: 0, alignedCuesByLang: {}, subtitleAlignmentSource: '', renderOutputPath: '',
+          automation: stagePatch(automation, 'script', { status: 'queued', blocker: '', autoTranslationRepairAttempts: attempts + 1, translationRepairReason: reason }) });
+        return { changed: true, blocker: '' };
+      }
+      return block('script', `逐镜翻译自动修复 ${attempts} 次后仍未通过：${reason}`, { retryPolicy: 'input_required' });
+    }
     return block(stage, reason.replace(/^production_input_required:/, ''), reason.startsWith('production_input_required:') ? { retryPolicy: 'input_required' } : {});
   }
 }

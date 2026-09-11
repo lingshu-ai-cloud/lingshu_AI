@@ -564,6 +564,11 @@ export function buildTaskDeepLink(
   planTask: PlanTask | undefined,
   runId: string,
 ): DigitalEmployeeDeepLink {
+  const resources = Array.isArray(task.business_refs) ? task.business_refs : [];
+  const studioProject = resources.find(
+    (resource) => resource?.type === "studio_project" && String(resource.id || "").trim(),
+  );
+  const studioProjectId = studioProject ? String(studioProject.id).trim() : undefined;
   const mapped =
     taskDestinationByKey[task.task_key] ||
     (task.kind === "production"
@@ -595,14 +600,15 @@ export function buildTaskDeepLink(
           : task.destination_view || planTask?.destinationView || mapped.view || "create")
         : undefined,
     studioPanel:
-      page === "smartAssets" && task.task_key === "content_production"
+      page === "smartAssets" && ["content_production", "content_quality_gate"].includes(task.task_key)
         ? "projects"
         : undefined,
     runId,
     taskId: task.id,
     businessRef: {
-      resources: task.business_refs || [],
+      resources,
       taskKey: task.task_key,
+      ...(studioProjectId ? { entityId: studioProjectId, deliveryId: `studio_project:${studioProjectId}` } : {}),
       businessDomain: task.business_domain || planTask?.businessDomain,
       capabilityKey:
         task.capability_key ||

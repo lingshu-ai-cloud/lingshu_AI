@@ -34,9 +34,11 @@ export async function generateNarration(input: { facts: string; theme: string; a
   if (evidenceIssues.length) throw new Error(evidenceIssues.join('；'));
   const units = Math.floor(input.duration * (narrationRate(input.language) * 0.87));
   const languageName = VIDEO_LANGUAGES[input.language as keyof typeof VIDEO_LANGUAGES] || input.language;
-  const prompt = `写一段纯${languageName}（${input.language}） 社媒口播，目标 ${input.duration} 秒、约 ${units} ${['zh', 'ja'].includes(input.language) ? '字' : '词'}。先完整想清表达，再按自然语意分成3–8句。
+  const unitLabel = ['zh', 'ja'].includes(input.language) ? '字' : '词';
+  const hardMaximum = Math.floor(input.duration * narrationRate(input.language) * 1.2);
+  const prompt = `写一段纯${languageName}（${input.language}） 社媒口播，目标 ${input.duration} 秒、约 ${units} ${unitLabel}，总长度不得超过 ${hardMaximum} ${unitLabel}；长度是硬性验收条件。先完整想清表达，再按自然语意分成3–8句。
 对谁说：${input.audience}。具体主题：${input.theme}。收尾目的：${input.cta}。
-先提出具体场景中的问题，解释为什么值得关注，给一个可执行的判断方法，再自然收尾。保留句子之间的承接；不加假经历、口头禅或审稿腔。不假定买家已经遇到故障或缺少能力，开头用选型/核实时的具体问题。
+${input.duration <= 15 ? '短于或等于15秒时，只保留三个必要信息：一个有画面依据的开场观察、一个不同的可见细节、一个受事实边界限制的收尾；不要加入背景解释、选型建议或额外铺垫。' : '先提出具体场景中的问题，解释为什么值得关注，给一个可执行的判断方法，再自然收尾。'}保留句子之间的承接；不加假经历、口头禅或审稿腔。不假定买家已经遇到故障或缺少能力。
 仅允许陈述下列已确认事实，所有数字和条件需有原文依据。行业猜测改成买家要核实的问题；不承诺资料外的效果或服务。收尾仅邀请讨论需求，不承诺提供未经确认存在的清单、指南、方案或测试服务。提到几个问题，就必须完整给出对应数量的问题。
 不要朗读内部素材编号、资料标题或测试标签。没有画面分析时，不断言视频里有/没有某技术内容，只讲买家应该向供应商核实什么，不扩展主题外的系统和型号。
 事实：${input.facts}
@@ -44,11 +46,15 @@ export async function generateNarration(input: { facts: string; theme: string; a
 ${input.reference ? '参考只迁移表达顺序，不复制事实：' + input.reference : ''}
 只输出 JSON：{"lines":["完整口播第一句","衔接句","收尾"]}。`;
   let correction = '';
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const { text: raw } = await callVideoModel(prompt + correction, { timeoutMs: 90000, systemPrompt: `所有口播必须使用${languageName}（${input.language}），不要翻译成其他语言。JSON键名固定为lines。严格控制总长度和句数。` });
     try { return parseNarration(raw, input.language, input.duration); } catch (error) {
-      if (attempt === 1) throw error;
-      correction = `\n上一版未通过：${error instanceof Error ? error.message : 'JSON无效'}。请在原事实边界内重写完整版本，不增加信息。上一版：${raw.slice(0, 6000)}`;
+      if (attempt === 3) throw error;
+      if (attempt >= 1) {
+        const { text: compressed } = await callVideoModel(`压缩以下${languageName}短视频口播。只允许删除信息和缩短措辞，不得添加事实、数字、承诺或新CTA。保留原顺序，输出恰好3句，总长度不得超过 ${hardMaximum} ${unitLabel}，目标约 ${units} ${unitLabel}。只输出JSON：{"lines":["第一句","第二句","第三句"]}。\n原稿：${raw.slice(0, 6000)}`, { timeoutMs: 60_000, systemPrompt: `这是严格的长度压缩任务。输出必须是${languageName}，恰好3句且不超过${hardMaximum}${unitLabel}。` });
+        try { return parseNarration(compressed, input.language, input.duration); } catch { /* continue with a fresh full draft */ }
+      }
+      correction = `\n上一版未通过：${error instanceof Error ? error.message : 'JSON无效'}。必须严格缩短到约 ${units} ${unitLabel}，绝不能超过 ${hardMaximum} ${unitLabel}；仍保留至少3句，每句只表达一个信息。直接删除解释和修饰语，在原事实边界内重写完整版本，不增加信息。上一版：${raw.slice(0, 6000)}`;
     }
   }
   throw Error('口播生成失败');
