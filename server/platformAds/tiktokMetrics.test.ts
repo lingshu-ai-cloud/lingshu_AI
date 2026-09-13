@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { aggregateTikTokMetrics, getTikTokCampaignMetrics } from './tiktokMetrics.js';
+
+const row = (day: string, metrics: Record<string, unknown>) => ({ dimensions: { campaign_id: '200', stat_time_day: day }, metrics });
+assert.equal(aggregateTikTokMetrics([], 'ENGAGED_VIEW').spend, null);
+assert.equal(aggregateTikTokMetrics([row('2026-09-10', { spend: '10', clicks: '500', video_play_actions: '1000', paid_engaged_view: '200' })], 'ENGAGED_VIEW').results, null);
+const aggregate = aggregateTikTokMetrics([row('2026-09-10', { spend: '10', impressions: '1000', engaged_view: '50' }), row('2026-09-11', { spend: '20', impressions: '2000', engaged_view: '100' })], 'ENGAGED_VIEW');
+assert.equal(aggregate.results, 150);
+assert.equal(aggregate.costPerResult, 0.2);
+assert.equal(aggregateTikTokMetrics([row('2026-09-10', { engaged_view: '10' })], 'CLICK').results, null);
+assert.equal(aggregateTikTokMetrics([row('2026-09-10', { engaged_view: '10', engaged_view_15s: '5' })], 'ENGAGED_VIEW_FIFTEEN').results, 5);
+assert.equal(aggregateTikTokMetrics([row('2026-09-10', { engaged_view: false })], 'ENGAGED_VIEW').results, null);
+let variant = 'normal', reports = 0;
+const transport = (async (url: string | URL | Request, init?: RequestInit) => {
+  const parsed = new URL(String(url));
+  assert.equal(parsed.hostname, 'business-api.tiktok.com');
+  assert.equal(init?.method || 'GET', 'GET');
+  assert.equal((init?.headers as Record<string, string>)['Access-Token'], 'test-token');
+  if (parsed.pathname.includes('campaign/get')) return new Response(JSON.stringify({ code: 0, data: { list: [{ campaign_id: '200', advertiser_id: variant === 'ownership' ? '999' : '100' }] } }));
+  reports++;
+  assert.deepEqual(JSON.parse(parsed.searchParams.get('metrics')!), ['spend', 'impressions', 'clicks', 'engaged_view']);
+  assert.equal(parsed.searchParams.get('data_level'), 'AUCTION_CAMPAIGN');
+  assert.equal(JSON.parse(parsed.searchParams.get('filtering')!)[0].filter_value, '["200"]');
+  const page = Number(parsed.searchParams.get('page'));
+  const data = { list: [row(variant === 'duplicate' ? '2026-09-10' : page === 1 ? '2026-09-10' : '2026-09-11', { spend: '10', impressions: '100', engaged_view: '50' })], page_info: { total_page: variant === 'incomplete' ? 21 : 2 } };
+  return new Response(JSON.stringify({ code: 0, data }));
+}) as typeof fetch;
+const input = { accessToken: 'test-token', accountId: '100', campaignId: '200', since: '2026-09-10', until: '2026-09-11', optimizationGoal: 'ENGAGED_VIEW' };
+const result = await getTikTokCampaignMetrics(input, transport);
+assert.equal(result.spend, 20); assert.equal(result.results, 100); assert.equal(reports, 2);
+variant = 'duplicate'; await assert.rejects(getTikTokCampaignMetrics(input, transport), /不一致/);
+variant = 'incomplete'; await assert.rejects(getTikTokCampaignMetrics(input, transport), /分页/);
+variant = 'ownership'; const before = reports; await assert.rejects(getTikTokCampaignMetrics(input, transport), /不属于/); assert.equal(reports, before);
+await assert.rejects(getTikTokCampaignMetrics({ ...input, since: '2026-02-30' }, transport), /日期/);
+console.log('TikTok reporting provenance, pagination and ownership tests passed');

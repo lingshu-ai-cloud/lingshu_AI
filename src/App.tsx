@@ -11,6 +11,7 @@ import LegalPages from './components/LegalPages';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
+const PlatformAdsPage = lazy(() => import('./components/PlatformAdsPage'));
 const StrategyPage = lazy(() => import('./components/StrategyPage'));
 const TrafficPage = lazy(() => import('./components/TrafficPage'));
 const ConversionPage = lazy(() => import('./components/ConversionPage'));
@@ -36,6 +37,10 @@ export type Page =
   | 'scriptLibrary'
   | 'smartAssets'
   | 'accountManagement'
+  | 'adsOverview'
+  | 'adsPlans'
+  | 'adsCreatives'
+  | 'adsManaged'
   | 'conversion'
   | 'retention'
   | 'orders'
@@ -76,13 +81,13 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
-  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
   customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'retention', 'orders', 'scheduled']),
 };
 const ALL_PAGES: Page[] = [
-  'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement',
+  'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged',
   'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
   'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
 ];
@@ -597,6 +602,7 @@ export default function App() {
               storageScope={session.tenant?.id || session.user.tenantId}
             />
           )}
+          {(['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'] as Page[]).includes(page) && <PlatformAdsPage page={page} onNavigate={handleNavigate} />}
           {page === 'scriptLibrary' && <ScriptLibraryPage />}
           {page === 'conversion' && (
             <ConversionPage

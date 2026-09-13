@@ -47,6 +47,13 @@ import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
 import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
+import { platformAdsRouter } from './routes/platformAds.js';
+import { platformAdHandoffRouter } from './routes/platformAdHandoff.js';
+import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
+import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
+import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
+import { platformAdImportsRouter } from './routes/platformAdImports.js';
+import { startAdAutomationWorker } from './platformAds/automation.js';
 import { initFollowupDispatchWorker } from './digitalEmployees/followupDispatchWorker.js';
 import { initDigitalEmployeeRuntime } from './digitalEmployees/runtimeOrchestrator.js';
 
@@ -155,6 +162,12 @@ app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
 app.use('/api/overseas/digital-employees/followup', followupTemplatesRouter);
 app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
+app.use('/api/overseas/platform-ads', platformAdConnectionsRouter);
+app.use('/api/overseas/platform-ads', platformAdsRouter);
+app.use('/api/overseas/platform-ads', platformAdHandoffRouter);
+app.use('/api/overseas/platform-ads', platformAdExecutionRouter);
+app.use('/api/overseas/platform-ads', platformAdMetricsRouter);
+app.use('/api/overseas/platform-ads', platformAdImportsRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 
@@ -166,6 +179,7 @@ initCrawlWorkerCloudFallback();
 initTenantPlatformTokenMonitor();
 await initWhatsAppCustomerMaintenance();
 initFollowupDispatchWorker();
+startAdAutomationWorker();
 initDigitalEmployeeRuntime();
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
