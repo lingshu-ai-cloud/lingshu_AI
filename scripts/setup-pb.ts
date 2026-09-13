@@ -27,9 +27,42 @@ const WORKBENCH_ADMIN_PASSWORD = String(process.env.WORKBENCH_ADMIN_PASSWORD ?? 
 const WORKBENCH_ADMIN_NAME = String(process.env.WORKBENCH_ADMIN_NAME ?? '灵枢管理员').trim() || '灵枢管理员';
 
 type Field = { name: string; type: string; required?: boolean; [k: string]: unknown };
+type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 
 /** Collection definitions, derived from what the route handlers write/read. */
-const COLLECTIONS: { name: string; fields: Field[]; indexes?: string[] }[] = [
+const COLLECTIONS: CollectionSpec[] = [
+  {
+    name: 'quote_skill_drafts',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'customer_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 500000 },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE INDEX `idx_quote_skill_customer` ON `quote_skill_drafts` (`tenant_id`, `customer_id`, `updated_at`)',
+      'CREATE INDEX `idx_quote_skill_status` ON `quote_skill_drafts` (`tenant_id`, `status`)',
+    ],
+  },
+  {
+    name: 'quote_skill_events',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'customer_id', type: 'text', required: true },
+      { name: 'quote_id', type: 'text', required: true },
+      { name: 'actor_id', type: 'text', required: true },
+      { name: 'action', type: 'text', required: true },
+      { name: 'revision', type: 'number', required: true, min: 1, onlyInt: true },
+      { name: 'details', type: 'json', maxSize: 100000 },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE INDEX `idx_quote_event_quote` ON `quote_skill_events` (`tenant_id`, `quote_id`, `created_at`)',
+      'CREATE INDEX `idx_quote_event_customer` ON `quote_skill_events` (`tenant_id`, `customer_id`, `created_at`)',
+    ],
+  },
   {
     name: 'assistant_threads',
     fields: [
@@ -795,15 +828,23 @@ async function ensureIndexes(token: string, name: string, want: string[]): Promi
 }
 
 /** Add any missing fields to an existing collection (idempotent schema sync). */
-async function ensureFields(token: string, name: string, want: Field[]): Promise<void> {
+function indexName(sql: string): string {
+  return sql.match(/\bINDEX\s+[`"]?([^`"\s]+)[`"]?/i)?.[1]?.toLowerCase() || sql.trim().toLowerCase();
+}
+
+async function ensureFields(token: string, name: string, want: Field[], wantIndexes: string[] = []): Promise<void> {
   const res = await fetch(`${PB_URL}/api/collections/${name}`, {
     headers: { Authorization: token },
   });
   if (!res.ok) return;
-  const col = (await res.json()) as { fields?: { name: string }[] };
+  const col = (await res.json()) as { fields?: { name: string }[]; indexes?: string[] };
   const have = new Set((col.fields ?? []).map((f) => f.name));
   const missing = want.filter((f) => !have.has(f.name));
-  if (!missing.length) {
+  const existingIndexes = col.indexes ?? [];
+  const existingIndexNames = new Set(existingIndexes.map(indexName));
+  const indexes = [...existingIndexes, ...wantIndexes.filter(index => !existingIndexNames.has(indexName(index)))];
+  const indexesChanged = indexes.length !== existingIndexes.length;
+  if (!missing.length && !indexesChanged) {
     console.log(`  = ${name} up to date`);
     return;
   }
@@ -814,10 +855,10 @@ async function ensureFields(token: string, name: string, want: Field[]): Promise
   const up = await fetch(`${PB_URL}/api/collections/${name}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: token },
-    body: JSON.stringify({ fields: merged }),
+    body: JSON.stringify({ fields: merged, indexes }),
   });
   if (!up.ok) throw new Error(`patch ${name} fields failed: ${up.status} ${await up.text()}`);
-  console.log(`  ✓ ${name}: added ${missing.map((f) => f.name).join(', ')}`);
+  console.log(`  ✓ ${name}: synchronized ${[...missing.map((f) => f.name), ...(indexesChanged ? ['indexes'] : [])].join(', ')}`);
 }
 
 /** Ensure the users auth collection has tenant and organization-role fields. */
@@ -945,7 +986,7 @@ async function main(): Promise<void> {
 
   for (const { name, fields, indexes = [] } of COLLECTIONS) {
     if (existing.has(name)) {
-      await ensureFields(token, name, fields);
+      await ensureFields(token, name, fields, indexes);
       await ensureIndexes(token, name, indexes);
       continue;
     }

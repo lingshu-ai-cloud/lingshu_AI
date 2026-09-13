@@ -28,6 +28,7 @@ import { TagsWidget } from './customers/widgets/TagsWidget';
 import { SourceIcon, sourceLabel } from './customers/SourceIcon';
 import { LiveLocalTime } from './customers/LiveLocalTime';
 import { DailyBriefing } from './customers/DailyBriefing';
+import { QuoteSkillCard } from './customers/QuoteSkillCard';
 import { useCustomers } from '../hooks/useCustomers';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -1017,6 +1018,15 @@ function ChatThread({
               </div>
             </form>
           )}
+          <QuoteSkillCard
+            customer={customer}
+            onInsertReply={text => {
+              onManualActive();
+              onInputChange(text);
+              window.setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+            onToast={onToast}
+          />
           {customer.timeline.map(event => {
             if (event.type !== 'whatsapp') {
               return (

@@ -1905,7 +1905,7 @@ export default function EnterprisePage() {
               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
                 {productImporting ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
                 导入产品表
-                <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
+                <input type="file" accept=".xlsx,.csv" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
               </label>
               <button type="button" onClick={addProduct} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
                 <Plus size={12} />添加产品
@@ -2370,7 +2370,7 @@ export default function EnterprisePage() {
                       上传产品表
                       <input
                         type="file"
-                        accept=".xlsx,.xls,.csv"
+                        accept=".xlsx,.csv"
                         className="hidden"
                         disabled={productImporting}
                         onChange={e => {
@@ -2607,7 +2607,7 @@ export default function EnterprisePage() {
                   导入产品表
                   <input
                     type="file"
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx,.csv"
                     className="hidden"
                     disabled={productImporting}
                     onChange={e => {

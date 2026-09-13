@@ -1,0 +1,35 @@
+{
+  "id": "manufacturing_quote_v1",
+  "name": "制造业智能报价学习包",
+  "version": 1,
+  "positioning": "AI整理询盘并生成可核验的内部报价草稿，价格、折扣、付款条款和交期必须由人确认。",
+  "triggerIntents": ["quote", "quotation", "price", "RFQ", "报价", "询价", "单价", "多少钱"],
+  "requiredFields": ["productName", "quantity", "materialOrSpecification"],
+  "recommendedFields": ["deliveryDate", "destination", "incoterm", "packaging", "drawingVersion"],
+  "knowledgeSources": [
+    "企业产品目录",
+    "企业报价规则",
+    "经过审核的历史报价",
+    "当前客户会话和附件"
+  ],
+  "guardrails": [
+    "没有可靠价格来源时单价留空，不允许大模型猜价",
+    "正式报价、折扣、付款条款和交期承诺均为L4动作",
+    "报价只生成内部草稿，必须由当前员工人工确认",
+    "确认后的报价不可覆盖，修改必须创建新版本",
+    "只有超级管理员、管理员或客服角色可以人工确认正式报价",
+    "自动回复模式不得绕过报价确认"
+  ],
+  "clarificationTemplates": {
+    "productName": "Could you confirm the exact product name or SKU?",
+    "quantity": "What quantity would you like us to quote?",
+    "materialOrSpecification": "Could you confirm the required material and key specifications?",
+    "destination": "What is the destination country or port for this quotation?",
+    "deliveryDate": "What is your target delivery date?"
+  },
+  "learningPolicy": {
+    "automaticPromotion": false,
+    "candidateSignals": ["最终发送报价", "客户接受", "转为订单", "人工修改价格或条款"],
+    "promotionRule": "历史结果只能成为学习候选，管理员审核后才能进入企业报价规则。"
+  }
+}

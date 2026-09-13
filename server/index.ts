@@ -47,6 +47,7 @@ import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
 import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
+import { quoteSkillRouter } from './routes/quoteSkill.js';
 import { platformAdsRouter } from './routes/platformAds.js';
 import { platformAdHandoffRouter } from './routes/platformAdHandoff.js';
 import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
@@ -119,6 +120,7 @@ app.get('/api/overseas/health', (_req, res) => {
     featureLocks: {
       geminiVideo: process.env.GEMINI_VIDEO_ENABLED !== 'true',
       seedanceVideo: process.env.SEEDANCE_VIDEO_ENABLED !== 'true',
+      quoteSkill: process.env.NODE_ENV === 'production' && process.env.QUOTE_SKILL_ENABLED !== 'true',
       digitalHuman: !String(process.env.DIGITAL_HUMAN_API_URL || '').trim(),
     },
   });
@@ -162,6 +164,7 @@ app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
 app.use('/api/overseas/digital-employees/followup', followupTemplatesRouter);
 app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
+app.use('/api/overseas/quote-skill', quoteSkillRouter);
 app.use('/api/overseas/platform-ads', platformAdConnectionsRouter);
 app.use('/api/overseas/platform-ads', platformAdsRouter);
 app.use('/api/overseas/platform-ads', platformAdHandoffRouter);
