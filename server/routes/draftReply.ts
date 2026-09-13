@@ -49,6 +49,7 @@ import {
 } from '../knowledge/strategyRetrieve.js';
 import { customerServicePolicy, readTenantEnterpriseProfile, type BizRules, type SalesStyleProfile } from './enterprise.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { buildCustomerServiceDecision } from '../customerService/decision.js';
 
 export const draftReplyRouter = Router();
 draftReplyRouter.use(requireAuth);
@@ -149,6 +150,7 @@ function knowledgeGapPayload(
 ) {
   const messages = splitMobileChatMessages(plan.draft);
   const translatedMessages = splitMobileChatMessages(plan.draftZh);
+  const execution = handoffRequired ? 'human_required' as const : 'draft' as const;
   return {
     draft: messages.join('\n\n'),
     messages,
@@ -191,6 +193,29 @@ function knowledgeGapPayload(
           : '未回答无依据事实；先用自然追问澄清，不制造人工已接管的假象',
       ],
     },
+    decision: buildCustomerServiceDecision({
+      action: { id: 'knowledge_gap', risk: handoffRequired ? 'L4' : 'L2', description: '知识缺口承接' },
+      execution,
+      handoff: { required: handoffRequired, reason: plan.handlingReason, safeBridgeAllowed: plan.safeToSendBeforeHandoff },
+      knowledge: {
+        ready: context.knowledgeReady,
+        miss: true,
+        safetyMode: context.knowledgeReady ? 'missing_knowledge' : 'setup_required',
+        fallbackCount,
+      },
+      sales: { strategyIds: strategies.map(match => match.strategy.id) },
+      safety: { verificationStatus: 'playbook', issues: blockingIssues },
+      explanations: [
+        {
+          code: handoffRequired ? 'knowledge_gap_handoff' : 'knowledge_gap_draft',
+          source: 'knowledge',
+          severity: handoffRequired ? 'blocking' : 'warning',
+          summary: handoffRequired ? '企业知识不足，已转人工确认' : '企业知识不足，当前仅生成待确认草稿',
+          detail: plan.handlingReason,
+          evidence: context.evidence,
+        },
+      ],
+    }),
   };
 }
 
@@ -206,6 +231,13 @@ function directConversationPayload(pair: { draft: string; draftZh: string }, cat
     knowledgeMiss: false,
     category,
     verification: { status: 'verified', issues: [] },
+    decision: buildCustomerServiceDecision({
+      action: { id: 'direct_conversation', risk: 'L2', description: category },
+      execution: 'draft',
+      knowledge: { ready: true, miss: false, safetyMode: 'grounded', fallbackCount: 0 },
+      safety: { verificationStatus: 'verified', issues: [] },
+      explanations: [{ code: 'safe_draft', source: 'verification', severity: 'info', summary: '回复已通过确定性安全检查' }],
+    }),
   };
 }
 

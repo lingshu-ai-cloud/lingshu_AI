@@ -47,6 +47,7 @@
     "test:style-fact-isolation": "tsx server/knowledge/styleMemorySanitize.test.ts",
     "test:tenant-notification": "tsx server/lib/tenantNotification.test.ts",
     "test:quote-skill": "tsx --test server/quoteSkill/engine.test.ts server/routes/quoteSkill.test.ts src/components/customers/QuoteSkillCard.test.ts",
+    "test:customer-decision": "tsx server/autonomy/customerServiceDecisionMatrix.test.ts && tsx src/components/customers/SalesDecisionEvidence.test.ts",
     "test:product-import": "tsx --test src/lib/productImport.test.ts",
     "test:customer-service": "tsx server/whatsapp/autoReplyDelivery.test.ts && tsx server/whatsapp/inboundReplay.test.ts && npm run test:draft-safety && npm run test:conversation-tone && npm run test:mobile-chat-style && npm run test:knowledge-gap-playbook && npm run test:human-voice && npm run test:reply-planning && npm run test:customer-reply-ui && npm run test:customer-qualification && npm run test:customer-handoff && npm run test:handoff-summary && npm run test:polish-draft && npm run test:fast-product-inquiry && npm run test:spin && npm run test:sales-actions && npm run test:style-fact-isolation && npm run test:strategy-policy && npm run test:memory-governance && npm run test:tenant-notification && npm run test:external-customer-service-demo && npm run test:customer-profile",
     "test:customer-visibility": "tsx server/whatsapp/customerVisibility.test.ts",

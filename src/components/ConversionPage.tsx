@@ -28,6 +28,7 @@ import { TagsWidget } from './customers/widgets/TagsWidget';
 import { SourceIcon, sourceLabel } from './customers/SourceIcon';
 import { LiveLocalTime } from './customers/LiveLocalTime';
 import { DailyBriefing } from './customers/DailyBriefing';
+import { SalesDecisionEvidence, type SalesDecisionMeta } from './customers/SalesDecisionEvidence';
 import { QuoteSkillCard } from './customers/QuoteSkillCard';
 import { useCustomers } from '../hooks/useCustomers';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
@@ -62,6 +63,7 @@ interface DraftResult {
   category?: string;
   originalDraft?: string;
   strategies?: Array<{ id: string; scenario: string; confidence: number; reason: string }>;
+  decision?: SalesDecisionMeta['decision'];
 }
 
 interface MessageTemplate {
@@ -889,6 +891,7 @@ function ChatThread({
   priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
+  draftMeta,
   onMockBuyerMessage,
   sending,
   channelReady,
@@ -914,6 +917,7 @@ function ChatThread({
   priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
+  draftMeta: SalesDecisionMeta | null;
   onMockBuyerMessage: (text: string) => void;
   sending?: boolean;
   channelReady?: boolean;
@@ -1082,13 +1086,15 @@ function ChatThread({
             );
           })}
           {draftSuggestion && (
-            <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+            <>
+              <SalesDecisionEvidence meta={draftMeta} />
+              <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+            </>
           )}
         </div>
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
-          {!customer.isMock && !channelReady && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">WhatsApp 通道尚未连接。可以编辑和保留草稿，连接测试或正式账号后才能真实发送。</div>}
           {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{'\u8ddd\u5ba2\u6237\u4e0a\u6b21\u6d88\u606f\u5df2\u8d85\u8fc724\u5c0f\u65f6\uff0cWhatsApp \u8981\u6c42\u4ee5\u6a21\u677f\u6d88\u606f\u53d1\u9001'}</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
@@ -2602,6 +2608,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           priceRulesReady={priceRulesReady}
           knowledgeMiss={Boolean(draftMeta?.knowledgeMiss)}
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
+          draftMeta={draftMeta}
           onMockBuyerMessage={pushMockBuyerMessage}
           sending={sendingReply}
           channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
