@@ -18,12 +18,13 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         throw new Error(formatDemoQuotaError(j));
       }
       if (!r.ok) {
-        const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string };
-        // Script quality rejections are a valid, structured product response.
-        // Preserve their diagnostics so the studio can explain the block instead
-        // of degrading it into an apparently unresponsive empty result.
-        if (path === 'script' && r.status === 422) {
-          return { ...fallback, ...payload, source: payload.source || 'ai_rejected' } as T & { source?: string };
+        const payload = await r.json().catch(() => ({})) as { error?: string; code?: string; retryable?: boolean };
+        if (payload.retryable === false || /UPSTREAM_(QUOTA|AUTH)/.test(payload.code || '')
+          || /额度不足|额度已|授权暂不可用/.test(payload.error || '')) {
+          return payload as T & { source?: string };
+        }
+        if (r.status === 422 && payload.code === 'SCRIPT_QUALITY_BLOCKED') {
+          return payload as T & { source?: string };
         }
         const message = payload.error || `HTTP ${r.status}`;
         if ([502, 503, 504].includes(r.status) && attempt < maxAttempts) {
@@ -497,7 +498,15 @@ export const studioApi = {
     existingScripts?: string[];
     variantSeed?: number;
   }, fb: string, options?: { signal?: AbortSignal }) =>
-    post<StudioScriptResult>('script', b, { script: '' }, options?.signal),
+    post<{
+      script: string;
+      source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected';
+      qualityStatus?: 'passed' | 'needs_review' | 'repaired' | 'recovered' | 'fallback' | 'failed' | 'rejected';
+      qualityChecks?: { materialGrounded?: boolean; productGrounded?: boolean; dialogueFits?: boolean; structurallyComplete?: boolean };
+      fallbackReason?: string;
+      validationIssues?: string[];
+      error?: string;
+    }>('script', { ...b, provider: 'qwen' }, { script: '' }, options?.signal),
 
   covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, fb: string[]) =>
     post<{ covers: string[] }>('covers', b, { covers: fb }),
@@ -548,9 +557,12 @@ export const studioApi = {
   ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string }[]; style?: Partial<TtsStyleOptions> }) =>
     post<{ ok: boolean; audios: Record<string, TtsAudioResult>; error?: string }>('tts/batch', b, { ok: false, audios: {} }),
   alignTts: (b: { text: string; url: string; duration: number }) =>
-    post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
+    post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
+  qwenAsr: (b: { text?: string; url: string; duration: number; confirmed?: boolean }) =>
+    post<{ ok: boolean; id?: string; taskId?: string; status?: string; text?: string; cues?: SubCue[]; matches?: boolean; source?: 'qwen_asr'; error?: string }>('tts/asr', b, { ok: false }),
+  transcribeMaterial: (id: string) => post<{ ok: boolean; text?: string; error?: string }>(`materials/${encodeURIComponent(id)}/transcribe`, {}, { ok: false }),
   transcribeVoiceover: (b: { url: string; duration: number; language?: string; transcriptHint?: string }) =>
-    post<{ ok: boolean; text: string; cues: SubCue[]; source?: 'audio_ai' | 'proportional'; error?: string }>('tts/transcribe', b, { ok: false, text: '', cues: [] }),
+    post<{ ok: boolean; text: string; cues: SubCue[]; matches?: boolean; status?: string; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/transcribe', b, { ok: false, text: '', cues: [] }),
   audioCapabilities: async () => {
     try {
       const r = await fetch('/api/overseas/studio/tts/capabilities', { headers: authHeader() });
@@ -686,8 +698,12 @@ export const studioApi = {
       return [];
     }
   },
-  saveProject: (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string }) =>
-    post<{ ok: boolean; project: StudioProject }>('projects', b, { ok: false, project: null as unknown as StudioProject }),
+  saveProject: (b: { id?: string; title: string; status: 'draft' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string }) =>
+    fetch('/api/overseas/studio/projects', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify(b) }).then(async response => {
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error || '草稿保存失败，未覆盖当前修改');
+      return result as { ok: boolean; project: StudioProject };
+    }),
   deleteProject: (id: string) => del(`projects/${id}`),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>
     post<{ ok: boolean; batch: VariationBatch }>('variation-batches', b, { ok: false, batch: null as unknown as VariationBatch }),
@@ -702,8 +718,17 @@ export const studioApi = {
   },
 
   // 素材库
-  listMaterialLibrary: fetchMaterialLibrary,
-  listMaterials: async (): Promise<Material[]> => (await fetchMaterialLibrary()).items,
+  listMaterials: async (): Promise<Material[]> => {
+    try {
+      const r = await fetch('/api/overseas/studio/materials', { headers: authHeader(), cache: 'no-store' });
+      if (!r.ok) throw new Error(String(r.status));
+      if (r.headers.get('X-Studio-Material-Warning') === 'cloud_unavailable') window.dispatchEvent(new CustomEvent('lingshu:material-warning', { detail: '云端素材库暂不可用，当前仅显示本地素材；请检查数据库连接。' }));
+      const data = await r.json();
+      return Array.isArray(data) ? (data as Material[]) : [];
+    } catch {
+      return [];
+    }
+  },
   uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (
@@ -840,6 +865,8 @@ export interface CoverStyle {
 }
 
 export interface Material {
+  transcript?: string;
+  transcriptCues?: SubCue[];
   id: string;
   name: string;
   folder: string;

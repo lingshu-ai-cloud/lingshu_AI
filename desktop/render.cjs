@@ -14,7 +14,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { fileURLToPath } = require('node:url');
+const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -258,7 +258,8 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
     .map(cue => ({
       start: Math.max(0, Number(cue && cue.start) || 0),
       end: Math.max(0, Number(cue && cue.end) || 0),
-      text: String(cue && cue.text || '').replace(/[{}]/g, '').trim(),
+      text: wrappedAssText(cue && cue.text),
+      screen: cue && cue.kind === 'screen',
     }))
     .filter(cue => cue.text && cue.end > cue.start);
   if (!valid.length && !disclaimer) return '';
@@ -266,7 +267,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const marginV = Math.round(height * Math.max(.08, Math.min(.35, Number(style.bottomRatio) || .20)));
   const outline = Math.max(2, Math.round(width * .003));
   const events = valid.map(cue =>
-    `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${cue.text}`
+    `Dialogue: ${cue.screen ? 1 : 0},${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${cue.screen ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}` : ''}${cue.text}`
   );
   if (disclaimer && duration > 0) events.push(`Dialogue: 1,0:00:00.00,${assTime(duration)},Default,,0,0,0,,{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.08)})\\fs${Math.round(width * 0.035)}}${assText(disclaimer).replace(/[{}]/g, '')}`);
   return [
@@ -345,6 +346,20 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       throw new Error(`时间线素材不完整，已停止渲染：${clipErrors.join('；')}`);
     }
 
+    // Layer URLs are independent inputs. Failure is explicit, never a silent missing product.
+    const extraClips = [];
+    for (let i = 0; i < localClips.length; i++) {
+      const clip = localClips[i];
+      for (const kind of ['product', 'background']) {
+        if (kind === 'background' && clip.production?.backgroundMode === 'baked') continue;
+        const url = clip[`${kind}Url`]; if (!url) continue;
+        const file = path.join(tmp, `layer-${i}-${kind}.${path.extname(new URL(url).pathname).slice(1) || 'mp4'}`);
+        await downloadTo(url, file, downloadOptions);
+        clip[`${kind}Index`] = localClips.length + extraClips.length;
+        extraClips.push({ file, image: clip[`${kind}Type`] === 'image' || IMAGE_RE.test(url), target: Number(clip.targetDuration) || 3 });
+      }
+    }
+
     let bgmFile = null;
     const bgmUrl = manifest && manifest.bgm && manifest.bgm.url;
     if (bgmUrl) {
@@ -373,8 +388,9 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       localClips.forEach(c => {
         const target = Math.max(0.5, finiteNumber(c.targetDuration, duration / n));
         if (c.image) args.push('-loop', '1', '-t', target.toFixed(3), '-i', c.file);
-        else args.push('-i', c.file);
+        else { if (c.production?.transparent && /\.webm$/i.test(c.file)) args.push('-c:v', 'libvpx-vp9'); args.push('-i', c.file); }
       });
+      extraClips.forEach(c => { if (c.image) args.push('-loop', '1', '-t', c.target.toFixed(3), '-i', c.file); else args.push('-stream_loop', '-1', '-i', c.file); });
       localClips.forEach((c, i) => {
         const target = Math.max(0.5, finiteNumber(c.targetDuration, duration / n));
         const trimStart = Math.max(0, finiteNumber(c.trimStart, 0));
@@ -387,17 +403,8 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         const source = c.image
           ? `[${i}:v]trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`
           : `[${i}:v]trim=start=${trimStart.toFixed(3)}:end=${trimEnd.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},tpad=stop_mode=clone:stop_duration=${target.toFixed(3)},trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`;
-        const focusX = Math.max(0, Math.min(1, finiteNumber(c.focusX, 0.5)));
-        const focusY = Math.max(0, Math.min(1, finiteNumber(c.focusY, 0.5)));
-        const trustedFocus = c.cropMode === 'cover' || (c.cropMode === 'smart' && Number.isFinite(Number(c.focusX)) && Number.isFinite(Number(c.focusY)));
-        if (trustedFocus) {
-          filters.push(`${source},scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:(iw-ow)*${focusX.toFixed(4)}:(ih-oh)*${focusY.toFixed(4)},setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
-        } else {
-          filters.push(`${source},split=2[bg${i}raw][fg${i}raw]`);
-          filters.push(`[bg${i}raw]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=20:2[bg${i}]`);
-          filters.push(`[fg${i}raw]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg${i}]`);
-          filters.push(`[bg${i}][fg${i}]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
-        }
+        filters.push(...layoutFilters({ source, index: i, width: w, height: h, target,
+          layout: c.production?.layout || 'full', productIndex: c.productIndex, backgroundIndex: c.backgroundIndex, transparent: Boolean(c.production?.transparent) }));
       });
       filters.push(`${localClips.map((_, i) => `[v${i}]`).join('')}concat=n=${n}:v=1:a=0[vcat]`);
       vlabel = '[vcat]';
@@ -408,7 +415,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     }
 
     // 音轨输入：BGM(或静音) 固定一路，配音可选第二路。视频输入占 0..(vInputs-1)
-    const vInputs = n > 0 ? n : 1;
+    const vInputs = n > 0 ? n + extraClips.length : 1;
     const bgmIdx = vInputs;
     if (bgmFile) args.push('-stream_loop', '-1', '-i', bgmFile);
     else args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
@@ -437,12 +444,39 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     const vol = Math.min(1, Math.max(0, (Number.isFinite(rawBgmVol) ? rawBgmVol : 35) / 100));
     const voiceVol = Math.min(1.5, Math.max(0, (Number.isFinite(rawVoiceVol) ? rawVoiceVol : 100) / 100));
     if (voFile) {
-      filters.push(`[${bgmIdx}:a]${musicNormalize}volume=${vol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
-      filters.push(`[${voIdx}:a]volume=${voiceVol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[avo]`);
-      filters.push(`[abgm][avo]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[aout]`);
+      const duck = (vol * 0.5).toFixed(2); // 有人声时 BGM 再降一档
+      filters.push(`[${bgmIdx}:a]volume=${duck}${muteIntervals(localClips, 'bgm')},aformat=sample_rates=44100:channel_layouts=stereo[abgm]`);
+      const segmented = localClips.some(c => c.voiceAligned || c.production?.sound === 'source' || c.production?.sound === 'silent');
+      const voiceClips = localClips.map((c, i) => ({ c, i })).filter(({ c }) => (c.production?.sound || 'voiceover') === 'voiceover' && !(c.voiceAligned && c.voiceStart === 0 && c.voiceEnd === 0));
+      if (segmented && voiceClips.length) {
+        filters.push(`[${voIdx}:a]asplit=${voiceClips.length}${voiceClips.map(({ i }) => `[voiceInput${i}]`).join('')}`);
+        voiceClips.forEach(({ c, i }) => {
+          const start = Number(c.voiceStart ?? c.targetStart) || 0;
+          const target = Math.max(0.5, Number(c.targetDuration) || 3);
+          const end = Math.max(start + 0.1, Number(c.voiceEnd) || start + target);
+          if (c.voiceAligned && (!Number.isFinite(c.voiceStart) || !Number.isFinite(c.voiceEnd) || c.voiceStart < 0 || c.voiceEnd <= c.voiceStart || c.voiceEnd - c.voiceStart > target + 0.01)) throw new Error('已对齐口播时间无效或超过镜头时长，不自动加速声音');
+          const delay = Math.round((Number(c.targetStart) || 0) * 1000);
+          filters.push(`[voiceInput${i}]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS,${c.voiceAligned ? '' : `${tempoFilters((end - start) / target)},`}apad,atrim=duration=${target},aformat=sample_rates=44100:channel_layouts=stereo,volume=${voiceVol.toFixed(2)},adelay=${delay}|${delay}[voiceSegment${i}]`);
+        });
+        filters.push(`${voiceClips.map(({ i }) => `[voiceSegment${i}]`).join('')}amix=inputs=${voiceClips.length}:duration=longest:normalize=0[avo]`);
+      } else filters.push(`[${voIdx}:a]volume=${segmented ? '0' : voiceVol.toFixed(2)},aformat=sample_rates=44100:channel_layouts=stereo[avo]`);
+      filters.push(`[abgm][avo]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0[abase]`);
     } else {
-      filters.push(`[${bgmIdx}:a]${musicNormalize}volume=${vol.toFixed(2)},aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[aout]`);
+      filters.push(`[${bgmIdx}:a]volume=${vol.toFixed(2)}${muteIntervals(localClips, 'bgm')},aformat=sample_rates=44100:channel_layouts=stereo[abase]`);
     }
+    const sourceLabels = []; let audioCursor = 0;
+    localClips.forEach((clip, i) => {
+      const target = Math.max(0.5, finiteNumber(clip.targetDuration, duration / Math.max(1, n)));
+      if (clip.production?.sound === 'source') {
+        if (clip.image) throw new Error('图片没有原声音轨，请改用旁白或无声');
+        const start = Math.max(0, Number(clip.trimStart) || 0);
+        const end = Math.max(start + 0.1, Number(clip.trimEnd) || start + target);
+        filters.push(`[${i}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS,${tempoFilters(clip.speed)},apad,atrim=duration=${target},aformat=sample_rates=44100:channel_layouts=stereo,volume=${voiceVol.toFixed(2)},adelay=${Math.round(audioCursor * 1000)}|${Math.round(audioCursor * 1000)}[source${i}]`);
+        sourceLabels.push(`[source${i}]`);
+      }
+      audioCursor += target;
+    });
+    filters.push(sourceLabels.length ? `[abase]${sourceLabels.join('')}amix=inputs=${sourceLabels.length + 1}:duration=longest:normalize=0[aout]` : '[abase]anull[aout]');
 
     args.push(
       '-filter_complex', filters.join(';'),
@@ -492,4 +526,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss };
+module.exports = { composite, resolution, ffmpegPath, cuesToAss };

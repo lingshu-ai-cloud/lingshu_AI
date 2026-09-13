@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import { matchedReferenceIndustryLeaks as leaks } from '../server/routes/studio.js';
+const forbidden = ['t恤', '连衣裙', '面料'];
+assert.deepEqual(leaks('构图：前景女性短发、白T恤，双手自然垂落；后景女性同款白T恤。', forbidden), []);
+assert.deepEqual(leaks('画面：主持人穿白T恤面对镜头。', forbidden), []);
+assert.deepEqual(leaks('台词：白T恤透气舒适。', forbidden), ['t恤']);
+assert.deepEqual(leaks('字幕：连衣裙特价。', forbidden), ['连衣裙']);
+assert.deepEqual(leaks('画面：女性展示连衣裙面料。', forbidden), ['连衣裙', '面料']);
+assert.deepEqual(leaks('画面：白T恤摆在桌面。', forbidden), ['t恤']);
+assert.deepEqual(leaks('构图：女性穿白T恤。\n台词：购买这件T恤。', forbidden), ['t恤']);
+console.log('wardrobe leak tests passed');

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { authApi, authHeader, type EmployeeAccount, type OrganizationRole } from '../lib/auth';
 import { studioApi, type StudioProject } from '../lib/studioApi';
+import { productionSummary } from '../lib/shotProduction';
 import { ContentOpsExecutionDialog, type ContentOpsExecutionIntent } from './ContentOpsExecutionDialog';
 import { HighConfidenceInsights, PlatformTrends, type OpsEvidence } from './ContentOpsDrilldowns';
 import {
@@ -443,6 +444,7 @@ export function ScriptLibraryPage() {
           const media = firstDraftMedia(project); const script = String(project.spec?.script || '');
           return <article key={project.id} className="overflow-hidden rounded-2xl border border-border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
             <HoverMedia title={project.title} poster={media.poster} url={media.url} />
+            {productionSummary(project.spec || {}) && <p className="px-4 pt-3 text-[10px] text-amber-700">{productionSummary(project.spec || {})}</p>}
             <div className="p-4"><button type="button" onClick={() => setSelectedDraft(project)} className="block w-full text-left"><div className="flex items-start justify-between gap-3"><h2 className="line-clamp-2 text-sm font-black text-text-primary">{project.title || '未命名草稿'}</h2><span className="shrink-0 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700">{draftProgress(project)}</span></div><p className="mt-2 line-clamp-3 whitespace-pre-wrap text-xs leading-5 text-text-secondary">{script || '草稿尚未生成脚本内容'}</p><p className="mt-3 flex items-center gap-1 text-[10px] text-text-muted"><Clock3 size={11} />{modeLabel(project.spec?.mode)} · {formatDate(project.updatedAt || project.createdAt)}</p></button><div className="mt-4 flex gap-2"><button type="button" onClick={() => continueDraft(project)} className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white">继续创作<ArrowRight size={13} /></button><button type="button" disabled={draftBusyId === project.id} title="复制草稿" onClick={() => void copyDraft(project)} className="rounded-lg border border-border p-2 text-text-secondary hover:bg-surface-2 disabled:opacity-50"><Copy size={14} /></button><button type="button" disabled={draftBusyId === project.id} title="删除草稿" onClick={() => void deleteDraft(project)} className="rounded-lg border border-border p-2 text-rose-500 hover:bg-rose-50 disabled:opacity-50">{draftBusyId === project.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}</button></div></div>
           </article>;
         })}</div>

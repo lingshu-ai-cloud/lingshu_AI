@@ -63,6 +63,15 @@ const COLLECTIONS: CollectionSpec[] = [
       'CREATE INDEX `idx_quote_event_customer` ON `quote_skill_events` (`tenant_id`, `customer_id`, `created_at`)',
     ],
   },
+  { name: 'studio_production_defaults', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }] },
+  { name: 'studio_avatar_jobs', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }, { name: 'input', type: 'json', maxSize: 2000000 }] },
+  {
+    name: 'studio_shooting_tasks',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'payload', type: 'json', maxSize: 2000000 },
+    ],
+  },
   {
     name: 'assistant_threads',
     fields: [
@@ -805,33 +814,11 @@ async function createCollection(token: string, name: string, fields: Field[], in
   console.log(`  ✓ created ${name}`);
 }
 
-/** Add only missing named indexes without removing PocketBase/system indexes. */
-async function ensureIndexes(token: string, name: string, want: string[]): Promise<void> {
-  if (!want.length) return;
-  const res = await fetch(`${PB_URL}/api/collections/${name}`, {
-    headers: { Authorization: token },
-  });
-  if (!res.ok) return;
-  const col = (await res.json()) as { indexes?: string[] };
-  const current = col.indexes ?? [];
-  const indexName = (definition: string) => definition.match(/INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([^\s`"']+)/i)?.[1] ?? definition;
-  const have = new Set(current.map(indexName));
-  const missing = want.filter(definition => !have.has(indexName(definition)));
-  if (!missing.length) return;
-  const up = await fetch(`${PB_URL}/api/collections/${name}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Authorization: token },
-    body: JSON.stringify({ indexes: [...current, ...missing] }),
-  });
-  if (!up.ok) throw new Error(`patch ${name} indexes failed: ${up.status} ${await up.text()}`);
-  console.log(`  ✓ ${name}: added ${missing.map(indexName).join(', ')}`);
-}
-
-/** Add any missing fields to an existing collection (idempotent schema sync). */
 function indexName(sql: string): string {
   return sql.match(/\bINDEX\s+[`"]?([^`"\s]+)[`"]?/i)?.[1]?.toLowerCase() || sql.trim().toLowerCase();
 }
 
+/** Add any missing fields to an existing collection (idempotent schema sync). */
 async function ensureFields(token: string, name: string, want: Field[], wantIndexes: string[] = []): Promise<void> {
   const res = await fetch(`${PB_URL}/api/collections/${name}`, {
     headers: { Authorization: token },
@@ -843,7 +830,7 @@ async function ensureFields(token: string, name: string, want: Field[], wantInde
   const existingIndexes = col.indexes ?? [];
   const existingIndexNames = new Set(existingIndexes.map(indexName));
   const indexes = [...existingIndexes, ...wantIndexes.filter(index => !existingIndexNames.has(indexName(index)))];
-  const indexesChanged = indexes.length !== existingIndexes.length;
+  const indexesChanged = indexes.length !== (col.indexes ?? []).length;
   if (!missing.length && !indexesChanged) {
     console.log(`  = ${name} up to date`);
     return;

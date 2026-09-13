@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   applySafeStoryboardSpeechFallback,
   buildSafeCloneStoryboard,
@@ -10,12 +12,12 @@ import {
   fitStoryboardSpeech,
   fitSpeechToShot,
   isPackagingOnlyProductInfo,
-  isBeautyProductInfo,
-  isNonBlockingScriptQualityIssue,
-  normalizeCompleteTimestampTranslation,
-  normalizeTimestampTranslationValue,
+  materialGroundingIssues,
+  materialTimelineIssues,
   normalizeStoryboardFieldLines,
+  normalizeMaterialInfos,
   openingMatchesCooperationRoute,
+  openingMatchesTargetBuyer,
   productVoicePlanSupportsTheme,
   repairMaterialScript,
   restoreProductStoryboardBoundaries,
@@ -152,59 +154,42 @@ assert.ok(storyboardSpeechIssues(`[0-2s]\n台词：怎么判断这款包装是�
 assert.equal(ctaSemanticallySatisfied('Message us for verified product details.', '引导跳转WhatsApp以触达'), false);
 assert.equal(ctaSemanticallySatisfied('Message us on WhatsApp for verified product details.', '引导跳转WhatsApp以触达'), true);
 assert.equal(ctaSemanticallySatisfied('Read the catalog.', '引导跳转WhatsApp以触达'), false);
-const diagnosticCta = '发送工件、节拍、缺陷样本或现场布局，预约一次 30 分钟英文方案诊断';
-assert.equal(ctaSemanticallySatisfied('发工件和节拍，预约方案诊断。', diagnosticCta), true);
-assert.equal(ctaSemanticallySatisfied('联系我们了解详情。', diagnosticCta), false);
-const ctaInjectedStoryboard = ensureStoryboardPrimaryCta(
-  '[0-2s]\n环境：工厂\n台词：查看现场。\n字幕：查看现场。',
-  diagnosticCta,
-  'zh',
-);
-assert.equal(ctaSemanticallySatisfied(ctaInjectedStoryboard, diagnosticCta), true);
-assert.match(ctaInjectedStoryboard, /^台词：预约(?:方案)?诊断。$/m);
-assert.equal(storyboardSpeechIssues(ctaInjectedStoryboard).length, 0);
-const silentCtaStoryboard = ensureStoryboardPrimaryCta(
-  '[0-2s]\n环境：工厂\n台词：无\n字幕：无',
-  diagnosticCta,
-  'zh',
-  false,
-);
-assert.equal(ctaSemanticallySatisfied(silentCtaStoryboard, diagnosticCta), true);
-assert.match(silentCtaStoryboard, /^台词：无$/m);
-assert.match(silentCtaStoryboard, /^字幕：发工件和节拍，预约方案诊断。$/m);
+assert.equal(ctaSemanticallySatisfied('请用WhatsApp联系。', '发送工件图片、当前工艺、目标节拍、质量痛点及现场布局，获取初步自动化方案并预约30分钟技术沟通'), false);
+assert.equal(ctaSemanticallySatisfied('请发送工件图片、工艺、节拍、质量问题和布局，获取自动化方案并预约技术沟通。', '发送工件图片、当前工艺、目标节拍、质量痛点及现场布局，获取初步自动化方案并预约30分钟技术沟通'), true);
+assert.equal(openingMatchesTargetBuyer('设备经理，先确认这段动作是否适合产线。', '工厂厂长、自动化/设备负责人、生产与工艺经理、质量经理、采购与供应链负责人、系统集成商'), true);
+assert.equal(openingMatchesTargetBuyer('品牌创始人，先看包装。', '工厂厂长、自动化/设备负责人、生产与工艺经理、质量经理、采购与供应链负责人、系统集成商'), false);
+assert.match(readFileSync(fileURLToPath(new URL('./studio.ts', import.meta.url)), 'utf8'), /!audience\.trim\(\) && !openingMatchesCooperationRoute/, '企业自定义买家应优先于合作路线的通用角色模板');
 
-const safeCloneStoryboard = buildSafeCloneStoryboard(
-  '[0-3s]\n台词：电视屏幕。\n[3-7s]\n台词：Usefulhouse。\n[7-11s]\n台词：无',
-  '产品名称：Vision Inspection System',
-  diagnosticCta,
-  'zh',
-  'none',
-  'Factory Automation Manager',
+const selectedMaterialInfos = normalizeMaterialInfos([
+  { name: 'Gigaset Cordless Telephone Production VII - Pneumatic Conveyor Belt', duration: 20.115, effectiveDuration: 20.115, targetStart: 0, targetEnd: 25, observations: ['气动输送带'] },
+  { name: 'IMTEX 2025 (Bangalore International Exhibition Centre) 10', duration: 15, observations: ['展会观众与设备'] },
+], ['Gigaset Cordless Telephone Production VII - Pneumatic Conveyor Belt'], 25);
+assert.equal(selectedMaterialInfos.length, 1, '推荐但未选的 IMTEX 素材不得进入脚本事实源');
+assert.equal(selectedMaterialInfos[0]?.name, 'Gigaset Cordless Telephone Production VII - Pneumatic Conveyor Belt');
+assert.equal(selectedMaterialInfos[0]?.targetEnd, 20.1, '脚本时间线不得超过已选素材可用时长');
+const hallucinatedFactoryStoryboard = `[0-20.1s]
+素材：Gigaset Cordless Telephone Production VII - Pneumatic Conveyor Belt
+环境：IMTEX 2025 展会
+景别：中景
+运镜：固定
+构图：LX-Vision 工作站居中
+镜头功能：证据
+画面：常州经纬科技标识旁的屏幕显示划伤和字符识别结果，设备正在实时运行，观众围观
+配乐：环境声
+台词：设备经理，先确认真实动作。
+字幕：设备经理，先确认真实动作。`;
+const hallucinationIssues = materialGroundingIssues(
+  hallucinatedFactoryStoryboard,
+  '产品名称：自动化检测方案',
+  '素材名：Gigaset Cordless Telephone Production VII - Pneumatic Conveyor Belt；已确认观察：气动输送带',
 );
-assert.equal((safeCloneStoryboard.match(/^\[[^\]]+\]$/gm) || []).length, 3);
-assert.match(safeCloneStoryboard, /^台词：无$/m);
-assert.match(safeCloneStoryboard, /^字幕：发工件和节拍，预约方案诊断。$/m);
-assert.equal(ctaSemanticallySatisfied(safeCloneStoryboard, diagnosticCta), true);
-assert.doesNotMatch(safeCloneStoryboard, /Usefulhouse|电视|屏幕|#\w+/i);
+assert.ok(hallucinationIssues.some(issue => /展会|imtex/i.test(issue)));
+assert.ok(hallucinationIssues.some(issue => /品牌或设备名/.test(issue) && /LX-Vision/.test(issue)));
+assert.ok(hallucinationIssues.some(issue => /屏幕|识别结果|实时运行/.test(issue)));
+assert.deepEqual(materialTimelineIssues(hallucinatedFactoryStoryboard.replace('[0-20.1s]', '[0-25s]'), selectedMaterialInfos), ['第1段时间线超出已选素材可用区间（应为 0-20.1s）']);
 
-const referenceLeaks = storyboardReferenceLeakIssues(
-  '画面：Usefulhouse 电视屏幕演示 #SmartTV',
-  ['Usefulhouse'],
-  ['电视', '屏幕'],
-);
-assert.equal(referenceLeaks.length, 3);
-assert.doesNotMatch(stripStoryboardHashtags('字幕：#SmartTV\n画面：产品现场'), /#SmartTV/);
-const sanitizedReferenceLeaks = stripStoryboardReferenceLeaks(
-  '画面：Usefulhouse 电视屏幕 #SmartTV\n台词：查看 4K screen。',
-  ['Usefulhouse'],
-  ['电视', '屏幕', '4k', 'screen'],
-);
-assert.equal(storyboardReferenceLeakIssues(
-  sanitizedReferenceLeaks,
-  ['Usefulhouse'],
-  ['电视', '屏幕', '4k', 'screen'],
-).length, 0);
-assert.match(sanitizedReferenceLeaks, /设备|equipment/);
+const studioRouteSource = readFileSync(fileURLToPath(new URL('./studio.ts', import.meta.url)), 'utf8');
+assert.match(studioRouteSource, /const leakedReference = generationMode === 'clone'/, '素材模式必须允许脚本绑定已选素材名，引用泄漏仅适用于爆款迁移');
 
 assert.deepEqual(unsupportedNumericClaims('运镜：镜头向前推进1cm\n画面：滴管抬起0.5cm', '产品名称：测试精华'), []);
 assert.deepEqual(unsupportedNumericClaims('构图：产品占画面70%\n运镜：推进至80%\n字幕：提升70%\n画面：瓶身高度10cm', '产品名称：测试精华'), ['70%', '10cm']);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useId, useRef } from 'react';
+import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { motion } from 'motion/react';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, Copy, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
@@ -1871,7 +1872,7 @@ export default function EnterprisePage() {
           </div>
 
           {knowledgeView === 'company' && <>{marketSection}{companySection}</>}
-          {knowledgeView === 'socialStrategy' && socialStrategySection}
+          {knowledgeView === 'socialStrategy' && <>{socialStrategySection}<EnterprisePresenters /></>}
 
           {knowledgeView === 'products' && (
           <KnowledgeCard

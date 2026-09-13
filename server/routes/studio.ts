@@ -1,15 +1,12 @@
-import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
-import { productIdentity } from '../digitalEmployees/contentProduction.js';
-import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive } from '../lib/materialLibraryAnalysis.js';
-import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
-import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
-import { alignQwenFile } from '../integrations/qwenAlignment.js';
-import { contentLibraryRouter } from './contentLibrary.js';
-import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
-import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../src/lib/videoLanguages.js';
-import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
-import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
-import { Router, type Request, type Response } from 'express';
+import { Router } from 'express';
+import { createShootingTasksRouter } from './shootingTasks.js';
+import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
+import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
+import { QwenAsrService, qwenAsrCues } from '../lib/qwenAsr.js';
+import { studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
+import { checkAvatarMedia, type AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
+import os from 'node:os';
+import { createProductionRouter } from './production.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -101,7 +98,7 @@ function publishingRenderDir(tenantId: string): string {
 }
 
 function publishingRenderPreviewUrl(tenantId: string, outputPath: string): string {
-  const route = `/api/overseas/publishing/local-videos/${encodeURIComponent(path.basename(outputPath))}`;
+  const route = `/api/overseas/studio/local-renders/${encodeURIComponent(path.basename(outputPath))}`;
   return signAssetUrl(route, tenantId, 24 * 60 * 60 * 1000);
 }
 
@@ -503,6 +500,18 @@ function referenceForbiddenTerms(input: {
     .slice(0, 24);
 }
 
+export function matchedReferenceIndustryLeaks(script: string, forbidden: string[]): string[] {
+  // Wardrobe in a staging field is not the advertised product. Keep all spoken
+  // claims and product-focused wardrobe descriptions subject to the same gate.
+  const scoped = script.split('\n').map(line => {
+    if (!/^\s*(构图|画面)[：:]/.test(line)
+      || !/女性|男性|人物|主持人|模特|演员/.test(line)
+      || /展示|推荐|主推|售卖|销售|购买|价格|面料|透气|耐用|卖点|特写|品牌|产品/.test(line)) return line;
+    return line.replace(/连衣裙|t恤/gi, '日常着装');
+  }).join('\n').toLowerCase();
+  return forbidden.filter(term => scoped.includes(term.toLowerCase()));
+}
+
 function referenceIndustryLeakTerms(referenceText: string, productInfo: string): string[] {
   const reference = String(referenceText || '').toLowerCase();
   const product = String(productInfo || '').toLowerCase();
@@ -861,63 +870,25 @@ export function fitSpeechToShot(value: string, duration: number): string {
 }
 
 export function ctaSemanticallySatisfied(candidate: string, primaryCta: string): boolean {
-  if (!primaryCta || candidate.includes(primaryCta)) return true;
+  if (!primaryCta) return true;
+  if (candidate.includes(primaryCta)) return true;
   const requestedWhatsApp = /whatsapp|\bwa\b/i.test(primaryCta);
   const usedWhatsApp = /whatsapp|\bwa\b/i.test(candidate);
-  // A named channel is part of the enterprise's single CTA. Generic contact
-  // wording may not silently replace WhatsApp, or introduce it when unverified.
+  // A named channel is part of the enterprise's single CTA, not a stylistic
+  // detail. In particular, a generic DM may not silently replace WhatsApp and
+  // an unverified WhatsApp CTA may not replace a form/consultation CTA.
   if (requestedWhatsApp !== usedWhatsApp) return false;
   if (requestedWhatsApp) return /message|contact|联系|触达|咨询/i.test(candidate);
-  const intentPatterns: Array<[RegExp, RegExp]> = [
-    [/发送|提交|发来|分享|\bsend\b|\bshare\b|\bsubmit\b/i, /发送|提交|发来|分享|\bsend\b|\bshare\b|\bsubmit\b/i],
-    [/工件|节拍|缺陷|样本|布局|参数|需求|workpiece|cycle|defect|sample|layout|specification|requirement/i, /工件|节拍|缺陷|样本|布局|参数|需求|workpiece|cycle|defect|sample|layout|specification|requirement/i],
-    [/预约|安排|\bbook\b|\bschedule\b/i, /预约|安排|\bbook\b|\bschedule\b/i],
-    [/诊断|评估|方案|咨询|diagnos|assessment|consult|solution/i, /诊断|评估|方案|咨询|diagnos|assessment|consult|solution/i],
-    [/目录|资料|catalog|verified details|product details/i, /目录|资料|catalog|verified details|product details/i],
-    [/报价|价格|quote|pricing/i, /报价|价格|quote|pricing/i],
-    [/私信|联系|message|\bdm\b|contact/i, /私信|联系|message|\bdm\b|contact/i],
+  const normalized = (value: string) => value.toLowerCase().replace(/[\s，。！？、；：,.!?;:“”"'（）()\-]/g, '');
+  const wanted = normalized(primaryCta);
+  const actual = normalized(candidate);
+  const actionGroups = [
+    ['发送', '提交', 'send', 'submit'], ['图片', 'image', 'photo'], ['工艺', 'process'],
+    ['节拍', 'cycle'], ['质量', 'quality'], ['布局', 'layout'], ['方案', 'solution', 'proposal'],
+    ['预约', 'book', 'schedule'], ['沟通', 'consult', 'call', 'meeting'],
   ];
-  const required = intentPatterns.filter(([primary]) => primary.test(primaryCta));
-  if (!required.length) return false;
-  const matched = required.filter(([, output]) => output.test(candidate)).length;
-  return matched >= Math.min(2, required.length);
-}
-
-function safeStoryboardCta(primaryCta: string, language: string): string {
-  const cta = String(primaryCta || '').trim();
-  if (/whatsapp/i.test(cta)) return language === 'zh' ? '请用WhatsApp联系。' : 'Message us on WhatsApp.';
-  if (language === 'zh') {
-    if (/(?:发送|提交|发来|分享)/.test(cta) && /预约/.test(cta) && /(?:诊断|评估|方案|咨询)/.test(cta)) {
-      const detail = /工件/.test(cta) && /节拍/.test(cta) ? '工件和节拍' : /缺陷/.test(cta) ? '缺陷样本' : '关键参数';
-      return `发${detail}，预约方案诊断。`;
-    }
-    if (/预约/.test(cta) && /(?:诊断|评估|方案|咨询)/.test(cta)) return '预约一次方案诊断。';
-    if (/(?:发送|提交|发来|分享)/.test(cta) && /工件|节拍|缺陷|样本|布局|参数|需求/.test(cta)) return '发送关键资料，获取方案建议。';
-    if (/报价|价格/.test(cta)) return '发送需求，获取报价。';
-    if (/目录|资料/.test(cta)) return '联系获取已核实资料。';
-    return cta || '请联系我们了解已核实资料。';
-  }
-  if (/(?:send|share|submit)/i.test(cta) && /(?:book|schedule)/i.test(cta) && /(?:diagnos|assessment|consult|solution)/i.test(cta)) {
-    return 'Share key details and book a solution review.';
-  }
-  if (/(?:book|schedule)/i.test(cta) && /(?:diagnos|assessment|consult|solution)/i.test(cta)) return 'Book a solution review.';
-  if (/quote|pricing/i.test(cta)) return 'Share your needs for a quote.';
-  if (/catalog|product details/i.test(cta)) return 'Message us for verified product details.';
-  return cta || 'Message us for verified details.';
-}
-
-function shortStoryboardCta(primaryCta: string, language: string): string {
-  const cta = String(primaryCta || '');
-  if (/whatsapp/i.test(cta)) return language === 'zh' ? 'WhatsApp联系。' : 'Message us on WhatsApp.';
-  if (language === 'zh') {
-    if (/预约/.test(cta) && /(?:诊断|评估|方案|咨询)/.test(cta)) return '预约方案诊断。';
-    if (/报价|价格/.test(cta)) return '发送需求报价。';
-    if (/目录|资料/.test(cta)) return '联系获取资料。';
-    return '联系了解详情。';
-  }
-  if (/(?:book|schedule)/i.test(cta) && /(?:diagnos|assessment|consult|solution)/i.test(cta)) return 'Book a solution review.';
-  if (/quote|pricing/i.test(cta)) return 'Send needs for a quote.';
-  return 'Message us for details.';
+  const requiredGroups = actionGroups.filter(group => group.some(term => wanted.includes(normalized(term))));
+  return requiredGroups.length > 0 && requiredGroups.every(group => group.some(term => actual.includes(normalized(term))));
 }
 
 /** Keep an otherwise valid strategy script renderable even after a rewrite pass. */
@@ -1137,28 +1108,7 @@ export function openingMatchesTargetBuyer(opening: string, audience: string): bo
   return expected.length === 0 || expected.some(group => group.some(term => opening.toLowerCase().includes(term.toLowerCase())));
 }
 
-function targetBuyerVoiceLabel(audience: string, language: string): string {
-  const text = String(audience || '').toLowerCase();
-  if (language === 'zh') {
-    if (/自动化|automation/.test(text)) return '自动化经理';
-    if (/工程|engineering|engineer/.test(text)) return '工程经理';
-    if (/质量|quality|\bqa\b/.test(text)) return '质量经理';
-    if (/工厂|厂长|plant|factory/.test(text)) return '工厂经理';
-    if (/采购|procurement|buyer|sourcing/.test(text)) return '采购经理';
-    if (/经销|distributor/.test(text)) return '经销商';
-    if (/进口|importer/.test(text)) return '进口商';
-    return '采购';
-  }
-  if (/自动化|automation/.test(text)) return 'Automation managers';
-  if (/工程|engineering|engineer/.test(text)) return 'Engineering managers';
-  if (/质量|quality|\bqa\b/.test(text)) return 'Quality managers';
-  if (/工厂|厂长|plant|factory/.test(text)) return 'Plant managers';
-  if (/经销|distributor/.test(text)) return 'Distributors';
-  if (/进口|importer/.test(text)) return 'Importers';
-  return 'Buyers';
-}
-
-export function safeProductVoicePlan(theme: ContentTheme, productInfo: string, cta: string, language: string, audience = ''): string[] {
+function safeProductVoicePlan(theme: ContentTheme, productInfo: string, cta: string, language: string): string[] {
   const names = selectedProductNames(productInfo);
   const first = names[0] || 'the selected product';
   const facts = productFactCandidates(productInfo);
@@ -1417,30 +1367,21 @@ function parseLockedStoryboardScenes(raw: string, expectedCount: number): Locked
     }).filter(scene => Object.values(scene).every(Boolean));
   } catch { return []; }
 }
-export function lockedVoiceDurations(lines: string[]): number[] {
-  return lines.map(voice => {
-    const chars = Array.from(voice.replace(/[\s，。！？、；：,.!?;:“”"'（）()]/g, '')).length;
-    const words = voice.split(/\s+/).filter(Boolean).length;
-    const spoken = /[\u3400-\u9fff]/.test(voice) ? chars / 4.5 : words / 2.5;
-    return Math.max(2.4, +(spoken + 0.95).toFixed(1));
-  });
-}
-export function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines: string[], targetDuration = 0): string {
-  const naturalDurations = lockedVoiceDurations(lines);
-  const naturalTotal = naturalDurations.reduce((sum, duration) => sum + duration, 0);
-  const requestedTotal = Number(targetDuration) || 0;
-  const scaleToRequestedTotal = requestedTotal >= scenes.length * 2.4 && requestedTotal >= naturalTotal;
-  const durations = scaleToRequestedTotal
-    ? naturalDurations.map(duration => duration * requestedTotal / naturalTotal)
-    : naturalDurations;
+function serializeLockedStoryboard(scenes: LockedStoryboardScene[], lines: string[], timeline?: ScriptMaterialInfo[]): string {
   let cursor = 0;
   return scenes.map((scene, index) => {
     const voice = lines[index] || '';
-    const duration = durations[index] || 2.4;
-    const end = scaleToRequestedTotal && index === scenes.length - 1
-      ? requestedTotal
-      : +(cursor + duration).toFixed(1);
-    const block = `[${cursor}-${end}s]\n环境：${scene.environment}\n景别：${scene.shot}\n运镜：${scene.camera}\n构图：${scene.composition}\n镜头功能：${scene.purpose}\n画面：${scene.visual}\n配乐：${scene.music}\n台词：${voice}\n字幕：${voice}`;
+    const chars = Array.from(voice.replace(/[\s，。！？、；：,.!?;:“”"'（）()]/g, '')).length;
+    const words = voice.split(/\s+/).filter(Boolean).length;
+    const spoken = /[\u3400-\u9fff]/.test(voice) ? chars / 4.5 : words / 2.5;
+    const lockedRange = timeline?.[index];
+    const start = lockedRange ? Number(lockedRange.targetStart || 0) : cursor;
+    const duration = lockedRange
+      ? Math.max(0.5, Number(lockedRange.targetEnd || start) - start)
+      : Math.max(2.4, +(spoken + 0.95).toFixed(1));
+    const end = lockedRange ? Number(lockedRange.targetEnd || start + duration) : +(start + duration).toFixed(1);
+    const fittedVoice = fitSpeechToShot(voice, duration);
+    const block = `[${start}-${end}s]\n环境：${scene.environment}\n景别：${scene.shot}\n运镜：${scene.camera}\n构图：${scene.composition}\n镜头功能：${scene.purpose}\n画面：${scene.visual}\n配乐：${scene.music}\n台词：${fittedVoice}\n字幕：${fittedVoice}`;
     cursor = end;
     return block;
   }).join('\n\n');
@@ -1466,7 +1407,7 @@ export function repairMaterialScript(script: string, productInfo: string, materi
   return fitStoryboardSpeech(repaired);
 }
 
-export function materialGroundingIssues(script: string, productInfo: string, materialsText: string, targetBuyerText = ''): string[] {
+export function materialGroundingIssues(script: string, productInfo: string, materialsText: string): string[] {
   const evidence = `${productInfo}\n${materialsText}`.toLowerCase();
   const claimGroups = [
     ['迅速吸收', '快速吸收', '瞬时渗透', '即时渗透', '一触即融', '吸收', '渗透'],
@@ -1500,12 +1441,14 @@ export function materialGroundingIssues(script: string, productInfo: string, mat
   }
   const outputEntities = Array.from(script.matchAll(/\b[A-Z][A-Za-z0-9]*(?:[- ][A-Z][A-Za-z0-9]*)+\b/g))
     .map(match => match[0]!.trim())
-    .filter(term => !/^(CTA|AI|OEM|ODM|B2B|VO)$/i.test(term))
-    .filter(term => !isBusinessRoleEntity(term, targetBuyerText));
+    .filter(term => !/^(CTA|AI|OEM|ODM|B2B|VO)$/i.test(term));
   for (const entity of outputEntities) {
-    if (!evidence.includes(entity.toLowerCase())) issues.push(`已选素材/产品资料未支持的品牌或设备名：${entity}`);
+    const normalizedEntity = entity.replace(/^(?:Review|Compare|Display|Show|Use|See)\s+/i, '').trim();
+    if (!evidence.includes(entity.toLowerCase()) && !evidence.includes(normalizedEntity.toLowerCase())) {
+      issues.push(`已选素材/产品资料未支持的品牌或设备名：${entity}`);
+    }
   }
-  return Array.from(new Set(issues));
+  return issues;
 }
 
 export function materialTimelineIssues(script: string, infos: ScriptMaterialInfo[]): string[] {
@@ -1545,11 +1488,6 @@ export function requiresMinimumVoiceoverLines(voiceoverMode: unknown, generation
 }
 
 export const MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS = 1;
-
-/** Keep editorial preferences visible without discarding a safe storyboard. */
-export function isNonBlockingScriptQualityIssue(issue: string): boolean {
-  return /^(?:未使用本条唯一主 CTA|已选择 AI 口播，但有效台词不足两段|首段没有|分镜功能重复|美妆产品本体镜头不足|本次脚本与上一版本过于相似|爆款分镜包含不可执行的泛化镜头描述)/.test(String(issue || '').trim());
-}
 
 export function normalizeMaterialInfos(value: unknown, fallbackNames: unknown, totalDuration: number): ScriptMaterialInfo[] {
   const raw = Array.isArray(value) ? value : [];
@@ -1628,21 +1566,19 @@ function materialInfoLines(infos: ScriptMaterialInfo[]): string {
   ].filter(Boolean).join('；')).join('\n');
 }
 
-function safeMaterialVoicePlan(infos: ScriptMaterialInfo[], cta: string, language: string): string[] {
+function safeMaterialVoicePlan(infos: ScriptMaterialInfo[], cta: string, language: string, audience = ''): string[] {
   const selected = infos.slice(0, 5);
   const english = /english|英语|^en\b/i.test(language);
+  const firstBuyer = audience.split(/[、,，/]/).map(item => item.trim()).find(Boolean) || (english ? 'Factory manager' : '工厂负责人');
   const lines = selected.map((info, index) => {
     const name = String(info.name || `素材 ${index + 1}`).trim();
     if (index === 0) return english
-      ? 'Brand buyers, which visible detail should you verify first?'
-      : '品牌方采购时，哪个可见细节最该先确认？';
+      ? `${firstBuyer}, which production risk should you verify first?`
+      : `${firstBuyer}，哪个生产风险最该先判断？`;
     return english ? `Review ${name}.` : `查看素材：${name}。`;
   });
-  const safeCta = /whatsapp/i.test(cta)
-    ? (english ? 'Message us on WhatsApp for verified product details.' : '通过 WhatsApp 获取已核实的产品资料。')
-    : (english ? 'Message us for verified product details.' : '私信获取已核实的产品资料。');
   if (!lines.length) return [];
-  lines[lines.length - 1] = safeCta;
+  lines[lines.length - 1] = cta.trim() || (english ? 'Message us for verified product details.' : '私信获取已核实的产品资料。');
   return lines;
 }
 
@@ -1664,6 +1600,7 @@ function safeMaterialScenes(infos: ScriptMaterialInfo[]): LockedStoryboardScene[
 
 export const studioRouter = Router();
 studioRouter.use(requireAuth);
+studioRouter.use('/local-renders', studioRenderMediaRouter(path.resolve(process.cwd(), 'data/publishing-uploads')));
 studioRouter.use((_req, res, next) => {
   studioTenantContext.run((res.locals as AuthLocals).tenantId, next);
 });
@@ -1753,6 +1690,59 @@ studioRouter.get('/subscription', async (req, res) => {
 /* 收费墙：以下所有 AI / 渲染路由都需有效订阅（未启用强制时直通）。 */
 studioRouter.use(contentLibraryRouter);
 studioRouter.use(entitlementGate());
+
+studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, tenantId) => {
+  return loadMaterials().some(item => item.id === id && item.tenantId === tenantId && item.type === 'video' && !isReferenceOnlyMaterial(item));
+}));
+
+studioRouter.use('/production', createProductionRouter(store, async (url, duration, job, input, tenantId) => {
+  const id = `avatar-${job.id.replace(/[^A-Za-z0-9-]/g, '')}`;
+  const existing = loadMaterials().find(item => item.id === id && item.tenantId === tenantId);
+  if (existing?.avatarMediaCheck?.version === 1 && (!input.transparent || existing.avatarMediaCheck.alphaVerified)) return existing.id;
+  const remote = new URL(url);
+  if (remote.protocol !== 'https:' || remote.username || remote.password || remote.port || !/(^|\.)heygen\.(ai|com)$/i.test(remote.hostname)) {
+    throw new Error('供应商输出不在已核验的HeyGen素材域名中，已阻止自动下载');
+  }
+  const response = await fetch(remote, { redirect: 'error', signal: AbortSignal.timeout(90000) });
+  if (!response.ok || !response.body) throw new Error('数字人视频下载失败');
+  const maxBytes = 110 * 1024 * 1024;
+  if (Number(response.headers.get('content-length')) > maxBytes) { await response.body.cancel(); throw new Error('数字人素材超过110MB'); }
+  const reader = response.body.getReader(); const chunks: Buffer[] = []; let size = 0;
+  while (true) {
+    const part = await reader.read(); if (part.done) break;
+    size += part.value.length; if (size > maxBytes) { await reader.cancel(); throw new Error('数字人素材超过110MB'); }
+    chunks.push(Buffer.from(part.value));
+  }
+  if (!size) throw new Error('数字人视频为空');
+  const file = `${id}-${randomUUID()}.${input.transparent ? 'webm' : 'mp4'}`;
+  const relativeFile = tenantAssetRelativePath(tenantId, file);
+  const objectKey = objectStorageEnabled() ? materialAssetObjectKey(tenantId, file) : undefined;
+  const bytes = Buffer.concat(chunks);
+  const checkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-avatar-check-'));
+  let checked: AvatarMediaCheck;
+  try {
+    const checkFile = path.join(checkDir, file);
+    fs.writeFileSync(checkFile, bytes, { mode: 0o600 });
+    checked = await checkAvatarMedia(checkFile, { ratio: input.ratio, duration, transparent: input.transparent });
+  } finally { fs.rmSync(checkDir, { recursive: true, force: true }); }
+  if (objectKey) await r2Upload({ key: objectKey, body: bytes, contentType: input.transparent ? 'video/webm' : 'video/mp4' });
+  else { fs.mkdirSync(tenantAssetDir(MEDIA_DIR, tenantId), { recursive: true }); fs.writeFileSync(path.join(MEDIA_DIR, relativeFile), bytes); }
+  const material: Material = { id, name: `数字人口播 · ${input.title}`, folder: 'presenter', type: 'video', duration: checked.duration,
+    width: checked.width, height: checked.height, aspectRatio: checked.width / checked.height, avatarMediaCheck: checked, size: humanSize(size), file: relativeFile,
+    url: objectKey ? '' : `/media/${relativeFile}`, objectKey, scope: 'own', tenantId, usage: 'editable', sourceType: 'heygen', createdAt: new Date().toISOString() };
+  persistMaterials([...loadMaterials().filter(item => !(item.id === id && item.tenantId === tenantId)), material]);
+  return id;
+}, { prepareAudio: async ref => {
+  const media = localTtsFile(ref.url);
+  if (!media || !ffmpegStatic) throw new Error('统一旁白不在当前企业可用本地音频中，请重新生成或上传旁白');
+  const dir = fs.mkdtempSync(path.join(scopedStudioAssetDir(TTS_ROOT), 'avatar-audio-'));
+  const input = path.join(dir, 'input'); const output = path.join(dir, 'shot.wav');
+  try {
+    fs.writeFileSync(input, media.bytes);
+    await execFileAsync(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-i', input, '-ss', String(ref.start), '-t', String(ref.duration), '-vn', '-ac', '1', '-ar', '16000', output], 30000);
+    return fs.readFileSync(output);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+} }));
 
 /* ── Seedance 视频生成 ─────────────────────────────────────────────────── */
 // POST /studio/seedance-video  Body: { script, productInfo, language, ratio, duration, resolution, title? }
@@ -2083,12 +2073,12 @@ studioRouter.post('/script', async (req, res) => {
     : '- No reliable highlights. Infer a simple product-first structure from title, platform, and product info.';
   const forbiddenTerms = referenceForbiddenTerms({ referenceTitle, materials, referenceHighlights, referenceAnalysis });
   const forbiddenIndustryTerms = referenceIndustryLeakTerms(`${referenceTitle}\n${referenceAnalysis}\n${highlights}`, productInfo);
-  const forbiddenLine = forbiddenTerms.length
+  const forbiddenLine = (forbiddenTerms.length
     ? `Reference-only forbidden terms: ${forbiddenTerms.join(', ')}. Do not output these words, hashtags, brand names, original captions, or original product claims.`
-    : 'Do not output reference-video brand names, hashtags, original captions, or original product claims.';
-  // Default remains Qwen. Product-only provider comparisons are an explicit server opt-in;
-  // material/reference generation and persisted script contracts remain unchanged.
-  const providerOpt: 'qwen' | 'gemini' = generationMode === 'product' && process.env.STUDIO_SCRIPT_BACKEND === 'gemini' ? 'gemini' : 'qwen';
+    : 'Do not output reference-video brand names, hashtags, original captions, or original product claims.')
+    + (forbiddenIndustryTerms.length ? `\n本次行业校验不允许出现：${forbiddenIndustryTerms.join('、')}。涉及这些词的背景或服饰可改为中性描述，不要为了保留原片细节触发行业冲突。` : '');
+  // Script generation and repair always use Qwen, including legacy Gemini drafts.
+  const providerOpt = 'qwen' as const;
   const hasNarrationDraft = voiceoverMode === 'ai' || voiceoverMode === 'unselected';
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
@@ -2269,78 +2259,38 @@ ${previousCloneScripts.map(item => [...new Set(Array.from(item.matchAll(/^(?:台
 新版本至少改变钩子切口、证据顺序、叙述视角中的两项；不能只替换同义词。`
     : ''}`;
 
-  try {
-    const scriptSystemPrompt = `${presentationRule}\n${mixedRules}\n你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
-    // Select a source fact before drafting. An ungrounded draft must
-    // not become the source material for a second, increasingly confident rewrite.
-    const generatedVoicePlan = generationMode === 'product' && hasNarrationDraft
-      ? await callLLM(`为 ${platform} 的 ${lang} 产品口播选择一项事实。目标 ${productDuration} 秒，受众：${audience || '产品的潜在买家'}。
-产品资料：${planningProduct}
-主题：${videoThemeTitle}；关注方向：${videoThemePainPoint || contentPlan.hookFormula}
-${variantRules}
-选一项适合当前主题、值得向买家解释的细节。只摘完整原文并保留条件，不作解释，不追加问题或推论。只输出 JSON：{"factBasis":["产品资料原文"]}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt })
-      : '';
-    let spokenFact = '';
-    if (generatedVoicePlan) {
-      try {
-        const plan = JSON.parse(generatedVoicePlan.replace(/```json|```/gi, '').trim());
-        const facts = Array.isArray(plan.factBasis) ? plan.factBasis : [];
-        const supported = facts.length === 1 && facts.every((fact: unknown) => typeof fact === 'string' && fact.trim()
-          && planningProduct.replace(/\s/g, '').includes(fact.replace(/\s/g, '')));
-        if (supported) spokenFact = scriptSelectedFactPhrase(generatedVoicePlan, product);
-      } catch { /* fail explicitly below */ }
-      if (!spokenFact) throw new Error('口播构思模型未选出资料中的事实');
-    }
-    const factOwner = scriptSelectedFactProductName(generatedVoicePlan, product);
-    const spokenProductNames = (factOwner ? [factOwner] : selectedProductNames(product)).map(spokenName);
-    // Keep only the selected source clause in the writing context. Scene division
-    // happens afterwards and never changes the spoken wording.
-    let editedVoiceLines = spokenFact
-      ? scriptNarrationLinesFromPlan(await callLLM(`写一段 ${productDuration} 秒的 ${lang} 口播，用于 ${platform}。
-产品称呼：${spokenProductNames.join('、')}（只说一次，不念完整型号介绍）。
-本条只讲这个事实：${spokenFact}
-${scriptVariantDirection(generationMode, variantSeed)}
-对谁说：${audience || '产品的潜在买家'}。语气：${tone}。
-${SCRIPT_CREATIVE_QUALITY_RULES}
-${SCRIPT_FACT_TO_VALUE_EXAMPLES}
-${endingRules}
-${narrationBudget}
-只输出 JSON：{"narration":"像当面说话一样的完整口播"}。不分镜、不凑句数。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), productSceneCount)
-      : [];
-    if (spokenFact && !editedVoiceLines.length) {
-      throw new Error('口播模型未返回完整的结构化台词');
-    }
-    if (editedVoiceLines.length && lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
-      const estimated = lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0);
-      editedVoiceLines = scriptNarrationLinesFromPlan(await callLLM(`把口播缩到 ${productDuration} 秒；当前预估 ${estimated.toFixed(1)} 秒，至少减少 ${Math.max(20, Math.ceil((1 - productDuration / estimated) * 100))}% 内容。
-产品称呼：${spokenProductNames.join('、')}。本条事实：${spokenFact}
-原稿：${editedVoiceLines.join(' ')}
-保留原来的问题、事实条件和句间承接；提问仍然是提问，不替产品给出新答案。少讲一个点，不把全文压成口号。
-${endingRules}
-${narrationBudget}
-只输出 ${lang} JSON：{"narration":"缩短后的完整口播"}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), productSceneCount);
-      if (!editedVoiceLines.length || lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
-        res.status(422).json({
-          ok: false, source: 'ai_rejected', script: '', code: 'SCRIPT_DURATION_EXCEEDED', qualityStatus: 'rejected',
-          error: '口播仍超过目标时长，请增加时长或减少本条要讲的内容',
-          validationIssues: ['口播缩写后仍不满足目标时长'], validationWarnings: [],
-        });
-        return;
-      }
-    }
-    const lockedVoiceLines = generationMode === 'product'
-      ? editedVoiceLines
-      : generationMode === 'material' && voiceoverMode === 'unselected'
-        ? safeMaterialVoicePlan(normalizedMaterialInfos, primaryCta, language)
-        : [];
-    const lockedNarrationRules = lockedVoiceLines.length
-      ? `已锁定口播（不得改写；字幕逐字复制）：\n${lockedVoiceLines.join('\n')}`
-      : '';
-    const generatedVisualScenes = generationMode === 'product' && lockedVoiceLines.length
-      ? parseLockedStoryboardScenes(await callLLM(`为以下锁定口播片段写可执行分镜，恰好 ${lockedVoiceLines.length} 段。
-成片约束：${presentationRule}\n${mixedRules}
-产品名称：${selectedProductNames(product).join('、')}
-本条事实：${spokenFact}
+  // Stage 1 owns words only. It cannot invent timestamps, subtitles or shots.
+  // Those are locked by the server before the visual director sees them.
+  const generatedVoiceLines = generationMode === 'product' && voiceoverMode === 'ai' && !/润唇膏|lip balm/i.test(product)
+    ? parseLockedVoicePlan(await callLLM(`你是外贸美妆短视频口播编导。只输出 JSON：{"lines":["...", "...", "...", "..."]}。
+为${strategyRoute === 'oem_odm' ? 'OEM品牌创始人' : strategyRoute === 'wholesale_distribution' ? '进口商/经销商' : '终端消费者'}用${lang}写${productSceneCount}句完整自然口播。
+主题：${videoThemeTitle}。每句只说一个意思：买家角色+主题问题、产品A证据、产品B证据、唯一CTA依次完成。英语每句最多12词，中文每句最多18字；不得用逗号拼接多个主张。第一句必须明确说出${strategyRoute === 'oem_odm' ? 'brand founder、product manager 或 procurement' : strategyRoute === 'wholesale_distribution' ? 'importer 或 distributor' : 'consumer'}中的一个角色。字幕将逐字复制口播，所以不要写标题式短语。
+至少两句必须围绕产品资料明确提供的产品身份、结构、规格、包装或定制触点；不得补写资料没有提供的内装物、使用动作、功效、测试结果或客户体验。
+唯一可用事实：${product}
+唯一CTA：${primaryCta || '私信了解产品资料'}
+禁止功效、认证、价格、MOQ、交期、销量、趋势和包装外的臆测。`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined }), productSceneCount)
+    : [];
+  const safeProductVoiceLines = generationMode === 'product' && hasNarrationDraft
+    ? safeProductVoicePlan(videoThemeId as ContentTheme, product, primaryCta, language).slice(0, productSceneCount)
+    : [];
+  const generatedVoiceLinesMatchTheme = generatedVoiceLines.length === productSceneCount
+    && productVoicePlanSupportsTheme(generatedVoiceLines, videoThemeId as ContentTheme);
+  const lockedVoiceLines = generatedVoiceLinesMatchTheme
+    ? generatedVoiceLines
+    : generationMode === 'product' && voiceoverMode === 'ai' && /润唇膏|lip balm/i.test(product)
+      ? lipBalmFallbackVoicePlan(strategyRoute, videoThemeId, primaryCta || '私信了解产品资料', productSceneCount)
+      : generationMode === 'product' && hasNarrationDraft
+        ? safeProductVoiceLines
+        : generationMode === 'material' && voiceoverMode === 'unselected'
+          ? safeMaterialVoicePlan(normalizedMaterialInfos, primaryCta, language, audience)
+          : generatedVoiceLines;
+  const lockedNarrationRules = lockedVoiceLines.length
+    ? `\n已锁定口播（不得改写、不得截断、不得新增；每段字幕必须逐字复制同一行）：\n${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}\n时间戳由后端按这些完整口播自动计算；只为每段补画面、环境、景别、运镜、构图、镜头功能和配乐。`
+    : '';
+  const generatedVisualScenes = voiceoverMode === 'ai' && lockedVoiceLines.length && !/润唇膏|lip balm/i.test(product)
+    ? parseLockedStoryboardScenes(await callLLM(`只输出JSON：{"scenes":[{"environment":"","shot":"","camera":"","composition":"","purpose":"","visual":"","music":""}]}。
+为以下已锁定口播各写一个可拍产品短视频镜头。不得输出台词、字幕、时间戳或产品资料外的新事实。若资料只提供容器或包装信息，画面只能展示空容器、标签、外盒、颜色或结构，不得自行添加内装物和使用效果。
+产品资料：${product}
 主题：${videoThemeTitle}
 已选素材观察：${structuredMaterials || '未提供已分析素材；画面必须标为“建议补拍”，不声称已有素材。'}
 锁定口播：${lockedVoiceLines.map((line, index) => `${index + 1}. ${line}`).join('\n')}
@@ -2413,6 +2363,9 @@ ${lockedNarrationRules}
 请生成 ${platform} 分镜脚本，语言为 ${lang}。总时长、分镜数量和时间段必须跟随对标视频脚本详析，不得套用 ${duration} 秒或固定段数模板。
 
 已选素材：${clips}
+可用素材的片段观察（仅这些观察可以作为已有画面依据）：
+${structuredMaterials}
+素材文件名、分类、产品资料和参考片均不能证明本企业已经拍到某个动作。没有片段观察时按缺口处理，不得声称已有对应画面。
 产品信息：
 	${product || '未选择产品。请拒绝生成具体产品脚本。'}
 产品行业锁定：${selectedProductCategory || '以产品信息为准'}
@@ -2436,6 +2389,7 @@ ${scriptFactRules}
 
 每个场景必须严格对应“对标视频脚本详析”的同一时间段，不要合并、跳段或擅自重排。使用以下固定格式，不要 markdown 符号，不要缺字段：
 [start-end s]
+素材：<已有素材写准确文件名及原素材起止秒；无对应片段写“待拍：具体动作要求”；数字人讲解写“待生成：数字人口播”>
 环境：<按迁移方式保留原环境，或重建为适合企业产品的可拍场景>
 景别：<照抄原详析景别>
 运镜：<照抄原详析运镜>
@@ -2503,7 +2457,11 @@ Requirements:
       : await callLLM(`${presentationRule}\n${prompt}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
     const isStructuredLockedDraft = hasLockedDraft && (generationMode === 'product' || generationMode === 'material');
     let script = isStructuredLockedDraft
-      ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(lockedVisualScenes, lockedVoiceLines, generationMode === 'product' ? productDuration : 0), productInfo)
+      ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(
+        lockedVisualScenes,
+        lockedVoiceLines,
+        generationMode === 'material' ? normalizedMaterialInfos : undefined,
+      ), productInfo)
       : normalizeScriptTimestamps(enforceProductNameInScript(stripScriptAnalysisSummary(text), productInfo));
     if (generationMode === 'material') script = repairMaterialScript(script, productInfo, structuredMaterials);
 
@@ -2577,7 +2535,10 @@ Requirements:
       if (generationMode !== 'clone' && expected && !expected.test(opening)) {
         issues.push(`首段没有执行“${videoThemeTitle}”主题的钩子公式`);
       }
-      if (generationMode !== 'clone' && !String(audience || '').trim() && !openingMatchesCooperationRoute(opening, strategyRoute)) {
+      // A tenant's explicitly configured buyer roles override generic route
+      // stereotypes. For example, an OEM automation route may intentionally
+      // target plant managers rather than brand founders.
+      if (generationMode !== 'clone' && !audience.trim() && !openingMatchesCooperationRoute(opening, strategyRoute)) {
         issues.push('首段没有点名当前合作路线对应的目标买家');
       }
       if (generationMode !== 'clone' && !openingMatchesTargetBuyer(opening, audience)) {
@@ -2641,11 +2602,10 @@ ${product || '无。不得写任何产品事实。'}
 
 本次发现的问题：
 ${issues.map(issue => `- ${issue}`).join('\n')}
+${generationMode === 'clone' ? forbiddenLine : ''}
 
-保留本条创意和模式边界：
-${presentationRule}
-${mixedRules}
-${generationMode === 'clone' ? scriptCreativeModeRule('clone') : contentGoal === 'reach' ? endingRules : strategyPlanRules}
+本条脚本修复时的结构约束：
+${generationMode === 'clone' ? '保留草稿的参考镜头结构与节奏，不得套用采购营销结构、补写 CTA 或把无口播镜头改成销售口播。' : strategyPlanRules}
 
 修复规则：
 - 删除或改写含有资料外数字、单位、MOQ、价格、交期、认证、效果、比较、保证、性能测试结论或文件完备性主张的整句；不要用另一个数字替换。
@@ -2654,10 +2614,10 @@ ${generationMode === 'clone' ? scriptCreativeModeRule('clone') : contentGoal ===
 - 禁止截断台词。超过镜头时必须重新安排该段时间戳或改写成语义完整的短句；不能以破折号、省略号或未完成短语收尾。
 - 每个分镜每个字段只能出现一次，尤其只能有一行“台词”和一行“字幕”；把 CTA 融入最后一段唯一的台词或字幕，不得另起重复字段。
 - 每个选定产品名称只需逐字出现在一段“字幕”或“画面”字段中；产品名称本身是已核实事实，不得缩写、改名或省略，也不要在多段重复粘贴。
-- ${generationMode === 'clone' ? '口播、字幕和 CTA 仅保留原片已有位置，原片没有则不新增。' : `结尾仅保留所选 CTA「${primaryCta || '无'}」，按目标语言自然表达，不增加其他行动承诺。`}
-- 画面必须服从本次产品和素材事实；仅提供容器包装时不能添加内装物或使用效果。
-- 保留已有的创意切口与自然开场，只修复列出的问题，不因缺少职业或主题关键词重写口播。
-- ${generationMode === 'clone' ? '不得为了口播段数新增原片没有的台词。' : voiceoverDirective}
+- 结尾只能保留与本条唯一主 CTA「${primaryCta || '无'}」语义一致的一个动作，并按目标语言自然表达；不得增加寄样、免费样品、报价、交期或其它行动承诺。
+${isPackagingOnlyProductInfo(productInfo) ? '- 当前资料只支持包装样品，画面限于资料已确认的容器、标签、外盒和手部排布；不得虚构内容物、性能或测试结果。' : '- 画面与产品事实以本次提供的资料为准，不得套用其他行业的空瓶、包装或产品假设。'}
+- 如果问题涉及首段钩子，必须把首段台词或字幕改为“目标买家 + 一个具体判断问题/反差”；禁止以产品名称、企业介绍或卖点罗列开场。首段不能只说“这是/我们有/产品名”。
+${requiresMinimumVoiceoverLines(voiceoverMode, generationMode) ? '- 已选择 AI 口播，至少在两个不同镜头写自然短台词。' : '- 不要求增加口播，保留原有无口播镜头。'}
 - 不得新增产品事实、人物、镜头、CTA、场景或产品名称；唯一 CTA 保持原意。
 - ${repairFormat}
 
@@ -2739,6 +2699,9 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const timelineIssues = generationMode === 'material'
       ? materialTimelineIssues(script, normalizedMaterialInfos)
       : [];
+    const timelineIssues = generationMode === 'material'
+      ? materialTimelineIssues(script, normalizedMaterialInfos)
+      : [];
     const incompleteCloneStoryboard = generationMode === 'clone'
       && (!/环境[：:]/.test(script)
         || !/景别[：:]/.test(script)
@@ -2762,17 +2725,40 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const incompleteProductStoryboard = generationMode === 'product' && !isStructuredLockedDraft
       && (productStoryboardBlocks.length < 3
         || productStoryboardBlocks.some(block => productStoryboardFields.some(field => !new RegExp(`^${field}[：:]`, 'm').test(block))));
+    const unsafeScript = missingProduct
+      || missingSelectedProduct
+      || /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script)
+      || /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script)
+      || unsupportedNumberClaims.length > 0
+      || incompleteCloneStoryboard
+      || incompleteProductStoryboard
+      || genericCloneStoryboard
+      || hasUnnaturalVoiceover(script)
+      || speechIssues.length > 0
+      || groundingIssues.length > 0
+      || timelineIssues.length > 0
+      || strictCommercialIssues.length > 0
+      || strategyIssues.length > 0
+      || duplicateStoryboardFields.length > 0
+      || subtitleVoiceIssues.length > 0;
     const invalidProductScript = generationMode === 'product'
       && (/人物说[：:][^\n]*(镜头|画面|字幕|参考节奏|展示卖点|制作)/.test(script)
         || /Scene N/.test(script));
     const duplicateProductScript = generationMode === 'product'
       && previousCloneScripts.length > 0
       && previousCloneScripts.some(previous => jaccardSimilarity(script, previous) > 0.82);
-    const referenceLeakIssues = generationMode === 'clone'
-      ? storyboardReferenceLeakIssues(script, forbiddenTerms, forbiddenIndustryTerms)
+    // Reference leakage applies to clone/remix prompts. In material mode the
+    // selected material name is deliberately required in every storyboard
+    // block, so treating that same name as a forbidden reference makes every
+    // valid material storyboard reject itself.
+    const matchedIndustryLeaks = generationMode === 'clone'
+      ? matchedReferenceIndustryLeaks(script, forbiddenIndustryTerms)
       : [];
-    const leakedReference = referenceLeakIssues.length > 0;
-    const mixedIssues = mixedStoryboardIssues(script, presentationMode, normalizedMaterialInfos);
+    const leakedReference = generationMode === 'clone' && (
+      forbiddenTerms.some(term => new RegExp(`(^|[^A-Za-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9])`, 'i').test(script))
+      || matchedIndustryLeaks.length > 0
+      || /#[A-Za-z][A-Za-z0-9_-]{2,}/.test(script)
+    );
     const validationIssues = [
       ...mixedIssues,
       missingProduct ? '缺少产品信息' : '',
@@ -2783,8 +2769,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       genericCloneStoryboard ? '爆款分镜包含不可执行的泛化镜头描述' : '',
       hasUnnaturalVoiceover(script) ? '口播过长或堆叠过多技术名词' : '',
       invalidProductScript ? '产品模式把制作指令写进了人物口播' : '',
-      duplicateProductScript ? '本次脚本与上一版本过于相似，建议换一个创意切口' : '',
-      ...referenceLeakIssues,
+      duplicateProductScript ? '本次脚本与上一版本过于相似，已切换差异化版本' : '',
+      leakedReference ? `脚本包含对标来源、品牌、行业或Hashtag泄漏${matchedIndustryLeaks.length ? `：${matchedIndustryLeaks.join('、')}` : ''}` : '',
       ...speechIssues,
       ...groundingIssues,
       ...timelineIssues,
@@ -2833,12 +2819,10 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         ok: false,
         source: 'ai_rejected',
         code: 'SCRIPT_QUALITY_BLOCKED',
-        error: hardValidationIssues[0] || '脚本未通过安全与可执行性检查，请补充产品资料或重新生成。',
-        script,
+        error: validationIssues[0] || '脚本未通过安全与可执行性检查，请补充产品资料或重新生成。',
         qualityStatus: 'rejected',
         qualityChecks: {
-          materialGrounded: groundingIssues.length === 0 && mixedIssues.length === 0,
-          presentationGrounded: mixedIssues.length === 0,
+          materialGrounded: groundingIssues.length === 0,
           timelineGrounded: timelineIssues.length === 0,
           productGrounded: !missingProduct && !missingSelectedProduct && unsupportedNumberClaims.length === 0,
           dialogueFits: speechIssues.length === 0,
@@ -2863,22 +2847,24 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       ok: true,
       source: 'ai',
       script,
-      qualityStatus,
+      // Clone checks do not verify frame-level evidence. Do not claim an
+      // executable, materially grounded result merely because syntax passed.
+      qualityStatus: generationMode === 'clone' ? 'needs_review' : 'passed',
       qualityChecks: {
-        materialGrounded: groundingIssues.length === 0 && mixedIssues.length === 0,
-          presentationGrounded: mixedIssues.length === 0,
+        materialGrounded: generationMode !== 'clone' && groundingIssues.length === 0,
         timelineGrounded: timelineIssues.length === 0,
         productGrounded: !missingProduct && !missingSelectedProduct && unsupportedNumberClaims.length === 0,
         dialogueFits: speechIssues.length === 0,
         structurallyComplete: !incompleteCloneStoryboard && !incompleteProductStoryboard,
         ...(materialQualityV2 ? { materialCoverage: materialQualityV2.materialCoverage } : {}),
       },
-      validationIssues: [],
-      validationWarnings,
+      validationIssues: generationMode === 'clone' ? ['分镜初稿需逐镜核验素材片段；待拍与待生成镜头不属于已具备画面。'] : [],
     });
   } catch (error) {
     const rawError = String(error instanceof Error ? error.message : error);
     console.warn('[studio] script generation failed:', rawError.slice(0, 500));
+    const upstreamQuota = /429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing/i.test(rawError);
+    const upstreamAuth = /401|403|api.?key|unauthorized|permission/i.test(rawError);
     const publicFailureReason = /429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing/i.test(rawError)
       ? '上游模型额度不足，未生成脚本。请更换模型 Key 或稍后重试。'
       : /401|403|api.?key|unauthorized|permission/i.test(rawError)
@@ -2891,6 +2877,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       source: 'ai_failed',
       script: '',
       qualityStatus: 'failed',
+      code: upstreamQuota ? 'UPSTREAM_QUOTA_EXHAUSTED' : upstreamAuth ? 'UPSTREAM_AUTH_UNAVAILABLE' : 'UPSTREAM_GENERATION_FAILED',
+      retryable: !upstreamQuota && !upstreamAuth && /timeout|timed out|超时|503|502|504|UNAVAILABLE/i.test(rawError),
       error: publicFailureReason,
       validationIssues: [publicFailureReason],
     });
@@ -3661,7 +3649,10 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
       const rel = urlByName.get(item.name);
       const directUrl = 'url' in item && typeof item.url === 'string' ? item.url : undefined;
       const resolvedUrl = absoluteAssetUrl(base, directUrl || rel);
-      return { index, ...item, url: resolvedUrl }; // 优先使用逐镜传入 URL，避免 AI/临时素材被名称映射覆盖
+      return { index, ...item, url: resolvedUrl,
+        productUrl: absoluteAssetUrl(base, 'productUrl' in item ? String(item.productUrl || '') : ''),
+        backgroundUrl: absoluteAssetUrl(base, 'backgroundUrl' in item ? String(item.backgroundUrl || '') : ''),
+      }; // 优先使用逐镜传入 URL，避免 AI/临时素材被名称映射覆盖
     }),
     voiceover: { voice: spec.voice ?? null, url: absoluteAssetUrl(base, spec.voiceoverUrl) },
     cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl) },
@@ -3811,6 +3802,9 @@ function appendVideoVersion(input: Omit<VideoGenerationVersion, 'id' | 'versionN
 }
 
 interface Material {
+  avatarMediaCheck?: AvatarMediaCheck;
+  transcript?: string;
+  transcriptCues?: SubCue[];
   id: string;
   name: string;
   folder: string;
@@ -4427,8 +4421,13 @@ studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = req.query.scope as string | undefined;
   const purpose = String(req.query.purpose || 'library');
-  const inventory = await readMaterialLibrary(tenantId);
-  let list = inventory.items as Material[];
+  let cloud: Array<Record<string, unknown>> = [];
+  try { cloud = await listCloudMaterials(); }
+  catch { res.setHeader('X-Studio-Material-Warning', 'cloud_unavailable'); }
+  let list = [
+    ...cloud,
+    ...loadMaterials().filter(m => !isMockMaterial(m) && (m.scope === 'shared' || m.tenantId === tenantId)),
+  ] as Material[];
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
@@ -4755,7 +4754,35 @@ studioRouter.post('/materials/:id/analysis', async (req, res) => {
 });
 
 // POST /studio/materials/:id/analyze-segments
-// 按动作/主体/镜头功能切片；截取区间来自实际视频时间轴。
+studioRouter.post('/materials/:id/transcribe', async (req, res) => {
+  if (!await consumeDemoQuota(req, res, 'generation')) return;
+  const tenantId = res.locals.tenantId as string;
+  const material = loadMaterials().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  if (!material || material.type !== 'video') { res.status(404).json({ ok: false, error: '企业视频素材不存在' }); return; }
+  if (!process.env.GEMINI_API_KEY || !ffmpegStatic) { res.status(503).json({ ok: false, error: '口播转写服务未配置，候选保留等待人工核对' }); return; }
+  fs.mkdirSync(scopedStudioAssetDir(TTS_ROOT), { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scopedStudioAssetDir(TTS_ROOT), 'shoot-transcript-'));
+  try {
+    const file = material.objectKey ? path.join(dir, 'input.mp4') : path.join(MEDIA_DIR, material.file);
+    if (material.objectKey) { const result = await r2Download(material.objectKey); if (!result?.buf.length) throw new Error('素材下载失败'); fs.writeFileSync(file, result.buf); }
+    const audio = path.join(dir, 'speech.wav');
+    await execFileAsync(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-i', file, '-t', '180', '-vn', '-ac', '1', '-ar', '16000', audio], 30000);
+    const response = await new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }).models.generateContent({
+      model: process.env.GEMINI_ALIGNMENT_MODEL || 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: 'Transcribe only clearly audible speech verbatim. Do not infer missing words, translate, add claims, or copy captions. Return JSON {"text":"","cues":[{"text":"","start":0,"end":1}]}. Timestamps are seconds from audio start. Return empty text when there is no intelligible speech.' }, { inlineData: { mimeType: 'audio/wav', data: fs.readFileSync(audio).toString('base64') } }] }],
+      config: { responseMimeType: 'application/json', temperature: 0 },
+    });
+    const value = extractJSON<{ text?: string; cues?: SubCue[] }>(String(response.text || ''));
+    if (!value?.text?.trim() || !value.cues?.length) throw new Error('未识别到带时间戳的清晰口播，请人工核对或重拍');
+    const cues = value.cues.filter(cue => Number.isFinite(cue.start) && Number.isFinite(cue.end) && cue.start >= 0 && cue.end > cue.start && cue.end <= material.duration + 0.2);
+    if (cues.length !== value.cues.length || cues.some((cue, index) => typeof cue.text !== 'string' || !cue.text.trim() || (index > 0 && cue.start < cues[index - 1].end))) throw new Error('转写时间戳不合法或字幕重叠，请重试');
+    persistMaterials(loadMaterials().map(item => item.id === material.id && item.tenantId === tenantId ? { ...item, transcript: value.text!.trim(), transcriptCues: cues } : item));
+    res.json({ ok: true, text: value.text, cues });
+  } catch (error) { res.status(422).json({ ok: false, error: error instanceof Error ? error.message : '转写失败' }); }
+  finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Gemini 按动作/主体/镜头功能切片；截取区间来自实际视频时间轴，不再用比例猜测。
 /**
  * 素材片段分析的模型选择。
  *
@@ -6078,7 +6105,7 @@ function proportionalCues(text: string, duration: number): AlignedCue[] {
   });
 }
 
-function localTtsFile(url?: string): { bytes: Buffer; mimeType: string } | null {
+function localTtsFile(url?: string): { bytes: Buffer; mimeType: string; filePath: string } | null {
   if (!url || (!url.startsWith('/tts/') && !url.includes('/private-assets/tts/'))) return null;
   const filePath = path.join(scopedStudioAssetDir(TTS_ROOT), path.basename(new URL(url, 'http://local').pathname));
   if (!fs.existsSync(filePath)) return null;
@@ -6089,7 +6116,7 @@ function localTtsFile(url?: string): { bytes: Buffer; mimeType: string } | null 
         : ext === '.webm' ? 'audio/webm'
           : ext === '.aac' ? 'audio/aac'
             : 'audio/wav';
-  return { bytes: fs.readFileSync(filePath), mimeType };
+  return { bytes: fs.readFileSync(filePath), mimeType, filePath };
 }
 
 function studioAudioCapabilities() {
@@ -6159,13 +6186,21 @@ async function alignTtsAudio(transcript: string, url: string | undefined, durati
   const tenantId = studioTenantContext.getStore()!;
   const file = path.join(tenantAssetDir(TTS_ROOT, tenantId), path.basename(new URL(url, 'http://local').pathname));
   try {
-    const cached = JSON.parse(fs.readFileSync(file + '.alignment.json', 'utf8'));
-    if (cached.text === transcript && cached.cues?.length) return { cues: cached.cues, source: 'audio_ai' };
-  } catch {}
-  if (!objectStorageEnabled()) throw Error('该音频需要真实对齐。请重新生成句级配音，或配置私有对象存储后使用千问音频对齐');
-  await persistPrivateStudioAsset('tts', tenantId, file);
-  const signed = await r2SignedGetUrl(tenantPrivateObjectKey('tts', tenantId, path.basename(file)), 15 * 60);
-  return { cues: await alignQwenFile(signed, transcript, duration, file + '.asr.json'), source: 'audio_ai' };
+    const ai = new GoogleGenAI({ apiKey });
+    const prompt = `Align this exact transcript to the supplied speech audio. Return sentence-level subtitle cues and word-level timestamps. Do not paraphrase, translate, add or remove words. Times are seconds from audio start and must be monotonic within 0-${duration.toFixed(2)}. Split Chinese subtitles to about 8-16 characters and other languages to about 4-9 words. Return JSON only: {"cues":[{"text":"...","start":0.0,"end":1.2,"words":[{"text":"...","start":0.0,"end":0.3}]}]}.\n\nExact transcript:\n${transcript.slice(0, 6000)}`;
+    const response = await ai.models.generateContent({
+      model: process.env.GEMINI_ALIGNMENT_MODEL || 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: media.mimeType, data: media.bytes.toString('base64') } }] }],
+      config: { responseMimeType: 'application/json', temperature: 0 },
+    } as any);
+    const parsed = extractJSON<{ cues?: unknown[] } | unknown[]>(String((response as any).text || ''));
+    const rawCues = Array.isArray(parsed) ? parsed : parsed?.cues;
+    if (!validateSpeechCues(rawCues as AlignedCue[], transcript, duration)) return { cues: proportionalCues(transcript, duration), source: 'proportional' };
+    return { cues: rawCues as AlignedCue[], source: 'audio_ai' };
+  } catch (error) {
+    console.warn('[studio] TTS alignment fallback:', error instanceof Error ? error.message : error);
+    return { cues: proportionalCues(transcript, duration), source: 'proportional' };
+  }
 }
 
 async function rewriteVoiceoverToDuration(text: string, language: string, currentDuration: number, targetDuration: number): Promise<string> {
@@ -6390,6 +6425,34 @@ studioRouter.post('/tts', async (req, res) => {
 });
 
 // POST /studio/tts/align Body: { text, url, duration }
+const qwenAsrService = new QwenAsrService(path.join(process.cwd(), 'data', 'qwen-asr'));
+studioRouter.post(['/tts/asr', '/tts/transcribe'], async (req, res) => {
+  try {
+    const duration = Number(req.body?.duration);
+    if (!Number.isFinite(duration) || duration <= 0 || duration > 180) throw new Error('本版支持180秒以内音频');
+    const media = localTtsFile(String(req.body?.url || ''));
+    if (!media) { res.status(404).json({ ok: false, error: '当前企业音频不存在' }); return; }
+    if (req.body?.confirmed === true) {
+      if (!ffmpegStatic) throw new Error('缺少音频时长检查工具，未提交付费转写');
+      const probeBinary = ffmpegStatic;
+      const actualDuration = await new Promise<number>((resolve, reject) => {
+        execFile(probeBinary, ['-hide_banner', '-i', media.filePath], { timeout: 10000, maxBuffer: 100000 }, (_error, _stdout, stderr) => {
+          const match = String(stderr).match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/);
+          if (!match) { reject(new Error('无法验证实际音频时长，未提交付费转写')); return; }
+          resolve(Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]));
+        });
+      });
+      if (actualDuration > 180 || Math.abs(actualDuration - duration) > 0.5) throw new Error('音频实际时长超限或与提交值不一致，未提交付费转写');
+    }
+    const task = await qwenAsrService.run(res.locals.tenantId, media.bytes, media.mimeType, req.body?.confirmed === true);
+    const common = { id: task.id, taskId: task.taskId, status: task.status, error: task.error, usage: task.usage };
+    if (task.status !== 'SUCCEEDED') { res.json({ ok: true, ...common }); return; }
+    const result = qwenAsrCues(task.raw, duration, String(req.body?.text || req.body?.transcriptHint || '').slice(0, 6000));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, ...common, ...result, source: 'qwen_asr' });
+  } catch (error) { res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '千问转写失败' }); }
+});
+
 // Kept separate from synthesis so slow alignment never discards a valid audio result.
 studioRouter.post('/tts/align', async (req, res) => {
   const text = String(req.body?.text || '').trim();
@@ -6401,53 +6464,19 @@ studioRouter.post('/tts/align', async (req, res) => {
   }
   const fallback = { cues: proportionalCues(text, duration), source: 'proportional' as const };
   try {
-    const aligned = await Promise.race([
-      alignTtsAudio(text, url, duration),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('alignment timeout')), 45_000)),
-    ]);
-    res.json({ ok: true, ...aligned });
+    const media = localTtsFile(url);
+    if (!media) throw new Error('当前企业音频不存在');
+    const task = await qwenAsrService.run(res.locals.tenantId, media.bytes, media.mimeType);
+    if (task.status !== 'SUCCEEDED') { res.json({ ok: true, ...fallback, error: '请点击千问转写/刷新，确认新任务或恢复已有任务' }); return; }
+    const result = qwenAsrCues(task.raw, duration, text);
+    if (!result.matches) throw new Error('识别台词与当前文案不一致');
+    res.json({ ok: true, cues: result.cues, source: 'qwen_asr' });
   } catch (error) {
     console.warn('[studio] TTS alignment request fallback:', error instanceof Error ? error.message : error);
     res.status(422).json({ ok: false, error: error instanceof Error ? error.message : '音频对齐失败', cues: [] });
   }
 });
 
-// POST /studio/tts/transcribe Body: { url, duration, language?, transcriptHint? }
-// Used for user-uploaded voiceovers: recognize the real audio and create editable subtitle cues.
-studioRouter.post('/tts/transcribe', async (req, res) => {
-  const url = String(req.body?.url || '').trim();
-  const duration = Math.max(0.2, Math.min(180, Number(req.body?.duration) || 0));
-  const language = String(req.body?.language || 'auto').trim();
-  const transcriptHint = String(req.body?.transcriptHint || '').trim().slice(0, 6000);
-  const media = localTtsFile(url);
-  if (!media || !duration) {
-    res.status(400).json({ ok: false, error: 'local audio url and duration required', text: '', cues: [] });
-    return;
-  }
-  const qwenConfigured = Boolean(process.env.DASHSCOPE_API_KEY?.trim());
-  if (!qwenConfigured) {
-    if (transcriptHint) {
-      res.status(503).json({ ok: false, text: transcriptHint, cues: [], error: '音频对齐服务不可用，请重新生成配音' });
-    } else {
-      res.status(503).json({ ok: false, error: 'DASHSCOPE_API_KEY not set; uploaded audio cannot be transcribed', text: '', cues: [] });
-    }
-    return;
-  }
-  try {
-    void language;
-    const parsed = await transcribeAudioWithQwen({ audio: media.bytes, fileName: `voice${media.mimeType === 'audio/mpeg' ? '.mp3' : '.wav'}` });
-    const text = String(parsed.text || transcriptHint || '').trim();
-    if (!text) throw new Error('audio transcription returned no text');
-    const aligned = await alignTtsAudio(text, url, duration);
-    res.json({ ok: true, text, cues: aligned.cues, source: 'audio_ai' });
-  } catch (error) {
-    if (transcriptHint) {
-      res.status(422).json({ ok: false, text: transcriptHint, cues: [], error: String(error instanceof Error ? error.message : error).slice(0, 240) });
-    } else {
-      res.status(502).json({ ok: false, error: String(error instanceof Error ? error.message : error).slice(0, 240), text: '', cues: [] });
-    }
-  }
-});
 
 // POST /studio/tts/batch  Body: { voice?, items: [{ code, text }] } → 批量生成，多语种只扣一次生成额度
 studioRouter.post('/tts/batch', async (req, res) => {
@@ -6834,8 +6863,63 @@ interface StudioProject {
 
 type StoredStudioProject = StudioProject & { tenant_id: string };
 
-function projectFromRecord(record: any): StudioProject {
-  return { id: String(record.id), title: String(record.title || '未命名草稿'), status: record.status || 'draft', spec: record.spec || {}, thumbSeed: record.thumb_seed || undefined, createdAt: String(record.created_at || record.created || ''), updatedAt: String(record.updated_at || record.updated || '') };
+const PROJECT_PRIVATE_ASSET_PATH = /^\/api\/overseas\/studio\/private-assets\/(tts|voice-samples|covers|exports)\/([^/?#]+)$/;
+
+function mapStudioProjectPrivateAssetUrls(
+  value: unknown,
+  mapUrl: (namespace: string, file: string) => string,
+  depth = 0,
+): unknown {
+  if (depth > 16) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = new URL(value, 'http://local');
+      const renderMatch = parsed.pathname.match(/^\/api\/overseas\/(?:publishing\/local-videos|studio\/local-renders)\/([\w-]+\.mp4)$/);
+      if (renderMatch && value.startsWith('/')) return mapUrl('local-renders', renderMatch[1]!);
+      const match = parsed.pathname.match(PROJECT_PRIVATE_ASSET_PATH);
+      return match ? mapUrl(match[1]!, path.basename(match[2]!)) : value;
+    } catch {
+      return value;
+    }
+  }
+  if (Array.isArray(value)) return value.map(item => mapStudioProjectPrivateAssetUrls(item, mapUrl, depth + 1));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => [key, mapStudioProjectPrivateAssetUrls(item, mapUrl, depth + 1)]));
+}
+
+/** Persist stable private-asset references instead of short-lived signed URLs. */
+export function studioProjectSpecForStorage(spec: unknown): Record<string, unknown> {
+  const { _baseUpdatedAt, ...source } = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec as Record<string, unknown> : {};
+  return mapStudioProjectPrivateAssetUrls(
+    source,
+    (namespace, file) => namespace === 'local-renders'
+      ? `/api/overseas/studio/local-renders/${file}`
+      : `/api/overseas/studio/private-assets/${namespace}/${file}`,
+  ) as Record<string, unknown>;
+}
+
+/** Every project read receives fresh tenant-scoped media signatures. */
+export function refreshStudioProjectAssetUrls(spec: unknown, tenantId: string): Record<string, unknown> {
+  const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : {};
+  return mapStudioProjectPrivateAssetUrls(
+    source,
+    (namespace, file) => namespace === 'local-renders'
+      ? publishingRenderPreviewUrl(tenantId, file)
+      : privateStudioAssetUrl(namespace, tenantId, file),
+  ) as Record<string, unknown>;
+}
+
+function projectFromRecord(record: any, tenantId: string): StudioProject {
+  return {
+    id: String(record.id),
+    title: String(record.title || '未命名草稿'),
+    status: record.status || 'draft',
+    spec: { ...refreshStudioProjectAssetUrls(record.spec || {}, tenantId), _baseUpdatedAt: String(record.updated_at || record.updated || '') },
+    thumbSeed: record.thumb_seed || undefined,
+    createdAt: String(record.created_at || record.created || ''),
+    updatedAt: String(record.updated_at || record.updated || ''),
+  };
 }
 
 function loadProjects(): StudioProject[] {
@@ -6853,54 +6937,63 @@ function persistProjects(list: StudioProject[]): void {
 studioRouter.get('/projects', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const result = await store.list<StoredStudioProject>('studio_projects', { where: { tenant_id: tenantId }, sort: '-updated_at', perPage: 500 });
-  res.json(result.items.map(projectFromRecord));
+  res.json(result.items.map(item => projectFromRecord(item, tenantId)));
 });
 
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
+const guardProjectWrite = createProjectRevisionGuard();
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { id, title, status = 'draft', spec = {}, thumbSeed } = req.body ?? {};
   const now = new Date().toISOString();
+  const storedSpec = studioProjectSpecForStorage(spec);
 
   if (id) {
-    const existing = await store.getById<any>('studio_projects', String(id));
-    if (existing?.tenant_id === tenantId) {
-      const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
-      if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
-        res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
-        return;
+    try { await guardProjectWrite(`${tenantId}:${id}`, async () => {
+      const existing = await store.getById<any>('studio_projects', String(id));
+      if (!existing || existing.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: '草稿不存在，请另存为新草稿' }); return; }
+      const revision = String(existing.updated_at || existing.updated || '');
+      if (!projectRevisionMatches(spec?._baseUpdatedAt, revision, Boolean(spec?.shotProductions || existing.spec?.shotProductions))) {
+        res.status(409).json({ ok: false, error: '草稿已被其他窗口更新；当前修改尚未覆盖服务器。请另存为新草稿，或重新打开最新草稿。' }); return;
       }
-
-      const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
-        || String(existing.title || '') !== String(title ?? existing.title ?? '')
-        || String(existing.status || '') !== String(status || '');
-      await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
-      if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
-      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }) });
-      return;
-    }
+      const updatedAt = new Date(Math.max(Date.now(), (Date.parse(revision) || 0) + 1)).toISOString();
+      const patch = { title: title ?? existing.title, status, spec: storedSpec, thumb_seed: thumbSeed || '', updated_at: updatedAt };
+      if (!await store.update('studio_projects', String(id), patch)) { res.status(503).json({ ok: false, error: 'project storage unavailable' }); return; }
+      res.json({ ok: true, project: projectFromRecord({ ...existing, ...patch }, tenantId) });
+    }); } catch { res.status(503).json({ ok: false, error: '草稿保存失败，修改仍保留在本窗口' }); }
+    return;
   }
 
   const project: StudioProject = {
     id: randomUUID(),
     title: title || '未命名草稿',
     status,
-    spec,
+    spec: storedSpec,
     thumbSeed,
     createdAt: now,
     updatedAt: now,
   };
-  const created = await store.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
+  const created = await store.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec: storedSpec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
   if (!created) { res.status(503).json({ ok: false, error: 'project storage unavailable' }); return; }
-  res.status(201).json({ ok: true, project: projectFromRecord(created) });
+  res.status(201).json({ ok: true, project: projectFromRecord(created, tenantId) });
 });
 
 // GET /studio/projects/:id → 单个（用于再编辑）
+studioRouter.get('/projects/:id/evidence', async (req, res) => {
+  try {
+    const tenantId = res.locals.tenantId as string;
+    const project = await store.getById<any>('studio_projects', req.params.id);
+    if (!project || project.tenant_id !== tenantId) { res.status(404).json({ error: '草稿不存在' }); return; }
+    const gaps = auditShotEvidence(project.spec || {}, loadMaterials().filter(item => !isReferenceOnlyMaterial(item)), tenantId);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, projectId: project.id, revision: project.updated_at, gaps, status: gaps.length ? 'needs_review' : 'range_checked', note: '范围和动作文本校验，不代表视觉或产品功效已验证；未读取到的云端素材需人工核对。' });
+  } catch { res.status(503).json({ error: '素材依据检查失败，请稍后重试' }); }
+});
 studioRouter.get('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const p = await store.getById<any>('studio_projects', req.params.id);
   if (!p || p.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
-  res.json(projectFromRecord(p));
+  res.json(projectFromRecord(p, tenantId));
 });
 
 // DELETE /studio/projects/:id
@@ -7445,3 +7538,4 @@ function fallbackSelect(list: { id: string; type: string; duration: number }[], 
   }
   return { selectedIds: picked.length ? picked : list.slice(0, 3).map(c => c.id), reason: '按视频优先、贴合目标时长自动选取' };
 }
+import { createProjectRevisionGuard, projectRevisionMatches } from '../lib/projectRevision.js';
