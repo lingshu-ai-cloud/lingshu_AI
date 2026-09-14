@@ -21,16 +21,22 @@ import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
+import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
 import { reconcileShootingSlots, shootingRefillTarget, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
 import ShootingTaskDialog from './ShootingTaskDialog';
 import ShotProductionPanel from './ShotProductionPanel';
 import RenderedVideoPlayer from './RenderedVideoPlayer';
-import { avatarCandidateReady, automaticAvatarRefreshes } from '../lib/shotProduction';
+import { avatarCandidateReady, automaticAvatarRefreshes, EMPTY_DEFAULTS, newShotProduction, patchShot, shotFingerprint, shotBlockers, recommendShot, productionSummary, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
 import { productionApi } from '../lib/productionApi';
 import { matchEvidenceSegment, usableEvidenceSegment } from '../lib/segmentEvidence';
 import { mapNarrationCues, spokenText, validateSpeechCues } from '../lib/narrationAlignment';
-import { EMPTY_DEFAULTS, newShotProduction, patchShot, shotFingerprint, shotBlockers, recommendShot, productionSummary, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
+import {
+  StudioWorkbenchFrame,
+  StudioInputSummary,
+  StudioStoryboardList,
+  type StudioWorkbenchStep,
+} from './studio/StudioWorkbenchFrame';
 
 /* ──────────────────────────────────────────────────────────────────────────
    AI 生成内容工作台 — 社媒（流量）页子模块
@@ -89,8 +95,23 @@ export function validateStudioTimeline(items: TimelineValidationItem[]): string[
   return issues;
 }
 
-function pendingClaimLocations(script: string, productInfo: string): string[] {
-  const source = productInfo.toLowerCase();
+export function pendingClaimLocations(script: string, productInfo: string): string[] {
+  const source = String(productInfo || '');
+  const sourceLower = source.toLowerCase();
+  const sourceComparable = sourceLower.replace(/\s+/g, ' ');
+  const spokenField = /^(?:台词|字幕|口播|人物说|旁白|voiceover|vo|subtitle|caption|dialogue)\s*[：:]\s*(.+)$/i;
+  const supportedByCategory = [
+    { claim: /\bCE\b/i, evidence: /\bCE\b/i },
+    { claim: /\bFDA\b/i, evidence: /\bFDA\b/i },
+    { claim: /\bSGS\b/i, evidence: /\bSGS\b/i },
+    { claim: /(?:起订|\bMOQ\b)/i, evidence: /(?:起订|最小订单|\bMOQ\b)/i },
+    { claim: /(?:交期|delivery\s*(?:time|lead)|lead\s*time)/i, evidence: /(?:交期|delivery\s*(?:time|lead)|lead\s*time)/i },
+    { claim: /(?:认证|certif(?:y|ied|ication))/i, evidence: /(?:认证|certif(?:y|ied|ication))/i },
+    { claim: /(?:客户案例|合作案例|case\s*study)/i, evidence: /(?:客户案例|合作案例|case\s*study)/i },
+    { claim: /(?:销量|sales\s*volume)/i, evidence: /(?:销量|sales\s*volume)/i },
+    { claim: /(?:保证|guarantee)/i, evidence: /(?:保证|guarantee)/i },
+  ];
+
   return script.split('\n').map(line => line.trim()).filter(line => {
     const speech = line.match(spokenField)?.[1]?.trim();
     // 环境、构图、画面、运镜等是制作指令，不是对外商业声明，不参与企业事实硬校验。
@@ -319,7 +340,6 @@ const probeClipAspect = (clip: Clip) => new Promise<{ width: number; height: num
 });
 
 const materialToClip = (m: Material): Clip => ({
-  transcript: m.transcript, transcriptCues: m.transcriptCues,
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
   segmentAnalysisStatus: m.segmentAnalysisStatus, segmentAnalysisError: m.segmentAnalysisError, segments: m.segments, visualObservations: m.visualObservations,
@@ -330,8 +350,7 @@ type StepId = 'mode' | 'material' | 'script' | 'bgm' | 'cover' | 'preview' | 'po
 const STEPS: { id: StepId; label: string; icon: typeof LayoutGrid; hint: string }[] = [
   { id: 'mode',     label: '选模式',  icon: LayoutGrid, hint: '选择生成起点与全局参数' },
   { id: 'script',   label: '分镜与声音', icon: FileText, hint: '先确认可执行分镜，再选择口播、字幕与配音' },
-  { id: 'material', label: '镜头制作',  icon: Film,       hint: '按分镜选素材、生成数字人或安排拍摄' },
-  { id: 'bgm',      label: '配乐',     icon: Music,      hint: 'AI 推荐背景乐与音量平衡' },
+  { id: 'material', label: '选素材',  icon: Film,       hint: '按脚本挑选并排序片段' },
   { id: 'cover',    label: '封面',     icon: ImageIcon,  hint: '生成封面候选并选定标题' },
   { id: 'preview',  label: '素材成片预览', icon: Play,       hint: '确认成片并进入发布' },
 ];
@@ -578,7 +597,16 @@ export function resolveStudioWorkflowProjectEntry(
  * an empty project merely because Studio is mounted in the background.
  * Enterprise defaults (product, audience, tone, platform) are intentionally
  * not sufficient: they are loaded without a user or worker creating content.
- */
+*/
+
+const LEGACY_UNVERIFIED_COVER_TITLES = new Set([
+  ['You NEED this in', '2026'].join(' '),
+  'Factory price, 24h ship',
+  'Why everyone is obsessed',
+]);
+export function isUnverifiedLegacyCoverTitle(value: unknown): boolean {
+  return LEGACY_UNVERIFIED_COVER_TITLES.has(String(value || '').trim());
+}
 export function studioSpecHasMeaningfulContent(spec: Record<string, unknown>): boolean {
   const hasText = (key: string) => typeof spec[key] === 'string' && Boolean(String(spec[key]).trim());
   const hasArray = (key: string) => Array.isArray(spec[key]) && (spec[key] as unknown[]).length > 0;
@@ -746,13 +774,19 @@ export function matchMaterialsToStoryboardLocally(
     certificate: /证书|认证|检测|资质|ce|rohs|certificate|test report/i,
   };
   const assignments: Record<string, string> = {};
+  // Legacy drafts can contain title-only slots. They have no visual claim to
+  // verify, so keep the historical deterministic matcher for those slots.
+  // Generated slots with a real detail continue to require segment evidence.
+  const allowLegacyTitleOnlyMatching = slots.every(slot => !String(slot.detail || '').trim());
 
   slots.forEach((slot, slotIndex) => {
     const slotText = `${slot.title} ${slot.detail}`.toLowerCase();
     const targetDuration = Math.max(0.5, slot.end - slot.start);
     const remainingSlots = slots.length - slotIndex;
     const freshStillNeeded = Math.max(0, minimumFreshCount - freshAssignedCount);
-    const supportedPool = pool.filter(clip => matchEvidenceSegment(clip, slot));
+    const supportedPool = allowLegacyTitleOnlyMatching
+      ? pool
+      : pool.filter(clip => matchEvidenceSegment(clip, slot));
     const unusedSupported = supportedPool.filter(clip => unused.has(clip.id));
     const uniquePool = unusedSupported.length ? unusedSupported : supportedPool;
     const freshUniquePool = uniquePool.filter(clip => !previousMaterialIds.has(clip.id));
@@ -763,7 +797,7 @@ export function matchMaterialsToStoryboardLocally(
       ['presenter', 'model', 'scene'],
       ['product', 'detail', 'scene'],
     ][variantIndex % 3] || ['detail', 'product', 'presenter'];
-    const candidates = eligiblePool.filter(clip => matchEvidenceSegment(clip, slot)).map(clip => {
+    const candidates = eligiblePool.map(clip => {
       const clipText = `${clip.name} ${clip.folder} ${clip.industry || ''} ${clip.shotFunction || ''} ${clip.applicability || ''} ${clip.tags || ''}`.toLowerCase();
       let score = 0;
       if (unused.has(clip.id)) score += 18;
@@ -1277,14 +1311,6 @@ const DEFAULT_TTS_SETTINGS: LanguageTtsSettings = {
 };
 
 interface SocialAccount { id: string; platform: string; handle: string; color: string }
-const LEGACY_UNVERIFIED_COVER_TITLES = new Set([
-  'You NEED this in 2026',
-  'Factory price, 24h ship',
-  'Why everyone is obsessed',
-]);
-export function isUnverifiedLegacyCoverTitle(value: unknown): boolean {
-  return LEGACY_UNVERIFIED_COVER_TITLES.has(String(value || '').trim());
-}
 const ACCOUNTS: SocialAccount[] = [
   { id: 'a1', platform: 'TikTok',    handle: '@yiwu_home',     color: '#010101' },
   { id: 'a2', platform: 'Instagram', handle: '@yiwu.official', color: '#c13584' },
@@ -2737,7 +2763,7 @@ function buildMaterialInfosForScript(clips: Clip[], totalDuration: number, hookM
     );
     const targetStart = +cursor.toFixed(1);
     const targetEnd = +Math.min(totalDuration, cursor + effectiveDuration).toFixed(1);
-    const observations = (clip.segments || []).filter(segment => usableEvidenceSegment(segment, clip.duration)).slice(0, 4).map(segment => [
+    const observations = [...(clip.visualObservations || []), ...(clip.segments || []).filter(segment => !segment.needsReview && Number(segment.confidence) >= .65).slice(0, 6).map(segment => [
       `${segment.start}-${segment.end}s`,
       segment.action,
       segment.shot,
@@ -3725,7 +3751,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   useDismissibleLayer(productSelectorOpen, productSelectorRef, () => setProductSelectorOpen(false));
   const splitVariations = (value: string) => value.split(/[，,\n]/).map(item => item.trim()).filter(Boolean);
   const activeVideoTheme = VIDEO_THEMES.find(item => item.id === videoThemeId) || VIDEO_THEMES[0]!;
-  const effectivePrimaryCta = enterprisePrimaryCta.trim() || primaryCta.trim();
+  const effectiveContentGoal = mode === 'product' ? productContentGoal : 'leads';
+  const effectivePrimaryCta = effectiveContentGoal === 'reach' ? reachCta.trim() : enterprisePrimaryCta.trim() || primaryCta.trim();
   const applyInferredMaterialTheme = (material: Pick<Material, 'name' | 'folder' | 'shotFunction' | 'tags' | 'segments'>) => {
     const inferredId = inferVideoThemeFromMaterial(material);
     const inferred = VIDEO_THEMES.find(item => item.id === inferredId) || VIDEO_THEMES[0]!;
@@ -3737,8 +3764,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     id: activeVideoTheme.id,
     title: activeVideoTheme.title,
     painPoint: audience.trim() || activeVideoTheme.painPoint,
-    conversionGoal: effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL,
-    primaryCta: effectivePrimaryCta || DEFAULT_VIDEO_CONVERSION_GOAL,
+    contentGoal: effectiveContentGoal,
+    conversionGoal: effectivePrimaryCta || (effectiveContentGoal === 'reach' ? '' : DEFAULT_VIDEO_CONVERSION_GOAL),
+    primaryCta: effectivePrimaryCta || (effectiveContentGoal === 'reach' ? '' : DEFAULT_VIDEO_CONVERSION_GOAL),
     cooperationRoute,
     presenterMode, presentationMode,
   };
@@ -3832,6 +3860,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [materials, setMaterials] = useState<Clip[]>([]);
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [heygenAvatarId, setHeygenAvatarId] = useState('');
+  const [heygenAvatars, setHeygenAvatars] = useState<Array<{ id: string; name: string; gender?: string }>>([]);
+  const [digitalHumanLoading, setDigitalHumanLoading] = useState(false);
   const shootingSlotsRef = useRef<ShootingSlot[]>([]);
   const [shootingIdentityEpoch, setShootingIdentityEpoch] = useState(0);
   const [shootingTasks, setShootingTasks] = useState<ScriptGapTask[]>([]);
@@ -3874,8 +3905,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [voiceDraftPendingLangs, setVoiceDraftPendingLangs] = useState<string[]>([]);
   const [voiceDraftFailedLangs, setVoiceDraftFailedLangs] = useState<string[]>([]);
   const [voiceDraftLoading, setVoiceDraftLoading] = useState(false);
-  const [voiceDraftNotice, setVoiceDraftNotice] = useState('');
   const voiceDraftRunRef = useRef(0);
+  const [voiceDraftNotice, setVoiceDraftNotice] = useState('');
+  const voiceDraftAbortRef = useRef<AbortController | null>(null);
+  const studioSpecEpochRef = useRef(0);
+  const scriptTaskRequestRef = useRef(0);
   const [voicePreviewIdx, setVoicePreviewIdx] = useState<number | null>(null);
   const [scriptView, setScriptView] = useState<'timestamp' | 'voiceover'>('timestamp');
   const [scriptPreviewTab, setScriptPreviewTab] = useState('script');
@@ -4077,13 +4111,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ].filter(Boolean).join('；'));
         const inheritedRoute = profile.socialStrategy?.enabledRoutes?.[0] || '';
         const inheritedStrategy = profile.socialStrategy?.routeStrategies?.[inheritedRoute];
-        setAudience(enterpriseBuyerText(inheritedStrategy?.targetBuyerRoles));
+        if (!studioSettingsEditedRef.current) setAudience(enterpriseBuyerText(inheritedStrategy?.targetBuyerRoles));
         const inheritedCta = profile.socialStrategy?.routeStrategies?.[inheritedRoute]?.primaryCta;
         setCooperationRoute(current => current || inheritedRoute);
         setAvailableCooperationRoutes(profile.socialStrategy?.enabledRoutes || []);
         setEnterpriseRouteStrategies(profile.socialStrategy?.routeStrategies || {});
         setEnterprisePrimaryCta(inheritedCta || '');
-        setPrimaryCta(inheritedCta || '');
+        if (!studioSettingsEditedRef.current) setPrimaryCta(inheritedCta || '');
         setSellingPoints(prev => prev || [
           profile.brand?.usp,
           profile.products?.highlights,
@@ -4133,16 +4167,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [cueZh, setCueZh] = useState<string[]>([]);       // 双语字幕的中文译文（与 cues 对齐）
   const [previewTime, setPreviewTime] = useState(0);
   const [clipEdits, setClipEdits] = useState<Record<string, ClipEdit>>({});
-  useEffect(() => { setEvidenceGaps(null); }, [script, storyboardAssignments, clipEdits, activeAssemblyId]);
 
   // 草稿 / 作品
   const [projectId, setProjectId] = useState<string | null>(null);
   const currentProjectRef = useRef(projectId); currentProjectRef.current = projectId;
-  useEffect(() => {
-    const warning = (event: Event) => setModeNotice(String((event as CustomEvent).detail));
-    window.addEventListener('lingshu:material-warning', warning);
-    return () => window.removeEventListener('lingshu:material-warning', warning);
-  }, []);
+  const managedProductionProjectRef = useRef(false);
+  const agentProduction = useAgentProductionAction('studio');
+  const [projectWorkflowContext, setProjectWorkflowContext] = useState<StudioWorkflowContext | null>(workflowContext || null);
   const generationSessionId = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const [storyboardVideoVersions, setStoryboardVideoVersions] = useState<Record<string, VideoGenerationVersion[]>>({});
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
@@ -4247,7 +4278,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const matNames = selectedClips.map(c => c.name);
   const storyboardSlots = useMemo(() => {
     const parsed = parseStoryboardSlots(script, duration);
-    return parsed;
+    const activeAudioDuration = voiceoverMode === 'ai'
+      ? voiceoverAudios[activeVoiceLang]?.duration || 0
+      : voiceoverMode === 'upload' ? voiceoverDur : 0;
+    return fitStoryboardSlotsToDuration(parsed, activeAudioDuration);
   }, [activeVoiceLang, duration, script, voiceoverAudios, voiceoverDur, voiceoverMode]);
   const shootingSlots = useMemo(() => {
     const slots = reconcileShootingSlots(shootingSlotsRef.current, storyboardSlots,
@@ -4260,9 +4294,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const asrContextRef = useRef('');
   asrContextRef.current = JSON.stringify([projectId, productionAudioUrl, activeVoiceLang, voiceDrafts[activeVoiceLang], script]);
   const shotProductionContext = JSON.stringify({ language: activeVoiceLang || lang, ratio, productInfo, audioIdentity: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', audioDuration: voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.duration || 0 : voiceoverDur, audioSegments: shootingSlots.map(item => ({ id: item.id, duration: item.duration })), alignment: alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues, alignmentSource: voiceoverAudios[activeVoiceLang]?.alignmentSource });
-  const productionSignature = JSON.stringify({ script, ratio, assignments: storyboardAssignments, clipEdits, bgm, bgmVol, voiceVol, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '',
-    alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])),
-    shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
+  const productionSignature = JSON.stringify({ script, ratio, assignments: storyboardAssignments, clipEdits, bgm, bgmVol, voiceVol, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
   const productionKey = (slotId: string, assembly = activeAssemblyId) => `${assembly}:${shootingSlots.find(item => item.slotId === slotId)?.id || slotId}`;
   const productionFor = (slot: StoryboardSlot) => shotProductions[productionKey(slot.id)] || newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId);
   const openProduction = (slot: StoryboardSlot) => {
@@ -4282,6 +4314,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     refresh(); window.addEventListener('focus', refresh);
     return () => { live = false; window.removeEventListener('focus', refresh); };
   }, [projectId]);
+  useEffect(() => {
+    if (!storyboardSlots.length) {
+      if (activeStoryboardSlotId) setActiveStoryboardSlotId('');
+      return;
+    }
+    if (!storyboardSlots.some(item => item.id === activeStoryboardSlotId)) {
+      setActiveStoryboardSlotId(storyboardSlots[0].id);
+    }
+  }, [activeStoryboardSlotId, storyboardSlots]);
   const storyboardTimelineEnd = useMemo(() => storyboardSlots.reduce((max, slot) => Math.max(max, slot.end), 0), [storyboardSlots]);
   const recommendedSourceMode = (slot: StoryboardSlot): StoryboardSourceMode => {
     const text = `${slot.title} ${slot.detail}`.toLowerCase();
@@ -4531,11 +4572,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [capturedCoverFrameUrl, coverClip]);
   // 可作封面的候选：已选中的图片/视频；视频没有抽帧时直接展示首帧
   const frameCandidates = useMemo(() => {
-    const assigned = storyboardSlots.map(slot => materialById.get(storyboardAssignments[slot.id] || ''))
+    const assigned = storyboardSlots
+      .map(slot => materialById.get(storyboardAssignments[slot.id] || ''))
       .filter((clip): clip is Clip => Boolean(clip));
-    // Old drafts can keep reference footage in `selected`; covers follow actual shot assignments.
     return [...new Map((assigned.length ? assigned : selectedClips)
-      .filter(c => c.type !== 'audio' && (c.poster || c.url)).map(c => [c.id, c])).values()];
+      .filter(c => c.type !== 'audio' && (c.poster || c.url))
+      .map(c => [c.id, c])).values()];
   }, [selectedClips, storyboardSlots, storyboardAssignments, materialById]);
   useEffect(() => {
     const firstFrameId = frameCandidates[0]?.id ?? '';
@@ -4890,30 +4932,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     };
   };
   const defaultEditForSlot = (clip: Clip, slot: StoryboardSlot): ClipEdit => {
-    const isHookClip = hookMaterialId === clip.id;
-    const isOpeningHookSlot = isHookClip && storyboardSlots[0]?.id === slot.id;
-    const canFollowLockedRange = isHookClip && clip.type === 'video' && (clip.duration || 0) >= slot.end - 0.05;
-    if (isOpeningHookSlot || canFollowLockedRange) {
-      const slotDuration = Math.max(0.5, slot.end - slot.start);
-      // A source video used to generate an exact locked storyboard must retain
-      // the same source range. Compressing the whole source into the opening
-      // slot made a 20s clip play at 4x and left later scripted ranges empty.
-      return {
-        trimStart: canFollowLockedRange ? slot.start : 0,
-        trimEnd: canFollowLockedRange ? slot.end : (clip.type === 'image' ? slotDuration : Math.max(0.5, clip.duration || slotDuration)),
-        targetDuration: slotDuration,
-        speed: 1,
-        transition: '硬切',
-        note: `${slot.detail}\n钩子素材：按已锁定的脚本时间范围取用。`,
-      };
-    }
-    const targetDuration = Math.max(0.5, slot.end - slot.start);
-    const evidence = matchEvidenceSegment(clip, slot);
-    if (evidence) return { trimStart: evidence.trimStart, trimEnd: evidence.trimEnd,
-      targetDuration: evidence.targetDuration, speed: 1, transition: '硬切',
-      note: `${slot.detail}\n片段依据：${evidence.segmentId}，${evidence.evidence}；需人工试听与画面核对。` };
-    const sourceDuration = clip.type === 'image' ? Math.max(10, targetDuration) : Math.max(1, clip.duration || targetDuration);
-    const usable = Math.min(targetDuration, sourceDuration);
+    const trim = automaticStoryboardTrim(clip.duration, slot.end - slot.start, clip.type === 'image' ? 'image' : 'video');
+    const usable = trim.trimEnd - trim.trimStart;
     return {
       trimStart: trim.trimStart,
       trimEnd: trim.trimEnd,
@@ -4975,13 +4995,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (avatarSlot) return digitalHumanJob?.outputUrl ? { clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl, poster: undefined, trimStart: targetStart, trimEnd: timelineCursor, speed: 1, targetStart, targetEnd: timelineCursor, targetDuration } : null;
       if (!clip) return null;
       return {
-        production: productionFor(slot),
-        screenCaption: storyboardSlotScript(slot.detail).subtitle,
-        voiceStart: slot.start, voiceEnd: slot.end,
-        productUrl: materialById.get(productionFor(slot).productMaterialId)?.url,
-        productType: materialById.get(productionFor(slot).productMaterialId)?.type,
-        backgroundUrl: materialById.get(productionFor(slot).backgroundMaterialId)?.url,
-        backgroundType: materialById.get(productionFor(slot).backgroundMaterialId)?.type,
         clipId: clip.id,
         name: clip.name,
         type: clip.type,
@@ -5012,7 +5025,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         targetDuration: Math.max(0.5, edit.trimEnd - edit.trimStart),
       };
     });
-  }, [clipEdits, materialById, selectedClips, storyboardAssignments, storyboardSlots, shotProductions, productionDefaults, shootingSlots]);
+  }, [clipEdits, materialById, selectedClips, storyboardAssignments, storyboardSlots, presentationMode, presentationSources, digitalHumanJob]);
   const timelineForAssembly = (assembly: StoryboardAssembly) => {
     let timelineCursor = 0;
     const rows = storyboardSlots.map(slot => {
@@ -5068,6 +5081,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (!validStoryboard) return [];
       return languages.map((code, languageIndex) => {
         const bgmId = materialVersionBgms[materialVersionKey(plan.id, code)] ?? assemblyBgms[plan.id] ?? bgm;
+        const audioDuration = voiceoverForLanguage(code).duration;
         return {
           key: renderCombinationKey(plan.id, code, bgmId),
           plan,
@@ -5076,7 +5090,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           languageIndex,
           bgmId,
           script: scriptForRenderLanguage(code),
-          timeline,
+          timeline: fitTimelineToVoiceoverCues<(typeof timeline)[number]>(timeline, audioDuration, alignedCuesByLang[code]),
         };
       });
     });
@@ -5221,18 +5235,27 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const outputVoiceoverDur = renderOverride?.voiceoverDur ?? defaultVoiceover.duration;
     const outputScript = scriptOverride ?? (voiceDrafts[outputLanguage] || activeSpokenScript);
     const requestedTimeline = renderOverride?.timeline ?? renderTimeline;
-    const alignmentCues = renderOverride?.cues || alignedCuesByLang[outputLanguage] || voiceoverAudios[outputLanguage]?.cues || [];
-    const speechRanges = voiceoverMode !== 'none' && outputVoiceoverUrl
-      ? mapNarrationCues(requestedTimeline.map(item => 'production' in item ? item.production.narration : ''), alignmentCues, outputVoiceoverDur, voiceoverAudios[outputLanguage]?.alignmentSource)
-      : null;
-    const hasShotSound = Boolean(speechRanges) || requestedTimeline.some(item => 'production' in item && item.production.sound !== 'voiceover');
-    const outputTimeline = requestedTimeline.map((item, index) => {
-      const range = speechRanges?.[index];
-      if (!('production' in item) || !speechRanges || item.production.sound !== 'voiceover') return item;
-      if (range && range.end - range.start > item.targetDuration + 0.01) throw new Error(`分镜 ${index + 1} 台词超过镜头时长，请延长镜头或缩短台词，不自动加速声音`);
-      if (range && item.production.source === 'avatar' && (Math.abs(item.speed - 1) > 0.01 || item.trimStart > 0.01 || Math.abs(item.targetDuration - (range.end - range.start)) > 0.15)) throw new Error(`分镜 ${index + 1} 数字人口型需要原速、从头播放，且镜头时长与驱动音频一致；请调整时长和选段`);
-      return { ...item, voiceAligned: true, voiceStart: range?.start ?? 0, voiceEnd: range?.end ?? 0 };
-    });
+    let outputTimeline = voiceoverMode === 'none'
+      ? requestedTimeline
+      : fitTimelineToVoiceoverCues<(typeof requestedTimeline)[number]>(requestedTimeline, outputVoiceoverDur, renderOverride?.cues ?? alignedCuesByLang[outputLanguage]);
+    if (presentationMode !== 'material') {
+      if (!digitalHumanJob?.outputUrl || !['review', 'completed'].includes(digitalHumanJob.status)) throw new Error('请先生成所选数字人视频，不能自动切换为素材成片');
+      if (!outputVoiceoverUrl || new URL(digitalHumanJob.voiceoverUrl, location.origin).pathname !== new URL(outputVoiceoverUrl, location.origin).pathname) throw new Error('本语言配音与数字人视频不一致，请按当前配音重新生成数字人');
+      const choices = storyboardSlots.map((slot, index) => presentationMode === 'avatar' ? 'avatar' : presentationSources[slot.id] || (index === 0 || index === storyboardSlots.length - 1 ? 'avatar' : 'material'));
+      if (presentationMode === 'heygen' && (!choices.includes('avatar') || !choices.includes('material'))) throw new Error('混剪必须同时包含数字人和素材镜头，请调整分镜来源');
+      if (presentationMode === 'heygen' && outputTimeline.length !== storyboardSlots.length) throw new Error('混剪仍有镜头缺少素材，请逐镜补齐');
+      if (!digitalHumanJob.subtitleCues?.length) throw new Error('当前数字人缺少对应音频字幕，请重新获取字幕后合成');
+      const weights = storyboardSlots.map(slot => Math.max(.5, slot.end - slot.start));
+      const total = weights.reduce((sum, value) => sum + value, 0);
+      let cursor = 0;
+      outputTimeline = storyboardSlots.map((slot, index) => {
+        const targetStart = cursor, targetDuration = outputVoiceoverDur * weights[index] / total; cursor += targetDuration;
+        if (choices[index] === 'avatar') return { clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl!, poster: undefined, trimStart: targetStart, trimEnd: cursor, speed: 1, targetStart, targetEnd: cursor, targetDuration };
+        const original = outputTimeline[index];
+        if (!original?.url || original.clipId === digitalHumanJob.outputMaterialId) throw new Error(`第 ${index + 1} 镜缺少指定素材，不能使用数字人顶替`);
+        return { ...original, targetStart, targetEnd: cursor, targetDuration };
+      });
+    }
     const validOutputStoryboard = storyboardSlots.length > 0
       && outputTimeline.length === storyboardSlots.length
       && outputTimeline.every(item => Boolean(item.url && item.type !== 'audio' && item.targetDuration > 0));
@@ -5245,18 +5268,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       : defaultVoiceover.cues.length
         ? defaultVoiceover.cues
         : buildCues(outputScript, outputVoiceoverDur || timelineDuration || totalDur);
-    const mixedCues = hasShotSound ? outputTimeline.flatMap((item, index) => {
-      if (!('production' in item)) return [];
-      if (item.production.sound === 'silent') return [];
-      const transcriptCues = materialById.get(item.clipId)?.transcriptCues;
-      if (item.production.sound === 'source' && transcriptCues?.length) return transcriptCues.filter(cue => cue.end > item.trimStart && cue.start < item.trimEnd).map(cue => ({ text: cue.text,
-        start: item.targetStart + Math.max(0, cue.start - item.trimStart) / item.speed,
-        end: Math.min(item.targetEnd, item.targetStart + (cue.end - item.trimStart) / item.speed) }));
-      const range = speechRanges?.[index];
-      if (range && item.production.sound === 'voiceover') return range.cues.map(cue => ({ text: cue.text, start: item.targetStart + cue.start - range.start, end: item.targetStart + cue.end - range.start }));
-      return spokenText(item.production.narration) ? [{ text: item.production.narration, start: item.targetStart, end: item.targetEnd }] : [];
-    }) : rawOutputCues;
-    const outputCues = renderSafeCues(mixedCues, hasShotSound ? timelineDuration : Math.min(
+    const outputCues = renderSafeCues(rawOutputCues, Math.min(
       timelineDuration || duration,
       outputVoiceoverDur > 0 ? outputVoiceoverDur : timelineDuration || duration,
     ));
@@ -5284,10 +5296,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           ? outputCues.map((c, i) => ({ ...c, zh: cueZh[i] }))
           : outputCues), ...outputTimeline.flatMap(item => {
             if (!('production' in item) || typeof item.targetStart !== 'number' || typeof item.targetEnd !== 'number') return [];
+            const production = item.production as ShotProduction;
             const text = 'screenCaption' in item ? String(item.screenCaption || '').trim() : '';
             const normalize = (value: string) => value.replace(/[\p{P}\s]/gu, '');
             if (outputLanguage !== lang || !text || /^(无|none)$/i.test(text)
-              || normalize(text) === normalize(item.production.narration)) return [];
+              || normalize(text) === normalize(production.narration)) return [];
             return [{ text, start: item.targetStart, end: item.targetEnd, kind: 'screen' as const }];
           })],
       } : { mode: 'off' as const, style: {}, cues: [] },
@@ -5373,6 +5386,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
     if (contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover') {
       setScriptStageTab('audio');
+      return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'audio') {
+      setScriptStageTab('subtitle');
+      return;
+    }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle') {
+      setScriptStageTab('bgm');
       return;
     }
     if (contentMode === 'video' && step === 'material') {
@@ -5552,16 +5573,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         .filter(item => item.id !== activeAssemblyId)
         .map(item => item.assignments)
         .filter(item => Object.keys(item).length > 0);
-      const hookClip = hookMaterialId ? materialById.get(hookMaterialId) : undefined;
-      const hookCoversLockedTimeline = Boolean(hookClip?.type === 'video'
-        && (hookClip.duration || 0) >= (storyboardSlots.at(-1)?.end || 0) - 0.05);
-      const slotsToMatch = (hookClip ? storyboardSlots.slice(1) : storyboardSlots)
-        .filter(slot => !productionFor(slot).locked && !storyboardAssignments[slot.id]
-          && !['avatar', 'shoot', 'ai'].includes(productionFor(slot).source));
-      const matchPool = hookClip ? pool.filter(item => item.id !== hookClip.id) : pool;
-      const matchedAssignments = hookCoversLockedTimeline
-        ? Object.fromEntries(storyboardSlots.map(slot => [slot.id, hookClip!.id]))
-        : matchMaterialsToStoryboardLocally(matchPool, slotsToMatch, selected.filter(id => id !== hookMaterialId), {
+      // 所有视觉素材都可参与匹配；同方向优先，其他方向在渲染时居中裁切。
+      const pool = allVisuals;
+      const usesCropFallback = compatiblePool.length < Math.min(storyboardSlots.length, allVisuals.length);
+      const lockedAssignments = Object.fromEntries(Object.entries(storyboardAssignments).filter(([slotId, clipId]) => (
+        storyboardSlots.some(slot => slot.id === slotId) && materialById.has(clipId)
+      )));
+      const lockedClipIds = new Set(Object.values(lockedAssignments));
+      const slotsToMatch = storyboardSlots.filter(slot => !lockedAssignments[slot.id]);
+      if (!slotsToMatch.length) {
+        setModeNotice('所有分镜都已经有素材，无需重复匹配。');
+        return;
+      }
+      const unusedPool = pool.filter(item => !lockedClipIds.has(item.id));
+      const matchPool = unusedPool.length ? unusedPool : pool;
+      const candidateAssignments = matchMaterialsToStoryboardLocally(matchPool, slotsToMatch, selected.filter(id => id !== hookMaterialId), {
         variantIndex,
         previousAssignments,
         targetRatio: ratio,
@@ -5582,21 +5608,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         const clip = materialById.get(assignments[slot.id] || '');
         if (clip && !assessmentBySlot[slot.id]) assessmentBySlot[slot.id] = assessMaterialMatch(slot, clip, ratio);
       });
-      const assignments = hookClip && storyboardSlots[0]
-        ? { ...matchedAssignments, [storyboardSlots[0].id]: hookClip.id }
-        : matchedAssignments;
-      for (const slot of storyboardSlots) {
-        if (productionFor(slot).locked || storyboardAssignments[slot.id] || ['avatar', 'shoot', 'ai'].includes(productionFor(slot).source)) {
-          if (storyboardAssignments[slot.id]) assignments[slot.id] = storyboardAssignments[slot.id];
-          else delete assignments[slot.id];
-        }
-      }
       const orderedIds = storyboardSlots.map(slot => assignments[slot.id]).filter((id): id is string => Boolean(id));
       const nextEdits: Record<string, ClipEdit> = {};
       const nextPlans: Record<string, StoryboardSourcePlan> = {};
-      storyboardSlots.forEach(slot => {
-        if (productionFor(slot).locked || storyboardAssignments[slot.id]) return;
-        const clipId = assignments[slot.id];
+      slotsToMatch.forEach(slot => {
+        const clipId = matchedAssignments[slot.id];
         const clip = clipId ? materialById.get(clipId) : undefined;
         if (!clip) return;
         nextEdits[slotClipEditKey(slot.id, clip.id)] = defaultEditForSlot(clip, slot);
@@ -5621,15 +5637,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setScriptRecommendedMaterialIds([...new Set(orderedIds)]);
       setActiveFolder('recommend');
       setActiveStoryboardSlotId(storyboardSlots.find(slot => !assignments[slot.id])?.id || storyboardSlots[0]?.id || '');
-      const previousMaterialIds = new Set(previousAssignments.flatMap(plan => Object.values(plan)));
-      const freshCount = orderedIds.filter(id => !previousMaterialIds.has(id)).length;
-      const freshRatio = orderedIds.length ? Math.round(freshCount / orderedIds.length * 100) : 0;
-      const diversityMessage = previousAssignments.length
-        ? `；其中 ${freshCount}/${orderedIds.length} 条为新素材（差异率 ${freshRatio}%），开场和素材顺序已按流量测试策略变化`
-        : '';
-      setModeNotice(hookClip
-        ? `已固定“${hookClip.name}”为第一个钩子分镜（完整素材、不按时间戳裁切），并为后续 ${Math.max(0, orderedIds.length - 1)} 个分镜完成素材匹配${diversityMessage}。`
-        : `当前 ${orderedIds.length}/${storyboardSlots.length} 镜已选画面。自动匹配只采用有可用动作分析和具体时间段的候选，仍须逐镜核对；未匹配镜头请选素材、分析片段或安排拍摄。`);
+      const reviewCount = storyboardSlots.filter(slot => assessmentBySlot[slot.id]?.level === 'review' && assignments[slot.id]).length;
+      const missingCount = storyboardSlots.filter(slot => !assignments[slot.id]).length;
+      setModeNotice(`已为 ${Object.keys(matchedAssignments).length} 个空分镜补充素材；当前 ${orderedIds.length}/${storyboardSlots.length} 个分镜已匹配${reviewCount ? `，${reviewCount} 个建议人工确认` : ''}${missingCount ? `，仍有 ${missingCount} 个待匹配` : ''}${usesCropFallback ? '。不同画幅会在预览中居中适配' : ''}。`);
     } catch (error) {
       setModeNotice(error instanceof Error ? `智能选材失败：${error.message}` : '智能选材失败，请重试。');
     } finally {
@@ -5718,12 +5728,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           },
           '',
         ), 120_000, '后端模型生成超过 120 秒。');
-        if (response.source && response.source !== 'ai') {
-          const detail = response.validationIssues?.length
-            ? `\n${response.validationIssues.map((issue, issueIndex) => `${issueIndex + 1}. ${issue}`).join('\n')}`
-            : '';
-          throw new Error(`${response.error || response.fallbackReason || 'AI脚本未通过检查，未生成兜底稿。'}${detail}`);
-        }
+        if (!isCurrentRequest()) return false;
+        announceRejectedStoryboard(response);
+        const qualityFailure = scriptQualityFailure(response, 'AI脚本未通过检查，未返回可编辑结果。', true);
+        if (qualityFailure) throw new Error(qualityFailure);
         nextScript = sanitizeStoryboardScript(response.script || '', activeProductInfo, activeProductLabel).trim();
         if (!nextScript) throw new Error('后端脚本生成接口未返回结果。');
         qualityResponses.push(response);
@@ -5977,8 +5985,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         let generatedScript = '';
         const response = await withTimeout(studioApi.script(
             {
-              materials: materials.filter(item => item.scope !== 'shared' && item.type !== 'audio').slice(0, 8).map(item => item.name),
-              materialInfos: buildMaterialInfosForScript(materials.filter(item => item.scope !== 'shared' && item.type !== 'audio').slice(0, 8), duration),
+              materials: [
+                ...(cloneReference.video?.platform ? [`平台：${cloneReference.video.platform}`] : []),
+                ...selectedVisualClips.map(item => `已选素材：${item.name}`),
+              ],
+              materialInfos: buildMaterialInfosForScript(selectedVisualClips, duration, hookMaterialId),
               productInfo: cloneProductInfo,
               language: code,
               platform,
@@ -6034,7 +6045,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         setActiveModeScriptId(firstNewScript.id);
         applyTimestampScript(firstNewScript.script);
       }
-      setModeNotice('分镜初稿已生成，尚未通过逐镜画面核验。请检查素材依据与待拍缺口；生成成功不代表素材已齐备。');
+      setModeNotice(qualitySuccessNotice(
+        qualityResponses[0] || { script: firstNewScript?.script || '' },
+        '已真实调用后端，按爆款结构和产品卖点生成标准分镜脚本。',
+      ));
       autoGen.current = true;
       return true;
     } catch (err: any) {
@@ -6149,6 +6163,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const generateVoiceDrafts = async () => {
     const runId = ++voiceDraftRunRef.current;
+    voiceDraftAbortRef.current?.abort();
+    const controller = new AbortController();
+    voiceDraftAbortRef.current = controller;
+    const isCurrentRequest = () => voiceDraftAbortRef.current === controller;
     const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
     const base = selectCompleteVoiceoverSource(script, sourceText);
     setVoiceoverLines(base);
@@ -6182,9 +6200,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const failureReasons = new Map<string, string>();
       let translateError = '';
       if (targets.length) {
-        const translated = await withStudioTimeout(studioApi.translateBatch({ text: normalizeScriptTimestamps(base), targets, source: sourceLanguage }))
-          .catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
-        if (runId !== voiceDraftRunRef.current) return;
+        const translated = await runVoiceTranslationWithTimeout(
+          signal => studioApi.translateBatch(
+            { text: normalizeScriptTimestamps(base), targets, source: sourceLanguage },
+            { signal },
+          ),
+          controller.signal,
+          VOICE_TRANSLATION_BATCH_TIMEOUT_MS,
+        ).catch((err: any) => ({ ok: false, translations: {} as Record<string, string>, error: err?.message || '请求失败' }));
+        if (controller.signal.aborted) throw new DOMException('翻译已取消', 'AbortError');
         translateError = translated.error || '';
         const unresolved: string[] = [];
         for (const code of targets) {
@@ -6192,13 +6216,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           const normalized = raw.trim()
             ? resolveTranslatedVoiceover(base, raw, code)
             : '';
-          if (!normalized.trim()) {
-            const single = await withStudioTimeout(studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage }))
-              .catch(() => ({ ok: false, text: '' }));
-            if (runId !== voiceDraftRunRef.current) return;
-            raw = single.ok ? single.text : '';
-            normalized = raw.trim() ? resolveTranslatedVoiceover(base, raw, code) : '';
-          }
           if (normalized.trim()) {
             improved[code] = normalized;
             setVoiceDrafts(current => ({ ...current, [code]: normalized }));
@@ -6259,7 +6276,43 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           : (err?.message || '多语种字幕生成失败，请稍后重试。'));
       }
     } finally {
-      if (runId === voiceDraftRunRef.current) setVoiceDraftLoading(false);
+      if (isCurrentRequest()) {
+        voiceDraftAbortRef.current = null;
+        setVoiceDraftLoading(false);
+      }
+    }
+  };
+
+  const retryVoiceDraft = async (code: string) => {
+    const specEpoch = studioSpecEpochRef.current;
+    const isCurrentSpec = () => studioSpecEpochRef.current === specEpoch;
+    const sourceText = scriptView === 'voiceover' ? (voiceoverLines || script) : script;
+    const base = extractVoiceoverText(sourceText);
+    if (!base.trim()) {
+      setVoiceDraftNotice('当前脚本没有可翻译的口播文案。');
+      return;
+    }
+    const sourceLanguage = detectScriptLanguageCode(base);
+    if (voiceoverAudios[code]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, code])]);
+    setVoiceDraftPendingLangs(current => [...new Set([...current, code])]);
+    setVoiceDraftFailedLangs(current => current.filter(item => item !== code));
+    try {
+      const normalized = code === sourceLanguage
+        ? normalizeScriptTimestamps(base)
+        : await studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage })
+          .then(result => result.ok && result.text.trim() ? resolveTranslatedVoiceover(base, result.text, code) : Promise.reject(new Error(result.error || '模型未返回有效译文')));
+      if (!isCurrentSpec()) return;
+      if (!normalized.trim()) throw new Error('模型未返回有效译文');
+      setVoiceDrafts(current => ({ ...current, [code]: normalized }));
+      setVoiceDraftStaleLangs(current => current.filter(item => item !== code));
+      setVoiceDraftNotice(`${LANGS.find(item => item.code === code)?.label || code}文案已更新，其他已完成语言保持不变。`);
+    } catch (error: unknown) {
+      if (!isCurrentSpec()) return;
+      const reason = error instanceof Error ? error.message : '翻译失败';
+      setVoiceDraftFailedLangs(current => [...new Set([...current, code])]);
+      setVoiceDraftNotice(`${LANGS.find(item => item.code === code)?.label || code}翻译失败：${reason}`);
+    } finally {
+      if (isCurrentSpec()) setVoiceDraftPendingLangs(current => current.filter(item => item !== code));
     }
   };
 
@@ -6605,8 +6658,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const bgmEl = previewBgmAudioRef.current;
     const voiceEl = previewVoiceAudioRef.current;
     const bgmUrl = selectedBgmTrack?.url || '';
-    const currentVoiceUrl = voiceoverMode === 'none' || !previewVoiceOn ? '' : previewVoicePlayableUrl;
-    const bgmGain = previewBgmOn ? Math.max(0, Math.min(1, (bgmVol || 0) / 100)) * (currentVoiceUrl ? 0.5 : 1) : 0;
+    const currentVoiceUrl = previewVoiceOn ? activeVoiceoverUrl : '';
+    const bgmGain = previewBgmOn ? Math.max(0, Math.min(1, (bgmVol || 0) / 100)) : 0;
     const voiceGain = previewVoiceOn ? Math.max(0, Math.min(1, (voiceVol || 0) / 100)) : 0;
 
     if (bgmEl) {
@@ -6616,17 +6669,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (voiceEl) {
       voiceEl.volume = currentVoiceUrl ? voiceGain : 0;
     }
-    // Sources and gains are prepared here, but playback starts only from the
-    // video `playing` event (or the image-shot timer) so audio cannot run ahead.
-    if (bgmEl && bgmUrl && bgmGain > 0 && bgmEl.src !== new URL(bgmUrl, window.location.href).href) {
-      bgmEl.src = bgmUrl;
-      bgmEl.load();
+    if (!previewPlaying) return;
+
+    if (bgmEl && bgmUrl && bgmGain > 0) {
+      if (bgmEl.src !== new URL(bgmUrl, window.location.href).href) bgmEl.src = bgmUrl;
+      bgmEl.currentTime = Math.max(0, previewTime);
+      void bgmEl.play().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error || '浏览器拒绝播放');
+        setPreviewPlaybackError(`背景音乐播放失败：${message}`);
+      });
     }
-    if (voiceEl && currentVoiceUrl && voiceGain > 0 && voiceEl.src !== currentVoiceUrl) {
-      voiceEl.src = currentVoiceUrl;
-      voiceEl.load();
+    if (voiceEl && currentVoiceUrl && voiceGain > 0) {
+      if (voiceEl.src !== new URL(currentVoiceUrl, window.location.href).href) voiceEl.src = currentVoiceUrl;
+      voiceEl.currentTime = Math.max(0, previewTime);
+      void voiceEl.play().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error || '浏览器拒绝播放');
+        setPreviewPlaybackError(`口播播放失败：${message}`);
+      });
     }
-  }, [bgmVol, previewBgmOn, previewVoiceOn, previewVoicePlayableUrl, selectedBgmTrack, voiceVol, voiceoverMode]);
+  }, [activeVoiceoverUrl, bgmVol, previewBgmOn, previewPlaying, previewVoiceOn, selectedBgmTrack, voiceVol]);
   // 离开预览步时停止播放
   useEffect(() => {
     if (step !== 'preview' && step !== 'bgm') {
@@ -6656,15 +6717,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const downloadMp4 = async (filePath = renderOutputPath) => {
     if (rendering) return;
-    if (filePath) {
-      setRenderOutputPath(filePath);
-      const opened = await openRenderOutputFolder(filePath);
-      if (opened) setRenderDownloadMessage(`成片已保存到本地：${filePath}`);
-      return;
-    }
     setRenderDownloadMessage('');
     try {
-      const outputPath = renderOutputPath || await goPreview();
+      const outputPath = filePath || await goPreview();
       if (!outputPath) throw Error('成片尚未生成');
       const response = await fetch('/api/overseas/studio/library/download-file', { method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify({ path: outputPath }) });
       if (!response.ok) throw Error('文件不可下载，请检查文件是否存在或已同步到服务器');
@@ -6674,7 +6729,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     } catch (error) { setRenderDownloadMessage((error as Error).message); }
   };
   const saveToWorks = async () => {
-    if (!await saveProject('published')) return; // 保存失败不显示成功
+    await saveProject('ready_for_approval'); // 保存作品不等于平台发布
     setSavedToWorks(true);
     setTimeout(() => setSavedToWorks(false), 2200);
   };
@@ -7102,63 +7157,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const slot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
     if (!slot) { setDigitalHumanNotice('请先确认分镜脚本，再为具体镜头配置数字人'); return; }
     openProduction(slot);
-    if (!productionFor(slot).locked) setShotProductions(current => ({ ...current, [productionKey(slot.id)]: { ...productionFor(slot), source: 'avatar', sound: 'source' } }));
-    if (!productionCapability.configured) setDigitalHumanNotice(productionCapability.reason || '数字人服务尚未接入');
+    if (!productionFor(slot).locked) {
+      setShotProductions(current => ({
+        ...current,
+        [productionKey(slot.id)]: { ...productionFor(slot), source: 'avatar', sound: 'source' },
+      }));
+    }
+    if (!productionCapability.configured) {
+      setDigitalHumanNotice(productionCapability.reason || '数字人服务尚未接入');
+    }
   };
-
-  useEffect(() => {
-    if (presenterMode !== 'digital') return;
-    let cancelled = false;
-    void studioApi.digitalHumanAvatars().then(value => { if (!cancelled) setHeygenAvatars(value.items); });
-    void studioApi.digitalHumanCapabilities().then(value => { if (!cancelled) setDigitalHumanCapabilities(value); });
-    void studioApi.listDigitalHumanJobs(projectId || undefined).then(jobs => {
-      if (cancelled || !jobs[0]) return;
-      setDigitalHumanJob(jobs[0]);
-      setDigitalHumanLoading(['queued', 'submitting', 'processing', 'quality_check'].includes(jobs[0].status));
-    });
-    return () => { cancelled = true; };
-  }, [presenterMode, projectId]);
-
-  useEffect(() => {
-    if (!digitalHumanJob || !['queued', 'submitting', 'processing', 'quality_check'].includes(digitalHumanJob.status)) return;
-    let cancelled = false;
-    const poll = async () => {
-      const result = await studioApi.getDigitalHumanJob(digitalHumanJob.id);
-      if (cancelled || !result.job) return;
-      setDigitalHumanJob(result.job);
-      if (result.job.status === 'completed') {
-        setDigitalHumanLoading(false);
-        await refreshMaterials();
-        if (result.outputMaterial?.id) setSelected(current => [...current.filter(id => id !== digitalHumanJob.avatarMaterialId), result.outputMaterial!.id]);
-        setDigitalHumanNotice('数字人口播已通过质量检测并回流素材库。');
-      } else if (result.job.status === 'review') {
-        setDigitalHumanLoading(false);
-        await refreshMaterials();
-        setDigitalHumanNotice('HeyGen 成片已生成，请预览确认人物、口型与声音。');
-      } else if (result.job.status === 'failed' || result.job.status === 'cancelled') {
-        setDigitalHumanLoading(false);
-        setDigitalHumanNotice(result.job.errorMessage || '数字人任务未完成。');
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 3000);
-    void poll();
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [digitalHumanJob?.id, digitalHumanJob?.status]);
-
-  useEffect(() => {
-    const materialId = digitalHumanJob?.outputMaterialId;
-    if (!materialId || !digitalHumanJob?.outputUrl || !['review', 'completed'].includes(digitalHumanJob.status) || !storyboardSlots.length) return;
-    if (!materialById.has(materialId)) { void refreshMaterials(); return; }
-    setStoryboardAssignments(previous => {
-      const next = { ...previous }; let changed = false;
-      storyboardSlots.forEach((slot, index) => {
-        const avatarSlot = presentationMode === 'avatar' || presentationMode === 'heygen' && (presentationSources[slot.id] || (index === 0 || index === storyboardSlots.length - 1 ? 'avatar' : 'material')) === 'avatar';
-        if (avatarSlot && next[slot.id] !== materialId) { next[slot.id] = materialId; changed = true; }
-        if (!avatarSlot && next[slot.id] === materialId) { delete next[slot.id]; changed = true; }
-      });
-      return changed ? next : previous;
-    });
-  }, [digitalHumanJob?.outputMaterialId, digitalHumanJob?.status, presentationMode, presentationSources, storyboardSlots, materialById]);
 
   /* ── BGM 曲库 ────────────────────────────────────────────────────────── */
   const refreshBgm = async () => {
@@ -7388,8 +7396,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             ? resolveTranslatedVoiceover(base, raw, code)
             : '';
           if (!normalized.trim()) {
-            const single = await studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage })
+            const single = await withStudioTimeout(studioApi.translate({ text: normalizeScriptTimestamps(base), target: code, source: sourceLanguage }))
               .catch(() => ({ ok: false, text: '' }));
+            if (!isCurrentTtsRequest()) return;
             raw = single.ok ? single.text : '';
             normalized = raw.trim() ? resolveTranslatedVoiceover(base, raw, code) : '';
           }
@@ -7515,10 +7524,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           return `${LANGS.find(langItem => langItem.code === code)?.label || code}：翻译失败，未生成配音（${reason || '未知原因'}）`;
         })].join('；')}`
         : voice.startsWith('custom:') && Object.values(audios).some(item => item.customVoiceStatus === 'activated')
-          ? `已生成 ${langs.length} 个语种配音，真人音色已通过正式 TTS 激活并保存，同时按真实音频对齐字幕。`
-          : Object.values(audios).some(item => item.alignmentSource === 'proportional')
-            ? `已生成 ${langs.length} 个语种配音；字幕时间为文本比例估算，请试听核对，不代表逐句音频对齐。`
-            : `已生成 ${langs.length} 个语种配音，并按真实音频对齐字幕。`);
+          ? `已生成 ${langs.length} 个语种配音，真人音色已通过正式 TTS 激活并保存。下一步可一键生成字幕。`
+          : `已生成 ${langs.length} 个语种配音。下一步可一键生成字幕。`);
     } catch (err: any) {
       if (!isCurrentTtsRequest()) return;
       const reason = err?.message || '配音生成失败，请稍后重试。';
@@ -7782,10 +7789,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     segments: item.segments,
   }));
   const collectSpec = () => ({
-    _baseUpdatedAt: projectRevisionRef.current,
-    workspaceStep: step, workspaceScriptStage: scriptStageTab,
-    shotProductions, shotProductionContext, appearancePreference, renderProductionSignatures,
-    shootingSlots, shootingAdoptions,
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
     activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
@@ -7804,13 +7807,32 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   });
 
   const applySpec = (s: Record<string, unknown>) => {
-    projectRevisionRef.current = s._baseUpdatedAt;
-    setRenderProductionSignatures(s.renderProductionSignatures && typeof s.renderProductionSignatures === 'object' ? s.renderProductionSignatures as Record<string, string> : {});
-    setShotProductions(s.shotProductions && typeof s.shotProductions === 'object' ? s.shotProductions as Record<string, ShotProduction> : {});
-    setAppearancePreference(['auto', 'avatar', 'real', 'none'].includes(String(s.appearancePreference)) ? s.appearancePreference as AppearancePreference : '');
-    setShootingAdoptions(s.shootingAdoptions && typeof s.shootingAdoptions === 'object' ? s.shootingAdoptions as Record<string, string> : {});
-    shootingSlotsRef.current = Array.isArray(s.shootingSlots) ? s.shootingSlots as ShootingSlot[] : [];
-    setShootingIdentityEpoch(value => value + 1);
+    studioSettingsEditedRef.current = true;
+    managedProductionProjectRef.current = Boolean(s.workflowRunId && (s.automation as { managedBy?: string } | undefined)?.managedBy === 'digital_employee');
+    setProjectWorkflowContext(
+      workflowContext?.taskKey === 'content_quality_gate'
+        ? workflowContext
+        : studioWorkflowContextFromSpec(s),
+    );
+    studioSpecEpochRef.current += 1;
+    scriptTaskRequestRef.current += 1;
+    productScriptAbortRef.current?.abort();
+    productScriptAbortRef.current = null;
+    voiceDraftAbortRef.current?.abort();
+    voiceDraftAbortRef.current = null;
+    ttsRequestRef.current += 1;
+    setVoiceDraftPendingLangs([]);
+    setVoiceDraftFailedLangs([]);
+    setTtsActiveLangs([]);
+    setTtsFailuresByLang({});
+    setModeActionLoading(false);
+    setModeActionStatus('');
+    setScriptLoading(false);
+    setMaterialSelectLoading(false);
+    setPendingRealCloneGeneration(false);
+    setStoryboardGenerating({});
+    setStoryboardQualityChecking({});
+    setVoiceoverStaleLangs(Array.isArray(s.voiceoverStaleLangs) ? s.voiceoverStaleLangs as string[] : []);
     const restoredVoiceDrafts = s.voiceDrafts && typeof s.voiceDrafts === 'object'
       ? s.voiceDrafts as Record<string, string>
       : {};
@@ -8003,15 +8025,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (typeof s.bgmVol === 'number') setBgmVol(s.bgmVol);
     if (typeof s.voiceVol === 'number') setVoiceVol(s.voiceVol);
     if (s.cover && s.cover !== 'gradient') setCover(s.cover as string);
-    if (typeof s.coverTitle === 'string') setCoverTitle(isUnverifiedLegacyCoverTitle(s.coverTitle) ? '' : s.coverTitle);
+    if (typeof s.coverTitle === 'string') setCoverTitle(s.coverTitle);
     if (s.coverStyle) setCoverStyle(s.coverStyle as CoverStyle);
-    if (s.materialVersionCovers && typeof s.materialVersionCovers === 'object') {
-      const restored = s.materialVersionCovers as Record<string, CoverVersionConfig>;
-      setMaterialVersionCovers(Object.fromEntries(Object.entries(restored).map(([key, value]) => [key, {
-        ...value,
-        title: isUnverifiedLegacyCoverTitle(value?.title) ? '' : value?.title,
-      }])));
-    }
+    setCapturedCoverFrameUrl(typeof s.capturedCoverFrameUrl === 'string' ? s.capturedCoverFrameUrl : '');
+    if (s.materialVersionCovers && typeof s.materialVersionCovers === 'object') setMaterialVersionCovers(s.materialVersionCovers as Record<string, CoverVersionConfig>);
     if (s.account !== undefined) setAccount(s.account as string | null);
     if (typeof s.caption === 'string') setCaption(s.caption);
     if (s.posterDraft && typeof s.posterDraft === 'object') setPosterDraft(s.posterDraft as FbPosterResult);
@@ -8067,44 +8084,43 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, []);
 
   const saveProject = async (
-    status: 'draft' | 'published' | 'template' = 'draft',
-    options: { silent?: boolean; asNew?: boolean } = {},
+    status: 'draft' | 'ready_for_approval' | 'published' | 'template' = 'draft',
+    options: { silent?: boolean } = {},
   ) => {
     const silent = options.silent === true;
     if (managedProductionProjectRef.current) {
       if (!silent) setModeNotice('请使用下方“生产现场：修改配置并继续原任务”，按节点保存，避免覆盖后台结果。');
-      return;
+      return false;
     }
-    if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return;
-    if (silent && workflowProjectSelectionPending) return;
+    if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return false;
+    if (silent && workflowProjectSelectionPending) return false;
     if (silent && (
       modeActionLoading || scriptLoading || materialSelectLoading || coverLoading
       || rendering || batchRenderingLangs || posterLoading || captionLoading
-    )) return;
+    )) return false;
     if (voiceDraftLoading || ttsLoading) {
       if (!silent) alert('多语字幕或配音仍在生成，请等待完成后再保存草稿。');
-      return;
+      return false;
     }
-    if (agentProduction.active) return;
+    if (agentProduction.active) return false;
     const nextSpec = collectSpec();
-    if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return;
-    if (silent && autosaveInFlightRef.current) return;
+    if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return false;
+    if (silent && autosaveInFlightRef.current) return false;
     if (silent) {
       autosaveInFlightRef.current = true;
       setAutosaveStatus('saving');
     }
     else setSavingProj(true);
     try {
-      const { ok, project } = await studioApi.saveProject({
-        id: status === 'template' || options.asNew ? undefined : projectId ?? undefined,
+      const { project } = await studioApi.saveProject({
+        id: status === 'template' ? undefined : projectId ?? undefined,
         title: projectTitle.trim() || '未命名草稿',
         status,
         spec: nextSpec,
         thumbSeed: cover,
       });
-      if (!ok || !project?.id) throw new Error('草稿未保存成功，请稍后重试');
+      if (!project?.id) throw new Error('草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (project?.id && status !== 'template') {
-        projectRevisionRef.current = project.updatedAt;
         setProjectId(project.id);
         setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
         if (!workflowContext && new URLSearchParams(location.search).get('page') === 'smartAssets') {
@@ -8125,9 +8141,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }
       return true;
     } catch (error) {
-      setModeNotice(error instanceof Error ? error.message : '草稿保存失败，当前修改仍在本窗口');
-      if (!silent) return;
+      setAutosaveStatus('error');
+      if (!silent) throw error;
       console.warn('[AiCreateStudio] autosave failed', error);
+      return false;
     } finally {
       if (silent) autosaveInFlightRef.current = false;
       else setSavingProj(false);
@@ -8368,10 +8385,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setProjectTitle(p.status === 'template' ? `${p.title} · 副本` : p.title);
     setWorkflowProjectSelectionPending(false);
     autoGen.current = true; // 载入已有脚本，别再自动覆盖
-    const savedSteps = p.spec.contentMode === 'poster' ? POSTER_STEPS : STEPS;
-    setStepIdx(p.status === 'template' ? 0 : Math.max(0, savedSteps.findIndex(item => item.id === p.spec.workspaceStep)));
-    setScriptStageTab(['theme', 'script', 'voiceover', 'audio'].includes(String(p.spec.workspaceScriptStage))
-      ? p.spec.workspaceScriptStage as 'theme' | 'script' | 'voiceover' | 'audio' : 'theme');
     setShowProjects(false);
     setPublished(false);
   };
@@ -8415,7 +8428,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
     if (!raw) return;
     try {
-      const state = JSON.parse(raw) as { at?: number; projectId?: string; shooting?: boolean; assemblyId?: string };
+      const state = JSON.parse(raw) as { at?: number; projectId?: string };
       if (!state.at || Date.now() - state.at > 10 * 60 * 1000 || !state.projectId) return;
       void studioApi.listProjects().then(list => {
         if (disposed) return;
@@ -8425,14 +8438,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setModeNotice('未找到该历史创作草稿。');
           return;
         }
-        applySpec(state.shooting && state.assemblyId ? { ...project.spec, activeAssemblyId: state.assemblyId } : project.spec);
+        applySpec(project.spec);
         setProjectId(project.id);
         setProjectTitle(project.title);
         autoGen.current = true;
         setShowProjects(false);
         setPublished(false);
-        if (state.shooting) setStepIdx(STEPS.findIndex(item => item.id === 'material'));
-        setModeNotice(`已恢复历史创作草稿“${project.title}”。${state.shooting ? '正在检查待拍候选；已有画面不会被覆盖。' : ''}`);
+        setModeNotice(`已恢复历史创作草稿“${project.title}”。`);
       }).catch(() => setModeNotice('历史创作草稿读取失败，请稍后重试。'));
     } catch {
       // Ignore malformed navigation payloads from older local builds.
@@ -8533,11 +8545,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       case 'mode':
         const visibleModes = contentMode === 'poster' ? POSTER_MODES : MODES;
         return (
-          <div className="w-full min-w-0 max-w-6xl overflow-x-hidden">
-            <SectionTitle title="选择生成模式" desc="先选择内容形态，再确定 AI 从哪里取信息和素材" />
-            {contentMode === 'video' && <Field label="出镜偏好"><select value={appearancePreference} onChange={event => setAppearancePreference(event.target.value as AppearancePreference | '')} className="w-full rounded-xl border border-border bg-white p-3 text-sm"><option value="">继承企业默认（{productionDefaults.preference}）</option><option value="auto">AI推荐</option><option value="avatar">使用数字人</option><option value="real">优先真人实拍</option><option value="none">不出镜</option></select><p className="mt-1 text-xs text-text-muted">偏好用于镜头推荐，不会自动付费生成，也不会覆盖锁定镜头。</p></Field>}
-            <Field label="内容形态">
-              <div className="inline-flex rounded-xl border border-border bg-surface-2 p-1">
+          <div className="w-full min-w-0 overflow-x-hidden">
+            <input ref={fileInputRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => { void handleUpload(event.target.files); event.target.value = ''; }} />
+            <div className="mb-4">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容类型</p>
+              <div className="grid grid-cols-2 rounded-lg bg-surface-2 p-1">
                 {([
                   ['video', '视频模式'],
                   ['poster', '图文模式'],
@@ -9382,15 +9394,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           const clip = materialById.get(clipId);
           const slot = storyboardSlots.find(item => item.id === slotId);
           if (!clip || !slot) return;
-          if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁'); return; }
           if (!isClipCompatibleWithRatio(clip, ratio)) {
             setModeNotice(`“${clip.name}”与当前 ${ratio} 方向不同，已加入分镜；成片时会自动居中裁切，可在预览页检查主体是否完整。`);
           }
           const detectedSource = clipSourceMode(clip);
-          const currentProduction = { ...productionFor(slot), source: 'material' as const };
-          const candidateId = crypto.randomUUID();
-          setShotProductions(current => ({ ...current, [productionKey(slot.id)]: { ...currentProduction, adoptedId: candidateId,
-            candidates: [...currentProduction.candidates, { id: candidateId, materialId: clip.id, source: 'material', fingerprint: shotFingerprint(currentProduction, shotProductionContext), createdAt: new Date().toISOString() }] } }));
+          const assessment = assessMaterialMatch(slot, clip, ratio);
           setStoryboardAssignments(prev => ({ ...prev, [slotId]: clipId }));
           setSelected(prev => prev.includes(clipId) ? prev : [...prev, clipId]);
           setClipEdits(prev => ({ ...prev, [slotClipEditKey(slot.id, clipId)]: defaultEditForSlot(clip, slot) }));
@@ -9415,8 +9423,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setModeNotice(`已将“${clip.name}”应用到第 ${currentIndex + 1} 段，匹配 ${assessment.score} 分（${assessment.reason}）${assessment.level === 'missing' ? '；该素材低于自动匹配线，但已按你的手动选择保留' : ''}${nextSlot ? `。请继续确认第 ${storyboardSlots.findIndex(item => item.id === nextSlot.id) + 1} 段` : '。当前分镜素材已全部确认'}。`);
         };
         const removeSlotClip = (slotId: string) => {
-          const slot = storyboardSlots.find(item => item.id === slotId);
-          if (slot && productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁'); return; }
           setStoryboardAssignments(prev => {
             const next = { ...prev };
             delete next[slotId];
@@ -9705,17 +9711,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 		                <span className="text-sm font-semibold text-text-primary">{folderName(activeFolder)}</span>
 		                {activeFolder === 'recommend' && <span className="text-[11px] text-text-muted">查看当前视频版本全部分镜使用的素材</span>}
 		                {activeFolder === 'hot' && <span className="text-[11px] text-text-muted">官方实时更新</span>}
-	                {activeFolder === 'presenter' && <span className="text-[11px] text-text-muted">上传真人实拍，或为当前镜头生成数字人口播</span>}
+	                {activeFolder === 'presenter' && <span className="text-[11px] text-text-muted">上传并选择已授权的真人出镜视频</span>}
 	                <input ref={fileInputRef} type="file" multiple accept={activeFolder === 'presenter' ? 'video/*' : 'video/*,image/*,audio/*'} className="hidden"
 	                  onChange={e => { void handleUpload(e.target.files); e.target.value = ''; }} />
-		                {activeFolder === 'presenter' && (
-		                  <button
-		                    onClick={() => void generateDigitalHumanPresenter()}
-	                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-1.5 text-xs font-bold text-white transition disabled:opacity-50"
-	                  >
-	                    <Sparkles size={12} /> 制作数字人口播
-		                  </button>
-		                )}
 		                <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
 		                  className="btn-ghost ml-auto !px-3 !py-1.5 !text-xs flex items-center gap-1.5 disabled:opacity-60">
 		                  {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />} {uploading ? '上传中…' : '上传'}
@@ -9733,14 +9731,33 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 	                  <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
 	                    <div className="flex flex-wrap items-start justify-between gap-3">
 	                      <div className="min-w-0">
-	                        <p className="text-sm font-black text-text-primary">真人口播素材</p>
-	                        <p className="mt-1 text-xs text-text-muted">已有真人视频可用于剪辑。按新台词生成数字人口播需要接通真实数字人服务，当前不可用。</p>
+	                        <p className="text-sm font-black text-text-primary">HeyGen 数字人口播生成</p><label className="block text-xs">HeyGen 人物<select value={heygenAvatarId} onChange={event => {
+                          const id = event.target.value; setHeygenAvatarId(id); setDigitalHumanConsent(false);
+                          const gender = heygenAvatars.find(item => item.id === id)?.gender;
+                          const nextVoice = gender === 'male' ? 'v2' : gender === 'female' ? 'v1' : '';
+                          if (nextVoice && nextVoice !== voice && voiceoverMode !== 'upload') {
+                            setVoice(nextVoice);
+                            setVoiceoverStaleLangs(prev => [...new Set([...prev, activeVoiceLang, ...Object.keys(voiceoverAudios)])]);
+                            setDigitalHumanNotice('已匹配人物音色，请重新生成配音并试听，旧音频不能继续使用。');
+                          }
+                        }} className="mt-2 w-full rounded border p-2"><option value="">请选择人物</option>{heygenAvatars.map(avatar => <option key={avatar.id} value={avatar.id}>{avatar.name}</option>)}</select></label>
+	                        <p className="mt-1 text-xs text-text-muted">选择 HeyGen 人物并使用已确认音频生成，完成后需预览确认人物、声音和口型。</p>
+	                        <div className="mt-3 flex flex-wrap gap-2">
+	                          {(['quality'] as const).map(item => (
+	                            <button key={item} type="button" onClick={() => setDigitalHumanMode(item)}
+	                              className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${digitalHumanMode === item ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}>
+	                              HeyGen 标准生成
+	                            </button>
+	                          ))}
+	                        </div>
 	                      </div>
 	                      <button
 	                        onClick={() => void generateDigitalHumanPresenter()}
+	                        disabled={digitalHumanLoading || !heygenAvatarId || digitalHumanCapabilities?.available === false}
 	                        className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
 	                      >
-	                        <Sparkles size={12} /> 编辑数字人镜头
+	                        {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+	                        {digitalHumanLoading ? '正在生成…' : '生成表情数字人'}
 	                      </button>
 	                    </div>
 	                    <label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] leading-5 text-text-secondary">
@@ -10325,8 +10342,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           <div className="grid w-full min-w-0 grid-cols-1 items-start gap-5">
           <div className="min-w-0">
             <div className="flex items-center justify-between mb-4">
-              <SectionTitle title="分镜与声音" desc="先确认爆点迁移后的可执行分镜，再选择保留无口播、AI 配音或上传真人音频" noMargin />
-              <p className="mt-1 text-xs text-text-muted">分镜生成模型：千问（固定）；不影响视频分析与配音服务。</p>
+              <SectionTitle title="生成内容" noMargin />
+              <p className="text-xs text-text-muted">分镜生成模型：千问（固定）；不影响视频分析与配音服务。</p>
+            </div>
+
+            <div className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'border-red-200 bg-red-50' : activeQualityWarnings.length || activeQualityIssues.length ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+              <div className="flex items-center gap-2">
+                {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
+                  ? <X size={15} className="text-red-600" />
+                  : activeQualityWarnings.length || activeQualityIssues.length
+                    ? <Clock size={15} className="text-amber-600" />
+                    : <Check size={15} className="text-emerald-600" />}
+                <div>
+                  <p className="text-xs font-black text-text-primary">
+                    {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
+                      ? '分镜质量未通过，请先处理异常'
+                      : activeQualityWarnings.length || activeQualityIssues.length
+                        ? `发现 ${activeQualityWarnings.length + activeQualityIssues.length} 项需要确认`
+                        : script.trim() ? '分镜检查已完成' : 'AI 将自动生成并检查分镜'}
+                  </p>
+                </div>
+              </div>
+              {typeof activeCoveragePercent === 'number' && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">素材覆盖 {Math.round(activeCoveragePercent)}%</span>}
             </div>
 
             <div className="mb-4 grid gap-2 md:grid-cols-3">
@@ -10379,39 +10416,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <div className="flex gap-2">
                       <button type="button" onClick={() => setStepIdx(STEPS.findIndex(item => item.id === 'material'))} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[11px] font-black text-amber-800">选择其他素材</button>
                       <button type="button" onClick={() => {
-                        const slot = storyboardSlots.find(item => item.id === activeStoryboardSlotId) || storyboardSlots[0];
-                        if (!slot) { setModeNotice('请先确认分镜脚本，再从镜头的“更多”中安排拍摄。'); return; }
-                        setShootingError(''); setShootingSlotId(slot.id);
+                        createScriptGapTask({ title: themeUnavailableReason(activeVideoTheme), productLabel: activeProductLabel || '当前产品', themeTitle: activeVideoTheme.title, shotBrief: `补拍可用于“${activeVideoTheme.title}”的${themeUnavailableReason(activeVideoTheme)}镜头`, suggestedDurationSec: 3, sourceProjectId: projectId || undefined, sourceStoryboardSlotId: activeStoryboardSlotId || undefined });
+                        setModeNotice('已创建建议补拍任务，可在灵感中心 → 拍摄任务查看。');
                       }} className="rounded-lg bg-amber-600 px-3 py-2 text-[11px] font-black text-white">创建建议补拍</button>
                     </div>
                   </div>
                 )}
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {availableCooperationRoutes.length > 1 && <label className="block">
-                    <span className="mb-1.5 block text-[10px] font-black text-text-secondary">本条视频合作路线</span>
-                    <select value={cooperationRoute} onChange={event => {
-                      const route = event.target.value;
-                      const defaults = enterpriseRouteStrategies[route];
-                      setCooperationRoute(route);
-                      setAudience(enterpriseBuyerText(defaults?.targetBuyerRoles));
-                      setEnterprisePrimaryCta(defaults?.primaryCta || '');
-                      setPrimaryCta(defaults?.primaryCta || '');
-                    }} className="w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-text-primary outline-none focus:border-accent">
-                      {availableCooperationRoutes.map(route => <option key={route} value={route}>{route === 'oem_odm' ? 'OEM / ODM' : route === 'wholesale_distribution' ? '现货批发 / 经销' : 'C 端零售'}</option>)}
-                    </select>
-                  </label>}
-                  <label className="block">
-                    <span className="mb-1.5 block text-[10px] font-black text-text-secondary">目标买家</span>
-                    <textarea value={audience} onChange={event => setAudience(event.target.value)} rows={3}
-                      className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none focus:border-accent" />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1.5 block text-[10px] font-black text-text-secondary">主 CTA</span>
-                    <textarea value={enterprisePrimaryCta || primaryCta} readOnly rows={3} title="主 CTA 由企业社媒策略统一管理"
-                      className="w-full resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-5 text-text-primary outline-none" />
-                    <span className="mt-1 block text-[10px] text-text-muted">仅使用企业社媒策略中的唯一主 CTA，如需修改请前往企业中心。</span>
-                  </label>
-                </div>
               </div>
             )}
 
@@ -10550,24 +10560,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   <p className="text-sm font-black text-text-primary">提取口播与多语种字幕</p>
                   <p className="mt-1 text-xs text-text-muted">从时间戳脚本里提取口播台词，保留时间段，再生成不同语种版本。</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void generateVoiceDrafts()}
-                  disabled={voiceDraftLoading || !hasTimestampScript || !voiceLangs.length}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
-                >
-                  {voiceDraftLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  {voiceDraftLoading ? '生成中…' : '提取口播并翻译'}
-                </button>
-                {voiceDraftLoading && (
-                  <button type="button" onClick={() => {
-                    voiceDraftRunRef.current += 1;
-                    setVoiceDraftLoading(false);
-                    setVoiceDraftNotice('已取消本次翻译，已生成的源语言口播仍可继续编辑或重试。');
-                  }} className="inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">
-                    <X size={12} /> 取消
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void generateVoiceDrafts()}
+                    disabled={voiceDraftLoading || !hasTimestampScript || !voiceLangs.length}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                  >
+                    {voiceDraftLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {voiceDraftLoading ? `翻译中 ${voiceLangs.length - voiceDraftPendingLangs.length}/${voiceLangs.length}` : '提取口播并翻译'}
                   </button>
-                )}
+                  {voiceDraftLoading && (
+                    <button
+                      type="button"
+                      onClick={cancelVoiceDraftGeneration}
+                      className="inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:border-red-200 hover:text-red-600"
+                    >
+                      <X size={12} /> 取消
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2">
                 <span className="text-[10px] font-black text-accent">企业中心语种</span>
@@ -11445,28 +11457,19 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   <div className="absolute inset-0 flex items-center justify-center">
                     <button
                       type="button"
-                      onClick={previewPlaying ? stopPreview : () => void startPreview()}
-                      disabled={!previewTimeline.length || previewPreparing}
+                      onClick={previewPlaying ? stopPreview : () => { void startPreview(); }}
+                      disabled={!previewTimeline.length}
                       className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 text-text-primary shadow-lg transition hover:scale-105 disabled:opacity-40"
-                      aria-label={previewPreparing ? '正在准备粗剪预览' : previewPlaying ? '停止粗剪预览' : '播放粗剪预览'}
+                      aria-label={previewPlaying ? '停止粗剪预览' : '播放粗剪预览'}
                     >
-                      {previewPreparing
-                        ? <Loader2 size={19} className="animate-spin" />
-                        : previewPlaying ? <Pause size={19} fill="currentColor" /> : <Play size={19} className="ml-0.5" fill="currentColor" />}
+                      {previewPlaying ? <Pause size={19} fill="currentColor" /> : <Play size={19} className="ml-0.5" fill="currentColor" />}
                     </button>
                   </div>
                 </div>
                 <audio ref={previewBgmAudioRef} src={selectedBgmTrack?.url || undefined} preload="auto" />
-                <audio ref={previewVoiceAudioRef} src={voiceoverMode === 'none' ? undefined : previewVoicePlayableUrl || undefined} preload="auto"
-                  onError={() => setPreviewPlaybackError('口播文件加载或解码失败，请重新加载当前版本')} />
+                <audio ref={previewVoiceAudioRef} src={activeVoiceoverUrl || undefined} preload="auto" />
               </div>
             </div>
-
-            {(previewVoiceLoading || previewPlaybackError) && (
-              <p className={`mt-3 rounded-lg px-3 py-2 text-[11px] font-semibold ${previewPlaybackError ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-text-muted'}`}>
-                {previewPlaybackError || '正在验证并缓存口播音频…'}
-              </p>
-            )}
 
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-text-muted">
@@ -11727,8 +11730,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <p className="mt-1 text-[11px] text-text-muted">每个版本可独立选择封面底图；标题和艺术字可单独改，也可批量同步。</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{coverMaterialVersions.filter(item => Boolean(materialVersionCovers[item.key])).length}/{coverMaterialVersions.length} 已配置</span>
-                    <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[11px] font-black text-white">
+                    <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{Object.keys(materialVersionCovers).length}/{coverMaterialVersions.length} 已配置</span>
+                    <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-black text-text-secondary hover:bg-surface-2">
                       <Sparkles size={12} />批量同步参数
                     </button>
                     <button type="button" onClick={batchUseFirstFrames} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary hover:border-accent hover:text-accent">
@@ -11866,10 +11869,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         const activeOutputVersion = outputVersions.find(item => item.key === activeRenderCombinationKey)
           || outputVersions.find(item => item.key === fallbackActiveKey)
           || outputVersions[0];
-        // Never borrow another combination's output when the selected one has not rendered.
+        // Never borrow another combination's output when the selected one has
+        // not rendered. A formal preview must represent this exact version.
         const formalPreviewUrl = activeOutputVersion?.output?.status === 'done'
           ? activeOutputVersion.output.previewUrl
           : undefined;
+        const activeFormalPreviewUrl = formalPreviewUrl;
         const hasFormalVideo = Boolean(renderOutputPath || outputVersions.some(version => (
           Boolean(version.output?.status === 'done' && version.output.path)
           || version.generations.some(generation => generation.status === 'done' && generation.path)
@@ -11880,8 +11885,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           activateContentPlan(version.plan.id);
           setBgm(version.bgmId);
           previewLanguageVersion(version.code, false);
-          setRenderOutputPath(version.output?.status === 'done' ? version.output.path || null : null);
-          setRenderOutputPreviewUrl(version.output?.status === 'done' ? version.output.previewUrl || null : null);
+          if (version.output?.path) {
+            setRenderOutputPath(version.output.path);
+            setRenderOutputPreviewUrl(version.output.previewUrl || null);
+          } else {
+            setRenderOutputPath(null);
+            setRenderOutputPreviewUrl(null);
+          }
         };
         return (
           <div className="flex min-w-0 flex-col items-stretch gap-5">
@@ -11889,7 +11899,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             <div className="flex-shrink-0">
               <div className="relative rounded-2xl overflow-hidden border border-border bg-black" style={{ width: 260 }}>
                 <div className="relative aspect-[9/16]">
-                  {formalPreviewUrl ? <RenderedVideoPlayer key={formalPreviewUrl} src={formalPreviewUrl} onActivate={stopPreview} /> : activePreviewItem ? (
+                  {formalPreviewUrl ? (
+                    <RenderedVideoPlayer key={formalPreviewUrl} src={formalPreviewUrl} onActivate={stopPreview} />
+                  ) : activePreviewItem ? (
                     activePreviewItem.clip.type === 'image' ? (
                       <img src={activePreviewItem.clip.url} alt="" className="absolute inset-0 w-full h-full object-cover bg-black" />
                     ) : (
@@ -11922,7 +11934,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <CoverFace coverUrl={coverUrl} frameUrl={coverFrameUrl} frameType={coverClip?.poster ? 'image' : coverClip?.type} fallbackVideoUrl={coverClip?.type === 'video' ? coverClip.url : undefined} title={coverTitle} style={coverStyle} />
                   )}
                 </div>
-                {!formalPreviewUrl && activePreviewItem && (
+                {activeFormalPreviewUrl ? (
+                  <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">
+                    正式成片 · 连续 MP4
+                  </div>
+                ) : activePreviewItem && (
                   <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-black/60 px-2 py-1 text-[10px] font-bold text-white">
                     {previewIdx! + 1}/{previewTimeline.length} · {activePreviewItem.targetStart ?? 0}s-{activePreviewItem.targetEnd ?? activePreviewItem.targetDuration}s
                   </div>
@@ -11946,18 +11962,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                         </div>
                       </div>
                     ) : (
-                      <button onClick={() => void startPreview()} disabled={previewPreparing}
-                        className="w-14 h-14 rounded-full bg-white/90 flex items-center justify-center shadow-lg active:scale-95 transition-transform disabled:opacity-50">
-                        {previewPreparing
-                          ? <Loader2 size={22} className="animate-spin text-text-primary" />
-                          : <Play size={22} className="text-text-primary ml-0.5" fill="currentColor" />}
+                      <button onClick={() => { void startPreview(); }}
+                        className="w-14 h-14 rounded-full bg-white/90 flex items-center justify-center shadow-lg active:scale-95 transition-transform">
+                        <Play size={22} className="text-text-primary ml-0.5" fill="currentColor" />
                       </button>
                     )}
                   </div>
                 )}
                 <audio ref={previewBgmAudioRef} src={selectedBgmTrack?.url || undefined} preload="auto" />
-                <audio ref={previewVoiceAudioRef} src={voiceoverMode === 'none' ? undefined : previewVoicePlayableUrl || undefined} preload="auto"
-                  onError={() => setPreviewPlaybackError('口播文件加载或解码失败，请重新加载当前版本')} />
+                <audio ref={previewVoiceAudioRef} src={activeVoiceoverUrl || undefined} preload="auto" />
                 {!formalPreviewUrl && previewIdx !== null && (
                   <button onClick={stopPreview} className="absolute top-2 right-2 z-10 w-7 h-7 rounded-full bg-black/55 flex items-center justify-center text-white">
                     <X size={14} />
@@ -11965,15 +11978,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 )}
               </div>
               {/* 无真实可播放素材时的说明 */}
-              <p className="mt-2 w-[260px] text-[11px] text-text-muted">{formalPreviewUrl ? '实际导出成片 · 已包含配音、配乐和字幕；修改草稿后需重新生成。' : '分镜模拟预览 · 不代表最终成片效果。'}</p>
-              {!formalPreviewUrl && previewNote && (
+              {previewNote && (
                 <p className="text-[11px] text-text-muted mt-2 w-[260px] leading-relaxed">
                   该片段暂无可播放源文件，请上传真实视频素材，或在桌面客户端合成后下载完整成片。
-                </p>
-              )}
-              {(previewVoiceLoading || previewPlaybackError) && (
-                <p className={`mt-2 w-[260px] text-[11px] leading-relaxed ${previewPlaybackError ? 'text-red-500' : 'text-text-muted'}`}>
-                  {previewPlaybackError || '正在验证并缓存口播音频…'}
                 </p>
               )}
             </div>
@@ -12469,7 +12476,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             : scriptStageTab === 'bgm'
               ? '进入成片制作'
             : voiceoverMode === 'unselected'
-              ? '选择声音策略'
+              ? '请先选择声音策略'
               : voiceoverMode === 'none'
                 ? '进入成片制作'
                 : voiceoverMode === 'upload'
@@ -12738,139 +12745,44 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   return (
     <div className="flex flex-col h-full relative">
-      {productionEditorId && (() => {
-        const slot = storyboardSlots.find(item => item.id === productionEditorId); if (!slot) return null;
-        const shot = productionFor(slot); const key = productionKey(slot.id);
-        const recommendation = recommendShot({ detail: slot.detail, preference: appearancePreference || productionDefaults.preference, locked: shot.locked, hasMaterial: Boolean(storyboardAssignments[slot.id]), hasPresenter: productionDefaults.presenters.length > 0 });
-        return <ShotProductionPanel key={key} shot={shot} context={shotProductionContext} title={slot.title} defaults={productionDefaults} materials={materials} products={productOptions}
-          jobs={productionJobs.filter(job => job.projectId === projectId && `${job.assemblyId}:${job.shotId}` === key)} refreshingJobIds={productionRefreshingIds} preview={materialById.get(storyboardAssignments[slot.id] || '')} reason={recommendation.reason}
-          error={productionError} busy={productionBusy} configured={productionCapability.configured} capabilityReason={productionCapability.reason} costPerSecond={productionCapability.costPerSecond}
-          onChange={patch => { try { const next = patchShot(shot, patch.source === 'avatar' ? { ...patch, sound: 'source' } : patch); setShotProductions(current => ({ ...current, [key]: next })); setRendered(false); } catch (error) { setProductionError(String(error)); } }}
-          onClose={() => setProductionEditorId('')} onNarration={applyProductionNarration}
-          onDefaults={async value => setProductionDefaults(await productionApi.saveDefaults(value))} onGenerate={() => void generateProductionAvatar()}
-          onAi={() => { void generateStoryboardShot(slot, { ...sourcePlanFor(slot), mode: 'ai', decided: true, confirmed: false }); }}
-          onShoot={() => { setProductionEditorId(''); setShootingSlotId(slot.id); }} onMaterial={() => { setActiveFolder('all'); setProductionEditorId(''); }}
-          onAdopt={adoptProductionCandidate} onRefresh={id => void refreshProductionJob(id)} />;
-      })()}
-      {shootingSlotId && (() => {
-        const slot = shootingSlots.find(item => item.slotId === shootingSlotId);
-        return slot ? <ShootingTaskDialog key={slot.id} title={`分镜 ${storyboardSlots.findIndex(item => item.id === slot.slotId) + 1}`}
-          brief={slot.detail} duration={slot.duration} ratio={ratio} busy={shootingBusy} error={shootingError}
-          soundMode={productionFor(storyboardSlots.find(item => item.id === slot.slotId)!).sound}
-          onClose={() => setShootingSlotId('')} onSubmit={brief => void createBoundShootingTask(brief)} /> : null;
-      })()}
+      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
+      {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
+      {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
+      {managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
+        <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
+        <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
+      </div>}
+      {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
+        ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
+        : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      {/* ── 顶部工作条：标题 + 保存草稿 + 我的作品 ─────────── */}
-      <div className="h-11 flex items-center gap-3 px-4 border-b border-border flex-shrink-0">
-        <FileText size={13} className="text-text-muted flex-shrink-0" />
-        <input
-          value={projectTitle}
-          onChange={e => setProjectTitle(e.target.value)}
-          placeholder="未命名草稿"
-          className="text-sm font-semibold text-text-primary bg-transparent outline-none min-w-0 flex-1 max-w-xs placeholder:text-text-muted"
-        />
-        {projectId && <span className="text-[10px] text-text-muted">已保存</span>}
-        <div className="ml-auto flex items-center gap-2">
-          {mode === 'clone' && contentMode === 'video' && (
-            <button onClick={() => void saveProject('template')} disabled={savingProj || voiceDraftLoading || ttsLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-50 transition-colors">
-              <Copy size={13} /> 保存为母版
-            </button>
-          )}
-          <button onClick={() => void saveProject('draft')} disabled={savingProj || voiceDraftLoading || ttsLoading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-50 transition-colors">
-            {savingProj ? <Loader2 size={13} className="animate-spin" /> : savedTick ? <Check size={13} className="text-accent" /> : <Save size={13} />}
-            {savedTick ? '已保存' : '保存草稿'}
-          </button>
-          {projectId && <button type="button" onClick={() => void saveProject('draft', { asNew: true })} disabled={savingProj || voiceDraftLoading || ttsLoading} className="rounded-lg border px-2 py-1.5 text-xs disabled:opacity-40">另存副本</button>}
-          <button onClick={() => void openProjects()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all active:scale-95"
-            style={{ background: TRAFFIC_GREEN }}>
-            <FolderOpen size={13} /> 我的创作
-          </button>
-        </div>
-      </div>
-
-      {modeNotice && <div role="status" className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">{modeNotice}</div>}
-      <div className="flex flex-1 min-h-0">
-      {/* ── ① 步骤导航 ─────────────────────────────── */}
-      <aside className="w-32 flex-shrink-0 border-r border-border flex flex-col bg-surface-2/40">
-        <div className="px-3 pt-4 pb-3">
-          <p className="text-[9px] font-mono text-text-muted uppercase tracking-wider mb-1">AI 生成</p>
-          <p className="text-xs font-bold text-text-primary font-display">AI智能素材</p>
-        </div>
-        <div className="flex-1 px-2 space-y-0.5 overflow-y-auto">
-          {activeSteps.map((s, i) => {
-            const done = i < stepIdx;
-            const active = i === stepIdx;
-            return (
-              <button key={s.id} onClick={() => i <= stepIdx && setStepIdx(i)}
-                disabled={i > stepIdx}
-                className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors ${
-                  active ? 'bg-surface shadow-sm' : i > stepIdx ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface'}`}>
-                <span className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 text-[10px] font-bold"
-                  style={
-                    active ? { background: TRAFFIC_GREEN, color: '#fff' }
-                    : done ? { background: 'var(--color-accent-glow)', color: 'var(--color-accent)' }
-                    : { background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }
-                  }>
-                  {done ? <Check size={11} /> : i + 1}
-                </span>
-                <div className="min-w-0">
-                  <p className={`text-[11px] font-semibold leading-tight whitespace-nowrap ${active ? 'text-text-primary' : 'text-text-secondary'}`}>{s.label}</p>
-                  <p className="text-[8px] text-text-muted truncate whitespace-nowrap mt-0.5">{s.hint}</p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </aside>
-
-      {/* ── ② 操作区 ───────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-1 min-h-0 overflow-y-auto p-6">
-          <AnimatePresence mode="wait">
-            <motion.div key={step} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.2 }} className="h-full">
-              {renderStep()}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-
-        {/* 底部导航条 */}
-        <div data-lingshu-assistant-clearance="bottom-navigation" className="h-14 flex items-center justify-between px-6 border-t border-border flex-shrink-0">
-          <button onClick={prev} disabled={stepIdx === 0}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-text-secondary hover:bg-surface-2 disabled:opacity-30 disabled:hover:bg-transparent transition-colors">
-            <ChevronLeft size={15} /> 上一步
-          </button>
-          <div className="flex items-center gap-1.5">
-            {activeSteps.map((_, i) => (
-              <span key={i} className="h-1 rounded-full transition-all"
-                style={{ width: i === stepIdx ? 18 : 6, background: i <= stepIdx ? TRAFFIC_GREEN : 'var(--color-border)' }} />
-            ))}
-          </div>
-          {!isLast ? (
-            <button onClick={next} disabled={!canNext}
-              className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all active:scale-95 disabled:opacity-40"
-              style={{ background: TRAFFIC_GREEN }}>
-              {step === 'script'
-                ? scriptStageTab === 'theme'
-                  ? '确认分镜并处理口播'
-                  : scriptStageTab === 'voiceover'
-                    ? '确认口播并选择声音'
-                    : voiceoverMode === 'unselected'
-                      ? '请先选择声音策略'
-                      : voiceoverMode === 'none'
-                        ? '确认字幕并进入素材匹配'
-                        : '试听确认并进入素材匹配'
-                : step === 'material' && contentMode === 'video'
-                  ? canNext
-                    ? '完成选材并进入配乐'
-                    : `还需放入 ${Math.max(0, storyboardSlots.length - assignedCount)} 个分镜视频`
-                  : '下一步'} <ChevronRight size={15} />
-            </button>
+      <div className={showProjects ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+      <StudioWorkbenchFrame
+        className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
+        projectTitle={projectTitle}
+        projectSubtitle={`${contentMode === 'video' ? '视频' : '图文'} · ${platform} · ${ratio}`}
+        onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
+        onSave={!agentProduction.active && !managedProductionProjectRef.current ? () => void saveProject('draft').catch(error => setModeNotice(error.message)) : undefined}
+        saveStatus={{
+          state: savingProj ? 'saving' : autosaveStatus,
+          savedAt: lastAutosavedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+          onRetry: () => void saveProject('draft').catch(error => setModeNotice(error.message)),
+        }}
+        steps={workbenchSteps}
+        activeStepId={workbenchStageId}
+        onStepChange={targetId => {
+          const targetStageIndex = targetId === 'settings' ? 0 : targetId === 'script' ? 1 : 2;
+          if (targetStageIndex > stageIdx) return;
+          const anchor = activeSteps.findIndex(item => activeStages[targetStageIndex]?.steps.includes(item.id));
+          if (anchor >= 0) setStepIdx(anchor);
+        }}
+        objectTitle={contentMode === 'video' && storyboardSlots.length ? '分镜脚本' : '创作输入'}
+        objectDescription={contentMode === 'video' && storyboardSlots.length ? `${storyboardSlots.length} 个分镜 · 点击定位画面` : '生成前确认关键输入'}
+        objectPanel={(
+          contentMode === 'video' && storyboardSlots.length ? (
+            <StudioStoryboardList items={workbenchStoryboardItems} selectedId={activeWorkbenchSlot?.id} onSelect={focusWorkbenchStoryboardSlot} />
           ) : (
             <StudioInputSummary
               title="已确认内容"

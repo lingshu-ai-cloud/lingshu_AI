@@ -892,6 +892,7 @@ function ChatThread({
   knowledgeMiss,
   bridgeOnly,
   draftMeta,
+  onToast,
   onMockBuyerMessage,
   sending,
   channelReady,
@@ -918,6 +919,7 @@ function ChatThread({
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
   draftMeta: SalesDecisionMeta | null;
+  onToast: (text: string) => void;
   onMockBuyerMessage: (text: string) => void;
   sending?: boolean;
   channelReady?: boolean;
@@ -2612,6 +2614,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onMockBuyerMessage={pushMockBuyerMessage}
           sending={sendingReply}
           channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
+          onToast={showToast}
         />
         </div>
         <div className={mobilePanel === 'profile' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>

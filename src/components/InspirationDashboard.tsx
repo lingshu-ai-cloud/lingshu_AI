@@ -19,7 +19,6 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { readScriptGapTasks, updateScriptGapTask, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
-import { probeShootingVideo } from '../lib/shootingUpload';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -2435,13 +2434,12 @@ interface VideoCardProps {
 
 function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
-  const crawlRule = sourceScopeLabel(video);
+  const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const isImagePost = video.contentFormat === 'image';
   const [mediaReady, setMediaReady] = useState(false);
   useEffect(() => setMediaReady(false), [video.id, video.thumbnail, video.videoUrl]);
   const imageAnalyzed = video.aiAnalysis?.imageEvidence?.status === 'analyzed' && Boolean(video.aiAnalysis.imageEvidence.observedFacts?.length);
   const imageFailed = video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed';
-  const processable = canProcessVideo(video);
   const trendLabel = isImagePost
     ? (imageAnalyzed ? '✓ 已完成拆解' : imageFailed ? '! 分析失败' : '… 待分析')
     : video.trend === 'hot' ? '🔥 热门' : video.trend === 'rising' ? '↑ 上升' : '— 平稳';
@@ -2484,28 +2482,9 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAn
           <span className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900 shadow-sm">
             {isImagePost ? <Images size={12} /> : <Play size={12} fill="currentColor" />}预览内容
           </span>
-          {isImagePost && <button onClick={e => { e.stopPropagation(); onSelect(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-            style={{ background: meta.bg, color: meta.color }}>
-            <Sparkles size={11} />拆解图文
-          </button>}
-          {!isImagePost && <button onClick={e => { e.stopPropagation(); if (!processable) return; if (onAnalyzeVideo) onAnalyzeVideo(); else onSelect(); }}
-            disabled={analyzingVideo || !processable}
-            title={processable ? '分析脚本' : '缺少有效时长，暂不能分析'}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-            style={{ background: meta.bg, color: meta.color }}>
-            {analyzingVideo ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}分析脚本
-          </button>}
-          {video.sourceUrl && !isImagePost && (
-            <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }}
-              disabled={favoritingMaterial}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/90 text-neutral-900 disabled:opacity-70">
-              {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />}收藏
-            </button>
-          )}
         </div>
         <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold text-white bg-black/50 backdrop-blur-sm">
-          {isImagePost ? '图文' : displayDuration(video.duration)}
+          {isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}
         </div>
         <div className="absolute bottom-2 right-2 max-w-[60%] truncate px-1.5 py-0.5 rounded-md text-[10px] font-bold text-white bg-black/55 backdrop-blur-sm">
           {crawlRule}
@@ -2530,7 +2509,7 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAn
           <span className="flex items-center gap-1 text-[10px] text-text-muted">{isImagePost ? <Images size={9} /> : <Clock size={9} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} views`}</span>
         </div>
         <div className="flex flex-wrap gap-1">
-          {video.tags.filter(tag => tag.toLowerCase() !== meta.label.toLowerCase()).slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
+          {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3">
           <button type="button" onClick={onSelect}
@@ -2578,9 +2557,8 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onAnaly
   const meta = getPlatformMeta(video.platform);
   const trendColor = video.trend === 'hot' ? 'text-accent' : video.trend === 'rising' ? 'text-green' : 'text-text-muted';
   const trendLabel = video.trend === 'hot' ? '热门' : video.trend === 'rising' ? '上升' : '平稳';
-  const crawlRule = sourceScopeLabel(video);
+  const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const isImagePost = video.contentFormat === 'image';
-  const processable = canProcessVideo(video);
   return (
     <div className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-all group sm:flex-nowrap ${isSelected ? 'bg-accent-glow' : 'hover:bg-surface-2'}`}>
       <button type="button" onClick={e => { e.stopPropagation(); onWatch(); }}
@@ -2600,27 +2578,29 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onAnaly
         <p className="text-sm text-text-primary font-medium truncate">{video.title}</p>
       </div>
       <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
-        {video.tags.filter(tag => tag.toLowerCase() !== meta.label.toLowerCase()).slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
+        {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
       </div>
       <span className="hidden xl:inline-flex flex-shrink-0 px-2 py-1 rounded-md text-[10px] font-semibold bg-surface-2 border border-border text-text-muted">
         {crawlRule}
       </span>
       <div className="flex-shrink-0 text-right min-w-[52px]">
-        <p className="text-xs font-mono text-text-secondary">{isImagePost ? '图文' : displayDuration(video.duration)}</p>
+        <p className="text-xs font-mono text-text-secondary">{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
         <p className="text-[10px] text-text-muted">{video.views}</p>
       </div>
-      {isImagePost && <button onClick={e => { e.stopPropagation(); onSelect(); }}
-        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all opacity-0 group-hover:opacity-100"
-        style={{ color: 'var(--color-accent)', borderColor: 'rgba(22,163,74,0.25)', background: 'var(--color-accent-glow)' }}>
-        <Sparkles size={11} /><span>拆解图文</span>
-      </button>}
-      {!isImagePost && <button onClick={e => { e.stopPropagation(); if (onAnalyzeVideo) onAnalyzeVideo(); else onSelect(); }}
-        disabled={analyzingVideo || !processable}
-        title={processable ? '分析脚本' : '缺少有效时长，暂不能分析'}
-        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all opacity-0 group-hover:opacity-100"
-        style={{ color: 'var(--color-accent)', borderColor: 'rgba(22,163,74,0.25)', background: 'var(--color-accent-glow)' }}>
-        {analyzingVideo ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}<span>分析脚本</span>
-      </button>}
+      <div className="ml-auto flex w-full items-center justify-end gap-1.5 sm:ml-0 sm:w-auto">
+        <button type="button" onClick={onSelect}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-accent hover:text-accent">
+          <Eye size={12} />查看详情
+        </button>
+        <button type="button" onClick={onCreate}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-95">
+          <Sparkles size={12} />用此灵感创作
+        </button>
+        <button type="button" onClick={() => onAnalyzeVideo?.()} disabled={analyzingVideo} aria-label={isImagePost ? '查看图文拆解' : '分析脚本'} title={isImagePost ? '查看图文拆解' : '分析脚本'}
+          className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent disabled:opacity-60">
+          {analyzingVideo ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
+        </button>
+      </div>
       {video.sourceUrl && !isImagePost && (
         <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }} disabled={favoritingMaterial}
           className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-60">
@@ -2956,7 +2936,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [crawledVideos, setCrawledVideos] = useState<TrendVideo[]>([]);
   const [videoPage, setVideoPage] = useState(1);
   const [videoTotalPages, setVideoTotalPages] = useState(1);
-  const [, setTenantVideoTotalItems] = useState(0);
+  const [tenantVideoTotalItems, setTenantVideoTotalItems] = useState(0);
   const [videosLoading, setVideosLoading] = useState(false);
   const [lastCrawlVideoIds, setLastCrawlVideoIds] = useState<string[]>([]);
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
@@ -2991,6 +2971,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [generatingNeedId, setGeneratingNeedId] = useState('');
   const [scriptGapTasks, setScriptGapTasks] = useState<ScriptGapTask[]>([]);
+  const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
   const [shootingTaskError, setShootingTaskError] = useState('');
   const [pendingTaskLink, setPendingTaskLink] = useState<{ taskId: string; materialId: string } | null>(null);
   const [classifyingMaterialId, setClassifyingMaterialId] = useState('');
@@ -3325,57 +3306,38 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     });
   }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource]);
 
-  const handleUploadMaterials = async (files: FileList | null, taskId?: string) => {
+  const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
-    if (uploadingMaterial) return;
-    const uploadFiles = Array.from(files);
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
       const uploadedVideos: Material[] = [];
       const uploadedIds: string[] = [];
-      for (const file of uploadFiles) {
+      for (const file of Array.from(files)) {
         const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
-        if (taskId && type !== 'video') throw new Error('待拍任务只接受视频，请使用视频文件');
-        const metadata = type === 'video' ? await probeShootingVideo(file) : { duration: 0 };
-        const dataBase64 = await fileToDataUrl(file);
-        const result = await studioApi.uploadMaterial({
-          name: file.name,
+        const result = await studioApi.uploadMaterialFile(file, {
           folder: 'social',
           type,
-          ...metadata,
-          dataBase64,
-          mimeType: file.type,
+          duration: 0,
           sourceType: 'local-upload',
         });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
         uploadedIds.push(result.material.id);
-        if (taskId) {
-          // Link each success immediately; later upload/analysis failures must not lose it.
-          try { await updateScriptGapTask(taskId, { uploadedMaterialIds: [result.material.id] }); }
-          catch (error) { setPendingTaskLink({ taskId, materialId: result.material.id }); throw error; }
-          if (scriptGapTasks.find(task => task.id === taskId)?.soundMode === 'source') {
-            const transcript = await studioApi.transcribeMaterial(result.material.id);
-            if (!transcript.ok) throw new Error(transcript.error || '视频已关联，口播转写未通过，请在任务中重试核对');
-          }
-        }
         if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }
-      setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${uploadFiles.length} 个素材到社媒素材库`);
-      const analysisResults = await Promise.allSettled(uploadedVideos.map(material => studioApi.analyzeMaterialSegments(material.id)));
+      setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个素材到社媒素材库`);
       await refreshMaterials();
       window.dispatchEvent(new Event('lingshu:materials-updated'));
-      const analyzedCount = analysisResults.filter(result => result.status === 'fulfilled' && result.value.ok).length;
-      const failedCount = uploadedVideos.length - analyzedCount;
+      if (uploadingScriptGapId && uploadedIds.length) updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
       setMaterialMessage(uploadedVideos.length
-        ? `已上传 ${uploadFiles.length} 个素材，${analyzedCount} 个视频已完成分镜分析${failedCount ? `，${failedCount} 个分析失败可稍后重试` : ''}`
-        : `已上传 ${uploadFiles.length} 个素材到社媒素材库`);
+        ? `已上传 ${files.length} 个素材，视频已进入分析队列，可在素材卡片查看进度`
+        : `已上传 ${files.length} 个素材到社媒素材库`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
       setMaterialMessage(e instanceof Error ? e.message : '素材上传失败');
     } finally {
       setUploadingMaterial(false);
-      void refreshMaterials();
+      setUploadingScriptGapId('');
       if (uploadInputRef.current) uploadInputRef.current.value = '';
     }
   };
@@ -3787,31 +3749,34 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   return (
     <main className="relative min-h-full bg-ink text-text-primary">
       <div className="transition-all duration-300">
-        <div className="pointer-events-none absolute left-0 top-48 z-30 flex flex-col gap-2">
-          {([
-            { id: 'inspiration' as const, label: '爆款灵感', short: '爆款', count: visibleVideos.length, icon: <Flame size={18} /> },
-            { id: 'library' as const, label: '社媒素材库', short: '素材', count: localMaterials.length, icon: <Film size={18} /> },
-            { id: 'shooting' as const, label: '待拍摄素材', short: '待拍', count: shootingNeeds.length + scriptGapTasks.length, icon: <Lightbulb size={18} /> },
-          ]).map(item => {
-            const active = innerView === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                title={`${item.label} · ${item.count}`}
-                onClick={() => setInnerView(item.id)}
-                className={`pointer-events-auto flex h-28 w-14 flex-col items-center justify-center gap-1.5 rounded-r-2xl border border-l-0 text-[14px] font-black shadow-md transition-all ${
-                  active
-                    ? 'border-accent/30 bg-accent text-white'
-                    : 'border-border bg-white/95 text-slate-500 hover:bg-accent-glow hover:text-accent'
-                }`}
-              >
-                {item.icon}
-                <span className="[writing-mode:vertical-rl] tracking-[0.16em] leading-none">{item.short}</span>
-              </button>
-            );
-          })}
-        </div>
+        <div className="px-4 py-5 sm:px-6 lg:py-6">
+          <div className="mb-4 border-b border-border">
+            <nav className="-mb-px flex min-w-0 max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
+              {([
+                { id: 'inspiration' as const, label: '爆款灵感', count: tenantVideoTotalItems || visibleVideos.length, icon: <Flame size={16} /> },
+                { id: 'library' as const, label: '我的素材', count: localMaterials.length, icon: <Film size={16} /> },
+                { id: 'shooting' as const, label: '拍摄任务', count: shootingNeeds.length + scriptGapTasks.length, icon: <Lightbulb size={16} /> },
+              ]).map(item => {
+                const active = innerView === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setInnerView(item.id)}
+                    className={`inline-flex min-h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/30 ${
+                      active ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'
+                    }`}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                    <span className={`border-l pl-2 text-[10px] font-bold ${active ? 'border-accent/35 text-accent' : 'border-border text-text-muted'}`}>{item.count}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
 
             {materialMessage && (
               <div role="status" aria-live="polite" className="mb-3 border-l-2 border-accent bg-accent-glow px-4 py-2.5 text-sm font-semibold text-accent">
@@ -3933,20 +3898,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             </AnimatePresence>
           </div>}
 
-        {innerView === 'inspiration' && <div className="mb-4 grid grid-cols-3 gap-3 max-w-xl">
-          {[
-            { icon: <Zap size={13} />,       label: contentFormat === 'image' ? '当前结果·图文' : '当前结果·视频', value: `${filtered.length}`, color: 'text-accent' },
-            { icon: <TrendingUp size={13} />, label: contentFormat === 'image' ? '当前·已拆解' : '当前·上升趋势', value: `${contentFormat === 'image' ? filtered.filter(video => video.aiAnalysis?.imageEvidence?.status === 'analyzed').length : filtered.filter(video => video.trend === 'rising').length}`, color: 'text-green' },
-            { icon: <Globe size={13} />,      label: '当前·覆盖平台', value: `${new Set(filtered.map(v => v.platform)).size}`, color: 'text-accent' },
-          ].map(stat => (
-            <div key={stat.label} className="card p-3 flex items-center gap-2.5">
-              <span className={stat.color}>{stat.icon}</span>
-              <div>
-                <p className="text-base font-bold text-text-primary font-display leading-none">{stat.value}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">{stat.label}</p>
-              </div>
-            </div>
-          ))}
+        {innerView === 'inspiration' && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-border bg-surface-2/60 px-3.5 py-2 text-xs text-text-muted">
+          <span><strong className="text-sm text-text-primary">{tenantVideoTotalItems || visibleVideos.length}</strong> 条{contentFormat === 'image' ? '图文' : '视频'}灵感</span>
+          <span>当前显示 <strong className="text-text-primary">{filtered.length}</strong> 条</span>
+          <span>近 3 日新入库 <strong className="text-text-primary">{recentThreeDayUploads}</strong> 条</span>
+          <span>覆盖 <strong className="text-text-primary">{new Set(visibleVideos.map(v => v.platform)).size}</strong> 个平台</span>
+          {videosLoading && <span className="ml-auto inline-flex items-center gap-1.5 font-semibold text-accent"><Loader2 size={12} className="animate-spin" />更新中…</span>}
         </div>}
 
         <div>
@@ -4263,45 +4220,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
           {innerView === 'shooting' && (
             <div className="space-y-4">
-              {shootingTaskError && <p role="alert" className="text-xs text-red-600">{shootingTaskError}</p>}
-              {materialMessage && <p role="status" className="text-xs text-text-secondary">{materialMessage}</p>}
-              {pendingTaskLink && <button type="button" disabled={uploadingMaterial} className="rounded-lg border border-amber-300 px-3 py-2 text-xs" onClick={async () => {
-                try { await updateScriptGapTask(pendingTaskLink.taskId, { uploadedMaterialIds: [pendingTaskLink.materialId] }); setPendingTaskLink(null); setMaterialMessage('视频已重新关联到待拍任务'); }
-                catch (error) { setMaterialMessage(error instanceof Error ? error.message : '关联失败'); }
-              }}>视频已入库，重试关联原任务</button>}
               {scriptGapTasks.length > 0 && <div className="space-y-3">
                 <p className="text-xs font-black text-text-secondary">脚本缺口</p>
                 {scriptGapTasks.map(task => <article key={task.id} className="rounded-lg border border-amber/25 bg-amber-dim p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">脚本缺口</span><h3 className="mt-2 text-sm font-bold text-text-primary">{task.title}</h3><p className="mt-1 text-xs text-text-secondary">{task.shotBrief}</p><p className="mt-2 text-[11px] text-text-muted">{task.productLabel} · {task.themeTitle} · 建议 {task.suggestedDurationSec} 秒</p></div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className={`relative rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800 ${uploadingMaterial ? 'opacity-50' : 'cursor-pointer'}`}>
-                        {uploadingMaterial ? '正在上传…' : '上传补拍视频'}
-                        <input type="file" aria-label={`上传补拍视频：${task.title}`} accept="video/*" multiple disabled={uploadingMaterial} className="absolute inset-0 w-full opacity-0 cursor-pointer" onChange={event => { void handleUploadMaterials(event.currentTarget.files, task.id); event.currentTarget.value = ''; }} />
-                      </label>
-                      {task.sourceProjectId && <button type="button" onClick={() => {
-                        localStorage.setItem('ow_studio_open_project', JSON.stringify({ at: Date.now(), projectId: task.sourceProjectId, assemblyId: task.sourceAssemblyId, shooting: true }));
-                        openMaterialSmartGeneration();
-                      }} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">返回创作草稿</button>}
-                      <span className="text-[11px] text-text-muted">{task.uploadedMaterialIds.length ? `${task.uploadedMaterialIds.length} 条候选 · 返回草稿检查补位` : '等待拍摄上传'}</span>
-                      {task.soundMode === 'source' && task.uploadedMaterialIds.map(id => <button key={id} type="button" disabled={uploadingMaterial} onClick={async () => {
-                        setUploadingMaterial(true);
-                        try { const result = await studioApi.transcribeMaterial(id); if (!result.ok) throw new Error(result.error || '转写失败'); await refreshMaterials(); setMaterialMessage('已按真实口播转写，请返回草稿核对补位'); }
-                        catch (error) { setMaterialMessage(error instanceof Error ? error.message : '转写失败'); }
-                        finally { setUploadingMaterial(false); }
-                      }} className="rounded-lg border px-2 py-1.5 text-xs">转写核对：{localMaterials.find(material => material.id === id)?.name || id.slice(0, 8)}</button>)}
-                      <select aria-label={`关联已上传视频：${task.title}`} defaultValue="" disabled={uploadingMaterial} className="max-w-48 rounded-lg border bg-white px-2 py-1.5 text-xs" onChange={async event => {
-                        const id = event.currentTarget.value; event.currentTarget.value = ''; if (!id) return;
-                        try { await updateScriptGapTask(task.id, { uploadedMaterialIds: [id] }); setMaterialMessage('已关联视频候选，返回草稿检查补位'); }
-                        catch (error) { setMaterialMessage(error instanceof Error ? error.message : '关联失败'); }
-                      }}><option value="">关联已上传视频…</option>{localMaterials.filter(material => material.type === 'video' && !task.uploadedMaterialIds.includes(material.id)).map(material => <option key={material.id} value={material.id}>{material.name}</option>)}</select>
-                    </div>
+                    <div><span className="border-l-2 border-amber px-2 py-0.5 text-[10px] font-bold text-amber">脚本缺口</span><h3 className="mt-2 text-sm font-bold text-text-primary">{task.title}</h3><p className="mt-1 text-xs text-text-secondary">{task.shotBrief}</p><p className="mt-2 text-[11px] text-text-muted">{task.productLabel} · {task.themeTitle} · 建议 {task.suggestedDurationSec} 秒</p></div>
+                    <div className="flex gap-2"><button type="button" onClick={() => { setUploadingScriptGapId(task.id); setInnerView('library'); setTimeout(() => uploadInputRef.current?.click(), 50); }} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:script-gap-refill', { detail: task }))} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">一键回填</button>}</div>
                   </div>
                 </article>)}
               </div>}
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  { label: '等待上传', value: shootingNeeds.length + scriptGapTasks.filter(task => !task.uploadedMaterialIds.length).length, color: 'text-accent' },
+                  { label: '待拍摄缺口', value: shootingNeeds.length, color: 'text-accent' },
                   { label: '高优先级', value: shootingNeeds.filter(item => item.priority === '高').length, color: 'text-red-500' },
                   { label: '已入库素材', value: localMaterials.length, color: 'text-accent' },
                 ].map(item => (
@@ -4315,8 +4245,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               {shootingNeeds.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                   <Check size={30} className="mx-auto mb-3 text-accent" />
-                  <p className="text-sm font-bold text-text-primary">{scriptGapTasks.length ? '暂无其他自动推荐的补拍缺口' : '当前没有明显待拍摄缺口'}</p>
-                  <p className="mt-1 text-xs text-text-muted">{scriptGapTasks.length ? '上方草稿绑定任务仍需按各自状态处理；上传候选不等于已完成成片验收。' : '素材库已能覆盖当前抓取视频的主要分镜。'}</p>
+                  <p className="text-sm font-bold text-text-primary">当前没有明显待拍摄缺口</p>
+                  <p className="mt-1 text-xs text-text-muted">素材库已能覆盖当前抓取视频的主要分镜。</p>
                 </div>
               ) : (
                 <div className="space-y-3">
