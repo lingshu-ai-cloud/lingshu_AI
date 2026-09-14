@@ -535,7 +535,7 @@ export default function App() {
               onAction={startAgentTask}
               onNavigate={handleNavigate}
               onSessionRefresh={() => void refreshSession()}
-              includeMockCustomers={false}
+              includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
@@ -614,7 +614,7 @@ export default function App() {
               onAction={startAgentTask}
               onSessionRefresh={() => void refreshSession()}
               isDemo={false}
-              includeMockCustomers={false}
+              includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
@@ -622,7 +622,7 @@ export default function App() {
           {page === 'enterprise' && <EnterprisePage />}
           {page === 'agentMemory' && (
             <AgentMemoryPage
-              includeMockCustomers={false}
+              includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}

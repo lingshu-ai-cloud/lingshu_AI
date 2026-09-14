@@ -15,6 +15,15 @@ function mockStorageKey(scope: string): string {
 
 async function storedMockCustomers(storageKey: string): Promise<CustomerProfile[]> {
   if (!import.meta.env.DEV) return [];
+  if (new URLSearchParams(window.location.search).get('mock') === 'quote') {
+    const { createQuoteMockCustomers } = await import('../mocks/quoteCustomerProfiles');
+    const seeds = createQuoteMockCustomers();
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const stored = Array.isArray(saved) ? saved.filter(item => seeds.some(seed => seed.id === item?.id)).map(cloneCustomer) : [];
+      return seeds.map(seed => stored.find(item => item.id === seed.id) || seed);
+    } catch { return seeds; }
+  }
   const { createMockCustomers } = await import('../mocks/customerProfiles');
   const scope = storageKey.slice(`${MOCK_STORAGE_KEY}:`.length);
   const seededCustomers = () => createMockCustomers(scope);
@@ -85,7 +94,7 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
 } {
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [loading, setLoading] = useState(false);
-  const scopedMockStorageKey = includeMockCustomers ? mockStorageKey(mockCustomerScope) : null;
+  const scopedMockStorageKey = includeMockCustomers ? mockStorageKey(mockCustomerScope + (import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote' ? ':quote-debug' : '')) : null;
 
   useEffect(() => {
     if (!includeMockCustomers) {

@@ -69,6 +69,7 @@ interface StoredCustomer {
   tenantId: string;
   waNumber: string;
   name: string;
+  whatsappProfileName?: string;
   language: string;
   languageLocked?: boolean;
   countryName?: string;
@@ -732,6 +733,7 @@ function upsertCustomer(input: { tenantId: string; waNumber: string; name?: stri
     tenantId: input.tenantId,
     waNumber: input.waNumber,
     name: input.name || input.waNumber,
+    whatsappProfileName: input.name || undefined,
     language: detectLanguage(input.body || ''),
     countryName: inferredRegion.countryName,
     timeZone: inferredRegion.timeZone,
@@ -749,6 +751,7 @@ function upsertCustomer(input: { tenantId: string; waNumber: string; name?: stri
     ...base,
     ...input.patch,
     name: input.name || base.name,
+    whatsappProfileName: input.name || base.whatsappProfileName,
     language: base.languageLocked ? base.language : (input.body ? detectLanguage(input.body) : base.language || detectLanguage('')),
     stage: stageByTimestamp(lastActiveAt),
     lastActiveAt: Math.max(base.lastActiveAt, lastActiveAt),
@@ -1757,6 +1760,7 @@ export function getWhatsAppCustomers(tenantId?: string): any[] {
     return {
       id: customer.id,
       name: customer.name,
+      whatsappProfileName: customer.whatsappProfileName,
       avatar: (customer.name[0] || 'W').toUpperCase(),
       countryName: customer.countryName || inferredRegion.countryName || '未知',
       email: undefined,

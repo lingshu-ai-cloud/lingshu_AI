@@ -24,6 +24,7 @@ import { useModalFocus } from "../hooks/useModalFocus";
 import { platformAdsApi, type PlatformAdTask } from "../lib/platformAds";
 import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, type AdManagement } from '../lib/platformAdsDomain';
 import "./platformAds.css";
+import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
 import AdManagedWorkspace from './AdManagedWorkspace';
@@ -82,9 +83,14 @@ export default function PlatformAdsPage({
   previewMode?: boolean;
 }) {
   const [dialog, setDialog] = useState<"create" | "accounts" | null>(null);
+  const [returnToCreate, setReturnToCreate] = useState(false);
+  const closeDialog = () => {
+    if (dialog === 'accounts' && returnToCreate) { setReturnToCreate(false); setDialog('create'); }
+    else setDialog(null);
+  };
   const modalRef = useModalFocus<HTMLDivElement>({
     open: dialog !== null,
-    onClose: () => setDialog(null),
+    onClose: closeDialog,
   });
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -165,6 +171,20 @@ export default function PlatformAdsPage({
     });
     setDialog("create");
   };
+  const continueAfterConnection = (connection: AdConnection) => {
+    if (returnToCreate) {
+      setReturnToCreate(false);
+      setDialog('create');
+      return;
+    }
+    openCreate();
+    setForm(current => ({
+      ...current,
+      channels: connection.provider === 'google' ? ['YouTube'] : connection.provider === 'tiktok' ? ['TikTok'] : ['Facebook', 'Instagram'],
+      goal: connection.provider === 'google' ? '获取线索或转化' : '提升有效视频观看',
+      ...(connection.currency === 'USD' || connection.currency === 'CNY' ? { currency: connection.currency } : {}),
+    }));
+  };
   const next = async (event: FormEvent) => {
     event.preventDefault();
     if (step < 2) {
@@ -203,21 +223,35 @@ export default function PlatformAdsPage({
   return (
     <div className="ads-workspace">
       <header className="ads-topbar">
-        <div>
-          <Megaphone size={18} />
-          <span>平台投放</span>
-          <ChevronRight size={14} />
-          <strong>{title}</strong>
+        <div className="ads-topbar-title">
+          <span className="ads-topbar-icon" aria-hidden="true">
+            <Megaphone size={13} />
+          </span>
+          <h1>{title}</h1>
         </div>
-        <span className="ads-preview-tag">{previewMode ? '独立界面预览' : '账户连接与执行状态以服务回执为准'}</span>
       </header>
       <main className="ads-main">
-        <div className="ads-heading">
-          <div>
-            <div className="ads-eyebrow">CONTENT INTO GROWTH</div>
-            <h1>{title}</h1>
-            <p>{page === 'adsManaged' ? 'AI 管什么、依据什么行动、哪些决策需要你确认。' : '让好视频被更多人看见，在一个工作台管理你的海外投放。'}</p>
-          </div>
+        <div className={isOverviewPage ? "ads-overview-toolbar" : "ads-page-toolbar"}>
+          {isOverviewPage && (
+            <nav className="ads-overview-tabs" aria-label="投放总览视图">
+              <button
+                type="button"
+                className={overviewTab === "performance" ? "active" : ""}
+                aria-current={overviewTab === "performance" ? "page" : undefined}
+                onClick={() => setOverviewTab("performance")}
+              >
+                <BarChart3 size={16} />整体表现
+              </button>
+              <button
+                type="button"
+                className={overviewTab === "creatives" ? "active" : ""}
+                aria-current={overviewTab === "creatives" ? "page" : undefined}
+                onClick={() => setOverviewTab("creatives")}
+              >
+                <Layers3 size={16} />素材效果
+              </button>
+            </nav>
+          )}
           <div className="ads-actions">
             <button
               className="ads-button"
@@ -235,26 +269,6 @@ export default function PlatformAdsPage({
             {page === 'adsManaged' && <button className="ads-button" onClick={() => onNavigate('adsPlans')}>管理投放计划</button>}
           </div>
         </div>
-        {isOverviewPage && (
-          <nav className="ads-overview-tabs" aria-label="投放总览视图">
-            <button
-              type="button"
-              className={overviewTab === "performance" ? "active" : ""}
-              aria-current={overviewTab === "performance" ? "page" : undefined}
-              onClick={() => setOverviewTab("performance")}
-            >
-              <BarChart3 size={16} />整体表现
-            </button>
-            <button
-              type="button"
-              className={overviewTab === "creatives" ? "active" : ""}
-              aria-current={overviewTab === "creatives" ? "page" : undefined}
-              onClick={() => setOverviewTab("creatives")}
-            >
-              <Layers3 size={16} />素材效果
-            </button>
-          </nav>
-        )}
         {notice && (
           <div className="ads-notice" role="status">
             <Check size={16} />
@@ -847,7 +861,7 @@ export default function PlatformAdsPage({
         <div
           className="ads-overlay"
           onKeyDown={(e) => {
-            if (e.key === "Escape") setDialog(null);
+            if (e.key === "Escape") { e.stopPropagation(); closeDialog(); }
           }}
         >
           <div
@@ -866,15 +880,15 @@ export default function PlatformAdsPage({
               </div>
               <button
                 className="ads-icon-button"
-                aria-label="关闭弹窗"
-                onClick={() => setDialog(null)}
+                aria-label={returnToCreate && dialog === 'accounts' ? "返回创建投放" : "关闭弹窗"}
+                onClick={closeDialog}
                 autoFocus
               >
                 <X size={20} />
               </button>
             </div>
             {dialog === "accounts" ? (
-              !previewMode ? <AdAccountConnections onTaskImported={task => { setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)]); setSelectedDraft(taskToDraft(task)); setDialog(null); onNavigate('adsPlans'); }} /> : <>
+              !previewMode ? <AdAccountConnections initialProvider={(returnToCreate ? form.channels.includes('TikTok') : selected === 'TikTok') ? 'tiktok' : (returnToCreate ? form.channels.includes('YouTube') : selected === 'YouTube') ? 'google' : 'meta'} continueLabel={returnToCreate ? '返回并继续创建' : '继续创建投放计划'} onContinue={continueAfterConnection} onTaskImported={task => { setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)]); setSelectedDraft(taskToDraft(task)); setDialog(null); onNavigate('adsPlans'); }} /> : <>
                 <p className="ads-muted">
                   四个渠道，通过三套广告系统连接。社媒发布授权与广告管理授权需分别确认。
                 </p>
@@ -904,6 +918,7 @@ export default function PlatformAdsPage({
               </>
             ) : (
               <form onSubmit={next}>
+                {!previewMode && <div className="ads-context-banner"><Link2 size={17} /><p>需要连接广告账户？当前填写内容会保留。</p><button type="button" className="ads-text-button" disabled={saving} onClick={() => { setReturnToCreate(true); setDialog('accounts'); }}>连接账户</button></div>}
                 <div className="ads-steps">
                   {["视频与目标", "渠道与预算", "预览方案"].map((s, i) => (
                     <span className={i === step ? "active" : ""} key={s}>

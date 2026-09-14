@@ -118,6 +118,8 @@ export interface OrderRecord {
 export interface CustomerProfile {
   id: string;
   name: string;
+  /** Public profile name supplied by WhatsApp. Never use the internal display name as customer-facing copy. */
+  whatsappProfileName?: string;
   avatar: string;
   countryName: string;
   email?: string;

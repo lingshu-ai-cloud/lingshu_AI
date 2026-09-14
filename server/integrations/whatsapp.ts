@@ -1,4 +1,5 @@
 import axios from 'axios';
+import FormData from 'form-data';
 
 export interface WhatsAppConfig {
   phoneNumberId: string;
@@ -11,6 +12,10 @@ export interface WhatsAppSendReceipt {
   messageId: string;
   recipientId: string;
   raw: Record<string, unknown>;
+}
+
+function graphVersion(): string {
+  return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
 }
 
 function sendReceipt(data: unknown): WhatsAppSendReceipt {
@@ -26,9 +31,36 @@ function sendReceipt(data: unknown): WhatsAppSendReceipt {
 
 export async function sendWhatsAppText(config: WhatsAppConfig, to: string, text: string, callbackData?: string): Promise<WhatsAppSendReceipt> {
   const response = await axios.post(
-    `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
+    `https://graph.facebook.com/${graphVersion()}/${config.phoneNumberId}/messages`,
     { messaging_product: 'whatsapp', to, type: 'text', text: { body: text }, ...(callbackData ? { biz_opaque_callback_data: callbackData } : {}) },
     { headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' } }
+  );
+  return sendReceipt(response.data);
+}
+
+export async function sendWhatsAppImage(
+  config: WhatsAppConfig,
+  to: string,
+  bytes: Buffer,
+  caption: string,
+  filename = 'quotation.png',
+  callbackData?: string,
+): Promise<WhatsAppSendReceipt> {
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', 'image/png');
+  form.append('file', bytes, { filename, contentType: 'image/png', knownLength: bytes.length });
+  const uploaded = await axios.post(
+    `https://graph.facebook.com/${graphVersion()}/${config.phoneNumberId}/media`,
+    form,
+    { headers: { Authorization: `Bearer ${config.accessToken}`, ...form.getHeaders() }, maxBodyLength: 10 * 1024 * 1024 },
+  );
+  const mediaId = String(uploaded.data?.id || '');
+  if (!mediaId) throw new Error('whatsapp_media_id_missing');
+  const response = await axios.post(
+    `https://graph.facebook.com/${graphVersion()}/${config.phoneNumberId}/messages`,
+    { messaging_product: 'whatsapp', to, type: 'image', image: { id: mediaId, caption }, ...(callbackData ? { biz_opaque_callback_data: callbackData } : {}) },
+    { headers: { Authorization: `Bearer ${config.accessToken}`, 'Content-Type': 'application/json' } },
   );
   return sendReceipt(response.data);
 }
@@ -42,7 +74,7 @@ export async function sendWhatsAppTemplate(
   callbackData?: string
 ): Promise<WhatsAppSendReceipt> {
   const response = await axios.post(
-    `https://graph.facebook.com/v19.0/${config.phoneNumberId}/messages`,
+    `https://graph.facebook.com/${graphVersion()}/${config.phoneNumberId}/messages`,
     {
       messaging_product: 'whatsapp',
       to,
@@ -67,7 +99,7 @@ export function verifyWhatsAppWebhook(
 
 export async function getPhoneNumberInfo(config: WhatsAppConfig) {
   const res = await axios.get(
-    `https://graph.facebook.com/v19.0/${config.phoneNumberId}`,
+    `https://graph.facebook.com/${graphVersion()}/${config.phoneNumberId}`,
     { headers: { Authorization: `Bearer ${config.accessToken}` } }
   );
   return res.data;

@@ -1,211 +1,111 @@
-import { useEffect, useState } from 'react';
-import { AlertTriangle, BadgeCheck, Calculator, Check, Loader2, MessageSquareText, PencilLine, Sparkles } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
+import { AlertTriangle, BadgeCheck, Calculator, Check, ChevronDown, ChevronUp, Eye, Loader2, PencilLine, Send, Sparkles, X } from 'lucide-react';
 import type { CustomerProfile } from '../../types/customer';
-import { quoteSkillApi, type QuoteSkillDraft } from '../../lib/quoteSkillApi';
-
-function quoteLikely(customer: CustomerProfile): boolean {
-  const latest = [...customer.timeline].reverse().find(event => event.actor === 'buyer')?.body || '';
-  return customer.stage === 'inquiry' || customer.stage === 'quoted' || /\b(quote|quotation|price|pricing|rfq|cost)\b|报价|价格|询价|多少钱/i.test(latest);
-}
+import { quoteSkillApi, type QuoteCatalogProduct, type QuoteSkillDraft } from '../../lib/quoteSkillApi';
 
 function money(value: number | null, currency: string): string {
-  return value == null ? '待人工填写' : `${currency} ${value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
+  return value == null ? '待补价' : `${currency} ${value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
 }
 
-export function QuoteSkillCard({ customer, onInsertReply, onToast }: {
+const fieldClass = 'mt-1 w-full rounded-lg border border-border bg-white px-2.5 py-2 text-xs text-text-primary outline-none focus:border-accent';
+
+export function QuoteSkillCard({ customer, onInsertReply, onToast, channelReady, onCardSent }: {
   customer: CustomerProfile;
   onInsertReply: (text: string) => void;
   onToast: (text: string) => void;
+  channelReady: boolean;
+  onCardSent: (summary: string, providerMessageId?: string) => void;
 }) {
   const [draft, setDraft] = useState<QuoteSkillDraft | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [quantity, setQuantity] = useState('');
-  const [unitPrice, setUnitPrice] = useState('');
-  const [productName, setProductName] = useState('');
-  const [material, setMaterial] = useState('');
-  const [deliveryDate, setDeliveryDate] = useState('');
-  const [destination, setDestination] = useState('');
-  const [incoterm, setIncoterm] = useState('');
-  const [packaging, setPackaging] = useState('');
-  const [drawingVersion, setDrawingVersion] = useState('');
-  const [currency, setCurrency] = useState('CNY');
-  const [unit, setUnit] = useState('件');
-  const [paymentTerms, setPaymentTerms] = useState('');
-  const [validityDays, setValidityDays] = useState('15');
+  const [expanded, setExpanded] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [catalog, setCatalog] = useState<QuoteCatalogProduct[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const detailsId = useId();
+  const [form, setForm] = useState({ productName: '', sku: '', quantity: '', unit: '件', material: '', unitPrice: '', currency: 'CNY', leadTime: '', deliveryDate: '', destination: '', incoterm: '', packaging: '', drawingVersion: '', paymentTerms: '', validityDays: '15' });
 
   useEffect(() => {
     let alive = true;
-    void quoteSkillApi.availability()
-      .then(data => { if (alive) setAvailable(data.enabled); })
-      .catch(() => { if (alive) setAvailable(false); });
+    void quoteSkillApi.availability().then(data => { if (alive) setAvailable(data.enabled); }).catch(() => { if (alive) setAvailable(false); });
     return () => { alive = false; };
   }, []);
 
   useEffect(() => {
     if (available !== true) return;
     let alive = true;
-    setDraft(null);
+    setDraft(null); setExpanded(false); setEditing(false);
     void quoteSkillApi.latest(customer.id).then(result => { if (alive) setDraft(result.draft); }).catch(() => {});
     return () => { alive = false; };
   }, [available, customer.id]);
 
   useEffect(() => {
+    if (available !== true) return;
+    let alive = true;
+    setCatalogLoading(true);
+    void quoteSkillApi.catalog()
+      .then(result => { if (alive) setCatalog(result.items); })
+      .catch(() => { if (alive) setCatalog([]); })
+      .finally(() => { if (alive) setCatalogLoading(false); });
+    return () => { alive = false; };
+  }, [available]);
+
+  useEffect(() => {
     if (!draft) return;
-    setQuantity(draft.quantity == null ? '' : String(draft.quantity));
-    setUnitPrice(draft.unitPrice == null ? '' : String(draft.unitPrice));
-    setProductName(draft.productName);
-    setMaterial(draft.material);
-    setDeliveryDate(draft.deliveryDate);
-    setDestination(draft.destination);
-    setIncoterm(draft.incoterm);
-    setPackaging(draft.packaging);
-    setDrawingVersion(draft.drawingVersion);
-    setCurrency(draft.currency);
-    setUnit(draft.unit);
-    setPaymentTerms(draft.paymentTerms);
-    setValidityDays(String(draft.validityDays));
+    setForm({ productName: draft.productName, sku: draft.sku, quantity: draft.quantity == null ? '' : String(draft.quantity), unit: draft.unit, material: draft.material, unitPrice: draft.unitPrice == null ? '' : String(draft.unitPrice), currency: draft.currency, leadTime: draft.leadTime, deliveryDate: draft.deliveryDate, destination: draft.destination, incoterm: draft.incoterm, packaging: draft.packaging, drawingVersion: draft.drawingVersion, paymentTerms: draft.paymentTerms, validityDays: String(draft.validityDays) });
   }, [draft]);
 
-  if (available !== true || (!quoteLikely(customer) && !draft)) return null;
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
-  const run = async (action: () => Promise<void>) => {
-    setLoading(true);
-    try { await action(); } catch (error) {
-      const message = error instanceof Error ? error.message : '报价能力暂时不可用';
-      if (/其他成员更新|刷新后重试/.test(message)) {
-        const latest = await quoteSkillApi.latest(customer.id).catch(() => null);
-        if (latest) setDraft(latest.draft);
-      }
-      onToast(message);
-    }
-    finally { setLoading(false); }
-  };
+  if (available !== true) return null;
+  const run = async (action: () => Promise<void>) => { setLoading(true); try { await action(); } catch (error) { const message = error instanceof Error ? error.message : '报价能力暂时不可用'; if (/其他成员更新|刷新后重试/.test(message)) setDraft((await quoteSkillApi.latest(customer.id).catch(() => null))?.draft || null); onToast(message); } finally { setLoading(false); } };
+  const createDraft = (clonePrevious = false) => run(async () => { const result = await quoteSkillApi.create({ customerId: customer.id, customerWhatsAppName: customer.whatsappProfileName, customerLanguage: customer.language, productHint: customer.product || customer.outboundProduct, messages: customer.timeline.filter(event => event.type === 'whatsapp').slice(-12).map(event => event.body), clonePrevious }); setDraft(result.draft); setExpanded(true); setEditing(false); onToast(clonePrevious ? '已复制上一版，可编辑后重新确认' : result.draft.status === 'needs_clarification' ? '已整理询价，请补齐报价信息' : '报价草稿已生成'); });
+  const save = () => draft && run(async () => { if (!form.productName.trim() || !form.material.trim() || !form.unit.trim() || !form.destination.trim() || !form.incoterm.trim() || !form.paymentTerms.trim() || (!form.deliveryDate.trim() && !form.leadTime.trim()) || !(Number(form.quantity) > 0) || !(Number(form.unitPrice) > 0) || !Number.isInteger(Number(form.validityDays)) || Number(form.validityDays) < 1 || Number(form.validityDays) > 365) throw new Error('请完整填写产品、数量、规格、单价、交货地点、贸易术语、交期、付款条款和有效期'); const selectedProduct = catalog.find(product => product.name === form.productName && (!form.sku || !product.sku || product.sku === form.sku)); const result = await quoteSkillApi.update(draft.id, draft.revision, { ...form, quantity: Number(form.quantity), unitPrice: Number(form.unitPrice), validityDays: Number(form.validityDays), ...(selectedProduct ? { catalogProductRef: selectedProduct.sku || selectedProduct.name } : {}) }); setDraft(result.draft); setEditing(false); onToast('报价草稿已更新'); });
+  const confirm = () => draft && run(async () => { const result = await quoteSkillApi.confirm(draft.id, draft.revision); setDraft(result.draft); onToast('报价已人工确认，可预览并发送'); });
+  const preview = () => draft && run(async () => { const blob = await quoteSkillApi.card(draft.id); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(URL.createObjectURL(blob)); });
+  const sendCard = () => draft && run(async () => { if (customer.isMock) { const sentAt = new Date().toISOString(); setDraft({ ...draft, delivery: { status: 'sent', sentAt, providerMessageId: `mock-${Date.now()}`, imageSha256: 'mock' } }); onCardSent(`${draft.quoteNumber} · V${draft.version} · ${money(draft.subtotal, draft.currency)}`); setPreviewUrl(''); onToast('模拟报价卡已发送，仅写入本地会话'); return; } const result = await quoteSkillApi.sendCard(draft.id); setDraft(result.draft); onCardSent(`${result.draft.quoteNumber} · V${result.draft.version} · ${money(result.draft.subtotal, result.draft.currency)}`, result.providerMessageId); setPreviewUrl(''); onToast('报价卡已发送到 WhatsApp'); });
 
-  const createDraft = () => run(async () => {
-    const result = await quoteSkillApi.create({
-      customerId: customer.id,
-      customerName: customer.name,
-      customerLanguage: customer.language,
-      productHint: customer.product || customer.outboundProduct,
-      messages: customer.timeline.filter(event => event.type === 'whatsapp').slice(-12).map(event => event.body),
-    });
-    setDraft(result.draft);
-    onToast(result.draft.status === 'needs_clarification' ? '已整理询盘，请补充缺失信息' : '已生成内部报价草稿');
-  });
-
-  const save = () => draft && run(async () => {
-    if (!productName.trim() || !material.trim() || !unit.trim() || !destination.trim() || !incoterm.trim() || !paymentTerms.trim() || (!deliveryDate.trim() && !draft.leadTime.trim()) || !(Number(quantity) > 0) || !(Number(unitPrice) > 0) || !Number.isInteger(Number(validityDays)) || Number(validityDays) < 1 || Number(validityDays) > 365) {
-      throw new Error('请完整填写产品、数量、材料、单价、交货地点、贸易术语、交期、付款条款和报价有效期');
-    }
-    const result = await quoteSkillApi.update(draft.id, draft.revision, {
-      productName,
-      quantity: quantity ? Number(quantity) : null,
-      unitPrice: unitPrice ? Number(unitPrice) : null,
-      material,
-      deliveryDate,
-      destination,
-      incoterm,
-      packaging,
-      drawingVersion,
-      currency,
-      unit,
-      paymentTerms,
-      validityDays: Number(validityDays),
-    });
-    setDraft(result.draft);
-    setEditing(false);
-    onToast('报价草稿已更新');
-  });
-
-  const confirm = () => draft && run(async () => {
-    const result = await quoteSkillApi.confirm(draft.id, draft.revision);
-    setDraft(result.draft);
-    onToast('报价已由你确认，仍不会自动发送');
-  });
-
-  const generateReply = () => draft && run(async () => {
-    const result = await quoteSkillApi.reply(draft.id);
-    onInsertReply(result.reply);
-    onToast('报价回复已放入输入框，请核对后发送');
-  });
-
-  if (!draft) {
-    return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4" data-quote-skill-card>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-black text-emerald-800"><Sparkles size={14} />智能报价能力包</div>
-            <p className="mt-1 text-xs leading-5 text-emerald-700">检测到客户可能在询价。Agent 可以整理需求并调用企业产品与报价规则，结果只生成内部草稿。</p>
-          </div>
-          <button type="button" disabled={loading} onClick={createDraft} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
-            {loading ? <Loader2 size={13} className="animate-spin" /> : <Calculator size={13} />}整理报价
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (!draft) return <section className="rounded-lg border border-emerald-200 bg-white p-3" data-quote-skill-card><div className="flex items-center gap-2 text-xs font-black text-emerald-800"><Sparkles size={14} />智能报价</div><p className="mt-1 text-[11px] leading-5 text-text-muted">从当前会话提取需求，形成待人工核对的英文报价草稿。</p><button type="button" disabled={loading} onClick={() => createDraft(false)} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <Calculator size={13} />}整理报价</button></section>;
 
   const ready = draft.status === 'ready_for_review';
   const confirmed = draft.status === 'confirmed';
-  return (
-    <div className={`rounded-2xl border p-4 ${confirmed ? 'border-emerald-200 bg-emerald-50/60' : ready ? 'border-cyan-200 bg-cyan-50/60' : 'border-amber-200 bg-amber-50/60'}`} data-quote-skill-card>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-black text-text-primary">
-            {confirmed ? <BadgeCheck size={15} className="text-emerald-700" /> : ready ? <Calculator size={15} className="text-cyan-700" /> : <AlertTriangle size={15} className="text-amber-700" />}
-            报价能力包 V{draft.version} · {confirmed ? '人工已确认' : ready ? '待人工确认' : '需要补充信息'}
-          </div>
-          <p className="mt-1 text-[11px] text-text-muted">正式报价属于 L4 高风险动作，系统不会自动发送。</p>
-        </div>
-        {!confirmed
-          ? <button type="button" onClick={() => setEditing(value => !value)} className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[11px] font-bold text-text-secondary"><PencilLine size={12} />编辑</button>
-          : <button type="button" disabled={loading} onClick={createDraft} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-emerald-800 disabled:opacity-50"><Sparkles size={12} />新建报价版本</button>}
-      </div>
-
-      {editing ? (
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <label className="col-span-2 text-[11px] font-bold text-text-muted">产品或 SKU<input required maxLength={200} value={productName} onChange={event => setProductName(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">数量<input required min="0.000001" max="1000000000" value={quantity} onChange={event => setQuantity(event.target.value)} inputMode="decimal" type="number" className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">计价单位<input required maxLength={40} value={unit} onChange={event => setUnit(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">币种<select value={currency} onChange={event => setCurrency(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400"><option>CNY</option><option>USD</option><option>EUR</option><option>GBP</option><option>JPY</option><option>AUD</option><option>CAD</option><option>SGD</option><option>HKD</option></select></label>
-          <label className="text-[11px] font-bold text-text-muted">单价（{currency}）<input required min="0.000001" max="1000000000" value={unitPrice} onChange={event => setUnitPrice(event.target.value)} inputMode="decimal" type="number" className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">材料/规格<input required maxLength={200} value={material} onChange={event => setMaterial(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">目标交期<input required={!draft.leadTime} value={deliveryDate} onChange={event => setDeliveryDate(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="col-span-2 text-[11px] font-bold text-text-muted">交货地点或港口<input required value={destination} onChange={event => setDestination(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">贸易术语<select required value={incoterm} onChange={event => setIncoterm(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400"><option value="">待确认</option><option>EXW</option><option>FCA</option><option>FOB</option><option>CFR</option><option>CIF</option><option>CPT</option><option>CIP</option><option>DAP</option><option>DPU</option><option>DDP</option></select></label>
-          <label className="text-[11px] font-bold text-text-muted">图纸版本<input value={drawingVersion} onChange={event => setDrawingVersion(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="col-span-2 text-[11px] font-bold text-text-muted">包装要求<input value={packaging} onChange={event => setPackaging(event.target.value)} maxLength={200} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">付款条款<input required value={paymentTerms} onChange={event => setPaymentTerms(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <label className="text-[11px] font-bold text-text-muted">有效期（天）<input required min="1" max="365" value={validityDays} onChange={event => setValidityDays(event.target.value)} inputMode="numeric" type="number" className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary outline-none focus:border-cyan-400" /></label>
-          <button type="button" disabled={loading} onClick={save} className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl bg-cyan-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}保存报价信息</button>
-        </div>
-      ) : (
-        <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 text-xs">
-          <div><p className="text-[10px] font-bold text-text-muted">产品</p><p className="mt-0.5 font-black text-text-primary">{draft.productName || '待确认'}{draft.sku ? ` · ${draft.sku}` : ''}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">数量</p><p className="mt-0.5 font-black text-text-primary">{draft.quantity ?? '待确认'} {draft.unit}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">建议单价</p><p className="mt-0.5 font-black text-text-primary">{money(draft.unitPrice, draft.currency)}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">产品小计</p><p className="mt-0.5 font-black text-text-primary">{money(draft.subtotal, draft.currency)}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">材料/规格</p><p className="mt-0.5 font-black text-text-primary">{draft.material || '待确认'}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">参考交期</p><p className="mt-0.5 font-black text-text-primary">{draft.leadTime || draft.deliveryDate || '待确认'}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">交货地点/港口</p><p className="mt-0.5 font-black text-text-primary">{draft.destination || '待客户补充'}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">贸易术语</p><p className="mt-0.5 font-black text-text-primary">{draft.incoterm || '待客户补充'}</p></div>
-          <div><p className="text-[10px] font-bold text-text-muted">有效期</p><p className="mt-0.5 font-black text-text-primary">{draft.validityDays} 天</p></div>
-          {draft.drawingVersion && <div><p className="text-[10px] font-bold text-text-muted">图纸版本</p><p className="mt-0.5 font-black text-text-primary">{draft.drawingVersion}</p></div>}
-          {draft.packaging && <div><p className="text-[10px] font-bold text-text-muted">包装要求</p><p className="mt-0.5 font-black text-text-primary">{draft.packaging}</p></div>}
-          {draft.paymentTerms && <div className="col-span-2"><p className="text-[10px] font-bold text-text-muted">付款条款</p><p className="mt-0.5 font-black text-text-primary">{draft.paymentTerms}</p></div>}
-        </div>
-      )}
-
-      {!editing && draft.pricingExplanation.length > 0 && <div className="mt-3 rounded-xl border border-white/80 bg-white/70 px-3 py-2 text-[11px] leading-5 text-text-secondary">{draft.pricingExplanation.map(item => <p key={item}>• {item}</p>)}</div>}
-      {!editing && (draft.missingFields.length > 0 || draft.blockers.length > 0) && <div className="mt-3 text-[11px] leading-5 text-amber-800">{[...draft.missingFields.map(item => `缺少：${item}`), ...draft.blockers].map(item => <p key={item}>• {item}</p>)}</div>}
-
-      {!editing && <div className="mt-4 flex flex-wrap justify-end gap-2">
-        {draft.clarificationQuestions.length > 0 && !confirmed && <button type="button" onClick={() => onInsertReply(draft.clarificationQuestions.join('\n'))} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-black text-text-secondary"><MessageSquareText size={13} />插入澄清问题</button>}
-        {ready && <button type="button" disabled={loading} onClick={confirm} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}人工确认报价</button>}
-        {confirmed && <button type="button" disabled={loading} onClick={generateReply} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <MessageSquareText size={13} />}生成客户回复</button>}
-      </div>}
+  const sent = draft.delivery?.status === 'sent';
+  const set = (field: keyof typeof form, value: string) => setForm(current => ({ ...current, [field]: value }));
+  const selectedCatalogIndex = catalog.findIndex(product => product.name === form.productName && (!form.sku || !product.sku || product.sku === form.sku));
+  const selectCatalogProduct = (value: string) => {
+    if (value === '__custom__') return;
+    const product = catalog[Number(value)];
+    if (!product) return;
+    setForm(current => ({
+      ...current,
+      productName: product.name,
+      sku: product.sku,
+      material: product.material,
+      unit: product.unit || current.unit,
+      unitPrice: product.unitPrice == null ? '' : String(product.unitPrice),
+      currency: product.currency || current.currency,
+      leadTime: product.leadTime || current.leadTime,
+    }));
+  };
+  return <section className="rounded-lg border border-border bg-white p-3" data-quote-skill-card>
+    <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="flex items-center gap-1.5 text-xs font-black text-text-primary">{sent || confirmed ? <BadgeCheck size={14} className="text-emerald-700" /> : <AlertTriangle size={14} className="text-amber-700" />}智能报价</p><p className="mt-1 truncate text-[11px] font-bold text-text-secondary">{draft.productName || '产品待确认'} · V{draft.version}</p></div><button type="button" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded(value => !value)} className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-accent">{expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}{expanded ? '收起' : '详情'}</button></div>
+    <div className="mt-3 grid grid-cols-2 gap-2">{[['状态', sent ? '已发送' : confirmed ? '已确认' : ready ? '待确认' : '待补充'], ['总额', money(draft.subtotal, draft.currency)], ['数量', draft.quantity == null ? '待确认' : `${draft.quantity} ${draft.unit}`], ['有效期', `${draft.validityDays} 天`]].map(([label, value]) => <div key={label} className="rounded-md bg-slate-50 px-2 py-2"><p className="text-[9px] font-bold text-text-muted">{label}</p><p className="mt-0.5 truncate text-[11px] font-black text-text-primary">{value}</p></div>)}</div>
+    <div id={detailsId} hidden={!expanded}>
+      {editing ? <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="col-span-2 text-[10px] font-bold text-text-muted">企业知识库产品<select aria-label="企业知识库产品" className={fieldClass} value={selectedCatalogIndex >= 0 ? String(selectedCatalogIndex) : '__custom__'} onChange={e => selectCatalogProduct(e.target.value)} disabled={catalogLoading}><option value="__custom__">{catalogLoading ? '正在读取产品…' : '自定义产品'}</option>{catalog.map((product, index) => <option key={`${product.sku || product.name}-${index}`} value={index}>{product.name}{product.sku ? ` · ${product.sku}` : ''}{product.unitPrice != null ? ` · ${product.currency} ${product.unitPrice}` : ''}</option>)}</select>{!catalogLoading && !catalog.length && <span className="mt-1 block font-normal text-amber-700">企业知识库暂无产品，可继续手工填写。</span>}</label>
+        <label className="col-span-2 text-[10px] font-bold text-text-muted">产品名称<input className={fieldClass} value={form.productName} onChange={e => set('productName', e.target.value)} /></label>
+        <label className="text-[10px] font-bold text-text-muted">SKU<input className={fieldClass} value={form.sku} onChange={e => set('sku', e.target.value)} /></label><label className="text-[10px] font-bold text-text-muted">材料/规格<input className={fieldClass} value={form.material} onChange={e => set('material', e.target.value)} /></label>
+        <label className="text-[10px] font-bold text-text-muted">数量<input type="number" min="0.000001" className={fieldClass} value={form.quantity} onChange={e => set('quantity', e.target.value)} /></label><label className="text-[10px] font-bold text-text-muted">单位<input className={fieldClass} value={form.unit} onChange={e => set('unit', e.target.value)} /></label>
+        <label className="text-[10px] font-bold text-text-muted">币种<select className={fieldClass} value={form.currency} onChange={e => set('currency', e.target.value)}>{['CNY','USD','EUR','GBP','JPY','AUD','CAD','SGD','HKD'].map(value => <option key={value}>{value}</option>)}</select></label><label className="text-[10px] font-bold text-text-muted">单价<input type="number" min="0.000001" className={fieldClass} value={form.unitPrice} onChange={e => set('unitPrice', e.target.value)} /></label>
+        <label className="text-[10px] font-bold text-text-muted">参考交期<input className={fieldClass} value={form.leadTime} onChange={e => set('leadTime', e.target.value)} /></label><label className="text-[10px] font-bold text-text-muted">目标日期<input className={fieldClass} value={form.deliveryDate} onChange={e => set('deliveryDate', e.target.value)} /></label>
+        <label className="col-span-2 text-[10px] font-bold text-text-muted">交货地点/港口<input className={fieldClass} value={form.destination} onChange={e => set('destination', e.target.value)} /></label><label className="text-[10px] font-bold text-text-muted">贸易术语<select className={fieldClass} value={form.incoterm} onChange={e => set('incoterm', e.target.value)}><option value="">待确认</option>{['EXW','FCA','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].map(value => <option key={value}>{value}</option>)}</select></label><label className="text-[10px] font-bold text-text-muted">有效期（天）<input type="number" min="1" max="365" className={fieldClass} value={form.validityDays} onChange={e => set('validityDays', e.target.value)} /></label>
+        <label className="col-span-2 text-[10px] font-bold text-text-muted">付款条款<input className={fieldClass} value={form.paymentTerms} onChange={e => set('paymentTerms', e.target.value)} /></label><label className="col-span-2 text-[10px] font-bold text-text-muted">包装要求<input className={fieldClass} value={form.packaging} onChange={e => set('packaging', e.target.value)} /></label><label className="col-span-2 text-[10px] font-bold text-text-muted">图纸版本<input className={fieldClass} value={form.drawingVersion} onChange={e => set('drawingVersion', e.target.value)} /></label>
+        <button type="button" disabled={loading} onClick={save} className="col-span-2 inline-flex items-center justify-center gap-1 rounded-lg bg-accent px-3 py-2 text-xs font-black text-white"><Check size={12} />保存报价</button>
+      </div> : <div className="mt-3 space-y-2 border-t border-border pt-3 text-[11px] text-text-secondary"><p><b>单价：</b>{money(draft.unitPrice, draft.currency)}/{draft.unit}</p><p><b>规格：</b>{draft.material || '待确认'}{draft.sku ? ` · ${draft.sku}` : ''}</p><p><b>交付：</b>{[draft.incoterm, draft.destination, draft.leadTime || draft.deliveryDate].filter(Boolean).join(' · ') || '待确认'}</p><p><b>付款：</b>{draft.paymentTerms || '待确认'}</p>{draft.packaging && <p><b>包装：</b>{draft.packaging}</p>}{draft.drawingVersion && <p><b>图纸：</b>{draft.drawingVersion}</p>}{(draft.missingFields.length > 0 || draft.blockers.length > 0) && <div className="rounded-md bg-amber-50 p-2 text-amber-800">{[...draft.missingFields.map(item => `缺少：${item}`), ...draft.blockers].map(item => <p key={item}>• {item}</p>)}</div>}</div>}
+      <div className="mt-3 flex flex-wrap gap-1.5">{!confirmed && <button type="button" onClick={() => setEditing(value => !value)} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-[10px] font-bold"><PencilLine size={11} />{editing ? '取消编辑' : '编辑'}</button>}{!editing && draft.clarificationQuestions.length > 0 && !confirmed && <button type="button" onClick={() => onInsertReply(draft.clarificationQuestions.join('\n'))} className="rounded-md border border-border px-2 py-1.5 text-[10px] font-bold">插入澄清问题</button>}{!editing && ready && <button type="button" disabled={loading} onClick={confirm} className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-1.5 text-[10px] font-bold text-white"><Check size={11} />人工确认</button>}{!editing && <button type="button" disabled={loading} onClick={preview} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-[10px] font-bold"><Eye size={11} />预览卡片</button>}{confirmed && !editing && <button type="button" disabled={loading} onClick={() => createDraft(true)} className="rounded-md border border-border px-2 py-1.5 text-[10px] font-bold">新建版本</button>}{sent && <p className="self-center text-[10px] font-bold text-emerald-700">该版本已发送</p>}</div>
     </div>
-  );
+    {previewUrl && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-label="报价卡片预览"><div className="w-full max-w-2xl rounded-xl bg-white p-4 shadow-2xl"><div className="flex items-center justify-between"><div><p className="text-sm font-black">WhatsApp 报价卡片预览</p><p className="text-[11px] text-text-muted">客户将收到下方图片和报价摘要。</p></div><button type="button" aria-label="关闭预览" onClick={() => setPreviewUrl('')} className="rounded-md p-2 hover:bg-slate-100"><X size={16} /></button></div><img src={previewUrl} alt="报价卡片" className="mt-3 max-h-[65vh] w-full rounded-lg border border-border object-contain"/><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setPreviewUrl('')} className="rounded-lg border border-border px-4 py-2 text-xs font-bold">返回修改</button>{confirmed && !sent && <button type="button" disabled={loading || (!customer.isMock && !channelReady)} onClick={sendCard} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-black text-white disabled:opacity-50">{loading ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}发送到 WhatsApp</button>}</div>{!confirmed && <p className="mt-2 text-right text-[10px] text-amber-700">这是草稿预览，人工确认后才能发送。</p>}{confirmed && !customer.isMock && !channelReady && <p className="mt-2 text-right text-[10px] text-amber-700">WhatsApp 通道未连接，暂时不能发送。</p>}</div></div>}
+  </section>;
 }

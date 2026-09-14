@@ -39,6 +39,7 @@ function memoryStore(): { dataStore: DataStore; records: Map<string, Record<stri
 
 test('报价 API：租户隔离、并发控制、人工确认、安全回复与审计', async () => {
   const { dataStore, records } = memoryStore();
+  const sentImages: Array<{ to: string; caption: string; bytes: Buffer }> = [];
   const app = express();
   app.use(express.json({ limit: '100kb' }));
   const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -52,7 +53,15 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     dataStore,
     authMiddleware: auth,
     canConfirm: async req => req.headers['x-test-confirm'] !== 'deny',
-    readEnterpriseProfile: async () => ({ products: { items: [] }, bizRules: {} } as any),
+    readEnterpriseProfile: async () => ({ products: { items: [{ sku: 'IMH-ABS-01', name: 'Injection molded electronics housing', material: 'ABS', moq: '1000', attributes: { unit: 'pcs', unitPrice: 3.8, currency: 'USD', leadTime: '30 days' } }] }, bizRules: {} } as any),
+    renderCard: async () => Buffer.from('png-card'),
+    messagingReady: async () => true,
+    findCustomer: (_tenantId, customerId) => ({ id: customerId, waNumber: '15550001111', whatsappProfileName: 'Emily WA', timeline: [{ actor: 'buyer', timestamp: Date.now() }] }),
+    sendImage: async input => {
+      sentImages.push({ to: input.to, caption: input.caption, bytes: input.bytes });
+      return { messageId: 'wamid.quote-1', recipientId: input.to, raw: {} };
+    },
+    recordOutbound: () => ({} as any),
   }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
@@ -65,6 +74,11 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
 
   try {
     assert.equal((await call('/customers/buyer/latest', 'GET', undefined, '')).status, 401);
+    const catalogResponse = await call('/catalog');
+    assert.equal(catalogResponse.status, 200);
+    const catalog = (await catalogResponse.json()).items;
+    assert.equal(catalog.length, 1);
+    assert.deepEqual({ name: catalog[0].name, sku: catalog[0].sku, unitPrice: catalog[0].unitPrice, currency: catalog[0].currency }, { name: 'Injection molded electronics housing', sku: 'IMH-ABS-01', unitPrice: 3.8, currency: 'USD' });
     assert.equal((await call('/drafts', 'POST', { customerId: 'buyer' })).status, 400);
 
     const createdResponse = await call('/drafts', 'POST', {
@@ -76,6 +90,8 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     assert.equal(created.revision, 1);
     assert.equal(created.version, 1);
     assert.equal(created.productName, 'aluminum brackets');
+    assert.equal(created.customerName, 'Emily WA');
+    assert.equal(created.customerNameSource, 'whatsapp_profile');
     assert.equal(created.status, 'needs_clarification');
     const storedCreated = records.get(`quote_skill_drafts/${created.id}`)!;
     const legacyPayload = structuredClone(storedCreated.payload as Record<string, unknown>);
@@ -122,21 +138,52 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     const reply = await replyResponse.json();
     assert.match(reply.reply, /USD 42\.5/);
     assert.equal(reply.safety.autoSendAllowed, false);
+    const cardResponse = await call(`/drafts/${created.id}/card`);
+    assert.equal(cardResponse.status, 200);
+    assert.equal(cardResponse.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await cardResponse.arrayBuffer()), Buffer.from('png-card'));
+    const sentResponse = await call(`/drafts/${created.id}/send-card`, 'POST');
+    assert.equal(sentResponse.status, 200);
+    const sent = await sentResponse.json();
+    assert.equal(sent.status, 'sent');
+    assert.equal(sent.providerMessageId, 'wamid.quote-1');
+    assert.equal(sentImages.length, 1);
+    assert.equal(sentImages[0].to, '15550001111');
+    assert.match(sentImages[0].caption, /QT-\d{8}-[A-F0-9]{6} · V1/);
+    assert.equal((await call(`/drafts/${created.id}/send-card`, 'POST')).status, 409);
     assert.equal((await call('/customers/buyer/latest', 'GET', undefined, 'B').then(response => response.json())).draft, null);
 
     const actions = [...records.entries()].filter(([key]) => key.startsWith('quote_skill_events/')).map(([, event]) => event.action);
-    assert.deepEqual(actions, ['created', 'updated', 'confirmed', 'reply_generated']);
+    assert.deepEqual(actions, ['created', 'updated', 'confirmed', 'reply_generated', 'card_sent']);
     const replyEvent = [...records.entries()].find(([, event]) => event.action === 'reply_generated')?.[1];
     assert.equal(typeof (replyEvent?.details as Record<string, unknown>)?.replyLength, 'number');
     assert.equal('reply' in ((replyEvent?.details as Record<string, unknown>) || {}), false);
 
+    const catalogDraft = (await (await call('/drafts', 'POST', {
+      customerId: 'catalog-buyer', productHint: 'custom housing', messages: ['Please quote 1000 pcs in ABS, delivery to Berlin, DAP, within 30 days.'],
+    })).json()).draft;
+    const catalogSelectedResponse = await call(`/drafts/${catalogDraft.id}`, 'PATCH', {
+      expectedRevision: 1,
+      catalogProductRef: 'IMH-ABS-01',
+      paymentTerms: '100% in advance',
+    });
+    assert.equal(catalogSelectedResponse.status, 200);
+    const catalogSelected = (await catalogSelectedResponse.json()).draft;
+    assert.equal(catalogSelected.sku, 'IMH-ABS-01');
+    assert.equal(catalogSelected.unitPrice, 3.8);
+    assert.equal(catalogSelected.matchedProduct.priceSource, '企业产品目录 unitPrice');
+    assert.match(catalogSelected.pricingExplanation.join('\n'), /价格来源：企业产品目录 unitPrice/);
+
     const nextVersionResponse = await call('/drafts', 'POST', {
-      customerId: 'buyer', customerName: 'Emily', customerLanguage: 'English', productHint: 'aluminum brackets', messages: [],
+      customerId: 'buyer', customerName: 'Emily', customerLanguage: 'English', productHint: 'aluminum brackets', messages: [], clonePrevious: true,
     });
     assert.equal(nextVersionResponse.status, 201);
     const nextVersion = (await nextVersionResponse.json()).draft;
     assert.equal(nextVersion.version, 2);
     assert.equal(nextVersion.supersedesId, created.id);
+    assert.equal(nextVersion.unitPrice, 42.5);
+    assert.equal(nextVersion.currency, 'USD');
+    assert.equal(nextVersion.status, 'ready_for_review');
     const latest = (await call('/customers/buyer/latest').then(response => response.json())).draft;
     assert.equal(latest.id, nextVersion.id);
 

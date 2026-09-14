@@ -5,7 +5,11 @@ import type { DataStore } from '../storage/datastore.js';
 import { readTenantEnterpriseProfile } from './enterprise.js';
 import { requestOrganizationRoleStrict } from './auth.js';
 import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply } from '../quoteSkill/engine.js';
-import type { QuoteSkillDraft } from '../quoteSkill/types.js';
+import type { QuoteCatalogProduct, QuoteSkillDraft } from '../quoteSkill/types.js';
+import { quoteCardDigest, quoteNumber, renderQuoteCard } from '../quoteSkill/card.js';
+import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
+import { sendTenantWhatsAppImageWithReceipt } from '../whatsapp/send.js';
+import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
 const DRAFT_COLLECTION = 'quote_skill_drafts';
 const EVENT_COLLECTION = 'quote_skill_events';
@@ -30,6 +34,11 @@ type QuoteSkillDeps = {
   enabled?: (tenantId: string) => boolean;
   reportError?: (error: unknown) => void;
   canConfirm?: (req: Request, userId: string) => Promise<boolean>;
+  renderCard?: typeof renderQuoteCard;
+  sendImage?: typeof sendTenantWhatsAppImageWithReceipt;
+  findCustomer?: (tenantId: string, customerId: string) => { id?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; timestamp?: number }> } | undefined;
+  messagingReady?: (tenantId: string) => Promise<boolean>;
+  recordOutbound?: typeof markWhatsAppHumanReply;
 };
 
 function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
@@ -44,6 +53,8 @@ function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
     revision: Number.isInteger(value.revision) && Number(value.revision) > 0 ? Number(value.revision) : 1,
     version: Number.isInteger(value.version) && Number(value.version) > 0 ? Number(value.version) : 1,
     customerLanguage: String(value.customerLanguage || 'English'),
+    customerNameSource: value.customerNameSource === 'whatsapp_profile' ? 'whatsapp_profile' : 'safe_fallback',
+    sellerName: String(value.sellerName || ''),
     incoterm: String(value.incoterm || ''),
     packaging: String(value.packaging || ''),
     drawingVersion: String(value.drawingVersion || ''),
@@ -53,6 +64,7 @@ function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
     pricingExplanation: Array.isArray(value.pricingExplanation) ? value.pricingExplanation.map(String) : [],
     clarificationQuestions: Array.isArray(value.clarificationQuestions) ? value.clarificationQuestions.map(String) : [],
   } as QuoteSkillDraft;
+  draft.quoteNumber = String(value.quoteNumber || quoteNumber({ id: record.id, createdAt: String(value.createdAt || record.updated_at) }));
   if (!Number.isFinite(draft.quantity) || Number(draft.quantity) <= 0) draft.quantity = null;
   if (!Number.isFinite(draft.unitPrice) || Number(draft.unitPrice) <= 0) draft.unitPrice = null;
   if (!Number.isInteger(draft.validityDays) || draft.validityDays < 1 || draft.validityDays > 365) draft.validityDays = 15;
@@ -152,7 +164,7 @@ async function audit(dataStore: DataStore, input: {
   customerId: string;
   quoteId: string;
   actorId: string;
-  action: 'created' | 'updated' | 'confirmed' | 'reply_generated';
+  action: 'created' | 'updated' | 'confirmed' | 'reply_generated' | 'card_sent';
   revision: number;
   details?: Record<string, unknown>;
 }): Promise<void> {
@@ -198,6 +210,17 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     return role === 'super_admin' || role === 'admin' || role === 'customer_service';
   });
   const withDraftLock = createKeyedLock();
+  const renderCard = deps.renderCard || renderQuoteCard;
+  const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
+  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => getWhatsAppCustomers(tenantId).find(item => item.id === customerId));
+  const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
+  const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
+  const customerVisibleDraft = (tenantId: string, draft: QuoteSkillDraft): QuoteSkillDraft => {
+    const currentWhatsAppName = boundedText(findCustomer(tenantId, draft.customerId)?.whatsappProfileName, 200);
+    return currentWhatsAppName
+      ? { ...draft, customerName: currentWhatsAppName, customerNameSource: 'whatsapp_profile' }
+      : draft;
+  };
   router.use(deps.authMiddleware || requireAuth);
   const enabled = deps.enabled || ((tenantId: string) => {
     if (process.env.NODE_ENV === 'production' && process.env.QUOTE_SKILL_ENABLED !== 'true') return false;
@@ -213,6 +236,13 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     if (!enabled(tenantId)) { res.status(404).json({ error: 'quote_skill_disabled' }); return; }
     next();
   });
+
+  router.get('/catalog', asyncRoute(async (_req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const profile = await profileReader(tenantId);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ items: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>) });
+  }));
 
   router.get('/customers/:customerId/latest', asyncRoute(async (req, res) => {
     const { tenantId } = res.locals as AuthLocals;
@@ -238,15 +268,41 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       dataStore.list<StoredDraft>(DRAFT_COLLECTION, { where: { tenant_id: tenantId, customer_id: customerId }, sort: '-updated_at', page: 1, perPage: 1 }),
     ]);
     const previous = draftPayload(priorResult.items[0] || null);
-    const draft = buildQuoteDraft({
+    const serverWhatsAppName = boundedText(findCustomer(tenantId, customerId)?.whatsappProfileName, 200);
+    const mockWhatsAppName = process.env.NODE_ENV !== 'production' && customerId.startsWith('mock-')
+      ? boundedText(req.body?.customerWhatsAppName, 200)
+      : '';
+    const customerWhatsAppName = serverWhatsAppName || mockWhatsAppName;
+    let draft = buildQuoteDraft({
       customerId,
-      customerName: boundedText(req.body?.customerName, 200),
+      customerName: customerWhatsAppName,
+      customerNameSource: customerWhatsAppName ? 'whatsapp_profile' : 'safe_fallback',
       customerLanguage: boundedText(req.body?.customerLanguage, 40),
+      sellerName: boundedText(profile.company?.name, 200),
       productHint: boundedText(req.body?.productHint, 200),
       messages,
       products: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>),
       rules: profile.bizRules || {},
     });
+    if (previous?.status === 'confirmed' && req.body?.clonePrevious === true) {
+      draft = applyQuoteDraftPatch(draft, {
+        productName: previous.productName,
+        sku: previous.sku,
+        quantity: previous.quantity,
+        unit: previous.unit,
+        material: previous.material,
+        deliveryDate: previous.deliveryDate,
+        destination: previous.destination,
+        incoterm: previous.incoterm,
+        packaging: previous.packaging,
+        drawingVersion: previous.drawingVersion,
+        unitPrice: previous.unitPrice,
+        currency: previous.currency,
+        leadTime: previous.leadTime,
+        paymentTerms: previous.paymentTerms,
+        validityDays: previous.validityDays,
+      });
+    }
     draft.version = (previous?.version || 0) + 1;
     if (previous?.id) draft.supersedesId = previous.id;
     const previousUpdatedAt = Date.parse(previous?.updatedAt || '');
@@ -277,9 +333,30 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     if (revision !== owned.draft.revision) { res.status(409).json({ error: 'quote_version_conflict', message: '报价已被其他成员更新，请刷新后重试。', draft: owned.draft }); return; }
     const validated = validatePatch(req.body);
     if (!validated.patch) { res.status(400).json({ error: validated.error, message: '报价字段格式不正确。' }); return; }
-    const changedFields = Object.keys(validated.patch);
+    const catalogProductRef = boundedText(req.body?.catalogProductRef, 200);
+    let patch = validated.patch;
+    let patchSource: 'human' | 'product_catalog' = 'human';
+    if (catalogProductRef) {
+      const profile = await profileReader(tenantId);
+      const products = catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>);
+      const product = products.find(item => (item.sku || item.name) === catalogProductRef);
+      if (!product) { res.status(409).json({ error: 'catalog_product_changed', message: '该产品已从企业知识库中移除或变更，请重新选择。' }); return; }
+      patch = {
+        ...patch,
+        productName: product.name,
+        sku: product.sku,
+        material: product.material,
+        unit: product.unit,
+        unitPrice: product.unitPrice,
+        currency: product.currency,
+        ...(product.leadTime ? { leadTime: product.leadTime } : {}),
+        matchedProduct: product satisfies QuoteCatalogProduct,
+      };
+      patchSource = 'product_catalog';
+    }
+    const changedFields = [...Object.keys(validated.patch), ...(catalogProductRef ? ['catalogProduct'] : [])];
     if (!changedFields.length) { res.status(400).json({ error: 'empty_quote_patch' }); return; }
-    const draft = applyQuoteDraftPatch(owned.draft, validated.patch);
+    const draft = applyQuoteDraftPatch(owned.draft, patch, patchSource);
     draft.revision = owned.draft.revision + 1;
     const ok = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { status: draft.status, payload: draft, updated_at: draft.updatedAt });
     if (!ok) { res.status(503).json({ error: 'quote_storage_unavailable' }); return; }
@@ -323,6 +400,50 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const reply = composeQuoteReply(owned.draft);
     await audit(dataStore, { tenantId, customerId: owned.draft.customerId, quoteId: owned.record.id, actorId: userId, action: 'reply_generated', revision: owned.draft.revision, details: { replyLength: reply.length } });
     res.json({ reply, safety: { action: 'formal_quote', risk: 'L4', autoSendAllowed: false } });
+  }));
+
+  router.get('/drafts/:id/card', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const owned = await ownedDraft(dataStore, boundedText(req.params.id, 160), tenantId);
+    if (!owned) { res.status(404).json({ error: 'quote_not_found' }); return; }
+    const bytes = await renderCard(customerVisibleDraft(tenantId, owned.draft));
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', `inline; filename="${owned.draft.quoteNumber || 'quotation'}-v${owned.draft.version}.png"`);
+    res.send(bytes);
+  }));
+
+  router.post('/drafts/:id/send-card', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const id = boundedText(req.params.id, 160);
+    await withDraftLock(`${tenantId}:${id}`, async () => {
+      const owned = await ownedDraft(dataStore, id, tenantId);
+      if (!owned) { res.status(404).json({ error: 'quote_not_found' }); return; }
+      if (owned.draft.status !== 'confirmed') { res.status(409).json({ error: 'quote_not_confirmed', message: '请先人工确认报价，再发送客户卡片。' }); return; }
+      if (owned.draft.delivery?.status === 'sent') { res.status(409).json({ error: 'quote_already_sent', message: '该报价版本已经发送。修改内容后请新建报价版本。', draft: owned.draft }); return; }
+      if (!await canConfirm(req, userId)) { res.status(403).json({ error: 'quote_send_forbidden', message: '当前角色无权发送正式报价。' }); return; }
+      if (!await messagingReady(tenantId)) { res.status(409).json({ error: 'whatsapp_not_ready', message: 'WhatsApp 通道尚未连接。' }); return; }
+      const customer = findCustomer(tenantId, owned.draft.customerId);
+      const to = boundedText(customer?.waNumber, 80);
+      if (!customer || !to) { res.status(409).json({ error: 'whatsapp_recipient_required', message: '客户缺少可用的 WhatsApp 收件号码。' }); return; }
+      const timeline = Array.isArray(customer.timeline) ? customer.timeline as Array<{ actor?: string; timestamp?: number }> : [];
+      const latestBuyerAt = Math.max(0, ...timeline.filter(item => item.actor === 'buyer').map(item => Number(item.timestamp || 0)));
+      if (!latestBuyerAt || Date.now() - latestBuyerAt > 24 * 60 * 60 * 1000) {
+        res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过 24 小时，图片报价需通过已审核的 WhatsApp 模板发送。' }); return;
+      }
+      const bytes = await renderCard(customerVisibleDraft(tenantId, owned.draft));
+      const caption = `${owned.draft.quoteNumber} · V${owned.draft.version}\n${owned.draft.productName}\n${owned.draft.currency} ${owned.draft.subtotal?.toLocaleString('en-US')}`;
+      const receipt = await sendImage({ tenantId, to, bytes, caption, filename: `${owned.draft.quoteNumber}-v${owned.draft.version}.png`, callbackData: `quote:${owned.record.id}:v${owned.draft.version}` });
+      if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
+      const now = new Date().toISOString();
+      const imageSha256 = quoteCardDigest(bytes);
+      const draft: QuoteSkillDraft = { ...owned.draft, delivery: { status: 'sent', sentAt: now, providerMessageId: receipt.messageId, imageSha256 }, updatedAt: now };
+      const ok = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { payload: draft, updated_at: now });
+      if (!ok) { res.status(503).json({ error: 'quote_storage_unavailable', message: '图片已发送，但报价发送状态保存失败，请勿重复发送并联系管理员。' }); return; }
+      recordOutbound({ tenantId, customerId: draft.customerId, body: caption, waNumber: to, providerReceipts: [receipt] });
+      await audit(dataStore, { tenantId, customerId: draft.customerId, quoteId: owned.record.id, actorId: userId, action: 'card_sent', revision: draft.revision, details: { providerMessageId: receipt.messageId, imageSha256 } });
+      res.json({ draft: { ...draft, id: owned.record.id }, status: 'sent', providerMessageId: receipt.messageId, sentAt: now });
+    });
   }));
 
   router.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
