@@ -71,6 +71,7 @@
     "1789776001_create_durable_operation_leases.js": "ae6c43258ba203a967ee3d1436876a600d4208ef851ea6ad3dc9136398b8622e",
     "1789862400_bind_starter_quote_workflow_lineage.js": "cc03528c8ee8f459a6de42aadff1f71fe040a4b11e320f537af61e19c1ddf1bc",
     "1789862401_bind_starter_content_workflow_lineage.js": "eb2c943012fa0806674319334782dd9f9af9ec12f0c7dc4086a9930bb9a020a5",
-    "1789948800_create_starter_social_content_workflow.js": "52550fc32a21755be67f1c74675295e6dec9b277b50130c38e16a1bb01ee0b14"
+    "1789948800_create_starter_social_content_workflow.js": "52550fc32a21755be67f1c74675295e6dec9b277b50130c38e16a1bb01ee0b14",
+    "1790035200_create_platform_ad_schema.js": "a001716f642e20ffe5caf66bf50db2df212319f431ed9c6a8f396c8dc1abc6da"
   }
 }
