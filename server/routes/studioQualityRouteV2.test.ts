@@ -43,8 +43,25 @@ process.env.GEMINI_API_KEY = '';
 process.env.SUBSCRIPTION_ENFORCED = 'false';
 process.env.DEMO_MODE = 'false';
 
-const { auth } = await import('../storage/index.js');
+const { auth, store } = await import('../storage/index.js');
 auth.verifyToken = async () => ({ userId: 'quality-route-user', tenantId: 'quality-route-tenant' });
+store.list = (async collection => collection === 'tenant_profiles'
+  ? ({
+    items: [{
+      id: 'quality-route-enterprise-profile',
+      profile: {
+        company: { name: 'LX 测试制造企业', companyType: '制造工厂' },
+        products: { items: [{
+          name: 'LX-Vision 工业视觉检测工作站',
+          category: '工厂自动化',
+          highlights: '可根据工件、节拍、缺陷样本或现场布局开展方案诊断',
+        }] },
+        socialStrategy: { enabledRoutes: ['oem_odm'] },
+      },
+    }],
+    page: 1, perPage: 20, totalItems: 1, totalPages: 1,
+  })
+  : ({ items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 })) as typeof store.list;
 const { studioRouter } = await import('./studio.js');
 const app = express();
 app.use(express.json({ limit: '2mb' }));

@@ -27,6 +27,7 @@ import InspirationEmptyState from './InspirationEmptyState';
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
 type ScriptType = 'voiceover' | 'storyboard';
+type ScriptResultProvenance = 'ai' | 'ai_rejected' | 'template';
 type SortMode = 'heat' | 'crawlTime';
 type InspirationInnerView = 'inspiration' | 'library' | 'shooting';
 type ContentFormat = 'video' | 'image';
@@ -617,12 +618,6 @@ function getPrimaryProductLabel(productInfo: string): string {
   return productInfo.trim().split('\n')[0]?.replace(/^[-*\s]+/, '').trim() || '当前主推品';
 }
 
-function getProductField(productInfo: string, label: string): string {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = productInfo.match(new RegExp(`${escaped}[:：]\\s*([^\\n]+)`));
-  return match?.[1]?.trim() || '';
-}
-
 function shortenText(text: string, max = 72): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
@@ -908,121 +903,6 @@ function conciseLines(text: string, maxLines = 6, maxChars = 34): string[] {
   return lines.slice(0, maxLines);
 }
 
-function productScriptContext(productInfo: string): {
-  label: string;
-  category: string;
-  advantage: string;
-  market: string;
-  proof: string;
-} {
-  const label = getPrimaryProductLabel(productInfo);
-  const category = getProductField(productInfo, '产品类目') || label;
-  const advantage = getProductField(productInfo, '核心优势') || getProductField(productInfo, '品牌 USP') || '可做私标定制、快速打样和合规资料支持';
-  const market = getProductField(productInfo, '目标市场') || '海外美妆买家';
-  const proof = getProductField(productInfo, '认证资质') || getProductField(productInfo, '起订量') || '小批量测试和私标包装支持';
-  return { label, category, advantage, market, proof };
-}
-
-function productLabelForLang(product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  if (langCode === 'zh') return product.label;
-  if (langCode === 'id') return 'produk unggulan';
-  return 'featured product bundle';
-}
-
-function advantageForLang(product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  if (langCode === 'zh') return shortenText(product.advantage, 34);
-  if (langCode === 'id') return 'sampel cepat, kemasan private-label, dan dukungan dokumen kepatuhan';
-  return 'fast sampling, private-label packaging, and compliance documentation support';
-}
-
-function voiceLine(line: string, langCode = 'zh'): string {
-  return langCode === 'zh' ? `人物说：“${line}”` : `Voiceover: "${line}"`;
-}
-
-function scriptTitle(product: ReturnType<typeof productScriptContext>, languageLabel?: string, langCode = 'zh'): string {
-  if (langCode === 'zh') return `口播脚本｜${product.label}｜${languageLabel || '中文'}`;
-  if (langCode === 'id') return `Naskah Voiceover | Produk Unggulan | ${languageLabel || 'Bahasa Indonesia'}`;
-  return `Voiceover Script | Featured Product Bundle | ${languageLabel || 'English'}`;
-}
-
-function inferShotAction(detail: ScriptDetail15s, index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const label = productLabelForLang(product, langCode);
-  if (langCode !== 'zh') {
-    const actions = langCode === 'id' ? [
-      `Show ${label} close to the camera with clean packaging and a clear product texture shot`,
-      `Cut to a simple usage moment, keeping the reference video's quick product-first rhythm`,
-      `Show the bundle, shade range, and private-label packaging options in one clean frame`,
-      `Use a close-up result shot to make the texture and finish easy to understand`,
-      `End with the full product set and a clear message prompt for samples or a quote`,
-    ] : [
-      `Show ${label} close to the camera with clean packaging and a clear product texture shot`,
-      `Cut to a simple usage moment, keeping the reference video's quick product-first rhythm`,
-      `Show the bundle, shade range, and private-label packaging options in one clean frame`,
-      `Use a close-up result shot to make the texture and finish easy to understand`,
-      `End with the full product set and a clear message prompt for samples or a quote`,
-    ];
-    return actions[index % actions.length]!;
-  }
-  const lower = `${detail.visual} ${detail.subtitle}`.toLowerCase();
-  if (/hand|手|hold|举起|展示|管|瓶|spatula|applicator|swatch|涂|抹|唇|shade|色/.test(lower)) {
-    return `模特手持「${product.label}」靠近镜头，展示管身、刷头和上唇/手背试色效果；画面保留对标视频的手部特写和产品质感节奏`;
-  }
-  if (/face|脸|skin|肤|look|mirror|镜头|smile|微笑/.test(lower)) {
-    return `模特对镜展示「${product.label}」上唇后的妆效，表情从观察到惊喜，突出颜色贴肤、光泽和日常通勤适配`;
-  }
-  if (/brand|logo|设备|device|包装|box|name|字样/.test(lower)) {
-    return `镜头切到「${product.label}」套装包装、色号排列和私标 Logo 位，手指轻点关键卖点区域`;
-  }
-  if (/result|before|after|效果|证明|评论|热度/.test(lower)) {
-    return `画面用上唇前后对比和多色号并排展示证明「${product.label}」的显色、成膜和套装组合价值`;
-  }
-  const actions = [
-    `开场直接给「${product.label}」上唇结果，保留对标视频先给效果再解释的节奏`,
-    `模特边试色边把「${product.label}」放到镜头前，形成产品和妆效同框`,
-    `切到套装多色号平铺，突出私标包装质感和可组合销售`,
-    `用手背/唇部近景展示颜色、光泽和成膜后的不黏腻感`,
-    `收束到套装全貌和询盘引导，强调低 MOQ、打样快、适合 ${product.market}`,
-  ];
-  return actions[index % actions.length]!;
-}
-
-function localizedVoiceLine(index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const label = productLabelForLang(product, langCode);
-  const advantage = advantageForLang(product, langCode);
-  const zh = [
-    `这款${label}不是只好看，上脸质感也很稳。`,
-    `如果你想做一款容易出单的组合，这套可以直接当主推。`,
-    `它的优势是${advantage}，适合先小批量测市场。`,
-    `近看细节和包装质感都在线，做私标也很容易出效果。`,
-    `想要样品、色号表或报价，可以直接留言给我们。`,
-  ];
-  const en = [
-    `This ${label} is not just pretty. The texture looks reliable from the first look.`,
-    `If you need an easy product bundle to test, this can be your lead item.`,
-    `Its key edge is ${advantage}, so it works for small-batch market testing.`,
-    `The details and packaging look clean on camera, which is friendly for private label orders.`,
-    `Message us for samples, shade options, packaging details, or a quick quote.`,
-  ];
-  const id = [
-    `${label} bukan cuma terlihat cantik. Teksturnya juga terlihat meyakinkan.`,
-    `Kalau kamu ingin coba produk bundle yang mudah dijual, ini bisa jadi produk utama.`,
-    `Keunggulannya adalah ${advantage}, cocok untuk tes pasar kecil.`,
-    `Detail dan kemasannya terlihat rapi di kamera, cocok untuk private label.`,
-    `Kirim pesan untuk sampel, pilihan warna, kemasan, atau penawaran harga.`,
-  ];
-  const source = langCode === 'id' ? id : langCode === 'zh' ? zh : en;
-  return source[index % source.length]!;
-}
-
-function rewriteSubtitle(detail: ScriptDetail15s, index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const original = cleanAnalysisText(detail.subtitle);
-  const line = localizedVoiceLine(index, product, langCode);
-  if (original && !/待 Gemini|视频下载|显示真实|基础资料/.test(original)) {
-    return `${line}（参考原节奏：${shortenText(original, 42)}）`;
-  }
-  return line;
-}
-
 function referenceAnalysisText(video: TrendVideo, analysis: ScriptAnalysis | null): string {
   if (!analysis) {
     return [
@@ -1062,105 +942,49 @@ function referenceHighlights(video: TrendVideo, analysis: ScriptAnalysis | null)
   ].filter(Boolean).slice(0, 8);
 }
 
-function adaptedFrameLine(detail: ScriptDetail15s, index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const visual = inferShotAction(detail, index, product, langCode);
-  const subtitle = rewriteSubtitle(detail, index, product, langCode);
-  const audio = detail.audio && !/待真实视频|待 Gemini|待视频/.test(detail.audio)
-    ? detail.audio
-    : 'BGM 保持轻快种草节奏，口播短句跟随字幕切点。';
-  const note = detail.note ? `（注：保留对标视频节奏备注：${detail.note}）` : '';
-  if (langCode !== 'zh') {
-    return `[${detail.time}] Environment: ${detail.environment}; Shot: close-up or medium shot; Camera: simple handheld movement; Audio: upbeat social commerce music; ${voiceLine(subtitle, langCode)}; Visual: ${visual}; Captions match the voiceover.`;
-  }
-  return `[${detail.time}] 环境：${detail.environment}；景别：${detail.shot}；运镜：${detail.camera}；${detail.angle ? `视角：${detail.angle}；` : ''}${detail.composition ? `构图：${detail.composition}；` : ''}配乐：${audio}；台词：人物说“${subtitle}”；画面：${visual}${detail.startState ? `；初始状态：${detail.startState}` : ''}${detail.endState ? `；结束状态：${detail.endState}` : ''}${detail.transitionToNext ? `；衔接：${detail.transitionToNext}` : ''}${note}`;
-}
-
-function makeVoiceoverDraft(_video: TrendVideo, analysis: ScriptAnalysis, productInfo: string, languageLabel?: string, langCode = 'zh'): string {
-  const product = productScriptContext(productInfo);
-  const useCase = shortenText(product.market, 28);
-  const proof = shortenText(product.proof, 34);
-  if (langCode !== 'zh') {
-    const label = productLabelForLang(product, langCode);
-    return `${scriptTitle(product, languageLabel, langCode)}
-
-[Hook · 0-3s]
-Voiceover: "If your buyers ask to see ${label} before ordering, show them this first."
-
-[Body · 3-12s]
-Voiceover: "Film the texture, packaging, and options clearly, then show why it fits ${useCase}."
-Voiceover: "The key proof point is ${proof}, so buyers can check samples before bulk orders."
-
-[CTA · 12-15s]
-Voiceover: "Message us for the sample list, packaging options, and MOQ quote."`;
-  }
-  return `${scriptTitle(product, languageLabel, langCode)}
-
-[Hook · 0-3s]
-人物说：“客户问这款${product.label}能不能先看样品，就先给他看这三个细节。”
-
-[Body · 3-12s]
-人物说：“第一，看实拍质地和包装，不要只发渲染图。”
-人物说：“第二，把${proof}直接放到字幕里，让买家知道能不能试单。”
-人物说：“第三，说明适合${useCase}，客户才知道怎么上架或采购。”
-
-[CTA · 12-15s]
-人物说：“要样品、包装方案和 MOQ 报价，直接留言给我们。”`;
-}
-
-function makeFallbackScript(video: TrendVideo, analysis: ScriptAnalysis | null, productInfo: string, languageLabel?: string, langCode = 'zh', type: ScriptType = 'voiceover'): string {
-  if (analysis) return type === 'voiceover'
-    ? makeVoiceoverDraft(video, analysis, productInfo, languageLabel, langCode)
-    : makeStoryboardDraft(video, analysis, productInfo, languageLabel, langCode);
-
-  const product = productScriptContext(productInfo);
+function makeFallbackScript(_video: TrendVideo, _analysis: ScriptAnalysis | null, productInfo: string, languageLabel?: string, langCode = 'zh', type: ScriptType = 'voiceover'): string {
+  const product = getPrimaryProductLabel(productInfo) || '【待从企业中心选择产品】';
+  const label = languageLabel || (langCode === 'zh' ? '中文' : langCode);
   if (type === 'storyboard') {
-    return `【分镜脚本｜${product.label}｜${languageLabel || '中文'}】
+    return `【本地草稿模板｜未调用 AI｜未经质量校验｜不可发布】
+【分镜脚本｜${product}｜${label}】
 
 Scene 1 (0-3s)
 Shot: close-up | Camera: static
-Visual: 手把「${product.label}」放到镜头前，先展示最能看懂的质地、颜色、尺寸或包装细节。
-Voiceover: 客户问样品前，先给他看真实细节。
-Subtitle: 先看真实样品
+Visual: 待人工匹配企业自有素材；只描述素材中能直接观察到的画面。
+Voiceover: 【待根据企业中心已确认事实填写】
+Subtitle: 【待确认】
 
 Scene 2 (3-8s)
 Shot: medium | Camera: push
-Visual: 拆开包装或演示一个使用场景，画面同时露出产品和手部动作。
-Voiceover: 这段要让买家知道里面有什么、怎么用、适合什么渠道。
-Subtitle: 产品和场景同框
+Visual: 待人工填写；不得补造产品功能、使用效果或商业能力。
+Voiceover: 【待根据企业中心已确认事实填写】
+Subtitle: 【待确认】
 
 Scene 3 (8-12s)
 Shot: close-up | Camera: pan
-Visual: 用字幕标出 MOQ、样品、私标包装、认证或交期信息。
-Voiceover: 采购最关心的是样品、包装和报价能不能快速确认。
-Subtitle: 样品 / 包装 / 报价
+Visual: 待人工填写可验证证据；没有资料的字段保持空白。
+Voiceover: 【待根据企业中心已确认事实填写】
+Subtitle: 【待确认】
 
 Scene 4 (12-15s)
 Shot: wide | Camera: static
-Visual: 全套产品平铺，画面出现“索取色号表 / 包装方案 / MOQ 报价”。
-Voiceover: 要目录和 MOQ 报价，直接留言给我们。
-Subtitle: 留言拿报价`;
+Visual: 待人工填写中性收束画面；行动提示须由用户确认。
+Voiceover: 【待确认行动提示】
+Subtitle: 【待确认】`;
   }
-  return makeVoiceoverDraft(video, {
-    videoType: '基础资料拆解',
-    structure: [],
-    firstTenSeconds: [],
-    scriptSummary15s: { visualStyle: '真实产品实拍', coreEmotion: '可信、清楚、可询盘', competitors: [] },
-    scriptDetails15s: [],
-    baseRequirements: '情绪氛围：可信、清楚、可询盘；光影：明亮干净；全片主要场景：产品实拍、包装展示、使用演示和 CTA；质感：真实产品实拍，突出产品细节；基础要求：强反转开头，真人口播，卡点剪辑，特效拉满，产品质感突出。',
-    referenceHighlights: [],
-    adaptTip: '',
-    emotion: '',
-    infoSpeed: '',
-  }, productInfo, languageLabel, langCode);
-}
+  return `【本地草稿模板｜未调用 AI｜未经质量校验｜不可发布】
+【口播脚本｜${product}｜${label}】
 
-function makeStoryboardDraft(_video: TrendVideo, analysis: ScriptAnalysis, productInfo: string, languageLabel?: string, langCode = 'zh'): string {
-  const product = productScriptContext(productInfo);
-  const frames = analysis.scriptDetails15s.map((detail, index) => adaptedFrameLine(detail, index, product, langCode)).join('\n\n');
-  if (langCode !== 'zh') {
-    return frames;
-  }
-  return frames;
+[Hook · 0-3s]
+【待根据企业中心已确认的产品事实填写开场】
+
+[Body · 3-12s]
+【待填写可由企业资料或自有素材证明的产品信息】
+【不得填写未确认的认证、价格、起订量、交期、出口或履约承诺】
+
+[CTA · 12-15s]
+【待用户确认行动提示】`;
 }
 
 function scriptTypeLabel(type: ScriptType): string {
@@ -1918,6 +1742,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
   const [selectedProductId, setSelectedProductId] = useState('');
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [resultProvenance, setResultProvenance] = useState<ScriptResultProvenance | null>(null);
+  const [resultQualityStatus, setResultQualityStatus] = useState<string>('');
+  const [resultNotice, setResultNotice] = useState('');
   const [copied, setCopied] = useState(false);
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const languageDropdownRef = useRef<HTMLDivElement>(null);
@@ -1967,6 +1794,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
 
   useEffect(() => {
     setResult(null);
+    setResultProvenance(null);
+    setResultQualityStatus('');
+    setResultNotice('');
     setCopied(false);
     setShowLangDropdown(false);
     setVideoResult(null);
@@ -1998,6 +1828,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
     const shouldAdvanceDemo = isDemoTrafficStep();
     setGenerating(true);
     setResult(null);
+    setResultProvenance(null);
+    setResultQualityStatus('');
+    setResultNotice('');
     setVideoResult(null);
     setVideoError('');
     const realAnalysis = getAnalysis(video);
@@ -2029,17 +1862,37 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
         },
         fallbackScript,
       );
-      setResult(response.script || fallbackScript);
+      const responseScript = String(response.script || '').trim();
+      const rejectedDraft = response.source === 'ai_rejected' && responseScript;
+      if (rejectedDraft) {
+        setResult(responseScript);
+        setResultProvenance('ai_rejected');
+        setResultQualityStatus('rejected');
+        setResultNotice(response.error || response.validationIssues?.join('；') || 'AI 草稿未通过事实或质量校验，仅供修改，不可进入视频生成或交付。');
+        return;
+      }
+      if (response.ok === false || response.source !== 'ai' || !responseScript) {
+        setResult(fallbackScript);
+        setResultProvenance('template');
+        setResultQualityStatus('fallback');
+        setResultNotice(response.error || 'AI 生成失败。以下仅为本地空白草稿模板，未调用模型、未经质检，不可进入视频生成或交付。');
+        return;
+      }
+      setResult(responseScript);
+      setResultProvenance('ai');
+      setResultQualityStatus(response.qualityStatus || 'warning');
+      setResultNotice(response.qualityStatus === 'passed'
+        ? 'AI 脚本已通过当前质量校验。'
+        : 'AI 脚本已生成，但尚未获得“质量通过”结论；请先人工复核。');
       if (shouldAdvanceDemo) {
         completeDemoStep('traffic');
         window.setTimeout(() => onNavigate?.('conversion'), 700);
       }
-    } catch {
+    } catch (error) {
       setResult(fallbackScript);
-      if (shouldAdvanceDemo) {
-        completeDemoStep('traffic');
-        window.setTimeout(() => onNavigate?.('conversion'), 700);
-      }
+      setResultProvenance('template');
+      setResultQualityStatus('fallback');
+      setResultNotice(`${error instanceof Error ? error.message : 'AI 生成失败'}。以下仅为本地空白草稿模板，未调用模型、未经质检，不可进入视频生成或交付。`);
     } finally {
       setGenerating(false);
     }
@@ -2051,6 +1904,10 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
 
   const generateSeedanceVideo = async () => {
     if (!result) return;
+    if (resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)) {
+      setVideoError('当前内容是本地模板或未通过校验的草稿，不能进入视频生成。请先成功生成并通过 AI 质量检查。');
+      return;
+    }
     if (seedanceVideoLocked) return;
     setVideoGenerating(true);
     setVideoError('');
@@ -2091,7 +1948,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
   };
 
   const enterWorkflow = () => {
-    if (!result || !videoResult) return;
+    if (!result || !videoResult || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)) return;
     onEnterWorkflow?.({ source: 'seedance_video', script: result, video, scriptType, language, productInfo, generatedVideo: videoResult });
   };
 
@@ -2276,10 +2133,11 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   {productInfoOpen && (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.18 }} className="overflow-hidden">
-                      <textarea value={productInfo} onChange={e => setProductInfo(e.target.value)}
-                        placeholder="主推品信息：名称、核心功能、目标人群、价格区间..."
+                      <textarea value={productInfo} readOnly
+                        placeholder="请先在企业中心维护并确认产品资料"
                         rows={4}
-                        className="w-full px-4 py-3 bg-transparent text-sm text-text-primary placeholder:text-text-muted resize-none outline-none" />
+                        className="w-full resize-none bg-transparent px-4 py-3 text-sm text-text-primary outline-none placeholder:text-text-muted" />
+                      <p className="px-4 pb-3 text-[10px] leading-relaxed text-text-muted">此处只读，商业事实仅来自企业中心。需要修改时请先回企业中心更新资料。</p>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -2296,8 +2154,8 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                 <button
                   data-demo-target="traffic_script_generate"
                   onClick={() => void handleGenerate()}
-                  disabled={generating || !voiceLanguageConfirmed}
-                  title={voiceLanguageConfirmed ? '生成脚本' : '请先确认口播输出语言'}
+                  disabled={generating || !voiceLanguageConfirmed || !selectedProductId || !productInfo.trim()}
+                  title={!selectedProductId || !productInfo.trim() ? '请先在企业中心维护并选择产品' : voiceLanguageConfirmed ? '生成脚本' : '请先确认口播输出语言'}
                   className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-semibold text-white transition-colors hover:bg-accent-dim disabled:opacity-50">
                   {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   生成脚本
@@ -2328,10 +2186,16 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
               )}
               {result && (
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3">
-                  <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent">
+                  <div className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full ${resultProvenance === 'ai' ? 'bg-accent' : 'bg-amber-500'}`}>
                     <Sparkles size={12} className="text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
+                    <div className={`mb-2 rounded-lg border px-3 py-2 text-[10px] font-semibold leading-relaxed ${resultProvenance === 'ai' && resultQualityStatus === 'passed' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : resultProvenance === 'ai' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                      <p className="font-black">{resultProvenance === 'ai'
+                        ? resultQualityStatus === 'passed' ? 'AI 生成 · 质量校验通过' : 'AI 草稿 · 待人工复核'
+                        : resultProvenance === 'ai_rejected' ? 'AI 草稿 · 质量校验未通过' : '本地草稿模板 · 未调用 AI'}</p>
+                      {resultNotice && <p className="mt-1">{resultNotice}</p>}
+                    </div>
                     <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-4 py-3">
                       <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line font-mono">{result}</p>
                     </div>
@@ -2363,7 +2227,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                                 </div>
                               </div>
                             ) : (
-                              <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating}
+                              <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
                                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 disabled:opacity-70"
                                 style={{ background: 'var(--color-accent)' }}>
                                 {videoGenerating ? <Loader2 size={13} className="animate-spin" /> : <Film size={13} />}
@@ -2395,11 +2259,11 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                                   }} className={`rounded-md border px-2 py-1 text-[10px] font-bold ${item.isSelected ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-muted'}`}>V{item.versionNumber}</button>)}
                                 </div>}
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                  <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating}
+                                  <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
                                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-text-secondary hover:text-text-primary disabled:opacity-60">
                                     {videoGenerating ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} 重新生成
                                   </button>
-                                  <button onClick={enterWorkflow}
+                                  <button onClick={enterWorkflow} disabled={resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
                                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white"
                                     style={{ background: 'var(--color-accent)' }}>
                                     <ArrowRight size={11} /> 进入剪辑流程

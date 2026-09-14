@@ -1,6 +1,49 @@
 import { formatDemoQuotaError } from './studioQuotaMessage';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
+
+const VERIFIED_AI_GENERATION_PATHS = new Set([
+  'script',
+  'covers',
+  'caption',
+  'fb-poster',
+  'lead-content-package',
+  'insight',
+  'select',
+]);
+
+function failedAiGeneration<T>(path: string, payload: Record<string, unknown> = {}, fallbackError = 'AI generation request failed'): T & { source?: string } {
+  const common = {
+    ok: false,
+    source: payload.source === 'ai_rejected' ? 'ai_rejected' : 'ai_failed',
+    provenance: payload.source === 'ai_rejected' ? 'ai_rejected' : 'ai_failed',
+    publishable: false,
+    qualityStatus: payload.source === 'ai_rejected' ? 'rejected' : 'failed',
+    error: String(payload.error || fallbackError),
+    ...(payload.code ? { code: String(payload.code) } : {}),
+    ...(typeof payload.retryable === 'boolean' ? { retryable: payload.retryable } : {}),
+    ...(Array.isArray(payload.validationIssues) ? { validationIssues: payload.validationIssues.map(String) } : {}),
+    ...(Array.isArray(payload.validationWarnings) ? { validationWarnings: payload.validationWarnings.map(String) } : {}),
+    ...(Array.isArray(payload.fieldsToConfirm) ? { fieldsToConfirm: payload.fieldsToConfirm.map(String) } : {}),
+  };
+  const emptyPayload: Record<string, unknown> = path === 'script'
+    ? { script: '' }
+    : path === 'covers'
+      ? { covers: [] }
+      : path === 'caption'
+        ? { caption: '', hashtags: [] }
+        : path === 'fb-poster'
+          ? { caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }
+          : path === 'lead-content-package'
+            ? { strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm: [] }
+            : path === 'insight'
+              ? { summary: '', actions: [] }
+              : path === 'select'
+                ? { selectedIds: [], reason: '' }
+                : {};
+  return { ...emptyPayload, ...common } as unknown as T & { source?: string };
+}
+
 async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortSignal): Promise<T & { source?: string }> {
   const retryablePaths = new Set(['script', 'translate', 'translate/batch', 'tts', 'tts/batch']);
   const maxAttempts = path === 'script' ? 4 : retryablePaths.has(path) ? 2 : 1;
@@ -19,15 +62,25 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
       }
       if (!r.ok) {
         const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string; code?: string; retryable?: boolean };
+        // Quality and fact gates are expected structured responses. Keep their
+        // diagnostics, but never merge them with a local/previous draft.
+        if (VERIFIED_AI_GENERATION_PATHS.has(path) && r.status === 422) {
+          if (path === 'script' && typeof payload.script === 'string') {
+            return {
+              ...payload,
+              ok: false,
+              source: payload.source || 'ai_rejected',
+              provenance: 'ai_rejected',
+              publishable: false,
+              qualityStatus: 'rejected',
+            } as unknown as T & { source?: string };
+          }
+          return failedAiGeneration<T>(path, { ...payload, source: payload.source || 'ai_rejected' });
+        }
         if (payload.retryable === false || /UPSTREAM_(QUOTA|AUTH)/.test(payload.code || '')
           || /额度不足|额度已|授权暂不可用/.test(payload.error || '')) {
+          if (VERIFIED_AI_GENERATION_PATHS.has(path)) return failedAiGeneration<T>(path, payload);
           return { ...fallback, ...payload } as T & { source?: string };
-        }
-        // Script quality rejections are a valid, structured product response.
-        // Preserve their diagnostics so the studio can explain the block instead
-        // of degrading it into an apparently unresponsive empty result.
-        if (path === 'script' && r.status === 422) {
-          return { ...fallback, ...payload, source: payload.source || 'ai_rejected' } as T & { source?: string };
         }
         const message = payload.error || `HTTP ${r.status}`;
         if ([502, 503, 504].includes(r.status) && attempt < maxAttempts) {
@@ -36,7 +89,11 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         }
         throw new Error(message);
       }
-      return (await r.json()) as T & { source?: string };
+      const payload = await r.json() as T & { source?: string; ok?: boolean; error?: string };
+      if (VERIFIED_AI_GENERATION_PATHS.has(path) && (payload.ok !== true || payload.source !== 'ai')) {
+        return failedAiGeneration<T>(path, payload as Record<string, unknown>, payload.error || '服务端未返回可验证的 AI 生成结果');
+      }
+      return payload;
     } catch (err: any) {
       const message = String(err?.message || '');
       if (message.includes('Demo') || message.includes('试用') || message.includes('额度') || message.includes('到期')) throw err;
@@ -50,13 +107,16 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
       break;
     }
   }
+  if (VERIFIED_AI_GENERATION_PATHS.has(path)) return failedAiGeneration<T>(path, {}, lastError);
   return { ...fallback, source: 'local', error: lastError };
 }
+export type StudioGenerationProvenance = 'ai' | 'ai_rejected' | 'ai_failed' | 'template' | 'manual_draft';
 export type StudioScriptQualityStatus =
   | 'passed'
   | 'passed_with_warnings'
   | 'warning'
   | 'needs_material'
+  | 'unreviewed'
   | 'rejected'
   // Legacy statuses remain readable while old drafts/backends are in flight.
   | 'repaired'
@@ -89,8 +149,11 @@ export interface StudioScriptMaterialCoverage {
   missingShots?: string[];
 }
 export interface StudioScriptResult {
+  ok?: boolean;
   script: string;
   source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected' | string;
+  provenance?: StudioGenerationProvenance | string;
+  publishable?: boolean;
   qualityStatus?: StudioScriptQualityStatus;
   qualityChecks?: StudioScriptQualityChecks;
   validationWarnings?: string[];
@@ -348,14 +411,17 @@ export interface FbPosterBrief {
 
 export interface FbPosterResult {
   ok: boolean;
-  source?: 'ai' | 'fallback' | 'local';
+  source?: 'ai' | 'ai_rejected' | 'ai_failed';
+  provenance?: StudioGenerationProvenance | string;
+  qualityStatus?: 'passed' | 'needs_confirmation' | 'rejected' | 'failed' | 'unreviewed';
+  publishable?: boolean;
   layoutModules?: {
     module: string;
     referencePattern: string;
     localAssetRole: string;
     replacementInstruction: string;
   }[];
-  poster: FbPosterBrief;
+  poster?: FbPosterBrief;
   caption: string;
   hashtags: string[];
   commentCta: string;
@@ -377,7 +443,10 @@ export interface FbPosterRenderResult {
 
 export interface LeadContentPackageResult {
   ok: boolean;
-  source?: 'ai';
+  source?: 'ai' | 'ai_rejected' | 'ai_failed';
+  provenance?: StudioGenerationProvenance | string;
+  qualityStatus?: 'passed' | 'needs_confirmation' | 'rejected' | 'failed';
+  publishable?: boolean;
   provider?: 'qwen' | 'gemini';
   strategySummary: string;
   referenceModulesUsed: Array<{ module: string; evidence: string; application: string }>;
@@ -394,66 +463,6 @@ export interface LeadContentPackageResult {
   }>;
   fieldsToConfirm: string[];
   error?: string;
-}
-
-function productCategoryFromInfo(productInfo?: string): string {
-  const text = String(productInfo || '');
-  const match = text.match(/(?:产品类目|所属类目|产品名称|主推产品|category|product)[：:]\s*([^\n]+)/i);
-  return String(match?.[1] || 'Private Label Product').trim().slice(0, 60) || 'Private Label Product';
-}
-
-function localPosterFallback(input: {
-  productInfo?: string;
-  ratio?: string;
-  posterStyle?: string;
-}): FbPosterResult {
-  const category = productCategoryFromInfo(input.productInfo);
-  const poster: FbPosterBrief = {
-    headline: `OEM/ODM ${category}`,
-    subheadline: 'Private label solution for overseas brands',
-    originBadge: 'Global export support',
-    trustBadges: ['GMP', 'ISO', 'FDA-ready'],
-    sellingPoints: ['Custom Formula', 'Premium Packaging', 'Factory Support', 'Global Export'],
-    process: ['Consultation', 'Formula Development', 'Packaging Design', 'Production', 'Quality Control', 'Delivery'],
-    categories: [
-      { name: category, description: 'Customizable product line for brand owners and distributors' },
-      { name: 'Private Label', description: 'Logo, packaging and formula support for market testing' },
-      { name: 'OEM/ODM', description: 'One-stop manufacturing service from sample to bulk order' },
-    ],
-    bottomBar: ['Low MOQ', 'Custom Formula', 'Premium Packaging', 'Fast Turnaround', 'Dedicated Support'],
-    cta: 'Comment "CATALOG" or DM us for sample details',
-  };
-  return {
-    ok: true,
-    source: 'local',
-    layoutModules: [
-      {
-        module: 'headline zone',
-        referencePattern: 'Use a strong OEM/ODM value hook or clone-mode viral opening structure.',
-        localAssetRole: 'none',
-        replacementInstruction: 'Rewrite with verified product category and buyer pain point.',
-      },
-      {
-        module: 'product hero',
-        referencePattern: 'Premium central product display with clean catalog composition.',
-        localAssetRole: 'product photo',
-        replacementInstruction: 'Replace competitor/product placeholder with selected local product images.',
-      },
-      {
-        module: 'proof modules',
-        referencePattern: 'Factory proof, badges, process row, category cards, and CTA bar.',
-        localAssetRole: 'factory image / certificate image / packaging image / scene image',
-        replacementInstruction: 'Map local assets to each proof module and keep commercial claims verified.',
-      },
-    ],
-    poster,
-    caption: `Looking to launch your own ${category} brand?\n\nWe support OEM/ODM, private label packaging, product customization, and export-ready supply for overseas buyers.\n\nComment "CATALOG" or DM us to get product options and sample details.`,
-    hashtags: ['OEM', 'ODM', 'PrivateLabel', 'B2B', 'Wholesale', 'FactoryDirect'],
-    commentCta: 'Comment "CATALOG" to get the product list and sample details.',
-    dmOpening: 'Hi, thanks for your interest. May I know your target market, product type, expected MOQ, and whether you need private label packaging?',
-    fieldsToConfirm: ['MOQ', 'certifications', 'lead time', 'price range', 'export countries', 'factory qualifications'],
-    imagePrompt: `Create a high-end B2B OEM/ODM social media poster for ${category}. Ratio ${String(input.ratio || '1:1')}. Style ${String(input.posterStyle || 'oem-factory')}. Include the exact poster text from the JSON brief, product hero area, factory proof area, trust badges, process row, product category cards, and bottom CTA bar. Premium catalog quality, clean layout, no unreadable tiny text.`,
-  };
 }
 
 async function del(path: string): Promise<{ ok: boolean }> {
@@ -487,11 +496,11 @@ export const studioApi = {
     referenceHighlights?: string[];
     existingScripts?: string[];
     variantSeed?: number;
-  }, fb: string, options?: { signal?: AbortSignal }) =>
+  }, _fb: string, options?: { signal?: AbortSignal }) =>
     post<StudioScriptResult>('script', { ...b, provider: 'qwen' }, { script: '' }, options?.signal),
 
-  covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, fb: string[]) =>
-    post<{ covers: string[] }>('covers', b, { covers: fb }),
+  covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, _fb: string[] = []) =>
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; covers: string[]; error?: string }>('covers', b, { ok: false, covers: [] }),
 
   caption: (b: {
     script?: string;
@@ -502,8 +511,8 @@ export const studioApi = {
     audience?: string;
     sellingPoints?: string;
     tone?: string;
-  }, fb: { caption: string; hashtags: string[] }) =>
-    post<{ caption: string; hashtags: string[] }>('caption', b, fb),
+  }, _fb: { caption: string; hashtags: string[] } = { caption: '', hashtags: [] }) =>
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
   fbPoster: (b: {
     mode: 'material' | 'clone' | 'product';
@@ -516,7 +525,7 @@ export const studioApi = {
     materials?: Array<{ id?: string; name: string; type?: string; folder?: string; role?: string }>;
     referenceNotes?: string;
   }) =>
-    post<FbPosterResult>('fb-poster', b, localPosterFallback(b)),
+    post<FbPosterResult>('fb-poster', b, { ok: false, caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }),
 
   leadContentPackage: (b: { productInfo: string; platform: string; language: string; ratio: string; referenceTitle: string; referenceEvidence: unknown }) =>
     post<LeadContentPackageResult>('lead-content-package', b, { ok: false, strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm: [], error: '获客内容包生成失败' }),
@@ -530,8 +539,8 @@ export const studioApi = {
   }) =>
     post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }),
 
-  select: (b: SelectInput, fb: string[]) =>
-    post<{ selectedIds: string[]; reason: string }>('select', b, { selectedIds: fb, reason: '本地按视频优先选取' }),
+  select: (b: SelectInput, _fb: string[]) =>
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; selectedIds: string[]; reason: string; error?: string }>('select', b, { ok: false, selectedIds: [], reason: '' }),
 
   // 配音 TTS
   tts: (b: { script?: string; text?: string; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
@@ -617,7 +626,7 @@ export const studioApi = {
 
   // 数据看板 AI 结论
   insight: (b: { scope: string; metrics: Record<string, unknown> }) =>
-    post<{ ok: boolean; summary: string; actions: string[] }>('insight', b, { ok: false, summary: '', actions: [] }),
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; summary: string; actions: string[]; error?: string }>('insight', b, { ok: false, summary: '', actions: [] }),
 
   // ⑥ 渲染授权：服务器下发原料 manifest + 短期令牌，合成交给客户端本机 ffmpeg
   render: async (spec: RenderSpec): Promise<RenderAuthorization & { source?: string }> => {

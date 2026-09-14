@@ -16,7 +16,7 @@ import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreatio
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
-import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
+import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
@@ -1034,7 +1034,7 @@ const POSTER_MODES: ModeCard[] = [
   { id: 'product',  icon: Sparkles,title: '使用产品生成', desc: '从产品资料自动开始创作' },
 ] as const;
 const POSTER_STYLES = [
-  { id: 'oem-factory', label: 'OEM 工厂风' },
+  { id: 'oem-factory', label: 'B2B 产品说明风' },
   { id: 'promo', label: '促销招商风' },
   { id: 'holiday', label: '节日营销风' },
   { id: 'premium', label: '高端品牌风' },
@@ -1390,6 +1390,9 @@ interface ModeScriptOutput {
   mode: 'material' | 'product' | 'clone';
   contentTheme?: VideoThemeId;
   buyerLabel?: string;
+  generationSource?: string;
+  generationProvenance?: StudioGenerationProvenance | string;
+  publishable?: boolean;
   qualityStatus?: StudioScriptQualityStatus;
   qualityChecks?: StudioScriptQualityChecks;
   validationWarnings?: string[];
@@ -1442,11 +1445,14 @@ function missingMaterialLabels(response: StudioScriptResult): string[] {
 }
 
 function normalizedScriptQualityStatus(response: StudioScriptResult): StudioScriptQualityStatus | undefined {
+  if (response.ok === false && response.source !== 'ai_rejected') return 'failed';
+  if (['fallback', 'local', 'template', 'ai_failed'].includes(String(response.source || '').toLowerCase())) return 'failed';
   if (response.qualityStatus) return response.qualityStatus;
   if (response.source === 'ai_rejected') return 'rejected';
   if (response.source === 'ai_failed') return 'failed';
-  // Old successful responses did not include V2 quality fields.
-  return response.script?.trim() ? 'passed' : undefined;
+  // Legacy responses without an explicit quality verdict remain drafts. A
+  // non-empty string alone must never be upgraded to "passed".
+  return response.script?.trim() ? 'warning' : undefined;
 }
 
 function scriptQualityWarnings(response: StudioScriptResult): string[] {
@@ -1462,6 +1468,11 @@ function scriptQualityWarnings(response: StudioScriptResult): string[] {
 export function scriptQualityFailure(response: StudioScriptResult, fallback: string, retainRejectedDraft = false): string | null {
   const status = normalizedScriptQualityStatus(response);
   const scriptAvailable = Boolean(response.script?.trim());
+  const source = String(response.source || '').toLowerCase();
+  if (response.ok === false && source !== 'ai_rejected') return response.error || fallback;
+  if (['fallback', 'local', 'template', 'ai_failed'].includes(source)) {
+    return response.error || 'AI 生成失败；本地或历史内容未被当作本次 AI 结果。';
+  }
   if (scriptAvailable && status !== 'rejected' && status !== 'failed') return null;
   if (scriptAvailable && status === 'rejected' && retainRejectedDraft) return null;
   const reasons = response.validationIssues?.length
@@ -1488,8 +1499,11 @@ function announceRejectedStoryboard(response: StudioScriptResult): void {
   }));
 }
 
-function qualityFields(response: StudioScriptResult): Pick<ModeScriptOutput, 'qualityStatus' | 'qualityChecks' | 'validationWarnings' | 'validationIssues' | 'materialCoveragePercent' | 'pendingMaterialScenes' | 'missingMaterials'> {
+function qualityFields(response: StudioScriptResult): Pick<ModeScriptOutput, 'generationSource' | 'generationProvenance' | 'publishable' | 'qualityStatus' | 'qualityChecks' | 'validationWarnings' | 'validationIssues' | 'materialCoveragePercent' | 'pendingMaterialScenes' | 'missingMaterials'> {
   return {
+    generationSource: response.source,
+    generationProvenance: response.provenance || (response.source === 'ai' ? 'ai' : response.source),
+    publishable: response.publishable,
     qualityStatus: normalizedScriptQualityStatus(response),
     qualityChecks: response.qualityChecks,
     validationWarnings: scriptQualityWarnings(response),
@@ -1523,6 +1537,31 @@ function qualitySuccessNotice(response: StudioScriptResult, defaultMessage: stri
   }
   return defaultMessage;
 }
+
+function manualScriptDraft(item: ModeScriptOutput, script: string): ModeScriptOutput {
+  const previousReviewNotes = [
+    ...(item.validationIssues || []),
+    ...(item.validationWarnings || []),
+  ].map(note => String(note).trim()).filter(Boolean);
+  return {
+    ...item,
+    script,
+    generationSource: 'manual_draft',
+    generationProvenance: 'manual_draft',
+    publishable: false,
+    qualityStatus: 'unreviewed',
+    qualityChecks: undefined,
+    validationWarnings: Array.from(new Set([
+      '内容已手动修改，等待基于企业中心资料重新审核。',
+      ...previousReviewNotes,
+    ])),
+    validationIssues: [],
+    materialCoveragePercent: undefined,
+    pendingMaterialScenes: undefined,
+    missingMaterials: [],
+  };
+}
+
 const uniqueLangs = (primary: string, count: number) => {
   const base = [primary, 'en', 'es', 'ar', 'pt', 'id', 'fr', 'de'].filter(Boolean);
   return Array.from(new Set(base)).slice(0, Math.max(1, count));
@@ -1711,48 +1750,6 @@ function parseProductBrief(productInfo: string) {
   };
 }
 
-function compactCategory(product: ReturnType<typeof parseProductBrief>): string {
-  const name = compact(product.name);
-  const items = compact(product.category).split(/[、,，/]/).map(item => item.trim()).filter(Boolean);
-  if (name && items.some(item => name.includes(item) || item.includes(name))) return name;
-  return items[0] || name || '产品';
-}
-
-function buyerPainForProduct(product: ReturnType<typeof parseProductBrief>): string {
-  const text = `${product.name} ${product.category} ${product.highlights}`.toLowerCase();
-  if (/灯|照明|light|lighting|轨道|筒灯|线性|庭院|调光/.test(text)) {
-    return '订购一大批灯具，结果现场亮度、色温和图文效果严重不符';
-  }
-  if (/包装|袋|盒|纸|paper|bag|box|package/.test(text)) {
-    return '下单后才发现包装材质、尺寸和印刷效果跟样图不一样';
-  }
-  if (/美妆|护肤|cream|serum|cosmetic|skincare/.test(text)) {
-    return '选品时只看图片，结果质地、包装和市场卖点都对不上';
-  }
-  return `批量采购${compactCategory(product)}，最怕样品看着可以，大货效果和描述不一致`;
-}
-
-function sceneEnvironmentForProduct(product: ReturnType<typeof parseProductBrief>, index: number): string {
-  const text = `${product.name} ${product.category}`.toLowerCase();
-  const lighting = /灯|照明|light|lighting|轨道|筒灯|线性|庭院|调光/.test(text);
-  if (lighting) {
-    return [
-      '现代简约室内展厅，白墙和木色桌面，顶部已安装一段轨道灯',
-      '半暗室内样板间，墙面保留一块明暗对比区域',
-      '安装台面旁，样品、驱动、电源线和参数卡整齐摆放',
-      '工程客户选型桌面，色温样品、外壳色卡和包装标签并排',
-      '工厂老化测试架或样品打包台，背景能看到成排灯具点亮',
-    ][index] || '真实产品演示场景';
-  }
-  return [
-    '干净桌面实拍场景，产品和采购资料放在同一画面',
-    '近距离样品展示台，手边放着规格卡和包装样',
-    '简单对比测试台，保留一个普通款作为参照',
-    '定制选项展示桌，颜色、尺寸、包装或 logo 样并排',
-    '样品打包台或询盘电脑旁，画面收束到留言动作',
-  ][index] || '真实产品演示场景';
-}
-
 function cloneReferenceAnalysisText(kickoff: VideoKickoff): string {
   const ref = kickoff.referenceAnalysis;
   if (!ref) return '';
@@ -1871,158 +1868,6 @@ function cloneReferenceHighlights(kickoff: VideoKickoff): string[] {
   return out.length ? out : ['复刻对标视频的开头钩子、情绪节奏、镜头关系和转化 CTA。'];
 }
 
-function referenceProductTerms(kickoff: VideoKickoff): string[] {
-  const raw = [
-    kickoff.video?.title || '',
-    ...(kickoff.referenceAnalysis?.details || []).flatMap(item => [item.visual || '', item.subtitle || '', item.onScreenText || '']),
-  ].join('\n');
-  const stopWords = new Set(['facebook', 'instagram', 'youtube', 'tiktok', 'video', 'official', 'factory', 'product']);
-  const titleTerms = String(kickoff.video?.title || '').match(/[A-Za-z][A-Za-z0-9-]{3,}/g) || [];
-  const upperTerms = raw.match(/\b[A-Z][A-Z0-9-]{2,}\b/g) || [];
-  return [...new Set([...titleTerms, ...upperTerms]
-    .map(term => term.trim())
-    .filter(term => term.length >= 3 && !stopWords.has(term.toLowerCase())))];
-}
-
-function adaptReferenceVisualToProduct(visual: string, product: ReturnType<typeof parseProductBrief>, kickoff?: VideoKickoff): string {
-  const productObject = `${compactCategory(product)}产品`;
-  const productName = product.name && product.name !== productObject ? product.name : productObject;
-  let next = compact(visual) || `展示${productName}的外观、细节和实际效果`;
-  for (const term of kickoff ? referenceProductTerms(kickoff) : []) {
-    next = next.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), productName);
-  }
-  next = next
-    .replace(/护肤美妆纸艺品（[^）]*）/g, `${productObject}纸艺品`)
-    .replace(/护肤美妆纸艺品\([^)]*\)/g, `${productObject}纸艺品`)
-    .replace(/护肤美妆产品|护肤品|美妆品|美妆产品|眼膜|唇膏|面霜|安瓶|指甲油|蒸笼/g, productObject)
-    .replace(/饺子造型的[^，。；;]*?(?:纸艺品|产品)/g, `饺子造型的${productObject}纸艺品`)
-    .replace(/多个[^，。；;]*?(?:产品|纸艺品)/, `多个${productObject}纸艺品`)
-    .replace(/一双[^，。；;]*?手/g, '一双手')
-    .replace(/粉色大饺子/g, `粉色${productObject}`)
-    .replace(/可爱的饺子造型纸艺品/g, `可爱的${productObject}纸艺品`);
-  const productText = `${product.name} ${product.category}`.toLowerCase();
-  const incompatibleReferenceObjects = [
-    { test: /truck|lorry|卡车|货车|牵引车|底盘/gi, supported: /truck|lorry|卡车|货车|牵引车|底盘/i },
-    { test: /cream|serum|cosmetic|skincare|面霜|精华|美妆|护肤品/gi, supported: /cream|serum|cosmetic|skincare|面霜|精华|美妆|护肤/i },
-    { test: /lighting|light fixture|track light|灯具|照明|轨道灯|筒灯/gi, supported: /lighting|light|灯具|照明|轨道灯|筒灯/i },
-  ];
-  for (const group of incompatibleReferenceObjects) {
-    if (!group.supported.test(productText)) next = next.replace(group.test, productObject);
-  }
-  if (!next.includes(productObject) && !next.includes(product.name)) {
-    next = next.replace(/画面中出现/, `画面中出现${productName}，`);
-  }
-  return next;
-}
-
-function buildLocalCloneScript(kickoff: VideoKickoff, productInfo: string, languageCode: string, variant = 0, migrationMode: MigrationMode = 'structure'): string {
-  const product = parseProductBrief(productInfo);
-  const details = kickoff.referenceAnalysis?.details?.length ? kickoff.referenceAnalysis.details : [];
-  const variantPlans = [
-    {
-      environments: ['干净桌面产品主视觉区', '近距离样品展示台', '细节检验工作台', '规格与包装陈列区', '品牌产品矩阵背景'],
-      visuals: [
-        `${product.name}正面完整亮相，主体约占画面三分之二，用清晰轮廓建立产品识别`,
-        `手持${product.name}缓慢转到侧面，展示外观、结构与包装关系`,
-        `镜头贴近${product.name}关键细节，以可见纹理或结构证明${product.highlights}`,
-        `把${product.name}的规格、包装或可定制部分并列摆放，逐项给出视觉对照`,
-        `${product.name}与品牌资料同框收尾，保持画面整洁并强化产品记忆`,
-      ],
-    },
-    {
-      environments: ['真实使用准备区', '产品操作演示台', '结果对照区', '样品确认区', '整套交付展示区'],
-      visuals: [
-        `先呈现${product.name}即将投入使用的状态，以动作悬念形成开场`,
-        `双手完成一次${product.name}可实际拍摄的操作，突出使用路径而非静态陈列`,
-        `把操作前后或两个有效角度放在同一画面比较，用结果证明${product.highlights}`,
-        `依次展示${product.name}样品、包装和可确认规格，让采购信息可被看见`,
-        `将${product.name}成套排开并回到完成态，以完整交付感结束`,
-      ],
-    },
-    {
-      environments: ['质检台近景区', '结构拆解展示区', '材质细节灯光区', '包装核验区', '工厂资料背景区'],
-      visuals: [
-        `以${product.name}局部极近景开场，随后拉开到完整产品，制造细节揭晓`,
-        `沿${product.name}结构顺序逐处移动镜头，展示组成、接口或工艺关系`,
-        `用侧光拍出${product.name}材质和边缘细节，把${product.highlights}转成可见证据`,
-        `手动翻转${product.name}及其包装标签，核验外观、规格和定制位置`,
-        `产品、包装与企业资料形成前中后景，定格在${product.name}完整正面`,
-      ],
-    },
-    {
-      environments: ['采购验样桌', '规格并列区', '手部测试台', '定制方案板前', '询盘资料收纳区'],
-      visuals: [
-        `采购者把${product.name}样品推入画面中央，以验样动作直接建立开场问题`,
-        `把${product.name}的两个可见角度并排摆放，手指沿结构逐项指出差异`,
-        `完成一次可复现的手部检查动作，用近景记录${product.highlights}对应的真实细节`,
-        `包装、标识位与${product.name}依次进入画面，形成清晰的定制确认顺序`,
-        `镜头从确认清单移回${product.name}完整产品，以单一询盘动作收尾`,
-      ],
-    },
-    {
-      environments: ['仓库取样通道', '开箱检查桌', '核心部件展示垫', '批量陈列背景', '出货确认区'],
-      visuals: [
-        `从成排样品中抽出一件${product.name}并快速转向镜头，形成动态揭晓`,
-        `拆开${product.name}外包装并依次取出内容物，保留完整开箱动作`,
-        `将核心结构靠近镜头后再放回产品主体，用连续动作呈现${product.highlights}`,
-        `单件样品与批量陈列同框，镜头横移展示包装和品牌位置`,
-        `封箱标签与${product.name}正面依次定格，强调可执行的交付确认`,
-      ],
-    },
-    {
-      environments: ['使用场景入口', '第一视角操作区', '侧面对照区', '品牌展示桌', '简洁 CTA 背景'],
-      visuals: [
-        `第一视角拿起${product.name}进入使用位置，不先展示全貌以制造悬念`,
-        `按真实步骤完成一次操作，镜头跟随手部与${product.name}移动`,
-        `固定机位并列展示两个角度或状态，以画面差异说明${product.highlights}`,
-        `将${product.name}放回品牌展示桌，补充包装与规格的可见信息`,
-        `手指停在${product.name}与资料卡之间，画面只保留一个明确行动入口`,
-      ],
-    },
-  ];
-  const plan = variantPlans[Math.abs(Math.trunc(variant)) % variantPlans.length];
-  if (details.length) {
-    return details.map((item, index) => {
-      const time = normalizeScriptTimestamps(`[${item.time || `${index * 4}-${(index + 1) * 4}s`}]`);
-      const environment = migrationMode === 'fidelity'
-        ? (item.environment || '沿用原片环境')
-        : (plan.environments[Math.min(index, plan.environments.length - 1)] || sceneEnvironmentForProduct(product, index));
-      const groundedVisual = migrationMode === 'fidelity'
-        ? adaptReferenceVisualToProduct(item.visual || item.note || '', product, kickoff)
-        : plan.visuals[Math.min(index, plan.visuals.length - 1)];
-      const verifiedProductCue = index === 0 && product.highlights && product.highlights !== '待补充真实卖点'
-        ? `，镜头中的品牌、型号和产品外观均以${product.name}的企业资料为准，重点呈现${product.highlights}`
-        : '';
-      const visual = `${groundedVisual}${verifiedProductCue}`;
-      const voice = compact(item.dialogue);
-      const subtitle = compact(item.onScreenText || item.subtitle);
-      if (languageCode === 'zh') {
-        return [
-          time,
-          `环境：${environment}`,
-          `景别：${item.shot || '沿用原片景别'}`,
-          `运镜：${item.camera || '沿用原片机位'}`,
-          `画面：${visual}`,
-          `配乐：${item.bgm || item.audio || '无'}`,
-          `台词：${voice || '无'}`,
-          `字幕：${subtitle || '无'}`,
-        ].join('\n');
-      }
-      return [
-        time,
-        `Environment: ${environment}`,
-        `Shot: ${item.shot || 'match the reference shot size'}`,
-        `Camera: ${item.camera || 'match the reference camera'}`,
-        `Visual: ${visual}`,
-        `Music: ${item.bgm || item.audio || 'None'}`,
-        `Voiceover: ${voice || 'None'}`,
-        `Subtitle: ${subtitle || 'None'}`,
-      ].join('\n');
-    }).join('\n\n');
-  }
-  return '';
-}
-
 function isStandardCloneStoryboard(value: string): boolean {
   const text = String(value || '');
   if (!text.trim()) return false;
@@ -2077,62 +1922,6 @@ function ensureDistinctCloneStoryboard(input: {
   return { script: '', normalized: true };
 }
 
-function buildLocalProductScript(productInfo: string, languageCode: string, totalDuration = 20): string {
-  const product = parseProductBrief(productInfo);
-  const field = (label: string) => compact(String(productInfo || '').split('\n').find(line => line.startsWith(`${label}：`) || line.startsWith(`${label}:`))?.replace(new RegExp(`^${label}[：:]\\s*`), ''));
-  const details = [
-    field('容量') ? `容量 ${field('容量')}` : '',
-    field('杯体材质') ? `杯体材质 ${field('杯体材质')}` : '',
-    field('刀片材质') ? `刀片材质 ${field('刀片材质')}` : '',
-    field('充电方式') ? `充电方式 ${field('充电方式')}` : '',
-    ...compact(product.highlights).split(/[、,，;；\n]/).map(item => item.trim()),
-  ].filter(Boolean);
-  const points = [details[0] || product.category, details[1] || '样品细节可确认', details[2] || '实际操作可打样确认'];
-  const total = Math.max(10, totalDuration);
-  const boundaries = [0, .18, .4, .62, .82, 1].map(value => +(value * total).toFixed(1));
-  const time = (index: number) => `${boundaries[index]}-${boundaries[index + 1]}s`;
-  const productText = `${product.name} ${product.category}`.toLowerCase();
-  const appliance = /榨汁|果汁|搅拌|小家电|blender|juicer|appliance/.test(productText);
-  const scenes = [
-    {
-      time: time(0), scene: '采购风险钩子',
-      visual: `把「${product.name}」与采购资料放到桌面，不模拟资料未提供的效果。`,
-      voice: appliance ? '榨汁杯好看，不好洗也白搭。' : `${compactCategory(product)}只看图片，真不够。`, subtitle: appliance ? '好看 ≠ 好清洗' : '先确认真实细节',
-    },
-    {
-      time: time(1), scene: '资料与实物细节',
-      visual: `用实物和参数卡确认${points[0]}，无法目测的参数只放资料卡。`,
-      voice: appliance && /容量\s*420/i.test(points[0]) ? '420毫升，通勤一杯刚刚好。' : `${Array.from(points[0]).slice(0, 12).join('')}，细节拍给你看。`, subtitle: appliance ? '420mL · 通勤随行' : String(points[0]),
-    },
-    {
-      time: time(2), scene: '第二证明点',
-      visual: `展示${points[1]}对应的实物或资料，不添加跨品类动作。`,
-      voice: appliance && /可拆洗|拆洗/.test(product.highlights) ? '杯体能拆，清洗不用绕弯。' : `${Array.from(points[1]).slice(0, 10).join('')}，实物更有说服力。`, subtitle: appliance ? '可拆杯体 · 清洗省事' : String(points[1]),
-    },
-    {
-      time: time(3), scene: '定制确认',
-      visual: `展示产品资料中已经提供的定制项、包装样或LOGO位置。`,
-      voice: /logo|包装|彩盒/i.test(product.highlights) ? 'LOGO和彩盒，都能做成你的品牌。' : '想做自己的版本？样品可以先聊。', subtitle: /logo|包装|彩盒/i.test(product.highlights) ? 'LOGO / 彩盒定制' : '先看定制样',
-    },
-    {
-      time: time(4), scene: '询盘转化',
-      visual: `收束到数量、目标市场、包装和留言动作。`,
-      voice: '想测样？发我数量和市场。', subtitle: `${product.moq ? `发数量 · MOQ ${product.moq}` : '发数量 · 拿样品报价'}`,
-    },
-  ];
-  return scenes.map(item => [
-    `[${item.time}]`,
-    `环境：真实产品桌面演示区`,
-    `景别：中近景`,
-    `运镜：固定镜头或缓慢推进`,
-    `镜头功能：${item.scene}`,
-    `画面：${item.visual}`,
-    `配乐：轻节奏BGM，口播时自动降低音量`,
-    `人物说：“${item.voice}”`,
-    `字幕：${item.subtitle}`,
-  ].join('\n')).join('\n\n');
-}
-
 function publicScriptFailureReason(value: unknown): string {
   const message = String(value || '');
   if (/429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing/i.test(message)) return '上游模型额度不足，未生成脚本。请更换模型 Key 或稍后重试。';
@@ -2148,46 +1937,6 @@ function publicVoiceFailureReason(value: unknown): string {
   if (/quota|insufficient|balance|credit|resource_exhausted|额度|余额/i.test(message)) return '语音服务额度或余额不足，暂时无法生成口播。请补充额度，或改用“上传口播”。';
   if (/401|403|unauthorized|forbidden|api.?key|permission|鉴权|权限/i.test(message)) return '语音服务鉴权失败，请检查 API Key 与模型权限，或改用“上传口播”。';
   return message || '语音服务暂时不可用，请稍后重试或改用“上传口播”。';
-}
-
-function buildLocalMaterialScript(materialsList: Clip[], selectedIds: string[], productInfo: string, totalDuration = 20): string {
-  const product = parseProductBrief(productInfo);
-  const selectedMaterials = selectedIds.length
-    ? materialsList.filter(item => selectedIds.includes(item.id))
-    : materialsList.filter(item => item.type !== 'audio').slice(0, 4);
-  const usable = selectedMaterials.length ? selectedMaterials : [{ name: '当前产品素材', folder: 'product', type: 'video', duration: 4 } as Clip];
-  const infos = buildMaterialInfosForScript(usable.slice(0, 8), totalDuration);
-  return infos.map((info, index) => {
-    const clip = usable.find(item => item.name === info.name) || usable[index]!;
-    const start = info.targetStart;
-    const end = info.targetEnd;
-    const materialRole = clip.folder === 'presenter' ? '真人口播素材'
-      : clip.folder === 'detail' ? '产品细节素材'
-      : clip.folder === 'factory' ? '工厂/实力素材'
-      : clip.folder === 'scene' ? '场景使用素材'
-      : clip.folder === 'model' ? '模特/效果素材'
-      : '产品展示素材';
-    const materialText = `${clip.name} ${clip.tags || ''} ${clip.shotFunction || ''}`;
-    const isBeauty = /精华|护肤|美容|serum|skincare|cosmetic/i.test(`${product.name} ${product.category} ${materialText}`);
-    const voice = index === 0
-      ? (/滴|液体|质地/i.test(materialText) ? '这一滴的质感，开场就很抓眼。' : `${Array.from(product.name).slice(0, 7).join('')}，第一眼就得抓人。`)
-      : index === infos.length - 1
-        ? (isBeauty ? '想做自有品牌？发数量，给你配方案。' : '想测样？发我数量和市场。')
-        : clip.folder === 'product'
-          ? (isBeauty ? '瓶身和滴管一入镜，品牌感就来了。' : '外观和结构，镜头里一次看清。')
-          : clip.folder === 'factory' ? '样品能打，大货也要接得住。'
-            : clip.folder === 'packaging' ? '换上你的LOGO，才是你的产品。'
-              : clip.folder === 'scene' || clip.folder === 'model' ? '放进真实场景，客户更容易代入。'
-                : '细节拍到位，卖点自然站得住。';
-    return [
-      `[${start}-${end}s]`,
-      `素材理解：${materialRole}《${clip.name}》，优先使用它已有的画面信息，不凭空新增场景。`,
-      `产品承接：只把已确认的可见动作或细节连接到「${product.name}」，不推断功效。`,
-      `画面：使用素材《${clip.name}》按可见内容剪辑，优先截取动作完整、主体清楚的位置。`,
-      `人物说：“${voice}”`,
-      `字幕：${index === 0 ? (/滴|液体|质地/i.test(materialText) ? '一滴抓住注意力' : '第一眼就要抓人') : index === usable.length - 1 ? '发数量 · 拿方案' : clip.folder === 'product' ? '质感就是品牌感' : clip.folder === 'factory' ? '样品到大货都能接' : clip.folder === 'packaging' ? '做成你的品牌' : clip.folder === 'scene' || clip.folder === 'model' ? '让客户看见使用场景' : '看得见的卖点'}`,
-    ].join('\n');
-  }).join('\n\n');
 }
 
 function materialRoleLabel(clip: Pick<Clip, 'folder' | 'type'>): string {
@@ -3450,6 +3199,31 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [leadContentPackage, setLeadContentPackage] = useState<LeadContentPackageResult | null>(null);
   const [posterJsonText, setPosterJsonText] = useState('');
   const [posterImageUrl, setPosterImageUrl] = useState('');
+  const posterGenerationIsVerified = Boolean(
+    posterDraft?.ok
+    && posterDraft.source === 'ai'
+    && posterDraft.provenance === 'ai'
+    && posterDraft.qualityStatus === 'passed'
+    && posterDraft.publishable === true
+    && !posterDraft.fieldsToConfirm?.length,
+  );
+  const markPosterJsonAsManualDraft = (value: string) => {
+    setPosterJsonText(value);
+    setPosterImageUrl('');
+    setLeadContentPackage(null);
+    setPosterDraft(current => ({
+      ...(current || {
+        caption: '', hashtags: [], commentCta: '', dmOpening: '', imagePrompt: '',
+      }),
+      ok: false,
+      source: undefined,
+      provenance: 'manual_draft',
+      qualityStatus: 'unreviewed',
+      publishable: false,
+      fieldsToConfirm: [...new Set([...(current?.fieldsToConfirm || []), '手动修改后的图文内容'])],
+    }));
+    setModeNotice('图文 JSON 已手动修改，原图片已失效。当前内容仅为待复核草稿，需按企业中心资料重新生成并通过校验后才能提交。');
+  };
 
   const storyboardWorkActive = Object.values(storyboardGenerating).some(Boolean)
     || Object.values(storyboardQualityChecking).some(Boolean);
@@ -5761,8 +5535,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const regenCovers = async () => {
     setCoverLoading(true);
     try {
-      const { covers } = await studioApi.covers({ script, productInfo: activeProductInfo, language: lang, provider, tone }, [coverTitle]);
-      if (covers[0]) setCoverTitle(covers[0]);
+      const result = await studioApi.covers({ script, productInfo: activeProductInfo, language: lang, provider, tone }, [coverTitle]);
+      if (!result.ok || result.source !== 'ai' || !result.covers[0]) throw new Error(result.error || '封面标题生成失败，原标题已保留。');
+      setCoverTitle(result.covers[0]);
     } catch (err: any) {
       alert(err?.message || '封面标题生成失败，请稍后重试。');
     } finally {
@@ -6162,7 +5937,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     } catch (error) { setRenderDownloadMessage((error as Error).message); }
   };
   const saveToWorks = async () => {
-    await saveProject('ready_for_approval'); // 保存作品不等于平台发布
+    if (!await saveProject('ready_for_approval')) return; // 保存作品不等于平台发布
     setSavedToWorks(true);
     setTimeout(() => setSavedToWorks(false), 2200);
   };
@@ -6242,10 +6017,12 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const aiCaption = async () => {
     setCaptionLoading(true);
     try {
-      const { caption: cap, hashtags } = await studioApi.caption(
+      const result = await studioApi.caption(
         { script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone },
         { caption, hashtags: [] },
       );
+      if (!result.ok || result.source !== 'ai' || !result.caption.trim()) throw new Error(result.error || '发布文案生成失败，原文案已保留。');
+      const { caption: cap, hashtags } = result;
       const tags = (hashtags ?? []).map(t => `#${t.replace(/^#/, '')}`).join(' ');
       setCaption(tags ? `${cap} ${tags}` : cap);
     } catch (err: any) {
@@ -6269,8 +6046,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setModeNotice('当前记录只有标题或首图，没有完整轮播证据。请返回灵感中心重新分析后再生成，避免凭空总结爆点。');
       return;
     }
-    if (mode === 'product' && !activeProductLabel) {
-      setModeNotice('产品信息生成需要先在第一步选择企业中心产品，再进入第二步选择配套素材。');
+    if (!activeProductInfo.trim() || !activeProductLabel) {
+      setModeNotice('生成商业图文前必须先选择企业中心已确认的产品资料；缺少资料时不会创建本地营销话术。');
       return;
     }
     if (mode === 'clone' && !isEvidenceLedPackage && !selectedClips.some(item => item.folder === 'hot')) {
@@ -6289,7 +6066,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           referenceTitle: videoKickoff?.video?.title || '',
           referenceEvidence: imageEvidence,
         });
-        if (!result.ok || result.items.length < 3) throw new Error(result.error || '获客内容包生成失败');
+        if (!result.ok || result.source !== 'ai' || result.items.length < 3) throw new Error(result.error || '获客内容包生成失败');
         const first = result.items[0]!;
         const firstSlide = first.slides[0];
         const poster = {
@@ -6306,6 +6083,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         const posterResult: FbPosterResult = {
           ok: true,
           source: 'ai',
+          provenance: result.provenance || 'ai',
+          qualityStatus: result.qualityStatus || 'needs_confirmation',
+          publishable: result.publishable === true && result.qualityStatus === 'passed' && result.fieldsToConfirm.length === 0,
           poster,
           caption: first.caption,
           hashtags: first.hashtags,
@@ -6393,15 +6173,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           ? [hotPosterRefs, videoKickoff ? cloneReferenceAnalysisText(videoKickoff) : ''].filter(Boolean).join('\n\n')
           : '',
       });
-      if (!result.ok && !result.poster?.headline) throw new Error(result.error || '海报文案生成失败');
+      if (!result.ok || result.source !== 'ai' || !result.poster?.headline) throw new Error(result.error || '海报文案生成失败');
+      const generatedPoster = result.poster;
       setPosterDraft(result);
-      setPosterJsonText(JSON.stringify(result.poster, null, 2));
+      setPosterJsonText(JSON.stringify(generatedPoster, null, 2));
       const tags = (result.hashtags || []).map(tag => `#${String(tag).replace(/^#/, '')}`).join(' ');
       setCaption([result.caption, tags].filter(Boolean).join(' '));
       setModeNotice('正在生成海报图...');
       try {
         const rendered = await studioApi.fbPosterRender({
-          poster: result.poster,
+          poster: generatedPoster,
           caption: result.caption,
           imagePrompt: result.imagePrompt,
           ratio,
@@ -6443,13 +6224,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (qualityFailure) throw new Error(qualityFailure);
       if (!String(scriptResp.script || '').trim()) throw new Error('模型没有返回可用脚本。');
       setScript(scriptResp.script);
+      const generatedScriptId = `demo-${Date.now()}`;
+      setModeScripts(current => [...current, {
+        id: generatedScriptId,
+        title: 'AI 自动生成脚本',
+        script: scriptResp.script,
+        mode,
+        contentTheme: activeVideoTheme.id,
+        buyerLabel: audience.trim() || '默认买家',
+        ...qualityFields(scriptResp),
+      }]);
+      setActiveModeScriptId(generatedScriptId);
       setModeNotice(qualitySuccessNotice(scriptResp, '脚本与发布内容已生成。'));
       const coversResp = await studioApi.covers({ script: scriptResp.script, productInfo: activeProductInfo, language: lang, provider, tone }, [coverTitle]);
-      if (coversResp.covers[0]) setCoverTitle(coversResp.covers[0]);
+      if (!coversResp.ok || coversResp.source !== 'ai' || !coversResp.covers[0]) throw new Error(coversResp.error || '封面标题生成失败');
+      setCoverTitle(coversResp.covers[0]);
       const cap = await studioApi.caption(
         { script: scriptResp.script, productInfo: activeProductInfo, platform, language: lang, provider, audience, sellingPoints, tone },
         { caption, hashtags: [] },
       );
+      if (!cap.ok || cap.source !== 'ai' || !cap.caption.trim()) throw new Error(cap.error || '发布文案生成失败');
       const tags = (cap.hashtags ?? []).map(t => `#${t.replace(/^#/, '')}`).join(' ');
       setCaption(tags ? `${cap.caption} ${tags}` : cap.caption);
       await goPreview(scriptResp.script);
@@ -7245,7 +7039,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
     shootingSlots, shotProductions, shotProductionContext,
-    posterDraft, posterJsonText, posterImageUrl,
+    posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
   });
 
   const applySpec = (s: Record<string, unknown>) => {
@@ -7478,9 +7272,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (s.materialVersionCovers && typeof s.materialVersionCovers === 'object') setMaterialVersionCovers(s.materialVersionCovers as Record<string, CoverVersionConfig>);
     if (s.account !== undefined) setAccount(s.account as string | null);
     if (typeof s.caption === 'string') setCaption(s.caption);
-    if (s.posterDraft && typeof s.posterDraft === 'object') setPosterDraft(s.posterDraft as FbPosterResult);
-    if (typeof s.posterJsonText === 'string') setPosterJsonText(s.posterJsonText);
-    if (typeof s.posterImageUrl === 'string') setPosterImageUrl(s.posterImageUrl);
+    setPosterDraft(s.posterDraft && typeof s.posterDraft === 'object' ? s.posterDraft as FbPosterResult : null);
+    setLeadContentPackage(s.leadContentPackage && typeof s.leadContentPackage === 'object' ? s.leadContentPackage as LeadContentPackageResult : null);
+    setPosterJsonText(typeof s.posterJsonText === 'string' ? s.posterJsonText : '');
+    setPosterImageUrl(typeof s.posterImageUrl === 'string' ? s.posterImageUrl : '');
     if (typeof s.subtitlesOn === 'boolean') setSubtitlesOn(s.subtitlesOn);
     if (s.subMode === 'target' || s.subMode === 'bilingual') setSubMode(s.subMode);
     if (s.clipEdits && typeof s.clipEdits === 'object') setClipEdits(s.clipEdits as Record<string, ClipEdit>);
@@ -7551,6 +7346,34 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
     if (agentProduction.active) return false;
     const nextSpec = collectSpec();
+    if (!['draft', 'template'].includes(status)) {
+      const invalidScript = modeScripts.find(item => {
+        const provenance = String(item.generationProvenance || item.generationSource || '').toLowerCase();
+        const quality = String(item.qualityStatus || '').toLowerCase();
+        return provenance !== 'ai'
+          || !quality
+          || ['failed', 'rejected', 'fallback', 'unreviewed', 'needs_confirmation'].includes(quality)
+          || item.publishable !== true;
+      });
+      const activeScriptHasVerifiedRecord = !script.trim() || modeScripts.some(item => (
+        item.script.trim() === script.trim()
+        && String(item.generationProvenance || item.generationSource || '').toLowerCase() === 'ai'
+        && Boolean(item.qualityStatus)
+        && !['failed', 'rejected', 'fallback', 'unreviewed', 'needs_confirmation'].includes(String(item.qualityStatus).toLowerCase())
+        && item.publishable === true
+      ));
+      if ((contentMode === 'poster' && Boolean(posterJsonText.trim()) && !posterGenerationIsVerified) || invalidScript || (contentMode === 'video' && !activeScriptHasVerifiedRecord)) {
+        const reason = contentMode === 'poster'
+          ? posterDraft?.fieldsToConfirm?.length
+            ? `图文仍有待确认商业字段：${posterDraft.fieldsToConfirm.join('、')}`
+            : '图文尚未获得可发布的 AI 事实与质量校验结果'
+          : invalidScript
+            ? `${invalidScript.title || '脚本'}仍是失败、降级或待复核草稿`
+            : '当前脚本缺少与正文一致的 AI 来源、质量和可发布记录';
+        setModeNotice(`${reason}。已保留在当前编辑器中；请先保存为草稿，不能直接进入作品交付。`);
+        return false;
+      }
+    }
     if (silent && !projectId && !studioSpecHasMeaningfulContent(nextSpec)) return false;
     if (silent && autosaveInFlightRef.current) return false;
     if (silent) {
@@ -7683,6 +7506,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     shootingSlotsRef.current = shootingSlotsRef.current.map(item => item.slotId === slot.id ? { ...item, detail } : item);
     const nextScript = storyboardSlots.map(item => `[${item.time}]\n${item.id === slot.id ? detail : item.detail}`).join('\n\n');
     setScript(nextScript); setVoiceoverLines(extractVoiceoverText(nextScript));
+    setModeScripts(current => current.map(item => item.id === activeModeScriptId ? manualScriptDraft(item, nextScript) : item));
     setVoiceDrafts({ [activeVoiceLang || lang]: extractVoiceoverText(nextScript) });
     setVoiceDraftStaleLangs(voiceLangs); setVoiceoverAudios({}); setVoiceoverUrl(null); setVoiceoverDur(0); setAlignedCuesByLang({});
     setRendered(false); setProductionError(''); setModeNotice('台词已同步到脚本；旧配音、字幕对齐和成片需更新。其他镜头画面保留。');
@@ -7821,7 +7645,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setSelected([]); setScriptRecommendedMaterialIds([]); setStoryboardAssignments({}); setStoryboardSourcePlans({});
     setVoiceoverUrl(null); setVoiceoverAudios({}); setAlignedCuesByLang({}); setLanguageRenderOutputs({});
     setBgm(''); setCover(''); setCoverUrl(null); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCaption(''); setClipEdits({}); setRendered(false); setPreviewIdx(null);
-    setPosterDraft(null); setPosterJsonText(''); setPosterImageUrl('');
+    setPosterDraft(null); setLeadContentPackage(null); setPosterJsonText(''); setPosterImageUrl('');
     setProjectId(saved.project.id); setProjectTitle(nextTitle); setProjects(current => [saved.project, ...current.filter(item => item.id !== saved.project.id)]);
     setStepIdx(0); setShowProjects(false); setSavedTick(true); window.setTimeout(() => setSavedTick(false), 1800);
   };
@@ -8507,8 +8331,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               <div className="rounded-2xl border border-border bg-surface p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-bold text-text-primary">图文内容</p>
-                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${posterLoading ? 'bg-amber-50 text-amber-700' : posterJsonText ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
-                    {posterLoading ? '生成中' : posterJsonText ? '已生成' : '待生成'}
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${posterLoading ? 'bg-amber-50 text-amber-700' : posterGenerationIsVerified ? 'bg-emerald-50 text-emerald-700' : posterJsonText ? 'bg-amber-50 text-amber-800' : 'bg-surface-2 text-text-muted'}`}>
+                    {posterLoading ? '生成中' : posterGenerationIsVerified ? 'AI 生成 · 已校验' : posterDraft?.provenance === 'manual_draft' ? '手动草稿 · 待复核' : posterJsonText ? '草稿 · 待确认' : '待生成'}
                   </span>
                 </div>
                 {modeNotice && (
@@ -8518,13 +8342,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 )}
                 <textarea
                   value={posterJsonText}
-                  onChange={event => setPosterJsonText(event.target.value)}
+                  onChange={event => markPosterJsonAsManualDraft(event.target.value)}
                   rows={posterJsonText ? 12 : 6}
                   placeholder={videoKickoff?.video?.contentFormat === 'image'
                     ? '生成后这里会出现三组内容 JSON：买家注意、合作能力、供应商信任，以及每组轮播结构、配文、CTA 和私信开场。'
                     : '生成后这里会出现海报文案 JSON：标题、副标题、认证徽章、流程六步、产品分类卡、底部卖点和 CTA。'}
                   className="mt-3 w-full rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs leading-relaxed text-text-secondary outline-none focus:border-accent"
                 />
+                {posterJsonText && !posterGenerationIsVerified && (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                    当前图文不是“已核实可提交”成品。{posterDraft?.fieldsToConfirm?.length
+                      ? `仍需确认：${posterDraft.fieldsToConfirm.join('、')}。`
+                      : '需重新生成并通过企业资料事实校验。'}系统不会自动提交或交付此草稿。
+                  </div>
+                )}
                 {leadContentPackage && <LeadContentPackagePreview value={leadContentPackage} imageUrl={posterImageUrl} />}
                 {posterDraft && !leadContentPackage && (
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -9701,25 +9532,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setScriptView('timestamp');
           setModeScripts(current => current.map(item => {
             if (item.id !== activeModeScriptId) return item;
-            const previousReviewNotes = [
-              ...(item.validationIssues || []),
-              ...(item.validationWarnings || []),
-            ].map(note => String(note).trim()).filter(Boolean);
-            return {
-              ...item,
-              script: value,
-              // 人工修改是有效的修正流程，改完后转为待审核，而不是永久保留失败状态。
-              qualityStatus: 'warning',
-              qualityChecks: undefined,
-              validationWarnings: Array.from(new Set([
-                '内容已手动修改，等待人工审核。',
-                ...previousReviewNotes,
-              ])),
-              validationIssues: [],
-              materialCoveragePercent: undefined,
-              pendingMaterialScenes: undefined,
-              missingMaterials: [],
-            };
+            return manualScriptDraft(item, value);
           }));
           if (spoken.trim()) {
             setVoiceDrafts(current => ({ ...current, [sourceLanguage]: spoken }));
@@ -11579,7 +11392,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const primaryGeneratesSetupScript = contentMode === 'video' && step === 'mode' && (!hasTimestampScript || setupChangedSinceGeneration);
   const primaryReturnsToExistingScript = contentMode === 'video' && step === 'mode' && hasTimestampScript && !setupChangedSinceGeneration;
   const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
-  const socialPosterArtifactReady = isSocialArtifactMediaSourceEligible({ source: posterImageUrl, contentMode: 'poster' });
+  const socialPosterArtifactReady = posterGenerationIsVerified
+    && isSocialArtifactMediaSourceEligible({ source: posterImageUrl, contentMode: 'poster' });
   const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster' && !(socialContentTaskId && socialPosterArtifactReady);
   const primaryGeneratesCopy = contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover' && !hasRequestedVoiceDrafts;
   const primaryGeneratesVoice = contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai' && !hasRequestedVoiceovers;

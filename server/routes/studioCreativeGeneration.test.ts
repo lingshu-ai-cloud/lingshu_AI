@@ -74,7 +74,24 @@ process.env.SUBSCRIPTION_ENFORCED = 'false';
 const { auth, store } = await import('../storage/index.js');
 auth.verifyToken = async header => header === 'Bearer local-creative-test'
   ? { userId: 'creative-test', tenantId: 'local_tenant_admin_creative_test' } : null;
-store.list = async () => ({ items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 });
+store.list = (async collection => collection === 'tenant_profiles'
+  ? ({
+    items: [{
+      id: 'creative-enterprise-profile',
+      profile: {
+        company: { name: '测试制造企业', companyType: '制造工厂' },
+        products: {
+          items: [
+            { name: '测试玻璃瓶', highlights: '透明玻璃；支持标签和外盒定制' },
+            { name: '测试润唇膏', highlights: '旋转管设计', certifications: 'FDA-ready' },
+          ],
+        },
+        socialStrategy: { enabledRoutes: ['oem_odm'] },
+      },
+    }],
+    page: 1, perPage: 20, totalItems: 1, totalPages: 1,
+  })
+  : ({ items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 })) as typeof store.list;
 const { studioRouter, storyboardSpeechIssues } = await import('./studio.js');
 const app = express();
 app.use(express.json());
@@ -99,6 +116,9 @@ const generate = async (overrides: Record<string, unknown> = {}) => {
 try {
   const first = await generate();
   assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.source, 'ai');
+  assert.equal(first.body.provenance, 'ai');
+  assert.equal(first.body.publishable, true);
   assert.equal(prompts.length, 3, 'grounded angle, continuous narration, then visuals');
   assert.ok(prompts[2].includes(editedLines![1]), 'visuals use the edited narration');
   assert.ok(first.body.script.includes(editedLines![1]), 'final script keeps the edited narration');
@@ -161,18 +181,30 @@ try {
   lines = ['先看看瓶子。', '容量是999ml。' , '再看看标签。', '私信了解产品资料。'];
   const falseFact = await generate();
   assert.equal(falseFact.status, 422, 'factual rejection still applies to structured drafts');
+  assert.equal(falseFact.body.source, 'ai_rejected');
+  assert.equal(falseFact.body.publishable, false);
   assert.match(falseFact.body.validationIssues.join(' '), /999ml/);
+
+  const beforeUnconfirmedInput = prompts.length;
+  const unconfirmedInput = await generate({ productInfo: '产品名称：测试玻璃瓶\n认证资质：FDA-ready' });
+  assert.equal(unconfirmedInput.status, 422, 'a product cannot borrow a certification confirmed only for another enterprise product');
+  assert.equal(unconfirmedInput.body.code, 'UNCONFIRMED_ENTERPRISE_PRODUCT_INPUT');
+  assert.equal(unconfirmedInput.body.publishable, false);
+  assert.equal(prompts.length, beforeUnconfirmedInput, 'unconfirmed product facts are blocked before any paid model call');
 
   malformedVoice = true;
   const malformed = await generate();
   assert.equal(malformed.status, 502, 'malformed model output is not presented as an AI template');
   assert.equal(malformed.body.script, '');
+  assert.equal(malformed.body.source, 'ai_failed');
+  assert.equal(malformed.body.publishable, false);
   malformedVoice = false;
   malformedEdit = true;
   const beforeBadEdit = prompts.length;
   const badEdit = await generate();
   assert.equal(badEdit.status, 502, 'malformed edit cannot silently fall back to unedited copy');
   assert.equal(badEdit.body.script, '');
+  assert.equal(badEdit.body.source, 'ai_failed');
   assert.equal(prompts.length - beforeBadEdit, 2, 'no visuals are generated after an invalid edit');
   malformedEdit = false;
 

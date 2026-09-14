@@ -70,7 +70,6 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
-import { groundedCaptionFallback, groundedCoverTitleFallbacks } from '../publishing/copyAdaptation.js';
 import { assessTransformation, commercialDigitalHumanGate, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
@@ -483,6 +482,269 @@ function extractJSON<T>(text: string): T | null {
   } catch {
     return null;
   }
+}
+
+type CommercialClaimAudit = { issues: string[]; fieldsToConfirm: string[] };
+
+const COMMERCIAL_CLAIM_RULES: Array<{
+  field: string;
+  claim: RegExp;
+  evidence: RegExp;
+}> = [
+  {
+    field: 'MOQ / 起订量',
+    claim: /\bMOQ\b|起订量|最低订购|低起订|小批量(?:起订|订单)|(?:low|small|flexible)\s+(?:minimum order|MOQ)/i,
+    evidence: /起订量[：:]\s*[^；;\s]|\bMOQ\b\s*[：:=]\s*[^；;\s]|minimum order\s*[：:=]\s*[^；;\s]/i,
+  },
+  {
+    field: '认证资质',
+    claim: /\b(?:GMP|ISO(?:[\s-]?\d{3,5})?|FDA(?:-ready|\s+(?:approved|registered|compliant))?|CE|RoHS|UKCA|ETL|BSCI|REACH)\b|认证(?:通过|齐全|支持)|资质(?:齐全|认证)|certif(?:ied|ication)/i,
+    evidence: /认证资质[：:]\s*[^；;\s]|资质[：:]\s*[^；;\s]|certif(?:ied|ication)\s*[：:=]\s*[^；;\s]/i,
+  },
+  {
+    field: '交期 / 周转时间',
+    claim: /交期|快速交付|极速交付|快速打样|(?:fast|quick|rapid)\s+(?:turnaround|delivery|sampling)|lead\s*time/i,
+    evidence: /leadTime=\s*[^；;\s]|交期(?:能力)?[：:]\s*[^；;\s]|周转时间[：:]\s*[^；;\s]/i,
+  },
+  {
+    field: '价格',
+    claim: /价格(?:低|优势|从|仅|区间)|最低价|出厂价|批发价|price\s+(?:from|range)|factory\s+price|wholesale\s+price/i,
+    evidence: /价格区间[：:]\s*[^；;\s]|价格[：:]\s*[^；;\s]|priceRange=\s*[^；;\s]|定价策略[：:]\s*[^；;\s]/i,
+  },
+  {
+    field: '出口能力 / 国家',
+    claim: /全球出口|出口(?:就绪|能力|支持|到)|销往全球|覆盖\S*(?:国家|市场)|(?:global|worldwide)\s+(?:export|shipping|supply)|international\s+shipping|ships?\s+(?:worldwide|globally|internationally|to)|serv(?:e|ing)\s+\d+\s+(?:countries|markets)|export[- ]ready|export\s+(?:support|capability|to)/i,
+    evidence: /(?:出口|外贸|export)[^：:=\n]*[：:=]\s*[^；;\s]|(?:出口企业|外贸企业|exporter)/i,
+  },
+  {
+    field: '工厂资质 / 产能',
+    claim: /源头工厂|自有工厂|厂家直供|工厂(?:直供|支持|车间|产线|实拍|场景|展示)?|生产能力|日产|月产|年产|批量(?:供货|生产)|量产能力|大货[^\n，。;]{0,10}(?:能接|承接|供应)|\bfactory\b|\bmanufactur(?:er|ing)\b|production\s+(?:line|capacity)|mass\s+production/i,
+    evidence: /企业类型[：:]\s*[^\n]*(?:工厂|制造)|工厂实拍素材[：:]\s*[^；;\s]|源头工厂|自有工厂|厂家直供|(?:factory|manufactur)[^：:=\n]*[：:=]\s*[^；;\s]/i,
+  },
+  {
+    field: 'OEM / ODM / 私标 / 定制能力',
+    claim: /\bOEM\b|\bODM\b|私标|贴牌|(?:可|支持|提供|能够|可以)[^\n，。;]{0,12}定制|定制(?:能力|方案|配方|包装|产品|服务|[。.!！,，;；\s]|$)|private\s+label|custom(?:izable|ization|\s+formula|\s+packaging)/i,
+    evidence: /社媒合作路线[：:]\s*[^\n]*oem_odm|定制能力[：:]\s*[^；;\s]|(?:\bOEM\b|\bODM\b|私标|贴牌|定制|custom)[^：:=\n]*[：:=]\s*[^；;\s]/i,
+  },
+  {
+    field: '样品 / 寄样政策',
+    claim: /免费样品|免费寄样|可寄样|可以寄样|提供样品|样品可用|sample(?:s)?\s+(?:available|provided)|free\s+samples?/i,
+    evidence: /samplePolicy=\s*[^；;\s]|样品政策[：:]\s*[^；;\s]|寄样[：:]\s*[^；;\s]/i,
+  },
+  {
+    field: '库存 / 现货能力',
+    claim: /现货供应|大量现货|库存充足|立即发货|ready\s+stock|in\s+stock|ships?\s+immediately/i,
+    evidence: /(?:库存|现货)[^：:=\n]*[：:=]\s*[^；;\s]|ready\s+stock|in\s+stock/i,
+  },
+  {
+    field: '质量或履约承诺',
+    claim: /品质保证|质量保证|严格质检|优质品质|高端品质|准时交付|全程支持|quality\s+(?:guarantee|assurance|control)|premium\s+quality|on[- ]time\s+delivery|dedicated\s+support/i,
+    evidence: /品质保证|质量保证|质检|质量控制|准时交付|全程支持|quality\s+(?:guarantee|assurance|control)|on[- ]time\s+delivery|dedicated\s+support/i,
+  },
+];
+
+const CERTIFICATION_TOKEN_RE = /\b(?:GMP|ISO(?:[\s-]?\d{3,5})?|FDA(?:-ready|\s+(?:approved|registered|compliant))?|CE|RoHS|UKCA|ETL|BSCI|REACH)\b/gi;
+const ABSOLUTE_COMMERCIAL_PROMISE_RE = /保证|绝对|永久|永不|零风险|100%|最快|最低价|全网第一|guaranteed|always|never|zero[- ]risk|best\s+price/i;
+const QUALIFIED_AS_PENDING_RE = /待确认|需确认|尚未确认|未核实|请提供|请填写|询问|是否|\?|？|to confirm|needs? confirmation|unverified|not verified|please (?:provide|confirm)|may i know|what is/i;
+
+function normalizedEvidence(value: string): string {
+  return String(value || '').normalize('NFKC').toLowerCase().replace(/[\s\u00a0_-]+/g, '');
+}
+
+function normalizedFactValue(value: string): string {
+  return String(value || '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}%]+/gu, '');
+}
+
+export function hasConfirmedEnterpriseFacts(value: string): boolean {
+  const text = String(value || '');
+  if (/^(?:公司名称|行业类目|企业类型|主营产品|产品优势|产品\d+|核心卖点|重点产品|认证资质|起订量|价格区间|定制能力|交期能力|物流履约)[：:]\s*\S+/m.test(text)) return true;
+  if (/^Approved FAQ for auto reply:\s*\S+/m.test(text)) return true;
+  return /\b(?:priceRange|moq|samplePolicy|paymentTerms|leadTime|bargainPolicy|bargainFloor)=\s*(?!not_configured\b)[^；;\s]+/i.test(text);
+}
+
+const PRODUCT_CONTEXT_FIELD_RE = /^(?:选定产品\s*\d*|产品名称|主推品|所属类目|产品类目|产品卖点|核心优势|已核实事实|价格区间|起订量|认证资质|产品主图素材|工厂实拍素材|包装定制素材|证书资质素材|使用场景素材|品牌视觉素材)$/;
+
+/**
+ * Keep company-wide facts plus only the selected product records. This avoids
+ * accidentally borrowing a certification, MOQ or selling point from another
+ * product in the same tenant profile.
+ */
+export function confirmedEnterpriseContextForProduct(productInfo: unknown, confirmedEnterpriseContext: string): string {
+  const raw = String(productInfo || '');
+  const selectedNames = Array.from(raw.matchAll(/^产品名称[：:]\s*(.+)$/gm))
+    .map(match => match[1]!.trim())
+    .filter(Boolean);
+  if (!selectedNames.length) return String(confirmedEnterpriseContext || '');
+  const selectedKeys = selectedNames.map(normalizedFactValue).filter(Boolean);
+  const lines = String(confirmedEnterpriseContext || '').split('\n');
+  const globalLines = lines.filter(line => !/^产品\d+[：:]/.test(line.trim()));
+  const selectedProductLines = lines.filter(line => {
+    const name = line.trim().match(/^产品\d+[：:]\s*([^；;\n]+)/)?.[1] || '';
+    const key = normalizedFactValue(name);
+    return key.length > 0 && selectedKeys.some(selected => key === selected);
+  });
+  return [...globalLines, ...selectedProductLines].join('\n');
+}
+
+export function unconfirmedEnterpriseProductFields(productInfo: unknown, confirmedEnterpriseContext: string): string[] {
+  const raw = String(productInfo || '').trim();
+  if (!raw) return [];
+  const evidenceKey = normalizedFactValue(confirmedEnterpriseContextForProduct(raw, confirmedEnterpriseContext));
+  const fields: string[] = [];
+  let inspected = 0;
+  for (const line of raw.split(/\n+/)) {
+    const match = line.trim().match(/^([^：:]+)[：:]\s*(.+)$/);
+    if (!match) continue;
+    const label = match[1]!.trim();
+    const value = match[2]!.trim();
+    if (!PRODUCT_CONTEXT_FIELD_RE.test(label) || !value) continue;
+    inspected += 1;
+    const values = /^选定产品/.test(label)
+      ? value.split(/\s*\+\s*|[、，,]/).filter(Boolean)
+      : [value];
+    if (values.some(item => {
+      const key = normalizedFactValue(item);
+      return key.length >= 2 && !evidenceKey.includes(key);
+    })) fields.push(label || '产品资料');
+  }
+  if (!inspected) {
+    const key = normalizedFactValue(raw);
+    if (key.length >= 2 && !evidenceKey.includes(key)) fields.push('产品资料');
+  }
+  return Array.from(new Set(fields));
+}
+
+function regexMatchContexts(text: string, pattern: RegExp): string[] {
+  const flags = Array.from(new Set(`${pattern.flags.replace(/g/g, '')}g`.split(''))).join('');
+  const matcher = new RegExp(pattern.source, flags);
+  return Array.from(text.matchAll(matcher)).map(match => {
+    const start = Math.max(0, text.lastIndexOf('\n', match.index ?? 0) + 1);
+    const nextBreak = text.indexOf('\n', (match.index ?? 0) + match[0].length);
+    return text.slice(start, nextBreak < 0 ? text.length : nextBreak).trim();
+  });
+}
+
+/**
+ * Closed-world gate for commercial copy. The model may rewrite prose, but it
+ * cannot create a sensitive business capability that is absent from the
+ * authenticated tenant's enterprise profile.
+ */
+export function auditCommercialClaims(candidate: unknown, confirmedEnterpriseContext: string): CommercialClaimAudit {
+  const text = typeof candidate === 'string' ? candidate : JSON.stringify(candidate ?? '');
+  const evidence = String(confirmedEnterpriseContext || '');
+  const issues: string[] = [];
+  const fieldsToConfirm = new Set<string>();
+  if (!text.trim()) return { issues, fieldsToConfirm: [] };
+
+  const absoluteContexts = regexMatchContexts(text, ABSOLUTE_COMMERCIAL_PROMISE_RE);
+  if (absoluteContexts.some(context => !QUALIFIED_AS_PENDING_RE.test(context))) {
+    issues.push('输出包含绝对化或不可核实的商业承诺');
+    fieldsToConfirm.add('绝对化商业承诺');
+  }
+
+  for (const rule of COMMERCIAL_CLAIM_RULES) {
+    const contexts = regexMatchContexts(text, rule.claim);
+    if (!contexts.length) continue;
+    const unqualifiedContexts = contexts.filter(context => !QUALIFIED_AS_PENDING_RE.test(context));
+    if (!unqualifiedContexts.length) {
+      fieldsToConfirm.add(rule.field);
+      continue;
+    }
+    if (!rule.evidence.test(evidence)) {
+      issues.push(`企业中心未确认“${rule.field}”，但生成内容包含相关承诺`);
+      fieldsToConfirm.add(rule.field);
+    }
+  }
+
+  const evidenceKey = normalizedEvidence(evidence);
+  const certificationMatches = Array.from(text.matchAll(CERTIFICATION_TOKEN_RE));
+  for (const match of certificationMatches) {
+    const token = match[0];
+    const start = Math.max(0, text.lastIndexOf('\n', match.index ?? 0) + 1);
+    const nextBreak = text.indexOf('\n', (match.index ?? 0) + token.length);
+    const context = text.slice(start, nextBreak < 0 ? text.length : nextBreak);
+    if (QUALIFIED_AS_PENDING_RE.test(context)) {
+      fieldsToConfirm.add('认证资质');
+      continue;
+    }
+    if (!evidenceKey.includes(normalizedEvidence(token))) {
+      issues.push(`企业中心未确认认证“${token}”`);
+      fieldsToConfirm.add('认证资质');
+    }
+  }
+
+  const assertedText = text.split('\n').filter(line => !QUALIFIED_AS_PENDING_RE.test(line)).join('\n');
+  const unsupportedNumbers = unsupportedNumericClaims(assertedText, evidence);
+  if (unsupportedNumbers.length) {
+    issues.push(`企业中心未确认商业数字：${unsupportedNumbers.join('、')}`);
+    fieldsToConfirm.add('数字、价格、MOQ 或交期');
+  }
+
+  return {
+    issues: Array.from(new Set(issues)),
+    fieldsToConfirm: Array.from(fieldsToConfirm),
+  };
+}
+
+function userFacingPosterText(value: any): string {
+  const poster = value?.poster || value || {};
+  return [
+    poster.headline,
+    poster.subheadline,
+    poster.originBadge,
+    ...(Array.isArray(poster.trustBadges) ? poster.trustBadges : []),
+    ...(Array.isArray(poster.sellingPoints) ? poster.sellingPoints : []),
+    ...(Array.isArray(poster.process) ? poster.process : []),
+    ...(Array.isArray(poster.categories) ? poster.categories.flatMap((item: any) => [item?.name, item?.description]) : []),
+    ...(Array.isArray(poster.bottomBar) ? poster.bottomBar : []),
+    poster.cta,
+    value?.caption,
+    ...(Array.isArray(value?.hashtags) ? value.hashtags : []),
+    value?.commentCta,
+    value?.dmOpening,
+    value?.imagePrompt,
+  ].filter(Boolean).map(String).join('\n');
+}
+
+function userFacingLeadPackageText(value: any): string {
+  return [
+    value?.strategySummary,
+    ...(Array.isArray(value?.items) ? value.items.flatMap((item: any) => [
+      item?.title,
+      item?.objective,
+      ...(Array.isArray(item?.slides) ? item.slides.flatMap((slide: any) => [slide?.headline, slide?.body]) : []),
+      item?.caption,
+      ...(Array.isArray(item?.hashtags) ? item.hashtags : []),
+      item?.cta,
+      item?.dmOpening,
+      item?.imagePrompt,
+    ]) : []),
+  ].filter(Boolean).map(String).join('\n');
+}
+
+function confirmationFields(value: unknown): string[] {
+  return Array.from(new Set((Array.isArray(value) ? value : []).map(String).map(item => item.trim()).filter(Boolean))).slice(0, 20);
+}
+
+function upstreamGenerationFailure(error: unknown, label: string) {
+  const raw = String(error instanceof Error ? error.message : error || 'unknown upstream error');
+  const quota = /429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing|额度|余额/i.test(raw);
+  const authFailure = /401|403|api.?key|unauthorized|permission|鉴权|权限/i.test(raw);
+  const retryable = !quota && !authFailure && /timeout|timed out|超时|503|502|504|UNAVAILABLE|fetch|network/i.test(raw);
+  return {
+    ok: false,
+    source: 'ai_failed' as const,
+    provenance: 'ai_failed' as const,
+    publishable: false,
+    qualityStatus: 'failed' as const,
+    code: quota ? 'UPSTREAM_QUOTA_EXHAUSTED' : authFailure ? 'UPSTREAM_AUTH_UNAVAILABLE' : 'UPSTREAM_GENERATION_FAILED',
+    retryable,
+    error: quota
+      ? `上游模型额度不足，未生成${label}。`
+      : authFailure
+        ? `上游模型授权不可用，未生成${label}。`
+        : `上游模型调用失败，未生成${label}。请稍后重试。`,
+  };
 }
 
 function referenceForbiddenTerms(input: {
@@ -2034,6 +2296,31 @@ studioRouter.post('/script', async (req, res) => {
   const normalizedMaterialInfos = normalizeMaterialInfos(materialInfos, materials, Number(duration) || 20);
   const structuredMaterials = materialInfoLines(normalizedMaterialInfos);
   const product = productInfo || '';
+  const confirmedEnterprise = await enterpriseCtx();
+  if (!String(product).trim()) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PRODUCT_REQUIRED', script: '', fieldsToConfirm: ['企业产品资料'],
+      validationIssues: ['缺少企业中心已确认的产品选择'], validationWarnings: [],
+      error: '请先选择企业中心已确认产品；未调用模型生成脚本。',
+    });
+    return;
+  }
+  const confirmedProductEnterprise = confirmedEnterpriseContextForProduct(productInfo, confirmedEnterprise);
+  const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, confirmedEnterprise);
+  if (String(sellingPoints || '').trim()
+    && !normalizedFactValue(confirmedProductEnterprise).includes(normalizedFactValue(String(sellingPoints)))) {
+    unconfirmedProductFields.push('创作卖点');
+  }
+  if (unconfirmedProductFields.length) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'UNCONFIRMED_ENTERPRISE_PRODUCT_INPUT', script: '', fieldsToConfirm: Array.from(new Set(unconfirmedProductFields)),
+      validationIssues: ['请求中的产品或卖点信息无法在当前企业中心已确认资料中核对'], validationWarnings: [],
+      error: '所选产品或卖点资料尚未在企业中心确认，未调用模型生成脚本。',
+    });
+    return;
+  }
   // Long benchmark videos can easily exceed 8k characters once every shot,
   // beat, dialogue and sound cue is serialized. Preserve the full working
   // timeline instead of silently dropping the latter half before generation.
@@ -2292,7 +2579,8 @@ ${narrationBudget}
 只输出 ${lang} JSON：{"narration":"缩短后的完整口播"}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), productSceneCount);
       if (!editedVoiceLines.length || lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
         res.status(422).json({
-          ok: false, source: 'ai_rejected', script: '', code: 'SCRIPT_DURATION_EXCEEDED', qualityStatus: 'rejected',
+          ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false,
+          script: '', code: 'SCRIPT_DURATION_EXCEEDED', qualityStatus: 'rejected',
           error: '口播仍超过目标时长，请增加时长或减少本条要讲的内容',
           validationIssues: ['口播缩写后仍不满足目标时长'], validationWarnings: [],
         });
@@ -2475,7 +2763,7 @@ Requirements:
     const hasLockedDraft = lockedVisualScenes.length > 0 && lockedVisualScenes.length === lockedVoiceLines.length;
     const text = hasLockedDraft
       ? ''
-      : await callLLM(`${presentationRule}\n${prompt}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
+      : await callLLM(`${presentationRule}\n${prompt}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || undefined });
     const isStructuredLockedDraft = hasLockedDraft && (generationMode === 'product' || generationMode === 'material');
     let script = isStructuredLockedDraft
       ? ensureSelectedProductNamesInScript(serializeLockedStoryboard(lockedVisualScenes, lockedVoiceLines, generationMode === 'product' ? productDuration : 0), productInfo)
@@ -2573,8 +2861,10 @@ Requirements:
       return issues;
     };
     const repairableIssues = (candidate: string): string[] => {
-      const unsupported = unsupportedNumericClaims(candidate, productInfo);
+      const unsupported = unsupportedNumericClaims(candidate, confirmedProductEnterprise);
+      const commercialAudit = auditCommercialClaims(candidate, confirmedProductEnterprise);
       const issues = unsupported.length ? [`资料外数字：${unsupported.join('、')}`] : [];
+      issues.push(...commercialAudit.issues);
       issues.push(...mixedStoryboardIssues(candidate, presentationMode, normalizedMaterialInfos));
       if (/不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(candidate)) {
         issues.push('绝对化或不可验证承诺');
@@ -2611,8 +2901,8 @@ Requirements:
       if (!issues.length) break;
       const repaired = await callLLM(`你是脚本事实校对员。请直接修复下方草稿，只输出修复后的脚本，不要解释。
 
-唯一允许作为产品事实的来源：
-${product || '无。不得写任何产品事实。'}
+唯一允许作为产品与商业事实的来源（服务器读取的企业中心已确认资料）：
+${hasConfirmedEnterpriseFacts(confirmedProductEnterprise) ? confirmedProductEnterprise : '无。不得写任何产品事实或商业能力。'}
 
 本次发现的问题：
 ${issues.map(issue => `- ${issue}`).join('\n')}
@@ -2637,7 +2927,7 @@ ${generationMode === 'clone' ? scriptCreativeModeRule('clone') : contentGoal ===
 - ${repairFormat}
 
 待修复草稿：
-${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
+${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || undefined });
       script = normalizeGeneratedScript(repaired);
     }
     if (!isStructuredLockedDraft) script = normalizeGeneratedScript(script);
@@ -2658,17 +2948,6 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     }
     if (generationMode === 'clone' && voiceoverMode === 'none') {
       script = clearStoryboardSpeech(script);
-    } else if (voiceoverMode === 'ai'
-      && generationMode === 'material'
-      && (storyboardSpeechIssues(script).length > 0
-        || strictCommercialPolicyIssues(script).some(issue => /^未使用本条唯一主 CTA/.test(issue)))) {
-      script = syncStoryboardSubtitles(applySafeStoryboardSpeechFallback(
-        script,
-        productInfo,
-        videoThemeId as ContentTheme,
-        primaryCta,
-        language,
-      ));
     }
     script = ensureSelectedProductNamesInScript(script, productInfo);
     if (generationMode === 'clone') {
@@ -2677,7 +2956,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       script = stripStoryboardReferenceLeaks(script, forbiddenTerms, forbiddenIndustryTerms);
     }
     if (generationMode === 'material' && voiceoverMode === 'ai') {
-      script = await finalizeMaterialScript({script,facts:productInfo,language,infos:normalizedMaterialInfos.map(info=>({...info,name:info.name || ''}))});
+      script = await finalizeMaterialScript({script,facts:confirmedProductEnterprise,language,infos:normalizedMaterialInfos.map(info=>({...info,name:info.name || ''}))});
     }
     let materialQualityV2: ReturnType<typeof assessScriptQualityV2> | null = null;
     if (generationMode === 'material') {
@@ -2699,7 +2978,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     }
     const selectedNames = selectedProductNames(productInfo);
     // “秒”及时间戳是视频制作参数，不是产品主张，不能触发“资料外数字”风险。
-    const unsupportedNumberClaims = unsupportedNumericClaims(script, productInfo);
+    const unsupportedNumberClaims = unsupportedNumericClaims(script, confirmedProductEnterprise);
+    const commercialAudit = auditCommercialClaims(script, confirmedProductEnterprise);
     const missingProduct = !String(productInfo || '').trim();
     const normalizedScriptIdentity = normalizeProductIdentity(script);
     const missingSelectedProduct = selectedNames.length > 0
@@ -2763,6 +3043,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       ...speechIssues,
       ...groundingIssues,
       ...timelineIssues,
+      ...commercialAudit.issues,
       ...strictCommercialIssues,
       ...strategyIssues,
       ...duplicateStoryboardFields,
@@ -2780,6 +3061,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       missingSelectedProduct ? `脚本未完整覆盖选定产品名称：${selectedNames.join('、')}` : '',
       unsupportedNumberClaims.length ? `出现产品资料未提供的数字：${unsupportedNumberClaims.join('、')}` : '',
       ...groundingIssues,
+      ...commercialAudit.issues,
       ...materialStrictHardIssues,
       /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script) ? '脚本泄漏了生成规则或占位说明' : '',
       /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script) ? '脚本包含绝对化或不可验证承诺' : '',
@@ -2796,6 +3078,9 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         strictCommercialIssues.some(issue => /^已选择 AI 口播，但有效台词不足两段/.test(issue))
           ? '当前可用素材不足以承载两段有效口播，补充素材后可继续完善'
           : '',
+        commercialAudit.fieldsToConfirm.length
+          ? `商业字段待企业中心确认：${commercialAudit.fieldsToConfirm.join('、')}`
+          : '',
       ].filter(Boolean)))
       : nonBlockingQualityIssues;
     const hardValidationIssues = generationMode === 'material'
@@ -2807,6 +3092,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       res.status(422).json({
         ok: false,
         source: 'ai_rejected',
+        provenance: 'ai_rejected',
+        publishable: false,
         code: 'SCRIPT_QUALITY_BLOCKED',
         error: hardValidationIssues[0] || '脚本未通过安全与可执行性检查，请补充产品资料或重新生成。',
         script,
@@ -2822,6 +3109,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
         },
         validationIssues: hardValidationIssues,
         validationWarnings,
+        fieldsToConfirm: commercialAudit.fieldsToConfirm,
       });
       return;
     }
@@ -2837,6 +3125,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     res.json({
       ok: true,
       source: 'ai',
+      provenance: 'ai',
+      publishable: commercialAudit.fieldsToConfirm.length === 0,
       script,
       qualityStatus,
       qualityChecks: {
@@ -2850,6 +3140,7 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       },
       validationIssues: [],
       validationWarnings,
+      fieldsToConfirm: commercialAudit.fieldsToConfirm,
     });
   } catch (error) {
     const rawError = String(error instanceof Error ? error.message : error);
@@ -2866,6 +3157,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     res.status(502).json({
       ok: false,
       source: 'ai_failed',
+      provenance: 'ai_failed',
+      publishable: false,
       script: '',
       qualityStatus: 'failed',
       code: upstreamQuota ? 'UPSTREAM_QUOTA_EXHAUSTED' : upstreamAuth ? 'UPSTREAM_AUTH_UNAVAILABLE' : 'UPSTREAM_GENERATION_FAILED',
@@ -2883,6 +3176,34 @@ studioRouter.post('/covers', async (req, res) => {
   const { script = '', productInfo = '', language = 'en', provider, tone = '' } = req.body ?? {};
   const lang = langName(language);
   const providerOpt: 'qwen' = 'qwen';
+  const enterprise = await enterpriseCtx();
+  if (!hasConfirmedEnterpriseFacts(enterprise)) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PROFILE_REQUIRED', covers: [],
+      error: '企业中心尚无已确认资料，不能生成可用于发布的封面标题。',
+      fieldsToConfirm: ['企业产品资料'],
+    });
+    return;
+  }
+  if (!String(productInfo || '').trim()) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PRODUCT_REQUIRED', covers: [], fieldsToConfirm: ['企业产品资料'],
+      error: '请先选择企业中心已确认产品；未调用模型生成封面标题。',
+    });
+    return;
+  }
+  const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
+  const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, enterprise);
+  if (unconfirmedProductFields.length) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'UNCONFIRMED_ENTERPRISE_PRODUCT_INPUT', covers: [], fieldsToConfirm: unconfirmedProductFields,
+      error: '封面请求中的产品资料无法在当前企业中心已确认资料中核对。',
+    });
+    return;
+  }
 
   const prompt = `Generate 3 punchy ${lang} video cover titles (max 6 words each) for an overseas e-commerce short video.
 Context — product: ${productInfo || '(see enterprise profile)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
@@ -2890,15 +3211,28 @@ Use only product categories, facts, specifications and claims explicitly present
 Return ONLY a JSON array of 3 strings. No other text.`;
 
   try {
-    const text = await callLLM(prompt, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
+    const text = await callLLM(prompt, { backend: providerOpt, systemPrompt: productEnterprise });
     const arr = extractJSON<string[]>(text);
     if (arr && arr.length) {
-      res.json({ ok: true, source: 'ai', covers: arr.slice(0, 3) });
+      const covers = arr.slice(0, 3).map(String).map(item => item.trim()).filter(Boolean);
+      const audit = auditCommercialClaims(covers.join('\n'), productEnterprise);
+      if (audit.issues.length || audit.fieldsToConfirm.length) {
+        res.status(422).json({
+          ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+          code: audit.issues.length ? 'UNVERIFIED_COMMERCIAL_CLAIMS' : 'COMMERCIAL_FIELDS_REQUIRE_CONFIRMATION',
+          covers: [], fieldsToConfirm: audit.fieldsToConfirm,
+          error: audit.issues.length
+            ? `封面标题包含企业中心未确认的商业声明：${audit.issues.join('；')}`
+            : `封面标题仍有待确认商业字段：${audit.fieldsToConfirm.join('、')}`,
+        });
+        return;
+      }
+      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', covers });
       return;
     }
     throw new Error('parse');
-  } catch {
-    res.json({ ok: true, source: 'fallback', covers: groundedCoverTitleFallbacks(script, productInfo, language) });
+  } catch (error) {
+    res.status(502).json({ ...upstreamGenerationFailure(error, '封面标题'), covers: [] });
   }
 });
 
@@ -2919,28 +3253,58 @@ studioRouter.post('/fb-poster', async (req, res) => {
   } = req.body ?? {};
   const providerOpt: 'qwen' = 'qwen';
   const lang = langName(language);
+  const enterprise = await enterpriseCtx();
+  if (!hasConfirmedEnterpriseFacts(enterprise)) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PROFILE_REQUIRED', caption: '', hashtags: [], fieldsToConfirm: ['企业产品与商业能力资料'],
+      error: '企业中心尚无已确认资料，不能生成商业海报文案。',
+    });
+    return;
+  }
+  if (!String(productInfo || '').trim()) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PRODUCT_REQUIRED', caption: '', hashtags: [], fieldsToConfirm: ['企业产品资料'],
+      error: '请先选择企业中心已确认产品；未调用模型生成海报文案。',
+    });
+    return;
+  }
+  const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
+  const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, enterprise);
+  if (unconfirmedProductFields.length) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'UNCONFIRMED_ENTERPRISE_PRODUCT_INPUT', caption: '', hashtags: [], fieldsToConfirm: unconfirmedProductFields,
+      error: '海报请求中的产品资料无法在当前企业中心已确认资料中核对。',
+    });
+    return;
+  }
   const materialLines = Array.isArray(materials)
     ? materials.slice(0, 8).map((item: any, index: number) => `${index + 1}. ${String(item?.name || item || '').slice(0, 120)}${item?.role ? ` (${item.role})` : ''}`).join('\n')
     : '';
   const modeGuide = mode === 'clone'
     ? [
-        'First modularly deconstruct the reference poster into reusable layout modules: headline zone, product hero, background atmosphere, factory/proof strip, badges, process row, category cards, CTA/bottom bar, and caption framework.',
-        'Then map each reusable module to local/enterprise assets: replace competitor product with our product photo, reuse only generic background/composition style, match factory/proof modules with factory/certificate assets, and rebuild copy from verified enterprise/product info.',
+        'First modularly deconstruct the reference poster into reusable layout modules: headline zone, product hero, background atmosphere, evidence strip, badges, process row, category cards, CTA/bottom bar, and caption framework.',
+        'Then map each reusable module to verified local/enterprise assets: replace competitor product with our product photo, reuse only generic background/composition style, omit any evidence module that has no matching verified asset, and rebuild copy from verified enterprise/product info.',
         'Do not copy competitor brand, logo, certifications, price, MOQ, lead time, export country, factory qualification, or any unverified commercial promise.',
       ].join(' ')
     : mode === 'material'
-      ? 'Use selected material names as evidence for product photo, factory photo, packaging, certificate, and scene sections.'
+      ? 'Use selected materials only for directly visible product appearance and composition. Material names or folders do not prove factory ownership, certification, export, delivery, pricing, MOQ, or customization capability.'
       : 'Use enterprise profile and product info as the primary source.';
 
-  const prompt = `You are a senior B2B social media creative director for overseas OEM/ODM suppliers.
+  const prompt = `You are a senior B2B social media creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
 Create a structured poster brief and ${platform} caption in ${lang}.
 
 Generation channel: ${mode}
 Channel rule: ${modeGuide}
-Poster style: ${posterStyle}
+Poster style: ${posterStyle === 'oem-factory' ? 'structured B2B product-information layout (the legacy id is visual only; it does not authorize any OEM or factory claim)' : posterStyle}
 Canvas ratio: ${ratio}
-Product / enterprise info:
-${productInfo || '(use enterprise profile if available)'}
+Selected product context (selection only; authenticated enterprise profile remains the sole source of commercial facts):
+${productInfo || '(no product selected)'}
+
+Authenticated enterprise profile (sole commercial fact source):
+${productEnterprise}
 
 Selected material references:
 ${materialLines || '(none selected yet)'}
@@ -2952,7 +3316,7 @@ Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
 - MOQ, certifications, lead time, price, export countries, factory qualifications must come from product / enterprise info or be placed in fieldsToConfirm.
 - If Generation channel is clone, output a module-level deconstruction and local asset matching plan. The final poster must be a new composition using our product/materials, not a copy of the competitor poster.
-- Poster text should be concise enough for a dense B2B OEM poster.
+- Poster text should be concise enough for a dense B2B product-information poster.
 - Use exact English text for poster fields when language is English.
 - Return ONLY valid JSON. No markdown.
 
@@ -2960,7 +3324,7 @@ Schema:
 {
   "layoutModules": [
     {
-      "module": "headline zone / product hero / background / factory proof / badges / process row / category cards / CTA bar",
+      "module": "headline zone / product hero / background / verified evidence / badges / process row / category cards / CTA bar",
       "referencePattern": "what to reuse from the viral poster structure or style",
       "localAssetRole": "product photo / factory image / packaging image / certificate image / scene image / brand visual / none",
       "replacementInstruction": "how to replace competitor content with our verified assets and copy"
@@ -2970,40 +3334,65 @@ Schema:
     "headline": "string",
     "subheadline": "string",
     "originBadge": "string",
-    "trustBadges": ["GMP", "ISO"],
-    "sellingPoints": ["Natural Ingredients"],
-    "process": ["Consultation", "Formula Development", "Packaging Design", "Production", "Quality Control", "Delivery"],
-    "categories": [{"name":"Essential Oil","description":"short text"}],
-    "bottomBar": ["Low MOQ from ..."],
+    "trustBadges": ["only an exact certification from the authenticated profile, otherwise empty"],
+    "sellingPoints": ["only an exact verified product fact"],
+    "process": ["only steps explicitly supported by the authenticated profile, otherwise empty"],
+    "categories": [{"name":"verified product name or category","description":"verified neutral description"}],
+    "bottomBar": ["only verified facts, otherwise empty"],
     "cta": "string"
   },
   "caption": "3 short paragraphs with emoji hooks and CTA",
-  "hashtags": ["oem", "privatelabel"],
+  "hashtags": ["verified product/category terms only; capability tags such as OEM or private label require profile evidence"],
   "commentCta": "string",
   "dmOpening": "string",
-  "fieldsToConfirm": ["MOQ", "certifications"],
-  "imagePrompt": "detailed prompt for a no-extra-text B2B OEM poster image model; include layoutModules as composition guidance, include all poster text exactly as above, mention product replacement, background/style reuse, local material roles, sections, and layout"
+  "fieldsToConfirm": ["every desired but missing commercial field; do not put its value elsewhere"],
+  "imagePrompt": "detailed prompt for a no-extra-text B2B product poster image model; include layoutModules as composition guidance, include all poster text exactly as above, mention product replacement, background/style reuse, verified local material roles, sections, and layout"
 }`;
 
   const backends = [providerOpt] as const;
   const failures: string[] = [];
   for (const backend of backends) {
     try {
-      const text = await callLLM(prompt, { backend, systemPrompt: await enterpriseCtx() || undefined });
+      const text = await callLLM(prompt, { backend, systemPrompt: productEnterprise });
       const obj = extractJSON<any>(text);
       if (obj?.poster?.headline && obj?.caption) {
+        const normalized = {
+          ...obj,
+          poster: normalizePosterBrief(obj.poster),
+          caption: String(obj.caption || ''),
+          commentCta: String(obj.commentCta || ''),
+          dmOpening: String(obj.dmOpening || ''),
+          imagePrompt: String(obj.imagePrompt || ''),
+        };
+        const audit = auditCommercialClaims(userFacingPosterText(normalized), productEnterprise);
+        const fieldsToConfirm = confirmationFields([
+          ...(Array.isArray(obj.fieldsToConfirm) ? obj.fieldsToConfirm : []),
+          ...audit.fieldsToConfirm,
+        ]);
+        if (audit.issues.length) {
+          res.status(422).json({
+            ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+            code: 'UNVERIFIED_COMMERCIAL_CLAIMS', caption: '', hashtags: [], fieldsToConfirm,
+            error: `海报草稿包含企业中心未确认的商业声明：${audit.issues.join('；')}`,
+          });
+          return;
+        }
+        const publishable = fieldsToConfirm.length === 0;
         res.json({
           ok: true,
           source: 'ai',
+          provenance: 'ai',
+          publishable,
+          qualityStatus: publishable ? 'passed' : 'needs_confirmation',
           provider: backend,
           layoutModules: Array.isArray(obj.layoutModules) ? obj.layoutModules.slice(0, 12) : [],
-          poster: normalizePosterBrief(obj.poster),
-          caption: String(obj.caption || ''),
+          poster: normalized.poster,
+          caption: normalized.caption,
           hashtags: Array.isArray(obj.hashtags) ? obj.hashtags.map(String).slice(0, 10) : [],
-          commentCta: String(obj.commentCta || ''),
-          dmOpening: String(obj.dmOpening || ''),
-          fieldsToConfirm: Array.isArray(obj.fieldsToConfirm) ? obj.fieldsToConfirm.map(String).slice(0, 12) : [],
-          imagePrompt: String(obj.imagePrompt || ''),
+          commentCta: normalized.commentCta,
+          dmOpening: normalized.dmOpening,
+          fieldsToConfirm,
+          imagePrompt: normalized.imagePrompt,
         });
         return;
       }
@@ -3012,8 +3401,11 @@ Schema:
       failures.push(`${backend}: ${String(err?.message || err).slice(0, 180)}`);
     }
   }
-  console.warn('[studio] fb-poster LLM fallback:', failures.join(' | '));
-  res.json({ ok: true, source: 'fallback', ...fallbackPosterBrief({ productInfo, platform, ratio, posterStyle, language }) });
+  console.warn('[studio] fb-poster generation failed:', failures.join(' | '));
+  res.status(502).json({
+    ...upstreamGenerationFailure(failures[0] || 'poster generation failed', '海报文案'),
+    caption: '', hashtags: [], fieldsToConfirm: [],
+  });
 });
 
 // POST /studio/lead-content-package
@@ -3023,10 +3415,36 @@ studioRouter.post('/lead-content-package', async (req, res) => {
   const { productInfo = '', platform = 'instagram', language = 'en', ratio = '4:5', referenceEvidence = null, referenceTitle = '' } = req.body ?? {};
   if (!referenceEvidence?.observedFacts?.length) { res.status(400).json({ error: '缺少可信的竞品逐图证据，不能生成获客内容包' }); return; }
   const enterprise = await enterpriseCtx();
+  if (!hasConfirmedEnterpriseFacts(enterprise)) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PROFILE_REQUIRED', strategySummary: '', referenceModulesUsed: [], items: [],
+      fieldsToConfirm: ['企业产品与商业能力资料'], error: '企业中心尚无已确认资料，不能生成获客内容包。',
+    });
+    return;
+  }
+  if (!String(productInfo || '').trim()) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PRODUCT_REQUIRED', strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm: ['企业产品资料'],
+      error: '请先选择企业中心已确认产品；未调用模型生成获客内容包。',
+    });
+    return;
+  }
+  const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
+  const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, enterprise);
+  if (unconfirmedProductFields.length) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'UNCONFIRMED_ENTERPRISE_PRODUCT_INPUT', strategySummary: '', referenceModulesUsed: [], items: [],
+      fieldsToConfirm: unconfirmedProductFields, error: '获客内容包请求中的产品资料无法在当前企业中心已确认资料中核对。',
+    });
+    return;
+  }
   const prompt = `你是外贸 B2B 社媒获客内容总监。请基于企业真实资料和竞品公开图文的结构化证据，生成三条连续图文内容：吸引目标买家、解释合作能力、建立供应商信任。
 
 企业资料（唯一商业事实来源）：
-${enterprise || '(企业中心资料为空)'}
+${productEnterprise || '(企业中心资料为空)'}
 
 当前选择产品：
 ${String(productInfo || '(未选择产品)').slice(0, 5000)}
@@ -3064,16 +3482,41 @@ Schema:
   const failures: string[] = [];
   for (const backend of ['qwen'] as const) {
     try {
-      const text = await callLLM(prompt, { backend, systemPrompt: enterprise || undefined });
+      const text = await callLLM(prompt, { backend, systemPrompt: productEnterprise || undefined });
       const parsed = extractJSON<any>(text);
       if (Array.isArray(parsed?.items) && parsed.items.length >= 3) {
-        res.json({ ok: true, source: 'ai', provider: backend, strategySummary: String(parsed.strategySummary || ''), referenceModulesUsed: Array.isArray(parsed.referenceModulesUsed) ? parsed.referenceModulesUsed.slice(0, 12) : [], items: parsed.items.slice(0, 3), fieldsToConfirm: Array.isArray(parsed.fieldsToConfirm) ? parsed.fieldsToConfirm.map(String).slice(0, 20) : [] });
+        const items = parsed.items.slice(0, 3);
+        const audit = auditCommercialClaims(userFacingLeadPackageText({ ...parsed, items }), productEnterprise);
+        const fieldsToConfirm = confirmationFields([
+          ...(Array.isArray(parsed.fieldsToConfirm) ? parsed.fieldsToConfirm : []),
+          ...audit.fieldsToConfirm,
+        ]);
+        if (audit.issues.length) {
+          res.status(422).json({
+            ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+            code: 'UNVERIFIED_COMMERCIAL_CLAIMS', strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm,
+            error: `获客内容包包含企业中心未确认的商业声明：${audit.issues.join('；')}`,
+          });
+          return;
+        }
+        const publishable = fieldsToConfirm.length === 0;
+        res.json({
+          ok: true, source: 'ai', provenance: 'ai', publishable,
+          qualityStatus: publishable ? 'passed' : 'needs_confirmation', provider: backend,
+          strategySummary: String(parsed.strategySummary || ''),
+          referenceModulesUsed: Array.isArray(parsed.referenceModulesUsed) ? parsed.referenceModulesUsed.slice(0, 12) : [],
+          items,
+          fieldsToConfirm,
+        });
         return;
       }
       failures.push(`${backend}: parse_failed`);
     } catch (error) { failures.push(`${backend}: ${String((error as Error)?.message || error).slice(0, 180)}`); }
   }
-  res.status(502).json({ error: '获客内容包生成失败', details: failures });
+  res.status(502).json({
+    ...upstreamGenerationFailure(failures[0] || 'lead content generation failed', '获客内容包'),
+    strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm: [], details: failures,
+  });
 });
 
 // POST /studio/fb-poster/render  Body: { poster, caption, imagePrompt, ratio, materialIds? }
@@ -3086,17 +3529,37 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     ratio = '1:1',
     materialIds = [],
   } = req.body ?? {};
+  const enterprise = await enterpriseCtx();
+  if (!hasConfirmedEnterpriseFacts(enterprise)) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PROFILE_REQUIRED', error: '企业中心尚无已确认资料，不能生成商业海报图片。',
+      fieldsToConfirm: ['企业产品与商业能力资料'],
+    });
+    return;
+  }
   const normalizedPoster = normalizePosterBrief(poster || {});
+  const commercialAudit = auditCommercialClaims(userFacingPosterText({ poster: normalizedPoster, imagePrompt }), enterprise);
+  if (commercialAudit.issues.length) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'UNVERIFIED_COMMERCIAL_CLAIMS', error: `海报图片输入包含企业中心未确认的商业声明：${commercialAudit.issues.join('；')}`,
+      fieldsToConfirm: commercialAudit.fieldsToConfirm,
+    });
+    return;
+  }
   const headline = normalizedPoster.headline || 'AI 图文海报';
   const references = await resolveReferenceImages(materialIds, tenantId);
   const prompt = [
     String(imagePrompt || '').trim(),
-    'Generate one finished high-end B2B OEM/ODM social media poster image.',
+    'Generate one finished high-end B2B social media product poster. Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
     `Use this exact poster JSON as the content source:\n${JSON.stringify(normalizedPoster, null, 2)}`,
     `Aspect ratio: ${ratio}.`,
-    'Layout should look like a premium Facebook/Instagram B2B supplier poster: product hero area, factory proof area, badges, process row, category cards, bottom CTA bar.',
+    'Use only the sections that contain verified JSON content. Empty badge, proof, process, category, or CTA sections must stay absent rather than being filled with generic marketing claims.',
     'All visible text must match the JSON exactly. Avoid extra fake certifications, fake numbers, fake flags, watermarks, or unreadable tiny claims.',
-    references.length ? `Use the ${references.length} reference image(s) for product/factory visual guidance.` : 'No reference image was provided; create a realistic generic product/factory visual without brand-specific false claims.',
+    references.length
+      ? `Use the ${references.length} owned reference image(s) only for product appearance and directly visible environment guidance. Do not infer factory ownership or operational capability from an image.`
+      : 'No reference image was provided; create a neutral product-only studio composition. Do not add a factory, warehouse, certificate, flag, packaging claim, or operational proof scene.',
   ].filter(Boolean).join('\n\n');
 
   try {
@@ -3118,7 +3581,7 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       references: references.length,
     });
   } catch (err: any) {
-    res.status(502).json({ ok: false, error: String(err?.message || err || 'image_generation_failed') });
+    res.status(502).json(upstreamGenerationFailure(err, '海报图片'));
   }
 });
 
@@ -3128,6 +3591,27 @@ studioRouter.post('/caption', async (req, res) => {
   const { script = '', productInfo = '', platform = 'tiktok', language = 'en', provider, audience = '', sellingPoints = '', tone = '' } = req.body ?? {};
   const lang = langName(language);
   const providerOpt: 'qwen' = 'qwen';
+  const enterprise = await enterpriseCtx();
+  if (!hasConfirmedEnterpriseFacts(enterprise)) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'ENTERPRISE_PROFILE_REQUIRED', caption: '', hashtags: [], fieldsToConfirm: ['企业产品资料'],
+      error: '企业中心尚无已确认资料，不能生成可发布配文。',
+    });
+    return;
+  }
+  const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
+  const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, enterprise);
+  const sellingPointKey = normalizedFactValue(String(sellingPoints || ''));
+  if (sellingPointKey && !normalizedFactValue(productEnterprise).includes(sellingPointKey)) unconfirmedProductFields.push('创作卖点');
+  if (unconfirmedProductFields.length) {
+    res.status(422).json({
+      ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+      code: 'UNCONFIRMED_ENTERPRISE_PRODUCT_INPUT', caption: '', hashtags: [], fieldsToConfirm: Array.from(new Set(unconfirmedProductFields)),
+      error: '配文请求中的产品或卖点资料无法在当前企业中心已确认资料中核对。',
+    });
+    return;
+  }
 
   const prompt = `Write a ${platform} post caption in ${lang} for this overseas e-commerce video.
 Product: ${productInfo || '(see enterprise profile)'} ; audience: ${audience || '(infer)'} ; selling points: ${sellingPoints || '(infer)'} ; tone: ${tone || '(fit platform)'} ; script: ${script.slice(0, 300)}
@@ -3135,15 +3619,29 @@ Use only facts and product terms explicitly present above. Never invent a produc
 Return ONLY JSON: { "caption": string (1-2 sentences, may include 1-2 emojis), "hashtags": string[] (5-8 trending tags, no # prefix) }`;
 
   try {
-    const text = await callLLM(prompt, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undefined });
+    const text = await callLLM(prompt, { backend: providerOpt, systemPrompt: productEnterprise });
     const obj = extractJSON<{ caption: string; hashtags: string[] }>(text);
     if (obj?.caption) {
-      res.json({ ok: true, source: 'ai', caption: obj.caption, hashtags: obj.hashtags ?? [] });
+      const caption = String(obj.caption || '').trim();
+      const hashtags = Array.isArray(obj.hashtags) ? obj.hashtags.map(String).slice(0, 8) : [];
+      const audit = auditCommercialClaims([caption, ...hashtags].join('\n'), productEnterprise);
+      if (audit.issues.length || audit.fieldsToConfirm.length) {
+        res.status(422).json({
+          ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false, qualityStatus: 'rejected',
+          code: audit.issues.length ? 'UNVERIFIED_COMMERCIAL_CLAIMS' : 'COMMERCIAL_FIELDS_REQUIRE_CONFIRMATION',
+          caption: '', hashtags: [], fieldsToConfirm: audit.fieldsToConfirm,
+          error: audit.issues.length
+            ? `发布配文包含企业中心未确认的商业声明：${audit.issues.join('；')}`
+            : `发布配文仍有待确认商业字段：${audit.fieldsToConfirm.join('、')}`,
+        });
+        return;
+      }
+      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', caption, hashtags });
       return;
     }
     throw new Error('parse');
-  } catch {
-    res.json({ ok: true, source: 'fallback', ...groundedCaptionFallback(script, productInfo) });
+  } catch (error) {
+    res.status(502).json({ ...upstreamGenerationFailure(error, '发布配文'), caption: '', hashtags: [], fieldsToConfirm: [] });
   }
 });
 
@@ -3326,9 +3824,11 @@ Text: ${src}`;
     if (!res.writableEnded && !res.destroyed) res.json({ ok: true, source: 'ai', text: out.trim() });
   } catch (error) {
     if (!res.writableEnded && !res.destroyed) {
-      res.json({
+      res.status(502).json({
         ok: false,
-        source: 'fallback',
+        source: 'ai_failed',
+        provenance: 'ai_failed',
+        publishable: false,
         text: '',
         error: deadline.timedOut ? 'translation request timed out' : (error instanceof Error ? error.message : String(error)),
       });
@@ -3517,12 +4017,12 @@ studioRouter.post('/insight', async (req, res) => {
     const text = await callLLM(prompt, { backend: 'qwen', systemPrompt: await enterpriseCtx() || undefined });
     const obj = extractJSON<{ summary: string; actions: string[] }>(text);
     if (obj?.summary) {
-      res.json({ ok: true, source: 'ai', summary: obj.summary, actions: (obj.actions ?? []).slice(0, 3) });
+      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', summary: obj.summary, actions: (obj.actions ?? []).slice(0, 3) });
       return;
     }
     throw new Error('parse');
-  } catch {
-    res.json({ ok: true, source: 'fallback', summary: '', actions: [] });
+  } catch (error) {
+    res.status(502).json({ ...upstreamGenerationFailure(error, '数据洞察'), summary: '', actions: [] });
   }
 });
 
@@ -3543,12 +4043,12 @@ Return ONLY JSON: { "selectedIds": string[] (ordered), "reason": string (one sho
     const obj = extractJSON<{ selectedIds: string[]; reason: string }>(text);
     const valid = obj?.selectedIds?.filter(id => list.some(c => c.id === id));
     if (valid && valid.length) {
-      res.json({ ok: true, source: 'ai', selectedIds: valid, reason: obj!.reason ?? '' });
+      res.json({ ok: true, source: 'ai', provenance: 'ai', publishable: true, qualityStatus: 'passed', selectedIds: valid, reason: obj!.reason ?? '' });
       return;
     }
     throw new Error('parse');
-  } catch {
-    res.json({ ok: true, source: 'fallback', ...fallbackSelect(list, duration) });
+  } catch (error) {
+    res.status(502).json({ ...upstreamGenerationFailure(error, '智能选材结果'), selectedIds: [], reason: '' });
   }
 });
 
@@ -6827,6 +7327,58 @@ function projectFromRecord(record: any, tenantId: string): StudioProject {
   };
 }
 
+export function unpublishableGenerationReasons(spec: Record<string, unknown>): string[] {
+  const reasons: string[] = [];
+  const inspect = (label: string, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const item = value as Record<string, unknown>;
+    const source = String(item.provenance || item.source || item.generationProvenance || item.generationSource || '').toLowerCase();
+    const quality = String(item.qualityStatus || '').toLowerCase();
+    const hasGeneratedContent = Boolean(
+      String(item.script || item.caption || '').trim()
+      || (item.poster && typeof item.poster === 'object')
+      || (Array.isArray(item.items) && item.items.length),
+    );
+    if (hasGeneratedContent && !source) reasons.push(`${label}缺少明确生成来源，仅可保存为草稿`);
+    if (hasGeneratedContent && !quality) reasons.push(`${label}缺少质量校验结论，仅可保存为草稿`);
+    if (hasGeneratedContent && item.publishable !== true) reasons.push(`${label}没有明确可发布结论`);
+    if (['template', 'local', 'fallback', 'manual_draft', 'ai_failed', 'ai_rejected'].includes(source)) {
+      reasons.push(`${label}来源为${source}，仅可保存为草稿`);
+    }
+    if (['failed', 'rejected', 'fallback', 'unreviewed', 'needs_confirmation'].includes(quality)) {
+      reasons.push(`${label}质量状态为${quality}，尚不可进入交付`);
+    }
+    if (item.publishable === false) reasons.push(`${label}明确标记为不可发布`);
+    const pending = confirmationFields(item.fieldsToConfirm);
+    if (pending.length) reasons.push(`${label}仍有待确认商业字段：${pending.join('、')}`);
+  };
+  if (spec.contentMode === 'poster') {
+    inspect('海报草稿', spec.posterDraft);
+    inspect('获客内容包', spec.leadContentPackage);
+    if (String(spec.posterJsonText || '').trim() && (!spec.posterDraft || typeof spec.posterDraft !== 'object')) {
+      reasons.push('海报正文缺少生成来源和质量校验记录，仅可保存为草稿');
+    }
+  } else if (Array.isArray(spec.modeScripts)) {
+    spec.modeScripts.forEach((item, index) => inspect(`脚本${index + 1}`, item));
+  }
+  if (spec.contentMode !== 'poster' && String(spec.script || '').trim()) {
+    const currentScript = String(spec.script).trim();
+    const hasVerifiedRecord = Array.isArray(spec.modeScripts) && spec.modeScripts.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const item = value as Record<string, unknown>;
+      const source = String(item.generationProvenance || item.generationSource || item.provenance || item.source || '').toLowerCase();
+      const quality = String(item.qualityStatus || '').toLowerCase();
+      return String(item.script || '').trim() === currentScript
+        && source === 'ai'
+        && Boolean(quality)
+        && !['failed', 'rejected', 'fallback', 'unreviewed', 'needs_confirmation'].includes(quality)
+        && item.publishable === true;
+    });
+    if (!hasVerifiedRecord) reasons.push('当前脚本缺少与正文一致的 AI 来源、质量和可发布记录');
+  }
+  return Array.from(new Set(reasons));
+}
+
 // GET /studio/projects → 列表（更新时间倒序）
 studioRouter.get('/projects', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -6847,6 +7399,16 @@ studioRouter.post('/projects', async (req, res) => {
     ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
   if (automation.managedBy === 'digital_employee') { res.status(403).json({ ok: false, error: '数字员工内容项目只能由受信任的生产流程创建', code: 'managed_production_project_forbidden' }); return; }
+  const generationBlocks = unpublishableGenerationReasons(spec);
+  if (!['draft', 'template'].includes(String(status)) && generationBlocks.length) {
+    res.status(422).json({
+      ok: false,
+      code: 'UNREVIEWED_GENERATION_DRAFT',
+      error: '草稿包含未核实、待确认或失败降级内容，只能先保存为草稿，不能自动进入发布或交付。',
+      reasons: generationBlocks,
+    });
+    return;
+  }
 
   if (id) {
     const existing = await store.getById<any>('studio_projects', String(id));
@@ -7094,52 +7656,6 @@ function compactBriefCategory(p: ReturnType<typeof productBrief>): string {
   return items[0] || p.name || '产品';
 }
 
-function buyerPainForBrief(p: ReturnType<typeof productBrief>): string {
-  const text = `${p.name} ${p.category}`.toLowerCase();
-  if (/灯|照明|light|lighting|轨道|筒灯|线性|庭院|调光/.test(text)) {
-    return '订购一大批灯具，结果现场亮度、色温和图文效果严重不符';
-  }
-  if (/包装|袋|盒|纸|paper|bag|box|package/.test(text)) {
-    return '下单后才发现包装材质、尺寸和印刷效果跟样图不一样';
-  }
-  if (/美妆|护肤|cream|serum|cosmetic|skincare/.test(text)) {
-    return '选品时只看图片，结果质地、包装和市场卖点都对不上';
-  }
-  if (/榨汁|果汁|搅拌|小家电|blender|juicer|appliance/.test(text)) {
-    return '样品看着可以，大货的结构和操作细节会不会不一致';
-  }
-  return `批量采购${compactBriefCategory(p)}，最怕样品看着可以，大货效果和描述不一致`;
-}
-
-function sceneEnvironmentForBrief(p: ReturnType<typeof productBrief>, index: number): string {
-  const text = `${p.name} ${p.category}`.toLowerCase();
-  if (/灯|照明|light|lighting|轨道|筒灯|线性|庭院|调光/.test(text)) {
-    return [
-      '现代简约室内展厅，白墙和木色桌面，顶部已安装一段轨道灯',
-      '半暗室内样板间，墙面保留一块明暗对比区域',
-      '安装台面旁，样品、驱动、电源线和参数卡整齐摆放',
-      '工程客户选型桌面，色温样品、外壳色卡和包装标签并排',
-      '工厂老化测试架或样品打包台，背景能看到成排灯具点亮',
-    ][index] || '真实产品演示场景';
-  }
-  if (/榨汁|果汁|搅拌|小家电|blender|juicer|appliance/.test(text)) {
-    return [
-      '干净桌面演示区，榨汁杯、产品资料和一杯清水放在同一画面',
-      '产品细节台，杯体、杯盖和参数卡整齐摆放',
-      '俯拍操作台，杯体与刀头结构保持清晰可见',
-      '定制样品桌，LOGO位置和彩盒样并排展示',
-      '样品打包台或询盘电脑旁，画面收束到资料确认动作',
-    ][index] || '真实产品演示场景';
-  }
-  return [
-    '干净桌面实拍场景，产品和采购资料放在同一画面',
-    '近距离样品展示台，手边放着规格卡和包装样',
-    '简单对比测试台，保留一个普通款作为参照',
-    '定制选项展示桌，颜色、尺寸、包装或 logo 样并排',
-    '样品打包台或询盘电脑旁，画面收束到留言动作',
-  ][index] || '真实产品演示场景';
-}
-
 function conservativeClaim(value: string): string {
   return String(value || '')
     .replace(/大风吹不烂/g, '不易撕裂，抗拉表现可打样测试')
@@ -7148,173 +7664,13 @@ function conservativeClaim(value: string): string {
     .trim();
 }
 
-function fallbackScript(productInfo: string, duration: number): string {
-  const p = productBrief(productInfo);
-  return `[Hook · 0-3s]
-If you source ${p.category}, do not judge ${p.name} by photos only. Check the real detail first.
-
-[Body · 3-${duration - 5}s]
-Show ${p.firstPoint}, then confirm sample, packaging, MOQ and certification details on screen.
-
-[CTA · ${duration - 5}-${duration}s]
-Send your quantity, size or packaging request, and we will prepare the quote and sample plan.`;
-}
-
-function fallbackStoryboard(duration: number, productInfo = '', variantSeed = 0): string {
-  const p = productBrief(productInfo);
-  const variant = Math.abs(Number(variantSeed) || 0) % 6;
-  const pain = buyerPainForBrief(p);
-  const total = Math.max(10, Number(duration) || 20);
-  const boundaries = [0, 0.18, 0.4, 0.62, 0.82, 1].map(value => +(value * total).toFixed(1));
-  const time = (index: number) => `${boundaries[index]}-${boundaries[index + 1]}s`;
-  const categoryText = `${p.name} ${p.category}`.toLowerCase();
-  const appliance = /榨汁|果汁|搅拌|小家电|blender|juicer|appliance/.test(categoryText);
-  const proofPoints = [
-    [p.firstPoint, p.secondPoint, p.thirdPoint],
-    [p.secondPoint, p.firstPoint, p.thirdPoint],
-    [p.thirdPoint, p.secondPoint, p.firstPoint],
-    [p.firstPoint, p.thirdPoint, p.secondPoint],
-    [p.secondPoint, p.thirdPoint, p.firstPoint],
-    [p.thirdPoint, p.firstPoint, p.secondPoint],
-  ][variant] || [p.firstPoint, p.secondPoint, p.thirdPoint];
-  const detailAction = appliance
-    ? `手部依次拿起「${p.name}」的杯体和杯盖，镜头停留在参数卡与可拆结构；只呈现资料已确认的${p.firstPoint}和${p.secondPoint}。`
-    : `手持「${p.name}」缓慢转动，近拍产品正面与侧面；画面角标逐字标出“${proofPoints[0]}”和“${proofPoints[1]}”。`;
-  const proofAction = appliance
-    ? `俯拍拆开杯体与刀头组件，再按原方向装回；如果没有真实操作素材，只展示实物与${p.thirdPoint}资料卡，不模拟性能结果。`
-    : `镜头切到“${proofPoints[2]}”：手指停在产品对应细节，无法目测的内容只显示企业中心原始资料文字。`;
-  const customization = p.highlightPoints.slice(0, 2).join('、') || '定制项可按需求确认';
-  const shortPoint = (value: string, max = 14) => Array.from(String(value || '')).slice(0, max).join('');
-  const openingVoice = [
-    appliance ? '榨汁杯好看，不好洗也白搭。' : `${shortPoint(compactBriefCategory(p), 6)}只看图片，真不够。`,
-    `先别看宣传，先看${shortPoint(proofPoints[0], 8)}。`,
-    '这款值不值得选？先核对一个细节。',
-    `同类产品很多，${shortPoint(proofPoints[0], 8)}先看清。`,
-    '采购前，我会先把这个细节拍清楚。',
-    `${shortPoint(p.name, 10)}，先从一个真实细节开始。`,
-  ][variant] || `${shortPoint(compactBriefCategory(p), 6)}先看真实细节。`;
-  const firstVoice = appliance && /容量\s*420/i.test(p.firstPoint)
-    ? '420毫升，通勤一杯刚刚好。'
-    : `${shortPoint(proofPoints[1], 12)}，镜头拉近看。`;
-  const proofVoice = appliance && /可拆洗|拆洗/.test(`${p.highlights} ${p.thirdPoint}`)
-    ? '杯体能拆，清洗不用绕弯。'
-    : /304/.test(proofPoints[2]) ? '刀头用料，拆开给你看。' : `${shortPoint(proofPoints[2], 10)}，这点也看清。`;
-  const customizationVoice = /logo|包装|彩盒/i.test(customization)
-    ? 'LOGO和彩盒，都能做成你的品牌。'
-    : `${shortPoint(p.name, 10)}，正侧包装一次看清。`;
-  return `[${time(0)}]
-环境：${sceneEnvironmentForBrief(p, 0)}；
-景别：中景；
-运镜：固定镜头直拍；
-画面：人物把「${p.name}」和采购资料放到桌面，先指向实物，再转向镜头发问，最后把杯体拆开放在镜头前。
-配乐：口播 + 舒缓递进，开头保留半秒停顿制造问题感；
-台词：${openingVoice}
-字幕：${appliance ? '好看 ≠ 好清洗' : pain}
-
-[${time(1)}]
-环境：${sceneEnvironmentForBrief(p, 1)}；
-景别：近景；
-运镜：缓慢推进到产品细节；
-画面：${detailAction.replace('；只呈现资料已确认的', '；参数卡同步标出')}
-配乐：口播 + 轻节奏鼓点，细节出现时轻微加强；
-台词：${firstVoice}
-字幕：${appliance ? '420mL · 通勤随行' : `${proofPoints[0]} / ${proofPoints[1]}`}
-
-[${time(2)}]
-环境：${sceneEnvironmentForBrief(p, 2)}；
-景别：特写；
-运镜：俯拍固定，动作完成后短暂停留；
-画面：${proofAction}
-配乐：口播 + 短促转场音，操作瞬间降低背景音；
-台词：${proofVoice}
-字幕：${appliance ? '可拆杯体 · 清洗省事' : proofPoints[2]}
-
-[${time(3)}]
-环境：${sceneEnvironmentForBrief(p, 3)}；
-景别：中近景；
-运镜：横向平移扫过选项；
-画面：${/logo|包装|彩盒/i.test(customization) ? '把企业资料已确认的包装样和LOGO位置并排放好，手指从产品移到彩盒，镜头跟随横移。' : `把「${p.name}」正面、侧面和包装连续排开，逐一给出清晰近景。`}
-配乐：口播 + 稳定节奏，配合手指移动做轻快切点；
-台词：${customizationVoice}
-字幕：${/logo|包装|彩盒/i.test(customization) ? 'LOGO / 彩盒定制' : p.name}
-
-[${time(4)}]
-环境：${sceneEnvironmentForBrief(p, 4)}；
-景别：中景；
-运镜：固定镜头，最后轻推到资料页或询盘窗口；
-画面：镜头回到「${p.name}」和企业中心已填写的产品资料；只显示已有的${[p.moq ? `MOQ ${p.moq}` : '', p.cert ? `认证 ${p.cert}` : '', p.price ? `价格 ${p.price}` : ''].filter(Boolean).join('、') || '产品名称与已确认卖点'}，最后停在询盘窗口。
-配乐：口播 + 收束感配乐，结尾留出 CTA 停顿；
-台词：${[
-    '想进一步了解？发我数量和市场。', '想看完整资料？告诉我你的市场。', '需要这款？发我目标市场。',
-    '想核对采购细节？给我留个消息。', '需要产品资料？发我你的需求。', '告诉我采购市场，我把资料发给你。',
-  ][variant] || '发我你的采购需求。'}
-字幕：${p.moq ? `MOQ ${p.moq}` : '发送采购需求'}`;
-}
-
-function fallbackMaterialStoryboard(infos: ScriptMaterialInfo[], duration: number, productInfo = ''): string {
-  const p = compactProductLabel(productInfo);
-  const brief = productBrief(productInfo);
-  const usable = infos.length ? infos.slice(0, 8) : [{
-    name: '待上传素材',
-    type: 'video',
-    folder: 'upload',
-    duration,
-    role: '素材片段',
-    targetStart: 0,
-    targetEnd: duration,
-  }];
-  const tasks = ['开场钩子', '细节证明', '使用场景', '供应能力', '定制/包装', '询盘 CTA'];
-  return usable.map((info, index) => {
-    const start = Number.isFinite(Number(info.targetStart)) ? Number(info.targetStart) : +(index * duration / usable.length).toFixed(1);
-    const end = Number.isFinite(Number(info.targetEnd)) ? Number(info.targetEnd) : +(index === usable.length - 1 ? duration : (index + 1) * duration / usable.length).toFixed(1);
-    const role = materialRoleFromFolder(info);
-    const roleTask = info.folder === 'detail' ? (index === 0 ? '开场细节' : '细节证明')
-      : info.folder === 'product' ? '产品展示'
-        : info.folder === 'model' || info.folder === 'scene' ? '使用场景'
-          : info.folder === 'factory' ? '供应能力'
-            : info.folder === 'packaging' ? '定制/包装'
-              : info.folder === 'certificate' ? '资质证明'
-                : '';
-    const task = roleTask || tasks[Math.min(index, tasks.length - 1)] || '素材承接';
-    const materialText = `${info.name} ${info.tags || ''} ${info.shotFunction || ''}`;
-    const isBeauty = /精华|护肤|美容|serum|skincare|cosmetic/i.test(`${p} ${brief.category} ${materialText}`);
-    const voice = index === 0
-      ? (/滴|液体|质地/i.test(materialText)
-        ? '这一滴的质感，开场就很抓眼。'
-        : `${Array.from(p).slice(0, 7).join('')}，第一眼就得抓人。`)
-      : index === usable.length - 1
-        ? (isBeauty ? '想做自有品牌？发数量，给你配方案。' : '想测样？发我数量和市场。')
-        : info.folder === 'product'
-          ? (isBeauty ? '瓶身和滴管一入镜，品牌感就来了。' : '外观和结构，镜头里一次看清。')
-          : info.folder === 'factory'
-            ? '样品能打，大货也要接得住。'
-            : info.folder === 'packaging'
-              ? '换上你的LOGO，才是你的产品。'
-              : info.folder === 'scene' || info.folder === 'model'
-                ? '放进真实场景，客户更容易代入。'
-                : '细节拍到位，卖点自然站得住。';
-    const salesSubtitle = index === 0
-      ? (/滴|液体|质地/i.test(materialText) ? '一滴抓住注意力' : '第一眼就要抓人')
-      : index === usable.length - 1
-        ? '发数量 · 拿方案'
-        : info.folder === 'product' ? '质感就是品牌感'
-          : info.folder === 'factory' ? '样品到大货都能接'
-            : info.folder === 'packaging' ? '做成你的品牌'
-              : info.folder === 'scene' || info.folder === 'model' ? '让客户看见使用场景'
-                : task;
-    return `[${start}-${Math.max(start + 0.5, end)}s]
-素材：${info.name}
-画面：使用素材《${info.name}》作为「${p}」的${task}，原速截取主体最清楚、动作最完整的位置，并在动作结束点切入下一镜。
-人物说：“${voice}”
-字幕：${salesSubtitle}`;
-  }).join('\n\n');
-}
-
 function normalizePosterBrief(raw: any) {
   const categories = Array.isArray(raw?.categories) ? raw.categories : [];
   return {
-    headline: String(raw?.headline || 'OEM/ODM Private Label Solution').slice(0, 120),
-    subheadline: String(raw?.subheadline || 'Build your brand with factory support').slice(0, 140),
+    // Empty model fields stay empty. Filling them with generic supplier claims
+    // would turn a parse omission into an unverified business promise.
+    headline: String(raw?.headline || '').slice(0, 120),
+    subheadline: String(raw?.subheadline || '').slice(0, 140),
     originBadge: String(raw?.originBadge || '').slice(0, 80),
     trustBadges: Array.isArray(raw?.trustBadges) ? raw.trustBadges.map(String).slice(0, 8) : [],
     sellingPoints: Array.isArray(raw?.sellingPoints) ? raw.sellingPoints.map(String).slice(0, 8) : [],
@@ -7324,7 +7680,7 @@ function normalizePosterBrief(raw: any) {
       description: String(item?.description || '').slice(0, 140),
     })).filter((item: { name: string }) => item.name),
     bottomBar: Array.isArray(raw?.bottomBar) ? raw.bottomBar.map(String).slice(0, 8) : [],
-    cta: String(raw?.cta || 'DM us for catalog and sample quote').slice(0, 120),
+    cta: String(raw?.cta || '').slice(0, 120),
   };
 }
 
@@ -7382,66 +7738,4 @@ async function resolveReferenceImages(materialIds: unknown, tenantId: string): P
   return refs;
 }
 
-function fallbackPosterBrief(input: { productInfo?: unknown; platform?: unknown; ratio?: unknown; posterStyle?: unknown; language?: unknown }) {
-  const productText = String(input.productInfo || '');
-  const categoryMatch = productText.match(/(?:产品类目|产品名称|主推产品|category|product)[：:]\s*([^\n]+)/i);
-  const category = (categoryMatch?.[1] || 'Private Label Product').trim().slice(0, 60);
-  const poster = normalizePosterBrief({
-    headline: `OEM/ODM ${category}`,
-    subheadline: 'Private label solution for overseas brands',
-    originBadge: 'Global export support',
-    trustBadges: ['GMP', 'ISO', 'FDA-ready'],
-    sellingPoints: ['Custom Formula', 'Premium Packaging', 'Factory Support', 'Global Export'],
-    process: ['Consultation', 'Formula Development', 'Packaging Design', 'Production', 'Quality Control', 'Delivery'],
-    categories: [
-      { name: category, description: 'Customizable product line for brand owners and distributors' },
-      { name: 'Private Label', description: 'Logo, packaging and formula support for market testing' },
-      { name: 'OEM/ODM', description: 'One-stop manufacturing service from sample to bulk order' },
-    ],
-    bottomBar: ['Low MOQ', 'Custom Formula', 'Premium Packaging', 'Fast Turnaround', 'Dedicated Support'],
-    cta: 'Comment “CATALOG” or DM us for sample details',
-  });
-  return {
-    layoutModules: [
-      {
-        module: 'headline zone',
-        referencePattern: 'Use the viral poster hook structure if clone mode is selected; otherwise use a clear OEM/ODM value proposition.',
-        localAssetRole: 'none',
-        replacementInstruction: 'Rewrite with verified product category, target buyer pain point, and CTA.',
-      },
-      {
-        module: 'product hero',
-        referencePattern: 'Large center product display with premium catalog lighting.',
-        localAssetRole: 'product photo',
-        replacementInstruction: 'Replace competitor product with selected local product images.',
-      },
-      {
-        module: 'background and proof areas',
-        referencePattern: 'Reuse only the generic background mood, module order, and information hierarchy.',
-        localAssetRole: 'factory image / certificate image / packaging image / scene image',
-        replacementInstruction: 'Match factory, certificate, packaging, and scene assets to the corresponding poster modules.',
-      },
-    ],
-    poster,
-    caption: `🌿 Looking to launch your own ${category} brand?\n\n🚀 We support OEM/ODM, private label packaging, product customization, and export-ready supply for overseas buyers.\n\n💎 Comment “CATALOG” or DM us to get product options and sample details.`,
-    hashtags: ['OEM', 'ODM', 'PrivateLabel', 'B2B', 'Wholesale', 'FactoryDirect'],
-    commentCta: 'Comment “CATALOG” to get the product list and sample details.',
-    dmOpening: 'Hi, thanks for your interest. May I know your target market, product type, expected MOQ, and whether you need private label packaging?',
-    fieldsToConfirm: ['MOQ', 'certifications', 'lead time', 'price range', 'export countries', 'factory qualifications'],
-    imagePrompt: `Create a high-end B2B OEM/ODM social media poster for ${category}. Ratio ${String(input.ratio || '1:1')}. Style ${String(input.posterStyle || 'oem-factory')}. Include the exact poster text from the JSON brief, product hero area, factory proof area, trust badges, process row, product category cards, and bottom CTA bar. Premium catalog quality, clean layout, no unreadable tiny text.`,
-  };
-}
-
-function fallbackSelect(list: { id: string; type: string; duration: number }[], target: number) {
-  // 视频优先、累计接近目标时长
-  const ordered = [...list].sort((a, b) => (a.type === 'video' ? -1 : 1) - (b.type === 'video' ? -1 : 1));
-  const picked: string[] = [];
-  let acc = 0;
-  for (const c of ordered) {
-    if (acc >= target) break;
-    picked.push(c.id);
-    acc += c.type === 'image' ? 3 : c.duration;
-  }
-  return { selectedIds: picked.length ? picked : list.slice(0, 3).map(c => c.id), reason: '按视频优先、贴合目标时长自动选取' };
-}
 import { createProjectRevisionGuard, projectRevisionMatches } from '../lib/projectRevision.js';
