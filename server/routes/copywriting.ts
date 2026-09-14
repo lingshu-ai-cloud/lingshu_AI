@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
 import { buildCopywritingPrompt, type CopywritingParams } from '../prompts/copyPrompts.js';
+import { requireAuth } from '../middleware/auth.js';
 
 export const copywritingRouter = Router();
+copywritingRouter.use(requireAuth);
 
 copywritingRouter.post('/generate', async (req, res) => {
   const { productName, description, targetMarket, targetAudience, platform, tone, language, backend, model } = req.body as CopywritingParams & { backend?: string; model?: string };

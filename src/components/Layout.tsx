@@ -42,6 +42,7 @@ const SOCIAL_NAV: NavSection = {
     { id: 'socialInspiration', label: '灵感中心', icon: <Clapperboard size={16} /> },
     { id: 'smartAssets', label: '内容创作', icon: <WandSparkles size={16} /> },
     { id: 'scriptLibrary', label: '脚本库', icon: <FileText size={16} /> },
+    { id: 'traffic', label: '投流与发布', icon: <Send size={16} /> },
     { id: 'accountManagement', label: '账号管理', icon: <RadioTower size={16} /> },
   ],
 };
@@ -81,10 +82,18 @@ const SYSTEM_NAV: NavSection = {
 
 const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
+const STARTER_HOME_NAV_ITEM = { id: 'digitalEmployees' as Page, label: '灵小枢工作台', icon: <Home size={16} /> };
+const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
+  label: '经营管理',
+  items: [
+    { id: 'strategy', label: '经营概览', icon: <Target size={16} /> },
+  ],
+};
+
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
   customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'orders', 'scheduled']),
 };
 
@@ -104,6 +113,7 @@ interface LayoutProps {
   onSessionUpdate?: (session: AuthSession | null) => void;
   demoGuideActive?: boolean;
   onDemoGuideShown?: () => void;
+  starterMode?: boolean;
 }
 
 const relTime = (ts: number) => {
@@ -224,11 +234,7 @@ const pct = (used?: number, limit?: number) => {
 
 const byToken = (tokens: number, reserve: number) => Math.max(0, Math.floor(tokens / reserve));
 const isAdminSession = (session?: AuthSession | null) => (
-  !session?.supportAccess && (
-    session?.user?.email === 'lingshu-admin@local.test' ||
-    session?.tenant?.subscriptionPlan === 'admin' ||
-    session?.subscription?.plan === 'admin'
-  )
+  Boolean(session && !session.supportAccess && session.platformAdmin === true)
 );
 
 const ADMIN_PAGE_GUIDES: Partial<Record<Page, Array<{ label: string; target: string }>>> = {
@@ -274,7 +280,7 @@ function AdminPageGuide({ page }: { page: Page }) {
   );
 }
 
-export default function Layout({ page, onNavigate, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown }: LayoutProps) {
+export default function Layout({ page, onNavigate, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown, starterMode = false }: LayoutProps) {
   const isInConversation = conversation !== null && !suppressRightPanel;
   const [quotaOpen, setQuotaOpen] = useState(false);
   const quotaAreaRef = useRef<HTMLDivElement>(null);
@@ -301,12 +307,21 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   const activeSession = liveSession && liveSessionIdentityScope === sessionIdentityScope ? liveSession : session;
   const guideScope = activeSession?.demo?.guideScope || (activeSession?.demo?.expiresAt ? `${activeSession.user.id}:${activeSession.demo.expiresAt}` : activeSession?.user?.id || 'demo-guide');
   const supportAccess = activeSession?.supportAccess;
-  const organizationRole = activeSession?.user.role || 'super_admin';
+  const organizationRole = activeSession?.user.role || 'customer_service';
   const allowedPages = ROLE_PAGE_ACCESS[organizationRole];
   const roleSections = NAV_SECTIONS
     .map(section => ({ ...section, items: section.items.filter(item => allowedPages.has(item.id)) }))
     .filter(section => section.items.length > 0);
-  const navSections = isAdminSession(activeSession) ? [...roleSections, ADMIN_NAV] : roleSections;
+  const customerSections = starterMode
+    ? [
+      { ...STARTER_BUSINESS_OVERVIEW_NAV, items: STARTER_BUSINESS_OVERVIEW_NAV.items.filter(item => allowedPages.has(item.id)) },
+      ...roleSections
+        .map(section => ({ ...section, items: section.items.filter(item => item.id !== 'digitalEmployees') }))
+        .filter(section => section.items.length > 0),
+    ].filter(section => section.items.length > 0)
+    : roleSections;
+  const navSections = isAdminSession(activeSession) ? [...customerSections, ADMIN_NAV] : customerSections;
+  const homeNavItem = starterMode ? STARTER_HOME_NAV_ITEM : HOME_NAV_ITEM;
 
   const leaveSupportSession = () => {
     if (!exitSupportSession()) authApi.logout();
@@ -316,6 +331,9 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
   useEffect(() => {
     setLiveSession(null);
   }, [sessionIdentityScope]);
+  useEffect(() => {
+    if (starterMode) setQuotaOpen(false);
+  }, [starterMode]);
   useEffect(() => {
     if (!isInConversation) setMobileRightPanelOpen(false);
   }, [isInConversation]);
@@ -403,8 +421,10 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
       >
         {/* Logo */}
         <div className={`relative h-14 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4 gap-2.5'}`}>
-          {!sidebarCollapsed && <img src="/brand-logo.png" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />}
-          {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary font-display">灵枢 AI</span>}
+          {!sidebarCollapsed && (starterMode
+            ? <span aria-hidden="true" className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">{initial}</span>
+            : <img src="/brand-logo.png" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />)}
+          {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary font-display">{starterMode ? tenantName : '灵枢 AI'}</span>}
           <button
             type="button"
             onClick={() => setSidebarCollapsed(value => !value)}
@@ -429,9 +449,9 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         {/* Home nav */}
         <nav aria-label="主导航" className="px-3 pb-2">
           <NavItem
-            item={HOME_NAV_ITEM}
-            active={page === HOME_NAV_ITEM.id}
-            onClick={() => onNavigate(HOME_NAV_ITEM.id)}
+            item={homeNavItem}
+            active={page === homeNavItem.id}
+            onClick={() => onNavigate(homeNavItem.id)}
             collapsed={sidebarCollapsed}
           />
         </nav>
@@ -463,7 +483,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             </div>
           ))}
 
-          {!sidebarCollapsed && <AdminPageGuide page={page} />}
+          {!starterMode && !sidebarCollapsed && <AdminPageGuide page={page} />}
         </div>
 
         {/* Bottom user */}
@@ -600,7 +620,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                   <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate text-[10px] text-text-muted">{activeSession?.user?.email}</p></div>
                 </div>
                 <div className="pt-2">
-                  <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>
+                  {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
                   <button onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                 </div>
@@ -621,7 +641,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             {!sidebarCollapsed && <button onClick={() => { setQuotaOpen(false); setAccountMenuOpen(value => !value); }} aria-expanded={accountMenuOpen} aria-haspopup="menu" className="flex-1 min-w-0 text-left rounded-lg -my-1 py-1 hover:bg-black/5 transition-colors">
               <p className="text-xs font-semibold text-text-primary truncate">{tenantName}</p>
               <p className="text-[10px] text-text-muted truncate">
-                {demo && isTrialAccount ? `Token 剩余 ${tokenLabel}` : (SUB_LABEL[subStatus] ?? subStatus)}
+                {starterMode ? '198 标准工作区' : demo && isTrialAccount ? `Token 剩余 ${tokenLabel}` : (SUB_LABEL[subStatus] ?? subStatus)}
               </p>
             </button>}
             {!sidebarCollapsed && <ChevronRight size={14} className={`text-text-muted transition-transform ${accountMenuOpen ? '-rotate-90' : ''}`} />}

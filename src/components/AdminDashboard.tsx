@@ -12,7 +12,8 @@ interface AdminAccount {
   email: string;
   tenantId: string;
   tenantName: string;
-  password: string;
+  credentialState: string;
+  credentialAction: string;
   status: string;
   activatedAt: string | null;
   expiresAt: string | null;
@@ -27,7 +28,6 @@ interface AdminAccount {
   renderToday: number;
   videoGenerationToday: number;
   rotatedAt: string | null;
-  rotationPassword: string | null;
 }
 
 interface CustomerAccount {
@@ -36,7 +36,8 @@ interface CustomerAccount {
   contactName: string;
   industry: string;
   emails: string[];
-  password: string;
+  credentialState: string;
+  credentialAction: string;
   inviteCode: string;
   subscriptionPlan: string;
   subscriptionStatus: string;
@@ -61,6 +62,12 @@ interface StyleAdoptionTrend {
 
 const fmtDate = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-';
 const fmtTokens = (value: number) => value.toLocaleString('en-US');
+const credentialStateLabel = (value: string) => ({
+  active_hash_only: '认证哈希有效',
+  external_secret: '受控渠道凭据',
+  password_reset_required: '需要密码重置',
+  expired_locked: '到期已锁定',
+}[value] || '需要密码重置');
 
 export default function AdminDashboard({ onSupportSessionStarted }: { onSupportSessionStarted: (session: AuthSession) => void }) {
   const [trialAccounts, setTrialAccounts] = useState<AdminAccount[]>([]);
@@ -251,20 +258,20 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
         </section>
 
         <section id="admin-trial-accounts" className="scroll-mt-5">
-          <div className="mb-2 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-text-primary">试用账号表</h2><p className="mt-0.5 text-xs text-text-muted">备用试用账号无需注册，管理员把账号密码交给测试用户后即可直接登录。</p></div><span className="text-xs text-text-muted">{accountsLoaded ? `${trialAccounts.length} 个账号` : loading ? '读取中' : '读取失败'}</span></div>
+          <div className="mb-2 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-text-primary">试用账号表</h2><p className="mt-0.5 text-xs text-text-muted">后台不保存或展示密码；试用凭据仅通过受控渠道一次性设置或重置。</p></div><span className="text-xs text-text-muted">{accountsLoaded ? `${trialAccounts.length} 个账号` : loading ? '读取中' : '读取失败'}</span></div>
           <div className="overflow-auto border border-border rounded-lg">
             <table className="min-w-[1440px] w-full text-xs">
               <thead className="bg-surface-2 text-text-muted">
                 <tr className="text-left">
                   <th className="px-3 py-2 font-semibold">账号</th>
-                  <th className="px-3 py-2 font-semibold">密码</th>
+                  <th className="px-3 py-2 font-semibold">凭据状态 / 重置说明</th>
                   <th className="px-3 py-2 font-semibold">流转状态</th>
                   <th className="px-3 py-2 font-semibold">试用进度</th>
                   <th className="px-3 py-2 font-semibold">激活时间</th>
                   <th className="px-3 py-2 font-semibold">到期时间</th>
                   <th className="px-3 py-2 font-semibold">Token 今日/总计</th>
                   <th className="px-3 py-2 font-semibold">今日功能次数</th>
-                  <th className="px-3 py-2 font-semibold">轮换</th>
+                  <th className="px-3 py-2 font-semibold">最近安全处置</th>
                   <th className="px-3 py-2 font-semibold">客户状态</th>
                   <th className="px-3 py-2 font-semibold">租户后台</th>
                 </tr>
@@ -276,14 +283,14 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                   return (
                     <tr key={account.email} className="hover:bg-surface-2/60">
                       <td className="px-3 py-2 font-semibold text-text-primary whitespace-nowrap">{account.email}</td>
-                      <td className="px-3 py-2 font-mono text-text-secondary whitespace-nowrap">{account.password}</td>
+                      <td className="px-3 py-2 text-text-secondary"><span className="font-semibold text-text-primary">{credentialStateLabel(account.credentialState)}</span><p className="mt-0.5 max-w-64 text-[10px] leading-4 text-text-muted">{account.credentialAction}</p></td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.status}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.trialDays ? `第 ${account.trialDay ?? '-'} / ${account.trialDays} 天，剩余 ${account.daysRemaining ?? '-'} 天` : '长期有效'}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{fmtDate(account.activatedAt)}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{fmtDate(account.expiresAt)}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{fmtTokens(account.tokenUsedToday)} / {fmtTokens(account.tokenUsedTotal)}{account.tokenLimit ? ` / ${fmtTokens(account.tokenLimit)}` : ''}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">对话 {account.aiChatToday} · 生成 {account.generationToday} · 渲染 {account.renderToday} · 视频 {account.videoGenerationToday}</td>
-                      <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.rotatedAt ? `${fmtDate(account.rotatedAt)} · ${account.rotationPassword ?? '-'}` : '-'}</td>
+                      <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.rotatedAt ? `${fmtDate(account.rotatedAt)} · 已锁定，恢复前须重置` : '未发生后台轮换'}</td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <button
                           type="button"
@@ -317,7 +324,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
         </section>
 
         <section id="admin-customer-accounts" className="mt-6 scroll-mt-5">
-          <div className="mb-2 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-text-primary">客户账号表</h2><p className="mt-0.5 text-xs text-text-muted">注册码无需预设账密；客户完成注册后，账号、初始密码和已使用邀请码会自动出现在这里。</p></div><span className="text-xs text-text-muted">{accountsLoaded ? `${customerAccounts.length} 个客户` : loading ? '读取中' : '读取失败'}</span></div>
+          <div className="mb-2 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-text-primary">客户账号表</h2><p className="mt-0.5 text-xs text-text-muted">客户密码仅由认证系统哈希校验；后台只显示凭据状态与重置动作，不保存初始密码。</p></div><span className="text-xs text-text-muted">{accountsLoaded ? `${customerAccounts.length} 个客户` : loading ? '读取中' : '读取失败'}</span></div>
           <div className="overflow-auto border border-border rounded-lg">
             <table className="min-w-[1700px] w-full text-xs">
               <thead className="bg-surface-2 text-text-muted">
@@ -326,7 +333,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                   <th className="px-3 py-2 font-semibold">联系人</th>
                   <th className="px-3 py-2 font-semibold">所属行业</th>
                   <th className="px-3 py-2 font-semibold">登录账号</th>
-                  <th className="px-3 py-2 font-semibold">初始密码</th>
+                  <th className="px-3 py-2 font-semibold">凭据状态 / 重置说明</th>
                   <th className="px-3 py-2 font-semibold">已使用邀请码</th>
                   <th className="px-3 py-2 font-semibold">订阅方案</th>
                   <th className="px-3 py-2 font-semibold">账号状态</th>
@@ -349,7 +356,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.contactName || '-'}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.industry || '未标注行业'}</td>
                       <td className="px-3 py-2 text-text-secondary">{registered ? account.emails.join('、') : '待客户注册'}</td>
-                      <td className="px-3 py-2 font-mono text-text-secondary whitespace-nowrap">{account.password || '待客户注册'}</td>
+                      <td className="px-3 py-2 text-text-secondary"><span className="font-semibold text-text-primary">{credentialStateLabel(account.credentialState)}</span><p className="mt-0.5 max-w-64 text-[10px] leading-4 text-text-muted">{account.credentialAction}</p></td>
                       <td className="px-3 py-2 font-mono text-text-secondary whitespace-nowrap">{account.inviteCode || '-'}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.subscriptionPlan}</td>
                       <td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.subscriptionStatus}</td>

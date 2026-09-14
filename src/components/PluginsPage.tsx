@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { SocialPlatformIcon, type SocialBrand } from './SocialPlatformIcon';
 import { useModalFocus } from '../hooks/useModalFocus';
+import { pluginApiRequest } from '../lib/pluginApi';
 
 // ── Plugin types & data ───────────────────────────────────────────────────────
 interface Plugin {
@@ -19,9 +20,7 @@ interface Plugin {
   description: string;
   icon: string;
   status: 'installed' | 'not_installed' | 'error';
-  config: Record<string, string>;
-  installed: boolean;
-  installedAt?: string;
+  installed: boolean; installedAt?: string; managementAllowed?: boolean; tenantUsable?: boolean;
 }
 
 function pluginSocialBrand(pluginKey: string): SocialBrand | null {
@@ -409,8 +408,8 @@ function PluginDrawer({
         )}
       </div>
 
-      <div className="border-t border-gray-100 p-4 flex gap-2">
-        {!plugin.installed ? (
+      {(plugin.managementAllowed === true || plugin.tenantUsable === true) && <div className="border-t border-gray-100 p-4 flex gap-2">
+        {plugin.managementAllowed === true && !plugin.installed ? (
           <button
             type="button"
             onClick={onInstall}
@@ -422,7 +421,7 @@ function PluginDrawer({
           </button>
         ) : (
           <>
-            {fields.length > 0 && (
+            {plugin.managementAllowed === true && fields.length > 0 && (
               <button
                 type="button"
                 onClick={onConfigure}
@@ -431,25 +430,25 @@ function PluginDrawer({
                 <Settings size={12} /> 配置
               </button>
             )}
-            <button
+            {(plugin.managementAllowed === true || plugin.tenantUsable === true) && <button
               type="button"
               onClick={onTest}
               disabled={testing}
               className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs text-white disabled:opacity-50 transition-colors"
               style={{ background: '#16a34a' }}
             >
-              {testing ? '测试中...' : '测试'}
-            </button>
-            <button
+              {testing ? '测试中...' : plugin.managementAllowed === true ? '测试' : '使用'}
+            </button>}
+            {plugin.managementAllowed === true && <button
               type="button"
               onClick={onUninstall}
               className="px-3 py-2 border border-gray-200 rounded-xl text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors"
             >
               <Trash2 size={13} />
-            </button>
+            </button>}
           </>
         )}
-      </div>
+      </div>}
     </motion.div>
   );
 }
@@ -834,11 +833,9 @@ export default function PluginsPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await fetch('/api/overseas/plugins');
-      const text = await r.text();
-      if (!r.ok) throw new Error(text || `插件接口错误：${r.status}`);
-      if (!text.trim()) throw new Error('插件接口返回为空，请稍后重试');
-      setPlugins(JSON.parse(text) as Plugin[]);
+      const data = await pluginApiRequest<Plugin[]>('');
+      if (!Array.isArray(data)) throw new Error('插件接口返回格式无效');
+      setPlugins(data);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '插件加载失败');
     } finally { setLoading(false); }
@@ -846,27 +843,31 @@ export default function PluginsPage() {
 
   async function install(pluginKey: string) {
     setInstalling(pluginKey);
+    setLoadError(null);
     try {
-      await fetch(`/api/overseas/plugins/${pluginKey}/install`, { method: 'POST' });
+      await pluginApiRequest(`/${encodeURIComponent(pluginKey)}/install`, { method: 'POST' });
       await fetchPlugins();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '插件安装失败');
     } finally { setInstalling(null); }
   }
-
   async function uninstall(pluginKey: string) {
-    await fetch(`/api/overseas/plugins/${pluginKey}`, { method: 'DELETE' });
-    await fetchPlugins();
+    setLoadError(null);
+    try {
+      await pluginApiRequest(`/${encodeURIComponent(pluginKey)}`, { method: 'DELETE' });
+      await fetchPlugins();
+    } catch (error) { setLoadError(error instanceof Error ? error.message : '插件卸载失败'); }
   }
-
   async function saveConfig(plugin: Plugin) {
-    await fetch(`/api/overseas/plugins/${plugin.pluginKey}/config`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(configValues),
-    });
-    await fetchPlugins();
-    setConfigTarget(null);
+    setLoadError(null);
+    try {
+      await pluginApiRequest(`/${encodeURIComponent(plugin.pluginKey)}/config`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(configValues),
+      });
+      await fetchPlugins();
+      setConfigTarget(null);
+    } catch (error) { setLoadError(error instanceof Error ? error.message : '插件配置保存失败'); }
   }
-
   async function testPlugin(pluginKey: string) {
     if (pluginKey === 'exchangerate' || pluginKey === 'translate' || pluginKey === 'google_translate') {
       setActiveToolKey(prev => prev === pluginKey ? null : pluginKey);
@@ -878,8 +879,7 @@ export default function PluginsPage() {
 
     setTesting(pluginKey);
     try {
-      const r = await fetch(`/api/overseas/plugins/${pluginKey}/test`, { method: 'POST' });
-      const data = await r.json() as { ok: boolean; shopName?: string; message?: string; error?: string; rates?: Record<string, number>; source?: string };
+      const data = await pluginApiRequest<{ ok: boolean; shopName?: string; message?: string; error?: string; rates?: Record<string, number>; source?: string }>(`/${encodeURIComponent(pluginKey)}/test`, { method: 'POST' });
       setTestResult(prev => ({
         ...prev,
         [pluginKey]: { ok: data.ok, msg: data.ok ? (data.shopName ? `连接成功：${data.shopName}` : (data.message ?? '连接成功')) : (data.error ?? data.message ?? '连接失败') },
@@ -889,11 +889,10 @@ export default function PluginsPage() {
           ? { ...plugin, installed: true, status: 'installed' }
           : plugin
       )));
-    } catch {
-      setTestResult(prev => ({ ...prev, [pluginKey]: { ok: false, msg: '网络错误' } }));
+    } catch (error) {
+      setTestResult(prev => ({ ...prev, [pluginKey]: { ok: false, msg: error instanceof Error ? error.message : '网络错误' } }));
     } finally { setTesting(null); }
   }
-
   async function runExchange() {
     const amount = Number(toolState.amount);
     if (!Number.isFinite(amount)) {
@@ -901,9 +900,8 @@ export default function PluginsPage() {
       return;
     }
     try {
-      const r = await fetch('/api/overseas/plugins/exchangerate/rates');
-      const data = await r.json() as { rates?: Record<string, number>; error?: string };
-      if (!r.ok || !data.rates) throw new Error(data.error || '实时汇率服务不可用');
+      const data = await pluginApiRequest<{ rates?: Record<string, number>; error?: string }>('/exchangerate/rates');
+      if (!data.rates) throw new Error(data.error || '实时汇率服务不可用');
       const rates: Record<string, number> = { USD: 1, ...data.rates };
       const fromRate = rates[toolState.fromCurrency];
       const toRate = rates[toolState.toCurrency];
@@ -920,12 +918,11 @@ export default function PluginsPage() {
     if (!current.text.trim()) return;
     setToolState(prev => ({ ...prev, translatedText: '翻译中…' }));
     try {
-      const r = await fetch('/api/overseas/plugins/translate/run', {
+      const data = await pluginApiRequest<{ translatedText?: string; error?: string }>('/translate/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: current.text, source: current.sourceLanguage, target: current.targetLanguage }),
       });
-      const data = await r.json() as { translatedText?: string; error?: string };
-      if (!r.ok || !data.translatedText) throw new Error(data.error || '翻译服务不可用');
+      if (!data.translatedText) throw new Error(data.error || '翻译服务不可用');
       setToolState(prev => ({ ...prev, translatedText: data.translatedText || '' }));
     } catch (error) {
       setToolState(prev => ({ ...prev, translatedText: error instanceof Error ? error.message : '翻译服务不可用' }));
@@ -1040,7 +1037,7 @@ export default function PluginsPage() {
                           )}
 
                           <div className="flex gap-2 mt-3">
-                            {!plugin.installed ? (
+                            {plugin.managementAllowed === true && !plugin.installed ? (
                               <>
                                 <button
                                   type="button"
@@ -1070,31 +1067,31 @@ export default function PluginsPage() {
                                 >
                                   <BookOpen size={12} /> 详情
                                 </button>
-                                {fields.length > 0 && (
+                                {plugin.managementAllowed === true && fields.length > 0 && (
                                   <button
                                     type="button"
-                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setConfigTarget(plugin); setConfigValues(plugin.config); }}
+                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setLoadError(null); setConfigTarget(plugin); setConfigValues({}); }}
                                     className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors"
                                   >
                                     <Settings size={12} /> 配置
                                   </button>
                                 )}
-                                <button
+                                {(plugin.managementAllowed === true || plugin.tenantUsable === true) && <button
                                   type="button"
                                   onClick={e => { e.preventDefault(); e.stopPropagation(); void testPlugin(plugin.pluginKey); }}
                                   disabled={testing === plugin.pluginKey}
                                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white disabled:opacity-50 transition-colors"
                                   style={{ background: '#16a34a' }}
                                 >
-                                  {testing === plugin.pluginKey ? '测试中...' : '测试'}
-                                </button>
-                                <button
+                                  {testing === plugin.pluginKey ? '测试中...' : plugin.managementAllowed === true ? '测试' : '使用'}
+                                </button>}
+                                {plugin.managementAllowed === true && <button
                                   type="button"
                                   onClick={e => { e.preventDefault(); e.stopPropagation(); void uninstall(plugin.pluginKey); }}
                                   className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors"
                                 >
                                   <Trash2 size={12} />
-                                </button>
+                                </button>}
                               </>
                             )}
                           </div>
@@ -1217,7 +1214,7 @@ export default function PluginsPage() {
               onClose={() => setSelectedPluginKey(null)}
               onInstall={() => void install(selectedPlugin.pluginKey)}
               onUninstall={() => void uninstall(selectedPlugin.pluginKey)}
-              onConfigure={() => { setConfigTarget(selectedPlugin); setConfigValues(selectedPlugin.config); }}
+              onConfigure={() => { setLoadError(null); setConfigTarget(selectedPlugin); setConfigValues({}); }}
               onTest={() => void testPlugin(selectedPlugin.pluginKey)}
             />
           </>
@@ -1259,6 +1256,7 @@ export default function PluginsPage() {
                   </div>
                 ))}
               </div>
+              {loadError && <p role="alert" className="mt-3 text-xs text-red-600">{loadError}</p>}
               <div className="flex gap-3 mt-5">
                 <button type="button" onClick={() => setConfigTarget(null)} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">取消</button>
                 <button

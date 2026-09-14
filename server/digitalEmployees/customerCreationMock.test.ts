@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { store } from '../storage/index.js';
 import { createCustomerSegmentSnapshot, createFollowupBatch, getCustomerSegment } from './customerWorkflow.js';
 
-const fixture = JSON.parse(fs.readFileSync(new URL('../../reports/full-chain-monitor-20260906/mock-fixtures/customer-and-channel.json', import.meta.url), 'utf8'));
-const enterprise = JSON.parse(fs.readFileSync(new URL('../../reports/full-chain-monitor-20260906/mock-fixtures/enterprise.json', import.meta.url), 'utf8'));
+type CustomerFixture = { id: string; name: string; wa_number: string; last_inbound_at: string; draft_body: string; tags?: string[] };
+const fixture: { tenant_id: string; clock: string; customers: CustomerFixture[] } = {
+  tenant_id: 'isolated-customer-creation-mock',
+  clock: '2026-09-06T12:00:00.000Z',
+  customers: [
+    { id: 'mock_customer_recent', name: 'MOCK recent buyer', wa_number: '+12025550101', last_inbound_at: '2026-09-06T06:00:00.000Z', draft_body: 'MOCK TEST: Here is the requested product information.' },
+    { id: 'mock_customer_template', name: 'MOCK earlier buyer', wa_number: '+12025550102', last_inbound_at: '2026-09-04T06:00:00.000Z', draft_body: 'MOCK TEST: May we follow up with the requested product details?' },
+    { id: 'mock_customer_optout', name: 'MOCK opted-out buyer', wa_number: '+12025550103', last_inbound_at: '2026-09-06T08:00:00.000Z', tags: ['opt-out'], draft_body: 'MOCK TEST: This draft must never be queued.' },
+  ],
+};
+const enterprise = { profile: { company: { name: 'MOCK company', industry: 'Clothing' }, products: { items: [{ name: 'MOCK cotton shirt' }] }, knowledge: {} } };
 const tenantId = fixture.tenant_id;
 const now = Date.now();
 const fixtureClock = Date.parse(fixture.clock);
-const customers = fixture.customers.map((customer: any) => ({
+const customers = fixture.customers.map(customer => ({
   ...customer, tenantId, waNumber: customer.wa_number, timeZone: 'Asia/Shanghai',
   handlingMode: 'ai', stage: 'inquiry', intentScore: 65,
   timeline: [{ actor: 'buyer', timestamp: now - (fixtureClock - Date.parse(customer.last_inbound_at)), body: 'MOCK product enquiry' }],
@@ -52,7 +60,7 @@ try {
   assert.equal(rows.customer_segments.length, 1); assert.equal(rows.customer_segment_members.length, 3);
   assert.equal(await getCustomerSegment('other_tenant', segment.segment.id), null);
   const batchInput = { ...segmentInput, taskId: 'mock_draft_task', segmentId: segment.segment.id,
-    draftOverrides: Object.fromEntries(customers.map((customer: any) => [customer.id, customer.draft_body || 'MOCK TEST: What product information would be useful?'])),
+    draftOverrides: Object.fromEntries(customers.map(customer => [customer.id, customer.draft_body || 'MOCK TEST: What product information would be useful?'])),
   };
   await assert.rejects(() => createFollowupBatch({ ...batchInput, tenantId: 'other_tenant' }, customerProvider), /customer_segment_not_found/);
   await assert.rejects(() => createFollowupBatch({ ...batchInput, runId: 'wrong_run' }, customerProvider), /customer_segment_not_found/);

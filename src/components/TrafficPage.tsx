@@ -23,13 +23,8 @@ import type { ConversationContext, Page, RestoreSignal, KickoffSignal, AgentActi
 import { authHeader } from '../lib/auth';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import {
-  resolveInitialTrafficViewMode,
-  resolveNavigationEventViewMode,
-  resolveSignalViewMode,
-  resolveWorkflowNavigationPage,
-  type TrafficViewMode,
-} from './trafficViewMode';
+import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
+import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -183,6 +178,7 @@ interface Props {
   /** Isolates browser-only draft/queue state between tenants on a shared browser. */
   storageScope?: string;
   workflowContextSignal?: DigitalEmployeeWorkflowContext | null;
+  socialContentTaskId?: string | null;
 }
 
 const PLATFORM_META: Record<PublishPlatform, { label: string; color: string; format: string }> = {
@@ -489,6 +485,7 @@ export default function TrafficPage({
   openProjectsSignal = 0,
   storageScope,
   workflowContextSignal,
+  socialContentTaskId,
 }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (initialView) return initialView;
@@ -509,6 +506,7 @@ export default function TrafficPage({
     .map(mode => ({ mode, ...TRAFFIC_MODE_META[mode] }));
   const currentModeLabel = TRAFFIC_MODE_META[viewMode].label;
   const showCreateShortcut = initialView === 'materials' && showModeTabs === false && Boolean(onNavigate);
+  const navigateWithinSocialTask = useSocialContentNavigation(onNavigate, socialContentTaskId);
 
   useEffect(() => {
     setWorkflowContext(workflowContextSignal || null);
@@ -591,7 +589,7 @@ export default function TrafficPage({
     try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
     const targetPage = resolveWorkflowNavigationPage(initialView, showModeTabs);
     if (targetPage) {
-      onNavigate?.(targetPage);
+      navigateWithinSocialTask(targetPage);
       return;
     }
     setViewMode('create');
@@ -631,7 +629,7 @@ export default function TrafficPage({
         {showCreateShortcut && (
           <button
             type="button"
-            onClick={() => onNavigate?.('smartAssets')}
+            onClick={() => navigateWithinSocialTask('smartAssets')}
             aria-label="从灵感中心进入内容创作"
             className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-bold text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
           >
@@ -676,7 +674,7 @@ export default function TrafficPage({
       <main className="relative min-h-0 flex-1 overflow-hidden">
         {(studioMounted || viewMode === 'create') && (
           <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-            <AiCreateStudio onNavigate={onNavigate} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} />
+            <AiCreateStudio key={socialContentTaskId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} />
           </div>
         )}
         <AnimatePresence mode="wait">
@@ -685,7 +683,7 @@ export default function TrafficPage({
               <InspirationDashboard
                 onScriptPanelOpen={onScriptPanelOpen}
                 onScriptPanelClose={onScriptPanelClose}
-                onNavigate={onNavigate}
+                onNavigate={navigateWithinSocialTask}
                 onEnterWorkflow={handleEnterWorkflow}
               />
             </motion.div>

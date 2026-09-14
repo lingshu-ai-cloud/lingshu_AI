@@ -10,12 +10,7 @@ import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import {
-  LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send,
-  Check, ChevronLeft, ChevronRight, Folder, Search, Volume2,
-  Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock,
-  Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
-} from 'lucide-react';
+import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
@@ -23,19 +18,11 @@ import { authHeader } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask } from '../lib/scriptGapQueue';
-import {
-  StudioWorkbenchFrame,
-  StudioInputSummary,
-  StudioStoryboardList,
-  type StudioWorkbenchStep,
-} from './studio/StudioWorkbenchFrame';
-
-/* ──────────────────────────────────────────────────────────────────────────
-   AI 生成内容工作台 — 社媒（流量）页子模块
-   流程：创作设置 → 脚本与声音 → 成片制作
-   稳定工作台：① 内容对象  ② 内容画布  ③ 步骤与属性  ④ 固定操作栏
-─────────────────────────────────────────────────────────────────────────── */
-
+import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifactMedia';
+import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
+import { useStudioSocialTaskHydration } from './socialContent/useStudioSocialTaskHydration';
+import { StudioWorkbenchFrame, StudioInputSummary, StudioStoryboardList, type StudioWorkbenchStep } from './studio/StudioWorkbenchFrame';
+// AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const TRAFFIC_GREEN = '#117f51';
 const CANVA_VIDEO_COVER_URL = 'https://www.canva.cn/create/video-covers/';
 const CANVA_COVER_RETURN_KEY = 'ow_canva_cover_return';
@@ -43,18 +30,14 @@ const CANVA_COVER_RETURN_TTL = 6 * 60 * 60 * 1000;
 const PUBLISH_RETURN_PREVIEW_KEY = 'ow_publish_return_to_preview';
 const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
-
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
 const VOICE_DRAFT_TIMEOUT_MS = 30_000;
-
 export class StudioRequestTimeoutError extends Error {
   constructor(message = '请求超时') {
     super(message);
     this.name = 'StudioRequestTimeoutError';
   }
 }
-
 export async function withStudioTimeout<T>(promise: Promise<T>, timeoutMs = VOICE_DRAFT_TIMEOUT_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -68,11 +51,9 @@ export async function withStudioTimeout<T>(promise: Promise<T>, timeoutMs = VOIC
     if (timer) clearTimeout(timer);
   }
 }
-
 export function enterpriseBuyerText(roles?: string[]): string {
   return (roles || []).map(item => item.trim()).filter(Boolean).join('、');
 }
-
 type TimelineValidationItem = { type: string; url?: string; trimStart: number; trimEnd: number; speed: number; targetDuration: number };
 export function validateStudioTimeline(items: TimelineValidationItem[]): string[] {
   const issues: string[] = [];
@@ -86,7 +67,6 @@ export function validateStudioTimeline(items: TimelineValidationItem[]): string[
   });
   return issues;
 }
-
 export function pendingClaimLocations(script: string, productInfo: string): string[] {
   const source = String(productInfo || '');
   const sourceLower = source.toLowerCase();
@@ -103,13 +83,11 @@ export function pendingClaimLocations(script: string, productInfo: string): stri
     { claim: /(?:销量|sales\s*volume)/i, evidence: /(?:销量|sales\s*volume)/i },
     { claim: /(?:保证|guarantee)/i, evidence: /(?:保证|guarantee)/i },
   ];
-
   return script.split('\n').map(line => line.trim()).filter(line => {
     const speech = line.match(spokenField)?.[1]?.trim();
     // 环境、构图、画面、运镜等是制作指令，不是对外商业声明，不参与企业事实硬校验。
     if (!speech) return false;
     if (supportedByCategory.some(({ claim, evidence }) => claim.test(speech) && !evidence.test(source))) return true;
-
     // 数字交期和明确价格必须在企业资料中出现同一个值，避免凭空承诺。
     const exactClaims = [
       ...(speech.match(/\b\d+\s*(?:天|days?)\b/gi) || []),
@@ -118,10 +96,8 @@ export function pendingClaimLocations(script: string, productInfo: string): stri
     return exactClaims.some(claim => !sourceComparable.includes(claim.toLowerCase().replace(/\s+/g, ' ')));
   }).slice(0, 4);
 }
-
 const PLAYABLE_AUDIO_BLOB_CACHE = new Map<string, string>();
 const PLAYABLE_VIDEO_BLOB_CACHE = new Map<string, string>();
-
 function isSameOriginUrl(sourceUrl: string): boolean {
   try {
     return new URL(sourceUrl, window.location.href).origin === window.location.origin;
@@ -129,7 +105,6 @@ function isSameOriginUrl(sourceUrl: string): boolean {
     return false;
   }
 }
-
 async function authenticatedAudioBlobUrl(sourceUrl: string): Promise<string> {
   if (/^(?:blob:|data:)/i.test(sourceUrl)) return sourceUrl;
   const cached = PLAYABLE_AUDIO_BLOB_CACHE.get(sourceUrl);
@@ -147,7 +122,6 @@ async function authenticatedAudioBlobUrl(sourceUrl: string): Promise<string> {
   PLAYABLE_AUDIO_BLOB_CACHE.set(sourceUrl, blobUrl);
   return blobUrl;
 }
-
 async function authenticatedVideoBlobUrl(sourceUrl: string): Promise<string> {
   if (/^(?:blob:|data:)/i.test(sourceUrl)) return sourceUrl;
   const cached = PLAYABLE_VIDEO_BLOB_CACHE.get(sourceUrl);
@@ -168,7 +142,6 @@ async function authenticatedVideoBlobUrl(sourceUrl: string): Promise<string> {
   PLAYABLE_VIDEO_BLOB_CACHE.set(sourceUrl, blobUrl);
   return blobUrl;
 }
-
 async function playAudioWithAuthenticatedFallback(
   element: HTMLAudioElement,
   sourceUrl: string,
@@ -194,7 +167,6 @@ async function playAudioWithAuthenticatedFallback(
     await element.play();
   }
 }
-
 async function playVideoWithAuthenticatedFallback(
   element: HTMLVideoElement,
   sourceUrl: string,
@@ -217,24 +189,20 @@ async function playVideoWithAuthenticatedFallback(
     return blobUrl;
   }
 }
-
 const mediaType = (f: File): 'video' | 'image' | 'audio' =>
   f.type.startsWith('video') ? 'video' : f.type.startsWith('audio') ? 'audio' : 'image';
-
 const fileToDataUrl = (f: File) => new Promise<string>((res, rej) => {
   const r = new FileReader();
   r.onload = () => res(String(r.result));
   r.onerror = rej;
   r.readAsDataURL(f);
 });
-
 const blobToDataUrl = (blob: Blob) => new Promise<string>((res, rej) => {
   const r = new FileReader();
   r.onload = () => res(String(r.result));
   r.onerror = rej;
   r.readAsDataURL(blob);
 });
-
 const localFileName = (filePath: string) => filePath.split(/[\\/]/).pop() || filePath;
 
 // 客户端读取媒体时长和画幅，供自动选材阻止横竖素材混剪。
@@ -1299,12 +1267,12 @@ export function validateStudioScriptGenerationInput(input: {
 
 export function studioAgentSourceLabel(source?: string): string {
   const normalized = String(source || '').trim();
-  if (normalized === 'inspiration_analysis') return '社媒内容 Agent · 爆款视频分析';
-  if (normalized === 'inspiration_image_post') return '社媒内容 Agent · 爆款图文分析';
-  if (normalized === 'material_library' || normalized === 'material_segment_analysis') return '社媒内容 Agent · 素材库';
-  if (normalized === 'seedance_video') return '社媒内容 Agent · AI 视频生成';
-  if (normalized === 'agent_memory' || normalized === 'content_memory_recommendation') return '数字员工 · 内容策略任务';
-  return normalized ? `Agent 任务 · ${normalized}` : '人工进入内容工作台';
+  if (normalized === 'inspiration_analysis') return '灵感中心 · 爆款视频分析';
+  if (normalized === 'inspiration_image_post') return '灵感中心 · 爆款图文分析';
+  if (normalized === 'material_library' || normalized === 'material_segment_analysis') return '素材库';
+  if (normalized === 'seedance_video') return 'AI 视频创作';
+  if (normalized === 'agent_memory' || normalized === 'content_memory_recommendation') return '智能推荐 · 内容策略';
+  return '手动创建';
 }
 const RATIOS = ['9:16', '1:1', '16:9'];
 const POSTER_RATIOS = ['1:1', '4:5'];
@@ -3589,7 +3557,7 @@ function VariationChipEditor({
   );
 }
 
-export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string } = {}) {
+export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null } = {}) {
   const [stepIdx, setStepIdx] = useState(0);
   const [activeStoryboardSlotId, setActiveStoryboardSlotId] = useState('');
   const [canvasView, setCanvasView] = useState<'reference' | 'creation'>('creation');
@@ -3965,7 +3933,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         if (!alive) return;
         const options = buildAiProductOptions(profile);
         setProductOptions(current => {
-          const preserved = current.filter(item => item.id === 'kickoff-product');
+          const preserved = current.filter(item => item.id === 'kickoff-product' || item.id.startsWith('social-task-product:'));
           const seen = new Set(preserved.map(item => item.id));
           return [...preserved, ...options.filter(item => !seen.has(item.id))];
         });
@@ -3978,7 +3946,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           : configuredVoiceLanguages[0];
         setEnterpriseVoiceLangs(configuredVoiceLanguages);
         setVoiceLangs(current => current.length ? current : [defaultVoiceLanguage || 'zh']);
-        if (defaultVoiceLanguage) {
+        if (defaultVoiceLanguage && !studioSettingsEditedRef.current) {
           setLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
           setActiveVoiceLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
         }
@@ -4050,6 +4018,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [storyboardVideoVersions, setStoryboardVideoVersions] = useState<Record<string, VideoGenerationVersion[]>>({});
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
+  useStudioSocialTaskHydration({
+    taskId: socialContentTaskId,
+    canApply: () => !projectId && !autoGen.current && !studioSettingsEditedRef.current,
+    onHydrate: seed => {
+      studioSettingsEditedRef.current = true;
+      autoGen.current = true;
+      setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
+      setPlatform(seed.platform); setRatio(seed.aspectRatio); setLang(seed.languageCodes[0]!);
+      setVoiceLangs(seed.languageCodes); setActiveVoiceLang(seed.languageCodes[0]!);
+      setProductInfo(seed.productInfo); setAudience(seed.audience); setPrimaryCta(seed.primaryCta); setSellingPoints(seed.sellingPoints);
+      const taskProduct = productOptionFromInfo(seed.productInfo, `social-task-product:${socialContentTaskId}`);
+      if (taskProduct) {
+        setProductOptions(current => [taskProduct, ...current.filter(item => item.id !== taskProduct.id)]);
+        setSelectedProductIds([taskProduct.id]);
+      }
+      if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
+      if (seed.unsupportedLanguages.length) setModeNotice(`本次任务中的${seed.unsupportedLanguages.join('、')}暂不在创作语言列表中，请先选择可用语言。`);
+    },
+  });
   const [showProjects, setShowProjects] = useState(false);
   const [workflowProjectSelectionPending, setWorkflowProjectSelectionPending] = useState(
     () => ['content_production', 'content_quality_gate'].includes(workflowContext?.taskKey || ''),
@@ -4999,7 +4986,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     });
   };
 
-  const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string }) => {
+  const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string; serverPreviewRequired?: boolean }) => {
     setStepIdx(STEPS.findIndex(s => s.id === 'preview'));
     setRendered(false);
     setRendering(true);
@@ -5094,7 +5081,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
     // 2) 桌面客户端：用本机原生 ffmpeg 真实合成出片
     const desktop = getDesktopRender();
-    if (desktop?.available) {
+    if (desktop?.available && !renderOverride?.serverPreviewRequired) {
       const unsub = desktop.onProgress(p => {
         if (renderToken.current === token) setRenderPct(Math.min(99, Math.round(p)));
       });
@@ -5195,7 +5182,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (contentMode === 'video' && nextStep === 'material') setActiveFolder('all');
     setStepIdx(i => Math.min(i + 1, activeSteps.length - 1));
   };
-  const renderSelectedLanguageVersion = async (selectedKey?: string) => {
+  const renderSelectedLanguageVersion = async (selectedKey?: string, serverPreviewRequired = false) => {
     const combinations = buildRenderableVideoVersions();
     if (!combinations.length) {
       alert('暂无可生成的视频版本。请先完成有效脚本，并为全部分镜匹配有效素材。');
@@ -5224,7 +5211,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         cues: audio.cues,
         outputOnly: true,
         timeline: combination.timeline as typeof renderTimeline,
-        bgmId,
+        bgmId, serverPreviewRequired,
       });
       const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
       setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'done', path: outputPath || undefined, previewUrl } }));
@@ -10015,7 +10002,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   {referenceAnalysisIncomplete && (
                     <button
                       type="button"
-                      onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view: 'materials' } }))}
+                      onClick={() => onNavigate?.('socialInspiration')}
                       className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-800 hover:bg-amber-100"
                     >
                       返回灵感中心补全分析
@@ -11684,7 +11671,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const primaryGeneratesSetupScript = contentMode === 'video' && step === 'mode' && (!hasTimestampScript || setupChangedSinceGeneration);
   const primaryReturnsToExistingScript = contentMode === 'video' && step === 'mode' && hasTimestampScript && !setupChangedSinceGeneration;
   const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
-  const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster';
+  const socialPosterArtifactReady = isSocialArtifactMediaSourceEligible({ source: posterImageUrl, contentMode: 'poster' });
+  const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster' && !(socialContentTaskId && socialPosterArtifactReady);
   const primaryGeneratesCopy = contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover' && !hasRequestedVoiceDrafts;
   const primaryGeneratesVoice = contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai' && !hasRequestedVoiceovers;
   const primaryGeneratesSubtitles = contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle' && !hasRequestedSubtitles;
@@ -11934,11 +11922,26 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       statusLabel: working ? '处理中' : warning ? '需检查' : stageStatus.label,
     };
   });
+  const workbenchFormalPreviewUrl = languageRenderOutputs[activeRenderCombinationKey]?.previewUrl || renderOutputPreviewUrl || Object.values(languageRenderOutputs).find(output => output?.status === 'done' && output.previewUrl)?.previewUrl || '';
   const workbenchHasFormalVideo = Boolean(
     renderOutputPath || Object.values(languageRenderOutputs).some(output => output.status === 'done' && output.path),
   );
-  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && !workbenchHasFormalVideo;
+  const socialVideoArtifactReady = isSocialArtifactMediaSourceEligible({ source: workbenchFormalPreviewUrl, contentMode: 'video' });
+  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && (!workbenchHasFormalVideo || Boolean(socialContentTaskId && !socialVideoArtifactReady));
   const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
+  const { ready: primarySubmitsSocialArtifact, submitting: socialArtifactSubmitting, submit: submitCurrentSocialArtifact } = useStudioSocialArtifactSubmission({
+    enabled: Boolean(socialContentTaskId && (contentMode === 'poster' ? step === 'poster' && socialPosterArtifactReady : step === 'preview' && socialVideoArtifactReady)),
+    taskId: socialContentTaskId,
+    snapshot: {
+      sourceKey: `studio_${projectId || generationSessionId.current}`.replace(/[^a-z0-9:_-]/gi, '_').slice(0, 200),
+      title: projectTitle, contentMode, platform,
+      language: contentMode === 'video' ? activeVoiceLang : lang, aspectRatio: ratio, durationSeconds: contentMode === 'video' ? duration : null,
+      body: contentMode === 'poster' ? caption.trim() || posterJsonText.trim() : caption.trim() || voiceDrafts[activeVoiceLang]?.trim() || activeSpokenScript || script,
+      coverTitle, projectId, outputUrl: contentMode === 'poster' ? posterImageUrl : workbenchFormalPreviewUrl,
+    },
+    onSubmitted: () => { setSavedTick(true); setAutosaveStatus('saved'); setLastAutosavedAt(new Date()); window.setTimeout(() => setSavedTick(false), 1_800); },
+    onNotice: setModeNotice,
+  });
   const generateSetupScriptAndContinue = async () => {
     if (mode === 'material' && !selectedVisualClips.length) {
       setModeNotice('请先选择本次创作要使用的素材。脚本会根据你明确选择的画面规划分镜。');
@@ -11960,7 +11963,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setModeNotice('请先生成并确认分镜脚本，再继续口播、翻译和配音。');
       return;
     }
-    if (step === 'preview' && workbenchHasFormalVideo) {
+    if (primarySubmitsSocialArtifact) return void submitCurrentSocialArtifact();
+    if (step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo) {
       goPublishCurrentWork();
       return;
     }
@@ -11996,13 +12000,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       return;
     }
     if (primaryGeneratesVideo) {
-      void renderSelectedLanguageVersion();
+      void renderSelectedLanguageVersion(undefined, Boolean(socialContentTaskId));
       return;
     }
     next();
   };
 
-  const primaryActionLabel = primaryGeneratesPoster
+  const primaryActionLabel = primarySubmitsSocialArtifact ? '提交确认' : primaryGeneratesPoster
     ? posterJsonText ? '重新生成图文' : '生成图文'
     : primaryGeneratesSetupScript
       ? hasTimestampScript ? '更新脚本' : '生成脚本'
@@ -12017,7 +12021,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         : primaryGeneratesSubtitles
           ? '一键生成字幕文案'
         : primaryGeneratesVideo
-          ? '生成成片'
+          ? socialContentTaskId && workbenchHasFormalVideo ? '生成可提交成片' : '生成成片'
       : step === 'script'
         ? scriptStageTab === 'theme'
           ? '确认分镜'
@@ -12066,8 +12070,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       : step === 'script' && !canNext && !primaryGeneratesStoryboard
         ? voiceoverMode === 'unselected' ? '请选择 AI 配音、上传口播或无口播。' : '至少完成一种语言的有效口播，或明确选择无口播。'
         : undefined;
-  const primaryActionLoading = primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : primaryGeneratesCopy ? voiceDraftLoading : primaryGeneratesSubtitles ? subtitleGenerating : ttsLoading || rendering || batchRenderingLangs;
-  const primaryActionDisabled = primaryGeneratesPoster
+  const primaryActionLoading = primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : primaryGeneratesCopy ? voiceDraftLoading : primaryGeneratesSubtitles ? subtitleGenerating : ttsLoading || rendering || batchRenderingLangs;
+  const primaryActionDisabled = primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster
     ? posterLoading
     : primaryGeneratesSetupScript || primaryGeneratesStoryboard
       ? storyboardGenerationBlocked || (primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length)
@@ -12093,7 +12097,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
   const sourceWorkflowContext = agentProduction.active ? workflowContext : projectWorkflowContext;
   const agentSourceContext = sourceWorkflowContext?.taskId
-    ? `${sourceWorkflowContext.preview ? '计划预览' : '内容 Agent'} · ${workflowTaskLabel[sourceWorkflowContext.taskKey || 'content_production'] || sourceWorkflowContext.taskKey}`
+    ? `${sourceWorkflowContext.preview ? '制作方案预览' : '灵小图'} · ${workflowTaskLabel[sourceWorkflowContext.taskKey || 'content_production'] || '内容制作'}`
     : studioAgentSourceLabel(videoKickoff?.actionContext?.source || videoKickoff?.source);
   const focusProductContext = activeProductLabel || '待选择企业产品';
   const activeSlotTime = activeWorkbenchSlot && activeWorkbenchSlot.end > activeWorkbenchSlot.start
@@ -12217,10 +12221,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: trackId }));
     setPreviewBgmOn(Boolean(trackId));
   };
-  const workbenchFormalPreviewUrl = languageRenderOutputs[activeRenderCombinationKey]?.previewUrl
-    || renderOutputPreviewUrl
-    || Object.values(languageRenderOutputs).find(output => output?.status === 'done' && output.previewUrl)?.previewUrl
-    || '';
   const workbenchProductionPanel = (step === 'bgm' || (step === 'script' && scriptStageTab === 'bgm')) ? (
     <section ref={bgmLibraryRef} className="space-y-3">
       <input ref={bgmInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleBgmUpload(event.target.files); event.target.value = ''; }} />
@@ -12296,7 +12296,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   ) : null;
 
   return (
-    <div className="flex flex-col h-full relative">
+    <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
       {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
@@ -12340,7 +12340,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               title="已确认内容"
               description="只显示会影响本次生成的输入"
               items={[
-                { id: 'agent-source', label: 'Agent 来源', value: agentSourceContext },
+                { id: 'agent-source', label: '内容来源', value: agentSourceContext },
                 { id: 'product', label: '焦点产品', value: activeProductLabel, emptyLabel: '待选择' },
                 { id: 'theme', label: '主题', value: activeVideoTheme.title },
                 { id: 'audience', label: '目标受众', value: audience.trim(), emptyLabel: '待填写' },
@@ -12363,10 +12363,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         propertyDescription={workbenchPropertyDescription}
         propertyPanel={(
           <div className="space-y-4">
-            <section aria-label="Agent 任务上下文" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">Agent 任务上下文</p>
+            <section aria-label="本次创作信息" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">本次创作信息</p>
               <dl className="mt-2 space-y-1.5 text-[10px] leading-4">
-                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">来源</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
+                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">创作方式</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
                 <div className="flex gap-2"><dt className="shrink-0 text-text-muted">焦点产品</dt><dd className="min-w-0 break-words font-bold text-text-primary">{focusProductContext}</dd></div>
               </dl>
             </section>
@@ -12636,9 +12636,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           onClick: agentProduction.active ? () => void agentProduction.execute().catch(error => setModeNotice(error.message)) : runPrimaryAction,
           disabled: agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
           loading: agentProduction.busy || primaryActionLoading,
-          loadingLabel: modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
+          loadingLabel: socialArtifactSubmitting ? '正在提交成品' : modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
           blockReason: agentProduction.active ? undefined : primaryActionBlockedReason,
-          icon: step === 'preview' && workbenchHasFormalVideo ? <Send size={15} /> : <ChevronRight size={15} />,
+          icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >
         <div className={`relative flex h-full min-h-[360px] w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-slate-300/70 bg-[#e7e9ec] p-3 shadow-inner'}`}>

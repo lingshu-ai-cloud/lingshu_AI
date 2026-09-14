@@ -1,6 +1,6 @@
-import { VIDEO_LANGUAGES, narrationLength, narrationRate } from '../../src/lib/videoLanguages.js';
+import { VIDEO_LANGUAGES, narrationLength, narrationRate } from '../../shared/contracts/videoLanguages.js';
 import { callVideoModel } from './videoModel.js';
-import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 
 export function narrationUnits(text: string, language: string): number {
   return narrationLength(text, language);

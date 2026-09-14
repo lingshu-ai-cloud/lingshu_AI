@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -13,39 +12,39 @@ import {
   consumeDemoGuide,
   isAdminEmail,
   isTrialAccount,
-  readDemoAccountRegistry,
+  requireAdminUser,
   rotateExpiredTrialPassword,
   trialExpiresAt,
   upsertDemoAccountRegistry,
 } from '../lib/demoAccounts.js';
 import {
   activateLocalTenantInvite,
+  clearLocalTenantRegisteredCredential,
   findLocalTenantByInvite,
   findLocalTenantByRegistrationInvite,
   getLocalTenant,
-  updateLocalTenantRegisteredPassword,
   type LocalTenantRecord,
 } from '../lib/localTenants.js';
-import { encryptRegistrationPassword } from '../lib/registrationCredentials.js';
 import { clearAssetSessionCookie } from '../lib/assetAccess.js';
+import {
+  normalizeOrganizationRole as normalizedRole,
+  organizationRoleOrNull,
+  requestOrganizationRoleStrict,
+  type OrganizationRole,
+} from '../lib/organizationRole.js';
+import { syncPasswordChangeCredentialStateBestEffort } from '../lib/passwordChangeCredentialState.js';
 import { browserReadIdentity, isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
-
-/* ──────────────────────────────────────────────────────────────────────────
-   账号 / 登录（基于 PocketBase）
-   - 注册：建租户（按公司订阅，默认 14 天试用）→ 建用户 → 登录拿 token
-   - 登录：PB auth-with-password → 返回 token + 用户 + 租户订阅
-   - me：用 token 取当前身份 + 订阅状态
-   token 由前端存起来，后续请求带 Authorization: Bearer <token>。
-─────────────────────────────────────────────────────────────────────────── */
+import { isLocalAccountStoreError, readLocalAccountRecords, writeLocalAccountRecords, type LocalStoredAccount } from '../lib/localAccountStore.js';
+import { assertStarter198MemberCapacity, Starter198MemberQuotaError } from '../starter198/memberQuota.js';
+import { requireAuth } from '../middleware/auth.js';
 
 export const authRouter = Router();
-
-export type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
 interface PbUser { id: string; email?: string; name?: string; tenantId?: string; role?: OrganizationRole }
-
 const LOCAL_AUTH_PREFIX = 'local-demo.';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_ACCOUNTS_FILE = path.join(__dirname, '../../data/local-auth-accounts.json');
+const LOCAL_ACCOUNTS_FILE = process.env.NODE_ENV === 'test' && process.env.LOCAL_AUTH_ACCOUNTS_FILE
+  ? path.resolve(process.env.LOCAL_AUTH_ACCOUNTS_FILE)
+  : path.join(__dirname, '../../data/local-auth-accounts.json');
 
 interface LocalIdentity {
   userId: string;
@@ -56,17 +55,7 @@ interface LocalIdentity {
   role?: OrganizationRole;
 }
 
-interface LocalAccount extends LocalIdentity {
-  email: string;
-  name: string;
-  accountType: 'customer';
-  salt: string;
-  passwordHash: string;
-  createdAt: string;
-}
-
-const ORGANIZATION_ROLES = new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator', 'customer_service']);
-const normalizedRole = (value: unknown): OrganizationRole => ORGANIZATION_ROLES.has(value as OrganizationRole) ? value as OrganizationRole : 'super_admin';
+type LocalAccount = LocalStoredAccount & LocalIdentity;
 
 interface LocalLoginResult {
   token: string;
@@ -95,17 +84,15 @@ function localUser(email: string, companyName = ''): PbUser {
 }
 
 function readLocalAccounts(): LocalAccount[] {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(LOCAL_ACCOUNTS_FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return readLocalAccountRecords(LOCAL_ACCOUNTS_FILE);
 }
 
 function writeLocalAccounts(accounts: LocalAccount[]): void {
-  fs.mkdirSync(path.dirname(LOCAL_ACCOUNTS_FILE), { recursive: true });
-  fs.writeFileSync(LOCAL_ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), 'utf8');
+  writeLocalAccountRecords(LOCAL_ACCOUNTS_FILE, accounts);
+}
+
+function localStoreUnavailable(res: { status(code: number): { json(body: unknown): unknown } }): void {
+  res.status(503).json({ error: 'local_auth_store_unavailable', message: '本地认证数据暂时不可用，请联系管理员修复后重试。' });
 }
 
 function passwordHash(password: string, salt: string): Buffer {
@@ -195,6 +182,7 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
   const account = readLocalAccounts().find(item => item.email === normalizedEmail);
   if (account) {
     if (!localPasswordMatches(account, password)) return null;
+    clearLocalTenantRegisteredCredential(account.tenantId, account.email);
     const record: PbUser = {
       id: account.userId,
       email: account.email,
@@ -218,36 +206,9 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
       email: normalizedEmail,
       name: normalizedEmail.split('@')[0],
       tenantId: `local_tenant_admin_${localId(normalizedEmail)}`,
+      role: 'super_admin',
     };
     return { token: createLocalToken(record, 'admin'), record, accountType: 'admin', expiresAt: null };
-  }
-
-  const registryEntry = readDemoAccountRegistry()[normalizedEmail];
-  if (registryEntry?.password && registryEntry.password === password && registryEntry.status !== 'expired') {
-    const accountType = registryEntry.status === 'admin'
-      ? 'admin'
-      : registryEntry.status === 'customer'
-        ? 'customer'
-        : 'trial';
-    const tenantId = registryEntry.tenantId || `local_tenant_${accountType}_${localId(normalizedEmail)}`;
-    const record: PbUser = {
-      id: registryEntry.userId || `local_user_${accountType}_${localId(normalizedEmail)}`,
-      email: normalizedEmail,
-      name: normalizedEmail.split('@')[0],
-      tenantId,
-    };
-    if (accountType === 'admin' || accountType === 'customer') {
-      return { token: createLocalToken(record, accountType), record, accountType, expiresAt: null };
-    }
-    const expiresAt = registryEntry.expiresAt || trialExpiresAt();
-    upsertDemoAccountRegistry(normalizedEmail, {
-      userId: record.id,
-      tenantId,
-      activatedAt: registryEntry.activatedAt || new Date().toISOString(),
-      expiresAt,
-      status: 'trialing',
-    });
-    return { token: createLocalToken(record, accountType), record, accountType, expiresAt };
   }
 
   const allowedEmails = String(process.env.LOCAL_AUTH_EMAILS ?? '')
@@ -268,12 +229,12 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
   }
   const expiresAt = trialExpiresAt();
   upsertDemoAccountRegistry(normalizedEmail, {
-    password: configuredPassword,
     userId: record.id,
     tenantId: record.tenantId,
     activatedAt: new Date().toISOString(),
     expiresAt,
     status: 'trialing',
+    credentialState: 'external_secret',
   });
   return { token: createLocalToken(record, accountType), record, accountType, expiresAt };
 }
@@ -293,6 +254,9 @@ function localRegister(email: string, password: string, tenant: LocalTenantRecor
     email: normalizedEmail,
     name: tenant.companyName || tenant.name || normalizedEmail.split('@')[0],
     tenantId: tenant.id,
+    // This is the first account created from a one-use tenant invite, so it is
+    // the tenant Owner. All other missing/invalid roles normalize downward.
+    role: 'super_admin',
   };
   const salt = randomBytes(16).toString('hex');
   accounts.push({
@@ -312,21 +276,6 @@ function localRegister(email: string, password: string, tenant: LocalTenantRecor
 
 function publicUser(r: PbUser) {
   return { id: r.id, email: r.email ?? '', name: r.name ?? '', tenantId: r.tenantId ?? '', role: normalizedRole(r.role) };
-}
-
-export async function requestOrganizationRole(authorization: string | undefined, userId: string): Promise<OrganizationRole> {
-  const local = parseLocalToken(authorization);
-  if (local) return normalizedRole(local.role);
-  const user = await pbGet('users', userId) as PbUser | null;
-  return normalizedRole(user?.role);
-}
-
-/** Least-privilege role lookup for security-sensitive enterprise governance writes. */
-export async function requestOrganizationRoleStrict(authorization: string | undefined, userId: string): Promise<OrganizationRole | null> {
-  const local = parseLocalToken(authorization);
-  if (local) return ORGANIZATION_ROLES.has(local.role as OrganizationRole) ? local.role as OrganizationRole : null;
-  const user = await pbGet('users', userId) as PbUser | null;
-  return ORGANIZATION_ROLES.has(user?.role as OrganizationRole) ? user!.role as OrganizationRole : null;
 }
 
 function pbFilterValue(value: string): string {
@@ -418,12 +367,17 @@ authRouter.post('/register', async (req, res) => {
   }
 
   if (localInvitedTenant) {
-    const fallback = localRegister(String(email), String(password), localInvitedTenant);
+    let fallback: ReturnType<typeof localRegister>;
+    try {
+      fallback = localRegister(String(email), String(password), localInvitedTenant);
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
     if (fallback?.ok) {
       const tenant = activateLocalTenantInvite({
         inviteCode: code,
         email: String(email),
-        password: String(password),
       });
       if (!tenant) {
         res.status(409).json({ error: '邀请码已被使用，请联系管理员重新生成' });
@@ -459,18 +413,21 @@ authRouter.post('/register', async (req, res) => {
 
   const login = await pbLogin(email, password);
   if (!login) { res.status(500).json({ error: '注册后自动登录失败' }); return; }
-  await pbPatch('tenants', String(invitedTenant!.id), {
+  const updatedTenant = await pbPatch('tenants', String(invitedTenant!.id), {
     name: invitedCompanyName || String(email).split('@')[0],
     companyName: invitedCompanyName,
     inviteCode: '',
     registrationInviteCode: code,
     registeredEmail: String(email).trim().toLowerCase(),
-    registeredPasswordCipher: encryptRegistrationPassword(String(password)),
     registeredAt: new Date().toISOString(),
     subscriptionStatus: 'active',
     subscriptionPlan: 'customer',
     subscriptionExpiresAt: null,
   });
+  if (!updatedTenant) {
+    await pbDelete('users', String(user.id));
+    res.status(500).json({ error: '租户凭据清理失败，注册已安全回滚，请重试' }); return;
+  }
   const tenant = await pbGet('tenants', String(invitedTenant!.id)) || {
     ...invitedTenant,
     inviteCode: '',
@@ -491,7 +448,13 @@ authRouter.post('/login', async (req, res) => {
   if (!email || !password) { res.status(400).json({ error: '邮箱和密码必填' }); return; }
   const login = await pbLogin(email, password);
   if (!login) {
-    const fallback = localLogin(email, password);
+    let fallback: LocalLoginResult | null;
+    try {
+      fallback = localLogin(email, password);
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
     if (!fallback) { res.status(401).json({ error: '邮箱或密码错误' }); return; }
     const subscription = await getTenantSubscription(String(fallback.record.tenantId || ''));
     const fallbackEmail = String(fallback.record.email ?? email).trim().toLowerCase();
@@ -525,26 +488,6 @@ authRouter.post('/login', async (req, res) => {
   let tenant = login.record.tenantId ? await pbGet('tenants', login.record.tenantId) : null;
   let subscription = login.record.tenantId ? await getTenantSubscription(login.record.tenantId) : null;
   const loginEmail = String(login.record.email ?? email).trim().toLowerCase();
-  if (
-    tenant
-    && String(tenant.subscriptionPlan || '').toLowerCase() === 'customer'
-    && String(tenant.registeredEmail || '').trim().toLowerCase() === loginEmail
-  ) {
-    void (async () => {
-      try {
-        const synced = await pbPatch('tenants', String(login.record.tenantId), {
-          registeredPasswordCipher: encryptRegistrationPassword(String(password)),
-        });
-        if (!synced) console.warn(`[auth] failed to sync verified customer credential for tenant ${login.record.tenantId}`);
-        const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-          entry.userId === login.record.id || entry.email === loginEmail
-        ));
-        if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(password) });
-      } catch (error) {
-        console.warn('[auth] verified customer credential sync failed:', error instanceof Error ? error.message : error);
-      }
-    })();
-  }
   if (isTrialAccount(subscription) && login.record.tenantId && !subscription?.expiresAt) {
     const activated = await activateTrialAccount(login.record.email ?? email, login.record.id, login.record.tenantId);
     tenant = await pbGet('tenants', login.record.tenantId);
@@ -584,6 +527,15 @@ authRouter.post('/login', async (req, res) => {
     },
   });
 });
+
+authRouter.post('/logout', (_req, res) => {
+  clearAssetSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// All routes below are authenticated; starter_198 permits only the explicit
+// auth paths in its boundary registry, so a future endpoint is denied by default.
+authRouter.use(requireAuth);
 
 // GET /auth/me  (Authorization: Bearer <token>)
 authRouter.get('/me', async (req, res) => {
@@ -627,6 +579,7 @@ authRouter.get('/me', async (req, res) => {
       }),
       subscription,
       demo,
+      platformAdmin: Boolean(await requireAdminUser(req)),
     });
     return;
   }
@@ -672,6 +625,7 @@ authRouter.get('/me', async (req, res) => {
     user: user ? publicUser(user as unknown as PbUser) : { id: id.userId, email: '', name: '', tenantId: id.tenantId },
     tenant: publicTenant(tenant),
     subscription,
+    platformAdmin: Boolean(await requireAdminUser(req)),
     demo: {
       ...demo,
       guideTrigger: guide.pending,
@@ -691,17 +645,24 @@ authRouter.post('/change-password', async (req, res) => {
 
   const local = parseLocalToken(req.headers.authorization);
   if (local) {
-    const accounts = readLocalAccounts();
-    const index = accounts.findIndex(account => account.userId === local.userId && account.tenantId === local.tenantId);
-    if (index < 0 || !localPasswordMatches(accounts[index], String(currentPassword))) { res.status(400).json({ error: '当前密码不正确' }); return; }
-    const salt = randomBytes(16).toString('hex');
-    accounts[index] = { ...accounts[index], salt, passwordHash: passwordHash(String(newPassword), salt).toString('hex') };
-    writeLocalAccounts(accounts);
-    updateLocalTenantRegisteredPassword(local.tenantId, accounts[index].email, String(newPassword));
-    const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-      entry.userId === local.userId || entry.email === accounts[index].email
-    ));
-    if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(newPassword) });
+    let account: LocalAccount;
+    try {
+      const accounts = readLocalAccounts();
+      const index = accounts.findIndex(item => item.userId === local.userId && item.tenantId === local.tenantId);
+      if (index < 0 || !localPasswordMatches(accounts[index], String(currentPassword))) { res.status(400).json({ error: '当前密码不正确' }); return; }
+      const salt = randomBytes(16).toString('hex');
+      accounts[index] = { ...accounts[index], salt, passwordHash: passwordHash(String(newPassword), salt).toString('hex') };
+      writeLocalAccounts(accounts);
+      account = accounts[index];
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
+    syncPasswordChangeCredentialStateBestEffort(account.email, {
+      branch: 'local',
+      tenantId: local.tenantId,
+      userId: local.userId,
+    });
     res.json({ ok: true });
     return;
   }
@@ -712,23 +673,11 @@ authRouter.post('/change-password', async (req, res) => {
   if (!verified || verified.record.id !== identity.userId) { res.status(400).json({ error: '当前密码不正确' }); return; }
   const updated = await pbPatch('users', identity.userId, { password: String(newPassword), passwordConfirm: String(passwordConfirm) });
   if (!updated) { res.status(500).json({ error: '密码更新失败，请稍后重试' }); return; }
-  const tenant = await pbGet('tenants', identity.tenantId);
-  if (
-    tenant
-    && String(tenant.registeredEmail || '').trim().toLowerCase() === user.email.trim().toLowerCase()
-  ) {
-    const synced = await pbPatch('tenants', identity.tenantId, {
-      registeredPasswordCipher: encryptRegistrationPassword(String(newPassword)),
-    });
-    if (!synced) {
-      res.status(500).json({ error: '登录密码已更新，但账号总控同步失败，请联系管理员' });
-      return;
-    }
-  }
-  const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-    entry.userId === identity.userId || entry.email === user.email!.trim().toLowerCase()
-  ));
-  if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(newPassword) });
+  syncPasswordChangeCredentialStateBestEffort(user.email, {
+    branch: 'provider',
+    tenantId: identity.tenantId,
+    userId: identity.userId,
+  });
   res.json({ ok: true });
 });
 
@@ -747,27 +696,45 @@ export async function listTenantEmployees(authorization: string | undefined) {
 
 authRouter.get('/employees', async (req, res) => {
   try { res.json({ employees: await listTenantEmployees(req.headers.authorization) }); }
-  catch { res.status(401).json({ error: '登录已失效，请重新登录' }); }
+  catch (error) {
+    if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+    res.status(401).json({ error: '登录已失效，请重新登录' });
+  }
 });
 
 authRouter.post('/employees', async (req, res) => {
   const identity = await auth.verifyToken(req.headers.authorization);
   if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以添加成员' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以添加成员' }); return; }
   const email = String(req.body?.email ?? '').trim().toLowerCase();
   const name = String(req.body?.name ?? '').trim();
   const password = String(req.body?.password ?? '');
-  const role = normalizedRole(req.body?.role);
+  const role = organizationRoleOrNull(req.body?.role);
+  if (!role) { res.status(400).json({ error: '无效的员工角色' }); return; }
   if (role === 'super_admin') { res.status(403).json({ error: '不能添加第二个超级管理员' }); return; }
   if (!email || !email.includes('@')) { res.status(400).json({ error: '请输入有效的员工邮箱' }); return; }
   if (password.length < 8) { res.status(400).json({ error: '初始密码至少需要 8 位' }); return; }
+  try {
+    await assertStarter198MemberCapacity({
+      tenantId: identity.tenantId,
+      countMembers: async () => (await listTenantEmployees(req.headers.authorization)).length,
+    });
+  } catch (error) {
+    if (error instanceof Starter198MemberQuotaError) { res.status(error.status).json({ error: error.code }); return; }
+    throw error;
+  }
   if (parseLocalToken(req.headers.authorization)) {
-    const accounts = readLocalAccounts();
-    if (accounts.some(account => account.email === email)) { res.status(400).json({ error: '该邮箱已被使用' }); return; }
-    const salt = randomBytes(16).toString('hex');
-    const employee: LocalAccount = { userId: `local_user_${localId(email)}`, tenantId: identity.tenantId, email, name: name || email.split('@')[0], role, accountType: 'customer', salt, passwordHash: passwordHash(password, salt).toString('hex'), createdAt: new Date().toISOString() };
-    accounts.push(employee); writeLocalAccounts(accounts);
-    res.status(201).json({ employee: { id: employee.userId, email, name: employee.name, role, isCurrent: false, created: employee.createdAt } }); return;
+    try {
+      const accounts = readLocalAccounts();
+      if (accounts.some(account => account.email === email)) { res.status(400).json({ error: '该邮箱已被使用' }); return; }
+      const salt = randomBytes(16).toString('hex');
+      const employee: LocalAccount = { userId: `local_user_${localId(email)}`, tenantId: identity.tenantId, email, name: name || email.split('@')[0], role, accountType: 'customer', salt, passwordHash: passwordHash(password, salt).toString('hex'), createdAt: new Date().toISOString() };
+      accounts.push(employee); writeLocalAccounts(accounts);
+      res.status(201).json({ employee: { id: employee.userId, email, name: employee.name, role, isCurrent: false, created: employee.createdAt } }); return;
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
   }
   const created = await pbCreate('users', { email, name, password, passwordConfirm: password, tenantId: identity.tenantId, role, emailVisibility: true });
   if (!created) { res.status(400).json({ error: '员工添加失败，邮箱可能已被使用' }); return; }
@@ -777,15 +744,21 @@ authRouter.post('/employees', async (req, res) => {
 authRouter.patch('/employees/:employeeId/role', async (req, res) => {
   const identity = await auth.verifyToken(req.headers.authorization);
   if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以调整角色' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以调整角色' }); return; }
   if (req.params.employeeId === identity.userId) { res.status(400).json({ error: '不能修改当前超级管理员的角色' }); return; }
-  const role = normalizedRole(req.body?.role);
+  const role = organizationRoleOrNull(req.body?.role);
+  if (!role) { res.status(400).json({ error: '无效的员工角色' }); return; }
   if (role === 'super_admin') { res.status(403).json({ error: '不能分配超级管理员角色' }); return; }
   if (parseLocalToken(req.headers.authorization)) {
-    const accounts = readLocalAccounts();
-    const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
-    if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
-    target.role = role; writeLocalAccounts(accounts); res.json({ ok: true, role }); return;
+    try {
+      const accounts = readLocalAccounts();
+      const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
+      if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
+      target.role = role; writeLocalAccounts(accounts); res.json({ ok: true, role }); return;
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
   }
   const employee = await pbGet('users', req.params.employeeId);
   if (!employee || employee.tenantId !== identity.tenantId) { res.status(404).json({ error: '未找到该员工' }); return; }
@@ -796,13 +769,18 @@ authRouter.patch('/employees/:employeeId/role', async (req, res) => {
 authRouter.delete('/employees/:employeeId', async (req, res) => {
   const identity = await auth.verifyToken(req.headers.authorization);
   if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以移除成员' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以移除成员' }); return; }
   if (req.params.employeeId === identity.userId) { res.status(400).json({ error: '不能删除当前登录账号' }); return; }
   if (parseLocalToken(req.headers.authorization)) {
-    const accounts = readLocalAccounts();
-    const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
-    if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
-    writeLocalAccounts(accounts.filter(account => account !== target)); res.json({ ok: true }); return;
+    try {
+      const accounts = readLocalAccounts();
+      const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
+      if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
+      writeLocalAccounts(accounts.filter(account => account !== target)); res.json({ ok: true }); return;
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
   }
   const employee = await pbGet('users', req.params.employeeId);
   if (!employee || employee.tenantId !== identity.tenantId) { res.status(404).json({ error: '未找到该员工' }); return; }
@@ -813,14 +791,10 @@ authRouter.delete('/employees/:employeeId', async (req, res) => {
 authRouter.post('/guide-seen', async (req, res) => {
   const id = await auth.verifyToken(req.headers.authorization);
   if (!id) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  if (id.supportAccess) { res.status(403).json({ error: 'support_access_read_only' }); return; }
   const local = parseLocalToken(req.headers.authorization);
   const user = local ? null : await pbGet('users', id.userId);
   const email = String(local?.email ?? user?.email ?? '').trim().toLowerCase();
   if (email) consumeDemoGuide(email);
-  res.json({ ok: true });
-});
-
-authRouter.post('/logout', (_req, res) => {
-  clearAssetSessionCookie(res);
   res.json({ ok: true });
 });

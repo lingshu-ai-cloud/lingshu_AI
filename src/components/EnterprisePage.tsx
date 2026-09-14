@@ -1,6 +1,6 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, Copy, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import {
@@ -10,6 +10,7 @@ import {
   prepareSheet,
 } from '../lib/productImport';
 import SupportAccessControl from './SupportAccessControl';
+import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 
 interface ProductAsset {
@@ -580,9 +581,6 @@ function KnowledgeCard({
   );
 }
 
-interface ProductApiInfo { apiKey: string; tenantId: string; createdAt?: string; lastIngestedAt?: string; lastProductName?: string }
-interface ProductApiStatus { count: number; lastIngestedAt?: string; lastProductName?: string }
-
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div>
@@ -676,7 +674,6 @@ export default function EnterprisePage() {
   const [saveError, setSaveError] = useState('');
   const [loading, setLoading] = useState(true);
   const [profileLoaded, setProfileLoaded] = useState(false);
-  const [apiInfo, setApiInfo] = useState<ProductApiInfo | null>(null);
   const [apiStatus, setApiStatus] = useState<ProductApiStatus>({ count: 0 });
   const [orderImporting, setOrderImporting] = useState(false);
   const [orderImportMessage, setOrderImportMessage] = useState('');
@@ -732,11 +729,10 @@ export default function EnterprisePage() {
     const requestInit = { headers: authHeader(), signal: controller.signal };
     Promise.all([
       fetch('/api/overseas/enterprise/profile', requestInit).then(r => r.ok ? r.json() : Promise.reject(new Error(`企业资料加载失败（${r.status}）`))),
-      fetch('/api/overseas/enterprise/product-api', requestInit).then(r => r.json()).catch(() => null),
       fetch('/api/overseas/enterprise/product-api/status', requestInit).then(r => r.json()).catch(() => ({ count: 0 })),
       fetch('/api/overseas/enterprise/faq/packs', requestInit).then(r => r.json()).catch(() => ({ packs: [], recommendedIndustry: 'general' })),
     ])
-      .then(([data, productApi, productApiStatus, packData]: [Partial<Profile>, ProductApiInfo | null, ProductApiStatus, { packs?: FaqPack[]; recommendedIndustry?: string }]) => {
+      .then(([data, productApiStatus, packData]: [Partial<Profile>, ProductApiStatus, { packs?: FaqPack[]; recommendedIndustry?: string }]) => {
         if (!active) return;
         const rawNext: Profile = {
           ...DEFAULT,
@@ -807,7 +803,6 @@ export default function EnterprisePage() {
         setProfile(next);
         setProfileLoaded(true);
         setSaveError('');
-        if (productApi) setApiInfo(productApi);
         setApiStatus(productApiStatus);
         const packs = Array.isArray(packData.packs) ? packData.packs : [];
         setFaqPacks(packs);
@@ -1335,14 +1330,6 @@ export default function EnterprisePage() {
     const timer = window.setTimeout(() => { void handleSave(); }, 900);
     return () => window.clearTimeout(timer);
   }, [profile, loading, saving, hasUnsavedChanges]);
-
-  const rotateProductApiKey = async () => {
-    const next = await fetch('/api/overseas/enterprise/product-api/rotate', {
-      method: 'POST',
-      headers: authHeader(),
-    }).then(r => r.json());
-    setApiInfo(next);
-  };
 
   const importOrderCsv = async (file: File | null) => {
     if (!file) return;
@@ -2353,50 +2340,12 @@ export default function EnterprisePage() {
             </div>
           </div>
 
-          <section data-lingshu-guide="enterprise-order-import" className="card p-4">
-            <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-700">
-                <FileSpreadsheet size={16} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-text-primary">产品数据导入</p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-text-muted">上传本地商品表，或给 ERP 服务商使用 API 批量 upsert、查询、删除。</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary">
-                      {productImporting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-                      上传产品表
-                      <input
-                        type="file"
-                        accept=".xlsx,.xls,.csv"
-                        className="hidden"
-                        disabled={productImporting}
-                        onChange={e => {
-                          void importProductSheet(e.currentTarget.files?.[0] ?? null);
-                          e.currentTarget.value = '';
-                        }}
-                      />
-                    </label>
-                    <button type="button" onClick={rotateProductApiKey}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary">
-                      重置Key
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-white px-3 py-2 text-xs text-text-primary">{apiInfo?.apiKey || '正在生成...'}</code>
-                  <button type="button" onClick={() => apiInfo?.apiKey && navigator.clipboard?.writeText(apiInfo.apiKey)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-950 text-xs font-semibold text-white">
-                    <Copy size={12} />复制
-                  </button>
-                </div>
-                {productImportMessage && <p className="mt-2 text-[11px] font-semibold text-green-700">{productImportMessage}</p>}
-                <p className="mt-2 text-[11px] text-text-muted">已接入商品：{apiStatus.count}{apiStatus.lastIngestedAt ? ` · 最近接入 ${apiStatus.lastProductName || '商品'}` : ''}</p>
-              </div>
-            </div>
-          </section>
+          <EnterpriseProductImportCard
+            importing={productImporting}
+            importMessage={productImportMessage}
+            apiStatus={apiStatus}
+            onImport={importProductSheet}
+          />
 
           <section className="card p-4">
             <div className="flex items-start gap-3">

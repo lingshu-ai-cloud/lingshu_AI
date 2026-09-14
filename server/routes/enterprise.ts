@@ -12,6 +12,12 @@ import type { AutonomyLevel } from '../autonomy/actionRules.js';
 import { callLLM } from '../agents/llm.js';
 import { notifyDeliveryTeam } from '../lib/tenantPlatformApps.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import {
+  productApiSecretForKey,
+  productApiSecretForTenant,
+  type ProductApiCredential,
+} from '../lib/productApiCredentials.js';
+import { enterpriseProductApiRouter } from './enterpriseProductApi.js';
 import { objectStorageEnabled, r2GetObject, r2Upload } from '../storage/r2.js';
 import {
   enterpriseAssetContentType,
@@ -20,14 +26,17 @@ import {
   enterpriseAssetTypeAllowed,
 } from '../storage/enterpriseAssets.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
+import {
+  assertLegacyExternalEffectAllowed,
+  Starter198LegacyEffectError,
+  withLegacyExternalEffectAllowed,
+} from '../starter198/legacyEffectGuard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
 const DATA_DIR = path.join(__dirname, '../../data');
 const ASSETS_DIR = path.join(DATA_DIR, 'enterprise-assets');
 const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
-// 生成的 productApi 密钥单独存放，不进 data/enterprise.json（避免和会被提交/覆盖的企业资料文件混在一起）。
-const PRODUCT_API_FILE = path.join(DATA_DIR, 'product-api.json');
 
 
 
@@ -255,14 +264,6 @@ export interface EnterpriseProfile {
   knowledge: string;
 }
 
-interface ProductApiSecret {
-  tenantId: string;
-  apiKey: string;
-  createdAt: string;
-  lastIngestedAt?: string;
-  lastProductName?: string;
-}
-
 const DEFAULT_BIZ_RULES: BizRules = {
   quoteMode: 'human_only',
   priceRange: '',
@@ -298,34 +299,14 @@ const DEFAULT_HANDOFF_RULES: HandoffRules = {
   negativeSentiment: true,
 };
 
-function readProductApiSecret(): ProductApiSecret | null {
-  try {
-    return JSON.parse(fs.readFileSync(PRODUCT_API_FILE, 'utf8')) as ProductApiSecret;
-  } catch {
-    return null;
-  }
-}
-
-function writeProductApiSecret(secret: ProductApiSecret): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(PRODUCT_API_FILE, JSON.stringify(secret, null, 2), 'utf8');
-}
-
-// 兼容旧数据：老版本把 productApi 密钥写进了 data/enterprise.json 的 integrations 字段。
-// 首次读取到这种旧格式时，把密钥迁移到独立文件，并从企业资料里彻底删除，避免它再被写回 enterprise.json。
-function migrateLegacyProductApiSecret(parsed: Record<string, unknown>): void {
-  const legacy = (parsed?.integrations as { productApi?: ProductApiSecret } | undefined)?.productApi;
-  if (legacy?.apiKey && !fs.existsSync(PRODUCT_API_FILE)) {
-    writeProductApiSecret(legacy);
-  }
-  delete parsed.integrations;
-}
-
 function readProfile(): EnterpriseProfile {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    migrateLegacyProductApiSecret(parsed);
+    // Reads are side-effect free. Legacy embedded integration credentials are
+    // ignored here; any historical credential migration must be an explicit,
+    // audited operator command rather than an implicit GET-time write.
+    delete parsed.integrations;
     return normalizeProfile(parsed);
   } catch {
     return normalizeProfile({
@@ -1146,68 +1127,32 @@ export function notificationTargetReady(profile: EnterpriseProfile): boolean {
   return hasTestedNotificationTarget(normalizeProfile(profile));
 }
 
-async function resolveTenantId(req: Request): Promise<string> {
-  const id = await auth.verifyToken(req.headers.authorization);
-  return id?.tenantId || String(req.query.tenantId || req.headers['x-tenant-id'] || 'local_tenant_default');
-}
-
-function publicProductApiInfo(secret: ProductApiSecret | null) {
-  return {
-    apiKey: secret?.apiKey || '',
-    tenantId: secret?.tenantId || '',
-    createdAt: secret?.createdAt || '',
-    lastIngestedAt: secret?.lastIngestedAt || '',
-    lastProductName: secret?.lastProductName || '',
-  };
-}
-
-function storedProductApiSecret(record: Record<string, unknown> | undefined): ProductApiSecret | null {
-  if (!record?.api_key || !record.tenant_id) return null;
-  return {
-    tenantId: String(record.tenant_id),
-    apiKey: String(record.api_key),
-    createdAt: String(record.created_at || ''),
-    lastIngestedAt: String(record.last_ingested_at || ''),
-    lastProductName: String(record.last_product_name || ''),
-  };
-}
-
-async function productApiSecretForTenant(tenantId: string): Promise<ProductApiSecret | null> {
-  const result = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
-  });
-  return storedProductApiSecret(result.items[0]);
-}
-
-async function ensureProductApiKey(tenantId: string): Promise<ProductApiSecret> {
-  const current = await productApiSecretForTenant(tenantId);
-  if (current?.apiKey) return current;
-  const next: ProductApiSecret = {
-    tenantId,
-    apiKey: `ls_prod_${randomBytes(24).toString('base64url')}`,
-    createdAt: new Date().toISOString(),
-  };
-  const created = await store.create('tenant_api_keys', {
-    tenant_id: tenantId, api_key: next.apiKey, created_at: next.createdAt,
-  });
-  if (!created) throw new Error('tenant_api_key_storage_unavailable');
-  return next;
-}
-
 function readApiKey(req: Request) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   return String(req.headers['x-api-key'] || bearer || '').trim();
 }
 
-async function verifyProductApiKey(req: Request): Promise<{ profile: EnterpriseProfile; secret: ProductApiSecret } | null> {
+async function verifyProductApiKey(req: Request): Promise<{ profile: EnterpriseProfile; secret: ProductApiCredential } | null> {
   const provided = readApiKey(req);
   if (!provided) return null;
-  const result = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { api_key: provided }, page: 1, perPage: 1,
-  });
-  const secret = storedProductApiSecret(result.items[0]);
+  const secret = await productApiSecretForKey(provided);
   if (!secret) return null;
+  await assertLegacyExternalEffectAllowed(secret.tenantId);
   return { profile: await readTenantProfile(secret.tenantId), secret };
+}
+
+function respondLegacyProductApiFailure(error: unknown, res: import('express').Response): void {
+  if (error instanceof Starter198LegacyEffectError) {
+    if (error.code === 'starter_198_orchestrator_only') {
+      // This public endpoint is authenticated only by the supplied key. Do not
+      // reveal that a historical starter key still exists or remains valid.
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    res.status(error.status).json({ error: error.code });
+    return;
+  }
+  res.status(503).json({ error: 'product_api_unavailable' });
 }
 
 type ApiProductInput = {
@@ -2037,40 +1982,25 @@ enterpriseRouter.post('/orders/import', async (req, res) => {
   } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
-enterpriseRouter.get('/product-api', async (req, res) => {
-  const tenantId = await resolveTenantId(req);
-  const secret = await ensureProductApiKey(tenantId);
-  res.json(publicProductApiInfo(secret));
-});
-
-enterpriseRouter.post('/product-api/rotate', async (req, res) => {
-  const tenantId = await resolveTenantId(req);
-  const next: ProductApiSecret = {
-    tenantId,
-    apiKey: `ls_prod_${randomBytes(24).toString('base64url')}`,
-    createdAt: new Date().toISOString(),
-  };
-  const existing = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
-  });
-  const payload = { tenant_id: tenantId, api_key: next.apiKey, created_at: next.createdAt, last_ingested_at: '', last_product_name: '' };
-  const ok = existing.items[0]?.id
-    ? await store.update('tenant_api_keys', String(existing.items[0].id), payload)
-    : Boolean(await store.create('tenant_api_keys', payload));
-  if (!ok) { res.status(503).json({ error: 'tenant_api_key_storage_unavailable' }); return; }
-  res.json(publicProductApiInfo(next));
-});
+enterpriseRouter.use('/product-api', enterpriseProductApiRouter);
 
 enterpriseRouter.get('/product-api/status', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const profile = await readTenantProfile(tenantId);
-  const items = profile.products.items ?? [];
-  const secret = await productApiSecretForTenant(tenantId);
-  res.json({
-    count: items.length,
-    lastIngestedAt: secret?.lastIngestedAt || '',
-    lastProductName: secret?.lastProductName || items.at(-1)?.name || '',
-  });
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const result = await withLegacyExternalEffectAllowed(tenantId, async () => {
+      const profile = await readTenantProfile(tenantId);
+      const items = profile.products.items ?? [];
+      const secret = await productApiSecretForTenant(tenantId);
+      return {
+        count: items.length,
+        lastIngestedAt: secret?.lastIngestedAt || '',
+        lastProductName: secret?.lastProductName || items.at(-1)?.name || '',
+      };
+    });
+    res.json(result);
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
+  }
 });
 
 enterpriseRouter.post('/assets', async (req, res) => {
@@ -2204,54 +2134,73 @@ enterpriseRouter.get('/context', async (_req, res) => {
 export const productApiRouter = Router();
 
 productApiRouter.post('/bulk', async (req, res) => {
-  const verified = await verifyProductApiKey(req);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid API Key' });
-    return;
+  try {
+    const verified = await verifyProductApiKey(req);
+    if (!verified) {
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    const { secret } = verified;
+    const payload = Array.isArray(req.body) ? req.body : req.body?.products;
+    if (!Array.isArray(payload)) {
+      res.status(400).json({ error: 'Body should be { products: [...] } or an array.' });
+      return;
+    }
+    const products = payload.map(item => normalizeApiProduct(item)).filter(Boolean) as NonNullable<EnterpriseProfile['products']['items']>;
+    const total = await withLegacyExternalEffectAllowed(secret.tenantId, async () => {
+      const profile = await readTenantProfile(secret.tenantId);
+      const nextItems = upsertProductItems(profile.products.items ?? [], products);
+      const last = products.at(-1);
+      await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: nextItems } }, 'product-api');
+      const keyRecord = await store.list<Record<string, unknown>>('tenant_api_keys', { where: { tenant_id: secret.tenantId }, page: 1, perPage: 1 });
+      if (keyRecord.items[0]?.id) await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
+      return nextItems.length;
+    });
+    res.json({ ok: true, received: payload.length, upserted: products.length, total });
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
   }
-  const { profile, secret } = verified;
-  const payload = Array.isArray(req.body) ? req.body : req.body?.products;
-  if (!Array.isArray(payload)) {
-    res.status(400).json({ error: 'Body should be { products: [...] } or an array.' });
-    return;
-  }
-  const products = payload.map(item => normalizeApiProduct(item)).filter(Boolean) as NonNullable<EnterpriseProfile['products']['items']>;
-  const existing = profile.products.items ?? [];
-  const nextItems = upsertProductItems(existing, products);
-  const last = products.at(-1);
-  await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: nextItems } }, 'product-api');
-  const keyRecord = await store.list<Record<string, unknown>>('tenant_api_keys', { where: { tenant_id: secret.tenantId }, page: 1, perPage: 1 });
-  if (keyRecord.items[0]?.id) await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
-  res.json({ ok: true, received: payload.length, upserted: products.length, total: nextItems.length });
 });
 
 productApiRouter.get('/', async (req, res) => {
-  const verified = await verifyProductApiKey(req);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid API Key' });
-    return;
+  try {
+    const verified = await verifyProductApiKey(req);
+    if (!verified) {
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    const { profile } = verified;
+    const sku = text(req.query.sku);
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
+    const items = (profile.products.items ?? []).filter(item => !sku || item.sku === sku).slice(0, limit);
+    res.json({ total: items.length, items });
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
   }
-  const { profile } = verified;
-  const sku = text(req.query.sku);
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
-  const items = (profile.products.items ?? []).filter(item => !sku || item.sku === sku).slice(0, limit);
-  res.json({ total: items.length, items });
 });
 
 productApiRouter.delete('/:sku?', async (req, res) => {
-  const verified = await verifyProductApiKey(req);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid API Key' });
-    return;
+  try {
+    const verified = await verifyProductApiKey(req);
+    if (!verified) {
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    const { secret } = verified;
+    const sku = text(req.params.sku || req.query.sku || req.body?.sku);
+    if (!sku) {
+      res.status(400).json({ error: 'Missing sku' });
+      return;
+    }
+    const result = await withLegacyExternalEffectAllowed(secret.tenantId, async () => {
+      const profile = await readTenantProfile(secret.tenantId);
+      const before = profile.products.items ?? [];
+      const after = before.filter(item => item.sku !== sku);
+      await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: after } }, 'product-api');
+      return { deleted: before.length - after.length, total: after.length };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
   }
-  const { profile, secret } = verified;
-  const sku = text(req.params.sku || req.query.sku || req.body?.sku);
-  if (!sku) {
-    res.status(400).json({ error: 'Missing sku' });
-    return;
-  }
-  const before = profile.products.items ?? [];
-  const after = before.filter(item => item.sku !== sku);
-  await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: after } }, 'product-api');
-  res.json({ ok: true, deleted: before.length - after.length, total: after.length });
 });

@@ -1,4 +1,7 @@
 import * as XLSX from 'xlsx';
+import { assertRowsAndTrackText, readSafeProductWorkbook } from './productImportSecurity';
+
+export { PRODUCT_IMPORT_LIMITS } from './productImportSecurity';
 
 export const PRODUCT_SCHEMA_FIELDS = [
   'sku',
@@ -134,20 +137,8 @@ function rowsToObjects(rows: string[][], headers: string[], start: number) {
 }
 
 export async function parseWorkbook(file: File): Promise<ParsedSheet[]> {
-  const buffer = await file.arrayBuffer();
-  const isCsv = /\.csv$/i.test(file.name);
-  let workbook: XLSX.WorkBook;
-  if (isCsv) {
-    const bytes = new Uint8Array(buffer);
-    let decoded = new TextDecoder('utf-8').decode(bytes);
-    const utf8Damage = (decoded.match(/�/g) || []).length + (decoded.match(/[ÃÂ]/g) || []).length;
-    if (utf8Damage >= 2) {
-      try { decoded = new TextDecoder('gb18030').decode(bytes); } catch { /* keep UTF-8 result */ }
-    }
-    workbook = XLSX.read(decoded, { type: 'string', cellDates: false });
-  } else {
-    workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
-  }
+  const workbook = await readSafeProductWorkbook(file);
+  let textCharacters = 0;
   return workbook.SheetNames.map(name => {
     const sheet = workbook.Sheets[name];
     for (const merge of sheet?.['!merges'] ?? []) {
@@ -162,6 +153,7 @@ export async function parseWorkbook(file: File): Promise<ParsedSheet[]> {
       }
     }
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: false, defval: '' });
+    textCharacters = assertRowsAndTrackText(rows, name, textCharacters);
     return { name, rows, rowCount: rows.length };
   });
 }

@@ -5,8 +5,8 @@ import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLoca
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
-import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
-import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../src/lib/videoLanguages.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
 import { Router, type Request, type Response } from 'express';
@@ -63,6 +63,7 @@ import { assessTransformation, commercialDigitalHumanGate, type TransformationAs
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
+import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -3129,12 +3130,13 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       source: generated.source,
       tenantId,
     });
+    const responseMaterial = await materialResponse(material, tenantId);
     res.json({
       ok: true,
       source: generated.source,
       model: generated.model,
-      url: material.url,
-      material,
+      url: responseMaterial.url,
+      material: responseMaterial,
       references: references.length,
     });
   } catch (err: any) {
@@ -3938,7 +3940,7 @@ interface DigitalHumanJob {
   completedAt?: string;
 }
 
-const DIGITAL_HUMAN_JOBS_FILE = path.join(__dirname, '../../data/digital-human-jobs.json');
+const DIGITAL_HUMAN_JOBS_FILE = process.env.NODE_ENV === 'test' && process.env.DIGITAL_HUMAN_JOBS_FILE ? path.resolve(process.env.DIGITAL_HUMAN_JOBS_FILE) : path.join(__dirname, '../../data/digital-human-jobs.json');
 const DIGITAL_HUMAN_MAX_OUTPUT_BYTES = 110 * 1024 * 1024;
 const digitalHumanRefreshes = new Map<string, Promise<DigitalHumanJob>>();
 
@@ -4247,9 +4249,8 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
 
 studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  let job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
-  if (['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
   const outputMaterial = job.outputMaterialId ? loadMaterials().find(item => item.id === job!.outputMaterialId && item.tenantId === tenantId) : undefined;
   res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
 });
@@ -4308,20 +4309,16 @@ function materialSignedUrlTtlSeconds(): number {
   return Number.isFinite(configured) ? Math.max(60, Math.min(3600, configured)) : 900;
 }
 
-async function signedMaterialObjectUrl(key?: string): Promise<string | undefined> {
-  return key && objectStorageEnabled() ? r2SignedGetUrl(key, materialSignedUrlTtlSeconds()) : undefined;
-}
-
 async function materialResponse(material: Material, tenantId: string): Promise<Material & { canManage: boolean }> {
   const url = material.objectKey
-    ? await signedMaterialObjectUrl(material.objectKey)
+    ? privateStudioAssetUrl('materials', tenantId, path.basename(material.objectKey))
     : /^\/(?:cloud-files|studio-media)\//.test(material.url)
       // Studio workflows often span script, material, music and render steps.
       // Keep the protected playback URL valid for the whole editing session.
       ? signPathAssetUrl(material.url, tenantId, 24 * 60 * 60 * 1000)
       : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.url) ? signAssetUrl(material.url, tenantId) : material.url;
   const poster = material.posterObjectKey
-    ? await signedMaterialObjectUrl(material.posterObjectKey)
+    ? privateStudioAssetUrl('materials', tenantId, path.basename(material.posterObjectKey))
     : material.poster && /^\/(?:cloud-files|studio-media)\//.test(material.poster)
       ? signPathAssetUrl(material.poster, tenantId, 24 * 60 * 60 * 1000)
       : material.poster && /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.poster)
@@ -4329,7 +4326,7 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
         : material.poster;
   const segments = await Promise.all((material.segments || []).map(async segment => ({
     ...segment,
-    poster: segment.posterObjectKey ? await signedMaterialObjectUrl(segment.posterObjectKey) : segment.poster,
+    poster: segment.posterObjectKey ? privateStudioAssetUrl('materials', tenantId, path.basename(segment.posterObjectKey)) : segment.poster,
     posterObjectKey: undefined,
   })));
   return { ...material, url: url || material.url, poster, segments, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
@@ -5162,7 +5159,7 @@ async function persistPrivateStudioAsset(namespace: string, tenantId: string, fi
 studioRouter.get('/private-assets/:namespace/:file', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const namespace = String(req.params.namespace || '');
-  if (!['tts', 'voice-samples', 'covers', 'exports'].includes(namespace)) { res.status(404).end(); return; }
+  if (!['tts', 'voice-samples', 'covers', 'exports', 'materials'].includes(namespace)) { res.status(404).end(); return; }
   const object = await r2GetObject(tenantPrivateObjectKey(namespace, tenantId, req.params.file), req.headers.range);
   if (!object) { res.status(404).end(); return; }
   res.setHeader('Content-Type', object.contentType);
@@ -6820,8 +6817,6 @@ studioRouter.delete('/bgm/:id', async (req, res) => {
    对应前端「我的草稿 / 我的作品」。save 既可新建也可更新（带 id 即更新）。
 ─────────────────────────────────────────────────────────────────────────── */
 
-const PROJECTS_FILE = path.join(__dirname, '../../data/studio-projects.json');
-
 interface StudioProject {
   id: string;
   title: string;
@@ -6838,33 +6833,29 @@ function projectFromRecord(record: any): StudioProject {
   return { id: String(record.id), title: String(record.title || '未命名草稿'), status: record.status || 'draft', spec: record.spec || {}, thumbSeed: record.thumb_seed || undefined, createdAt: String(record.created_at || record.created || ''), updatedAt: String(record.updated_at || record.updated || '') };
 }
 
-function loadProjects(): StudioProject[] {
-  try {
-    return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8')) as StudioProject[];
-  } catch {
-    return [];
-  }
-}
-function persistProjects(list: StudioProject[]): void {
-  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(list, null, 2), 'utf8');
-}
-
 // GET /studio/projects → 列表（更新时间倒序）
 studioRouter.get('/projects', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const result = await store.list<StoredStudioProject>('studio_projects', { where: { tenant_id: tenantId }, sort: '-updated_at', perPage: 500 });
-  res.json(result.items.map(projectFromRecord));
+  const taskId = socialProjectTaskId(res.locals);
+  res.json(result.items.filter(project => socialProjectBelongs(project, taskId)).map(projectFromRecord));
 });
 
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { id, title, status = 'draft', spec = {}, thumbSeed } = req.body ?? {};
+  const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed } = req.body ?? {};
+  const socialTaskId = socialProjectTaskId(res.locals);
+  const spec = bindSocialProjectSpec(rawSpec, socialTaskId) as Record<string, unknown>;
+  const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
+    ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
+  if (automation.managedBy === 'digital_employee') { res.status(403).json({ ok: false, error: '数字员工内容项目只能由受信任的生产流程创建', code: 'managed_production_project_forbidden' }); return; }
 
   if (id) {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
+      if (!socialProjectBelongs(existing, socialTaskId)) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
       if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
         res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
@@ -6899,7 +6890,7 @@ studioRouter.post('/projects', async (req, res) => {
 studioRouter.get('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const p = await store.getById<any>('studio_projects', req.params.id);
-  if (!p || p.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if (!p || p.tenant_id !== tenantId || !socialProjectBelongs(p, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
   res.json(projectFromRecord(p));
 });
 
@@ -6907,7 +6898,7 @@ studioRouter.get('/projects/:id', async (req, res) => {
 studioRouter.delete('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const existing = await store.getById<any>('studio_projects', req.params.id);
-  if (!existing || existing.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if (!existing || existing.tenant_id !== tenantId || !socialProjectBelongs(existing, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
   await store.delete('studio_projects', req.params.id);
   res.json({ ok: true });
 });

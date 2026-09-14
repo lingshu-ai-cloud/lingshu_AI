@@ -1,4 +1,4 @@
-import type { ContinuationPolicy } from '../../src/lib/continuationPolicy.js';
+import type { ContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
 import { beijingDate, latestDueReviewSlot, type ReviewCadenceSchedule } from './runtimeSchedule.js';
 export function cyclesOverlap(a: { starts_at: string; ends_at: string }, b: { starts_at: string; ends_at: string }): boolean {
   if (![a.starts_at,a.ends_at,b.starts_at,b.ends_at].every(x=>/^\d{4}-\d{2}-\d{2}$/.test(x))) return true;

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const approvalApplication = fs.readFileSync('server/digitalEmployees/approvalDecision.ts', 'utf8');
+const cancellationApplication = fs.readFileSync('server/digitalEmployees/runCancellation.ts', 'utf8');
 
 function routeBlock(start: string): string {
   const begin = source.indexOf(start);
@@ -60,23 +62,30 @@ for (const coordinate of ['x', 'y', 'viewportWidth', 'viewportHeight']) {
 }
 assert.match(uiEventRoute, /kind === ['"]click['"][\s\S]{0,300}ui_click_coordinates_required/, 'a click event without real viewport coordinates must be rejected');
 
-const approvalRoute = routeBlock("digitalEmployeesRouter.post('/approvals/:approvalId/decide'");
+const approvalAdapterStart = source.indexOf('async function decideDigitalEmployeeApproval');
+const approvalAdapterEnd = source.indexOf("digitalEmployeesRouter.post('/approvals/:approvalId/decide'", approvalAdapterStart);
+assert.notEqual(approvalAdapterStart, -1, 'missing approval HTTP adapter');
+assert.notEqual(approvalAdapterEnd, -1, 'missing approval route registration');
+const approvalRoute = source.slice(approvalAdapterStart, approvalAdapterEnd);
 assert.doesNotMatch(
-  approvalRoute,
+  `${approvalRoute}\n${approvalApplication}`,
   /===\s*['"]rejected['"]\s*\?\s*['"]rejected['"]\s*:\s*['"]approved['"]/,
   'an unknown approval decision must never default to approved',
 );
-assert.match(approvalRoute, /status\(400\)/, 'an invalid approval decision must return HTTP 400');
-assert.match(approvalRoute, /invalid_approval_decision|approval_decision_invalid|decision_invalid/, 'invalid approval decisions need a stable error contract');
-assert.match(approvalRoute, /tenantRecord<ApprovalRecord>/, 'approval records must be tenant scoped');
-assert.match(approvalRoute, /subject_version|content_hash/, 'approval must remain bound to the reviewed version or content hash');
-assert.match(approvalRoute, /withDigitalEmployeeRunLock/, 'approval decisions must serialize with human lifecycle controls');
-assert.match(approvalRoute, /approvalRunBlockedReason/, 'old approvals must not resume stopped runs or non-waiting tasks');
-assert.ok(approvalRoute.indexOf('approvalRunBlockedReason') < approvalRoute.indexOf('createPublishingCalendarEntries'), 'run eligibility must precede creation of externally actionable calendar entries');
-for (const control of ['pause', 'resume', 'cancel']) {
+assert.match(approvalRoute, /decideDigitalEmployeeApprovalUseCase/, 'the legacy route must use the shared approval application service');
+assert.match(approvalRoute, /DigitalEmployeeApprovalDecisionError/, 'the route must preserve typed application error status and details');
+assert.match(approvalApplication, /'invalid_approval_decision', 400/, 'an invalid approval decision must return HTTP 400');
+assert.match(approvalApplication, /tenantRecord<ApprovalDecisionRecord>/, 'approval records must be tenant scoped');
+assert.match(approvalApplication, /subject_version|content_hash/, 'approval must remain bound to the reviewed version or content hash');
+assert.match(approvalApplication, /withDigitalEmployeeRunLock/, 'approval decisions must serialize with human lifecycle controls');
+assert.match(approvalApplication, /approvalRunBlockedReason/, 'old approvals must not resume stopped runs or non-waiting tasks');
+assert.ok(approvalApplication.indexOf('approvalRunBlockedReason') < approvalApplication.indexOf('createPublishingCalendarEntries'), 'run eligibility must precede creation of externally actionable calendar entries');
+for (const control of ['pause', 'resume']) {
   assert.match(routeBlock(`digitalEmployeesRouter.post('/runs/:runId/${control}'`), /withDigitalEmployeeRunLock/, `${control} must share the execution lock`);
 }
-assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/cancel'"), /status: 'superseded'/, 'cancellation must invalidate pending approvals');
+assert.match(source, /cancelDigitalEmployeeRunApplication/, 'the cancel route must use the shared lifecycle application service');
+assert.match(cancellationApplication, /withDigitalEmployeeRunLock/, 'cancel must share the execution lock');
+assert.match(cancellationApplication, /status: 'superseded'/, 'cancellation must invalidate pending approvals');
 assert.match(routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/handoff'"), /withDigitalEmployeeRunLock/, 'handoff must serialize with external actions');
 
 const correctionStart = source.indexOf('async function applyTaskControl');

@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
-      alias: { '@': path.resolve(__dirname, 'src') },
+      alias: { '@': path.resolve(import.meta.dirname, 'src') },
     },
     server: {
     // 合并版使用独立端口，避免和 overseas / 新手引导两个工作区互相抢占。

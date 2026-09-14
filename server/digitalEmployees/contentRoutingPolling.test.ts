@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { agentBrowserSessions } from './browserSessions.js';
 import { store } from '../storage/index.js';
 import { buildWeeklyPlan, normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
+import { withExecutionAdapters } from './executionAdapters.js';
 import { reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
 
 const tenant = 'isolated-full-chain-mock';
@@ -15,6 +16,7 @@ const records:Record<string,any[]>={workflow_runs:[run],workflow_tasks:tasks,wee
 const original = { ...store }; const originalFetch=globalThis.fetch;
 let networkCalls=0; let serial=0;
 const statusHistory:any[]=[];
+const materials:Array<{id:string;tenantId:string;productId:string;url:string;synthetic?:boolean}>=[];
 Object.assign(store,{
  list:async(collection:string,query:any={})=>{let items=(records[collection]||[]).filter(r=>Object.entries(query.where||{}).every(([k,v])=>r[k]===v));if(query.sort){const key=query.sort.replace(/^-/,'');items=[...items].sort((a,b)=>(a[key]>b[key]?1:a[key]<b[key]?-1:0)*(query.sort.startsWith('-')?-1:1));}const page=query.page||1,perPage=query.perPage||100;return {items:structuredClone(items.slice((page-1)*perPage,page*perPage)),totalItems:items.length,totalPages:Math.ceil(items.length/perPage),page,perPage};},
  getById:async(c:string,id:string)=>structuredClone((records[c]||[]).find(r=>r.id===id)||null),
@@ -37,28 +39,39 @@ const originalPerform = agentBrowserSessions.perform;
 let clicks = 0;
 agentBrowserSessions.perform = async (_scope, _read, _label, execute) => { clicks++; return execute(); };
 try {
-  for (let i = 0; i < 4; i++) await reconcileDigitalEmployeeRun(tenant, run.id);
-  assert.equal(clicks, 0, 'blocked polling must never click the generation button');
-  assert.equal(records.content_batch_plans.length, 0, 'readiness checks must not create blocked orders');
-  assert.equal(routing.output.routingCheck.count, 4);
-  const waitingEvents = () => Object.values(records).flat().filter(e => e.type === 'task.routing_waiting');
-  assert.equal(waitingEvents().length, 1, 'unchanged blocker emits one event');
-  records.tenant_profiles[0].profile.products.items = [{name:'MOCK cotton shirt'}];
-  await reconcileDigitalEmployeeRun(tenant, run.id);
-  assert.equal(clicks, 0, 'a changed but still blocked condition stays read-only');
-  assert.equal(waitingEvents().length, 2, 'changed blocker is recorded');
-  records.materials = [{ id: 'material-1', tenantId: tenant, productId: 'enterprise-product-1', url: 'https://assets.example.com/shirt.jpg' }];
-  await reconcileDigitalEmployeeRun(tenant, run.id);
-  assert.equal(clicks, 1, 'newly satisfied conditions execute once');
-  assert.equal(routing.status, 'succeeded');
-  assert.equal(records.content_batch_plans.length, 1);
-  await reconcileDigitalEmployeeRun(tenant, run.id);
-  assert.equal(clicks, 1, 'completed routing is not replayed');
-  routing.status = 'pending';
-  await reconcileDigitalEmployeeRun(tenant, run.id);
-  assert.equal(clicks, 1, 'existing planned batch is reused without a browser action');
-  assert.equal(records.content_batch_plans.length, 1);
-  assert.equal(networkCalls, 0);
+  await withExecutionAdapters({materials: requestedTenant => {
+    assert.equal(requestedTenant,tenant,'material injection must remain tenant scoped');
+    return structuredClone(materials);
+  }},async()=>{
+    for (let i = 0; i < 4; i++) await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'blocked polling must never click the generation button');
+    assert.equal(records.content_batch_plans.length, 0, 'readiness checks must not create blocked orders');
+    assert.equal(routing.output.routingCheck.count, 4);
+    const waitingEvents = () => Object.values(records).flat().filter(e => e.type === 'task.routing_waiting');
+    assert.equal(waitingEvents().length, 1, 'unchanged blocker emits one event');
+    records.tenant_profiles[0].profile.products.items = [{name:'MOCK cotton shirt'}];
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'a changed but still blocked condition stays read-only');
+    assert.equal(waitingEvents().length, 2, 'changed blocker is recorded');
+    materials.push({ id: 'synthetic-material', tenantId: tenant, productId: 'enterprise-product-1', url: 'https://assets.example.com/synthetic-shirt.jpg', synthetic: true });
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'synthetic material must not satisfy production routing');
+    materials.push({ id: 'other-tenant-material', tenantId: 'other-tenant', productId: 'enterprise-product-1', url: 'https://assets.example.com/other-shirt.jpg' });
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'another tenant material must not satisfy production routing');
+    materials.push({ id: 'material-1', tenantId: tenant, productId: 'enterprise-product-1', url: 'https://assets.example.com/shirt.jpg' });
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, 'newly satisfied conditions execute once');
+    assert.equal(routing.status, 'succeeded');
+    assert.equal(records.content_batch_plans.length, 1);
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, 'completed routing is not replayed');
+    routing.status = 'pending';
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, 'existing planned batch is reused without a browser action');
+    assert.equal(records.content_batch_plans.length, 1);
+    assert.equal(networkCalls, 0);
+  });
   console.log('Content routing polling regression passed');
 } finally {
   Object.assign(store, original); globalThis.fetch = originalFetch;

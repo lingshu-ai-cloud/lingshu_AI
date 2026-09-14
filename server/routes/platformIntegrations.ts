@@ -54,10 +54,11 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
       appId: text(req.body?.metaSocialAppId),
       appSecret: text(req.body?.metaSocialAppSecret),
       waConfigId: text(req.body?.metaWhatsAppConfigId),
+      webhookVerifyToken: text(req.body?.metaWebhookVerifyToken),
     },
     { platform: 'tiktok' as const, appId: text(req.body?.tiktokClientKey), appSecret: text(req.body?.tiktokClientSecret) },
   ];
-  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('waConfigId' in entry && entry.waConfigId)).map(entry => upsertTenantPlatformApp({
+  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('waConfigId' in entry && entry.waConfigId) || ('webhookVerifyToken' in entry && entry.webhookVerifyToken)).map(entry => upsertTenantPlatformApp({
     tenantId,
     ...entry,
   })));

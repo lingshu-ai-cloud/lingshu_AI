@@ -1,7 +1,7 @@
-import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../src/lib/continuationPolicy.js';
-import { normalizeAssessment, type OperatingAssessment } from '../../src/lib/operatingMaturity.js';
-import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../src/lib/videoLanguages.js';
-import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../src/lib/videoCreationPlan.js';
+import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
+import { normalizeAssessment, type OperatingAssessment } from '../../shared/contracts/operatingMaturity.js';
+import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
+import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';

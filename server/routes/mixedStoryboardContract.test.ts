@@ -18,7 +18,10 @@ assert.match(mixedStoryboardRules('heygen', materials), /不是成片时间轴/)
 const source = fs.readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
 assert.match(source, /const scriptSystemPrompt = `\$\{presentationRule\}\\n\$\{mixedRules\}/);
 assert.match(source, /const mixedIssues = mixedStoryboardIssues\(script, presentationMode, normalizedMaterialInfos\)/);
-assert.match(source, /const materialHardIssues = Array\.from\(new Set\(\[\s*\.\.\.mixedIssues/);
+const materialHardIssuesStart = source.indexOf('const materialHardIssues = Array.from(new Set([');
+const materialHardIssuesEnd = source.indexOf('const validationWarnings', materialHardIssuesStart);
+assert.ok(materialHardIssuesStart >= 0 && materialHardIssuesEnd > materialHardIssuesStart);
+assert.match(source.slice(materialHardIssuesStart, materialHardIssuesEnd), /\.\.\.mixedIssues/);
 console.log('Mixed storyboard contract: passed');
 
 const negativeAvatar = avatar.replace('面对镜头讲述', '面对镜头讲述；不指向、不模拟操作；无手持物');

@@ -6,6 +6,10 @@ import type { Identity } from '../storage/datastore.js';
 const REQUESTS_FILE = path.resolve(process.cwd(), 'data/support-access.json');
 const SETTINGS_FILE = path.resolve(process.cwd(), 'data/support-access-settings.json');
 const TOKEN_PREFIX = 'support-v1.';
+const DEFAULT_TOKEN_TTL_MS = 30 * 60 * 1000;
+const MAX_TOKEN_TTL_MS = 60 * 60 * 1000;
+const MIN_TOKEN_TTL_MS = 60 * 1000;
+const CLOCK_SKEW_MS = 60 * 1000;
 
 type SupportAccessStatus = 'approved' | 'denied' | 'revoked';
 
@@ -35,7 +39,7 @@ interface SupportTokenPayload {
   tenantId: string;
   tenantName: string;
   issuedAt: number;
-  expiresAt?: number;
+  expiresAt: number;
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -69,12 +73,7 @@ function readSettings(): SupportAccessSettings {
 }
 
 function tokenSecret(): string {
-  const configured = String(
-    process.env.SUPPORT_ACCESS_SECRET ||
-    process.env.REGISTRATION_CREDENTIAL_KEY ||
-    process.env.OAUTH_STATE_SECRET ||
-    '',
-  ).trim();
+  const configured = String(process.env.SUPPORT_ACCESS_SECRET || '').trim();
   if (process.env.NODE_ENV === 'production' && !configured) {
     throw new Error('SUPPORT_ACCESS_SECRET is required in production');
   }
@@ -85,8 +84,14 @@ function signature(body: string): string {
   return createHmac('sha256', tokenSecret()).update(body).digest('base64url');
 }
 
+function supportAccessTokenTtlMs(): number {
+  const configuredMinutes = Number(process.env.SUPPORT_ACCESS_TTL_MINUTES);
+  if (!Number.isFinite(configuredMinutes) || configuredMinutes <= 0) return DEFAULT_TOKEN_TTL_MS;
+  return Math.min(MAX_TOKEN_TTL_MS, Math.max(MIN_TOKEN_TTL_MS, Math.round(configuredMinutes * 60 * 1000)));
+}
+
 export function supportAccessDefaultAuthorized(tenantId: string): boolean {
-  return readSettings()[tenantId]?.defaultAuthorized ?? true;
+  return readSettings()[tenantId]?.defaultAuthorized ?? false;
 }
 
 export function setSupportAccessDefaultAuthorized(
@@ -141,7 +146,7 @@ export function createSupportAccessRequest(input: {
 export function issueSupportAccessToken(
   requestId: string,
   adminUserId: string,
-): { token: string } | null {
+): { token: string; expiresAt: string } | null {
   const request = readRequests().find(item => item.id === requestId);
   if (
     !request ||
@@ -152,16 +157,19 @@ export function issueSupportAccessToken(
     return null;
   }
 
+  const issuedAt = Date.now();
+  const expiresAt = issuedAt + supportAccessTokenTtlMs();
   const payload: SupportTokenPayload = {
     requestId: request.id,
     adminUserId: request.requestedByUserId,
     adminEmail: request.requestedByEmail,
     tenantId: request.tenantId,
     tenantName: request.tenantName,
-    issuedAt: Date.now(),
+    issuedAt,
+    expiresAt,
   };
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  return { token: `${TOKEN_PREFIX}${body}.${signature(body)}` };
+  return { token: `${TOKEN_PREFIX}${body}.${signature(body)}`, expiresAt: new Date(expiresAt).toISOString() };
 }
 
 export function verifySupportAccessToken(authHeader: string | undefined): Identity | null {
@@ -170,7 +178,12 @@ export function verifySupportAccessToken(authHeader: string | undefined): Identi
   const [body, provided, ...extra] = token.slice(TOKEN_PREFIX.length).split('.');
   if (!body || !provided || extra.length) return null;
 
-  const expected = signature(body);
+  let expected: string;
+  try {
+    expected = signature(body);
+  } catch {
+    return null;
+  }
   const suppliedBuffer = Buffer.from(provided);
   const expectedBuffer = Buffer.from(expected);
   if (
@@ -182,6 +195,18 @@ export function verifySupportAccessToken(authHeader: string | undefined): Identi
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as SupportTokenPayload;
+    const now = Date.now();
+    if (
+      !Number.isSafeInteger(payload.issuedAt) ||
+      !Number.isSafeInteger(payload.expiresAt) ||
+      payload.issuedAt <= 0 ||
+      payload.expiresAt <= payload.issuedAt ||
+      payload.expiresAt - payload.issuedAt > MAX_TOKEN_TTL_MS ||
+      payload.issuedAt > now + CLOCK_SKEW_MS ||
+      payload.expiresAt <= now
+    ) {
+      return null;
+    }
     if (!supportAccessDefaultAuthorized(payload.tenantId)) return null;
     const request = readRequests().find(item => item.id === payload.requestId);
     if (
@@ -199,6 +224,7 @@ export function verifySupportAccessToken(authHeader: string | undefined): Identi
         requestId: payload.requestId,
         adminEmail: payload.adminEmail,
         tenantName: payload.tenantName,
+        expiresAt: new Date(payload.expiresAt).toISOString(),
       },
     };
   } catch {

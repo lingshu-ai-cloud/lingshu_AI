@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { encryptRegistrationPassword } from './registrationCredentials.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_TENANTS_FILE = path.join(__dirname, '../../data/local-auth-tenants.json');
+const LOCAL_TENANTS_FILE = process.env.NODE_ENV === 'test' && process.env.LOCAL_TENANTS_DATA_FILE
+  ? path.resolve(process.env.LOCAL_TENANTS_DATA_FILE)
+  : path.join(__dirname, '../../data/local-auth-tenants.json');
 
 export interface LocalTenantRecord {
   id: string;
@@ -22,27 +23,67 @@ export interface LocalTenantRecord {
   createdAt: string;
   registeredAt?: string;
   registeredEmail?: string;
-  registeredPasswordCipher?: string;
   registrationInviteCode?: string;
 }
 
-function readLocalTenants(): LocalTenantRecord[] {
+type LegacyLocalTenantRecord = LocalTenantRecord & { registeredPasswordCipher?: unknown };
+
+/** Drop the legacy recoverable credential from every in-memory/runtime view. */
+export function sanitizeLocalTenantRecord(record: LegacyLocalTenantRecord): LocalTenantRecord {
+  const { registeredPasswordCipher: _discarded, ...safeRecord } = record;
+  return safeRecord;
+}
+
+function readStoredLocalTenants(): LegacyLocalTenantRecord[] {
   try {
-    const parsed = JSON.parse(fs.readFileSync(LOCAL_TENANTS_FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+    const parsed = JSON.parse(fs.readFileSync(LOCAL_TENANTS_FILE, 'utf8')) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error('registry root must be an array');
+    }
+    return parsed as LegacyLocalTenantRecord[];
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+    throw new Error(`Cannot read local tenant registry ${LOCAL_TENANTS_FILE}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-function writeLocalTenants(tenants: LocalTenantRecord[]): void {
+function readLocalTenants(): LocalTenantRecord[] {
+  return readStoredLocalTenants().map(record => sanitizeLocalTenantRecord(record));
+}
+
+function writeStoredLocalTenants(tenants: LegacyLocalTenantRecord[]): void {
   fs.mkdirSync(path.dirname(LOCAL_TENANTS_FILE), { recursive: true });
-  fs.writeFileSync(LOCAL_TENANTS_FILE, JSON.stringify(tenants, null, 2), 'utf8');
+  const contents = JSON.stringify(tenants, null, 2);
   try {
-    fs.chmodSync(LOCAL_TENANTS_FILE, 0o600);
-  } catch {
-    // Windows and some containers may ignore POSIX file modes.
+    if (fs.readFileSync(LOCAL_TENANTS_FILE, 'utf8') === contents) return;
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
+  const temporaryFile = `${LOCAL_TENANTS_FILE}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryFile, contents, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporaryFile, LOCAL_TENANTS_FILE);
+    try { fs.chmodSync(LOCAL_TENANTS_FILE, 0o600); } catch { /* Some platforms ignore POSIX modes. */ }
+  } finally {
+    try { fs.unlinkSync(temporaryFile); } catch { /* Rename succeeded or the temporary file was never created. */ }
+  }
+}
+
+/**
+ * Business metadata writes must not silently perform the credential migration.
+ * Preserve any historical field until an operator applies the gated migration,
+ * or a verified login explicitly clears that account's exact record.
+ */
+function writeLocalTenants(tenants: LocalTenantRecord[]): void {
+  const storedById = new Map(readStoredLocalTenants().map(record => [record.id, record]));
+  const merged = tenants.map(tenant => {
+    const safeTenant = sanitizeLocalTenantRecord(tenant);
+    const stored = storedById.get(safeTenant.id);
+    return stored && Object.hasOwn(stored, 'registeredPasswordCipher')
+      ? { ...stored, ...safeTenant, registeredPasswordCipher: stored.registeredPasswordCipher }
+      : { ...stored, ...safeTenant };
+  });
+  writeStoredLocalTenants(merged);
 }
 
 export function listLocalTenants(): LocalTenantRecord[] {
@@ -53,19 +94,17 @@ export function getLocalTenant(tenantId: string): LocalTenantRecord | null {
   return readLocalTenants().find(tenant => tenant.id === tenantId) ?? null;
 }
 
-export function updateLocalTenantRegisteredPassword(tenantId: string, email: string, password: string): boolean {
-  const tenants = readLocalTenants();
+export function clearLocalTenantRegisteredCredential(tenantId: string, email: string): boolean {
+  const tenants = readStoredLocalTenants();
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const index = tenants.findIndex(tenant => (
     tenant.id === tenantId
     && String(tenant.registeredEmail || '').trim().toLowerCase() === normalizedEmail
   ));
   if (index < 0) return false;
-  tenants[index] = {
-    ...tenants[index],
-    registeredPasswordCipher: encryptRegistrationPassword(password),
-  };
-  writeLocalTenants(tenants);
+  if (!Object.hasOwn(tenants[index], 'registeredPasswordCipher')) return true;
+  tenants[index] = sanitizeLocalTenantRecord(tenants[index]);
+  writeStoredLocalTenants(tenants);
   return true;
 }
 
@@ -114,7 +153,6 @@ export function promoteLocalTrialTenant(input: {
   contactName?: string;
   industry?: string;
   email: string;
-  password?: string;
   registeredAt?: string;
 }): LocalTenantRecord {
   const tenants = readLocalTenants();
@@ -136,9 +174,6 @@ export function promoteLocalTrialTenant(input: {
     createdAt: existing?.createdAt ?? input.registeredAt ?? now,
     registeredAt: existing?.registeredAt ?? input.registeredAt ?? now,
     registeredEmail: input.email.trim().toLowerCase(),
-    registeredPasswordCipher: input.password
-      ? encryptRegistrationPassword(input.password)
-      : existing?.registeredPasswordCipher,
     registrationInviteCode: existing?.registrationInviteCode ?? '',
   };
   if (index >= 0) tenants[index] = next;
@@ -150,7 +185,6 @@ export function promoteLocalTrialTenant(input: {
 export function activateLocalTenantInvite(input: {
   inviteCode: string;
   email: string;
-  password: string;
 }): LocalTenantRecord | null {
   const tenants = readLocalTenants();
   const index = tenants.findIndex(tenant => tenant.inviteCode === input.inviteCode && !tenant.registeredAt);
@@ -165,7 +199,6 @@ export function activateLocalTenantInvite(input: {
     subscriptionExpiresAt: null,
     registeredAt: new Date().toISOString(),
     registeredEmail: String(input.email || '').trim().toLowerCase(),
-    registeredPasswordCipher: encryptRegistrationPassword(input.password),
   };
   writeLocalTenants(tenants);
   return tenants[index];

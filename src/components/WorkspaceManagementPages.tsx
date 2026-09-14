@@ -277,7 +277,7 @@ function PageShell({ icon, title, description, children }: {
   );
 }
 
-export function ScriptLibraryPage() {
+export function ScriptLibraryPage({ socialContentTaskId }: { socialContentTaskId?: string | null } = {}) {
   const [tab, setTab] = useState<'inspiration' | 'studio'>('inspiration');
   const [videos, setVideos] = useState<Array<ExactVideoRecord & { analysis: ExactAnalysis }>>([]);
   const [drafts, setDrafts] = useState<StudioProject[]>([]);
@@ -354,7 +354,7 @@ export function ScriptLibraryPage() {
   const availablePlatforms = useMemo(() => [...new Set(videos.map(item => String(item.platform || '').toLowerCase()).filter(Boolean))].sort(), [videos]);
   const visibleCount = tab === 'inspiration' ? filteredVideos.length : filteredDrafts.length;
 
-  const openSmartAssets = () => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
+  const openSmartAssets = () => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', socialContentTaskId, socialContentPage: 'smartAssets' } }));
   const startViralClone = (item: ExactVideoRecord & { analysis: ExactAnalysis }) => {
     const analysis = item.analysis;
     localStorage.setItem('ow_video_kickoff', JSON.stringify({

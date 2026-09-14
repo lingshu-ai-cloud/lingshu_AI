@@ -101,7 +101,7 @@ const publicPlatformApp = tenantPlatformApps.slice(
 );
 assert.doesNotMatch(publicPlatformApp, /\bappSecret\s*:/, 'customer-facing platform app data must not expose plaintext app secrets');
 const adminRoutes = read('server/routes/admin.ts');
-assert.match(adminRoutes, /function adminTenantPlatformApp[\s\S]*?appSecret:\s*decryptSecret\(app\.app_secret\)/, 'admin delivery responses should expose decrypted app secrets for administrator verification');
+assert.match(adminRoutes, /function adminTenantPlatformApp[\s\S]*?appSecret:\s*''/, 'admin delivery responses must keep app secrets write-only');
 assert.match(adminRoutes, /\['meta', 'google', 'tiktok', 'wecom'\]/, 'admin delivery cards must include TikTok for every tenant');
 assert.match(adminRoutes, /kind === 'tiktok'[\s\S]*?tiktok_test_passed/, 'admin delivery must provide a TikTok credential check');
 for (const route of ["'/oauth-config'", "'/delivery/platform-apps'"]) {

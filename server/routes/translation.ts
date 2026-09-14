@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
 import { buildTranslationPrompt, buildMultiLanguageBatchPrompt } from '../prompts/translationPrompts.js';
+import { requireAuth } from '../middleware/auth.js';
 
 export const translationRouter = Router();
+translationRouter.use(requireAuth);
 
 translationRouter.post('/single', async (req, res) => {
   const { text, targetLanguage, targetMarket, context, backend, model } = req.body as {

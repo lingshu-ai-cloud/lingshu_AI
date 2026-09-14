@@ -1,0 +1,7 @@
+packages:
+  - '.'
+
+# Keep pnpm's local/test graph aligned with npm's production package-lock.
+# Express 4 pins qs to the vulnerable 6.15 line, so both managers must override it.
+overrides:
+  qs: 6.16.0

@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
-import { auth, store } from '../storage/index.js';
+import { store } from '../storage/index.js';
+import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 
 type AssistantThread = {
   id: string;
@@ -12,20 +13,11 @@ type AssistantThread = {
   updatedAt: string;
 };
 
-async function requireIdentity(req: Request, res: Response) {
-  const identity = await auth.verifyToken(req.header('authorization'));
-  if (!identity) {
-    res.status(401).json({ error: 'unauthorized' });
-    return null;
-  }
-  return identity;
-}
-
 export const assistantThreadsRouter = Router();
+assistantThreadsRouter.use(requireAuth);
 
-assistantThreadsRouter.get('/', async (req: Request, res: Response) => {
-  const identity = await requireIdentity(req, res);
-  if (!identity) return;
+assistantThreadsRouter.get('/', async (_req: Request, res: Response) => {
+  const identity = res.locals as AuthLocals;
   const result = await store.list<AssistantThread>('assistant_threads', {
     where: { tenantId: identity.tenantId },
     perPage: 20,
@@ -34,8 +26,7 @@ assistantThreadsRouter.get('/', async (req: Request, res: Response) => {
 });
 
 assistantThreadsRouter.get('/:agentId', async (req: Request, res: Response) => {
-  const identity = await requireIdentity(req, res);
-  if (!identity) return;
+  const identity = res.locals as AuthLocals;
   const result = await store.list<AssistantThread>('assistant_threads', {
     where: { tenantId: identity.tenantId, agentId: req.params.agentId },
     perPage: 1,
@@ -52,8 +43,7 @@ assistantThreadsRouter.get('/:agentId', async (req: Request, res: Response) => {
 });
 
 assistantThreadsRouter.put('/:agentId', async (req: Request, res: Response) => {
-  const identity = await requireIdentity(req, res);
-  if (!identity) return;
+  const identity = res.locals as AuthLocals;
   const existing = await store.list<AssistantThread>('assistant_threads', {
     where: { tenantId: identity.tenantId, agentId: req.params.agentId },
     perPage: 1,

@@ -20,6 +20,13 @@ import {
   readCustomerMessagingAuthorization,
   type CustomerMessagingAuthorization,
 } from './customerMessagingPolicy.js';
+import {
+  assertLegacyExternalEffectAllowed,
+  Starter198LegacyEffectError,
+  withLegacyExternalEffectAllowed,
+} from '../starter198/legacyEffectGuard.js';
+
+type LegacyEffectExecutor = <T>(tenantId: string, effect: () => Promise<T>) => Promise<T>;
 
 type StoredRecord = { id: string; [key: string]: unknown };
 
@@ -94,6 +101,8 @@ const PREFLIGHT_BLOCKER_LABELS: Record<string, string> = {
   unsupported_send_mode: '发送模式不受支持',
   send_outcome_unknown: '发送结果不明，需要核对平台回执，禁止自动重发',
   whatsapp_template_content_changed: '平台模板正文已变化，需要重新选择并审批',
+  starter_198_orchestrator_only: '198 标准版仅允许灵小枢编排，不执行旧版真实发送',
+  starter_198_access_unavailable: '产品能力边界暂时无法确认，已停止真实发送',
 };
 
 export function followupDispatchPreflightFacts(preflight: FollowupDispatchPreflight): string[] {
@@ -125,6 +134,8 @@ interface DispatchDependencies {
   recordOutbound: typeof markWhatsAppHumanReply;
   authorization: (tenantId: string) => Promise<CustomerMessagingAuthorization>;
   recipientDelayMs: number;
+  assertLegacyAccess: (tenantId: string) => Promise<void>;
+  executeLegacyEffect: LegacyEffectExecutor;
 }
 
 const listeners = new Set<(event: FollowupWorkerEvent) => void | Promise<void>>();
@@ -349,6 +360,8 @@ function defaultDependencies(): DispatchDependencies {
     recordOutbound: markWhatsAppHumanReply,
     authorization: readCustomerMessagingAuthorization,
     recipientDelayMs: Number.isFinite(delay) ? Math.max(0, delay) : 1000,
+    assertLegacyAccess: assertLegacyExternalEffectAllowed,
+    executeLegacyEffect: withLegacyExternalEffectAllowed,
   };
 }
 
@@ -377,6 +390,14 @@ export async function preflightFollowupBatchDispatch(
     : authorization.manualFollowupSendAllowed;
   const blockers: Record<string, number> = {};
   const addBlocker = (reason: string) => { blockers[reason] = (blockers[reason] || 0) + 1; };
+  let legacyAccessBlocked = false;
+  try {
+    await dependencies.assertLegacyAccess(tenantId);
+  } catch (error) {
+    if (!(error instanceof Starter198LegacyEffectError)) throw error;
+    legacyAccessBlocked = true;
+    addBlocker(error.code);
+  }
   const runBlocker = await digitalEmployeeRunBlockedReason(tenantId, batch.run_id);
   if (runBlocker) addBlocker(runBlocker);
   if (!batchApproved) addBlocker('followup_batch_not_approved_for_current_version');
@@ -418,7 +439,7 @@ export async function preflightFollowupBatchDispatch(
   return {
     batchId,
     mode,
-    ready: !runBlocker && batchApproved && authorized && eligible > 0,
+    ready: !legacyAccessBlocked && !runBlocker && batchApproved && authorized && eligible > 0,
     batchApproved,
     authorized,
     eligible,
@@ -437,6 +458,8 @@ export async function dispatchFollowupBatch(
 ): Promise<FollowupDispatchResult> {
   return withBatchQueue(`${tenantId}:${batchId}`, async () => {
     const dependencies = { ...defaultDependencies(), ...(options.dependencies || {}) } as DispatchDependencies;
+    await dependencies.assertLegacyAccess(tenantId);
+    return dependencies.executeLegacyEffect(tenantId, async () => {
     const batch = await getFollowupBatch(tenantId, batchId);
     if (!batch) throw new Error('followup_batch_not_found');
     await recoverStaleFollowupSending(batch, dependencies.now(), dependencies.recordOutbound);
@@ -508,6 +531,7 @@ export async function dispatchFollowupBatch(
       let providerComplete = false;
       try {
         await withDigitalEmployeeExternalAction(tenantId, batch.run_id, async () => {
+        await dependencies.assertLegacyAccess(tenantId);
         const currentBatch = await getFollowupBatch(tenantId, batch.id);
         const currentItem = await store.getById<FollowupBatchItemRecord>('followup_batch_items', item.id);
         if (!currentBatch || currentBatch.status !== 'approved' || Number(currentBatch.version) !== approvedBatchVersion || Number(currentBatch.approved_version) !== approvedBatchVersion || !currentItem || currentItem.content_hash !== approvedContentHash) {
@@ -543,16 +567,17 @@ export async function dispatchFollowupBatch(
         await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, customerId: item.customer_id, type: 'worker.sent', level: 'success', summary: `${item.customer_name || '客户'} 跟进已被 WhatsApp 接受`, payload: { providerMessageIds: accepted.map(entry => entry.messageId), attempt } });
         });
       } catch (error) {
-        if (error instanceof WorkflowRunBlockedError && !accepted.length) {
+        if ((error instanceof WorkflowRunBlockedError || error instanceof Starter198LegacyEffectError) && !accepted.length) {
           // Human control won the lock before any provider call. Do not consume
           // an attempt, discard approval, or invent a failed/sent receipt.
+          const reason = error instanceof WorkflowRunBlockedError ? error.reason : error.code;
           await persistFollowupItem(item.id, {
-            status: error.reason === 'followup_approval_changed_before_send' ? 'draft' : previousStatus, attempts: attempt - 1, provider_receipt: previousReceipt,
-            last_error: error.reason, updated_at: dependencies.now().toISOString(),
+            status: reason === 'followup_approval_changed_before_send' ? 'draft' : previousStatus, attempts: attempt - 1, provider_receipt: previousReceipt,
+            last_error: reason, updated_at: dependencies.now().toISOString(),
           });
           result.claimed -= 1;
           result.blocked += 1;
-          await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, type: 'worker.blocked', level: 'warning', summary: '运行已停止，后续客户发送已暂停', payload: { reason: error.reason } });
+          await emit({ tenantId, runId: batch.run_id, taskId: eventTaskId, batchId, itemId: item.id, type: 'worker.blocked', level: 'warning', summary: '运行已停止，后续客户发送已暂停', payload: { reason } });
           break;
         }
         const failure = safeError(error);
@@ -596,6 +621,7 @@ export async function dispatchFollowupBatch(
     }
     result.counts = await refreshBatchCounts(batch);
     return result;
+    });
   });
 }
 
@@ -720,7 +746,12 @@ export async function getTenantFollowupDispatchStatus(tenantId: string): Promise
   };
 }
 
-export async function runFollowupDispatchScan(): Promise<number> {
+export async function runFollowupDispatchScan(scanDependencies: {
+  assertLegacyAccess?: (tenantId: string) => Promise<void>;
+  recover?: typeof recoverStaleFollowupSending;
+  getBatch?: typeof getFollowupBatch;
+  dispatch?: typeof dispatchFollowupBatch;
+} = {}): Promise<number> {
   if (scanRunning) return 0;
   scanRunning = true;
   try {
@@ -731,14 +762,19 @@ export async function runFollowupDispatchScan(): Promise<number> {
       if (page >= result.totalPages || !result.items.length) break;
     }
     for (const batch of batches) {
-      await recoverStaleFollowupSending(batch);
-      if ((await getFollowupBatch(batch.tenant_id, batch.id))?.status !== 'approved') continue;
-      await dispatchFollowupBatch(batch.tenant_id, batch.id, { mode: 'scheduled' }).catch(error => {
+      try {
+        await (scanDependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(batch.tenant_id);
+        await (scanDependencies.recover ?? recoverStaleFollowupSending)(batch);
+        if ((await (scanDependencies.getBatch ?? getFollowupBatch)(batch.tenant_id, batch.id))?.status !== 'approved') continue;
+        await (scanDependencies.dispatch ?? dispatchFollowupBatch)(batch.tenant_id, batch.id, { mode: 'scheduled' });
+      } catch (error) {
         const failure = safeError(error);
-        if (!failure.code.startsWith('customer_message_send_not_authorized:')) {
+        if (!failure.code.startsWith('customer_message_send_not_authorized:')
+          && failure.code !== 'starter_198_orchestrator_only'
+          && failure.code !== 'starter_198_access_unavailable') {
           console.error('[followup-worker:batch]', batch.id, failure.code);
         }
-      });
+      }
     }
     return batches.length;
   } finally { scanRunning = false; }
