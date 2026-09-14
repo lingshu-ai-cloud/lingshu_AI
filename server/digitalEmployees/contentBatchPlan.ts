@@ -1,4 +1,4 @@
-import { type VideoCreationPlan, videoPlanErrors } from '../../src/lib/videoCreationPlan.js';
+import { type VideoCreationPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';

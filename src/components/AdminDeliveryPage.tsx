@@ -3,11 +3,10 @@ import { CheckCircle2, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, Clip
 import { authHeader } from '../lib/auth';
 import AdminContentOpsAlerts from './AdminContentOpsAlerts';
 import AdminSocialAccountSetup from './AdminSocialAccountSetup';
+import AdminSocialWorkPackageCenter from './AdminSocialWorkPackageCenter';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-
 type Platform = 'meta' | 'google' | 'tiktok' | 'wecom';
 type Status = 'pending' | 'configuring' | 'waiting_customer' | 'importing_history' | 'verifying' | 'active' | 'needs_permanent_token' | 'token_expired' | 'error';
-
 interface DeliveryApp {
   id: string;
   tenantId: string;
@@ -24,7 +23,7 @@ interface DeliveryApp {
   pageId: string;
   igUserId: string;
   youtubeChannelId: string;
-  webhookVerifyToken: string;
+  webhookVerifyToken: string; webhookVerifyTokenSet?: boolean; webhookVerifyTokenLength?: number;
   wecomEncodingAesKeySet: boolean;
   wecomEncodingAesKeyLength: number;
   webhookUrl: string;
@@ -60,7 +59,7 @@ interface GeneratedInvite {
   inviteUrl: string;
 }
 
-type Draft = Record<string, Partial<DeliveryApp> & { appSecret?: string; accessToken?: string; wecomEncodingAesKey?: string }>;
+type Draft = Record<string, Partial<DeliveryApp> & { appSecret?: string; accessToken?: string; webhookVerifyToken?: string; wecomEncodingAesKey?: string }>;
 type TestState = Record<string, Record<string, 'idle' | 'running' | 'ok' | 'error'>>;
 type AssistLinkState = Record<string, { link: string; loading?: boolean }>;
 type ProgressStageKey = 'email_connected' | 'business_verification' | 'permanent_token_replaced';
@@ -527,7 +526,7 @@ function PlatformWizard({
           {activeStep === 'metaApp' && (
             <div className="grid gap-3">
               <Field required label="App ID" hint="开发者后台首页" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="App Secret" hint="应用设置 > 基本" value={appValue(drafts, app, 'appSecret')} placeholder="填写 App Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="App Secret" hint={savedSecretHint(app.appSecretLength, '应用设置 > 基本')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写 App Secret'} onChange={value => update({ appSecret: value })} />
               <Field label="Business ID" hint="BM 设置里可找到" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="privacy_domain_saved" label="隐私政策和域名已填" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -539,7 +538,7 @@ function PlatformWizard({
                 <p className="mb-2 text-xs font-black text-text-primary">复制到 Meta 后台</p>
                 <div className="space-y-2">
                   <CopyLine label="Webhook URL" value={app.webhookUrl} />
-                  <CopyLine label="Verify Token" value={app.webhookVerifyToken} />
+                  <Field required secret completed={app.webhookVerifyTokenSet} label="Verify Token（新建/轮换）" hint={app.webhookVerifyTokenSet ? savedSecretHint(app.webhookVerifyTokenLength ?? 0, '已保存') : '请与 Meta 后台填写相同值'} value={appValue(drafts, app, 'webhookVerifyToken')} placeholder={app.webhookVerifyTokenSet ? savedSecretPlaceholder(app.webhookVerifyTokenLength ?? 0) : '填写自定义 Verify Token'} onChange={value => update({ webhookVerifyToken: value })} />
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -584,7 +583,7 @@ function PlatformWizard({
           {activeStep === 'wecomApp' && (
             <div className="grid gap-3">
               <Field required label="企业 ID / CorpID" hint="企业微信管理后台 > 我的企业" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="应用 Secret" hint="自建应用 Secret" value={appValue(drafts, app, 'appSecret')} placeholder="填写应用 Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="应用 Secret" hint={savedSecretHint(app.appSecretLength, '自建应用 Secret')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写应用 Secret'} onChange={value => update({ appSecret: value })} />
               <Field required label="AgentId" hint="自建应用详情页" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="wecom_app_visible_range_set" label="应用可见范围已包含客户接待人员" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -596,7 +595,7 @@ function PlatformWizard({
                 <p className="mb-2 text-xs font-black text-text-primary">复制到企业微信后台</p>
                 <div className="space-y-2">
                   <CopyLine label="回调 URL" value={app.webhookUrl} />
-                  <CopyLine label="Token" value={app.webhookVerifyToken} />
+                  <Field required secret completed={app.webhookVerifyTokenSet} label="Token（新建/轮换）" hint={app.webhookVerifyTokenSet ? savedSecretHint(app.webhookVerifyTokenLength ?? 0, '已保存') : '请与企业微信后台填写相同值'} value={appValue(drafts, app, 'webhookVerifyToken')} placeholder={app.webhookVerifyTokenSet ? savedSecretPlaceholder(app.webhookVerifyTokenLength ?? 0) : '填写自定义 Token'} onChange={value => update({ webhookVerifyToken: value })} />
                 </div>
               </div>
               <Field required completed={app.wecomEncodingAesKeySet} label="EncodingAESKey" hint={app.wecomEncodingAesKeySet ? savedSecretHint(app.wecomEncodingAesKeyLength, '已保存') : '企业微信后台随机生成'} secret placeholder={app.wecomEncodingAesKeySet ? savedSecretPlaceholder(app.wecomEncodingAesKeyLength) : '43 位 EncodingAESKey'} onChange={value => update({ wecomEncodingAesKey: value })} />
@@ -618,7 +617,7 @@ function PlatformWizard({
           {activeStep === 'googleApp' && (
             <div className="grid gap-3">
               <Field required label="Client ID" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="Client Secret" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="Client Secret" hint={savedSecretHint(app.appSecretLength, 'Google Cloud OAuth')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写 Client Secret'} onChange={value => update({ appSecret: value })} />
               <ChecklistButton app={app} id="google_consent_published" label="OAuth 同意屏幕已发布到生产" drafts={drafts} setDrafts={setDrafts} />
             </div>
           )}
@@ -633,7 +632,7 @@ function PlatformWizard({
           {activeStep === 'tiktokApp' && (
             <div className="grid gap-3">
               <Field required label="Client Key" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required label="Client Secret" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="Client Secret" hint={savedSecretHint(app.appSecretLength, 'TikTok for Developers > Manage apps')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写 Client Secret'} onChange={value => update({ appSecret: value })} />
             </div>
           )}
 
@@ -815,7 +814,7 @@ export default function AdminDeliveryPage() {
           waPublicNumber: draft.waPublicNumber ?? app.waPublicNumber,
           pageId: draft.pageId ?? app.pageId,
           igUserId: draft.igUserId ?? app.igUserId,
-          youtubeChannelId: draft.youtubeChannelId ?? app.youtubeChannelId,
+          youtubeChannelId: draft.youtubeChannelId ?? app.youtubeChannelId, webhookVerifyToken: draft.webhookVerifyToken ?? '',
           wecomEncodingAesKey: draft.wecomEncodingAesKey ?? '',
           tokenType: draft.tokenType ?? app.tokenType,
           accessToken: draft.accessToken ?? '',
@@ -1070,6 +1069,7 @@ export default function AdminDeliveryPage() {
         <div id="customer-content-ops" className="mb-4 scroll-mt-5">
           <AdminContentOpsAlerts />
         </div>
+        <AdminSocialWorkPackageCenter />
         <section className="mb-3 rounded-2xl border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

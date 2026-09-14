@@ -1,8 +1,7 @@
 import { productionQualitySummary } from '../digitalEmployees/productionQualitySummary.js';
-import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { productionFailureState } from '../digitalEmployees/productionPreflight.js';
 import { reopenNoDataCustomerBranch } from '../digitalEmployees/customerReentry.js';
-import { normalizeContinuationPolicy } from '../../src/lib/continuationPolicy.js';
+import { normalizeContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
 import { cyclesOverlap, followupDraftDue } from '../digitalEmployees/continuationPolicy.js';
 import { reviewTodoService } from '../digitalEmployees/reviewTodos.js';
 import { applyReviewTodoPlan, sameTodoRequirements } from '../digitalEmployees/reviewTodoPlan.js';
@@ -14,7 +13,7 @@ import { recommendPackage, normalizePackage, validatePackage, compilePackage, pa
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
-import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
@@ -24,17 +23,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type BrowserProductionTarget } from '../digitalEmployees/browserSessions.js';
 import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
-import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/historyImport.js';
-import { currentExecutionAdapters } from '../digitalEmployees/executionAdapters.js';
+import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers: typeof defaultGetWhatsAppCustomers = (tenantId) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
 import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
+import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
 import {
@@ -46,7 +46,15 @@ import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPre
 import { bindPublishingTargets, listConnectedPublishingAccounts, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type PublishingApprovalPackage } from '../digitalEmployees/publishingExecution.js';
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
-import { approvalRunBlockedReason, withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
+import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
+import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
+import {
+  createDigitalEmployeeApprovalDecisionApplication,
+  decideDigitalEmployeeApproval as decideDigitalEmployeeApprovalUseCase,
+  DigitalEmployeeApprovalDecisionError,
+  registerDigitalEmployeeApprovalDecisionApplication,
+} from '../digitalEmployees/approvalDecision.js';
+import { enqueueApprovedContentPublicationPackageTask } from '../starter198/agentTasks.js';
 import {
   DEFAULT_FOLLOWUP_SEGMENT_CRITERIA,
   eligibleFollowupCustomerIds,
@@ -76,6 +84,7 @@ import {
 
 export const digitalEmployeesRouter = Router();
 digitalEmployeesRouter.use(requireAuth);
+digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 
 digitalEmployeesRouter.get('/publishing-accounts', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -415,7 +424,7 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
   const [profile, analyses, materials] = await Promise.all([
     readTenantEnterpriseProfile(tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 }),
-    readMaterialLibrary(tenantId),
+    readExecutionMaterialLibrary(tenantId),
   ]);
   if (materials.status === 'unavailable') throw Error('素材库暂时不可用，请稍后重试');
   const rawProducts = Array.isArray(profile.products?.items) ? profile.products.items as Array<Record<string, unknown>> : [];
@@ -1205,7 +1214,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     const matching = scoped.filter(postFullyPublished);
     const result = scopedProof('publishedPosts', 'posts.platform_post_id + publishResults + workflow scope', matching, matching.map(item => ({ type: 'post', id: item.id, receipt: true })), snapshot.content.publishedPosts.value);
     return { ...result, ready: scoped.length > 0 && matching.length === scoped.length,
-      waitState: publishingWait(scoped, process.env.PUBLISH_SCHEDULER_ENABLED !== 'false') };
+      waitState: publishingWait(scoped, process.env.PUBLISH_SCHEDULER_ENABLED === 'true') };
   }
   if (task.task_key === 'customer_attribution') {
     const posts = await store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 });
@@ -1714,16 +1723,16 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
           ? '真实发送预检：尚未取得可核验的发送条件或渠道回执'
           : `等待真实业务结果，请前往「${destinationLabel(metadata.destination)}」完成或检查该节点`);
         const needsInput = diagnostic.kind === 'input' && ['content_production', 'content_quality_gate'].includes(task.task_key);
-        const waitingStatus = needsInput ? 'failed' : 'waiting_external';
         if (needsInput) output.dataStatus = 'input_required';
+        const taskUpdate = needsInput ? { status: 'failed' as const, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() } : { status: 'waiting_external' as const, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() };
         await Promise.all([
-          store.update(COLLECTION.tasks, task.id, { status: waitingStatus, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() }),
+          store.update(COLLECTION.tasks, task.id, taskUpdate),
           store.update(COLLECTION.runs, run.id, { status: needsInput ? 'waiting_human' : 'waiting_external', current_controller: needsInput ? 'human' : 'agent', pause_reason: blockedReason }),
         ]);
-        if (task.status !== waitingStatus) {
+        if (task.status !== taskUpdate.status) {
           await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: needsInput ? 'task.input_required' : 'task.waiting_external', level: 'warning', summary: needsInput ? `${task.title}：${blockedReason}` : `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
         }
-        task.status = waitingStatus;
+        task.status = taskUpdate.status;
         task.output = output;
         task.business_refs = canonicalBusinessRefs;
         task.blocked_reason = blockedReason;
@@ -1924,7 +1933,11 @@ async function supersedeAffectedBusinessState(tenantId: string, run: RunRecord, 
     const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
     for (const project of projects.items) {
       const spec = resumeContentProjectForTaskControl({ project, runId: run.id, affectedTaskIds: affectedIds, now });
-      if (spec) await store.update('studio_projects', project.id, { spec, updated_at: now });
+      if (spec) await store.update('studio_projects', project.id, {
+        spec,
+        ...contentProjectLineageFields({ tenantId, spec, current: project }),
+        updated_at: now,
+      });
     }
   }
   if (affectedKeys.has('customer_segmentation')) {
@@ -2117,7 +2130,11 @@ digitalEmployeesRouter.post('/content-projects/:projectId/revise', async (req, r
       if (req.body.node === 'music' && req.body.values?.bgm && !automationBgmCatalog(tenantId).some(track => track.id === req.body.values.bgm)) throw Error('配乐不属于当前企业可用曲库');
       const next = reviseContent(spec, req.body.node, req.body.values || {});
       const now = new Date().toISOString();
-      if (!await store.update('studio_projects', project.id, { status: 'draft', spec: next, updated_at: now })) throw Error('项目保存失败');
+      if (!await store.update('studio_projects', project.id, {
+        status: 'draft', spec: next,
+        ...contentProjectLineageFields({ tenantId, spec: next, current: project }),
+        updated_at: now,
+      })) throw Error('项目保存失败');
       await invalidatePublishingApprovalForProject(tenantId, project.id);
       const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
       for (const task of tasks.items.filter(t => ['content_production', 'content_quality_gate', 'weekly_review'].includes(t.task_key))) await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, updated_at: now });
@@ -2145,7 +2162,11 @@ digitalEmployeesRouter.post('/content-projects/:projectId/narration', async (req
     try {
       const script = freezeStoryboardNarration(String(spec.script || ''), lines.map(line => line.trim()));
       const now = new Date().toISOString();
-      await store.update('studio_projects', project.id, { status: 'draft', updated_at: now, spec: { ...spec, script, narrationHistory: [...(Array.isArray(spec.narrationHistory) ? spec.narrationHistory : []), { script: spec.script, version: Number(spec.automation?.contentVersion || 1), changedAt: now }].slice(-20), contentAcceptance: null, productionDirection: null, subtitleAlignmentSource: '', voiceoverUrl: '', voiceoverDur: 0, alignedCuesByLang: {}, renderOutputPath: '', automation: { ...spec.automation, contentVersion: Number(spec.automation?.contentVersion || 1) + 1, stage: 'voice_subtitles', status: 'queued', blocker: '', narrationFeedback: '', narrationReviewPassed: false, heygenJobId: '', voiceLocalPath: '', quality: {}, renderOutputPath: '', renderedAt: '', completedAt: '' } } });
+      const nextSpec = { ...spec, script, narrationHistory: [...(Array.isArray(spec.narrationHistory) ? spec.narrationHistory : []), { script: spec.script, version: Number(spec.automation?.contentVersion || 1), changedAt: now }].slice(-20), contentAcceptance: null, productionDirection: null, subtitleAlignmentSource: '', voiceoverUrl: '', voiceoverDur: 0, alignedCuesByLang: {}, renderOutputPath: '', automation: { ...spec.automation, contentVersion: Number(spec.automation?.contentVersion || 1) + 1, stage: 'voice_subtitles', status: 'queued', blocker: '', narrationFeedback: '', narrationReviewPassed: false, heygenJobId: '', voiceLocalPath: '', quality: {}, renderOutputPath: '', renderedAt: '', completedAt: '' } };
+      await store.update('studio_projects', project.id, {
+        status: 'draft', updated_at: now, spec: nextSpec,
+        ...contentProjectLineageFields({ tenantId, spec: nextSpec, current: project }),
+      });
       await invalidatePublishingApprovalForProject(tenantId, project.id);
       const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
       for (const task of tasks.items.filter(task => ['content_production', 'content_quality_gate', 'weekly_review'].includes(task.task_key))) await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, updated_at: now });
@@ -2169,7 +2190,11 @@ digitalEmployeesRouter.post('/content-projects/:projectId/approve', async (req, 
     if (spec.automation?.stage !== 'completed' || spec.automation?.quality?.passed !== true || spec.automation?.quality?.ruleVersion !== CONTENT_SCRIPT_QUALITY_RULE_VERSION) { res.status(409).json({ error: '成片质检尚未通过' }); return; }
     const hash = contentAcceptanceHash(spec);
     if (req.body?.hash !== hash) { res.status(409).json({ error: '成片版本已变化，请刷新并重新预览' }); return; }
-    const saved = await store.update('studio_projects', project.id, { spec: { ...spec, contentAcceptance: { hash, approvedBy: userId, approvedAt: new Date().toISOString() } } });
+    const nextSpec = { ...spec, contentAcceptance: { hash, approvedBy: userId, approvedAt: new Date().toISOString() } };
+    const saved = await store.update('studio_projects', project.id, {
+      spec: nextSpec,
+      ...contentProjectLineageFields({ tenantId, spec: nextSpec, current: project }),
+    });
     if (!saved) { res.status(503).json({ error: '审批保存失败' }); return; }
     await appendAudit({ tenantId, userId, action: 'content.accepted', targetType: 'studio_project', targetId: project.id, metadata: { hash } });
     res.json({ ok: true });
@@ -2946,103 +2971,51 @@ digitalEmployeesRouter.get('/runs/:runId/stream', async (req, res) => {
   } catch { res.end(); }
 });
 
-digitalEmployeesRouter.post('/approvals/:approvalId/decide', async (req, res) => {
-  const { tenantId, userId } = res.locals as AuthLocals;
-  const initialApproval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, req.params.approvalId, tenantId);
-  if (!initialApproval) { res.status(404).json({ error: 'approval_not_found' }); return; }
-  await withDigitalEmployeeRunLock(tenantId, initialApproval.run_id, async () => {
-  const decision = String(req.body?.decision || '');
-  if (!['approved', 'rejected'].includes(decision)) {
-    res.status(400).json({ error: 'invalid_approval_decision', allowed: ['approved', 'rejected'] });
-    return;
-  }
-  const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, req.params.approvalId, tenantId);
-  if (!approval) { res.status(404).json({ error: 'approval_not_found' }); return; }
-  if (approval.status !== 'pending') { res.json(await buildOverview(tenantId)); return; }
-  const note = String(req.body?.note || '').trim().slice(0, 1000);
-  const now = new Date().toISOString();
-  const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, approval.task_id, tenantId);
-  const run = await tenantRecord<RunRecord>(COLLECTION.runs, approval.run_id, tenantId);
-  const goal = run ? await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId) : null;
-  if (!task || !run || !goal) { res.status(409).json({ error: 'approval_context_missing' }); return; }
-  const runBlocker = approvalRunBlockedReason(run, tenantId, task.status);
-  if (runBlocker) { res.status(409).json({ error: runBlocker, message: '当前运行或任务不允许审批；请先恢复运行或重新发起审批。' }); return; }
-  if (task.task_key === 'content_release_approval' && Number(approval.subject_version || 0) !== Number(task.task_version || 1)) {
-    res.status(409).json({ error: 'approval_subject_changed', currentVersion: Number(task.task_version || 1) });
-    return;
-  }
-  let currentPublishingPackage: PublishingApprovalPackage | null = null;
-  if (task.task_key === 'content_release_approval') {
-    const allTasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 });
-    currentPublishingPackage = await publishingApprovalPackage(tenantId, goal, run, task, allTasks.items, approval.created_at);
-    if (!currentPublishingPackage.items.length || currentPublishingPackage.contentHash !== String(approval.content_hash || '')) {
-      await store.update(COLLECTION.approvals, approval.id, { status: 'superseded', decision_note: '作品、文案、账号或排期已发生变化，请重新发起审批。', decided_at: now });
-      res.status(409).json({ error: 'approval_subject_changed', currentContentHash: currentPublishingPackage.contentHash });
-      return;
-    }
-  }
-  let followupBatch: FollowupBatchRecord | null = null;
-  if (task.task_key === 'followup_batch_approval') {
-    followupBatch = await first<FollowupBatchRecord>(COLLECTION.followupBatches, { tenant_id: tenantId, run_id: run.id }, '-version');
-    if (!followupBatch) { res.status(409).json({ error: 'followup_batch_missing' }); return; }
-    if (Number(approval.subject_version || 0) !== Number(followupBatch.version || 0) || String(approval.content_hash || '') !== String(followupBatch.content_hash || '')) {
-      res.status(409).json({ error: 'approval_subject_changed', currentVersion: followupBatch.version });
-      return;
-    }
-  }
-  let publishingEntries: Array<{ id: string; status: string }> = [];
-  if (decision === 'approved' && currentPublishingPackage) {
-    if (!publishingPlatformsCovered(goalInput(goal).contentPlatforms, currentPublishingPackage.items)) {
-      res.status(409).json({ error: 'publishing_platforms_incomplete', message: '部分目标平台尚未选择发布账号，请补齐后重新发起审批。' });
-      return;
-    }
-    const connectedAccounts = await listConnectedPublishingAccounts(tenantId);
-    const connectedById = new Map(connectedAccounts.map(account => [account.accountId, account]));
-    const unavailableAccountIds = [...new Set(currentPublishingPackage.items.flatMap(item => item.accountIds).filter(accountId => {
-      const account = connectedById.get(accountId);
-      const expectedPlatform = currentPublishingPackage?.items.find(candidate => candidate.accountIds.includes(accountId))?.platform;
-      return !account || account.platform !== expectedPlatform;
-    }))];
-    if (unavailableAccountIds.length) {
-      res.status(409).json({
-        error: 'publishing_accounts_invalid',
-        invalidAccountIds: unavailableAccountIds,
-        message: '审批包中的发布账号已断开或不再属于当前租户，请重新选择账号并发起审批。',
-      });
-      return;
-    }
-    publishingEntries = await createPublishingCalendarEntries({
-      tenantId,
-      runId: run.id,
-      approvalTaskId: task.id,
-      approvalId: approval.id,
-      approvedContentHash: String(approval.content_hash || ''),
-      package: currentPublishingPackage,
-    });
-  }
-  await store.update(COLLECTION.approvals, approval.id, { status: decision, decided_by: userId, decision_note: note, decided_at: now });
-  if (followupBatch) {
-    await applyFollowupBatchDecision({ tenantId, batchId: followupBatch.id, decision: decision as 'approved' | 'rejected', userId, approvalId: approval.id });
-  }
-  await appendAudit({ tenantId, userId, action: 'approval.decided', targetType: 'approval_request', targetId: approval.id, metadata: { decision, runId: run.id, taskId: task.id } });
-  if (decision === 'rejected') {
-    await Promise.all([
-      store.update(COLLECTION.tasks, task.id, { status: 'failed', blocked_reason: note || '审批驳回', updated_at: now }),
-      store.update(COLLECTION.runs, run.id, { status: 'waiting_external', current_controller: 'agent', pause_reason: '审批退回修改，其他分支可继续', completed_at: '' }),
-      store.update(COLLECTION.goals, goal.id, { status: 'active', updated_at: now }),
-    ]);
-    await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'approval.decided', level: 'error', summary: '审批已退回修改，仅阻塞本审批与下游外部动作', payload: { decision, note } });
-  } else {
-    await Promise.all([
-      store.update(COLLECTION.tasks, task.id, { status: 'succeeded', output: { decision, note, approvedAt: now, publishingEntries }, blocked_reason: '', updated_at: now }),
-      store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '' }),
-    ]);
-    await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'approval.decided', level: 'success', summary: '审批已通过，任务交还数字员工继续执行', payload: { decision, note } });
-    await advanceRun(tenantId, run.id);
-  }
-  res.json(await buildOverview(tenantId));
-  });
+const digitalEmployeeApprovalDecisionApplication = createDigitalEmployeeApprovalDecisionApplication({
+  store,
+  buildPublishingPackage: ({ tenantId, goal, run, task, tasks, scheduleAnchor }) => publishingApprovalPackage(
+    tenantId,
+    goal as GoalRecord,
+    run as RunRecord,
+    task as TaskRecord,
+    tasks as TaskRecord[],
+    scheduleAnchor,
+  ),
+  listConnectedPublishingAccounts,
+  createPublishingCalendarEntries,
+  applyFollowupBatchDecision,
+  appendAudit,
+  appendEvent,
+  continueRun: advanceRun,
+  enqueueStarterPublicationPackageTask: enqueueApprovedContentPublicationPackageTask,
 });
+registerDigitalEmployeeApprovalDecisionApplication(digitalEmployeeApprovalDecisionApplication);
+
+/** Thin HTTP adapter over the shared approval application service. */
+async function decideDigitalEmployeeApproval(req: Request, res: Response): Promise<void> {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    await decideDigitalEmployeeApprovalUseCase({
+      tenantId,
+      userId,
+      approvalId: req.params.approvalId,
+      decision: String(req.body?.decision || '') as 'approved' | 'rejected',
+      note: String(req.body?.note || ''),
+      ...(req.body?.expectedSubjectVersion !== undefined
+        ? { expectedSubjectVersion: String(req.body.expectedSubjectVersion).trim() }
+        : {}),
+    });
+    res.json(await buildOverview(tenantId));
+  } catch (error) {
+    if (error instanceof DigitalEmployeeApprovalDecisionError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    throw error;
+  }
+}
+
+digitalEmployeesRouter.post('/approvals/:approvalId/decide', decideDigitalEmployeeApproval);
 
 type TaskControlAction = 'retry' | 'skip' | 'manual_complete' | 'replan';
 
@@ -3480,27 +3453,21 @@ digitalEmployeesRouter.post('/runs/:runId/resume', async (req, res) => {
   });
 });
 
-digitalEmployeesRouter.post('/runs/:runId/cancel', async (req, res) => {
+async function cancelDigitalEmployeeRunRoute(req: Request, res: Response): Promise<void> {
   const { tenantId, userId } = res.locals as AuthLocals;
-  await withDigitalEmployeeRunLock(tenantId, req.params.runId, async () => {
-  const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
-  if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
-  const now = new Date().toISOString();
-  const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
-  await Promise.all(tasks.items.filter(task => !['succeeded', 'failed'].includes(task.status)).map(task => store.update(COLLECTION.tasks, task.id, { status: 'cancelled', updated_at: now })));
-  await Promise.all([
-    store.update(COLLECTION.runs, run.id, { status: 'cancelled', current_controller: 'human', pause_reason: '人工取消', completed_at: now }),
-    store.update(COLLECTION.goals, run.goal_id, { status: 'cancelled', updated_at: now }),
-  ]);
-  const pendingApprovals = await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, perPage: 100 });
-  await Promise.all(pendingApprovals.items.map(approval => store.update(COLLECTION.approvals, approval.id, {
-    status: 'superseded', decision_note: '运行已取消，审批失效', decided_at: now,
-  })));
-  await appendEvent({ tenantId, runId: run.id, type: 'workflow.cancelled', level: 'warning', summary: '运行已取消，未完成任务停止执行' });
-  await appendAudit({ tenantId, userId, action: 'workflow.cancelled', targetType: 'workflow_run', targetId: run.id });
+  try {
+    await cancelDigitalEmployeeRunApplication({ tenantId, userId, runId: req.params.runId, reason: String(req.body?.reason || '') });
+  } catch (error) {
+    if (error && typeof error === 'object' && 'status' in error && 'code' in error) {
+      res.status(Number(error.status)).json({ error: String(error.code) });
+      return;
+    }
+    throw error;
+  }
   res.json(await buildOverview(tenantId));
-  });
-});
+}
+
+digitalEmployeesRouter.post('/runs/:runId/cancel', cancelDigitalEmployeeRunRoute);
 
 /** Persist assignments before starting. Replays use source IDs stored in the plan. */
 export async function allocateReviewTodos(tenantId: string, userId: string, board: ReviewTodoBoard): Promise<string> {

@@ -2,19 +2,23 @@ import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
-import { QwenAsrService, qwenAsrCues } from '../lib/qwenAsr.js';
 import { studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
-import { checkAvatarMedia, type AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
-import os from 'node:os';
-import { createProductionRouter } from './production.js';
+import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
+import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
+import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
+import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
+export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
+import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
-import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
-import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../src/lib/videoLanguages.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
 import { Router, type Request, type Response } from 'express';
@@ -71,6 +75,7 @@ import { assessTransformation, commercialDigitalHumanGate, type TransformationAs
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
+import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -85,7 +90,6 @@ import {
    负责脚本 / 文案 / 封面标题 / 智能选材 / Seedance 视频生成等工作台能力。
    视频生成必须真实调用外部模型；失败时返回明确错误，不生成本地假预览。
 ─────────────────────────────────────────────────────────────────────────── */
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const studioTenantContext = new AsyncLocalStorage<string>();
 function scopedStudioAssetDir(root: string): string {
@@ -102,7 +106,6 @@ const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
   composite: (manifest: unknown, onProgress?: (pct: number) => void, outDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
-
 function publishingRenderDir(tenantId: string): string {
   const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
   return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
@@ -509,18 +512,6 @@ function referenceForbiddenTerms(input: {
     .map(term => term.replace(/^#/, '').trim())
     .filter(term => term.length >= 3 && !/^(TikTok|Instagram|Facebook|YouTube|Video|Official|Factory|Product|Free|Mini|This|Summer|Brighter|Skin|Days)$/i.test(term))
     .slice(0, 24);
-}
-
-export function matchedReferenceIndustryLeaks(script: string, forbidden: string[]): string[] {
-  // Wardrobe in a staging field is not the advertised product. Keep all spoken
-  // claims and product-focused wardrobe descriptions subject to the same gate.
-  const scoped = script.split('\n').map(line => {
-    if (!/^\s*(构图|画面)[：:]/.test(line)
-      || !/女性|男性|人物|主持人|模特|演员/.test(line)
-      || /展示|推荐|主推|售卖|销售|购买|价格|面料|透气|耐用|卖点|特写|品牌|产品/.test(line)) return line;
-    return line.replace(/连衣裙|t恤/gi, '日常着装');
-  }).join('\n').toLowerCase();
-  return forbidden.filter(term => scoped.includes(term.toLowerCase()));
 }
 
 function referenceIndustryLeakTerms(referenceText: string, productInfo: string): string[] {
@@ -1622,17 +1613,6 @@ export function normalizeMaterialInfos(value: unknown, fallbackNames: unknown, t
   }));
 }
 
-function materialRoleFromFolder(info: ScriptMaterialInfo): string {
-  if (info.role) return info.role;
-  if (info.folder === 'presenter') return '真人口播素材';
-  if (info.folder === 'detail') return '产品细节素材';
-  if (info.folder === 'factory') return '工厂/实力素材';
-  if (info.folder === 'scene') return '场景使用素材';
-  if (info.folder === 'model') return '模特/效果素材';
-  if (info.type === 'image') return '静态产品图';
-  return '产品展示素材';
-}
-
 function materialInfoLines(infos: ScriptMaterialInfo[]): string {
   return infos.map((info, index) => [
     `${index + 1}. 素材名：${info.name}`,
@@ -1646,38 +1626,6 @@ function materialInfoLines(infos: ScriptMaterialInfo[]): string {
     info.tags ? `人工/运营标签：${info.tags}` : '',
     info.observations?.length ? `已确认或待复核的分段观察：${info.observations.join(' | ')}` : '没有视频级分段观察，只能依据素材名和标签做保守剪辑',
   ].filter(Boolean).join('；')).join('\n');
-}
-
-function safeMaterialVoicePlan(infos: ScriptMaterialInfo[], cta: string, language: string, audience = ''): string[] {
-  const selected = infos.slice(0, 5);
-  const english = /english|英语|^en\b/i.test(language);
-  const firstBuyer = audience.split(/[、,，/]/).map(item => item.trim()).find(Boolean) || (english ? 'Factory manager' : '工厂负责人');
-  const lines = selected.map((info, index) => {
-    const name = String(info.name || `素材 ${index + 1}`).trim();
-    if (index === 0) return english
-      ? `${firstBuyer}, which production risk should you verify first?`
-      : `${firstBuyer}，哪个生产风险最该先判断？`;
-    return english ? `Review ${name}.` : `查看素材：${name}。`;
-  });
-  if (!lines.length) return [];
-  lines[lines.length - 1] = cta.trim() || (english ? 'Message us for verified product details.' : '私信获取已核实的产品资料。');
-  return lines;
-}
-
-function safeMaterialScenes(infos: ScriptMaterialInfo[]): LockedStoryboardScene[] {
-  return infos.slice(0, 5).map((info, index) => {
-    const name = String(info.name || `素材 ${index + 1}`).trim();
-    const role = materialRoleFromFolder(info);
-    return {
-      environment: '按素材实际可见环境',
-      shot: info.type === 'image' ? '静态画面' : '按素材原镜头',
-      camera: info.type === 'image' ? '固定' : '沿用素材原运镜',
-      composition: '保留素材主体，不补写不可见细节',
-      purpose: index === 0 ? '主题钩子' : index === Math.min(4, infos.length - 1) ? 'CTA' : role,
-      visual: `使用素材《${name}》，仅展示素材中实际可见内容`,
-      music: '轻量中性节奏',
-    };
-  });
 }
 
 export const studioRouter = Router();
@@ -1777,52 +1725,7 @@ studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, 
   return loadMaterials().some(item => item.id === id && item.tenantId === tenantId && item.type === 'video' && !isReferenceOnlyMaterial(item));
 }));
 
-studioRouter.use('/production', createProductionRouter(store, async (url, duration, job, input, tenantId) => {
-  const id = `avatar-${job.id.replace(/[^A-Za-z0-9-]/g, '')}`;
-  const existing = loadMaterials().find(item => item.id === id && item.tenantId === tenantId);
-  if (existing?.avatarMediaCheck?.version === 1 && (!input.transparent || existing.avatarMediaCheck.alphaVerified)) return existing.id;
-  const remote = new URL(url);
-  if (remote.protocol !== 'https:' || remote.username || remote.password || remote.port || !/(^|\.)heygen\.(ai|com)$/i.test(remote.hostname)) throw new Error('供应商输出不在已核验的HeyGen素材域名中，已阻止自动下载');
-  const response = await fetch(remote, { redirect: 'error', signal: AbortSignal.timeout(90000) });
-  if (!response.ok || !response.body) throw new Error('数字人视频下载失败');
-  const maxBytes = 110 * 1024 * 1024;
-  if (Number(response.headers.get('content-length')) > maxBytes) { await response.body.cancel(); throw new Error('数字人素材超过110MB'); }
-  const reader = response.body.getReader(); const chunks: Buffer[] = []; let size = 0;
-  while (true) {
-    const part = await reader.read(); if (part.done) break;
-    size += part.value.length; if (size > maxBytes) { await reader.cancel(); throw new Error('数字人素材超过110MB'); }
-    chunks.push(Buffer.from(part.value));
-  }
-  if (!size) throw new Error('数字人视频为空');
-  const file = `${id}-${randomUUID()}.${input.transparent ? 'webm' : 'mp4'}`;
-  const relativeFile = tenantAssetRelativePath(tenantId, file);
-  const objectKey = objectStorageEnabled() ? materialAssetObjectKey(tenantId, file) : undefined;
-  const bytes = Buffer.concat(chunks);
-  const checkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-avatar-check-'));
-  let checked: AvatarMediaCheck;
-  try {
-    const checkFile = path.join(checkDir, file);
-    fs.writeFileSync(checkFile, bytes, { mode: 0o600 });
-    checked = await checkAvatarMedia(checkFile, { ratio: input.ratio, duration, transparent: input.transparent });
-  } finally { fs.rmSync(checkDir, { recursive: true, force: true }); }
-  if (objectKey) await r2Upload({ key: objectKey, body: bytes, contentType: input.transparent ? 'video/webm' : 'video/mp4' });
-  else { fs.mkdirSync(tenantAssetDir(MEDIA_DIR, tenantId), { recursive: true }); fs.writeFileSync(path.join(MEDIA_DIR, relativeFile), bytes); }
-  const material: Material = { id, name: `数字人口播 · ${input.title}`, folder: 'presenter', type: 'video', duration: checked.duration,
-    width: checked.width, height: checked.height, aspectRatio: checked.width / checked.height, avatarMediaCheck: checked, size: humanSize(size), file: relativeFile,
-    url: objectKey ? '' : `/media/${relativeFile}`, objectKey, scope: 'own', tenantId, usage: 'editable', sourceType: 'heygen', createdAt: new Date().toISOString() };
-  persistMaterials([...loadMaterials().filter(item => !(item.id === id && item.tenantId === tenantId)), material]);
-  return id;
-}, { prepareAudio: async ref => {
-  const media = localTtsFile(ref.url);
-  if (!media || !ffmpegStatic) throw new Error('统一旁白不在当前企业可用本地音频中，请重新生成或上传旁白');
-  const dir = fs.mkdtempSync(path.join(scopedStudioAssetDir(TTS_ROOT), 'avatar-audio-'));
-  const input = path.join(dir, 'input'); const output = path.join(dir, 'shot.wav');
-  try {
-    fs.writeFileSync(input, media.bytes);
-    await execFileAsync(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-i', input, '-ss', String(ref.start), '-t', String(ref.duration), '-vn', '-ac', '1', '-ar', '16000', output], 30000);
-    return fs.readFileSync(output);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-} }));
+studioRouter.use('/production', createStudioAvatarProductionRouter(store));
 
 /* ── Seedance 视频生成 ─────────────────────────────────────────────────── */
 // POST /studio/seedance-video  Body: { script, productInfo, language, ratio, duration, resolution, title? }
@@ -3205,12 +3108,13 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       source: generated.source,
       tenantId,
     });
+    const responseMaterial = await materialResponse(material, tenantId);
     res.json({
       ok: true,
       source: generated.source,
       model: generated.model,
-      url: material.url,
-      material,
+      url: responseMaterial.url,
+      material: responseMaterial,
       references: references.length,
     });
   } catch (err: any) {
@@ -4020,7 +3924,7 @@ interface DigitalHumanJob {
   completedAt?: string;
 }
 
-const DIGITAL_HUMAN_JOBS_FILE = path.join(__dirname, '../../data/digital-human-jobs.json');
+const DIGITAL_HUMAN_JOBS_FILE = process.env.NODE_ENV === 'test' && process.env.DIGITAL_HUMAN_JOBS_FILE ? path.resolve(process.env.DIGITAL_HUMAN_JOBS_FILE) : path.join(__dirname, '../../data/digital-human-jobs.json');
 const DIGITAL_HUMAN_MAX_OUTPUT_BYTES = 110 * 1024 * 1024;
 const digitalHumanRefreshes = new Map<string, Promise<DigitalHumanJob>>();
 
@@ -4329,9 +4233,8 @@ studioRouter.post('/digital-human/jobs', async (req, res) => {
 
 studioRouter.get('/digital-human/jobs/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  let job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
+  const job = loadDigitalHumanJobs().find(item => item.id === req.params.id && item.tenantId === tenantId);
   if (!job) { res.status(404).json({ ok: false, error: '数字人任务不存在' }); return; }
-  if (['queued', 'submitting', 'processing', 'quality_check'].includes(job.status)) job = await refreshDigitalHumanJob(job.id, req);
   const outputMaterial = job.outputMaterialId ? loadMaterials().find(item => item.id === job!.outputMaterialId && item.tenantId === tenantId) : undefined;
   res.json({ ok: true, job: publicDigitalHumanJob(job), outputMaterial: outputMaterial ? await materialResponse(outputMaterial, tenantId) : undefined });
 });
@@ -4390,20 +4293,16 @@ function materialSignedUrlTtlSeconds(): number {
   return Number.isFinite(configured) ? Math.max(60, Math.min(3600, configured)) : 900;
 }
 
-async function signedMaterialObjectUrl(key?: string): Promise<string | undefined> {
-  return key && objectStorageEnabled() ? r2SignedGetUrl(key, materialSignedUrlTtlSeconds()) : undefined;
-}
-
 async function materialResponse(material: Material, tenantId: string): Promise<Material & { canManage: boolean }> {
   const url = material.objectKey
-    ? await signedMaterialObjectUrl(material.objectKey)
+    ? privateStudioAssetUrl('materials', tenantId, path.basename(material.objectKey))
     : /^\/(?:cloud-files|studio-media)\//.test(material.url)
       // Studio workflows often span script, material, music and render steps.
       // Keep the protected playback URL valid for the whole editing session.
       ? signPathAssetUrl(material.url, tenantId, 24 * 60 * 60 * 1000)
       : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.url) ? signAssetUrl(material.url, tenantId) : material.url;
   const poster = material.posterObjectKey
-    ? await signedMaterialObjectUrl(material.posterObjectKey)
+    ? privateStudioAssetUrl('materials', tenantId, path.basename(material.posterObjectKey))
     : material.poster && /^\/(?:cloud-files|studio-media)\//.test(material.poster)
       ? signPathAssetUrl(material.poster, tenantId, 24 * 60 * 60 * 1000)
       : material.poster && /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.poster)
@@ -4411,7 +4310,7 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
         : material.poster;
   const segments = await Promise.all((material.segments || []).map(async segment => ({
     ...segment,
-    poster: segment.posterObjectKey ? await signedMaterialObjectUrl(segment.posterObjectKey) : segment.poster,
+    poster: segment.posterObjectKey ? privateStudioAssetUrl('materials', tenantId, path.basename(segment.posterObjectKey)) : segment.poster,
     posterObjectKey: undefined,
   })));
   return { ...material, url: url || material.url, poster, segments, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
@@ -5244,7 +5143,7 @@ async function persistPrivateStudioAsset(namespace: string, tenantId: string, fi
 studioRouter.get('/private-assets/:namespace/:file', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const namespace = String(req.params.namespace || '');
-  if (!['tts', 'voice-samples', 'covers', 'exports'].includes(namespace)) { res.status(404).end(); return; }
+  if (!['tts', 'voice-samples', 'covers', 'exports', 'materials'].includes(namespace)) { res.status(404).end(); return; }
   const object = await r2GetObject(tenantPrivateObjectKey(namespace, tenantId, req.params.file), req.headers.range);
   if (!object) { res.status(404).end(); return; }
   res.setHeader('Content-Type', object.contentType);
@@ -6472,33 +6371,7 @@ studioRouter.post('/tts', async (req, res) => {
 });
 
 // POST /studio/tts/align Body: { text, url, duration }
-const qwenAsrService = new QwenAsrService(path.join(process.cwd(), 'data', 'qwen-asr'));
-studioRouter.post(['/tts/asr', '/tts/transcribe'], async (req, res) => {
-  try {
-    const duration = Number(req.body?.duration);
-    if (!Number.isFinite(duration) || duration <= 0 || duration > 180) throw new Error('本版支持180秒以内音频');
-    const media = localTtsFile(String(req.body?.url || ''));
-    if (!media) { res.status(404).json({ ok: false, error: '当前企业音频不存在' }); return; }
-    if (req.body?.confirmed === true) {
-      if (!ffmpegStatic) throw new Error('缺少音频时长检查工具，未提交付费转写');
-      const probeBinary = ffmpegStatic;
-      const actualDuration = await new Promise<number>((resolve, reject) => {
-        execFile(probeBinary, ['-hide_banner', '-i', media.filePath], { timeout: 10000, maxBuffer: 100000 }, (_error, _stdout, stderr) => {
-          const match = String(stderr).match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/);
-          if (!match) { reject(new Error('无法验证实际音频时长，未提交付费转写')); return; }
-          resolve(Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]));
-        });
-      });
-      if (actualDuration > 180 || Math.abs(actualDuration - duration) > 0.5) throw new Error('音频实际时长超限或与提交值不一致，未提交付费转写');
-    }
-    const task = await qwenAsrService.run(res.locals.tenantId, media.bytes, media.mimeType, req.body?.confirmed === true);
-    const common = { id: task.id, taskId: task.taskId, status: task.status, error: task.error, usage: task.usage };
-    if (task.status !== 'SUCCEEDED') { res.json({ ok: true, ...common }); return; }
-    const result = qwenAsrCues(task.raw, duration, String(req.body?.text || req.body?.transcriptHint || '').slice(0, 6000));
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ ok: true, ...common, ...result, source: 'qwen_asr' });
-  } catch (error) { res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '千问转写失败' }); }
-});
+studioRouter.use('/tts', createStudioAsrRouter(url => localTtsFile(url), ffmpegStatic));
 
 // Kept separate from synthesis so slow alignment never discards a valid audio result.
 studioRouter.post('/tts/align', async (req, res) => {
@@ -6930,8 +6803,6 @@ studioRouter.delete('/bgm/:id', async (req, res) => {
    对应前端「我的草稿 / 我的作品」。save 既可新建也可更新（带 id 即更新）。
 ─────────────────────────────────────────────────────────────────────────── */
 
-const PROJECTS_FILE = path.join(__dirname, '../../data/studio-projects.json');
-
 interface StudioProject {
   id: string;
   title: string;
@@ -6943,53 +6814,6 @@ interface StudioProject {
 }
 
 type StoredStudioProject = StudioProject & { tenant_id: string };
-
-const PROJECT_PRIVATE_ASSET_PATH = /^\/api\/overseas\/studio\/private-assets\/(tts|voice-samples|covers|exports)\/([^/?#]+)$/;
-
-function mapStudioProjectPrivateAssetUrls(
-  value: unknown,
-  mapUrl: (namespace: string, file: string) => string,
-  depth = 0,
-): unknown {
-  if (depth > 16) return value;
-  if (typeof value === 'string') {
-    try {
-      const parsed = new URL(value, 'http://local');
-      const renderMatch = parsed.pathname.match(/^\/api\/overseas\/(?:publishing\/local-videos|studio\/local-renders)\/([\w-]+\.mp4)$/);
-      if (renderMatch && value.startsWith('/')) return mapUrl('local-renders', renderMatch[1]!);
-      const match = parsed.pathname.match(PROJECT_PRIVATE_ASSET_PATH);
-      return match ? mapUrl(match[1]!, path.basename(match[2]!)) : value;
-    } catch {
-      return value;
-    }
-  }
-  if (Array.isArray(value)) return value.map(item => mapStudioProjectPrivateAssetUrls(item, mapUrl, depth + 1));
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .map(([key, item]) => [key, mapStudioProjectPrivateAssetUrls(item, mapUrl, depth + 1)]));
-}
-
-/** Persist stable private-asset references instead of short-lived signed URLs. */
-export function studioProjectSpecForStorage(spec: unknown): Record<string, unknown> {
-  const { _baseUpdatedAt, ...source } = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec as Record<string, unknown> : {};
-  return mapStudioProjectPrivateAssetUrls(
-    source,
-    (namespace, file) => namespace === 'local-renders'
-      ? `/api/overseas/studio/local-renders/${file}`
-      : `/api/overseas/studio/private-assets/${namespace}/${file}`,
-  ) as Record<string, unknown>;
-}
-
-/** Every project read receives fresh tenant-scoped media signatures. */
-export function refreshStudioProjectAssetUrls(spec: unknown, tenantId: string): Record<string, unknown> {
-  const source = spec && typeof spec === 'object' && !Array.isArray(spec) ? spec : {};
-  return mapStudioProjectPrivateAssetUrls(
-    source,
-    (namespace, file) => namespace === 'local-renders'
-      ? publishingRenderPreviewUrl(tenantId, file)
-      : privateStudioAssetUrl(namespace, tenantId, file),
-  ) as Record<string, unknown>;
-}
 
 function projectFromRecord(record: any, tenantId: string): StudioProject {
   return {
@@ -7003,33 +6827,31 @@ function projectFromRecord(record: any, tenantId: string): StudioProject {
   };
 }
 
-function loadProjects(): StudioProject[] {
-  try {
-    return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8')) as StudioProject[];
-  } catch {
-    return [];
-  }
-}
-function persistProjects(list: StudioProject[]): void {
-  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(list, null, 2), 'utf8');
-}
-
 // GET /studio/projects → 列表（更新时间倒序）
 studioRouter.get('/projects', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const result = await store.list<StoredStudioProject>('studio_projects', { where: { tenant_id: tenantId }, sort: '-updated_at', perPage: 500 });
-  res.json(result.items.map(record => projectFromRecord(record, tenantId)));
+  const taskId = socialProjectTaskId(res.locals);
+  res.json(result.items
+    .filter(project => socialProjectBelongs(project, taskId))
+    .map(project => projectFromRecord(project, tenantId)));
 });
 
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
 studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { id, title, status = 'draft', spec = {}, thumbSeed } = req.body ?? {};
+  const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed } = req.body ?? {};
+  const socialTaskId = socialProjectTaskId(res.locals);
+  const spec = studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId));
+  const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
+    ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
+  if (automation.managedBy === 'digital_employee') { res.status(403).json({ ok: false, error: '数字员工内容项目只能由受信任的生产流程创建', code: 'managed_production_project_forbidden' }); return; }
 
   if (id) {
     const existing = await store.getById<any>('studio_projects', String(id));
     if (existing?.tenant_id === tenantId) {
+      if (!socialProjectBelongs(existing, socialTaskId)) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
       if (storedSpec?.workflowRunId && storedSpec?.automation?.managedBy === 'digital_employee') {
         res.status(409).json({ ok: false, error: '此项目由任务自动生产，请通过交付看板纠偏重跑，或复制为新草稿后编辑。', code: 'managed_production_project' });
@@ -7065,7 +6887,7 @@ studioRouter.get('/projects/:id/evidence', async (req, res) => {
   try {
     const tenantId = res.locals.tenantId as string;
     const project = await store.getById<any>('studio_projects', req.params.id);
-    if (!project || project.tenant_id !== tenantId) { res.status(404).json({ error: '草稿不存在' }); return; }
+    if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) { res.status(404).json({ error: '草稿不存在' }); return; }
     const gaps = auditShotEvidence(project.spec || {}, loadMaterials().filter(item => !isReferenceOnlyMaterial(item)), tenantId);
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, projectId: project.id, revision: project.updated_at, gaps, status: gaps.length ? 'needs_review' : 'range_checked', note: '范围和动作文本校验，不代表视觉或产品功效已验证；未读取到的云端素材需人工核对。' });
@@ -7076,7 +6898,7 @@ studioRouter.get('/projects/:id/evidence', async (req, res) => {
 studioRouter.get('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const p = await store.getById<any>('studio_projects', req.params.id);
-  if (!p || p.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if (!p || p.tenant_id !== tenantId || !socialProjectBelongs(p, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
   res.json(projectFromRecord(p, tenantId));
 });
 
@@ -7084,7 +6906,7 @@ studioRouter.get('/projects/:id', async (req, res) => {
 studioRouter.delete('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const existing = await store.getById<any>('studio_projects', req.params.id);
-  if (!existing || existing.tenant_id !== tenantId) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  if (!existing || existing.tenant_id !== tenantId || !socialProjectBelongs(existing, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
   await store.delete('studio_projects', req.params.id);
   res.json({ ok: true });
 });

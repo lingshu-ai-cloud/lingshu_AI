@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { store } from '../storage/index.js';
-import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, ingestFollowupDeliveryStatuses, nextFollowupDeliveryWindow, preflightFollowupBatchDispatch } from './followupDispatchWorker.js';
+import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, ingestFollowupDeliveryStatuses, nextFollowupDeliveryWindow, preflightFollowupBatchDispatch, runFollowupDispatchScan } from './followupDispatchWorker.js';
 import { followupItemContentHash, type FollowupBatchItemRecord, type FollowupBatchRecord } from './customerWorkflow.js';
+import { Starter198LegacyEffectError } from '../starter198/legacyEffectGuard.js';
 
 const now = new Date('2026-09-03T04:00:00.000Z');
 const tenantId = 'tenant_worker_test';
@@ -28,18 +29,37 @@ const item: FollowupBatchItemRecord = {
 const run = { id: batch.run_id, tenant_id: tenantId, status: 'running' };
 const records = { batch, item };
 const originalGetById = store.getById;
+const originalCreate = store.create;
 const originalList = store.list;
 const originalUpdate = store.update;
+const originalDelete = store.delete;
+const durableLeases: Array<Record<string, unknown> & { id: string }> = [];
+let durableLeaseSequence = 0;
 
 store.getById = (async (collection: string, id: string) => {
   if (collection === 'workflow_runs' && id === run.id) return run;
   if (collection === 'followup_batches' && id === records.batch.id) return records.batch;
   if (collection === 'followup_batch_items' && id === records.item.id) return records.item;
+  if (collection === 'durable_operation_leases') return durableLeases.find(lease => lease.id === id) || null;
   return null;
 }) as typeof store.getById;
-store.list = (async (collection: string) => {
+store.create = (async (collection: string, data: Record<string, unknown>) => {
+  if (collection !== 'durable_operation_leases') return null;
+  if (durableLeases.some(lease => lease.tenant_id === data.tenant_id
+    && lease.lease_scope === data.lease_scope
+    && lease.subject_id === data.subject_id)) throw new Error('unique_lease_subject');
+  const lease = { id: `lease-${++durableLeaseSequence}`, ...structuredClone(data) };
+  durableLeases.push(lease);
+  return structuredClone(lease);
+}) as typeof store.create;
+store.list = (async (collection: string, query = {}) => {
   if (collection === 'followup_batch_items') return { items: [records.item], totalItems: 1, totalPages: 1, page: 1, perPage: 1000 };
   if (collection === 'followup_batches') return { items: [records.batch], totalItems: 1, totalPages: 1, page: 1, perPage: 500 };
+  if (collection === 'durable_operation_leases') {
+    const where = query.where || {};
+    const items = durableLeases.filter(lease => Object.entries(where).every(([key, value]) => lease[key] === value));
+    return { items: structuredClone(items), totalItems: items.length, totalPages: items.length ? 1 : 0, page: 1, perPage: query.perPage || 20 };
+  }
   return { items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 100 };
 }) as typeof store.list;
 store.update = (async (collection: string, id: string, patch: Record<string, unknown>) => {
@@ -52,6 +72,13 @@ store.update = (async (collection: string, id: string, patch: Record<string, unk
   Object.assign(target, patch);
   return true;
 }) as typeof store.update;
+store.delete = (async (collection: string, id: string) => {
+  if (collection !== 'durable_operation_leases') return false;
+  const index = durableLeases.findIndex(lease => lease.id === id);
+  if (index < 0) return false;
+  durableLeases.splice(index, 1);
+  return true;
+}) as typeof store.delete;
 
 try {
   let sends = 0;
@@ -145,6 +172,7 @@ try {
   }), /customer_message_send_not_authorized:tenant_real_customer_messages_not_authorized/);
   assert.equal(sends, 0, 'approval without explicit tenant consent must never call WhatsApp');
   assert.equal(item.status, 'approved', 'an unauthorized batch must remain approved and pending instead of being marked sent');
+  assert.equal(durableLeases.length, 0, 'authorization rejection must release the product-profile transition lease');
 
   for (const status of ['paused', 'cancelled', 'waiting_human', 'failed', 'succeeded']) {
     run.status = status;
@@ -329,6 +357,54 @@ try {
   assert.equal(await ingestFollowupDeliveryStatuses(tenantId,callbackPayload(),{verifiedSignature:true}),1);
   assert.equal((item.provider_receipt as any).messages.length,1,'replayed receipt cannot duplicate messages');
 
+  batch.status='approved'; item.status='approved'; item.provider_receipt={}; item.provider_message_id=''; item.sent_at=''; item.exclusion_reason=''; item.attempts=0;
+  item.send_mode='session_message'; item.template_name=''; item.template_status='not_required'; item.template_variables=[]; item.draft_body=body; item.content_hash=followupItemContentHash(item);
+  const starterPreflight = await preflightFollowupBatchDispatch(tenantId, batch.id, { dependencies: {
+    now:()=>now, customers:()=>[customer], guard:async()=>({allowed:true}), authorization,
+    assertLegacyAccess: async () => { throw new Starter198LegacyEffectError('starter_198_orchestrator_only', 403); },
+  }});
+  assert.equal(starterPreflight.ready, false);
+  assert.equal(starterPreflight.blockers.starter_198_orchestrator_only, 1);
+
+  item.status='sending'; item.provider_receipt={claimToken:'legacy-stale',claimedAt:new Date(now.getTime()-11*60_000).toISOString()};
+  await assert.rejects(() => dispatchFollowupBatch(tenantId,batch.id,{dependencies:{
+    now:()=>now, authorization,
+    assertLegacyAccess:async()=>{throw new Starter198LegacyEffectError('starter_198_orchestrator_only',403);},
+    sendText:async()=>{throw new Error('must_not_send');},
+  }}), /starter_198_orchestrator_only/);
+  assert.equal(item.status,'sending','starter authority must be checked before stale-recovery writes');
+  assert.equal((item.provider_receipt as any).claimToken,'legacy-stale');
+
+  item.status='approved'; item.provider_receipt={}; item.attempts=0;
+  let transitionSends=0;
+  await assert.rejects(()=>dispatchFollowupBatch(tenantId,batch.id,{dependencies:{
+    now:()=>now,customers:()=>[customer],guard:async()=>({allowed:true}),recordOutbound:()=>{},authorization,recipientDelayMs:0,
+    assertLegacyAccess:async()=>{},
+    executeLegacyEffect:async()=>{throw new Starter198LegacyEffectError('starter_198_orchestrator_only',403);},
+    sendText:async()=>{transitionSends++;throw new Error('must_not_send');},
+  }}),/starter_198_orchestrator_only/);
+  assert.equal(transitionSends,0,'starter authority must be rechecked inside the final provider-effect boundary');
+  assert.equal(item.status,'approved');
+  assert.equal(item.attempts,0,'a starter transition must not consume a provider attempt');
+
+  const starterScanBatch={...batch,id:'starter-scan-batch',tenant_id:'starter-scan-tenant'};
+  const enterpriseScanBatch={...batch,id:'enterprise-scan-batch',tenant_id:'enterprise-scan-tenant'};
+  const scanList=store.list;
+  store.list=(async(collection:string,query:any={})=>collection==='followup_batches'
+    ? {items:[starterScanBatch,enterpriseScanBatch],totalItems:2,totalPages:1,page:query.page||1,perPage:query.perPage||500}
+    : scanList(collection,query)) as typeof store.list;
+  const recoveredTenants:string[]=[];
+  const dispatchedTenants:string[]=[];
+  assert.equal(await runFollowupDispatchScan({
+    assertLegacyAccess:async scannedTenant=>{if(scannedTenant==='starter-scan-tenant')throw new Starter198LegacyEffectError('starter_198_orchestrator_only',403);},
+    recover:async scannedBatch=>{recoveredTenants.push(scannedBatch.tenant_id);return 0;},
+    getBatch:async(_tenant,scannedId)=>scannedId===enterpriseScanBatch.id?enterpriseScanBatch:null,
+    dispatch:async scannedTenant=>{dispatchedTenants.push(scannedTenant);return {batchId:'scan',mode:'scheduled',claimed:0,sent:0,partial:0,blocked:0,retryScheduled:0,failed:0,future:0,counts:{}};},
+  }),2);
+  assert.deepEqual(recoveredTenants,['enterprise-scan-tenant'],'a starter row must be rejected before recovery writes');
+  assert.deepEqual(dispatchedTenants,['enterprise-scan-tenant'],'a starter row must not block later enterprise tenants');
+  store.list=scanList;
+
   batch.status='approved'; item.status='approved'; item.provider_receipt={}; item.provider_message_id=''; item.sent_at=''; item.exclusion_reason='';
   const updating = store.update;
   store.update = (async (collection: string, id: string, patch: Record<string, unknown>) => collection === 'followup_batch_items' ? false : updating(collection, id, patch)) as typeof store.update;
@@ -341,8 +417,10 @@ try {
 
 } finally {
   store.getById = originalGetById;
+  store.create = originalCreate;
   store.list = originalList;
   store.update = originalUpdate;
+  store.delete = originalDelete;
 }
 
 console.log('digital employee follow-up dispatch worker tests passed');

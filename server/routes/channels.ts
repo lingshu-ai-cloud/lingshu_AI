@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -12,11 +13,18 @@ import { ingestFollowupDeliveryStatuses } from '../digitalEmployees/followupDisp
 import { sendTenantWhatsAppText } from '../whatsapp/send.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
-import { getTenantPlatformApp, type TenantPlatformAppRecord, type TenantPlatformStatus } from '../lib/tenantPlatformApps.js';
+import {
+  getTenantPlatformApp,
+  verifyMetaSignature,
+  type TenantPlatformAppRecord,
+  type TenantPlatformStatus,
+} from '../lib/tenantPlatformApps.js';
 import { store } from '../storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(__dirname, '../../data/channels.json');
+const DATA = process.env.NODE_ENV === 'test' && process.env.CHANNELS_DATA_FILE
+  ? path.resolve(process.env.CHANNELS_DATA_FILE)
+  : path.join(__dirname, '../../data/channels.json');
 
 export interface Channel {
   id: string;
@@ -30,6 +38,73 @@ export interface Channel {
   stats: { sent: number; received: number };
 }
 
+export interface PublicChannel extends Omit<Channel, 'config'> {
+  configuration: {
+    configuredFields: string[];
+    secretFields: string[];
+  };
+}
+
+const SECRET_CONFIG_FIELD = /(secret|token|password|api.?key|private.?key|credential|authorization)/i;
+
+/**
+ * The legacy channel store contains plaintext provider credentials. Even an
+ * internal management response must expose only presence metadata, never the
+ * raw configuration object.
+ */
+export function publicChannel(channel: Channel): PublicChannel {
+  const configuredFields = Object.entries(channel.config || {})
+    .filter(([, value]) => String(value || '').trim())
+    .map(([key]) => key)
+    .sort();
+  return {
+    id: channel.id,
+    type: channel.type,
+    label: channel.label,
+    enabled: channel.enabled,
+    status: channel.status,
+    ...(channel.connectedAt ? { connectedAt: channel.connectedAt } : {}),
+    ...(channel.lastActivity ? { lastActivity: channel.lastActivity } : {}),
+    stats: channel.stats,
+    configuration: {
+      configuredFields,
+      secretFields: configuredFields.filter(key => SECRET_CONFIG_FIELD.test(key)),
+    },
+  };
+}
+
+function headerText(value: unknown): string {
+  return String(Array.isArray(value) ? value[0] : value || '').trim();
+}
+
+function safeSecretEqual(expected: string, provided: unknown): boolean {
+  const supplied = headerText(provided);
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  return Boolean(expected)
+    && expectedBuffer.length === suppliedBuffer.length
+    && timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
+export function verifyLegacyMetaWebhookSignature(
+  appSecret: string,
+  rawBody: Buffer,
+  signatureHeader: unknown,
+): boolean {
+  const header = headerText(signatureHeader);
+  // Guard verifyMetaSignature from malformed-length timingSafeEqual inputs.
+  if (!appSecret || !/^sha256=[0-9a-f]{64}$/i.test(header)) return false;
+  try {
+    return verifyMetaSignature(appSecret, rawBody, header);
+  } catch {
+    return false;
+  }
+}
+
+export function verifyLegacyTelegramWebhookSecret(expected: string, header: unknown): boolean {
+  return safeSecretEqual(expected, header);
+}
+
 function load(): Channel[] {
   try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
 }
@@ -38,6 +113,15 @@ function save(channels: Channel[]) {
 }
 
 export const channelsRouter = Router();
+
+async function requireInternalAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const admin = await requireAdminUser(req);
+  if (!admin) {
+    res.status(403).json({ error: 'admin_required' });
+    return;
+  }
+  next();
+}
 
 type TenantChannelStatus = 'advisor_configuring' | 'waiting_customer' | 'importing' | 'connected' | 'needs_service';
 
@@ -102,9 +186,9 @@ channelsRouter.get('/status', requireAuth, async (req, res) => {
   });
 });
 
-channelsRouter.get('/', (_req, res) => res.json(load()));
+channelsRouter.get('/', requireAuth, requireInternalAdmin, (_req, res) => res.json(load().map(publicChannel)));
 
-channelsRouter.post('/', (req: Request, res: Response) => {
+channelsRouter.post('/', requireAuth, requireInternalAdmin, (req: Request, res: Response) => {
   const channels = load();
   const channel: Channel = {
     id: `ch_${Date.now()}`,
@@ -117,26 +201,26 @@ channelsRouter.post('/', (req: Request, res: Response) => {
   };
   channels.push(channel);
   save(channels);
-  res.json(channel);
+  res.json(publicChannel(channel));
 });
 
-channelsRouter.put('/:id', (req: Request, res: Response) => {
+channelsRouter.put('/:id', requireAuth, requireInternalAdmin, (req: Request, res: Response) => {
   const channels = load();
   const idx = channels.findIndex(c => c.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: 'not found' }); return; }
   channels[idx] = { ...channels[idx], ...req.body };
   save(channels);
-  res.json(channels[idx]);
+  res.json(publicChannel(channels[idx]));
 });
 
-channelsRouter.delete('/:id', (req: Request, res: Response) => {
+channelsRouter.delete('/:id', requireAuth, requireInternalAdmin, (req: Request, res: Response) => {
   const channels = load().filter(c => c.id !== req.params.id);
   save(channels);
   res.json({ ok: true });
 });
 
 // Test connection
-channelsRouter.post('/:id/test', async (req: Request, res: Response) => {
+channelsRouter.post('/:id/test', requireAuth, requireInternalAdmin, async (req: Request, res: Response) => {
   const channel = load().find(c => c.id === req.params.id);
   if (!channel) { res.status(404).json({ error: 'not found' }); return; }
   const cfg = channel.config;
@@ -197,7 +281,7 @@ channelsRouter.post('/:id/test', async (req: Request, res: Response) => {
 });
 
 // Send message via channel
-channelsRouter.post('/:id/send', requireAuth, async (req: Request, res: Response) => {
+channelsRouter.post('/:id/send', requireAuth, requireInternalAdmin, async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const channel = load().find(c => c.id === req.params.id);
   if (!channel) { res.status(404).json({ error: 'not found' }); return; }
@@ -238,16 +322,36 @@ channelsRouter.get('/webhook/whatsapp/:id', (req: Request, res: Response) => {
 });
 
 // WhatsApp webhook receive
-channelsRouter.post('/webhook/whatsapp/:id', (req: Request, res: Response) => {
+channelsRouter.post('/webhook/whatsapp/:id', async (req: Request, res: Response) => {
   const channel = load().find(c => c.id === req.params.id && c.type === 'whatsapp');
   if (!channel) { res.status(404).send('Not found'); return; }
+  const appSecret = String(channel.config.appSecret || channel.config.webhookAppSecret || '').trim();
+  if (!appSecret) {
+    res.status(503).json({ error: 'legacy_webhook_secret_not_configured' });
+    return;
+  }
+  const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+  if (!(rawBody instanceof Buffer)) {
+    res.status(503).json({ error: 'webhook_raw_body_unavailable' });
+    return;
+  }
+  if (!verifyLegacyMetaWebhookSignature(appSecret, rawBody, req.headers['x-hub-signature-256'])) {
+    res.status(403).json({ error: 'invalid_signature' });
+    return;
+  }
+  try {
+    await Promise.all([
+      handleMetaWebhook(channel.id, req.body),
+      ingestFollowupDeliveryStatuses(channel.id, req.body, { verifiedSignature: true }),
+    ]);
+  } catch (error) {
+    console.error('[whatsapp-channel-webhook]', error);
+    res.status(500).json({ error: 'webhook_persistence_failed' });
+    return;
+  }
   const channels = load();
   const idx = channels.findIndex(c => c.id === req.params.id);
   if (idx !== -1) { channels[idx].stats.received++; channels[idx].lastActivity = new Date().toISOString(); save(channels); }
-  void Promise.all([
-    handleMetaWebhook(channel.id, req.body),
-    ingestFollowupDeliveryStatuses(channel.id, req.body),
-  ]).catch(error => console.error('[whatsapp-channel-webhook]', error));
   res.sendStatus(200);
 });
 
@@ -255,7 +359,19 @@ channelsRouter.post('/webhook/whatsapp/:id', (req: Request, res: Response) => {
 channelsRouter.post('/webhook/telegram/:id', (req: Request, res: Response) => {
   const channels = load();
   const idx = channels.findIndex(c => c.id === req.params.id && c.type === 'telegram');
-  if (idx !== -1) { channels[idx].stats.received++; channels[idx].lastActivity = new Date().toISOString(); save(channels); }
+  if (idx === -1) { res.status(404).send('Not found'); return; }
+  const webhookSecret = String(channels[idx].config.webhookSecret || channels[idx].config.secretToken || '').trim();
+  if (!webhookSecret) {
+    res.status(503).json({ error: 'legacy_webhook_secret_not_configured' });
+    return;
+  }
+  if (!verifyLegacyTelegramWebhookSecret(webhookSecret, req.headers['x-telegram-bot-api-secret-token'])) {
+    res.status(403).json({ error: 'invalid_webhook_secret' });
+    return;
+  }
+  channels[idx].stats.received++;
+  channels[idx].lastActivity = new Date().toISOString();
+  save(channels);
   // TODO: route message to agent
   res.sendStatus(200);
 });

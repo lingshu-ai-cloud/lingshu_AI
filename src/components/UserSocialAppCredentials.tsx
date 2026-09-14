@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Clipboard, KeyRound, Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { getWhatsAppEmbeddedSignupConfig, startWhatsAppEmbeddedSignup } from '../lib/whatsappEmbeddedSignup';
@@ -12,6 +12,7 @@ type AppInfo = {
   phoneNumberId: string;
   waPublicNumber: string;
   webhookVerifyToken: string;
+  webhookVerifyTokenSet?: boolean;
   accessTokenSet: boolean;
   status: string;
 } | null;
@@ -27,10 +28,11 @@ type Form = {
   metaSocialAppId: string;
   metaSocialAppSecret: string;
   metaWhatsAppConfigId: string;
+  metaWebhookVerifyToken: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
 };
-const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', metaWhatsAppConfigId: '', tiktokClientKey: '', tiktokClientSecret: '' };
+const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', metaWhatsAppConfigId: '', metaWebhookVerifyToken: '', tiktokClientKey: '', tiktokClientSecret: '' };
 
 const PLATFORM_LABELS: Record<ConfigPlatform, string> = {
   google: 'YouTube / Google',
@@ -40,7 +42,7 @@ const PLATFORM_LABELS: Record<ConfigPlatform, string> = {
 
 function withoutPlatformCredentials(form: Form, platform: ConfigPlatform): Form {
   if (platform === 'google') return { ...form, youtubeOAuthClientId: '', youtubeOAuthClientSecret: '' };
-  if (platform === 'meta') return { ...form, metaSocialAppId: '', metaSocialAppSecret: '', metaWhatsAppConfigId: '' };
+  if (platform === 'meta') return { ...form, metaSocialAppId: '', metaSocialAppSecret: '', metaWhatsAppConfigId: '', metaWebhookVerifyToken: '' };
   return { ...form, tiktokClientKey: '', tiktokClientSecret: '' };
 }
 
@@ -55,10 +57,10 @@ function Callback({ label, value }: { label: string; value: string }) {
   </div>;
 }
 
-function Field({ label, value, saved, onChange }: { label: string; value: string; saved?: boolean; onChange: (value: string) => void }) {
+function Field({ label, value, saved, secret, onChange }: { label: string; value: string; saved?: boolean; secret?: boolean; onChange: (value: string) => void }) {
   return <label className="grid gap-1 text-[11px] font-bold text-text-secondary">
     <span className="flex items-center justify-between"><span>{label}<span className="ml-0.5 text-red">*</span></span>{(value.trim() || saved) && <span className="inline-flex items-center gap-1 text-[10px] text-accent"><CheckCircle2 size={11} />已填写</span>}</span>
-    <input type="text" autoComplete="off" data-1p-ignore data-lpignore="true" value={value} onChange={e => onChange(e.target.value)} placeholder={saved ? '已安全保存；留空表示不修改' : label} className="ui-field !rounded-md !bg-surface-2 font-normal" />
+    <input type={secret ? 'password' : 'text'} autoComplete={secret ? 'new-password' : 'off'} data-1p-ignore data-lpignore="true" value={value} onChange={e => onChange(e.target.value)} placeholder={saved ? '已安全保存；留空表示不修改' : label} className="ui-field !rounded-md !bg-surface-2 font-normal" />
   </label>;
 }
 
@@ -72,10 +74,14 @@ export default function UserSocialAppCredentials() {
   const [error, setError] = useState('');
   const [clearTarget, setClearTarget] = useState<ConfigPlatform | null>(null);
   const [clearing, setClearing] = useState(false);
+  const clearRequestInFlight = useRef(false);
+  const closeClearDialog = () => {
+    if (!clearRequestInFlight.current) setClearTarget(null);
+  };
   const clearDialogRef = useModalFocus<HTMLDivElement>({
     open: Boolean(clearTarget),
-    onClose: () => { if (!clearing) setClearTarget(null); },
-    closeOnEscape: () => !clearing,
+    onClose: closeClearDialog,
+    closeOnEscape: () => !clearRequestInFlight.current,
   });
 
   async function load() {
@@ -98,33 +104,35 @@ export default function UserSocialAppCredentials() {
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || '保存失败');
       setMessage('已保存到你的企业空间。请把下方回调地址原样添加到各平台后台，再连接账号。');
-      setForm(current => ({ ...current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', tiktokClientSecret: '' }));
+      setForm(current => ({ ...current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', metaWebhookVerifyToken: '', tiktokClientSecret: '' }));
       await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败'); }
     finally { setSaving(false); }
   }
   async function clearPlatform() {
-    if (!clearTarget) return;
+    if (!clearTarget || clearRequestInFlight.current) return;
+    const target = clearTarget;
+    clearRequestInFlight.current = true;
     setClearing(true); setMessage(''); setError('');
     try {
-      const response = await fetch(`/api/overseas/platform-integrations/oauth-config/${clearTarget}`, {
+      const response = await fetch(`/api/overseas/platform-integrations/oauth-config/${target}`, {
         method: 'DELETE',
         headers: authHeader(),
       });
       const data = await response.json().catch(() => ({})) as { error?: string; detail?: string; disconnectedAccounts?: number };
       if (!response.ok) throw new Error(data.detail || data.error || '清除平台配置失败');
-      const label = PLATFORM_LABELS[clearTarget];
+      const label = PLATFORM_LABELS[target];
       const accountCount = data.disconnectedAccounts ?? 0;
-      setForm(current => withoutPlatformCredentials(current, clearTarget));
+      setForm(current => withoutPlatformCredentials(current, target));
       setClearTarget(null);
       await load();
       setMessage(`${label} 配置已清除${accountCount > 0 ? `，并已断开 ${accountCount} 个已连接账号` : ''}。`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '清除平台配置失败'); }
-    finally { setClearing(false); }
+    finally { clearRequestInFlight.current = false; setClearing(false); }
   }
   const cards = config && [
     { key: 'google', title: 'YouTube / Google', icon: <SocialPlatformIcon platform="youtube" size={20} />, sub: 'Google Cloud OAuth Web application', idLabel: 'Client ID', idKey: 'youtubeOAuthClientId' as const, secretLabel: 'Client Secret', secretKey: 'youtubeOAuthClientSecret' as const, callbacks: [['Authorized redirect URI', config.callbacks.youtube]] },
-    { key: 'meta', title: 'Instagram / Facebook / WhatsApp', icon: <span className="flex gap-1"><SocialPlatformIcon platform="instagram" size={19} /><SocialPlatformIcon platform="facebook" size={19} /><SocialPlatformIcon platform="whatsapp" size={19} /></span>, sub: '三个平台共用一套 Meta App', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram], ['Facebook redirect URI', config.callbacks.facebook], ['WhatsApp Webhook Callback URL', config.metaWebhookUrl], ['WhatsApp Webhook Verify Token', config.apps.meta?.webhookVerifyToken || '保存 Meta 应用后自动生成']] },
+    { key: 'meta', title: 'Instagram / Facebook / WhatsApp', icon: <span className="flex gap-1"><SocialPlatformIcon platform="instagram" size={19} /><SocialPlatformIcon platform="facebook" size={19} /><SocialPlatformIcon platform="whatsapp" size={19} /></span>, sub: '三个平台共用一套 Meta App', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram], ['Facebook redirect URI', config.callbacks.facebook], ['WhatsApp Webhook Callback URL', config.metaWebhookUrl]] },
     { key: 'tiktok', title: 'TikTok', icon: <SocialPlatformIcon platform="tiktok" size={20} />, sub: 'Login Kit + Content Posting API', idLabel: 'Client Key', idKey: 'tiktokClientKey' as const, secretLabel: 'Client Secret', secretKey: 'tiktokClientSecret' as const, callbacks: [['Redirect URI', config.callbacks.tiktok]] },
   ];
   return <>
@@ -150,7 +158,8 @@ export default function UserSocialAppCredentials() {
             </button>
           </div>
           <Field label={card.idLabel} value={form[card.idKey]} onChange={value => field(card.idKey, value)} />
-          <Field label={card.secretLabel} value={form[card.secretKey]} saved={config?.apps[card.key as keyof Config['apps']]?.appSecretSet} onChange={value => field(card.secretKey, value)} />
+          <Field secret label={card.secretLabel} value={form[card.secretKey]} saved={config?.apps[card.key as keyof Config['apps']]?.appSecretSet} onChange={value => field(card.secretKey, value)} />
+          {card.key === 'meta' && <Field secret label="WhatsApp Webhook Verify Token" value={form.metaWebhookVerifyToken} saved={config?.apps.meta?.webhookVerifyTokenSet} onChange={value => field('metaWebhookVerifyToken', value)} />}
           {card.key === 'meta' && <Field label="Embedded Signup Config ID（连接 WhatsApp 时填写）" value={form.metaWhatsAppConfigId} onChange={value => field('metaWhatsAppConfigId', value)} />}
           {card.callbacks.map(([label, value]) => <Callback key={label} label={label} value={value} />)}
         </div>)}</div>
@@ -158,8 +167,8 @@ export default function UserSocialAppCredentials() {
       </>}
     </div>}
   </section>
-  {clearTarget && <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !clearing) setClearTarget(null); }}>
-    <div ref={clearDialogRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="clear-user-platform-title" aria-describedby="clear-user-platform-description" className="w-full max-w-md rounded-t-lg border border-border bg-white p-5 shadow-xl sm:rounded-lg" onMouseDown={event => event.stopPropagation()}>
+  {clearTarget && <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeClearDialog(); }}>
+    <div ref={clearDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-busy={clearing} aria-labelledby="clear-user-platform-title" aria-describedby="clear-user-platform-description" className="w-full max-w-md rounded-t-lg border border-border bg-white p-5 shadow-xl sm:rounded-lg" onMouseDown={event => event.stopPropagation()}>
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-insight-soft text-insight-action"><AlertTriangle size={19} /></span>
         <div>
@@ -169,7 +178,7 @@ export default function UserSocialAppCredentials() {
         </div>
       </div>
       <div className="mt-5 flex justify-end gap-2">
-        <button type="button" data-modal-initial-focus onClick={() => setClearTarget(null)} disabled={clearing} className="rounded-md border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">取消</button>
+        <button type="button" data-modal-initial-focus onClick={closeClearDialog} disabled={clearing} className="rounded-md border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">取消</button>
         <button type="button" onClick={() => void clearPlatform()} disabled={clearing} className="inline-flex items-center gap-1.5 rounded-md bg-red px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">
           {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}确认清除
         </button>

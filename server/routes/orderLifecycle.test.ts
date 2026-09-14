@@ -21,12 +21,13 @@ const closed = updateAfterSales(opened, 'resolved', 'replacement');
 assert.equal(updateAfterSales(closed, 'open', 'new problem').afterSalesHistory?.[0].resolution, 'replacement');
 const original = { list: store.list, create: store.create, update: store.update, verify: auth.verifyToken };
 const records: any[] = [];
-store.list = (async (_collection: string, opts: any) => {
-  const items = records.filter(record => Object.entries(opts.where || {}).every(([key, value]) => record[key] === value));
+store.list = (async (collection: string, opts: any) => {
+  const items = records.filter(record => record.__collection === collection
+    && Object.entries(opts.where || {}).every(([key, value]) => record[key] === value));
   return { items, totalPages: 1, totalItems: items.length };
 }) as any;
-store.create = (async (_collection: string, value: any) => { const record = { ...value, id: `record-${records.length}` }; records.push(record); return record; }) as any;
-store.update = (async (_collection: string, id: string, patch: any) => { const record = records.find(item => item.id === id); if (!record) return false; Object.assign(record, patch); return true; }) as any;
+store.create = (async (collection: string, value: any) => { const record = { ...value, id: `record-${records.length}`, __collection: collection }; records.push(record); return record; }) as any;
+store.update = (async (collection: string, id: string, patch: any) => { const record = records.find(item => item.id === id && item.__collection === collection); if (!record) return false; Object.assign(record, patch); return true; }) as any;
 auth.verifyToken = (async (header: string) => ({ tenantId: header === 'Bearer other' ? 'order-other' : 'order-isolation', userId: 'tester' })) as any;
 const app = express(); app.use(express.json()); app.use('/customers', customerSuggestionsRouter); app.use(enterpriseRouter);
 const server = app.listen(0, '127.0.0.1');

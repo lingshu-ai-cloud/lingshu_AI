@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthLocals } from '../middleware/auth.js';
 import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
-import { requestOrganizationRoleStrict } from '../routes/auth.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 export async function requireAdWriteAccess(req: Request, res: Response, next: NextFunction) {
   if (req.method === 'GET' || req.method === 'HEAD') { next(); return; }
   if (isBrowserReadToken(req.headers.authorization)) { res.status(403).json({ error: 'agent_browser_read_only' }); return; }

@@ -1532,7 +1532,8 @@ videosRouter.post('/analyze-source', async (req, res) => {
     platform?: Platform;
     async?: boolean;
   };
-  await handleAnalyzeSource(req, res, { id, sourceUrl, title, platform, async });
+  const scoped = (res.locals as AuthLocals).starter198SocialContext;
+  await handleAnalyzeSource(req, res, scoped ? { id, async } : { id, sourceUrl, title, platform, async });
 });
 
 videosRouter.post('/:id/analyze-source', async (req, res) => {
@@ -1885,7 +1886,6 @@ function withImagePublicBaselines(items: Record<string, unknown>[], baselineUniv
 // Query: page, perPage, platform, status, contentFormat(video|image)
 videosRouter.get('/', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  await purgeLegacyFakeVideos();
   const { page = '1', perPage = '20', platform, status, search, crawlRange = 'all', contentFormat: rawContentFormat = 'video' } = req.query as Record<string, string>;
   const pageNumber = Math.max(1, Number(page) || 1);
   const perPageNumber = Math.min(100, Math.max(1, Number(perPage) || 20));
@@ -2047,7 +2047,7 @@ videosRouter.get('/:id/media-url', async (req, res) => {
   const filename = String(record.videoFileId || '');
   if (!filename && !analysis.videoObjectKey) { res.status(404).json({ error: 'Video not stored' }); return; }
   res.setHeader('Cache-Control', 'private, no-store');
-  res.json({ url: `/api/overseas/videos/${encodeURIComponent(req.params.id)}/media` });
+  res.json({ url: signAssetUrl(`/api/overseas/videos/${encodeURIComponent(req.params.id)}/media`, tenantId) });
 });
 
 /**

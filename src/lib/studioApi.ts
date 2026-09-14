@@ -1,6 +1,6 @@
+import { formatDemoQuotaError } from './studioQuotaMessage';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
-
 async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortSignal): Promise<T & { source?: string }> {
   const retryablePaths = new Set(['script', 'translate', 'translate/batch', 'tts', 'tts/batch']);
   const maxAttempts = path === 'script' ? 4 : retryablePaths.has(path) ? 2 : 1;
@@ -18,7 +18,11 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         throw new Error(formatDemoQuotaError(j));
       }
       if (!r.ok) {
-        const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string };
+        const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string; code?: string; retryable?: boolean };
+        if (payload.retryable === false || /UPSTREAM_(QUOTA|AUTH)/.test(payload.code || '')
+          || /额度不足|额度已|授权暂不可用/.test(payload.error || '')) {
+          return { ...fallback, ...payload } as T & { source?: string };
+        }
         // Script quality rejections are a valid, structured product response.
         // Preserve their diagnostics so the studio can explain the block instead
         // of degrading it into an apparently unresponsive empty result.
@@ -48,7 +52,6 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
   }
   return { ...fallback, source: 'local', error: lastError };
 }
-
 export type StudioScriptQualityStatus =
   | 'passed'
   | 'passed_with_warnings'
@@ -60,7 +63,6 @@ export type StudioScriptQualityStatus =
   | 'recovered'
   | 'fallback'
   | 'failed';
-
 export interface StudioScriptQualityChecks {
   materialGrounded?: boolean;
   timelineGrounded?: boolean;
@@ -72,7 +74,6 @@ export interface StudioScriptQualityChecks {
   materialCoveragePercent?: number;
   [key: string]: boolean | number | string | StudioScriptMaterialCoverage | undefined;
 }
-
 export interface StudioScriptMaterialCoverage {
   covered?: number;
   total?: number;
@@ -87,7 +88,6 @@ export interface StudioScriptMaterialCoverage {
   missing?: string[];
   missingShots?: string[];
 }
-
 export interface StudioScriptResult {
   script: string;
   source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected' | string;
@@ -100,15 +100,6 @@ export interface StudioScriptResult {
   fallbackReason?: string;
   error?: string;
   code?: string;
-}
-
-function formatDemoQuotaError(j: any): string {
-  if (j?.error === 'demo_expired') return '试用已到期，请联系服务顾问开通或延长试用。';
-  if (j?.error === 'demo_token_quota_exceeded') return '今日 Token 额度已用完，请明天再试或联系服务顾问开通更多额度。';
-  if (j?.quota === 'generation') return '今日普通生成额度已用完，脚本/封面/配音等 AI 生成请明天再试或联系服务顾问开通更多额度。';
-  if (j?.quota === 'render') return '今日成片预览额度已用完，请明天再试或联系服务顾问开通更多额度。';
-  if (j?.quota === 'videoGeneration') return '今日视频生成额度已用完，请明天再试或联系服务顾问开通更多额度。';
-  return '今日试用额度已用完，请明天再试或联系服务顾问开通更多额度。';
 }
 
 async function get<T>(path: string, fallback: T): Promise<T & { source?: string }> {

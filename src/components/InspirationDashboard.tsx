@@ -18,7 +18,11 @@ import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
-import { readScriptGapTasks, updateScriptGapTask, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { updateScriptGapTask, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { canProcessVideo, displayDuration, resultEmptyState, sourceScopeLabel, trendFromEvidence } from '../lib/inspirationDataQuality';
+export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
+import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
+import InspirationEmptyState from './InspirationEmptyState';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -2698,33 +2702,6 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
     .sort((a, b) => heatValue(b.views) - heatValue(a.views));
 }
 
-export function trendFromEvidence(analysis: VideoAnalysisPayload): TrendVideo['trend'] {
-  const multiple = analysis.publicBaseline?.relativeMultiple ?? analysis.relativeViewMultiple;
-  if (typeof multiple !== 'number' || !Number.isFinite(multiple)) return 'stable';
-  if (multiple >= 3) return 'hot';
-  if (multiple >= 1.5) return 'rising';
-  return 'stable';
-}
-
-export function displayDuration(duration: number): string {
-  if (!Number.isFinite(duration) || duration <= 0) return '时长未知';
-  return `${Math.floor(duration / 60)}:${String(Math.floor(duration % 60)).padStart(2, '0')}`;
-}
-
-export function canProcessVideo(video: Pick<TrendVideo, 'contentFormat' | 'duration'>): boolean {
-  return video.contentFormat === 'image' || (Number.isFinite(video.duration) && video.duration > 0);
-}
-
-export function resultEmptyState(total: number, search: string, hasFilters: boolean): 'no-data' | 'no-match' {
-  return total === 0 && !search.trim() && !hasFilters ? 'no-data' : 'no-match';
-}
-
-function sourceScopeLabel(video: TrendVideo): string {
-  const rule = String(video.aiAnalysis?.crawlRule || '').trim();
-  if (/主页|账号|profile|channel/i.test(rule)) return '账号主页采集';
-  return video.sourceUrl ? '视频级原链接' : '本地素材';
-}
-
 function metadataFallbackAnalysis(
   title: string,
   platform: Exclude<Platform, 'all'>,
@@ -2970,10 +2947,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [generatingNeedId, setGeneratingNeedId] = useState('');
-  const [scriptGapTasks, setScriptGapTasks] = useState<ScriptGapTask[]>([]);
+  const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
-  const [shootingTaskError, setShootingTaskError] = useState('');
-  const [pendingTaskLink, setPendingTaskLink] = useState<{ taskId: string; materialId: string } | null>(null);
   const [classifyingMaterialId, setClassifyingMaterialId] = useState('');
   const [showAccountsModal, setShowAccountsModal] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -2981,17 +2956,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
   const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按热度';
   const contentFormatLabel = contentFormat === 'video' ? '视频' : '图文';
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => { void readScriptGapTasks().then(tasks => {
-      if (!cancelled) { setScriptGapTasks(tasks); setShootingTaskError(''); }
-    }).catch(error => { if (!cancelled) setShootingTaskError(error instanceof Error ? error.message : '待拍任务读取失败'); }); };
-    refresh();
-    window.addEventListener(SCRIPT_GAP_QUEUE_EVENT, refresh);
-    window.addEventListener('focus', refresh);
-    return () => { cancelled = true; window.removeEventListener(SCRIPT_GAP_QUEUE_EVENT, refresh); window.removeEventListener('focus', refresh); };
-  }, []);
-
   const openMaterialSmartGeneration = () => {
     window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
     onNavigate?.('smartAssets');
@@ -3910,31 +3874,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           {innerView === 'inspiration' && (
             <>
               {filtered.length === 0 ? (
-                <div className="min-h-72 rounded-xl border border-dashed border-border bg-surface flex flex-col items-center justify-center gap-3 text-center px-6">
-                  <div className="w-11 h-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted">
-                    <Download size={18} />
-                  </div>
-                  <div>
-                    {resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all') === 'no-data' ? <>
-                      <p className="text-sm font-semibold text-text-primary">暂无真实{contentFormat === 'image' ? '图文' : '视频'}数据</p>
-                      <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开{contentFormat === 'image' ? '图文' : '视频'}，或从对标账号导入真实内容。</p>
-                    </> : <>
-                      <p className="text-sm font-semibold text-text-primary">没有匹配{search.trim() ? `“${search.trim()}”` : '当前筛选条件'}的结果</p>
-                      <p className="text-xs text-text-muted mt-1">已有数据未丢失，可清除搜索或重置筛选后继续查看。</p>
-                      <button type="button" onClick={resetInspirationFilters} className="mt-3 rounded-lg border border-border px-3 py-2 text-xs font-bold text-accent hover:border-accent">清除搜索并重置筛选</button>
-                    </>}
-                  </div>
-                  {resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all') === 'no-data' && localMaterials.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setInnerView('library')}
-                      className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white"
-                    >
-                      <Film size={15} />
-                      查看 {localMaterials.length} 条素材
-                    </button>
-                  )}
-                </div>
+                <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
               ) : viewMode === 'grid' ? (
                 <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-start">
                   {filtered.map((video, i) => (

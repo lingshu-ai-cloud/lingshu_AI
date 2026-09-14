@@ -13,7 +13,7 @@ import '../server/loadEnvironment.js';
  * against any fresh instance (local dev OR the Singapore cloud deploy).
  */
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -91,10 +91,18 @@ const COLLECTIONS: CollectionSpec[] = [
       { name: 'legacy_id', type: 'text' },
       { name: 'title', type: 'text', required: true },
       { name: 'status', type: 'text', required: true },
+      { name: 'workflow_run_id', type: 'text' },
+      { name: 'workflow_task_id', type: 'text' },
+      { name: 'workflow_task_key', type: 'text' },
+      { name: 'workflow_lineage_hash', type: 'text' },
       { name: 'spec', type: 'json', maxSize: 2000000 },
       { name: 'thumb_seed', type: 'text' },
       { name: 'created_at', type: 'text' },
       { name: 'updated_at', type: 'text' },
+    ],
+    indexes: [
+      'CREATE INDEX idx_studio_project_workflow_status ON studio_projects (tenant_id, workflow_run_id, workflow_task_id, status)',
+      'CREATE INDEX idx_studio_project_workflow_lineage ON studio_projects (tenant_id, workflow_lineage_hash, status)',
     ],
   },
   {
@@ -110,7 +118,6 @@ const COLLECTIONS: CollectionSpec[] = [
       { name: 'inviteCode', type: 'text' },
       { name: 'registrationInviteCode', type: 'text' },
       { name: 'registeredEmail', type: 'text' },
-      { name: 'registeredPasswordCipher', type: 'text' },
       { name: 'registeredAt', type: 'text' },
       { name: 'subscriptionStatus', type: 'text' },     // active/trialing/past_due/canceled/expired/none
       { name: 'subscriptionPlan', type: 'text' },
@@ -298,9 +305,18 @@ const COLLECTIONS: CollectionSpec[] = [
   },
   {
     name: 'tenant_api_keys',
+    indexes: [
+      'CREATE UNIQUE INDEX idx_tenant_api_keys_tenant ON tenant_api_keys (tenant_id)',
+      "CREATE UNIQUE INDEX idx_tenant_api_keys_key_id ON tenant_api_keys (key_id) WHERE key_id != ''",
+    ],
     fields: [
       { name: 'tenant_id', type: 'text', required: true },
-      { name: 'api_key', type: 'text', required: true },
+      { name: 'key_id', type: 'text', required: true, min: 16, max: 16, pattern: '^[A-Za-z0-9_-]{16}$' },
+      { name: 'key_prefix', type: 'text', required: true, min: 24, max: 24, pattern: '^ls_prod_[A-Za-z0-9_-]{16}$' },
+      { name: 'key_last4', type: 'text', required: true, min: 4, max: 4, pattern: '^[A-Za-z0-9_-]{4}$' },
+      { name: 'key_hmac', type: 'text', required: true, min: 64, max: 64, pattern: '^[a-f0-9]{64}$' },
+      { name: 'key_hmac_version', type: 'text', required: true, pattern: '^hmac-sha256-v1$' },
+      { name: 'credential_status', type: 'text', required: true, pattern: '^active$' },
       { name: 'created_at', type: 'text', required: true },
       { name: 'last_ingested_at', type: 'text' },
       { name: 'last_product_name', type: 'text' },
@@ -848,6 +864,36 @@ async function ensureFields(token: string, name: string, want: Field[], wantInde
   console.log(`  ✓ ${name}: synchronized ${[...missing.map((f) => f.name), ...(indexesChanged ? ['indexes'] : [])].join(', ')}`);
 }
 
+export function withoutLegacyRegistrationCredentialField<T extends { name: string }>(fields: T[]): T[] {
+  return fields.filter(field => field.name !== 'registeredPasswordCipher');
+}
+
+/** Remove the legacy field and its stored values from an existing tenants collection. */
+async function removeLegacyRegistrationCredentialField(token: string): Promise<void> {
+  const res = await fetch(`${PB_URL}/api/collections/tenants`, {
+    headers: { Authorization: token },
+  });
+  if (!res.ok) throw new Error(`inspect tenants credential schema failed: ${res.status} ${await res.text()}`);
+  const collection = await res.json() as { fields?: Field[]; schema?: Field[] };
+  const key = Array.isArray(collection.fields) ? 'fields' : 'schema';
+  const fields = collection[key];
+  if (!Array.isArray(fields)) throw new Error('tenants collection returned no editable field schema');
+  const sanitizedFields = withoutLegacyRegistrationCredentialField(fields);
+  if (sanitizedFields.length === fields.length) {
+    console.log('  = tenants legacy registration credential field absent');
+    return;
+  }
+  const updated = await fetch(`${PB_URL}/api/collections/tenants`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: token },
+    body: JSON.stringify({ [key]: sanitizedFields }),
+  });
+  if (!updated.ok) {
+    throw new Error(`remove tenants legacy registration credential field failed: ${updated.status} ${await updated.text()}`);
+  }
+  console.log('  ✓ removed tenants legacy registration credential field and stored values');
+}
+
 /** Ensure the users auth collection has tenant and organization-role fields. */
 async function ensureUsersTenantId(token: string): Promise<void> {
   const res = await fetch(`${PB_URL}/api/collections/users`, {
@@ -964,7 +1010,7 @@ async function ensureWorkbenchAdmin(token: string): Promise<void> {
   console.log(`  ✓ workbench admin ready: ${WORKBENCH_ADMIN_EMAIL}`);
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   console.log(`→ Provisioning PocketBase at ${PB_URL}`);
   const token = await authToken();
   const existing = await listCollections(token);
@@ -974,16 +1020,20 @@ async function main(): Promise<void> {
   for (const { name, fields, indexes = [] } of COLLECTIONS) {
     if (existing.has(name)) {
       await ensureFields(token, name, fields, indexes);
-      await ensureIndexes(token, name, indexes);
       continue;
     }
     await createCollection(token, name, fields, indexes);
   }
+  await removeLegacyRegistrationCredentialField(token);
   await ensureWorkbenchAdmin(token);
   console.log('✓ Done.');
 }
 
-main().catch((e) => {
-  console.error('✗ Setup failed:', e instanceof Error ? e.message : e);
-  process.exit(1);
-});
+const invokedDirectly = Boolean(process.argv[1])
+  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (invokedDirectly) {
+  main().catch((e) => {
+    console.error('✗ Setup failed:', e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
+}

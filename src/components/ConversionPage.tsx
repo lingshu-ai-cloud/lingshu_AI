@@ -1,3 +1,4 @@
+import { sortCustomersByLatestMessage } from '../lib/customerRecency';
 import { requestProductionBack } from '../lib/productionNavigation';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import CustomerWorkflowPanel from './CustomerWorkflowPanel';
@@ -30,6 +31,7 @@ import { LiveLocalTime } from './customers/LiveLocalTime';
 import { DailyBriefing } from './customers/DailyBriefing';
 import { SalesDecisionEvidence, type SalesDecisionMeta } from './customers/SalesDecisionEvidence';
 import { QuoteSkillCard } from './customers/QuoteSkillCard';
+import { isOutsideWhatsAppWindow, lastBuyerEvent, sceneChips, timelineEventAgeHours, type ConversationDraftIntent } from './customers/conversationTiming';
 import { useCustomers } from '../hooks/useCustomers';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -45,7 +47,7 @@ const EmojiPicker = lazy(async () => {
 });
 
 type CustomerView = 'inbox' | 'leads' | 'won' | 'silent';
-type DraftIntent = 'reply' | 'opener' | 'followup' | 'reactivate' | 'post_call' | 'polish' | 'handoff_summary';
+type DraftIntent = ConversationDraftIntent;
 type CustomerFilterKey = 'source' | 'country' | 'language' | 'stage' | 'handling' | 'tag';
 
 interface DraftResult {
@@ -158,28 +160,6 @@ function filterCustomers(view: CustomerView, customers: CustomerProfile[]) {
   if (view === 'leads') return customers.filter(customer => ['lead', 'inquiry', 'quoted'].includes(customer.stage)).sort((a, b) => b.intentScore - a.intentScore);
   if (view === 'won') return customers.filter(customer => customer.stage === 'won');
   return sortCustomersByPriority(customers.filter(customer => customer.stage === 'silent30' || customer.stage === 'silent60'));
-}
-
-function messageTimestamp(customer: CustomerProfile): number {
-  const latestEvent = customer.timeline[customer.timeline.length - 1];
-  if (Number.isFinite(latestEvent?.timestamp)) return latestEvent.timestamp as number;
-  if (Number.isFinite(customer.lastActiveAt)) return customer.lastActiveAt as number;
-  const value = String(latestEvent?.time || customer.lastActive || '').trim();
-  const parsed = Date.parse(value);
-  if (Number.isFinite(parsed)) return parsed;
-  const clock = value.match(/^(\d{1,2}):(\d{2})$/);
-  if (clock) return new Date().setHours(Number(clock[1]), Number(clock[2]), 0, 0);
-  const amount = Number(value.match(/\d+/)?.[0] || 0);
-  if (/分钟前|min/i.test(value)) return Date.now() - amount * 60_000;
-  if (/小时前|hour|\bh\b/i.test(value)) return Date.now() - amount * 3_600_000;
-  if (/天前|day|\bd\b/i.test(value)) return Date.now() - amount * 86_400_000;
-  // “刚刚” is a display label, not sortable data. Mapping it to Date.now()
-  // on every render makes an old conversation permanently float to the top.
-  return 0;
-}
-
-function sortCustomersByLatestMessage<T extends CustomerProfile>(customers: T[]): T[] {
-  return [...customers].sort((a, b) => messageTimestamp(b) - messageTimestamp(a));
 }
 
 function applyCustomerListFilters(customers: CustomerProfile[], filters: CustomerListFilters) {
@@ -836,37 +816,6 @@ function chineseMessageTranslation(body: string, customer: CustomerProfile): str
     return `我会为您确认${customer.product}的最优价格和交期。`;
   }
   return null;
-}
-
-function timelineEventAgeHours(event?: TimelineEvent): number {
-  const time = String(event?.time || '').trim();
-  if (!time) return 0;
-  const hourMatch = time.match(/(\d+)\s*(?:h|\u5c0f\u65f6|\u5c0f\u6642)/i);
-  if (hourMatch) return Number(hourMatch[1]);
-  const dayMatch = time.match(/(\d+)\s*(?:d|\u5929)/i);
-  if (dayMatch) return Number(dayMatch[1]) * 24;
-  if (time.includes('\u6628\u5929')) return 30;
-  return 0;
-}
-
-function lastBuyerEvent(customer: CustomerProfile): TimelineEvent | undefined {
-  return [...customer.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer');
-}
-
-function isOutsideWhatsAppWindow(customer: CustomerProfile): boolean {
-  return timelineEventAgeHours(lastBuyerEvent(customer)) > 24;
-}
-
-function sceneChips(customer: CustomerProfile): { intent: DraftIntent; label: string }[] {
-  const chips: { intent: DraftIntent; label: string }[] = [];
-  const hasSellerOrAi = customer.timeline.some(event => event.type === 'whatsapp' && (event.actor === 'seller' || event.actor === 'ai'));
-  const last = customer.timeline[customer.timeline.length - 1];
-  const lastBuyer = lastBuyerEvent(customer);
-  if (customer.stage === 'lead' && !hasSellerOrAi) chips.push({ intent: 'opener', label: '\u5199\u4e00\u6761\u5f00\u573a\u767d' });
-  if (customer.stage === 'quoted' && timelineEventAgeHours(lastBuyer) > 72) chips.push({ intent: 'followup', label: '\u5199\u4e00\u6761\u8ddf\u8fdb' });
-  if (customer.stage === 'silent30' || customer.stage === 'silent60') chips.push({ intent: 'reactivate', label: '\u5199\u4e00\u6761\u5524\u9192\u6d88\u606f' });
-  if (last?.type === 'call') chips.push({ intent: 'post_call', label: '\u6309\u901a\u8bdd\u7ed3\u679c\u5199\u8ddf\u8fdb' });
-  return chips.slice(0, 3);
 }
 
 function ChatThread({

@@ -24,8 +24,9 @@ assert.equal(validateStudioScriptGenerationInput({ ...validBase, productInfo: ''
 assert.equal(validateStudioScriptGenerationInput({ ...validBase, mode: 'material' }).code, 'material_required');
 assert.equal(validateStudioScriptGenerationInput({ ...validBase, mode: 'clone' }).code, 'reference_required');
 assert.equal(validateStudioScriptGenerationInput({ ...validBase, duration: 0 }).code, 'duration_invalid');
-assert.match(studioAgentSourceLabel('inspiration_analysis'), /Agent.*爆款视频分析/);
-assert.match(studioAgentSourceLabel('agent_memory'), /数字员工/);
+assert.match(studioAgentSourceLabel('inspiration_analysis'), /灵感中心.*爆款视频分析/);
+assert.match(studioAgentSourceLabel('agent_memory'), /智能推荐/);
+assert.equal(studioAgentSourceLabel('unrecognized_internal_source'), '手动创建', 'unknown internal source codes must not be shown to customers');
 assert.deepEqual(
   studioWorkflowContextFromSpec({ workflowRunId: 'run-1', workflowTaskId: 'task-1', workflowTaskKey: 'content_production' }),
   { runId: 'run-1', taskId: 'task-1', taskKey: 'content_production' },
@@ -83,12 +84,17 @@ assert.doesNotMatch(
   '切换创作模式不能改写用户的项目名',
 );
 assert.match(studioSource, /validateStudioScriptGenerationInput\(\{/);
-assert.match(studioSource, /Agent 任务上下文/);
-assert.match(studioSource, /sourceWorkflowContext\.preview \? '计划预览' : '内容 Agent'/, 'Studio must distinguish draft-plan preview from an executing Agent task');
+assert.match(studioSource, /本次创作信息/);
+assert.doesNotMatch(studioSource, />Agent 任务上下文<|label: 'Agent 来源'|`Agent 任务 · \$\{normalized\}`/, 'Studio must not expose internal workflow labels or raw source codes');
+assert.match(studioSource, /sourceWorkflowContext\.preview \? '制作方案预览' : '灵小图'/, 'Studio must distinguish draft-plan preview from an executing content task');
 assert.match(studioSource, /焦点产品/);
 assert.match(studioSource, /workflowRunId:\s*projectWorkflowContext\?\.runId/, 'saved studio projects must retain their own originating workflow run');
 assert.match(studioSource, /workflowTaskId:\s*projectWorkflowContext\?\.taskId/, 'saved studio projects must retain their own originating workflow task');
-assert.match(studioSource, /setProjectWorkflowContext\(studioWorkflowContextFromSpec\(s\)\)/, 'loading a project must restore only the attribution persisted on that project');
+assert.match(
+  studioSource,
+  /setProjectWorkflowContext\([\s\S]{0,120}workflowContext\?\.taskKey === 'content_quality_gate'[\s\S]{0,120}\? workflowContext[\s\S]{0,120}: studioWorkflowContextFromSpec\(s\)/,
+  'loading a project must restore persisted attribution unless an explicit content-quality task is the active authority',
+);
 assert.match(studioSource, /withoutStudioWorkflowContext\([\s\S]{0,180}JSON\.parse/, 'reusing a historical project must not inherit the historical workflow task');
 assert.match(studioSource, /resolveStudioWorkflowProjectEntry\(nextProjects, workflowContext\)/, 'a content-production handoff must resolve exact task projects before entering Studio');
 assert.match(studioSource, /if \(workflowContext\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow context must override and consume a remembered browser draft');

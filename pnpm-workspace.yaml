@@ -1,0 +1,12 @@
+packages:
+  - '.'
+
+allowBuilds:
+  # The package declares a no-op preinstall hook; no lifecycle script is needed
+  # for the published runtime files, so keep it explicitly denied.
+  '@google/genai': false
+
+# Keep pnpm's local/test graph aligned with npm's production package-lock.
+# Express 4 pins qs to the vulnerable 6.15 line, so both managers must override it.
+overrides:
+  qs: 6.16.0

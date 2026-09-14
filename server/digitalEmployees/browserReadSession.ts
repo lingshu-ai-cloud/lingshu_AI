@@ -19,7 +19,7 @@ export function browserReadIdentity(req: Pick<Request, 'headers' | 'method' | 'o
   if (!identity || identity.expiresAt < Date.now()) { if (identity) sessions.delete(token); return null; }
   if (!['GET', 'HEAD'].includes(req.method)) return null;
   const path = new URL(req.originalUrl || req.url, 'http://local').pathname;
-  if (!path.startsWith('/api/overseas/') || /\/browser-stream$/.test(path)) return null;
+  if (!path.startsWith('/api/overseas/') || /\/browser-stream\/?$/.test(path)) return null;
   if (/^\/api\/overseas\/(admin|support-access|organization|plugins)(\/|$)/.test(path)) return null;
   if (path.startsWith('/api/overseas/auth/') && path !== '/api/overseas/auth/me') return null;
   if (identity.role === 'social_operator' && /^\/api\/overseas\/(customers|customer-service)(\/|$)/.test(path)) return null;

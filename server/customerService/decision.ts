@@ -104,3 +104,47 @@ export function executionForActionRisk(risk: ActionRisk, autonomy: AutonomyLevel
   if (autonomy === 'auto' && autoSendEligible) return 'auto_send';
   return 'draft';
 }
+
+export function knowledgeGapCustomerServiceDecision(input: {
+  handoffRequired: boolean;
+  handlingReason: string;
+  safeBridgeAllowed: boolean;
+  knowledgeReady: boolean;
+  fallbackCount?: number;
+  strategyIds: string[];
+  blockingIssues: string[];
+  evidence: string[];
+}): CustomerServiceDecision {
+  const { handoffRequired } = input;
+  return buildCustomerServiceDecision({
+    action: { id: 'knowledge_gap', risk: handoffRequired ? 'L4' : 'L2', description: '知识缺口承接' },
+    execution: handoffRequired ? 'human_required' : 'draft',
+    handoff: { required: handoffRequired, reason: input.handlingReason, safeBridgeAllowed: input.safeBridgeAllowed },
+    knowledge: {
+      ready: input.knowledgeReady,
+      miss: true,
+      safetyMode: input.knowledgeReady ? 'missing_knowledge' : 'setup_required',
+      fallbackCount: input.fallbackCount,
+    },
+    sales: { strategyIds: input.strategyIds },
+    safety: { verificationStatus: 'playbook', issues: input.blockingIssues },
+    explanations: [{
+      code: handoffRequired ? 'knowledge_gap_handoff' : 'knowledge_gap_draft',
+      source: 'knowledge',
+      severity: handoffRequired ? 'blocking' : 'warning',
+      summary: handoffRequired ? '企业知识不足，已转人工确认' : '企业知识不足，当前仅生成待确认草稿',
+      detail: input.handlingReason,
+      evidence: input.evidence,
+    }],
+  });
+}
+
+export function directConversationCustomerServiceDecision(category: string): CustomerServiceDecision {
+  return buildCustomerServiceDecision({
+    action: { id: 'direct_conversation', risk: 'L2', description: category },
+    execution: 'draft',
+    knowledge: { ready: true, miss: false, safetyMode: 'grounded', fallbackCount: 0 },
+    safety: { verificationStatus: 'verified', issues: [] },
+    explanations: [{ code: 'safe_draft', source: 'verification', severity: 'info', summary: '回复已通过确定性安全检查' }],
+  });
+}

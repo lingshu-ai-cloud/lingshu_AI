@@ -33,10 +33,25 @@ webhookRouter.post('/meta/:tenantId', async (req, res) => {
     return;
   }
 
-  const rawBody = (req as any).rawBody instanceof Buffer
-    ? (req as any).rawBody as Buffer
-    : Buffer.from(JSON.stringify(req.body ?? {}));
-  if (!verifyMetaSignature(appSecret, rawBody, req.headers['x-hub-signature-256'])) {
+  const rawBody = (req as any).rawBody;
+  if (!(rawBody instanceof Buffer)) {
+    res.status(503).json({ error: 'webhook_raw_body_unavailable' });
+    return;
+  }
+  const signatureHeader = Array.isArray(req.headers['x-hub-signature-256'])
+    ? req.headers['x-hub-signature-256'][0]
+    : String(req.headers['x-hub-signature-256'] || '').trim();
+  if (!/^sha256=[0-9a-f]{64}$/i.test(signatureHeader)) {
+    res.status(403).json({ error: 'invalid_signature' });
+    return;
+  }
+  let signatureValid = false;
+  try {
+    signatureValid = verifyMetaSignature(appSecret, rawBody, signatureHeader);
+  } catch {
+    signatureValid = false;
+  }
+  if (!signatureValid) {
     res.status(403).json({ error: 'invalid_signature' });
     return;
   }
@@ -51,7 +66,7 @@ webhookRouter.post('/meta/:tenantId', async (req, res) => {
     res.status(500).json({ error: 'webhook_persistence_failed' });
     return;
   }
-  console.log('[meta-webhook]', tenantId, JSON.stringify(req.body).slice(0, 500));
+  console.log('[meta-webhook] accepted', { tenantId });
   res.json({ ok: true });
 });
 
@@ -87,12 +102,11 @@ webhookRouter.get('/wecom/:tenantId', async (req, res) => {
 });
 
 webhookRouter.post('/wecom/:tenantId', async (req, res) => {
-  const tenantId = text(req.params.tenantId);
-  const app = await getTenantPlatformApp(tenantId, 'wecom');
-  if (!app) {
-    res.status(404).json({ error: 'tenant_wecom_app_not_configured' });
-    return;
-  }
-  console.log('[wecom-webhook]', tenantId, JSON.stringify(req.body ?? {}).slice(0, 500));
-  res.json({ ok: true });
+  // Receiving WeCom messages safely requires signature validation, XML parsing,
+  // AES decryption and replay protection. None of those may be approximated by
+  // logging an anonymous body, so keep this write path explicitly unavailable
+  // until the complete adapter exists.
+  res.status(process.env.NODE_ENV === 'production' ? 503 : 501).json({
+    error: 'wecom_webhook_ingestion_not_implemented',
+  });
 });

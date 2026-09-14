@@ -1,5 +1,7 @@
 /* 账号 / 登录：token 存 localStorage，注入到所有 API 请求 */
 
+import { socialContentTaskRequestHeaders } from './socialContentContext';
+
 const TOKEN_KEY = 'overseas_token';
 const SUPPORT_ORIGINAL_TOKEN_KEY = 'overseas_support_original_token';
 
@@ -9,7 +11,7 @@ export function clearToken(): void { localStorage.removeItem(TOKEN_KEY); }
 /** 给 fetch 用的鉴权头（无 token 时为空对象） */
 export function authHeader(): Record<string, string> {
   const t = getToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  return t ? { Authorization: `Bearer ${t}`, ...socialContentTaskRequestHeaders() } : {};
 }
 
 export type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
@@ -23,6 +25,8 @@ export interface AuthTenant {
 export interface AuthSession {
   user: AuthUser;
   tenant: AuthTenant | null;
+  /** Server-verified platform operator identity; subscription names are never authority. */
+  platformAdmin?: boolean;
   subscription?: { status: string; plan: string | null; expiresAt: string | null };
   demo?: {
     enabled: boolean;

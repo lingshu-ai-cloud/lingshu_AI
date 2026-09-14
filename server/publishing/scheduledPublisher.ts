@@ -4,18 +4,46 @@ import { store } from '../storage/index.js';
 import { publishVideoToAccount } from './platformPublisher.js';
 import { finalizeTrackedPost, type PostRecord } from './waLink.js';
 import { digitalEmployeeRunBlockedReason, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
+import {
+  assertLegacyExternalEffectAllowed,
+  Starter198LegacyEffectError,
+  withLegacyExternalEffectAllowed,
+} from '../starter198/legacyEffectGuard.js';
+import {
+  acquireDurableOperationLease,
+  assertDurableOperationLease,
+  releaseDurableOperationLease,
+  renewDurableOperationLease,
+  type DurableOperationLease,
+} from '../runtime/durableLease.js';
+
+type LegacyEffectExecutor = <T>(tenantId: string, effect: () => Promise<T>) => Promise<T>;
+export interface ScheduledPublishLeaseGuard {
+  beforeEffect(now?: Date): Promise<void>;
+  release(): Promise<void>;
+}
+type ScheduledPublishLeaseAcquirer = (post: PostRecord, now: Date) => Promise<ScheduledPublishLeaseGuard | null>;
 
 interface ScheduledPublishingDependencies {
   publish: typeof publishVideoToAccount;
   finalize: typeof finalizeTrackedPost;
+  assertLegacyAccess?: (tenantId: string) => Promise<void>;
+  executeLegacyEffect?: LegacyEffectExecutor;
+  acquirePublishLease?: ScheduledPublishLeaseAcquirer;
 }
-const defaultDependencies: ScheduledPublishingDependencies = { publish: publishVideoToAccount, finalize: finalizeTrackedPost };
+const defaultDependencies: ScheduledPublishingDependencies = {
+  publish: publishVideoToAccount,
+  finalize: finalizeTrackedPost,
+  assertLegacyAccess: assertLegacyExternalEffectAllowed,
+  executeLegacyEffect: withLegacyExternalEffectAllowed,
+};
 
 const POLL_INTERVAL_MS = 30_000;
 const STALE_LOCK_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 const SUPPORTED_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
+const SCHEDULED_PUBLISH_LEASE_SCOPE = 'legacy-scheduled-publish';
 
 type PublishResult = {
   status: 'published' | 'failed' | 'in_flight' | 'unknown';
@@ -91,6 +119,47 @@ function errorMessage(error: unknown): string {
   return '平台未返回明确错误，请稍后重试';
 }
 
+function publishLeaseDurationMs(): number {
+  const configured = Number(process.env.PUBLISH_SCHEDULER_LEASE_MS || 30 * 60_000);
+  return Number.isFinite(configured)
+    ? Math.min(Math.max(Math.floor(configured), 60_000), 2 * 60 * 60_000)
+    : 30 * 60_000;
+}
+
+async function acquireScheduledPublishLease(post: PostRecord, now: Date): Promise<ScheduledPublishLeaseGuard | null> {
+  const leaseDurationMs = publishLeaseDurationMs();
+  let lease: DurableOperationLease | null = await acquireDurableOperationLease({
+    dataStore: store,
+    tenantId: text(post.tenant_id),
+    scope: SCHEDULED_PUBLISH_LEASE_SCOPE,
+    subjectId: text(post.id),
+    ownerId: `publisher:${process.pid}:${randomUUID()}`,
+    now,
+    leaseDurationMs,
+    reclaimGraceMs: 30_000,
+  });
+  if (!lease) return null;
+  return {
+    async beforeEffect(effectNow = new Date()) {
+      lease = await renewDurableOperationLease({
+        dataStore: store,
+        lease: lease!,
+        now: effectNow,
+        leaseDurationMs,
+      });
+      await assertDurableOperationLease({
+        dataStore: store,
+        lease,
+        now: effectNow,
+        minimumRemainingMs: 30_000,
+      });
+    },
+    async release() {
+      if (lease) await releaseDurableOperationLease({ dataStore: store, lease });
+    },
+  };
+}
+
 async function markFailed(post: PostRecord, stats: Record<string, unknown>, attempts: number, message: string): Promise<void> {
   const exhausted = attempts >= MAX_ATTEMPTS;
   const results = resultMap(stats);
@@ -110,7 +179,18 @@ async function markFailed(post: PostRecord, stats: Record<string, unknown>, atte
   });
 }
 
-async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPublishingDependencies): Promise<void> {
+async function publishScheduledPost(
+  queuedPost: PostRecord,
+  dependencies: ScheduledPublishingDependencies,
+  cycleNow: number,
+): Promise<void> {
+  const acquireLease = dependencies.acquirePublishLease ?? acquireScheduledPublishLease;
+  const lease = await acquireLease(queuedPost, new Date(cycleNow));
+  if (!lease) return;
+  try {
+  const post = await store.getById<PostRecord>('posts', queuedPost.id);
+  if (!post || text(post.tenant_id) !== text(queuedPost.tenant_id) || !isScheduledPostDue(post, cycleNow)) return;
+  await (dependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(post.tenant_id);
   const initialStats = statsOf(post);
   const workflowRunId = text(initialStats.workflowRunId);
   if (workflowRunId && await digitalEmployeeRunBlockedReason(post.tenant_id, workflowRunId)) return;
@@ -163,6 +243,7 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
     results[accountId] = { status: 'in_flight', attemptId, startedAt: attemptStartedAt };
     if (!await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: { ...results } } })) throw new Error('无法保存平台发送尝试，尚未调用平台');
     try {
+      await lease.beforeEffect();
       const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
         accountId,
@@ -179,9 +260,10 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
         finalizeTracking: false,
         publishAttemptId: attemptId,
       });
+      const guardedPublish = () => (dependencies.executeLegacyEffect ?? withLegacyExternalEffectAllowed)(post.tenant_id, publish);
       const result = workflowRunId
-        ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, publish)
-        : await publish();
+        ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, guardedPublish)
+        : await guardedPublish();
       if (!text(result.platformPostId)) throw new Error('平台未返回有效发布回执');
       results[accountId] = {
         status: 'published', attemptId, startedAt: attemptStartedAt,
@@ -194,6 +276,17 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
         await store.update('posts', post.id, { stats: {
           ...lockedStats, status: 'scheduled', publishAttempts: attempts - 1,
           publishResults: results, workflowBlockedReason: error.reason,
+        } });
+        return;
+      }
+      if (error instanceof Starter198LegacyEffectError) {
+        delete results[accountId];
+        await store.update('posts', post.id, { stats: {
+          ...lockedStats,
+          status: 'scheduled',
+          publishAttempts: attempts - 1,
+          publishResults: results,
+          workflowBlockedReason: error.code,
         } });
         return;
       }
@@ -246,6 +339,11 @@ async function publishScheduledPost(post: PostRecord, dependencies: ScheduledPub
       nextPublishAttemptAt: new Date(Date.now() + scheduledRetryDelay(1)).toISOString(),
     } });
   }
+  } finally {
+    await lease.release().catch(error => {
+      console.error('[publishing-worker] failed to release durable post lease:', error instanceof Error ? error.message : error);
+    });
+  }
 }
 
 let cycleRunning = false;
@@ -268,8 +366,9 @@ export async function runScheduledPublishingCycle(now = Date.now(), dependencies
     }
     for (const post of duePosts) {
       try {
-        await publishScheduledPost(post, dependencies);
+        await publishScheduledPost(post, dependencies, now);
       } catch (error) {
+        if (error instanceof Starter198LegacyEffectError) continue;
         const latest = await store.getById<PostRecord>('posts', post.id).catch(() => null);
         // If the latest state cannot be read, leave it for recovery instead of
         // overwriting potentially persisted provider receipts.
@@ -288,8 +387,8 @@ export async function runScheduledPublishingCycle(now = Date.now(), dependencies
 }
 
 export function initScheduledPublisher(): void {
-  if (process.env.PUBLISH_SCHEDULER_ENABLED === 'false') {
-    console.log('[publishing-worker] disabled');
+  if (!scheduledPublisherEnabled()) {
+    console.log('[publishing-worker] disabled; set PUBLISH_SCHEDULER_ENABLED=true on a worker after lease migration verification');
     return;
   }
   const run = () => void runScheduledPublishingCycle().catch(error => {
@@ -300,4 +399,8 @@ export function initScheduledPublisher(): void {
   const timer = setInterval(run, POLL_INTERVAL_MS);
   timer.unref?.();
   console.log(`[publishing-worker] enabled; polling every ${POLL_INTERVAL_MS / 1000}s`);
+}
+
+export function scheduledPublisherEnabled(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return environment.PUBLISH_SCHEDULER_ENABLED === 'true';
 }

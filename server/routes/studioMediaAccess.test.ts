@@ -64,7 +64,8 @@ assert.match(previewUi, /setRenderOutputPath\(generation\.status === 'done' \? g
 assert.match(previewUi, /downloadMp4\(activeOutputVersion\?\.output\?\.status === 'done'/, 'reopened drafts must reuse the selected export instead of rendering again');
 
 const studioBackend = readFileSync(new URL('./studio.ts', import.meta.url), 'utf8');
-const avatarImport = studioBackend.slice(studioBackend.indexOf("studioRouter.use('/production'"), studioBackend.indexOf('/* ── Seedance 视频生成'));
+const avatarImport = readFileSync(new URL('../lib/studioAvatarProduction.ts', import.meta.url), 'utf8');
+assert.match(studioBackend, /studioRouter\.use\('\/production', createStudioAvatarProductionRouter\(store\)\)/, 'studio route must mount the validated avatar production service');
 assert.ok(avatarImport.indexOf('await checkAvatarMedia(') < avatarImport.indexOf('await r2Upload('), 'validate bytes before publishing them into the material store');
 assert.match(avatarImport, /width: checked.width, height: checked.height/);
 assert.doesNotMatch(avatarImport, /width: Math.round\(720/);

@@ -75,9 +75,9 @@ assert.match(
   /CREATE UNIQUE INDEX idx_workflow_corrections_task_version[\s\S]*?tenant_id, task_id, version/,
   'corrections must be append-only versions per tenant and task',
 );
-assert.match(bootstrap, /async function ensureIndexes[\s\S]*?method:\s*'PATCH'/, 'bootstrap must add missing safety indexes to existing collections');
-assert.match(bootstrap, /await ensureFields\(token, name, fields\)/, 'bootstrap must expand existing collections without recreating them');
-assert.match(bootstrap, /await ensureIndexes\(token, name, indexes/, 'bootstrap must reconcile indexes for existing collections');
+assert.match(bootstrap, /async function ensureFields[\s\S]*?method:\s*'PATCH'[\s\S]*?JSON\.stringify\(\{ fields: merged, indexes \}\)/, 'bootstrap must add missing safety indexes to existing collections');
+assert.match(bootstrap, /await ensureFields\(token, name, fields, indexes\)/, 'bootstrap must expand existing collections without recreating them');
+assert.match(bootstrap, /const indexes = \[\.\.\.existingIndexes, \.\.\.wantIndexes\.filter/, 'bootstrap must reconcile indexes for existing collections');
 for (const index of [
   'idx_digital_employee_config_tenant', 'idx_workflow_tasks_run_key', 'idx_run_events_sequence',
   'idx_approval_requests_task', 'idx_weekly_reviews_run',

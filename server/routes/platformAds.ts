@@ -2,7 +2,7 @@ import { Router, type RequestHandler } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { createPlatformAdTask, getPlatformAdTask, listPlatformAdTasks, PlatformAdTaskValidationError, PlatformAdTaskConflictError, updatePlatformAdTask, changePlatformAdManagement } from '../platformAds/tasks.js';
 import { createAiPlatformAdPlan } from '../platformAds/planning.js';
-import { requestOrganizationRoleStrict } from './auth.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
 import { listAdAutomationRules, saveAdAutomationRule, AD_AUTOMATION_RUNS } from '../platformAds/automation.js';
 import { store } from '../storage/index.js';

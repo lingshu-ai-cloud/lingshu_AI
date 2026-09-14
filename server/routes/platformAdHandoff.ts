@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { requestOrganizationRoleStrict } from './auth.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
 import { AdHandoffError, goalAdHandoffs, handoffGoalToAds } from '../platformAds/handoff.js';
 

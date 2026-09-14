@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -73,11 +73,11 @@ const EMPTY_FORM: OAuthForm = {
 function formFromConfig(config: AdminOAuthConfig): OAuthForm {
   return {
     youtubeOAuthClientId: config.values.youtubeOAuthClientId,
-    youtubeOAuthClientSecret: config.values.youtubeOAuthClientSecret,
+    youtubeOAuthClientSecret: '',
     metaSocialAppId: config.values.metaSocialAppId,
-    metaSocialAppSecret: config.values.metaSocialAppSecret,
+    metaSocialAppSecret: '',
     tiktokClientKey: config.values.tiktokClientKey,
-    tiktokClientSecret: config.values.tiktokClientSecret,
+    tiktokClientSecret: '',
     advancedManualConnectEnabled: config.values.advancedManualConnectEnabled,
   };
 }
@@ -114,15 +114,19 @@ function CredentialField({
   label,
   value,
   required,
+  secret,
+  saved,
   onChange,
 }: {
   fieldName: string;
   label: string;
   value: string;
   required?: boolean;
+  secret?: boolean;
+  saved?: boolean;
   onChange: (value: string) => void;
 }) {
-  const isCompleted = Boolean(value.trim());
+  const isCompleted = Boolean(value.trim()) || saved === true;
 
   return (
     <label className="grid gap-1 text-[11px] font-bold text-text-secondary">
@@ -139,16 +143,16 @@ function CredentialField({
       </span>
       <input
         name={fieldName}
-        type="text"
-        required={required}
-        aria-required={required}
-        autoComplete="off"
+        type={secret ? 'password' : 'text'}
+        required={required && !saved}
+        aria-required={required && !saved}
+        autoComplete={secret ? 'new-password' : 'off'}
         data-1p-ignore
         data-lpignore="true"
         data-form-type="other"
         value={value}
         onChange={event => onChange(event.target.value)}
-        placeholder={label}
+        placeholder={saved && secret ? '已安全保存；留空表示不修改' : label}
         className="ui-field !rounded-md !bg-surface-2 font-normal"
       />
     </label>
@@ -187,10 +191,16 @@ export default function AdminSocialAccountSetup() {
   const [error, setError] = useState('');
   const [clearTarget, setClearTarget] = useState<ClearableOAuthPlatform | null>(null);
   const [clearing, setClearing] = useState(false);
+  const clearRequestInFlight = useRef(false);
+
+  function closeClearDialog() {
+    if (!clearRequestInFlight.current) setClearTarget(null);
+  }
+
   const clearDialogRef = useModalFocus<HTMLDivElement>({
     open: Boolean(clearTarget),
-    onClose: () => { if (!clearing) setClearTarget(null); },
-    closeOnEscape: () => !clearing,
+    onClose: closeClearDialog,
+    closeOnEscape: () => !clearRequestInFlight.current,
   });
 
   async function load() {
@@ -240,12 +250,14 @@ export default function AdminSocialAccountSetup() {
   }
 
   async function clearPlatformConfig() {
-    if (!clearTarget) return;
+    if (!clearTarget || clearRequestInFlight.current) return;
+    const target = clearTarget;
+    clearRequestInFlight.current = true;
     setClearing(true);
     setNotice('');
     setError('');
     try {
-      const response = await fetch(`/api/overseas/admin/oauth-config/${clearTarget}`, {
+      const response = await fetch(`/api/overseas/admin/oauth-config/${target}`, {
         method: 'DELETE',
         headers: authHeader(),
       });
@@ -260,9 +272,9 @@ export default function AdminSocialAccountSetup() {
       }
       setConfig(data.config);
       setForm(formFromConfig(data.config));
-      const label = clearTarget === 'youtube'
+      const label = target === 'youtube'
         ? 'YouTube / Google'
-        : clearTarget === 'meta'
+        : target === 'meta'
           ? 'Instagram / Facebook'
           : 'TikTok';
       const accountCount = data.disconnectedAccounts ?? 0;
@@ -271,14 +283,15 @@ export default function AdminSocialAccountSetup() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '清除平台配置失败');
     } finally {
+      clearRequestInFlight.current = false;
       setClearing(false);
     }
   }
 
   const oauthPanelsKey = config?.updatedAt || 'oauth-not-configured';
-  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim());
-  const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim());
-  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim());
+  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim() || config?.secretSet.youtubeOAuthClientSecret);
+  const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim() || config?.secretSet.metaSocialAppSecret);
+  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim() || config?.secretSet.tiktokClientSecret);
 
   return (
     <>
@@ -345,7 +358,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="YouTube / Google" disabled={!youtubeConfigured || clearing} onClick={() => setClearTarget('youtube')} />
                     </div>
                     <CredentialField required fieldName="youtube-oauth-client-id" label="Client ID" value={form.youtubeOAuthClientId} onChange={value => setField('youtubeOAuthClientId', value)} />
-                    <CredentialField required fieldName="youtube-oauth-client-secret" label="Client Secret" value={form.youtubeOAuthClientSecret} onChange={value => setField('youtubeOAuthClientSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.youtubeOAuthClientSecret} fieldName="youtube-oauth-client-secret" label="Client Secret" value={form.youtubeOAuthClientSecret} onChange={value => setField('youtubeOAuthClientSecret', value)} />
                     <CallbackLine label="Authorized redirect URI" value={config.callbacks.youtube} />
                   </div>
 
@@ -364,7 +377,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="Instagram / Facebook" disabled={!metaConfigured || clearing} onClick={() => setClearTarget('meta')} />
                     </div>
                     <CredentialField required fieldName="meta-social-app-id" label="App ID" value={form.metaSocialAppId} onChange={value => setField('metaSocialAppId', value)} />
-                    <CredentialField required fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.metaSocialAppSecret} fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
                     <CallbackLine label="Instagram redirect URI" value={config.callbacks.instagram} />
                     <CallbackLine label="Facebook redirect URI" value={config.callbacks.facebook} />
                   </div>
@@ -380,7 +393,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="TikTok" disabled={!tiktokConfigured || clearing} onClick={() => setClearTarget('tiktok')} />
                     </div>
                     <CredentialField required fieldName="tiktok-client-key" label="Client Key" value={form.tiktokClientKey} onChange={value => setField('tiktokClientKey', value)} />
-                    <CredentialField required fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.tiktokClientSecret} fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
                     <CallbackLine label="Redirect URI" value={config.callbacks.tiktok} />
                   </div>
                 </div>
@@ -420,13 +433,14 @@ export default function AdminSocialAccountSetup() {
       <div
         className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4"
         role="presentation"
-        onMouseDown={event => { if (event.target === event.currentTarget && !clearing) setClearTarget(null); }}
+        onMouseDown={event => { if (event.target === event.currentTarget) closeClearDialog(); }}
       >
         <div
           ref={clearDialogRef}
           tabIndex={-1}
-          role="alertdialog"
+          role="dialog"
           aria-modal="true"
+          aria-busy={clearing}
           aria-labelledby="clear-platform-title"
           aria-describedby="clear-platform-description"
           className="w-full max-w-md rounded-t-lg border border-border bg-white p-5 shadow-xl sm:rounded-lg"
@@ -452,7 +466,7 @@ export default function AdminSocialAccountSetup() {
             <button
               type="button"
               data-modal-initial-focus
-              onClick={() => setClearTarget(null)}
+              onClick={closeClearDialog}
               disabled={clearing}
               className="rounded-md border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50"
             >

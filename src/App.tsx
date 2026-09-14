@@ -8,6 +8,9 @@ import { authApi, type AuthSession } from './lib/auth';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
 import AssistLinkPage from './components/AssistLinkPage';
 import LegalPages from './components/LegalPages';
+import { isSocialTaskContextPage } from './lib/socialTaskContext';
+import { readSocialContentNavigationTaskId } from './lib/socialContentContext';
+import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
@@ -27,6 +30,9 @@ const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceMan
 const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.ScriptLibraryPage })));
 const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'));
 const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
+const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWorkspacePage'));
+const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
+const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
 
 export type Page =
   | 'digitalEmployees'
@@ -91,11 +97,10 @@ const ALL_PAGES: Page[] = [
   'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
   'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
 ];
-const isAdminSession = (session: AuthSession | null) => Boolean(session && !session.supportAccess && (
-  session.user.email === 'lingshu-admin@local.test' ||
-  session.tenant?.subscriptionPlan === 'admin' ||
-  session.subscription?.plan === 'admin'
-));
+type StarterAccessState = 'loading' | 'starter_198' | 'legacy' | 'unavailable';
+const isAdminSession = (session: AuthSession | null) => Boolean(
+  session && !session.supportAccess && session.platformAdmin === true,
+);
 const EXTERNAL_CUSTOMER_SERVICE_DEMO_EMAILS = new Set([
   'customer-demo@lingshu.site',
   'wenlantianxia-test@local.test',
@@ -276,6 +281,9 @@ export default function App() {
   // 账号会话
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [starterAccess, setStarterAccess] = useState<StarterAccessState>('loading');
+  const [starterAccessError, setStarterAccessError] = useState('');
+  const [starterProbeRetry, setStarterProbeRetry] = useState(0);
 
   const progressScopeFor = (s: AuthSession | null) => s?.demo?.guideScope || (s?.demo?.expiresAt ? `${s.user.id}:${s.demo.expiresAt}` : s?.user?.id || s?.tenant?.id || null);
 
@@ -300,6 +308,42 @@ export default function App() {
     }, 300_000);
     return () => window.clearInterval(timer);
   }, [session?.user?.id]);
+  const starterProbeScope = `${session?.tenant?.id || ''}:${session?.user?.id || ''}:${session?.supportAccess?.requestId || ''}`;
+  useEffect(() => {
+    if (!session) {
+      starterWorkspaceApi.clearAll();
+      setStarterAccess('loading');
+      setStarterAccessError('');
+      return;
+    }
+    // Product profile is server authority. A subscription label can affect
+    // presentation, but can never bypass the starter access probe.
+    if (shouldBypassStarter198Probe(session)) {
+      setStarterAccess('legacy');
+      setStarterAccessError('');
+      return;
+    }
+    let cancelled = false;
+    setStarterAccess('loading');
+    setStarterAccessError('');
+    starterWorkspaceApi.get({ force: true }).then(workspace => {
+      if (cancelled) return;
+      setStarterAccess(workspace.productProfile === 'starter_198' ? 'starter_198' : 'legacy');
+    }).catch(error => {
+      if (cancelled) return;
+      if (
+        error instanceof StarterWorkspaceRequestError
+        && error.status === 403
+        && (error.code === 'profile_not_enabled' || error.code === 'starter_198_not_provisioned')
+      ) {
+        setStarterAccess('legacy');
+        return;
+      }
+      setStarterAccessError(error instanceof Error ? error.message : '工作区权限暂时无法核验');
+      setStarterAccess('unavailable');
+    });
+    return () => { cancelled = true; };
+  }, [starterProbeScope, starterProbeRetry]);
   useEffect(() => {
     try {
       localStorage.setItem('ow_page', page);
@@ -315,9 +359,10 @@ export default function App() {
   }, [page, session]);
   useEffect(() => {
     if (!session) return;
-    const role = session.user.role || 'super_admin';
+    if (starterAccess === 'loading' || starterAccess === 'unavailable') return;
+    const role = session.user.role || 'customer_service';
     if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('digitalEmployees');
-  }, [page, session]);
+  }, [page, session, starterAccess]);
 
   // 每次对话推进都记录/更新会话历史
   const enterConversation = (ctx: ConversationContext) => {
@@ -380,7 +425,7 @@ export default function App() {
     else window.history.replaceState({ ...window.history.state, productionDetail: undefined }, '');
     setConversation(null); setRestore(null); setKickoff(null);
     activeIdRef.current = null; setActiveConvId(null);
-    if (p === 'smartAssets') {
+    if (next === 'smartAssets') {
       setSmartAssetsWorkflowContext(null);
       setSmartAssetsView('create');
       try {
@@ -389,8 +434,8 @@ export default function App() {
         }
       } catch { /* ignore */ }
     }
-    setPage(p === 'retention' ? 'conversion' : p);
-    if (p === 'adminDelivery') window.history.replaceState(window.history.state, '', '/admin/delivery');
+    setPage(next);
+    if (next === 'adminDelivery') window.history.replaceState(window.history.state, '', '/admin/delivery');
     else if (window.location.pathname === '/admin/delivery') window.history.replaceState(window.history.state, '', '/');
   }, []);
 
@@ -447,12 +492,15 @@ export default function App() {
       }
     } catch { /* ignore browser persistence failures */ }
     setDemoProgressScope(progressScopeFor(s));
+    starterWorkspaceApi.clearAll();
+    setStarterAccess('loading');
     setSession(s);
   };
   const refreshSession = async () => {
     const latest = await authApi.me();
     if (!latest) {
       setDemoProgressScope(null);
+      starterWorkspaceApi.clearAll();
       setSession(null);
       return;
     }
@@ -462,10 +510,13 @@ export default function App() {
   const handleLogout = () => {
     authApi.logout();
     setDemoProgressScope(null);
+    starterWorkspaceApi.clearAll();
+    setStarterAccess('loading');
     setSession(null);
   };
   const handleSupportSessionStarted = (supportSession: AuthSession) => {
     setDemoProgressScope(progressScopeFor(supportSession));
+    starterWorkspaceApi.clearAll();
     setSession(supportSession);
     setConversation(null);
     setRestore(null);
@@ -500,15 +551,43 @@ export default function App() {
       </div>
     );
   }
+  if (starterAccess === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface-2">
+        <Loader2 size={22} className="animate-spin text-accent" />
+        <span className="ml-2 text-sm text-text-muted">正在核验工作区能力……</span>
+      </div>
+    );
+  }
+  if (starterAccess === 'unavailable') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface-2 px-6">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-white p-6 text-center shadow-sm">
+          <p className="text-sm font-bold text-text-primary">工作区能力暂时无法核验</p>
+          <p className="mt-2 text-sm leading-relaxed text-text-muted">{starterAccessError || '请稍后重试。在能力边界确认前，系统不会降级打开可写生产页面。'}</p>
+          <div className="mt-5 flex items-center justify-center gap-2">
+            <button type="button" onClick={() => setStarterProbeRetry(value => value + 1)} className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white">重新核验</button>
+            <button type="button" onClick={handleLogout} className="rounded-lg border border-border bg-white px-4 py-2 text-xs font-semibold text-text-secondary">退出登录</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const starterMode = starterAccess === 'starter_198';
+  const activeSocialContentTaskId = starterMode && isSocialTaskContextPage(page)
+    ? readSocialContentNavigationTaskId(page, window.history.state)
+    : null;
 
   return (
     <Layout page={page} onNavigate={handleNavigate} conversation={conversation} session={session} onLogout={handleLogout}
+      starterMode={starterMode}
       onSessionUpdate={setSession}
       demoGuideActive={false}
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
-      suppressRightPanel={scriptPanelOpen} onAction={startAgentTask}>
+      suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
       <Suspense fallback={null}>
-        {!isAgentProductionSession() && <GlobalAssistant
+        {!starterMode && !isAgentProductionSession() && <GlobalAssistant
           page={page}
           restore={restore}
           kickoff={kickoff}
@@ -519,10 +598,26 @@ export default function App() {
         />}
       </Suspense>
       {!isAgentProductionSession() && page !== 'agentMonitor' && window.history.state?.productionDepth > 0 && <button type="button" onClick={requestProductionBack} className="shrink-0 border-b bg-white px-5 py-2 text-left text-sm font-semibold text-blue-700">← 返回上一页（保留查看位置）</button>}
-      <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('strategy')}>
+      {starterMode && isSocialTaskContextPage(page) && (
+        <Suspense fallback={null}>
+          <SocialTaskContextBar
+            page={page}
+            view={page === 'smartAssets' ? smartAssetsView : undefined}
+            onNavigate={handleNavigate}
+          />
+        </Suspense>
+      )}
+      {starterMode && page !== 'digitalEmployees' && !isSocialTaskContextPage(page) && (
+        <Suspense fallback={null}>
+          <StarterWorkflowContextBar page={page} onNavigate={handleNavigate} />
+        </Suspense>
+      )}
+      <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'strategy')}>
         <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
-            <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />
+            {starterMode
+              ? <StarterWorkspacePage onNavigate={handleNavigate} />
+              : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
           {monitorMounted && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {page === 'strategy' && (
@@ -553,6 +648,7 @@ export default function App() {
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               onSessionRefresh={() => void refreshSession()}
               storageScope={session.tenant?.id || session.user.tenantId}
+              socialContentTaskId={activeSocialContentTaskId}
             />
           )}
           {page === 'socialInspiration' && (
@@ -568,6 +664,7 @@ export default function App() {
               showModeTabs={false}
               pageTitle="灵感中心"
               storageScope={session.tenant?.id || session.user.tenantId}
+              socialContentTaskId={activeSocialContentTaskId}
             />
           )}
           {(page === 'smartAssets' || smartAssetsMounted) && (
@@ -586,6 +683,7 @@ export default function App() {
                 pageTitle="内容创作"
                 storageScope={session.tenant?.id || session.user.tenantId}
                 workflowContextSignal={smartAssetsWorkflowContext}
+                socialContentTaskId={activeSocialContentTaskId}
               />
             </div>
           )}
@@ -600,10 +698,11 @@ export default function App() {
               showModeTabs={false}
               pageTitle="账号管理"
               storageScope={session.tenant?.id || session.user.tenantId}
+              socialContentTaskId={activeSocialContentTaskId}
             />
           )}
+          {page === 'scriptLibrary' && <ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} />}
           {(['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'] as Page[]).includes(page) && <PlatformAdsPage page={page} onNavigate={handleNavigate} />}
-          {page === 'scriptLibrary' && <ScriptLibraryPage />}
           {page === 'conversion' && (
             <ConversionPage
               onEnterConversation={enterConversation}

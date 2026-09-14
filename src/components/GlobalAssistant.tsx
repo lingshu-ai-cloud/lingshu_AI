@@ -220,7 +220,6 @@ function pageKey(page: Page) {
 }
 
 type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
-
 const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
   digitalEmployees: 'excited',
   agentMonitor: 'thinking',
@@ -230,10 +229,7 @@ const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
   scriptLibrary: 'thinking',
   smartAssets: 'excited',
   accountManagement: 'thinking',
-  adsOverview: 'thinking',
-  adsPlans: 'excited',
-  adsCreatives: 'thinking',
-  adsManaged: 'thinking',
+  adsOverview: 'thinking', adsPlans: 'excited', adsCreatives: 'thinking', adsManaged: 'thinking',
   conversion: 'thinking',
   retention: 'happy',
   orders: 'wink',

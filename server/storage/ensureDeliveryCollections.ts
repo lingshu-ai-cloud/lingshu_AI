@@ -26,7 +26,6 @@ const TENANTS_FIELDS: FieldDef[] = [
   { name: 'inviteCode', type: 'text' },
   { name: 'registrationInviteCode', type: 'text' },
   { name: 'registeredEmail', type: 'text' },
-  { name: 'registeredPasswordCipher', type: 'text' },
   { name: 'registeredAt', type: 'text' },
   { name: 'subscriptionStatus', type: 'text' },
   { name: 'subscriptionPlan', type: 'text' },
@@ -254,6 +253,10 @@ function newField(field: FieldDef) {
   };
 }
 
+export function withoutRecoverableTenantCredentialField<T extends { name?: string }>(fields: T[]): T[] {
+  return fields.filter(field => field.name !== 'registeredPasswordCipher');
+}
+
 async function collectionExists(name: string): Promise<boolean> {
   const res = await adminFetch(`/api/collections/${encodeURIComponent(name)}`);
   if (res.ok) return true;
@@ -301,6 +304,8 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
   if (!res.ok) throw new Error(`读取集合 ${name} 失败 (${res.status})`);
   const collection = await res.json() as { fields?: Array<{ name?: string; type?: string; values?: string[]; options?: { values?: string[] } }>; schema?: Array<{ name?: string; type?: string; values?: string[]; options?: { values?: string[] } }> };
   const existing = collection.fields ?? collection.schema ?? [];
+  const removeRecoverableCredential = name === 'tenants'
+    && existing.some(field => field.name === 'registeredPasswordCipher');
   const missing = fields.filter(field => !existing.some(item => item.name === field.name));
   const selectUpdates = fields
     .filter(field => field.type === 'select' && field.values?.length)
@@ -309,12 +314,12 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
       const values = current?.values ?? current?.options?.values ?? [];
       return field.values!.some(value => !values.includes(value));
     });
-  if (!missing.length && !selectUpdates.length) return;
+  if (!missing.length && !selectUpdates.length && !removeRecoverableCredential) return;
 
   const attempts = collection.fields
     ? [{
       fields: [
-        ...collection.fields.map(field => {
+        ...withoutRecoverableTenantCredentialField(collection.fields).map(field => {
           const update = selectUpdates.find(item => item.name === field.name);
           return update ? { ...field, values: update.values ?? [] } : field;
         }),
@@ -322,7 +327,7 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
       ],
     }]
     : [{
-      schema: (collection.schema ?? []).map(field => {
+      schema: withoutRecoverableTenantCredentialField(collection.schema ?? []).map(field => {
         const update = selectUpdates.find(item => item.name === field.name);
         return update ? { ...field, options: { ...(field.options ?? {}), values: update.values ?? [] } } : field;
       }).concat(missing.map(oldSchemaField)),
@@ -335,7 +340,12 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
       body: JSON.stringify(body),
     });
     if (patch.ok) {
-      console.log(`[pb-init] added ${missing.map(field => field.name).join(', ')} to ${name}`);
+      const changes = [
+        missing.length ? `added ${missing.map(field => field.name).join(', ')}` : '',
+        selectUpdates.length ? `updated ${selectUpdates.map(field => field.name).join(', ')}` : '',
+        removeRecoverableCredential ? 'removed legacy registration credential field and stored values' : '',
+      ].filter(Boolean).join('; ');
+      console.log(`[pb-init] ${changes} in ${name}`);
       return;
     }
     lastDetail = `${patch.status} ${await patch.text().catch(() => '')}`;

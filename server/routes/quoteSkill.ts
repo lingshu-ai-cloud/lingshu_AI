@@ -3,7 +3,7 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { readTenantEnterpriseProfile } from './enterprise.js';
-import { requestOrganizationRoleStrict } from './auth.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply } from '../quoteSkill/engine.js';
 import type { QuoteCatalogProduct, QuoteSkillDraft } from '../quoteSkill/types.js';
 import { quoteCardDigest, quoteNumber, renderQuoteCard } from '../quoteSkill/card.js';

@@ -1,4 +1,4 @@
-import { normalizeContinuationPolicy } from '../../src/lib/continuationPolicy.js';
+import { normalizeContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
 import { reviewTodoService } from './reviewTodos.js';
 import { store } from '../storage/index.js';
 import { normalizeDigitalEmployeeConfig, type DigitalEmployeeConfig } from './domain.js';
@@ -12,6 +12,7 @@ type RuntimeRun = StoredRecord & {
   plan_id: string;
   status: string;
   started_at: string;
+  product_profile?: unknown;
 };
 type RuntimeGoal = StoredRecord & { tenant_id: string; starts_at: string; ends_at: string };
 type RuntimePlan = StoredRecord & { tenant_id: string; plan: unknown };
@@ -50,7 +51,9 @@ async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
       const result = await store.list<RuntimeRun>('workflow_runs', {
         where: { status }, page, perPage: Math.min(100, limit - byId.size), sort: '-started_at',
       });
-      result.items.forEach(run => byId.set(run.id, run));
+      result.items.forEach(run => {
+        if (run.product_profile !== 'starter_198') byId.set(run.id, run);
+      });
       if (page >= result.totalPages || !result.items.length) break;
       page += 1;
     }
@@ -64,6 +67,7 @@ async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
         where: { status }, page, perPage: 100, sort: '-started_at',
       });
       for (const run of result.items) {
+        if (run.product_profile === 'starter_198') continue;
         const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id);
         if (!goal) continue;
         const config = await runConfig(run);
@@ -120,7 +124,12 @@ async function reviewIfDue(run: RuntimeRun, now: Date): Promise<boolean> {
 /** One bounded, tenant-safe pass. Each run fails independently. */
 export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<RuntimeCycleResult> {
   const maxRuns = integerEnv('DIGITAL_EMPLOYEE_RUNTIME_MAX_RUNS', 200, 1, 1000);
-  const runs = (await listRuns(maxRuns, now)).filter(run => run.id && run.tenant_id && REVIEWABLE_STATUSES.has(run.status));
+  // starter_198 has a separate fail-closed executor and must never fall into
+  // the legacy reconciler's permissive task fallback.
+  const runs = (await listRuns(maxRuns, now)).filter(run => run.id
+    && run.tenant_id
+    && run.product_profile !== 'starter_198'
+    && REVIEWABLE_STATUSES.has(run.status));
   const result: RuntimeCycleResult = { scanned: runs.length, reconciled: 0, reviewsGenerated: 0, errors: [] };
   for (const run of runs) {
     try {

@@ -1,6 +1,6 @@
 import { normalizeTodo } from '../../src/lib/reviewTodos.js';
-import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../src/lib/operatingMaturity.js';
-import { normalizeVideoPlan, videoPlanErrors } from '../../src/lib/videoCreationPlan.js';
+import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../shared/contracts/operatingMaturity.js';
+import { normalizeVideoPlan, videoPlanErrors } from '../../shared/contracts/videoCreationPlan.js';
 import { TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask } from '../../src/lib/weeklyPackage.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
 

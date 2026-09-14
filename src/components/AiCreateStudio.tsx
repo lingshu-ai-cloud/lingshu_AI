@@ -1,3 +1,8 @@
+import { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
+export { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
+import { mediaType, fileToDataUrl, blobToDataUrl, localFileName } from '../lib/studioFileInputs';
+import { studioWorkflowContextFromSpec, resolveStudioWorkflowProjectEntry, isUnverifiedLegacyCoverTitle, studioSpecHasMeaningfulContent, withoutStudioWorkflowContext, type StudioWorkflowContext } from '../lib/studioProjectContext';
+export { studioWorkflowContextFromSpec, resolveStudioWorkflowProjectEntry, isUnverifiedLegacyCoverTitle, studioSpecHasMeaningfulContent, type StudioWorkflowContext } from '../lib/studioProjectContext';
 import { materialShotPlan } from '../lib/materialShotPlan';
 import { ensureMaterialAnalysis } from '../lib/studioApi';
 import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
@@ -10,12 +15,7 @@ import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../lib/videoCreationPlan';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import {
-  LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send,
-  Check, ChevronLeft, ChevronRight, Folder, Search, Volume2,
-  Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock,
-  Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages,
-} from 'lucide-react';
+import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
@@ -23,6 +23,9 @@ import { authHeader } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifactMedia';
+import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
+import { useStudioSocialTaskHydration } from './socialContent/useStudioSocialTaskHydration';
 import { reconcileShootingSlots, shootingRefillTarget, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
 import ShootingTaskDialog from './ShootingTaskDialog';
 import ShotProductionPanel from './ShotProductionPanel';
@@ -37,13 +40,18 @@ import {
   StudioStoryboardList,
   type StudioWorkbenchStep,
 } from './studio/StudioWorkbenchFrame';
+import {
+  authenticatedAudioBlobUrl,
+  playAudioWithAuthenticatedFallback,
+  playVideoWithAuthenticatedFallback,
+  StudioRequestTimeoutError,
+  waitForStudioMediaReady,
+  withStudioTimeout,
+} from './studio/studioAuthenticatedMedia';
+import { BenchmarkVideoPreview, LeadContentPackagePreview, VariationChipEditor } from './studio/StudioPreviewPanels';
+export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 
-/* ──────────────────────────────────────────────────────────────────────────
-   AI 生成内容工作台 — 社媒（流量）页子模块
-   流程：创作设置 → 脚本与声音 → 成片制作
-   稳定工作台：① 内容对象  ② 内容画布  ③ 步骤与属性  ④ 固定操作栏
-─────────────────────────────────────────────────────────────────────────── */
-
+// AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const TRAFFIC_GREEN = '#117f51';
 const CANVA_VIDEO_COVER_URL = 'https://www.canva.cn/create/video-covers/';
 const CANVA_COVER_RETURN_KEY = 'ow_canva_cover_return';
@@ -51,242 +59,7 @@ const CANVA_COVER_RETURN_TTL = 6 * 60 * 60 * 1000;
 const PUBLISH_RETURN_PREVIEW_KEY = 'ow_publish_return_to_preview';
 const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
-
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
-const VOICE_DRAFT_TIMEOUT_MS = 30_000;
-
-export class StudioRequestTimeoutError extends Error {
-  constructor(message = '请求超时') {
-    super(message);
-    this.name = 'StudioRequestTimeoutError';
-  }
-}
-
-export async function withStudioTimeout<T>(promise: Promise<T>, timeoutMs = VOICE_DRAFT_TIMEOUT_MS): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new StudioRequestTimeoutError(`请求超过 ${Math.ceil(timeoutMs / 1000)} 秒，已停止等待`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-export function enterpriseBuyerText(roles?: string[]): string {
-  return (roles || []).map(item => item.trim()).filter(Boolean).join('、');
-}
-
-type TimelineValidationItem = { type: string; url?: string; trimStart: number; trimEnd: number; speed: number; targetDuration: number };
-export function validateStudioTimeline(items: TimelineValidationItem[]): string[] {
-  const issues: string[] = [];
-  if (!items.length) return ['没有可用素材，无法继续生成。'];
-  items.forEach((item, index) => {
-    if (!item.url || item.type === 'audio') issues.push(`分镜 ${index + 1} 缺少可播放画面素材。`);
-    const sourceDuration = Math.max(0, item.trimEnd - item.trimStart);
-    const playableDuration = sourceDuration / Math.max(0.01, item.speed || 1);
-    if (sourceDuration <= 0) issues.push(`分镜 ${index + 1} 的素材入点/出点无效。`);
-    if (item.targetDuration > playableDuration + 0.05) issues.push(`分镜 ${index + 1} 需要 ${item.targetDuration.toFixed(1)}s，但实际素材仅可覆盖 ${playableDuration.toFixed(1)}s。`);
-  });
-  return issues;
-}
-
-export function pendingClaimLocations(script: string, productInfo: string): string[] {
-  const source = String(productInfo || '');
-  const sourceLower = source.toLowerCase();
-  const sourceComparable = sourceLower.replace(/\s+/g, ' ');
-  const spokenField = /^(?:台词|字幕|口播|人物说|旁白|voiceover|vo|subtitle|caption|dialogue)\s*[：:]\s*(.+)$/i;
-  const supportedByCategory = [
-    { claim: /\bCE\b/i, evidence: /\bCE\b/i },
-    { claim: /\bFDA\b/i, evidence: /\bFDA\b/i },
-    { claim: /\bSGS\b/i, evidence: /\bSGS\b/i },
-    { claim: /(?:起订|\bMOQ\b)/i, evidence: /(?:起订|最小订单|\bMOQ\b)/i },
-    { claim: /(?:交期|delivery\s*(?:time|lead)|lead\s*time)/i, evidence: /(?:交期|delivery\s*(?:time|lead)|lead\s*time)/i },
-    { claim: /(?:认证|certif(?:y|ied|ication))/i, evidence: /(?:认证|certif(?:y|ied|ication))/i },
-    { claim: /(?:客户案例|合作案例|case\s*study)/i, evidence: /(?:客户案例|合作案例|case\s*study)/i },
-    { claim: /(?:销量|sales\s*volume)/i, evidence: /(?:销量|sales\s*volume)/i },
-    { claim: /(?:保证|guarantee)/i, evidence: /(?:保证|guarantee)/i },
-  ];
-
-  return script.split('\n').map(line => line.trim()).filter(line => {
-    const speech = line.match(spokenField)?.[1]?.trim();
-    // 环境、构图、画面、运镜等是制作指令，不是对外商业声明，不参与企业事实硬校验。
-    if (!speech) return false;
-    if (supportedByCategory.some(({ claim, evidence }) => claim.test(speech) && !evidence.test(source))) return true;
-
-    // 数字交期和明确价格必须在企业资料中出现同一个值，避免凭空承诺。
-    const exactClaims = [
-      ...(speech.match(/\b\d+\s*(?:天|days?)\b/gi) || []),
-      ...(speech.match(/(?:[$€£¥￥]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|CNY|RMB))/gi) || []),
-    ];
-    return exactClaims.some(claim => !sourceComparable.includes(claim.toLowerCase().replace(/\s+/g, ' ')));
-  }).slice(0, 4);
-}
-
-const PLAYABLE_AUDIO_BLOB_CACHE = new Map<string, string>();
-const PLAYABLE_VIDEO_BLOB_CACHE = new Map<string, string>();
-const PLAYABLE_AUDIO_BLOB_REQUESTS = new Map<string, Promise<string>>();
-const PLAYABLE_VIDEO_BLOB_REQUESTS = new Map<string, Promise<string>>();
-
-function isSameOriginUrl(sourceUrl: string): boolean {
-  try {
-    return new URL(sourceUrl, window.location.href).origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-async function authenticatedAudioBlobUrl(sourceUrl: string): Promise<string> {
-  if (/^(?:blob:|data:)/i.test(sourceUrl)) return sourceUrl;
-  const cached = PLAYABLE_AUDIO_BLOB_CACHE.get(sourceUrl);
-  if (cached) return cached;
-  const pending = PLAYABLE_AUDIO_BLOB_REQUESTS.get(sourceUrl);
-  if (pending) return pending;
-  const request = (async () => {
-    const response = await fetch(sourceUrl, { headers: authHeader(), credentials: 'same-origin' });
-    if (!response.ok) throw new Error(`音频请求失败（HTTP ${response.status}）`);
-    const blob = await response.blob();
-    if (!blob.size) throw new Error('服务器返回了空音频');
-    const contentType = String(response.headers.get('content-type') || blob.type || '').toLowerCase();
-    if (contentType && !contentType.startsWith('audio/') && contentType !== 'application/octet-stream') {
-      throw new Error(`服务器返回的不是音频（${contentType}）`);
-    }
-    const playableBlob = blob.type.startsWith('audio/') ? blob : new Blob([blob], { type: 'audio/wav' });
-    const blobUrl = URL.createObjectURL(playableBlob);
-    PLAYABLE_AUDIO_BLOB_CACHE.set(sourceUrl, blobUrl);
-    return blobUrl;
-  })().finally(() => PLAYABLE_AUDIO_BLOB_REQUESTS.delete(sourceUrl));
-  PLAYABLE_AUDIO_BLOB_REQUESTS.set(sourceUrl, request);
-  return request;
-}
-
-async function authenticatedVideoBlobUrl(sourceUrl: string): Promise<string> {
-  if (/^(?:blob:|data:)/i.test(sourceUrl)) return sourceUrl;
-  const cached = PLAYABLE_VIDEO_BLOB_CACHE.get(sourceUrl);
-  if (cached) return cached;
-  const pending = PLAYABLE_VIDEO_BLOB_REQUESTS.get(sourceUrl);
-  if (pending) return pending;
-  const request = (async () => {
-    const sameOrigin = isSameOriginUrl(sourceUrl);
-    const response = await fetch(sourceUrl, sameOrigin
-      ? { headers: authHeader(), credentials: 'same-origin' }
-      : { credentials: 'omit' });
-    if (!response.ok) throw new Error(`视频请求失败（HTTP ${response.status}）`);
-    const blob = await response.blob();
-    if (!blob.size) throw new Error('服务器返回了空视频');
-    const contentType = String(response.headers.get('content-type') || blob.type || '').toLowerCase();
-    if (contentType && !contentType.startsWith('video/') && contentType !== 'application/octet-stream') {
-      throw new Error(`服务器返回的不是视频（${contentType}）`);
-    }
-    const playableBlob = blob.type.startsWith('video/') ? blob : new Blob([blob], { type: 'video/mp4' });
-    const blobUrl = URL.createObjectURL(playableBlob);
-    PLAYABLE_VIDEO_BLOB_CACHE.set(sourceUrl, blobUrl);
-    return blobUrl;
-  })().finally(() => PLAYABLE_VIDEO_BLOB_REQUESTS.delete(sourceUrl));
-  PLAYABLE_VIDEO_BLOB_REQUESTS.set(sourceUrl, request);
-  return request;
-}
-
-async function playAudioWithAuthenticatedFallback(
-  element: HTMLAudioElement,
-  sourceUrl: string,
-  volume: number,
-): Promise<void> {
-  const absoluteSource = new URL(sourceUrl, window.location.href).href;
-  element.pause();
-  if (element.src !== absoluteSource && element.dataset.sourceUrl !== sourceUrl) {
-    element.src = sourceUrl;
-    element.dataset.sourceUrl = sourceUrl;
-    element.load();
-  }
-  if (element.ended || !Number.isFinite(element.currentTime)) element.currentTime = 0;
-  element.volume = Math.max(0, Math.min(1, volume));
-  try {
-    await element.play();
-  } catch {
-    const blobUrl = await authenticatedAudioBlobUrl(sourceUrl);
-    element.src = blobUrl;
-    element.dataset.sourceUrl = sourceUrl;
-    element.load();
-    element.currentTime = 0;
-    await element.play();
-  }
-}
-
-async function playVideoWithAuthenticatedFallback(
-  element: HTMLVideoElement,
-  sourceUrl: string,
-): Promise<string> {
-  const absoluteSource = new URL(sourceUrl, window.location.href).href;
-  if (element.src !== absoluteSource && element.dataset.sourceUrl !== sourceUrl) {
-    element.src = sourceUrl;
-    element.dataset.sourceUrl = sourceUrl;
-    element.load();
-  }
-  try {
-    await element.play();
-    return sourceUrl;
-  } catch {
-    const blobUrl = await authenticatedVideoBlobUrl(sourceUrl);
-    element.src = blobUrl;
-    element.dataset.sourceUrl = sourceUrl;
-    element.load();
-    await element.play();
-    return blobUrl;
-  }
-}
-
-export function waitForStudioMediaReady(element: HTMLMediaElement, timeoutMs = 20_000): Promise<void> {
-  if (element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const cleanup = () => {
-      if (timer) clearTimeout(timer);
-      element.removeEventListener('loadeddata', ready);
-      element.removeEventListener('canplay', ready);
-      element.removeEventListener('error', failed);
-      element.removeEventListener('abort', failed);
-    };
-    const ready = () => { cleanup(); resolve(); };
-    const failed = () => {
-      cleanup();
-      const code = element.error?.code;
-      reject(new Error(code ? `媒体加载失败（code ${code}）` : '媒体加载被中断'));
-    };
-    element.addEventListener('loadeddata', ready, { once: true });
-    element.addEventListener('canplay', ready, { once: true });
-    element.addEventListener('error', failed, { once: true });
-    element.addEventListener('abort', failed, { once: true });
-    timer = setTimeout(() => {
-      cleanup();
-      reject(new StudioRequestTimeoutError(`媒体准备超过 ${Math.ceil(timeoutMs / 1000)} 秒`));
-    }, timeoutMs);
-  });
-}
-
-const mediaType = (f: File): 'video' | 'image' | 'audio' =>
-  f.type.startsWith('video') ? 'video' : f.type.startsWith('audio') ? 'audio' : 'image';
-
-const fileToDataUrl = (f: File) => new Promise<string>((res, rej) => {
-  const r = new FileReader();
-  r.onload = () => res(String(r.result));
-  r.onerror = rej;
-  r.readAsDataURL(f);
-});
-
-const blobToDataUrl = (blob: Blob) => new Promise<string>((res, rej) => {
-  const r = new FileReader();
-  r.onload = () => res(String(r.result));
-  r.onerror = rej;
-  r.readAsDataURL(blob);
-});
-
-const localFileName = (filePath: string) => filePath.split(/[\\/]/).pop() || filePath;
-
 // 客户端读取媒体时长和画幅，供自动选材阻止横竖素材混剪。
 const probeMedia = (f: File) => new Promise<{ duration: number; width: number; height: number }>(res => {
   if (f.type.startsWith('image')) {
@@ -560,78 +333,6 @@ interface StoryboardAssembly {
 }
 
 type StudioPublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
-export type StudioWorkflowContext = { runId: string; taskId: string; taskKey?: string; preview?: boolean; entityId?: string };
-
-export function studioWorkflowContextFromSpec(spec: Record<string, unknown>): StudioWorkflowContext | null {
-  const runId = typeof spec.workflowRunId === 'string' ? spec.workflowRunId.trim() : '';
-  const taskId = typeof spec.workflowTaskId === 'string' ? spec.workflowTaskId.trim() : '';
-  if (!runId || !taskId) return null;
-  return {
-    runId,
-    taskId,
-    taskKey: typeof spec.workflowTaskKey === 'string' ? spec.workflowTaskKey.trim() : '',
-  };
-}
-
-export function resolveStudioWorkflowProjectEntry(
-  projects: StudioProject[],
-  context: StudioWorkflowContext,
-): { projects: StudioProject[]; project: StudioProject | null; openList: boolean } {
-  const matches = projects.filter(project => {
-    const projectContext = studioWorkflowContextFromSpec(project.spec);
-    if (context.entityId) {
-      return project.id === context.entityId
-        && (!context.runId || projectContext?.runId === context.runId);
-    }
-    return projectContext?.runId === context.runId && projectContext.taskId === context.taskId;
-  });
-  return {
-    projects: matches,
-    project: matches.length === 1 ? matches[0] : null,
-    openList: matches.length !== 1,
-  };
-}
-
-/**
- * Silent autosave may update a persisted project, but it must not manufacture
- * an empty project merely because Studio is mounted in the background.
- * Enterprise defaults (product, audience, tone, platform) are intentionally
- * not sufficient: they are loaded without a user or worker creating content.
-*/
-
-const LEGACY_UNVERIFIED_COVER_TITLES = new Set([
-  ['You NEED this in', '2026'].join(' '),
-  'Factory price, 24h ship',
-  'Why everyone is obsessed',
-]);
-export function isUnverifiedLegacyCoverTitle(value: unknown): boolean {
-  return LEGACY_UNVERIFIED_COVER_TITLES.has(String(value || '').trim());
-}
-export function studioSpecHasMeaningfulContent(spec: Record<string, unknown>): boolean {
-  const hasText = (key: string) => typeof spec[key] === 'string' && Boolean(String(spec[key]).trim());
-  const hasArray = (key: string) => Array.isArray(spec[key]) && (spec[key] as unknown[]).length > 0;
-  const hasObject = (key: string) => Boolean(
-    spec[key] && typeof spec[key] === 'object' && Object.keys(spec[key] as Record<string, unknown>).length > 0,
-  );
-  return [
-    'script', 'caption', 'posterJsonText', 'posterImageUrl', 'voiceoverUrl', 'coverTitle',
-  ].some(hasText)
-    || ['selected', 'materialSnapshots', 'modeScripts', 'productVideoVersions'].some(hasArray)
-    || ['videoKickoff', 'posterDraft', 'languageRenderOutputs', 'storyboardVideoVersions'].some(hasObject);
-}
-
-function withoutStudioWorkflowContext(spec: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...spec };
-  delete next.workflowRunId;
-  delete next.workflowTaskId;
-  delete next.workflowTaskKey;
-  delete next.automation;
-  delete next.contentOrder;
-  delete next.contentOrderId;
-  delete next.batchPlanId;
-  return next;
-}
-
 type StudioPublishItem = {
   videoPath?: string;
   previewUrl?: string;
@@ -1372,12 +1073,12 @@ export function validateStudioScriptGenerationInput(input: {
 
 export function studioAgentSourceLabel(source?: string): string {
   const normalized = String(source || '').trim();
-  if (normalized === 'inspiration_analysis') return '社媒内容 Agent · 爆款视频分析';
-  if (normalized === 'inspiration_image_post') return '社媒内容 Agent · 爆款图文分析';
-  if (normalized === 'material_library' || normalized === 'material_segment_analysis') return '社媒内容 Agent · 素材库';
-  if (normalized === 'seedance_video') return '社媒内容 Agent · AI 视频生成';
-  if (normalized === 'agent_memory' || normalized === 'content_memory_recommendation') return '数字员工 · 内容策略任务';
-  return normalized ? `Agent 任务 · ${normalized}` : '人工进入内容工作台';
+  if (normalized === 'inspiration_analysis') return '灵感中心 · 爆款视频分析';
+  if (normalized === 'inspiration_image_post') return '灵感中心 · 爆款图文分析';
+  if (normalized === 'material_library' || normalized === 'material_segment_analysis') return '素材库';
+  if (normalized === 'seedance_video') return 'AI 视频创作';
+  if (normalized === 'agent_memory' || normalized === 'content_memory_recommendation') return '智能推荐 · 内容策略';
+  return '手动创建';
 }
 const RATIOS = ['9:16', '1:1', '16:9'];
 const POSTER_RATIOS = ['1:1', '4:5'];
@@ -1510,7 +1211,7 @@ interface EnterpriseProfileLite {
   socialStrategy?: { enabledRoutes?: Array<'oem_odm' | 'wholesale_distribution' | 'consumer_retail'>; routeStrategies?: Record<string, { targetBuyerRoles?: string[]; primaryCta?: string }> };
 }
 
-interface VideoKickoff {
+export interface VideoKickoff {
   source?: 'inspiration_analysis' | 'inspiration_image_post' | 'seedance_video' | string;
   script?: string;
   scriptType?: 'voiceover' | 'storyboard';
@@ -1562,6 +1263,8 @@ interface VideoKickoff {
     };
   };
 }
+
+type ReferenceVoiceStrength = 'light' | 'balanced' | 'strong';
 
 function normalizedSourceToken(value?: string): string {
   const raw = String(value || '').trim();
@@ -1666,258 +1369,6 @@ function kickoffClipSnapshot(kickoff: VideoKickoff | null): Clip | null {
   });
 }
 
-const LEAD_PACKAGE_ROLE_LABELS: Record<string, string> = {
-  buyer_attention: '第 1 组 · 吸引目标买家',
-  capability_explanation: '第 2 组 · 解释合作能力',
-  supplier_trust: '第 3 组 · 建立供应商信任',
-};
-
-function LeadContentPackagePreview({ value, imageUrl }: { value: LeadContentPackageResult; imageUrl?: string }) {
-  return (
-    <div className="mt-4 space-y-3">
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-bold text-emerald-900">三组获客内容包</p>
-          <button type="button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(value, null, 2))} className="text-xs font-bold text-emerald-700">复制全部</button>
-        </div>
-        <p className="mt-1 text-xs leading-relaxed text-emerald-800">{value.strategySummary || '按买家注意、合作能力、供应商信任依次发布，形成连续承接。'}</p>
-      </div>
-      {imageUrl && (
-        <div className="overflow-hidden rounded-xl border border-border bg-white">
-          <div className="border-b border-border px-3 py-2 text-[11px] font-bold text-text-secondary">第 1 组首图预览</div>
-          <img src={imageUrl} alt="获客内容包首图预览" className="max-h-[520px] w-full object-contain" />
-        </div>
-      )}
-      <div className="grid gap-3 xl:grid-cols-3">
-        {value.items.map((item, itemIndex) => (
-          <article key={`${item.role}-${itemIndex}`} className="rounded-xl border border-border bg-surface-2 p-3">
-            <p className="text-[10px] font-bold text-accent">{LEAD_PACKAGE_ROLE_LABELS[item.role] || item.role}</p>
-            <h4 className="mt-1 text-sm font-bold text-text-primary">{item.title}</h4>
-            <p className="mt-1 text-[11px] leading-relaxed text-text-muted">目标：{item.objective}</p>
-            <div className="mt-3 space-y-2">
-              {item.slides.map((slide, slideIndex) => (
-                <div key={`${slide.index}-${slideIndex}`} className="rounded-lg border border-border/70 bg-white p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-black text-accent">{slide.index || slideIndex + 1}</span>
-                    <span className="text-[9px] text-text-muted">{slide.assetRole}</span>
-                  </div>
-                  <p className="mt-1 text-[11px] font-bold text-text-primary">{slide.headline}</p>
-                  <p className="mt-1 text-[10px] leading-relaxed text-text-secondary">{slide.body}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 border-t border-border pt-3 text-[10px] leading-relaxed text-text-secondary">
-              <p><span className="font-bold text-text-primary">CTA：</span>{item.cta}</p>
-              <p className="mt-1"><span className="font-bold text-text-primary">私信开场：</span>{item.dmOpening}</p>
-            </div>
-          </article>
-        ))}
-      </div>
-      {value.referenceModulesUsed.length > 0 && (
-        <div className="rounded-xl border border-border bg-surface-2 p-3">
-          <p className="text-xs font-bold text-text-primary">从对标图文保留的通用元素</p>
-          <div className="mt-2 grid gap-2 md:grid-cols-2">
-            {value.referenceModulesUsed.map((module, index) => (
-              <div key={`${module.module}-${index}`} className="rounded-lg bg-white p-2 text-[10px] leading-relaxed text-text-secondary">
-                <p className="font-bold text-text-primary">{module.module}</p>
-                <p className="mt-1">证据：{module.evidence}</p>
-                <p className="mt-1 text-text-muted">套用：{module.application}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {value.fieldsToConfirm.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-          生成图片或发布前需补充确认：{value.fieldsToConfirm.join('、')}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BenchmarkVideoPreview({ kickoff, embedded = false }: { kickoff: VideoKickoff | null; embedded?: boolean }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const playRequestRef = useRef(0);
-  const [playbackUrl, setPlaybackUrl] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [playbackError, setPlaybackError] = useState('');
-  const video = kickoff?.video;
-  const declaredAspectRatio = Number(video?.aspectRatio || kickoff?.generatedVideo?.aspectRatio)
-    || (video?.width && video?.height ? video.width / video.height : 0)
-    || (kickoff?.generatedVideo?.width && kickoff?.generatedVideo?.height ? kickoff.generatedVideo.width / kickoff.generatedVideo.height : 0);
-  const [mediaAspectRatio, setMediaAspectRatio] = useState(declaredAspectRatio || 9 / 16);
-  const isImageReference = video?.contentFormat === 'image';
-  const poster = video?.thumbnail || video?.aiAnalysis?.materialPoster || kickoff?.generatedVideo?.poster || '';
-  const rawUrl = video?.videoUrl || video?.aiAnalysis?.materialUrl || kickoff?.generatedVideo?.url || '';
-  const apiUrl = rawUrl.replace(/\/media(?=\?|$)/, '/media-url');
-
-  useEffect(() => {
-    playRequestRef.current += 1;
-    const element = videoRef.current;
-    if (element) {
-      element.pause();
-      element.removeAttribute('src');
-      delete element.dataset.sourceUrl;
-      element.load();
-    }
-    setPlaybackUrl('');
-    setPlaying(false);
-    setPlaybackError('');
-    setMediaAspectRatio(declaredAspectRatio || 9 / 16);
-  }, [apiUrl]);
-  const ensurePlaybackUrl = async () => {
-    if (playbackUrl) return playbackUrl;
-    if (!apiUrl) return '';
-    if (!apiUrl.includes('/api/overseas/videos/')) {
-      setPlaybackUrl(apiUrl);
-      return apiUrl;
-    }
-    if (loading) return '';
-    setLoading(true);
-    try {
-      const response = await fetch(apiUrl, { headers: authHeader(), credentials: 'same-origin' });
-      if (!response.ok) return '';
-      const next = String(((await response.json()) as { url?: string }).url || '');
-      setPlaybackUrl(next);
-      return next;
-    } finally {
-      setLoading(false);
-    }
-  };
-  const play = async () => {
-    const requestId = ++playRequestRef.current;
-    setPlaybackError('');
-    const url = await ensurePlaybackUrl();
-    if (requestId !== playRequestRef.current) return;
-    if (!url) {
-      setPlaybackError('视频文件暂不可用，可点击右上角“原站”查看');
-      return;
-    }
-    const element = videoRef.current;
-    if (!element) return;
-    try {
-      const usedUrl = await playVideoWithAuthenticatedFallback(element, url);
-      if (requestId !== playRequestRef.current) return;
-      if (usedUrl !== playbackUrl) setPlaybackUrl(usedUrl);
-      setPlaybackError('');
-      setPlaying(true);
-    } catch (error: unknown) {
-      if (requestId !== playRequestRef.current) return;
-      setPlaying(false);
-      const message = error instanceof Error ? error.message : String(error || '');
-      if (error instanceof DOMException && error.name === 'AbortError' && /interrupted by a new load/i.test(message)) return;
-      setPlaybackError(message ? `视频加载失败：${message}` : '视频加载或解码失败，可点击右上角“原站”查看');
-    }
-  };
-  const pause = () => {
-    if (!videoRef.current) return;
-    videoRef.current.pause();
-    setPlaying(false);
-  };
-  const togglePlayback = () => {
-    if (videoRef.current && !videoRef.current.paused) pause();
-    else void play();
-  };
-
-  if (embedded) {
-    return (
-      <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black">
-        {video?.sourceUrl && (
-          <a
-            href={video.sourceUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-md bg-black/55 px-2 py-1 text-[10px] font-bold text-white backdrop-blur"
-          >
-            原站 <ExternalLink size={11} />
-          </a>
-        )}
-        {!video ? (
-          <div className="flex flex-col items-center justify-center px-8 text-center text-white/65">
-            <Film size={28} className="opacity-50" />
-            <p className="mt-3 text-xs font-bold">尚未载入对标内容</p>
-          </div>
-        ) : isImageReference ? (
-          poster
-            ? <img src={poster} alt="竞品图文首图" className="h-full w-full object-contain" />
-            : <ImageIcon size={32} className="text-white/35" />
-        ) : (
-          <div className="group relative flex h-full w-full cursor-pointer items-center justify-center overflow-hidden bg-black" onClick={togglePlayback}>
-            <video
-              ref={videoRef}
-              poster={poster || undefined}
-              muted
-              playsInline
-              loop
-              preload="metadata"
-              className="h-full w-full object-contain"
-              onLoadedMetadata={event => {
-                const element = event.currentTarget;
-                if (element.videoWidth > 0 && element.videoHeight > 0) setMediaAspectRatio(element.videoWidth / element.videoHeight);
-              }}
-              onPlay={() => setPlaying(true)}
-              onPause={() => setPlaying(false)}
-              onError={() => {
-                setPlaying(false);
-                setPlaybackError('视频加载或解码失败，可点击右上角“原站”查看');
-              }}
-            />
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10 transition group-hover:bg-transparent">
-              {!playing && <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"><Play size={18} fill="currentColor" /></span>}
-            </div>
-            {loading && <span className="absolute right-3 top-3 rounded-md bg-black/55 px-2 py-1 text-[9px] text-white">加载中…</span>}
-            {playbackError && <span className="absolute inset-x-3 bottom-3 rounded-md bg-black/70 px-3 py-2 text-center text-[10px] leading-4 text-white">{playbackError}</span>}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <aside className="sticky top-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="min-w-0">
-          <p className="text-sm font-black text-text-primary">{isImageReference ? '对标图文' : '对标视频'}</p>
-          <p className="mt-0.5 truncate text-[10px] text-text-muted">{video?.platform || '尚未载入'} · {isImageReference ? '完整轮播证据' : '悬浮播放'}</p>
-        </div>
-        {video?.sourceUrl && <a href={video.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-accent">原站 <ExternalLink size={11} /></a>}
-      </div>
-      {video ? (
-        <div className="p-4">
-          {isImageReference ? (
-            <div className="relative mx-auto aspect-[4/5] max-h-[600px] overflow-hidden rounded-xl bg-surface-2">
-              {poster ? <img src={poster} alt="竞品图文首图" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-text-muted"><ImageIcon size={28} className="opacity-35" /></div>}
-              <span className="absolute left-2 top-2 rounded-md bg-black/55 px-2 py-1 text-[9px] font-bold text-white backdrop-blur">首图参考</span>
-            </div>
-          ) : (
-            <div className="flex max-h-[600px] items-center justify-center overflow-hidden">
-              <div className="group relative max-h-full max-w-full cursor-pointer overflow-hidden rounded-xl bg-black" style={{ aspectRatio: mediaAspectRatio, width: mediaAspectRatio >= 1 ? '100%' : 'auto', height: mediaAspectRatio < 1 ? '100%' : 'auto' }} onClick={togglePlayback}>
-              <video ref={videoRef} poster={poster || undefined} muted playsInline loop preload="metadata" className="h-full w-full object-contain" onLoadedMetadata={event => { const element = event.currentTarget; if (element.videoWidth > 0 && element.videoHeight > 0) setMediaAspectRatio(element.videoWidth / element.videoHeight); }} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onError={() => { setPlaying(false); setPlaybackError('视频加载或解码失败，可点击右上角“原站”查看'); }} />
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15 transition group-hover:bg-transparent">
-                {!playing && <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"><Play size={18} fill="currentColor" /></span>}
-              </div>
-              {loading && <span className="absolute right-2 top-2 rounded-md bg-black/55 px-2 py-1 text-[9px] text-white">加载中…</span>}
-              {playbackError && <span className="absolute inset-x-2 bottom-2 rounded-md bg-black/70 px-2 py-1.5 text-center text-[9px] leading-4 text-white">{playbackError}</span>}
-              </div>
-            </div>
-          )}
-          <p className="mt-3 line-clamp-2 text-xs font-bold leading-relaxed text-text-primary">{video.title || kickoff?.referenceAnalysis?.title || '未命名对标视频'}</p>
-          <p className="mt-1 text-[10px] text-text-muted">{isImageReference ? `${video.aiAnalysis?.imageEvidence?.observedFacts?.length || 0} 张逐图证据已带入，只复用可见布局与信息模块` : `${video.duration ? `${video.duration}s · ` : ''}点击视频播放或暂停`}</p>
-        </div>
-      ) : (
-        <div className="flex min-h-[360px] flex-col items-center justify-center px-8 text-center">
-          <Film size={28} className="text-text-muted opacity-35" />
-          <p className="mt-3 text-xs font-bold text-text-secondary">尚未载入对标内容</p>
-          <p className="mt-1 text-[10px] leading-relaxed text-text-muted">从灵感中心选择视频或图文并发起创作后，将在这里显示。</p>
-        </div>
-      )}
-    </aside>
-  );
-}
-
-type ReferenceVoiceStrength = 'light' | 'balanced' | 'strong';
 function referenceVoiceProfile(kickoff: VideoKickoff | null) {
   const ref = kickoff?.referenceAnalysis;
   const details = ref?.details || [];
@@ -2008,7 +1459,7 @@ function scriptQualityWarnings(response: StudioScriptResult): string[] {
   return Array.from(new Set(warnings.map(item => String(item).trim()).filter(Boolean)));
 }
 
-function scriptQualityFailure(response: StudioScriptResult, fallback: string, retainRejectedDraft = false): string | null {
+export function scriptQualityFailure(response: StudioScriptResult, fallback: string, retainRejectedDraft = false): string | null {
   const status = normalizedScriptQualityStatus(response);
   const scriptAvailable = Boolean(response.script?.trim());
   if (scriptAvailable && status !== 'rejected' && status !== 'failed') return null;
@@ -2018,7 +1469,7 @@ function scriptQualityFailure(response: StudioScriptResult, fallback: string, re
     : response.validationWarnings?.length
       ? response.validationWarnings
       : [];
-  const reason = reasons.map(item => String(item).trim()).filter(Boolean).slice(0, 4).join('；')
+  const reason = reasons.map(item => String(item).trim()).filter(Boolean).map((issue, issueIndex) => `${issueIndex + 1}. ${issue}`).join('；')
     || response.error
     || response.fallbackReason
     || fallback;
@@ -3632,75 +3083,8 @@ function CoverFace({ coverUrl, frameUrl, frameType, fallbackVideoUrl, title, sty
 
 /* ════════════════════════════════════════════════════════════════════════ */
 
-function VariationChipEditor({
-  label,
-  hint,
-  value,
-  suggestions,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: string;
-  suggestions: string[];
-  onChange: (value: string) => void;
-}) {
-  const [draft, setDraft] = useState('');
-  const items = value.split(/[，,\n]/).map(item => item.trim()).filter(Boolean);
-  const commit = (candidate = draft) => {
-    const additions = candidate.split(/[，,\n]/).map(item => item.trim()).filter(Boolean);
-    if (!additions.length) return;
-    onChange([...new Set([...items, ...additions])].join('，'));
-    setDraft('');
-  };
-  const remove = (item: string) => onChange(items.filter(current => current !== item).join('，'));
 
-  return (
-    <div className="rounded-xl border border-border bg-surface p-3.5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold text-text-primary">{label}</p>
-          <p className="mt-0.5 text-[10px] text-text-muted">{hint}</p>
-        </div>
-        <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{items.length || 0} 个</span>
-      </div>
-      <div className="mt-2.5 flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-border bg-surface-2 p-1.5 focus-within:border-accent">
-        {items.map(item => (
-          <span key={item} className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-medium text-text-primary shadow-sm">
-            {item}
-            <button type="button" onClick={() => remove(item)} className="text-text-muted hover:text-red-500" aria-label={`删除${item}`}><X size={11} /></button>
-          </span>
-        ))}
-        <input
-          value={draft}
-          onChange={event => {
-            const next = event.target.value;
-            if (/[，,\n]$/.test(next)) commit(next);
-            else setDraft(next);
-          }}
-          onKeyDown={event => {
-            if (event.key === 'Enter') { event.preventDefault(); commit(); }
-            if (event.key === 'Backspace' && !draft && items.length) remove(items[items.length - 1]!);
-          }}
-          onBlur={() => commit()}
-          placeholder={items.length ? '继续添加…' : '输入后按回车添加'}
-          className="min-w-28 flex-1 bg-transparent px-1 py-1 text-[11px] text-text-primary outline-none placeholder:text-text-muted"
-        />
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className="text-[10px] text-text-muted">快捷添加</span>
-        {suggestions.filter(item => !items.includes(item)).slice(0, 4).map(item => (
-          <button key={item} type="button" onMouseDown={event => event.preventDefault()} onClick={() => commit(item)}
-            className="rounded-md bg-surface-2 px-2 py-1 text-[10px] text-text-secondary transition hover:bg-accent/10 hover:text-accent">
-            + {item}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string } = {}) {
+export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId }: { onNavigate?: (p: Page) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null } = {}) {
   const [stepIdx, setStepIdx] = useState(0);
   const [activeStoryboardSlotId, setActiveStoryboardSlotId] = useState('');
   const [canvasView, setCanvasView] = useState<'reference' | 'creation'>('creation');
@@ -4099,7 +3483,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         if (!alive) return;
         const options = buildAiProductOptions(profile);
         setProductOptions(current => {
-          const preserved = current.filter(item => item.id === 'kickoff-product');
+          const preserved = current.filter(item => item.id === 'kickoff-product' || item.id.startsWith('social-task-product:'));
           const seen = new Set(preserved.map(item => item.id));
           return [...preserved, ...options.filter(item => !seen.has(item.id))];
         });
@@ -4112,7 +3496,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           : configuredVoiceLanguages[0];
         setEnterpriseVoiceLangs(configuredVoiceLanguages);
         setVoiceLangs(current => current.length ? current : [defaultVoiceLanguage || 'zh']);
-        if (defaultVoiceLanguage) {
+        if (defaultVoiceLanguage && !studioSettingsEditedRef.current) {
           setLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
           setActiveVoiceLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
         }
@@ -4190,6 +3574,25 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [storyboardVideoVersions, setStoryboardVideoVersions] = useState<Record<string, VideoGenerationVersion[]>>({});
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
+  useStudioSocialTaskHydration({
+    taskId: socialContentTaskId,
+    canApply: () => !projectId && !autoGen.current && !studioSettingsEditedRef.current,
+    onHydrate: seed => {
+      studioSettingsEditedRef.current = true;
+      autoGen.current = true;
+      setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
+      setPlatform(seed.platform); setRatio(seed.aspectRatio); setLang(seed.languageCodes[0]!);
+      setVoiceLangs(seed.languageCodes); setActiveVoiceLang(seed.languageCodes[0]!);
+      setProductInfo(seed.productInfo); setAudience(seed.audience); setPrimaryCta(seed.primaryCta); setSellingPoints(seed.sellingPoints);
+      const taskProduct = productOptionFromInfo(seed.productInfo, `social-task-product:${socialContentTaskId}`);
+      if (taskProduct) {
+        setProductOptions(current => [taskProduct, ...current.filter(item => item.id !== taskProduct.id)]);
+        setSelectedProductIds([taskProduct.id]);
+      }
+      if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
+      if (seed.unsupportedLanguages.length) setModeNotice(`本次任务中的${seed.unsupportedLanguages.join('、')}暂不在创作语言列表中，请先选择可用语言。`);
+    },
+  });
   const [showProjects, setShowProjects] = useState(false);
   const [workflowProjectSelectionPending, setWorkflowProjectSelectionPending] = useState(
     () => ['content_production', 'content_quality_gate'].includes(workflowContext?.taskKey || ''),
@@ -5232,7 +4635,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     });
   };
 
-  const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string }) => {
+  const goPreview = async (scriptOverride?: string, renderOverride?: { language?: string; voiceoverUrl?: string; voiceoverDur?: number; cues?: SubCue[]; outputOnly?: boolean; timeline?: typeof renderTimeline; bgmId?: string; serverPreviewRequired?: boolean }) => {
     const blockers = storyboardSlots.flatMap(slot => shotBlockers(productionFor(slot), shotProductionContext).map(message => `${slot.title}：${message}`));
     if (blockers.length) { setModeNotice(blockers.join('；')); throw new Error(blockers.join('\n')); }
     setStepIdx(STEPS.findIndex(s => s.id === 'preview'));
@@ -5341,7 +4744,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
     // 2) 桌面客户端：用本机原生 ffmpeg 真实合成出片
     const desktop = getDesktopRender();
-    if (desktop?.available) {
+    if (desktop?.available && !renderOverride?.serverPreviewRequired) {
       const unsub = desktop.onProgress(p => {
         if (renderToken.current === token) setRenderPct(Math.min(99, Math.round(p)));
       });
@@ -5444,7 +4847,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (contentMode === 'video' && nextStep === 'material') setActiveFolder('all');
     setStepIdx(i => Math.min(i + 1, activeSteps.length - 1));
   };
-  const renderSelectedLanguageVersion = async (selectedKey?: string) => {
+  const renderSelectedLanguageVersion = async (selectedKey?: string, serverPreviewRequired = false) => {
     const combinations = buildRenderableVideoVersions();
     if (!combinations.length) {
       alert('暂无可生成的视频版本。请先完成有效脚本，并为全部分镜匹配有效素材。');
@@ -5473,7 +4876,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         cues: audio.cues,
         outputOnly: true,
         timeline: combination.timeline as typeof renderTimeline,
-        bgmId,
+        bgmId, serverPreviewRequired,
       });
       const previewUrl = outputPath ? renderPreviewUrlsRef.current[outputPath] : undefined;
       setLanguageRenderOutputs(prev => ({ ...prev, [key]: { status: 'done', path: outputPath || undefined, previewUrl } }));
@@ -7944,13 +7347,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const restoredContentMode = s.contentMode === 'poster' ? 'poster' : 'video';
     setContentMode(restoredContentMode);
     const restoredSteps = restoredContentMode === 'poster' ? POSTER_STEPS : STEPS;
-    const restoredStepId = typeof s.activeStepId === 'string' ? s.activeStepId as StepId : null;
+    const savedStep = s.activeStepId ?? s.workspaceStep;
+    const restoredStepId = typeof savedStep === 'string' ? savedStep as StepId : null;
     const restoredLegacyBgmStep = restoredContentMode === 'video' && restoredStepId === 'bgm';
     const restoredStepIndex = restoredLegacyBgmStep ? restoredSteps.findIndex(item => item.id === 'script') : restoredStepId ? restoredSteps.findIndex(item => item.id === restoredStepId) : -1;
     setStepIdx(restoredStepIndex >= 0 ? restoredStepIndex : 0);
     setActiveStoryboardSlotId(typeof s.activeStoryboardSlotId === 'string' ? s.activeStoryboardSlotId : '');
     setCanvasView(s.canvasView === 'reference' ? 'reference' : 'creation');
-    setScriptStageTab(restoredLegacyBgmStep || s.scriptStageTab === 'bgm' ? 'bgm' : s.scriptStageTab === 'voiceover' || s.scriptStageTab === 'audio' || s.scriptStageTab === 'subtitle' ? s.scriptStageTab : 'theme');
+    const savedScriptStage = s.scriptStageTab ?? s.workspaceScriptStage;
+    setScriptStageTab(restoredLegacyBgmStep ? 'bgm' : (['theme', 'script', 'voiceover', 'audio', 'subtitle', 'bgm'] as const).find(stage => stage === savedScriptStage) || 'theme');
     setLastGeneratedSetupSignature(typeof s.lastGeneratedSetupSignature === 'string' ? s.lastGeneratedSetupSignature : '');
     if (typeof s.posterStyle === 'string' && POSTER_STYLES.some(item => item.id === s.posterStyle)) {
       setPosterStyle(s.posterStyle as typeof posterStyle);
@@ -10494,7 +9899,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   {referenceAnalysisIncomplete && (
                     <button
                       type="button"
-                      onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view: 'materials' } }))}
+                      onClick={() => onNavigate?.('socialInspiration')}
                       className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-800 hover:bg-amber-100"
                     >
                       返回灵感中心补全分析
@@ -11772,7 +11177,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <p className="mt-1 text-[11px] text-text-muted">每个版本可独立选择封面底图；标题和艺术字可单独改，也可批量同步。</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{Object.keys(materialVersionCovers).length}/{coverMaterialVersions.length} 已配置</span>
+                    <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{coverMaterialVersions.filter(item => Boolean(materialVersionCovers[item.key])).length}/{coverMaterialVersions.length} 已配置</span>
                     <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-black text-text-secondary hover:bg-surface-2">
                       <Sparkles size={12} />批量同步参数
                     </button>
@@ -12174,7 +11579,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const primaryGeneratesSetupScript = contentMode === 'video' && step === 'mode' && (!hasTimestampScript || setupChangedSinceGeneration);
   const primaryReturnsToExistingScript = contentMode === 'video' && step === 'mode' && hasTimestampScript && !setupChangedSinceGeneration;
   const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
-  const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster';
+  const socialPosterArtifactReady = isSocialArtifactMediaSourceEligible({ source: posterImageUrl, contentMode: 'poster' });
+  const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster' && !(socialContentTaskId && socialPosterArtifactReady);
   const primaryGeneratesCopy = contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover' && !hasRequestedVoiceDrafts;
   const primaryGeneratesVoice = contentMode === 'video' && step === 'script' && scriptStageTab === 'audio' && voiceoverMode === 'ai' && !hasRequestedVoiceovers;
   const primaryGeneratesSubtitles = contentMode === 'video' && step === 'script' && scriptStageTab === 'subtitle' && !hasRequestedSubtitles;
@@ -12443,8 +11849,22 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const workbenchHasFormalVideo = Boolean(
     renderOutputPath || Object.values(languageRenderOutputs).some(output => output.status === 'done' && output.path),
   );
-  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && !workbenchHasFormalVideo;
+  const socialVideoArtifactReady = isSocialArtifactMediaSourceEligible({ source: workbenchFormalPreviewUrl, contentMode: 'video' });
+  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && (!workbenchHasFormalVideo || Boolean(socialContentTaskId && !socialVideoArtifactReady));
   const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
+  const { ready: primarySubmitsSocialArtifact, submitting: socialArtifactSubmitting, submit: submitCurrentSocialArtifact } = useStudioSocialArtifactSubmission({
+    enabled: Boolean(socialContentTaskId && (contentMode === 'poster' ? step === 'poster' && socialPosterArtifactReady : step === 'preview' && socialVideoArtifactReady)),
+    taskId: socialContentTaskId,
+    snapshot: {
+      sourceKey: `studio_${projectId || generationSessionId.current}`.replace(/[^a-z0-9:_-]/gi, '_').slice(0, 200),
+      title: projectTitle, contentMode, platform,
+      language: contentMode === 'video' ? activeVoiceLang : lang, aspectRatio: ratio, durationSeconds: contentMode === 'video' ? duration : null,
+      body: contentMode === 'poster' ? caption.trim() || posterJsonText.trim() : caption.trim() || voiceDrafts[activeVoiceLang]?.trim() || activeSpokenScript || script,
+      coverTitle, projectId, outputUrl: contentMode === 'poster' ? posterImageUrl : workbenchFormalPreviewUrl,
+    },
+    onSubmitted: () => { setSavedTick(true); setAutosaveStatus('saved'); setLastAutosavedAt(new Date()); window.setTimeout(() => setSavedTick(false), 1_800); },
+    onNotice: setModeNotice,
+  });
   const generateSetupScriptAndContinue = async () => {
     if (mode === 'material' && !selectedVisualClips.length) {
       setModeNotice('请先选择本次创作要使用的素材。脚本会根据你明确选择的画面规划分镜。');
@@ -12466,7 +11886,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setModeNotice('请先生成并确认分镜脚本，再继续口播、翻译和配音。');
       return;
     }
-    if (step === 'preview' && workbenchHasFormalVideo) {
+    if (primarySubmitsSocialArtifact) return void submitCurrentSocialArtifact();
+    if (step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo) {
       goPublishCurrentWork();
       return;
     }
@@ -12502,13 +11923,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       return;
     }
     if (primaryGeneratesVideo) {
-      void renderSelectedLanguageVersion();
+      void renderSelectedLanguageVersion(undefined, Boolean(socialContentTaskId));
       return;
     }
     next();
   };
 
-  const primaryActionLabel = primaryGeneratesPoster
+  const primaryActionLabel = primarySubmitsSocialArtifact ? '提交确认' : primaryGeneratesPoster
     ? posterJsonText ? '重新生成图文' : '生成图文'
     : primaryGeneratesSetupScript
       ? hasTimestampScript ? '更新脚本' : '生成脚本'
@@ -12523,7 +11944,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         : primaryGeneratesSubtitles
           ? '一键生成字幕文案'
         : primaryGeneratesVideo
-          ? '生成成片'
+          ? socialContentTaskId && workbenchHasFormalVideo ? '生成可提交成片' : '生成成片'
       : step === 'script'
         ? scriptStageTab === 'theme'
           ? '确认分镜'
@@ -12574,8 +11995,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       : step === 'script' && !canNext && !primaryGeneratesStoryboard
         ? voiceoverMode === 'unselected' ? '请选择 AI 配音、上传口播或无口播。' : '至少完成一种语言的有效口播，或明确选择无口播。'
         : undefined;
-  const primaryActionLoading = primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : primaryGeneratesCopy ? voiceDraftLoading : primaryGeneratesSubtitles ? subtitleGenerating : ttsLoading || rendering || batchRenderingLangs;
-  const primaryActionDisabled = primaryGeneratesPoster
+  const primaryActionLoading = primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster ? posterLoading : primaryGeneratesSetupScript || primaryGeneratesStoryboard ? modeActionLoading : primaryGeneratesCopy ? voiceDraftLoading : primaryGeneratesSubtitles ? subtitleGenerating : ttsLoading || rendering || batchRenderingLangs;
+  const primaryActionDisabled = primarySubmitsSocialArtifact ? socialArtifactSubmitting : primaryGeneratesPoster
     ? posterLoading
     : primaryGeneratesSetupScript || primaryGeneratesStoryboard
       ? storyboardGenerationBlocked || (primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length)
@@ -12601,7 +12022,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
   const sourceWorkflowContext = agentProduction.active ? workflowContext : projectWorkflowContext;
   const agentSourceContext = sourceWorkflowContext?.taskId
-    ? `${sourceWorkflowContext.preview ? '计划预览' : '内容 Agent'} · ${workflowTaskLabel[sourceWorkflowContext.taskKey || 'content_production'] || sourceWorkflowContext.taskKey}`
+    ? `${sourceWorkflowContext.preview ? '制作方案预览' : '灵小图'} · ${workflowTaskLabel[sourceWorkflowContext.taskKey || 'content_production'] || '内容制作'}`
     : studioAgentSourceLabel(videoKickoff?.actionContext?.source || videoKickoff?.source);
   const focusProductContext = activeProductLabel || '待选择企业产品';
   const productionEditorSlot = storyboardSlots.find(item => item.id === productionEditorId);
@@ -12801,7 +12222,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   ) : null;
 
   return (
-    <div className="flex flex-col h-full relative">
+    <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
       {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
@@ -12845,7 +12266,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               title="已确认内容"
               description="只显示会影响本次生成的输入"
               items={[
-                { id: 'agent-source', label: 'Agent 来源', value: agentSourceContext },
+                { id: 'agent-source', label: '内容来源', value: agentSourceContext },
                 { id: 'product', label: '焦点产品', value: activeProductLabel, emptyLabel: '待选择' },
                 { id: 'theme', label: '主题', value: activeVideoTheme.title },
                 { id: 'audience', label: '目标受众', value: audience.trim(), emptyLabel: '待填写' },
@@ -12868,10 +12289,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         propertyDescription={workbenchPropertyDescription}
         propertyPanel={(
           <div className="space-y-4">
-            <section aria-label="Agent 任务上下文" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">Agent 任务上下文</p>
+            <section aria-label="本次创作信息" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">本次创作信息</p>
               <dl className="mt-2 space-y-1.5 text-[10px] leading-4">
-                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">来源</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
+                <div className="flex gap-2"><dt className="shrink-0 text-text-muted">创作方式</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
                 <div className="flex gap-2"><dt className="shrink-0 text-text-muted">焦点产品</dt><dd className="min-w-0 break-words font-bold text-text-primary">{focusProductContext}</dd></div>
               </dl>
             </section>
@@ -13163,9 +12584,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           onClick: agentProduction.active ? () => void agentProduction.execute().catch(error => setModeNotice(error.message)) : runPrimaryAction,
           disabled: agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
           loading: agentProduction.busy || primaryActionLoading,
-          loadingLabel: modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
+          loadingLabel: socialArtifactSubmitting ? '正在提交成品' : modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
           blockReason: agentProduction.active ? undefined : primaryActionBlockedReason,
-          icon: step === 'preview' && workbenchHasFormalVideo ? <Send size={15} /> : <ChevronRight size={15} />,
+          icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >
         <div className={`relative flex h-full min-h-[360px] w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-slate-300/70 bg-[#e7e9ec] p-3 shadow-inner'}`}>

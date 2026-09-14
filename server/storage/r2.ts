@@ -6,6 +6,7 @@ import {
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createReadStream } from 'node:fs';
 
 function getR2Client(): S3Client {
   const accountId = process.env.R2_ACCOUNT_ID?.trim();
@@ -66,6 +67,23 @@ export async function r2Upload(opts: {
   );
   const publicUrl = (process.env.R2_PUBLIC_URL ?? '').replace(/\/$/, '');
   return `${publicUrl}/${opts.key}`;
+}
+
+/** Upload a local file without materializing the complete object in memory. */
+export async function r2UploadFile(opts: {
+  key: string;
+  filePath: string;
+  contentType: string;
+  contentLength: number;
+}): Promise<void> {
+  const client = getR2Client();
+  await client.send(new PutObjectCommand({
+    Bucket: getBucket(),
+    Key: opts.key,
+    Body: createReadStream(opts.filePath),
+    ContentType: opts.contentType,
+    ContentLength: opts.contentLength,
+  }));
 }
 
 /** Download an object from R2 as a Buffer */

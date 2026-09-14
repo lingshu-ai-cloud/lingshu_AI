@@ -10,7 +10,7 @@ import { translationRouter } from './routes/translation.js';
 import { competitorRouter } from './routes/competitor.js';
 import { competitorAccountsRouter } from './routes/competitorAccounts.js';
 import { strategyRouter } from './routes/strategy.js';
-import { initCrawlerOpsWorker, initPocketBaseVideoBackfill, videosRouter } from './routes/videos.js';
+import { videosRouter } from './routes/videos.js';
 import { scriptsRouter } from './routes/scripts.js';
 import { trendsRouter } from './routes/trends.js';
 import { assetsRouter } from './routes/assets.js';
@@ -19,7 +19,7 @@ import { agentChatRouter } from './routes/agentChat.js';
 import { draftReplyRouter } from './routes/draftReply.js';
 import { customerSuggestionsRouter } from './routes/customerSuggestions.js';
 import { channelsRouter } from './routes/channels.js';
-import { schedulerRouter, initScheduler } from './routes/scheduler.js';
+import { schedulerRouter } from './routes/scheduler.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { studioRouter } from './routes/studio.js';
 import { authRouter } from './routes/auth.js';
@@ -31,22 +31,23 @@ import { adminRouter } from './routes/admin.js';
 import { assistantThreadsRouter } from './routes/assistantThreads.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { isDemoMode, demoLimits } from './lib/demo.js';
-import { initTenantPlatformTokenMonitor } from './routes/tenantPlatformTokenMonitor.js';
 import { assistLinksRouter } from './routes/assistLinks.js';
-import { initWhatsAppCustomerMaintenance } from './whatsapp/historyImport.js';
 import { whatsappOAuthRouter } from './routes/whatsappOAuth.js';
 import { publishingRecoveryRouter } from './routes/publishingRecovery.js';
 import { publishingRouter } from './routes/publishing.js';
-import { initScheduledPublisher } from './publishing/scheduledPublisher.js';
 import { backfillTrendVideoContentFormat, ensureDeliveryCollections, ensureTrendVideoAnalysisCapacity } from './storage/ensureDeliveryCollections.js';
 import { supportAccessRouter } from './routes/supportAccess.js';
-import { crawlWorkerRouter, initCrawlWorkerCloudFallback } from './routes/crawlWorker.js';
+import { crawlWorkerRouter } from './routes/crawlWorker.js';
 import { requireScopedAsset, syncAssetSession } from './lib/assetAccess.js';
 import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
 import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
+import { startBackgroundJobs } from './runtime/backgroundJobs.js';
+import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
+import { starter198Router } from './starter198/router.js';
+import { requireAuth } from './middleware/auth.js';
 import { quoteSkillRouter } from './routes/quoteSkill.js';
 import { platformAdsRouter } from './routes/platformAds.js';
 import { platformAdHandoffRouter } from './routes/platformAdHandoff.js';
@@ -54,11 +55,10 @@ import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
 import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
 import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
 import { platformAdImportsRouter } from './routes/platformAdImports.js';
-import { startAdAutomationWorker } from './platformAds/automation.js';
-import { initFollowupDispatchWorker } from './digitalEmployees/followupDispatchWorker.js';
-import { initDigitalEmployeeRuntime } from './digitalEmployees/runtimeOrchestrator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const processRole = parseProcessRole(process.env.PROCESS_ROLE);
+console.log(`[runtime] role=${processRole} http=${processRoleStartsHttp(processRole)} backgroundJobs=${processRoleStartsBackgroundJobs(processRole)}`);
 await ensureLocalPocketBase();
 configureNetworkProxy();
 try {
@@ -101,13 +101,20 @@ app.use(compression({
     return compression.filter(req, res);
   },
 }));
-// Supports base64-encoded admin/manual video uploads (鈮?0MB raw video).
-app.use(express.json({
-  limit: '120mb',
-  verify: (req, _res, buf) => {
-    (req as any).rawBody = Buffer.from(buf);
-  },
-}));
+const captureRawJsonBody: NonNullable<Parameters<typeof express.json>[0]>['verify'] = (req, _res, buf) => {
+  (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+};
+const jsonBody = (limit: string) => express.json({ limit, verify: captureRawJsonBody });
+
+// Large JSON bodies are legacy base64 upload compatibility paths only. Authenticate
+// before buffering them and keep the rest of the API at a small default limit.
+// New clients should use the streamed `/studio/materials/file` endpoint.
+app.use('/api/overseas/studio/materials', requireAuth, jsonBody('120mb'));
+app.use('/api/overseas/enterprise/assets', requireAuth, jsonBody('120mb'));
+app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody('30mb'));
+app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody('30mb'));
+app.use('/api/overseas/studio/bgm', requireAuth, jsonBody('30mb'));
+app.use(jsonBody('2mb'));
 app.use(syncAssetSession);
 
 app.get('/api/overseas/health', (_req, res) => {
@@ -134,6 +141,7 @@ app.use('/api/overseas/competitor-accounts', competitorAccountsRouter);
 app.use('/api/overseas/strategy', strategyRouter);
 
 // Core routes
+app.use('/api/overseas/starter-198', starter198Router);
 app.use('/api/overseas/videos', videosRouter);
 app.use('/api/overseas/scripts', scriptsRouter);
 app.use('/api/overseas/trends', trendsRouter);
@@ -174,16 +182,7 @@ app.use('/api/overseas/platform-ads', platformAdImportsRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 
-await initScheduler();
-initScheduledPublisher();
-initCrawlerOpsWorker();
-initPocketBaseVideoBackfill();
-initCrawlWorkerCloudFallback();
-initTenantPlatformTokenMonitor();
-await initWhatsAppCustomerMaintenance();
-initFollowupDispatchWorker();
-startAdAutomationWorker();
-initDigitalEmployeeRuntime();
+if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs();
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');
@@ -230,6 +229,10 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
-});
+if (processRoleStartsHttp(processRole)) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
+  });
+} else {
+  console.log('[overseas-agent] HTTP listener disabled for worker role');
+}

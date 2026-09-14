@@ -62,6 +62,8 @@ export interface PublicTenantPlatformApp {
   igUserId: string;
   youtubeChannelId: string;
   webhookVerifyToken: string;
+  webhookVerifyTokenSet: boolean;
+  webhookVerifyTokenLength: number;
   wecomEncodingAesKeySet: boolean;
   wecomEncodingAesKeyLength: number;
   webhookUrl: string;
@@ -188,7 +190,9 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
     pageId: numericAssetId(app.page_id),
     igUserId: numericAssetId(app.ig_user_id),
     youtubeChannelId: text(app.youtube_channel_id),
-    webhookVerifyToken: text(app.webhook_verify_token),
+    webhookVerifyToken: '',
+    webhookVerifyTokenSet: Boolean(text(app.webhook_verify_token)),
+    webhookVerifyTokenLength: text(app.webhook_verify_token).length,
     wecomEncodingAesKeySet: Boolean(wecomEncodingAesKey),
     wecomEncodingAesKeyLength: wecomEncodingAesKey.length,
     webhookUrl: app.platform === 'meta' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
@@ -220,6 +224,7 @@ export async function upsertTenantPlatformApp(input: {
   pageId?: string;
   igUserId?: string;
   youtubeChannelId?: string;
+  webhookVerifyToken?: string;
   wecomEncodingAesKey?: string;
   tokenType?: TenantTokenType;
   accessToken?: string;
@@ -232,7 +237,7 @@ export async function upsertTenantPlatformApp(input: {
   const patch: Record<string, unknown> = {
     tenant_id: input.tenantId,
     platform: input.platform,
-    webhook_verify_token: existing?.webhook_verify_token || randomToken(),
+    webhook_verify_token: input.webhookVerifyToken || existing?.webhook_verify_token || randomToken(),
     token_type: input.tokenType || existing?.token_type || 'user_60d',
     status: input.status || existing?.status || 'pending',
   };

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { followupItemContentHash } from './customerWorkflow.js';
 import { store } from '../storage/index.js';
 import { buildWeeklyPlan, normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
@@ -77,6 +76,10 @@ try {
  });
  assert.equal(currentExecutionAdapters(),undefined,'scoped adapters do not leak to production defaults');assert.equal(networkCalls,0);assert.equal((records.run_events||[]).filter(e=>e.type==='task.execution_failed').length,0,'no swallowed execution errors');
  const result={schemaVersion:1,generatedAt:new Date().toISOString(),mode:'isolated_mock_with_real_orchestrator',realBusinessRunModified:false,synthetic:true,networkCalls,taskCount:tasks.length,successfulTasks:tasks.filter(t=>t.status==='succeeded').length,coverage:{real:['domain plan DAG','dependency gates','proof predicates','approval preflight and decision handler','publishing calendar creation','task and run state transitions','weekly review aggregation','pending approval and completed-run idempotence','parallel adapter scope isolation'],simulated:['collection/analysis output','render and quality result','customer read model','segment and draft creation','platform and message provider receipts','human approval decisions'],notCovered:['real providers','OAuth/auth middleware','browser UI','real file rendering/vision','actual message delivery','natural customer attribution acquisition']},steps,statusHistory};
- fs.mkdirSync('reports/full-chain-monitor-20260906/mock-fixtures',{recursive:true});fs.writeFileSync('reports/full-chain-monitor-20260906/mock-fixtures/full-chain-results.json',JSON.stringify(result,null,2)+'\n');
- console.log('16-node real-orchestrator mock integration passed; all external outputs synthetic; network calls 0');
+ assert.equal(result.realBusinessRunModified,false);
+ assert.equal(result.networkCalls,0);
+ assert.equal(result.successfulTasks,result.taskCount);
+ assert.equal(result.steps.at(-1)?.name,'all_terminal');
+ assert.equal(result.steps.at(-1)?.status,'succeeded');
+ console.log('16-node real-orchestrator mock integration passed; in-memory summary validated; all external outputs synthetic; network calls 0');
 } finally {Object.assign(store,original);globalThis.fetch=originalFetch;}

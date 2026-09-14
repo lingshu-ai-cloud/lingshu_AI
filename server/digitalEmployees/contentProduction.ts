@@ -11,8 +11,8 @@ import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { chooseMusic } from './automaticMusic.js';
 import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
 import { buildPresentationTimeline } from './presenterMix.js';
-import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../src/lib/videoCreationPlan.js';
-import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../src/lib/videoLanguages.js';
+import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
+import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
 import { generateNarration, reviewFinalNarration, narrationEvidenceIssues } from './narration.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,18 +32,17 @@ import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/e
 import { inspectRenderedVisuals, inspectRenderedScenes } from '../lib/renderVisualQuality.js';
 import { planVideoSourceSegments, resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
-
+import { contentProjectLineageFields } from './contentProjectLineage.js';
+import { notifyStarterReviewableContentProjects } from '../starter198/contentArtifactWakeup.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
   composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
-
 export type ContentProductionRoute = 'clone' | 'product' | 'material';
 type ProductionStage = 'script' | 'material_match' | 'voice_subtitles' | 'heygen' | 'render' | 'quality' | 'completed' | 'blocked';
 export const CONTENT_SCRIPT_QUALITY_RULE_VERSION = 9;
 export const CONTENT_PRODUCTION_SCHEMA_VERSION = 3;
 export const CONTENT_PRODUCTION_MAX_CONCURRENCY = 2;
-
 type StoredRecord = { id: string; [key: string]: unknown };
 export type AssetCandidate = {
   id: string;
@@ -903,7 +902,8 @@ export async function assetRenderUrl(asset: AssetCandidate, tenantId: string): P
 }
 
 async function updateProject(record: StoredRecord, spec: Record<string, unknown>, status = 'draft') {
-  const ok = await store.update('studio_projects', record.id, { spec, status, updated_at: new Date().toISOString() });
+  const lineage = contentProjectLineageFields({ tenantId: record.tenant_id, spec, current: record });
+  const ok = await store.update('studio_projects', record.id, { spec, status, ...lineage, updated_at: new Date().toISOString() });
   if (!ok) throw new Error('studio_project_update_failed');
 }
 
@@ -962,7 +962,6 @@ export function resumeContentProjectForTaskControl(input: {
     },
   };
 }
-
 export function isLlmUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || '');
   return /timed?\s*out|timeout|not set|unavailable|temporar|network|fetch|econn|socket|503|502|504|service/i.test(message);
@@ -1800,25 +1799,27 @@ export async function advanceAutomatedContentProduction(input: {
         reference: referenceEvidence,
         hash: stableHash({ productId: routePlan.productId || '', assets: routeAssets.map(evidenceAssetSnapshot), reference: referenceEvidence }),
       };
+      const spec = {
+        mode: route, contentMode: 'video', platform: routePlan.platform, platformBrief: routePlan.platformBrief, ratio: '9:16', exportSpec: { ratio: '9:16', resolution: '1080p', fps: 30 }, duration: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).duration, lang: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language,
+        workflowRunId: input.runId, workflowTaskId: input.taskId, workflowTaskKey: 'content_production', productInfo: productFacts(profile, input.config, routePlan.productId),
+        ...(input.batchPlanId ? { batchPlanId: input.batchPlanId } : {}), ...(frozenOrder?.id ? { contentOrderId: frozenOrder.id, contentOrder: frozenOrder } : {}),
+        presenterMode: Boolean(frozenOrder?.videoPlan && usesDigitalPresenter(frozenOrder.videoPlan)) ? 'digital' : 'real',
+        audience: input.config.customerProfile, selectedMaterialIds: [], script: '', subtitlesOn: true,
+        evidenceSnapshot: snapshot,
+        automation: {
+          schemaVersion: CONTENT_PRODUCTION_SCHEMA_VERSION, managedBy: 'digital_employee', route, slot: slot + 1,
+          stage: 'script', status: routePlan.gap ? 'blocked' : 'queued', referenceAnalysisId: referenceId,
+          evidence, evidenceSnapshotHash: snapshot.hash, routePlan,
+          ...(routePlan.gap ? { blocker: routePlan.gap, resumeStage: 'script', retryAfter: new Date(Date.now() + 15 * 60_000).toISOString() } : {}),
+          routeWarnings: plan.blockers, createdAt: now, updatedAt: now,
+        },
+      };
       const record = await store.create<StoredRecord>('studio_projects', {
         tenant_id: input.tenantId,
         title: `${routeTitle(route)} · ${input.goal.title} · ${normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language.toUpperCase()} · ${slot + 1}`,
         status: 'draft',
-        spec: {
-          mode: route, contentMode: 'video', platform: routePlan.platform, platformBrief: routePlan.platformBrief, ratio: '9:16', exportSpec: { ratio: '9:16', resolution: '1080p', fps: 30 }, duration: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).duration, lang: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language,
-          workflowRunId: input.runId, workflowTaskId: input.taskId, workflowTaskKey: 'content_production', productInfo: productFacts(profile, input.config, routePlan.productId),
-          ...(input.batchPlanId ? { batchPlanId: input.batchPlanId } : {}), ...(frozenOrder?.id ? { contentOrderId: frozenOrder.id, contentOrder: frozenOrder } : {}),
-          presenterMode: Boolean(frozenOrder?.videoPlan && usesDigitalPresenter(frozenOrder.videoPlan)) ? 'digital' : 'real',
-          audience: input.config.customerProfile, selectedMaterialIds: [], script: '', subtitlesOn: true,
-          evidenceSnapshot: snapshot,
-          automation: {
-            schemaVersion: CONTENT_PRODUCTION_SCHEMA_VERSION, managedBy: 'digital_employee', route, slot: slot + 1,
-            stage: 'script', status: routePlan.gap ? 'blocked' : 'queued', referenceAnalysisId: referenceId,
-            evidence, evidenceSnapshotHash: snapshot.hash, routePlan,
-            ...(routePlan.gap ? { blocker: routePlan.gap, resumeStage: 'script', retryAfter: new Date(Date.now() + 15 * 60_000).toISOString() } : {}),
-            routeWarnings: plan.blockers, createdAt: now, updatedAt: now,
-          },
-        },
+        spec,
+        ...contentProjectLineageFields({ tenantId: input.tenantId, spec }),
         thumb_seed: '', created_at: now, updated_at: now,
       });
       if (!record) throw new Error('studio_project_storage_unavailable');
@@ -1849,7 +1850,6 @@ export async function advanceAutomatedContentProduction(input: {
     projects = projects.map(project => project.id === staleCompleted.id ? (refreshed || { ...project, status: 'draft', spec: revalidationSpec }) : project);
     changed = true;
   }
-
   const pending = selectContentProjectsForTick(projects.map(project => ({
     project, stage: text(projectAutomation(project).stage),
     retryable: contentProjectRetryable(projectAutomation(project)) || presenterApprovalResumesQuality(projectAutomation(project),
@@ -1864,7 +1864,7 @@ export async function advanceAutomatedContentProduction(input: {
   for (const refreshed of refreshedProjects) {
     if (refreshed) projects = projects.map(item => item.id === refreshed.id ? refreshed : item);
   }
-
+  await notifyStarterReviewableContentProjects({ dataStore: store, tenantId: input.tenantId, projects });
   const projectRefs = projects.map(project => {
     const automation = projectAutomation(project);
     return {

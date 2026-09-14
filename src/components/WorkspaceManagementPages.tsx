@@ -17,7 +17,6 @@ import {
   type ScriptLibraryActionPrefill,
 } from '../lib/contentActionNavigation';
 import { useModalFocus } from '../hooks/useModalFocus';
-
 type ExactAnalysisDetail = {
   time?: string; timestamp?: string; environment?: string; shot?: string; camera?: string;
   angle?: string; composition?: string; visual?: string; subtitle?: string; dialogue?: string; audio?: string; note?: string; purpose?: string;
@@ -27,7 +26,6 @@ type ExactAnalysisDetail = {
   authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean;
   viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string };
 };
-
 type AnalysisGlobalSettings = { visualStyle?: string; aspectRatio?: string; lighting?: string; subtitlePolicy?: string; audioPolicy?: string; identityConsistency?: string; productConsistency?: string; negativeConstraints?: string[] };
 type FirstTenSeconds = { atmosphere?: string; audioVisual?: string; camera?: string; visuals?: string; voiceMusic?: string };
 type CoarseStructure = { time?: string; frame?: string; label?: string; description?: string; desc?: string };
@@ -278,7 +276,7 @@ function PageShell({ icon, title, description, children }: {
   );
 }
 
-export function ScriptLibraryPage() {
+export function ScriptLibraryPage({ socialContentTaskId }: { socialContentTaskId?: string | null } = {}) {
   const [tab, setTab] = useState<'inspiration' | 'studio'>('inspiration');
   const [videos, setVideos] = useState<Array<ExactVideoRecord & { analysis: ExactAnalysis }>>([]);
   const [drafts, setDrafts] = useState<StudioProject[]>([]);
@@ -355,7 +353,7 @@ export function ScriptLibraryPage() {
   const availablePlatforms = useMemo(() => [...new Set(videos.map(item => String(item.platform || '').toLowerCase()).filter(Boolean))].sort(), [videos]);
   const visibleCount = tab === 'inspiration' ? filteredVideos.length : filteredDrafts.length;
 
-  const openSmartAssets = () => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
+  const openSmartAssets = () => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', socialContentTaskId, socialContentPage: 'smartAssets' } }));
   const startViralClone = (item: ExactVideoRecord & { analysis: ExactAnalysis }) => {
     const analysis = item.analysis;
     localStorage.setItem('ow_video_kickoff', JSON.stringify({

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { requestOrganizationRoleStrict, type OrganizationRole } from './auth.js';
+import { requestOrganizationRoleStrict, type OrganizationRole } from '../lib/organizationRole.js';
 import { store } from '../storage/index.js';
 import {
   distillResponseStrategyPreference,

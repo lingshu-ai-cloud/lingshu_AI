@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
 import { buildCompetitorAnalysisPrompt, buildAdCreativeInsightPrompt } from '../prompts/competitorPrompts.js';
+import { requireAuth } from '../middleware/auth.js';
 
 export const competitorRouter = Router();
+competitorRouter.use(requireAuth);
 
 competitorRouter.post('/analyze', async (req, res) => {
   const { competitorName, category, content, targetMarket, backend, model } = req.body as {

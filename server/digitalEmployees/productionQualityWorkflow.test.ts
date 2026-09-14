@@ -11,6 +11,7 @@ import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js
 import { normalizeVideoPlan } from '../../src/lib/videoCreationPlan.js';
 import { assessScriptQualityV2 } from '../lib/studioScriptQualityV2.js';
 import { store } from '../storage/index.js';
+import { contentProjectLineageFields } from './contentProjectLineage.js';
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'production-quality-worker-'));
 const originalCwd=process.cwd(), originalUpdate=store.update, originalFetch=globalThis.fetch;
 const hash=(value:unknown)=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -38,7 +39,7 @@ try {
   assert.equal(assessed.script,script,JSON.stringify(assessed));
   const spoken=lines.join(' ');
   const platformBrief=platformCreativeBrief('facebook');
-  const spec:any={script,duration:12,voiceoverDur:12,lang:'en',ratio:'9:16',exportSpec:{resolution:'720p'},bgm:'',voiceoverUrl:'/voice.wav',scenePlanOrigin:'director',productionDirection:{voice:'v1'},platformBrief,subtitleAlignmentSource:'synthesized_sentence_audio',
+  const spec:any={workflowRunId:'isolated-run',workflowTaskId:'isolated-task',workflowTaskKey:'content_production',script,duration:12,voiceoverDur:12,lang:'en',ratio:'9:16',exportSpec:{resolution:'720p'},bgm:'',voiceoverUrl:'/voice.wav',scenePlanOrigin:'director',productionDirection:{voice:'v1'},platformBrief,subtitleAlignmentSource:'synthesized_sentence_audio',
     contentOrder:{videoPlan:normalizeVideoPlan({presenter:'material',language:'en',duration:12,platform:'facebook',productName:'显示图案',materialIds:['a','b','c']})},
     sceneSourcePlan:['a','b','a'].map((assetId,sceneIndex)=>({sceneIndex,assetId,start:sceneIndex*4,end:(sceneIndex+1)*4,sourceStart:0,intent:'画面：彩色条纹',observations:['彩色条纹'],score:10,reasons:['彩色条纹']})),
     sceneOverrides:[0,1,2].map(()=>({trimStart:0})),selectedMaterialIds:['a','b'],materialInfos:infos,
@@ -46,7 +47,7 @@ try {
     automation:{managedBy:'digital_employee',route:'product',stage:'quality',contentVersion:1,renderOutputPath:initial,voiceLocalPath:voice,narrationReviewPassed:true,narrationHash:hash(spoken),spokenText:spoken,pathDifferenceCheck:{pathDifference:true},
       routePlan:{route:'product',productId:'display',assetIds:['a','b','c'],platform:'facebook',platformBrief},
       renderMaterialRevision:hash(assets.map(asset=>[asset.id,materialRevision(asset)]).sort())}};
-  const record:any={id:'isolated-project',title:'图案展示',spec};
+  const record:any={id:'isolated-project',tenant_id:'isolated-tenant',title:'图案展示',spec};
   store.update=(async(collection,id,patch)=>{assert.equal(collection,'studio_projects');assert.equal(id,record.id);Object.assign(record,structuredClone(patch));return true;}) as typeof store.update;
   const config=normalizeDigitalEmployeeConfig({focusProducts:'显示图案',companyName:'示例企业'});
   const multilingualConfig=normalizeDigitalEmployeeConfig({focusProducts:'显示图案',companyName:'示例企业',videoDefaults:{language:'en'},videoLanguages:['en','zh','en']});
@@ -86,6 +87,7 @@ try {
   await tick();
   assert.equal(record.spec.automation.stage,'completed',JSON.stringify(record.spec.automation));
   assert.equal(record.status,'ready_for_approval');assert.equal(record.spec.automation.quality.passed,true);
+  assert.deepEqual({workflow_run_id:record.workflow_run_id,workflow_task_id:record.workflow_task_id,workflow_task_key:record.workflow_task_key,workflow_lineage_hash:record.workflow_lineage_hash},contentProjectLineageFields({tenantId:'isolated-tenant',spec:record.spec}));
   assert.equal(record.spec.automation.quality.sceneDiagnostics.passed,true);
   assert.ok(record.spec.audioQuality.passed);assert.ok(fs.existsSync(record.spec.coverImagePath));
   if (process.env.QUALITY_TEST_ARTIFACT_DIR) {

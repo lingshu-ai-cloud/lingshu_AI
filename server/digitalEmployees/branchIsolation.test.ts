@@ -11,7 +11,7 @@ assert.equal(taskRetryDue(second,now+299_999),false);
 assert.equal(nextTaskFailure(second,true,now).retryAt,null);
 assert.equal(nextTaskFailure(undefined,false,now).retryAt,null,'uncertain writes must not be repeated automatically');
 const tenant='retry-fixture';
-const run={id:'run',tenant_id:tenant,status:'running',goal_id:'goal',plan_id:'plan'};
+const run={id:'run',tenant_id:tenant,status:'running',goal_id:'goal',plan_id:'plan',current_controller:'agent',pause_reason:''};
 const makeTask=(id:string,key:string)=>({id,tenant_id:tenant,run_id:run.id,task_key:key,title:key,status:'pending',depends_on:[],sequence:id==='one'?1:2,kind:'planning',execution_mode:'internal',external_effect:'none',automatic_execution_allowed:true,output:{},blocked_reason:''});
 const tasks=[makeTask('one','context_readiness'),makeTask('two','goal_decomposition')];
 const records:Record<string,any[]>={
@@ -26,18 +26,20 @@ store.getById=(async(collection:string,id:string)=>structuredClone((records[coll
 store.update=(async(collection:string,id:string,patch:any)=>{if(collection==='workflow_tasks'&&id==='one'&&patch.status==='succeeded'&&fail){fail=false;throw Error('fixture transient storage error');}const record=(records[collection]||[]).find(item=>item.id===id);if(!record)return false;Object.assign(record,patch);return true;}) as typeof store.update;
 store.create=(async(collection:string,body:any)=>{const record={id:`created-${(records[collection]||[]).length}`, ...body};(records[collection]||=[]).push(record);return structuredClone(record);}) as typeof store.create;
 try {
- // A rejected approval remains a failed branch while independent work can still advance.
+ // A rejected approval lets already queued independent work finish, then hands control to a human.
  tasks[0].task_key='content_release_approval'; tasks[0].status='failed';
  fail=false;
  await reconcileDigitalEmployeeRun(tenant,run.id);
  assert.equal(tasks[1].status,'succeeded');
- assert.equal(run.status,'waiting_external');
+ assert.equal(run.status,'waiting_human');
+ assert.equal(run.current_controller,'human');
  const later=makeTask('later','context_readiness');
  records.workflow_tasks.push(later);
  await reconcileDigitalEmployeeRun(tenant,run.id);
- assert.equal(later.status,'succeeded','a failed approval must not make future independent tasks unreachable');
- assert.equal(run.status,'waiting_external');
+ assert.equal(later.status,'pending','waiting_human must not execute newly queued work without an explicit resume');
+ assert.equal(run.status,'waiting_human');
  // Member readiness must not require a publication account for preparatory work.
+ Object.assign(run,{status:'running',current_controller:'agent',pause_reason:''});
  records.workflow_tasks=[{...makeTask('member','context_readiness'),owner_id:'member-1'}, {...makeTask('hold','weekly_review'),depends_on:['missing']}];
  records.digital_employee_configs[0].config={autonomyMode:'managed',enabledWorkflows:['content_publish']};
  records.tenant_profiles=[{id:'profile',tenant_id:tenant,profile:{company:{name:'Fixture',industry:'Clothing'},products:{items:[]}}}];

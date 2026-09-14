@@ -1,5 +1,5 @@
 import { callVideoModel } from '../digitalEmployees/videoModel.js';
-import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 export async function finalizeMaterialScript(input: {script:string;facts:string;language:string;infos:Array<{name:string;targetStart?:number;targetEnd?:number;observations?:string[]}>}, model: typeof callVideoModel = callVideoModel) {
   if(!input.infos.length || input.infos.some(info=>!info.name))throw Error('请选择有名称的真实素材区间');
   let lines=Array.from(input.script.matchAll(/^(?:台词|口播|对白)[：:]\s*(.+)$/gm)).map(match=>match[1].trim());

@@ -1,4 +1,7 @@
-import readXlsxFile from 'read-excel-file/browser';
+import * as XLSX from 'xlsx';
+import { assertRowsAndTrackText, readSafeProductWorkbook } from './productImportSecurity';
+
+export { PRODUCT_IMPORT_LIMITS } from './productImportSecurity';
 
 export const PRODUCT_SCHEMA_FIELDS = [
   'sku',
@@ -44,11 +47,6 @@ export interface PreparedSheet {
   sampleRows: Record<string, string>[];
   dataRows: Record<string, string>[];
 }
-
-const MAX_WORKBOOK_BYTES = 10 * 1024 * 1024;
-const MAX_WORKBOOK_SHEETS = 20;
-const MAX_WORKBOOK_ROWS = 20_000;
-const MAX_WORKBOOK_COLUMNS = 200;
 
 const text = (v: unknown) => (v == null ? '' : String(v).trim());
 
@@ -138,63 +136,26 @@ function rowsToObjects(rows: string[][], headers: string[], start: number) {
     .map(row => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ''])));
 }
 
-function parseCsv(textValue: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let quoted = false;
-  for (let index = 0; index < textValue.length; index += 1) {
-    const char = textValue[index]!;
-    if (quoted) {
-      if (char === '"' && textValue[index + 1] === '"') { field += '"'; index += 1; }
-      else if (char === '"') quoted = false;
-      else field += char;
-      continue;
-    }
-    if (char === '"' && field.length === 0) { quoted = true; continue; }
-    if (char === ',') { row.push(field); field = ''; continue; }
-    if (char === '\n' || char === '\r') {
-      if (char === '\r' && textValue[index + 1] === '\n') index += 1;
-      row.push(field);
-      if (row.some(cell => cell !== '')) rows.push(row);
-      if (rows.length > MAX_WORKBOOK_ROWS) throw new Error(`表格最多支持 ${MAX_WORKBOOK_ROWS} 行`);
-      row = [];
-      field = '';
-      continue;
-    }
-    field += char;
-  }
-  if (quoted) throw new Error('CSV 文件存在未闭合的引号');
-  row.push(field);
-  if (row.some(cell => cell !== '')) rows.push(row);
-  return rows;
-}
-
-function validateSheet(name: string, rows: unknown[][]): ParsedSheet {
-  if (rows.length > MAX_WORKBOOK_ROWS) throw new Error(`工作表“${name}”超过 ${MAX_WORKBOOK_ROWS} 行`);
-  if (rows.some(row => row.length > MAX_WORKBOOK_COLUMNS)) throw new Error(`工作表“${name}”超过 ${MAX_WORKBOOK_COLUMNS} 列`);
-  return { name, rows, rowCount: rows.length };
-}
-
 export async function parseWorkbook(file: File): Promise<ParsedSheet[]> {
-  if (!file || file.size <= 0) throw new Error('请选择非空的产品表格');
-  if (file.size > MAX_WORKBOOK_BYTES) throw new Error('产品表格不能超过 10 MB');
-  if (/\.xls$/i.test(file.name)) throw new Error('为保障导入安全，旧版 .xls 已停用，请另存为 .xlsx 或 .csv 后上传');
-  const isCsv = /\.csv$/i.test(file.name);
-  if (!isCsv && !/\.xlsx$/i.test(file.name)) throw new Error('仅支持 .xlsx 或 .csv 产品表格');
-  if (isCsv) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let decoded = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
-    const utf8Damage = (decoded.match(/�/g) || []).length + (decoded.match(/[ÃÂ]/g) || []).length;
-    if (utf8Damage >= 2) {
-      try { decoded = new TextDecoder('gb18030').decode(bytes); } catch { /* keep UTF-8 result */ }
+  const workbook = await readSafeProductWorkbook(file);
+  let textCharacters = 0;
+  return workbook.SheetNames.map(name => {
+    const sheet = workbook.Sheets[name];
+    for (const merge of sheet?.['!merges'] ?? []) {
+      const sourceAddress = XLSX.utils.encode_cell(merge.s);
+      const sourceValue = sheet?.[sourceAddress]?.v;
+      if (sourceValue == null || sourceValue === '') continue;
+      for (let row = merge.s.r; row <= merge.e.r; row += 1) {
+        for (let column = merge.s.c; column <= merge.e.c; column += 1) {
+          const address = XLSX.utils.encode_cell({ r: row, c: column });
+          if (!sheet[address]) sheet[address] = { t: 's', v: sourceValue };
+        }
+      }
     }
-    const name = file.name.replace(/\.csv$/i, '') || 'CSV';
-    return [validateSheet(name, parseCsv(decoded))];
-  }
-  const sheets = await readXlsxFile(file, { trim: true });
-  if (sheets.length > MAX_WORKBOOK_SHEETS) throw new Error(`工作簿最多支持 ${MAX_WORKBOOK_SHEETS} 个工作表`);
-  return sheets.map(sheet => validateSheet(sheet.sheet, sheet.data));
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: false, defval: '' });
+    textCharacters = assertRowsAndTrackText(rows, name, textCharacters);
+    return { name, rows, rowCount: rows.length };
+  });
 }
 
 export function prepareSheet(sheet: ParsedSheet, forcedHeaderRowIndex?: number): PreparedSheet {

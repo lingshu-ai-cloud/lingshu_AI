@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
-import { isScheduledPostDue, runScheduledPublishingCycle, scheduledRetryDelay } from './scheduledPublisher.js';
+import {
+  isScheduledPostDue,
+  runScheduledPublishingCycle,
+  scheduledPublisherEnabled,
+  scheduledRetryDelay,
+} from './scheduledPublisher.js';
 import type { PostRecord } from './waLink.js';
 import { store } from '../storage/index.js';
+import { Starter198LegacyEffectError } from '../starter198/legacyEffectGuard.js';
 
 const now = Date.parse('2026-07-29T10:00:00.000Z');
 
@@ -60,6 +66,15 @@ assert.equal(scheduledRetryDelay(1), 60_000);
 assert.equal(scheduledRetryDelay(2), 300_000);
 assert.equal(scheduledRetryDelay(3), 900_000);
 assert.equal(scheduledRetryDelay(99), 900_000);
+assert.equal(scheduledPublisherEnabled({}), false, 'the external publisher must fail closed when the switch is absent');
+assert.equal(scheduledPublisherEnabled({ PUBLISH_SCHEDULER_ENABLED: 'false' }), false);
+assert.equal(scheduledPublisherEnabled({ PUBLISH_SCHEDULER_ENABLED: 'TRUE' }), false, 'only the exact reviewed value enables publishing');
+assert.equal(scheduledPublisherEnabled({ PUBLISH_SCHEDULER_ENABLED: 'true' }), true);
+
+const noOpPublishLease = async () => ({
+  async beforeEffect() {},
+  async release() {},
+});
 
 const run = { id: 'run-1', tenant_id: 'tenant-1', status: 'running' };
 let current = post('scheduled', {}, { workflowRunId: run.id, realPublishingAuthorized: true, targetAccountIds: ['account-1', 'account-2'], videoPath: '/mock-owned-video.mp4' });
@@ -75,6 +90,9 @@ store.update = (async (_collection: string, _id: string, patch: Record<string, u
   return true;
 }) as typeof store.update;
 const dependencies = {
+  assertLegacyAccess: async () => {},
+  executeLegacyEffect: async <T>(_tenantId: string, effect: () => Promise<T>) => effect(),
+  acquirePublishLease: noOpPublishLease,
   publish: async () => {
     calls += 1;
     return { video: {}, tracking: current, publishRecord: null, platformPostId: `provider-post-${calls}` };
@@ -128,6 +146,9 @@ store.update = (async (_collection: string, id: string, patch: Record<string, un
   Object.assign(row, clone(patch)); return true;
 }) as typeof store.update;
 const localDependencies = {
+  assertLegacyAccess: async () => {},
+  executeLegacyEffect: async <T>(_tenantId: string, effect: () => Promise<T>) => effect(),
+  acquirePublishLease: noOpPublishLease,
   publish: async () => {
     providerCalls += 1;
     return { video: {}, tracking: rows[0], publishRecord: null, platformPostId: `receipt-${providerCalls}` };
@@ -158,6 +179,33 @@ try {
   assert.equal(await runScheduledPublishingCycle(now, localDependencies), 1);
   assert.equal((rows[501].stats as any).status, 'published', 'old completed rows cannot starve later pages');
   assert.equal(providerCalls, 3);
+
+  rows = [
+    post('scheduled', { id: 'starter-due', tenant_id: 'starter-tenant' }, { targetAccountIds: ['starter-account'], videoPath: '/isolated.mp4' }),
+    post('scheduled', { id: 'enterprise-due', tenant_id: 'enterprise-tenant' }, { targetAccountIds: ['enterprise-account'], videoPath: '/isolated.mp4' }),
+  ];
+  const providerCallsBeforeMixedTenants = providerCalls;
+  await runScheduledPublishingCycle(now, {
+    ...localDependencies,
+    assertLegacyAccess: async tenantId => {
+      if (tenantId === 'starter-tenant') throw new Starter198LegacyEffectError('starter_198_orchestrator_only', 403);
+    },
+  });
+  assert.equal((rows[0].stats as any).status, 'scheduled', 'starter rows must remain untouched by the legacy publisher');
+  assert.equal((rows[1].stats as any).status, 'published', 'a starter row must not block an enterprise tenant later in the scan');
+  assert.equal(providerCalls, providerCallsBeforeMixedTenants + 1);
+
+  rows = [post('scheduled', { id: 'transition-due', tenant_id: 'transition-tenant' }, { targetAccountIds: ['transition-account'], videoPath: '/isolated.mp4' })];
+  const providerCallsBeforeTransition = providerCalls;
+  await runScheduledPublishingCycle(now, {
+    ...localDependencies,
+    executeLegacyEffect: async () => { throw new Starter198LegacyEffectError('starter_198_orchestrator_only', 403); },
+  });
+  assert.equal(providerCalls, providerCallsBeforeTransition, 'authority must be rechecked inside the final provider-effect boundary');
+  assert.equal((rows[0].stats as any).status, 'scheduled');
+  assert.equal((rows[0].stats as any).publishAttempts, 0, 'a blocked starter transition must not consume a provider attempt');
+
+  const providerCallsAfterBoundaryTests = providerCalls;
   rows = [post('scheduled', {}, { targetAccountIds: ['c'], videoPath: '/isolated.mp4' })];
   let ambiguousCalls = 0;
   await runScheduledPublishingCycle(now, { ...localDependencies, publish: async () => { ambiguousCalls++; throw new Error('socket closed after acceptance'); } });
@@ -165,11 +213,11 @@ try {
   assert.equal((rows[0].stats as any).publishResults.c.status, 'unknown');
   assert.match((rows[0].stats as any).publishResults.c.attemptId, /^[0-9a-f-]{36}$/);
   await runScheduledPublishingCycle(now + 86400000, localDependencies);
-  assert.equal(ambiguousCalls, 1); assert.equal(providerCalls, 3, 'ambiguous request must never be resent');
+  assert.equal(ambiguousCalls, 1); assert.equal(providerCalls, providerCallsAfterBoundaryTests, 'ambiguous request must never be resent');
   rows = [post('publishing', {}, { targetAccountIds: ['c'], videoPath: '/isolated.mp4', lastPublishAttemptAt: new Date(now - 3600000).toISOString(), publishResults: { c: { status: 'in_flight', attemptId: 'crashed-attempt' } } })];
   await runScheduledPublishingCycle(now, localDependencies);
   assert.equal((rows[0].stats as any).publishResults.c.status, 'unknown');
-  assert.equal(providerCalls, 3, 'restart with no first receipt requires reconciliation');
+  assert.equal(providerCalls, providerCallsAfterBoundaryTests, 'restart with no first receipt requires reconciliation');
   rows = [post('scheduled', {}, { targetAccountIds: ['c'], videoPath: '/isolated.mp4' })];
   const updating = store.update;
   let failFirstReceipt = true;
@@ -178,10 +226,10 @@ try {
     return updating(collection, id, patch);
   }) as typeof store.update;
   await runScheduledPublishingCycle(now, localDependencies);
-  assert.equal(providerCalls, 4);
+  assert.equal(providerCalls, providerCallsAfterBoundaryTests + 1);
   assert.equal((rows[0].stats as any).publishResults.c.status, 'unknown', 'first receipt write loss retains durable attempt');
   await runScheduledPublishingCycle(now + 86400000, localDependencies);
-  assert.equal(providerCalls, 4, 'first receipt persistence outage cannot cause duplicate delivery');
+  assert.equal(providerCalls, providerCallsAfterBoundaryTests + 1, 'first receipt persistence outage cannot cause duplicate delivery');
 } finally {
   Object.assign(store, original);
 }
