@@ -29,8 +29,18 @@ test('识别报价意图并从对话与目录构建可核验草稿', () => {
   assert.equal(draft.sku, product.sku);
   assert.equal(draft.quantity, 500);
   assert.equal(draft.unitPrice, 40);
+  assert.equal(draft.unitPriceSource, 'product_catalog');
   assert.equal(draft.subtotal, 20_000);
   assert.equal(draft.humanConfirmationRequired, true);
+
+  const nonPriceEdit = applyQuoteDraftPatch(draft, { destination: 'Ningbo' });
+  assert.equal(nonPriceEdit.unitPriceSource, 'product_catalog');
+  assert.match(nonPriceEdit.pricingExplanation.join('\n'), /价格来源：企业产品目录/);
+
+  const manualPrice = applyQuoteDraftPatch(nonPriceEdit, { unitPrice: 41 });
+  assert.equal(manualPrice.unitPriceSource, 'human');
+  assert.equal(manualPrice.matchedProduct?.moq, 100);
+  assert.match(manualPrice.pricingExplanation.join('\n'), /价格来源：人工填写/);
 });
 
 test('没有可信价格时阻止确认并允许人工补价', () => {
@@ -83,6 +93,7 @@ test('按客户语言生成中文报价回复', () => {
   const draft = buildQuoteDraft({
     customerId: 'customer-4',
     customerName: '王经理',
+    customerNameSource: 'whatsapp_profile',
     customerLanguage: '中文',
     productHint: product.name,
     messages: ['请报价 500 件，材料 6061-T6，交期 20 天'],
@@ -93,6 +104,25 @@ test('按客户语言生成中文报价回复', () => {
   assert.match(reply, /王经理，您好/);
   assert.match(reply, /产品小计/);
   assert.ok(draft.clarificationQuestions.every(question => /[\u4e00-\u9fff]/.test(question)));
+});
+
+test('安全兜底客户名不会进入对外报价回复', () => {
+  const draft = buildQuoteDraft({
+    customerId: 'customer-5',
+    customerName: 'CRM 内部标签：高风险客户',
+    customerNameSource: 'safe_fallback',
+    customerLanguage: 'English',
+    productHint: product.name,
+    messages: ['Please quote 500 pcs in 6061-T6'],
+    products: [product],
+    rules: {},
+  });
+  const english = composeQuoteReply({ ...draft, status: 'confirmed' });
+  const chinese = composeQuoteReply({ ...draft, status: 'confirmed', customerLanguage: '中文' });
+  assert.match(english, /^Hi there,/);
+  assert.match(chinese, /^您好：/);
+  assert.doesNotMatch(english, /CRM 内部标签|高风险客户/);
+  assert.doesNotMatch(chinese, /CRM 内部标签|高风险客户/);
 });
 
 test('价格区间不得被误识别为确定单价', () => {

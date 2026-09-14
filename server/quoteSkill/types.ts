@@ -45,6 +45,7 @@ export interface QuoteSkillDraft {
   packaging: string;
   drawingVersion: string;
   unitPrice: number | null;
+  unitPriceSource?: 'product_catalog' | 'human';
   currency: string;
   subtotal: number | null;
   leadTime: string;
@@ -59,12 +60,29 @@ export interface QuoteSkillDraft {
   humanConfirmationRequired: true;
   confirmedBy?: string;
   confirmedAt?: string;
-  delivery?: {
-    status: 'sent';
-    sentAt: string;
-    providerMessageId: string;
-    imageSha256: string;
-  };
+  delivery?:
+    | {
+        status: 'sending';
+        attemptId: string;
+        startedAt: string;
+        imageSha256: string;
+      }
+    | {
+        status: 'outcome_unknown';
+        attemptId: string;
+        startedAt: string;
+        outcomeUnknownAt: string;
+        imageSha256: string;
+        providerMessageId?: string;
+      }
+    | {
+        status: 'sent';
+        attemptId?: string;
+        startedAt?: string;
+        sentAt: string;
+        providerMessageId: string;
+        imageSha256: string;
+      };
   createdAt: string;
   updatedAt: string;
 }

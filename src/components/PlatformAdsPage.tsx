@@ -256,7 +256,7 @@ export default function PlatformAdsPage({
           <div className="ads-actions">
             <button
               className="ads-button"
-              onClick={() => setDialog("accounts")}
+              onClick={() => { setReturnToCreate(false); setDialog("accounts"); }}
             >
               <Link2 size={15} />
               连接广告账户
@@ -573,7 +573,7 @@ export default function PlatformAdsPage({
               </button>
             </div>
             {dialog === "accounts" ? (
-              !previewMode ? <AdAccountConnections initialProvider={(returnToCreate ? form.channels.includes('TikTok') : selected === 'TikTok') ? 'tiktok' : (returnToCreate ? form.channels.includes('YouTube') : selected === 'YouTube') ? 'google' : 'meta'} continueLabel={returnToCreate ? '返回并继续创建' : '继续创建投放计划'} onContinue={continueAfterConnection} onTaskImported={task => { setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)]); setSelectedDraft(taskToDraft(task)); setDialog(null); onNavigate('adsPlans'); }} /> : <>
+              !previewMode ? <AdAccountConnections initialProvider={(returnToCreate ? form.channels.includes('TikTok') : selected === 'TikTok') ? 'tiktok' : (returnToCreate ? form.channels.includes('YouTube') : selected === 'YouTube') ? 'google' : 'meta'} continueLabel={returnToCreate ? '返回并继续创建' : '继续创建投放计划'} onContinue={continueAfterConnection} onTaskImported={task => { setReturnToCreate(false); setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)]); setSelectedDraft(taskToDraft(task)); setDialog(null); onNavigate('adsPlans'); }} /> : <>
                 <p className="ads-muted">
                   四个渠道，通过三套广告系统连接。社媒发布授权与广告管理授权需分别确认。
                 </p>

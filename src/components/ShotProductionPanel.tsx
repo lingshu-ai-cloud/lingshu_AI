@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { parseShotCommand, shotFingerprint, type ShotProduction, type ProductionDefaults, type AvatarJob, type PresenterAsset } from '../lib/shotProduction';
+import { parseShotCommand, shotFingerprint, shotBlockers, type ShotProduction, type ProductionDefaults, type AvatarJob, type PresenterAsset } from '../lib/shotProduction';
 import { avatarCandidateReady } from '../lib/shotProduction';
 
 type Asset = { id: string; name: string; type?: string; url?: string; poster?: string };
@@ -29,7 +29,7 @@ export default function ShotProductionPanel(props: {
     }} className="h-full w-full max-w-[560px] overflow-y-auto bg-[#f8faf9] p-5 shadow-2xl">
       <div className="flex justify-between border-b pb-4"><div><p className="text-[10px] font-black uppercase tracking-wider text-accent">数字人分镜</p><h2 className="mt-1 font-black">{props.title}</h2></div><button type="button" onClick={props.onClose}>关闭</button></div>
       <p className="my-2 text-xs text-text-muted">{props.reason}</p>
-      <form className="my-3 hidden flex-wrap gap-2" onSubmit={event => { event.preventDefault(); const patch = parseShotCommand(command); if (!patch) return; props.onChange(patch); setCommand(''); }}>
+      <form className="my-3 flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); const patch = parseShotCommand(command); if (!patch) { setCommandMessage('暂未识别。可说：改成分屏、使用数字人、安排拍摄、使用原声、台词改为…、锁定镜头。'); return; } if (shot.locked && patch.locked !== false) { setCommandMessage('请先解锁镜头'); return; } props.onChange(patch); setCommandMessage(patch.narration ? '台词已填入，请应用到脚本；不会自动生成付费视频。' : '已更新当前镜头设置，未发起付费生成。'); setCommand(''); }}>
         <input aria-label="用一句话编辑当前镜头" value={command} onChange={event => setCommand(event.target.value)} placeholder="例如：改成画中画" className="min-w-0 flex-1 rounded-lg border p-2 text-xs" />
         <button disabled={props.busy || !command.trim()} type="submit" className="rounded-lg border px-3 text-xs disabled:opacity-40">应用指令</button>
         {commandMessage && <p role="status" className="w-full text-xs text-text-muted">{commandMessage}</p>}
@@ -61,11 +61,16 @@ export default function ShotProductionPanel(props: {
         {shot.source === 'shoot' && <button type="button" onClick={props.onShoot} className="rounded-lg border px-4 py-2 text-xs">创建待拍任务</button>}
         {shot.source === 'ai' && <button type="button" onClick={props.onAi} className="rounded-lg border px-4 py-2 text-xs">生成这一镜（使用现有Seedance计费）</button>}
         {shot.source === 'avatar' && <div className="space-y-2 rounded-xl bg-surface-2 p-3">
+          <p className="text-xs">{props.configured ? 'HeyGen接口已启用；仅生成此镜头，已有候选保留。' : 'HeyGen未配置或未启用，当前不会调用付费生成。'}</p>
+          {!props.configured && props.capabilityReason && <p className="text-xs" role="status">{props.capabilityReason}</p>}
+          <p className="text-xs">提交结果未知时只核对原任务，不自动再次生成。预算预占是调用准入控制，不等于供应商最终账单。</p>
+          <p className="text-xs">{props.costPerSecond ? `配置估价约 ¥${(Math.max(1, shot.narration.length / 4) * props.costPerSecond).toFixed(2)}；按实际时长计费，重试可能产生额外成本。` : '未配置单价，费用以供应商账单为准。'}</p>
+          <p className="text-[10px] text-text-muted">新数字人文件入库前检查实际画幅、分辨率、音轨和透明区域。技术通过不代表口型、人物边缘与观感已人工验收。</p>
           <label className="flex gap-2 text-xs"><input type="checkbox" checked={chargeConfirmed} onChange={e => setChargeConfirmed(e.target.checked)} />确认本次镜头生成及供应商计费</label>
           <button type="button" disabled={!props.configured || !chargeConfirmed || !shot.presenterId || !shot.narration.trim()} onClick={() => { setChargeConfirmed(false); props.onGenerate(); }} className="rounded-lg bg-accent px-4 py-2 text-xs text-white disabled:opacity-40">{props.busy ? '提交中…' : '生成新候选'}</button>
         </div>}
       </fieldset>
-      {props.error && props.configured && <p role="alert" className="mt-2 text-xs text-red-600">{props.error}</p>}
+      {[props.error, ...shotBlockers(shot, props.context)].filter(Boolean).map((message, index) => <p role="alert" key={`${index}:${message}`} className="mt-2 text-xs text-red-600">{message}</p>)}
       {(props.jobs.length > 0 || shot.candidates.length > 0) && <div className="mt-4 space-y-2"><h3 className="text-sm font-bold">生成版本</h3>
         {props.jobs.map(job => <div key={job.id} className="rounded-lg border p-2 text-xs">{job.error?.startsWith('供应商已生成') ? '已生成 · 待入库核验' : ({ submitting: '正在提交', pending: '生成处理中', completed: '候选已就绪', failed: '生成失败', uncertain: '提交结果待核对' }[job.status])} {job.error}
           {job.status === 'pending' && job.error && <p className="mt-1 text-text-muted">已暂停自动重查。处理问题后可手动刷新原任务，不会重新付费生成。</p>}

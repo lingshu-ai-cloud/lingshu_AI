@@ -235,6 +235,7 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
     packaging,
     drawingVersion,
     unitPrice,
+    ...(unitPrice != null ? { unitPriceSource: 'product_catalog' as const } : {}),
     currency,
     subtotal,
     leadTime,
@@ -254,7 +255,7 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
 
 export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<string, unknown>, source: QuoteFieldEvidence['source'] = 'human'): QuoteSkillDraft {
   const next = { ...draft };
-  const catalogMatch = source === 'product_catalog' && patch.matchedProduct && typeof patch.matchedProduct === 'object'
+  const catalogMatch = patch.matchedProduct && typeof patch.matchedProduct === 'object'
     ? patch.matchedProduct as QuoteCatalogProduct
     : null;
   const productIdentityChanged = ('productName' in patch && clean(patch.productName) !== draft.productName)
@@ -272,10 +273,24 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
   if ('leadTime' in patch) next.leadTime = clean(patch.leadTime);
   if ('paymentTerms' in patch) next.paymentTerms = clean(patch.paymentTerms);
   if ('quantity' in patch) next.quantity = numberFrom(patch.quantity);
-  if ('unitPrice' in patch) next.unitPrice = numberFrom(patch.unitPrice);
-  else if (productIdentityChanged) next.unitPrice = null;
+  if ('unitPrice' in patch) {
+    next.unitPrice = numberFrom(patch.unitPrice);
+    next.unitPriceSource = next.unitPrice == null
+      ? undefined
+      : patch.unitPriceSource === 'product_catalog' || patch.unitPriceSource === 'human'
+        ? patch.unitPriceSource
+        : source === 'product_catalog' ? 'product_catalog' : 'human';
+  } else if (productIdentityChanged) {
+    next.unitPrice = null;
+    next.unitPriceSource = undefined;
+  }
   if (catalogMatch) next.matchedProduct = catalogMatch;
   else if (productIdentityChanged) next.matchedProduct = null;
+  if (next.unitPrice != null && (patch.unitPriceSource === 'product_catalog' || patch.unitPriceSource === 'human')) {
+    next.unitPriceSource = patch.unitPriceSource;
+  } else if (next.unitPrice != null && source === 'human' && ('currency' in patch || 'unit' in patch)) {
+    next.unitPriceSource = 'human';
+  }
   if ('validityDays' in patch) next.validityDays = Math.max(1, Math.min(365, Math.round(numberFrom(patch.validityDays) || 15)));
   next.subtotal = next.quantity != null && next.unitPrice != null ? Number((next.quantity * next.unitPrice).toFixed(2)) : null;
   next.missingFields = requiredQuoteFields(next);
@@ -287,7 +302,7 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
       ? `匹配产品：${next.matchedProduct.sku ? `${next.matchedProduct.sku} · ` : ''}${next.matchedProduct.name}`
       : `产品由人工确认：${next.productName || '待确认'}`,
     next.unitPrice != null
-      ? `价格来源：${source === 'human' ? '人工填写' : next.matchedProduct?.priceSource || '企业配置'} ${next.currency} ${next.unitPrice}/${next.unit}`
+      ? `价格来源：${next.unitPriceSource === 'product_catalog' ? next.matchedProduct?.priceSource || '企业配置' : '人工填写'} ${next.currency} ${next.unitPrice}/${next.unit}`
       : '价格待人工填写，Agent 不猜测单价',
     next.leadTime || next.deliveryDate ? `参考交期：${next.leadTime || next.deliveryDate}` : '交期待人工确认',
   ];
@@ -304,9 +319,10 @@ export function composeQuoteReply(draft: QuoteSkillDraft): string {
   if (draft.status !== 'confirmed') throw new Error('quote_not_confirmed');
   const amount = draft.subtotal == null ? '' : `${draft.currency} ${draft.subtotal.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
   const chinese = /^(?:zh|中文|chinese)/i.test(draft.customerLanguage || '');
+  const customerName = draft.customerNameSource === 'whatsapp_profile' ? clean(draft.customerName) : '';
   if (chinese) {
     return [
-      `${draft.customerName ? `${draft.customerName}，您好：` : '您好：'}`,
+      `${customerName ? `${customerName}，您好：` : '您好：'}`,
       `感谢您的询价。${draft.productName}${draft.material ? `（${draft.material}）` : ''}的报价为 ${draft.currency} ${draft.unitPrice}/${draft.unit}，数量 ${draft.quantity} ${draft.unit}。`,
       amount ? `产品小计：${amount}。` : '',
       draft.leadTime || draft.deliveryDate ? `参考交期：${draft.leadTime || draft.deliveryDate}。` : '',
@@ -320,7 +336,7 @@ export function composeQuoteReply(draft: QuoteSkillDraft): string {
   }
   const englishUnit = ({ 件: 'pcs', 个: 'units', 套: 'sets', 箱: 'cartons' } as Record<string, string>)[draft.unit] || draft.unit;
   return [
-    `Hi ${draft.customerName || 'there'},`,
+    `Hi ${customerName || 'there'},`,
     `Thank you for your inquiry. We can offer ${draft.quantity} ${englishUnit} of ${draft.productName}${draft.material ? ` in ${draft.material}` : ''} at ${draft.currency} ${draft.unitPrice} per ${englishUnit === 'pcs' ? 'piece' : englishUnit.replace(/s$/, '')}.`,
     amount ? `The product subtotal is ${amount}.` : '',
     draft.leadTime || draft.deliveryDate ? `Reference lead time: ${draft.leadTime || draft.deliveryDate}.` : '',

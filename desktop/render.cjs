@@ -433,7 +433,6 @@ async function composite(manifest, onProgress = () => {}, outDir) {
             productIndex: c.productIndex,
             backgroundIndex: c.backgroundIndex,
             transparent: Boolean(c.production.transparent),
-            deletterbox: c.production.source === 'avatar' && c.production.layout === 'full',
           }));
           return;
         }

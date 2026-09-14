@@ -53,7 +53,13 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     dataStore,
     authMiddleware: auth,
     canConfirm: async req => req.headers['x-test-confirm'] !== 'deny',
-    readEnterpriseProfile: async () => ({ products: { items: [{ sku: 'IMH-ABS-01', name: 'Injection molded electronics housing', material: 'ABS', moq: '1000', attributes: { unit: 'pcs', unitPrice: 3.8, currency: 'USD', leadTime: '30 days' } }] }, bizRules: {} } as any),
+    readEnterpriseProfile: async () => ({
+      products: { items: [
+        { sku: 'IMH-ABS-01', name: 'Injection molded electronics housing', material: 'ABS', moq: '1000', attributes: { unit: 'pcs', unitPrice: 3.8, currency: 'USD', leadTime: '30 days' } },
+        { sku: 'COVER-NP-01', name: 'Unpriced custom cover', material: 'ABS', moq: '25', attributes: { unit: 'pcs', currency: 'USD', leadTime: '20 days' } },
+      ] },
+      bizRules: {},
+    } as any),
     renderCard: async () => Buffer.from('png-card'),
     messagingReady: async () => true,
     findCustomer: (_tenantId, customerId) => ({ id: customerId, waNumber: '15550001111', whatsappProfileName: 'Emily WA', timeline: [{ actor: 'buyer', timestamp: Date.now() }] }),
@@ -77,7 +83,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     const catalogResponse = await call('/catalog');
     assert.equal(catalogResponse.status, 200);
     const catalog = (await catalogResponse.json()).items;
-    assert.equal(catalog.length, 1);
+    assert.equal(catalog.length, 2);
     assert.deepEqual({ name: catalog[0].name, sku: catalog[0].sku, unitPrice: catalog[0].unitPrice, currency: catalog[0].currency }, { name: 'Injection molded electronics housing', sku: 'IMH-ABS-01', unitPrice: 3.8, currency: 'USD' });
     assert.equal((await call('/drafts', 'POST', { customerId: 'buyer' })).status, 400);
 
@@ -171,8 +177,90 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     const catalogSelected = (await catalogSelectedResponse.json()).draft;
     assert.equal(catalogSelected.sku, 'IMH-ABS-01');
     assert.equal(catalogSelected.unitPrice, 3.8);
+    assert.equal(catalogSelected.unitPriceSource, 'product_catalog');
     assert.equal(catalogSelected.matchedProduct.priceSource, '企业产品目录 unitPrice');
     assert.match(catalogSelected.pricingExplanation.join('\n'), /价格来源：企业产品目录 unitPrice/);
+
+    const confirmedCatalogResponse = await call(`/drafts/${catalogDraft.id}/confirm`, 'POST', { expectedRevision: 2 });
+    assert.equal(confirmedCatalogResponse.status, 200);
+    const confirmedCatalog = (await confirmedCatalogResponse.json()).draft;
+    const clonedCatalogResponse = await call('/drafts', 'POST', {
+      customerId: 'catalog-buyer', productHint: 'custom housing', messages: [], clonePrevious: true,
+    });
+    assert.equal(clonedCatalogResponse.status, 201);
+    const clonedCatalog = (await clonedCatalogResponse.json()).draft;
+    assert.equal(clonedCatalog.supersedesId, confirmedCatalog.id);
+    assert.equal(clonedCatalog.matchedProduct.sku, 'IMH-ABS-01');
+    assert.equal(clonedCatalog.matchedProduct.moq, 1000);
+    assert.equal(clonedCatalog.unitPrice, 3.8);
+    assert.equal(clonedCatalog.unitPriceSource, 'product_catalog');
+    assert.match(clonedCatalog.pricingExplanation.join('\n'), /价格来源：企业产品目录 unitPrice/);
+    assert.ok(clonedCatalog.evidence.some((item: { field: string; source: string }) => item.field === 'productName' && item.source === 'product_catalog'));
+
+    const negotiatedDraft = (await (await call('/drafts', 'POST', {
+      customerId: 'negotiated-catalog-buyer', productHint: 'custom housing',
+      messages: ['Please quote 1000 pcs in ABS, delivery to Hamburg, DAP, within 30 days.'],
+    })).json()).draft;
+    const negotiatedResponse = await call(`/drafts/${negotiatedDraft.id}`, 'PATCH', {
+      expectedRevision: 1,
+      catalogProductRef: 'IMH-ABS-01',
+      catalogPriceMode: 'manual',
+      unitPrice: 3.35,
+      currency: 'USD',
+      paymentTerms: '30% deposit, balance before shipment',
+    });
+    assert.equal(negotiatedResponse.status, 200);
+    const negotiated = (await negotiatedResponse.json()).draft;
+    assert.equal(negotiated.unitPrice, 3.35, '议价后的人工单价不得被目录价 3.8 覆盖');
+    assert.equal(negotiated.unitPriceSource, 'human');
+    assert.equal(negotiated.matchedProduct.sku, 'IMH-ABS-01');
+    assert.equal(negotiated.matchedProduct.moq, 1000);
+    assert.match(negotiated.pricingExplanation.join('\n'), /价格来源：人工填写/);
+
+    const manualCatalogDraft = (await (await call('/drafts', 'POST', {
+      customerId: 'manual-catalog-buyer', productHint: 'legacy cover',
+      messages: ['Please quote 50 pcs in ABS, delivery to Berlin, DAP, within 20 days.'],
+    })).json()).draft;
+    assert.equal((await call(`/drafts/${manualCatalogDraft.id}`, 'PATCH', {
+      expectedRevision: 1,
+      catalogProductRef: 'COVER-NP-01',
+      catalogPriceMode: 'unsupported',
+      unitPrice: 9.5,
+      currency: 'EUR',
+    })).status, 400);
+    const manualCatalogResponse = await call(`/drafts/${manualCatalogDraft.id}`, 'PATCH', {
+      expectedRevision: 1,
+      catalogProductRef: 'COVER-NP-01',
+      catalogPriceMode: 'manual',
+      unitPrice: 9.5,
+      currency: 'EUR',
+      paymentTerms: '50% deposit, balance before shipment',
+    });
+    assert.equal(manualCatalogResponse.status, 200);
+    const manualCatalog = (await manualCatalogResponse.json()).draft;
+    assert.equal(manualCatalog.unitPrice, 9.5);
+    assert.equal(manualCatalog.currency, 'EUR');
+    assert.equal(manualCatalog.unitPriceSource, 'human');
+    assert.equal(manualCatalog.matchedProduct.sku, 'COVER-NP-01');
+    assert.equal(manualCatalog.matchedProduct.unitPrice, null);
+    assert.equal(manualCatalog.matchedProduct.moq, 25);
+    assert.match(manualCatalog.pricingExplanation.join('\n'), /价格来源：人工填写/);
+    const reloadedManualCatalog = (await call('/customers/manual-catalog-buyer/latest').then(response => response.json())).draft;
+    assert.equal(reloadedManualCatalog.unitPriceSource, 'human');
+    assert.match(reloadedManualCatalog.pricingExplanation.join('\n'), /价格来源：人工填写/);
+    const confirmedManualCatalogResponse = await call(`/drafts/${manualCatalogDraft.id}/confirm`, 'POST', { expectedRevision: 2 });
+    assert.equal(confirmedManualCatalogResponse.status, 200);
+    const confirmedManualCatalog = (await confirmedManualCatalogResponse.json()).draft;
+    const clonedManualCatalog = (await (await call('/drafts', 'POST', {
+      customerId: 'manual-catalog-buyer', productHint: 'legacy cover', messages: [], clonePrevious: true,
+    })).json()).draft;
+    assert.equal(clonedManualCatalog.supersedesId, confirmedManualCatalog.id);
+    assert.equal(clonedManualCatalog.matchedProduct.sku, 'COVER-NP-01');
+    assert.equal(clonedManualCatalog.matchedProduct.moq, 25);
+    assert.equal(clonedManualCatalog.unitPrice, 9.5);
+    assert.equal(clonedManualCatalog.unitPriceSource, 'human');
+    assert.match(clonedManualCatalog.pricingExplanation.join('\n'), /价格来源：人工填写/);
+    assert.ok(clonedManualCatalog.evidence.some((item: { field: string; source: string }) => item.field === 'productName' && item.source === 'human'));
 
     const nextVersionResponse = await call('/drafts', 'POST', {
       customerId: 'buyer', customerName: 'Emily', customerLanguage: 'English', productHint: 'aluminum brackets', messages: [], clonePrevious: true,
@@ -200,6 +288,118 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
       customerId: 'parallel-version-buyer', productHint: 'custom bracket', messages: [],
     }).then(response => response.json())));
     assert.deepEqual(parallelVersions.map(result => result.draft.version).sort(), [1, 2]);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('报价卡发送先持久化 claim，并在结果未知或回写失败后阻断重复发送', async () => {
+  const base = memoryStore();
+  let failSendingWrite = false;
+  let failSentWrite = false;
+  let sendBehavior: 'success' | 'unknown' = 'success';
+  let sendAttempts = 0;
+  const dataStore: DataStore = {
+    ...base.dataStore,
+    async update(collection, id, data) {
+      const payload = data.payload && typeof data.payload === 'object'
+        ? data.payload as Record<string, unknown>
+        : {};
+      const delivery = payload.delivery && typeof payload.delivery === 'object'
+        ? payload.delivery as Record<string, unknown>
+        : {};
+      if (failSendingWrite && delivery.status === 'sending') {
+        failSendingWrite = false;
+        return false;
+      }
+      if (failSentWrite && delivery.status === 'sent') {
+        failSentWrite = false;
+        return false;
+      }
+      return base.dataStore.update(collection, id, data);
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/quotes', createQuoteSkillRouter({
+    dataStore,
+    authMiddleware: (_req, res, next) => { res.locals.tenantId = 'A'; res.locals.userId = 'user-A'; next(); },
+    canConfirm: async () => true,
+    readEnterpriseProfile: async () => ({
+      products: { items: [{ sku: 'WIDGET-01', name: 'Widget', material: 'ABS', moq: '10', attributes: { unit: 'pcs', unitPrice: 10, currency: 'USD', leadTime: '20 days' } }] },
+      bizRules: { paymentTerms: '100% before shipment' },
+    } as any),
+    renderCard: async () => Buffer.from('png-card'),
+    messagingReady: async () => true,
+    findCustomer: (_tenantId, customerId) => ({ id: customerId, waNumber: `1555${customerId}`, whatsappProfileName: 'Verified Buyer', timeline: [{ actor: 'buyer', timestamp: Date.now() }] }),
+    sendImage: async input => {
+      sendAttempts += 1;
+      if (sendBehavior === 'unknown') throw new Error('simulated_provider_timeout');
+      return { messageId: `wamid.${sendAttempts}`, recipientId: input.to, raw: {} };
+    },
+    recordOutbound: () => ({} as any),
+    reportError: () => {},
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/quotes`;
+  const call = (path: string, method = 'GET', body?: unknown) => fetch(baseUrl + path, {
+    method,
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const createConfirmed = async (customerId: string) => {
+    const createdResponse = await call('/drafts', 'POST', {
+      customerId,
+      productHint: 'Widget',
+      customerLanguage: 'English',
+      messages: ['Please quote 100 pcs Widget in ABS, delivery to Berlin, DAP, within 20 days.'],
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = (await createdResponse.json()).draft;
+    assert.equal(created.status, 'ready_for_review');
+    const confirmedResponse = await call(`/drafts/${created.id}/confirm`, 'POST', { expectedRevision: 1 });
+    assert.equal(confirmedResponse.status, 200);
+    return (await confirmedResponse.json()).draft;
+  };
+
+  try {
+    const writebackFailureDraft = await createConfirmed('writeback-failure');
+    failSentWrite = true;
+    const failedWritebackResponse = await call(`/drafts/${writebackFailureDraft.id}/send-card`, 'POST');
+    assert.equal(failedWritebackResponse.status, 503);
+    assert.equal((await failedWritebackResponse.json()).error, 'quote_send_state_persist_failed');
+    assert.equal(sendAttempts, 1);
+    const claimed = (await call('/customers/writeback-failure/latest').then(response => response.json())).draft;
+    assert.equal(claimed.delivery.status, 'sending');
+    assert.equal(typeof claimed.delivery.attemptId, 'string');
+    const blockedWritebackRetry = await call(`/drafts/${writebackFailureDraft.id}/send-card`, 'POST');
+    assert.equal(blockedWritebackRetry.status, 409);
+    assert.equal((await blockedWritebackRetry.json()).error, 'quote_send_in_progress');
+    assert.equal(sendAttempts, 1, '发送后回写失败不得再次调用 WhatsApp');
+
+    const unknownOutcomeDraft = await createConfirmed('unknown-outcome');
+    sendBehavior = 'unknown';
+    const unknownResponse = await call(`/drafts/${unknownOutcomeDraft.id}/send-card`, 'POST');
+    assert.equal(unknownResponse.status, 502);
+    assert.equal((await unknownResponse.json()).error, 'quote_send_outcome_unknown');
+    assert.equal(sendAttempts, 2);
+    const unknown = (await call('/customers/unknown-outcome/latest').then(response => response.json())).draft;
+    assert.equal(unknown.delivery.status, 'outcome_unknown');
+    const blockedUnknownRetry = await call(`/drafts/${unknownOutcomeDraft.id}/send-card`, 'POST');
+    assert.equal(blockedUnknownRetry.status, 409);
+    assert.equal((await blockedUnknownRetry.json()).error, 'quote_send_outcome_unknown');
+    assert.equal(sendAttempts, 2, '结果未知时不得自动重发');
+
+    const claimFailureDraft = await createConfirmed('claim-failure');
+    sendBehavior = 'success';
+    failSendingWrite = true;
+    const claimFailureResponse = await call(`/drafts/${claimFailureDraft.id}/send-card`, 'POST');
+    assert.equal(claimFailureResponse.status, 503);
+    assert.equal((await claimFailureResponse.json()).error, 'quote_send_claim_failed');
+    assert.equal(sendAttempts, 2, 'claim 未落盘时不得调用 WhatsApp');
+    const unclaimed = (await call('/customers/claim-failure/latest').then(response => response.json())).draft;
+    assert.equal(unclaimed.delivery, undefined);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

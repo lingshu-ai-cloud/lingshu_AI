@@ -36,7 +36,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
   const context = 'ctx'; const shot = { ...newShotProduction('hello', 'alice'), source: 'avatar' as const, sound: 'source' as const };
   const project = { id: 'draft', tenant_id: 'A', status: 'draft', spec: { ratio: '9:16', shotProductions: { 'video-1:shot1': shot }, shotProductionContext: context, storyboardAssignments: { 'slot-1': 'keep-existing' } } };
   rows.set('studio_projects/draft', project);
-  rows.set('studio_production_defaults/defaults', { id: 'defaults', tenant_id: 'A', payload: { preference: 'avatar', defaultPresenterId: 'alice', presenters: [{ id: 'alice', name: 'Alice', avatarId: 'avatar1', voiceId: 'voice1', authorized: true, nativeOrientation: 'landscape' }] } });
+  rows.set('studio_production_defaults/defaults', { id: 'defaults', tenant_id: 'A', payload: { preference: 'avatar', defaultPresenterId: 'alice', presenters: [{ id: 'alice', name: 'Alice', avatarId: 'avatar1', voiceId: 'voice1', authorized: true }] } });
   let imports = 0; let budgetDenied = false; let importRejected = true; const audioRefs: Array<{ start: number; duration: number }> = [];
   const app = express(); app.use(express.json()); app.use((req, res, next) => { res.locals.tenantId = req.headers['x-tenant'] || 'A'; next(); });
   app.use(createProductionRouter(store, async () => { if (importRejected) throw new Error('数字人文件缺少音轨'); imports++; return 'new-material'; }, { client, enabled: () => true, reserve: async () => { if (budgetDenied) throw new Error('预算余额不足'); }, prepareAudio: async ref => { audioRefs.push(ref); return new Uint8Array([1, 2, 3]); } }));
@@ -46,8 +46,10 @@ test('production router persists jobs, never resubmits uncertain operations, iso
   const input = { projectId: 'draft', assemblyId: 'video-1', shotId: 'shot1', fingerprint: shotFingerprint(shot, context), ratio: '9:16', requestId: 'req1', confirmed: true };
   try {
     assert.equal((await request('/jobs', { ...input, confirmed: false })).status, 400); assert.equal(calls.length, 0);
-    // Landscape stock avatars are allowed because the renderer removes their
-    // baked letterbox and applies the requested portrait cover at composition.
+    assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0);
+    rows.get('studio_production_defaults/defaults').payload.presenters[0].nativeOrientation = 'landscape';
+    assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0);
+    rows.get('studio_production_defaults/defaults').payload.presenters[0].nativeOrientation = 'portrait';
     budgetDenied = true; assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0); budgetDenied = false;
     assert.equal((await request('/jobs', input, 'B')).status, 400); assert.equal(calls.length, 0);
     failWrites = true; assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0); failWrites = false;

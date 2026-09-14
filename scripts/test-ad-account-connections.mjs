@@ -22,7 +22,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
   const errors = []; page.on('pageerror', error => { errors.push(error.message); console.error(error.message); }); page.on('console', msg => { if (msg.type() === 'error') console.error(msg.text()); });
   let failLoad = false, failConnect = false, restricted = false, oauthStatus = 'pending', oauthEmpty = false, delayedOAuth = false;
-  let items = [], posts = [], oauthReads = 0;
+  let items = [], posts = [], oauthReads = 0, campaignItems = [];
   const capabilities = [{ provider: 'meta', configured: true, oauthConfigured: true }, { provider: 'google', configured: true }, { provider: 'tiktok', configured: true }];
   const base = `http://127.0.0.1:${server.httpServer.address().port}/${fixture}`;
   await page.route('**/api/**', async route => {
@@ -38,7 +38,8 @@ try {
     if (path === '/oauth/meta/start') return send({ url: 'https://example.test/oauth', sessionId: 'session' });
     if (path === '/oauth/meta/session/accounts') { oauthReads++; const status = oauthStatus; if (delayedOAuth) await new Promise(resolve => setTimeout(resolve, 350)); return send({ status, accounts: status === 'ready' && !oauthEmpty ? [{ id: 'act_123', name: 'Meta 测试账户', currency: 'USD' }] : [] }); }
     if (path === '/oauth/meta/session/connect') { const connection = { id: 'meta-saved', provider: 'meta', accountId: 'act_123', name: 'Meta 测试账户', currency: 'USD', status: 'connected' }; items = [connection]; return send({ connection }); }
-    if (path.endsWith('/campaigns')) return send({ items: [] });
+    if (path.endsWith('/campaigns')) return send({ items: campaignItems });
+    if (path.endsWith('/import') && request.method() === 'POST') return send({ task: { id: 'imported-plan', name: '导入计划', video: '', goal: '平台导入', market: '', budget: 0, currency: 'USD', channels: ['YouTube'], configuration: {}, creationSource: 'platform_import', managementMode: 'manual', status: 'draft', version: 1, proposal: null, authorization: null, sourceContext: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
     if (path === '/tasks') return send({ items: [] });
     return send({ items: [] });
   });
@@ -150,7 +151,15 @@ try {
   await page.getByRole('button', { name: '验证并连接 Google Ads' }).click();
   await page.getByRole('button', { name: '继续创建投放计划' }).click();
   assert.equal(await page.getByLabel('推广目标').inputValue(), '获取线索或转化');
-  console.log('PASS: parent modal Escape, preserved draft after connection, Google-compatible creation goal');
+  campaignItems = [{ id: 'campaign-1', name: '可导入计划', status: 'PAUSED', effective_status: 'PAUSED' }];
+  await page.getByRole('button', { name: '连接账户', exact: true }).click();
+  await page.getByRole('button', { name: '查看平台计划' }).first().click();
+  await page.getByRole('button', { name: '导入为只读计划' }).click();
+  await page.getByRole('button', { name: '连接广告账户', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: '关闭弹窗', exact: true }).count(), 1);
+  await page.getByRole('button', { name: '关闭弹窗', exact: true }).click();
+  assert.equal(await page.getByRole('dialog').count(), 0);
+  console.log('PASS: parent modal Escape, preserved draft after connection, Google-compatible creation goal, imported-task return state reset');
   assert.deepEqual(errors, []);
   console.log('PASS: desktop/mobile overflow and no browser runtime errors');
 } finally { await browser?.close(); await server.close(); await unlink(fixture); }

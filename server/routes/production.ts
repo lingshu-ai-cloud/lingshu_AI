@@ -96,6 +96,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
         if (!presenter) throw new Error('请先保存已授权的人物与声音资产');
         if (shot.layout === 'pip' && !shot.transparent) throw new Error('数字人画中画需要去背景的透明人物层；请先核验透明支持，或改用全屏普通混剪');
+        if (b.ratio === '9:16' && !shot.transparent && presenter.nativeOrientation !== 'portrait') throw new Error('竖屏生成前须在人物资产中核验原生竖屏画幅；横屏或未知人物可能产生大面积留白，已阻止付费提交');
         if (shot.transparent && !presenter.supportsAlpha) throw new Error('该人物未确认支持透明视频，不能生成独立背景人物层');
         if (shot.backgroundMaterialId && shot.backgroundMode === 'baked') throw new Error('首版只支持独立背景合成，请改用透明人物层；不将新背景参数静默忽略');
         if (!shot.narration.trim() || shot.narration.length > 5000 || !['9:16', '16:9', '1:1'].includes(b.ratio) || b.ratio !== project.spec.ratio) throw new Error('台词或画幅无效，请先保存当前草稿');

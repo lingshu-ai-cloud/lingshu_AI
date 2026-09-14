@@ -22,6 +22,7 @@ export interface QuoteSkillDraft {
   packaging: string;
   drawingVersion: string;
   unitPrice: number | null;
+  unitPriceSource?: 'product_catalog' | 'human';
   currency: string;
   subtotal: number | null;
   leadTime: string;
@@ -32,7 +33,11 @@ export interface QuoteSkillDraft {
   pricingExplanation: string[];
   clarificationQuestions: string[];
   humanConfirmationRequired: true;
-  delivery?: { status: 'sent'; sentAt: string; providerMessageId: string; imageSha256: string };
+  matchedProduct: QuoteCatalogProduct | null;
+  delivery?:
+    | { status: 'sending'; attemptId: string; startedAt: string; imageSha256: string }
+    | { status: 'outcome_unknown'; attemptId: string; startedAt: string; outcomeUnknownAt: string; imageSha256: string; providerMessageId?: string }
+    | { status: 'sent'; attemptId?: string; startedAt?: string; sentAt: string; providerMessageId: string; imageSha256: string };
 }
 
 export interface QuoteCatalogProduct {
@@ -71,7 +76,7 @@ export const quoteSkillApi = {
   catalog: () => request<{ items: QuoteCatalogProduct[] }>('/catalog'),
   latest: (customerId: string) => request<{ draft: QuoteSkillDraft | null }>(`/customers/${encodeURIComponent(customerId)}/latest`),
   create: (input: { customerId: string; customerWhatsAppName?: string; customerLanguage: string; productHint: string; messages: string[]; clonePrevious?: boolean }) => request<{ draft: QuoteSkillDraft }>('/drafts', { method: 'POST', body: JSON.stringify(input) }),
-  update: (id: string, expectedRevision: number, patch: Partial<Pick<QuoteSkillDraft, 'productName' | 'sku' | 'quantity' | 'unit' | 'material' | 'deliveryDate' | 'destination' | 'incoterm' | 'packaging' | 'drawingVersion' | 'unitPrice' | 'currency' | 'leadTime' | 'paymentTerms' | 'validityDays'>> & { catalogProductRef?: string }) => request<{ draft: QuoteSkillDraft }>(`/drafts/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, expectedRevision }) }),
+  update: (id: string, expectedRevision: number, patch: Partial<Pick<QuoteSkillDraft, 'productName' | 'sku' | 'quantity' | 'unit' | 'material' | 'deliveryDate' | 'destination' | 'incoterm' | 'packaging' | 'drawingVersion' | 'unitPrice' | 'currency' | 'leadTime' | 'paymentTerms' | 'validityDays'>> & { catalogProductRef?: string; catalogPriceMode?: 'catalog' | 'manual' }) => request<{ draft: QuoteSkillDraft }>(`/drafts/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ ...patch, expectedRevision }) }),
   confirm: (id: string, expectedRevision: number) => request<{ draft: QuoteSkillDraft }>(`/drafts/${encodeURIComponent(id)}/confirm`, { method: 'POST', body: JSON.stringify({ expectedRevision }) }),
   reply: (id: string) => request<{ reply: string }>(`/drafts/${encodeURIComponent(id)}/reply`, { method: 'POST' }),
   card: (id: string) => imageRequest(`/drafts/${encodeURIComponent(id)}/card`),

@@ -1,4 +1,5 @@
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -67,6 +68,20 @@ function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
   draft.quoteNumber = String(value.quoteNumber || quoteNumber({ id: record.id, createdAt: String(value.createdAt || record.updated_at) }));
   if (!Number.isFinite(draft.quantity) || Number(draft.quantity) <= 0) draft.quantity = null;
   if (!Number.isFinite(draft.unitPrice) || Number(draft.unitPrice) <= 0) draft.unitPrice = null;
+  const legacyPricingExplanation = Array.isArray(value.pricingExplanation) ? value.pricingExplanation.map(String) : [];
+  const catalogPriceMatches = draft.unitPrice != null
+    && draft.matchedProduct?.unitPrice != null
+    && draft.unitPrice === draft.matchedProduct.unitPrice
+    && draft.currency === draft.matchedProduct.currency;
+  draft.unitPriceSource = draft.unitPrice == null
+    ? undefined
+    : value.unitPriceSource === 'human'
+      ? 'human'
+      : value.unitPriceSource === 'product_catalog' && catalogPriceMatches
+        ? 'product_catalog'
+        : legacyPricingExplanation.some(item => /价格来源：人工填写/.test(item))
+          ? 'human'
+          : catalogPriceMatches ? 'product_catalog' : 'human';
   if (!Number.isInteger(draft.validityDays) || draft.validityDays < 1 || draft.validityDays > 365) draft.validityDays = 15;
   draft.subtotal = draft.quantity != null && draft.unitPrice != null ? Number((draft.quantity * draft.unitPrice).toFixed(2)) : null;
   draft.missingFields = [
@@ -90,7 +105,7 @@ function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
       ? `匹配产品：${draft.matchedProduct.sku ? `${draft.matchedProduct.sku} · ` : ''}${draft.matchedProduct.name}`
       : `产品由人工确认：${draft.productName || '待确认'}`,
     draft.unitPrice != null
-      ? `价格来源：${draft.matchedProduct?.priceSource || '人工填写'} ${draft.currency} ${draft.unitPrice}/${draft.unit}`
+      ? `价格来源：${draft.unitPriceSource === 'product_catalog' ? draft.matchedProduct?.priceSource || '企业配置' : '人工填写'} ${draft.currency} ${draft.unitPrice}/${draft.unit}`
       : '价格待人工填写，Agent 不猜测单价',
     draft.leadTime || draft.deliveryDate ? `参考交期：${draft.leadTime || draft.deliveryDate}` : '交期待人工确认',
   ];
@@ -297,11 +312,13 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
         packaging: previous.packaging,
         drawingVersion: previous.drawingVersion,
         unitPrice: previous.unitPrice,
+        unitPriceSource: previous.unitPriceSource,
         currency: previous.currency,
         leadTime: previous.leadTime,
         paymentTerms: previous.paymentTerms,
         validityDays: previous.validityDays,
-      });
+        ...(previous.matchedProduct ? { matchedProduct: previous.matchedProduct } : {}),
+      }, previous.matchedProduct && previous.unitPriceSource === 'product_catalog' ? 'product_catalog' : 'human');
     }
     draft.version = (previous?.version || 0) + 1;
     if (previous?.id) draft.supersedesId = previous.id;
@@ -334,6 +351,10 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const validated = validatePatch(req.body);
     if (!validated.patch) { res.status(400).json({ error: validated.error, message: '报价字段格式不正确。' }); return; }
     const catalogProductRef = boundedText(req.body?.catalogProductRef, 200);
+    const requestedCatalogPriceMode = boundedText(req.body?.catalogPriceMode, 20).toLowerCase();
+    if (requestedCatalogPriceMode && requestedCatalogPriceMode !== 'catalog' && requestedCatalogPriceMode !== 'manual') {
+      res.status(400).json({ error: 'invalid_catalog_price_mode', message: '目录价格模式无效。' }); return;
+    }
     let patch = validated.patch;
     let patchSource: 'human' | 'product_catalog' = 'human';
     if (catalogProductRef) {
@@ -341,14 +362,15 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       const products = catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>);
       const product = products.find(item => (item.sku || item.name) === catalogProductRef);
       if (!product) { res.status(409).json({ error: 'catalog_product_changed', message: '该产品已从企业知识库中移除或变更，请重新选择。' }); return; }
+      const catalogPriceMode = requestedCatalogPriceMode || 'catalog';
       patch = {
         ...patch,
         productName: product.name,
         sku: product.sku,
         material: product.material,
         unit: product.unit,
-        unitPrice: product.unitPrice,
-        currency: product.currency,
+        ...(catalogPriceMode === 'catalog' ? { unitPrice: product.unitPrice, currency: product.currency } : {}),
+        unitPriceSource: catalogPriceMode === 'catalog' ? 'product_catalog' : 'human',
         ...(product.leadTime ? { leadTime: product.leadTime } : {}),
         matchedProduct: product satisfies QuoteCatalogProduct,
       };
@@ -420,7 +442,17 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       const owned = await ownedDraft(dataStore, id, tenantId);
       if (!owned) { res.status(404).json({ error: 'quote_not_found' }); return; }
       if (owned.draft.status !== 'confirmed') { res.status(409).json({ error: 'quote_not_confirmed', message: '请先人工确认报价，再发送客户卡片。' }); return; }
-      if (owned.draft.delivery?.status === 'sent') { res.status(409).json({ error: 'quote_already_sent', message: '该报价版本已经发送。修改内容后请新建报价版本。', draft: owned.draft }); return; }
+      if (owned.draft.delivery) {
+        const sent = owned.draft.delivery.status === 'sent';
+        res.status(409).json({
+          error: sent ? 'quote_already_sent' : owned.draft.delivery.status === 'outcome_unknown' ? 'quote_send_outcome_unknown' : 'quote_send_in_progress',
+          message: sent
+            ? '该报价版本已经发送。修改内容后请新建报价版本。'
+            : '该报价版本已有发送尝试且结果尚未安全结算。为避免客户收到重复报价，请核对 WhatsApp 回执或创建新版本。',
+          draft: owned.draft,
+        });
+        return;
+      }
       if (!await canConfirm(req, userId)) { res.status(403).json({ error: 'quote_send_forbidden', message: '当前角色无权发送正式报价。' }); return; }
       if (!await messagingReady(tenantId)) { res.status(409).json({ error: 'whatsapp_not_ready', message: 'WhatsApp 通道尚未连接。' }); return; }
       const customer = findCustomer(tenantId, owned.draft.customerId);
@@ -433,13 +465,49 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       }
       const bytes = await renderCard(customerVisibleDraft(tenantId, owned.draft));
       const caption = `${owned.draft.quoteNumber} · V${owned.draft.version}\n${owned.draft.productName}\n${owned.draft.currency} ${owned.draft.subtotal?.toLocaleString('en-US')}`;
-      const receipt = await sendImage({ tenantId, to, bytes, caption, filename: `${owned.draft.quoteNumber}-v${owned.draft.version}.png`, callbackData: `quote:${owned.record.id}:v${owned.draft.version}` });
-      if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
-      const now = new Date().toISOString();
+      const attemptId = randomUUID();
+      const startedAt = new Date().toISOString();
       const imageSha256 = quoteCardDigest(bytes);
-      const draft: QuoteSkillDraft = { ...owned.draft, delivery: { status: 'sent', sentAt: now, providerMessageId: receipt.messageId, imageSha256 }, updatedAt: now };
+      const sendingDraft: QuoteSkillDraft = {
+        ...owned.draft,
+        delivery: { status: 'sending', attemptId, startedAt, imageSha256 },
+        updatedAt: startedAt,
+      };
+      const claimed = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { payload: sendingDraft, updated_at: startedAt });
+      if (!claimed) {
+        res.status(503).json({ error: 'quote_send_claim_failed', message: '发送尝试无法安全保存，尚未调用 WhatsApp。请稍后重试。' }); return;
+      }
+      let receipt: Awaited<ReturnType<typeof sendImage>>;
+      try {
+        receipt = await sendImage({ tenantId, to, bytes, caption, filename: `${owned.draft.quoteNumber}-v${owned.draft.version}.png`, callbackData: `quote:${owned.record.id}:v${owned.draft.version}:${attemptId}` });
+        if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
+      } catch (error) {
+        reportError(error);
+        const outcomeUnknownAt = new Date().toISOString();
+        const unknownDraft: QuoteSkillDraft = {
+          ...sendingDraft,
+          delivery: { status: 'outcome_unknown', attemptId, startedAt, outcomeUnknownAt, imageSha256 },
+          updatedAt: outcomeUnknownAt,
+        };
+        const recorded = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { payload: unknownDraft, updated_at: outcomeUnknownAt });
+        res.status(502).json({
+          error: 'quote_send_outcome_unknown',
+          message: 'WhatsApp 发送结果无法确认，同一报价版本已锁定以防重复发送。请核对平台回执或创建新版本。',
+          draft: { ...(recorded ? unknownDraft : sendingDraft), id: owned.record.id },
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const draft: QuoteSkillDraft = { ...sendingDraft, delivery: { status: 'sent', attemptId, startedAt, sentAt: now, providerMessageId: receipt.messageId, imageSha256 }, updatedAt: now };
       const ok = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { payload: draft, updated_at: now });
-      if (!ok) { res.status(503).json({ error: 'quote_storage_unavailable', message: '图片已发送，但报价发送状态保存失败，请勿重复发送并联系管理员。' }); return; }
+      if (!ok) {
+        res.status(503).json({
+          error: 'quote_send_state_persist_failed',
+          message: 'WhatsApp 已接受图片，但发送结果保存失败；同一报价版本已锁定，请勿重复发送并联系管理员。',
+          draft: { ...sendingDraft, id: owned.record.id },
+        });
+        return;
+      }
       recordOutbound({ tenantId, customerId: draft.customerId, body: caption, waNumber: to, providerReceipts: [receipt] });
       await audit(dataStore, { tenantId, customerId: draft.customerId, quoteId: owned.record.id, actorId: userId, action: 'card_sent', revision: draft.revision, details: { providerMessageId: receipt.messageId, imageSha256 } });
       res.json({ draft: { ...draft, id: owned.record.id }, status: 'sent', providerMessageId: receipt.messageId, sentAt: now });

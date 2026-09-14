@@ -1595,6 +1595,7 @@ function CustomerInfoRail({
           hasReplyReady={hasReplyReady}
         />
         <QuoteSkillCard
+          key={customer.id}
           customer={customer}
           onInsertReply={onInsertQuoteReply}
           onToast={onToast}

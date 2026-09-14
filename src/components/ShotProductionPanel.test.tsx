@@ -11,16 +11,28 @@ const props = {
   onAi: () => {}, onShoot: () => {}, onMaterial: () => {}, onAdopt: () => {}, onRefresh: () => {},
 };
 test('failed media verification is not presented as a usable completed candidate', () => {
-  const html = renderToStaticMarkup(<ShotProductionPanel {...props} shot={newShotProduction()} jobs={[{ id: 'j1', projectId: 'p1', shotId: 's1', assemblyId: 'a1', fingerprint: 'f1', status: 'pending', error: '供应商已生成，但下载或技术检查未通过：缺少音轨', createdAt: '', updatedAt: '' }]} />);
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} shot={{ ...newShotProduction(), source: 'avatar' }} jobs={[{ id: 'j1', projectId: 'p1', shotId: 's1', assemblyId: 'a1', fingerprint: 'f1', status: 'pending', error: '供应商已生成，但下载或技术检查未通过：缺少音轨', createdAt: '', updatedAt: '' }]} />);
   assert.match(html, /已生成 · 待入库核验/);
+  assert.match(html, /技术通过不代表口型/);
   assert.doesNotMatch(html, /候选已就绪/);
 });
 test('unconfigured avatar cannot be billed and exposes all four source choices', () => {
-  const html = renderToStaticMarkup(<ShotProductionPanel {...props} shot={{ ...newShotProduction('hello'), source: 'avatar' }} />);
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} capabilityReason="服务端未配置 HEYGEN_API_KEY" shot={{ ...newShotProduction('hello'), source: 'avatar' }} />);
   for (const label of ['已有素材', '数字人口播', 'AI创意画面', '安排真人拍摄', '连续旁白', '使用镜头原声', '此镜无声', '人物与产品分屏', '产品主画面', '用一句话编辑当前镜头']) assert.ok(html.includes(label));
-  assert.doesNotMatch(html, /HeyGen未配置或未启用/);
+  assert.match(html, /HeyGen未配置或未启用/);
+  assert.match(html, /服务端未配置 HEYGEN_API_KEY/);
+  assert.match(html, /提交结果未知时只核对原任务，不自动再次生成/);
+  assert.match(html, /预算预占是调用准入控制，不等于供应商最终账单/);
+  assert.match(html, /未配置单价，费用以供应商账单为准/);
+  assert.match(html, /请生成并采用当前数字人镜头候选/);
+  assert.match(html, /<form class="my-3 flex flex-wrap gap-2"/);
+  assert.doesNotMatch(html, /<form class="[^"]*\bhidden\b/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>生成新候选/);
   assert.match(html, /role="dialog" aria-modal="true"/);
+});
+test('capability errors remain visible even when avatar generation is not configured', () => {
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} error="能力检查失败，请稍后重试" shot={{ ...newShotProduction('hello'), source: 'avatar' }} />);
+  assert.match(html, /role="alert"[^>]*>能力检查失败，请稍后重试/);
 });
 test('locked shot disables editing and changed candidates cannot be adopted', () => {
   const shot = { ...newShotProduction(), locked: true, candidates: [{ id: 'old', materialId: 'm', source: 'material' as const, fingerprint: 'old', createdAt: '' }] };
