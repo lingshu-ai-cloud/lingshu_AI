@@ -1,6 +1,7 @@
 import type {
   CreateSocialArtifactInput,
   CreateSocialDeliveryPackageInput,
+  DecideSocialArtifactBatchInput,
   DecideSocialArtifactInput,
   RegisterSocialPublicationInput,
   SocialContentArtifact,
@@ -250,6 +251,66 @@ export async function decideSocialContentArtifact(input: {
     },
   });
   return mutation.value;
+}
+
+export async function decideSocialContentArtifactBatch(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  idempotencyKey: string;
+  value: DecideSocialArtifactBatchInput;
+  now?: Date;
+}): Promise<SocialContentTaskDetail> {
+  const mutation = await executeSocialContentMutation<{ task: SocialContentTaskDetail }>({
+    repository: input.repository,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    idempotencyKey: input.idempotencyKey,
+    requestHash: socialRequestHash(input.value),
+    operation: 'decide_social_content_artifact_batch',
+    targetId: input.taskId,
+    now: input.now,
+    replay: async operationId => {
+      await reconcileSocialContentTask({ ...input, operationId, preferredStatus: 'asset_review' });
+      return { task: (await readSocialTaskDetail(input))! };
+    },
+    action: async operationId => {
+      await requireSocialTask(input);
+      const records = await Promise.all(input.value.artifacts.map(item => findSocialRecord({
+        ...input,
+        collection: STARTER_COLLECTIONS.socialContentArtifacts,
+        where: { artifact_id: item.artifactId, task_id: input.taskId },
+        notFoundCode: 'social_artifact_not_found',
+      })));
+
+      records.forEach((record, index) => {
+        if (socialText(record.last_operation_id) === operationId) return;
+        if (socialText(record.version) !== input.value.artifacts[index].expectedVersion) {
+          throw new SocialContentWorkflowError('social_artifact_version_conflict', 409);
+        }
+        if (!['review_required', 'changes_requested'].includes(socialText(record.status))) {
+          throw new SocialContentWorkflowError('social_artifact_not_decidable', 409);
+        }
+      });
+
+      const timestamp = (input.now ?? new Date()).toISOString();
+      for (const record of records) {
+        if (socialText(record.last_operation_id) === operationId) continue;
+        await input.repository.update(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, record.id, {
+          status: input.value.decision,
+          version: nextVersion(record.version, 'social_artifact_record_invalid'),
+          decision_note: input.value.note ?? '',
+          last_operation_id: operationId,
+          updated_by: input.userId,
+          updated_at: timestamp,
+        });
+      }
+      await reconcileSocialContentTask({ ...input, operationId, preferredStatus: 'asset_review' });
+      return { task: (await readSocialTaskDetail(input))! };
+    },
+  });
+  return mutation.value.task;
 }
 
 export async function createSocialDeliveryPackage(input: {

@@ -28,6 +28,9 @@ import { TagsWidget } from './customers/widgets/TagsWidget';
 import { SourceIcon, sourceLabel } from './customers/SourceIcon';
 import { LiveLocalTime } from './customers/LiveLocalTime';
 import { DailyBriefing } from './customers/DailyBriefing';
+import { SalesDecisionEvidence, type SalesDecisionMeta } from './customers/SalesDecisionEvidence';
+import { ConversationQuoteSkill } from './customers/ConversationQuoteSkill';
+import { isOutsideWhatsAppWindow, lastBuyerEvent, sceneChips, timelineEventAgeHours, type ConversationDraftIntent } from './customers/conversationTiming';
 import { useCustomers } from '../hooks/useCustomers';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -43,7 +46,7 @@ const EmojiPicker = lazy(async () => {
 });
 
 type CustomerView = 'inbox' | 'leads' | 'won' | 'silent';
-type DraftIntent = 'reply' | 'opener' | 'followup' | 'reactivate' | 'post_call' | 'polish' | 'handoff_summary';
+type DraftIntent = ConversationDraftIntent;
 type CustomerFilterKey = 'source' | 'country' | 'language' | 'stage' | 'handling' | 'tag';
 
 interface DraftResult {
@@ -61,6 +64,7 @@ interface DraftResult {
   category?: string;
   originalDraft?: string;
   strategies?: Array<{ id: string; scenario: string; confidence: number; reason: string }>;
+  decision?: SalesDecisionMeta['decision'];
 }
 
 interface MessageTemplate {
@@ -835,37 +839,6 @@ function chineseMessageTranslation(body: string, customer: CustomerProfile): str
   return null;
 }
 
-function timelineEventAgeHours(event?: TimelineEvent): number {
-  const time = String(event?.time || '').trim();
-  if (!time) return 0;
-  const hourMatch = time.match(/(\d+)\s*(?:h|\u5c0f\u65f6|\u5c0f\u6642)/i);
-  if (hourMatch) return Number(hourMatch[1]);
-  const dayMatch = time.match(/(\d+)\s*(?:d|\u5929)/i);
-  if (dayMatch) return Number(dayMatch[1]) * 24;
-  if (time.includes('\u6628\u5929')) return 30;
-  return 0;
-}
-
-function lastBuyerEvent(customer: CustomerProfile): TimelineEvent | undefined {
-  return [...customer.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer');
-}
-
-function isOutsideWhatsAppWindow(customer: CustomerProfile): boolean {
-  return timelineEventAgeHours(lastBuyerEvent(customer)) > 24;
-}
-
-function sceneChips(customer: CustomerProfile): { intent: DraftIntent; label: string }[] {
-  const chips: { intent: DraftIntent; label: string }[] = [];
-  const hasSellerOrAi = customer.timeline.some(event => event.type === 'whatsapp' && (event.actor === 'seller' || event.actor === 'ai'));
-  const last = customer.timeline[customer.timeline.length - 1];
-  const lastBuyer = lastBuyerEvent(customer);
-  if (customer.stage === 'lead' && !hasSellerOrAi) chips.push({ intent: 'opener', label: '\u5199\u4e00\u6761\u5f00\u573a\u767d' });
-  if (customer.stage === 'quoted' && timelineEventAgeHours(lastBuyer) > 72) chips.push({ intent: 'followup', label: '\u5199\u4e00\u6761\u8ddf\u8fdb' });
-  if (customer.stage === 'silent30' || customer.stage === 'silent60') chips.push({ intent: 'reactivate', label: '\u5199\u4e00\u6761\u5524\u9192\u6d88\u606f' });
-  if (last?.type === 'call') chips.push({ intent: 'post_call', label: '\u6309\u901a\u8bdd\u7ed3\u679c\u5199\u8ddf\u8fdb' });
-  return chips.slice(0, 3);
-}
-
 function ChatThread({
   customer,
   draftSuggestion,
@@ -888,6 +861,8 @@ function ChatThread({
   priceRulesReady,
   knowledgeMiss,
   bridgeOnly,
+  draftMeta,
+  onToast,
   onMockBuyerMessage,
   sending,
   channelReady,
@@ -913,6 +888,8 @@ function ChatThread({
   priceRulesReady: boolean;
   knowledgeMiss?: boolean;
   bridgeOnly?: boolean;
+  draftMeta: SalesDecisionMeta | null;
+  onToast: (text: string) => void;
   onMockBuyerMessage: (text: string) => void;
   sending?: boolean;
   channelReady?: boolean;
@@ -1017,6 +994,7 @@ function ChatThread({
               </div>
             </form>
           )}
+          <ConversationQuoteSkill customer={customer} inputRef={inputRef} onManualActive={onManualActive} onInputChange={onInputChange} onToast={onToast} />
           {customer.timeline.map(event => {
             if (event.type !== 'whatsapp') {
               return (
@@ -1072,13 +1050,15 @@ function ChatThread({
             );
           })}
           {draftSuggestion && (
-            <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+            <>
+              <SalesDecisionEvidence meta={draftMeta} />
+              <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+            </>
           )}
         </div>
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
-          {!customer.isMock && !channelReady && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">WhatsApp 通道尚未连接。可以编辑和保留草稿，连接测试或正式账号后才能真实发送。</div>}
           {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{'\u8ddd\u5ba2\u6237\u4e0a\u6b21\u6d88\u606f\u5df2\u8d85\u8fc724\u5c0f\u65f6\uff0cWhatsApp \u8981\u6c42\u4ee5\u6a21\u677f\u6d88\u606f\u53d1\u9001'}</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
@@ -2592,9 +2572,11 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           priceRulesReady={priceRulesReady}
           knowledgeMiss={Boolean(draftMeta?.knowledgeMiss)}
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
+          draftMeta={draftMeta}
           onMockBuyerMessage={pushMockBuyerMessage}
           sending={sendingReply}
           channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
+          onToast={showToast}
         />
         </div>
         <div className={mobilePanel === 'profile' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>

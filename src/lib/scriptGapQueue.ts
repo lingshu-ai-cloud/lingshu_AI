@@ -1,40 +1,29 @@
-export interface ScriptGapTask {
-  id: string;
-  origin: 'script_gap';
-  title: string;
-  productLabel: string;
-  themeTitle: string;
-  shotBrief: string;
-  suggestedDurationSec: number;
-  sourceProjectId?: string;
-  sourceStoryboardSlotId?: string;
-  createdAt: string;
-  uploadedMaterialIds: string[];
+import { authHeader } from './auth';
+import type { ScriptGapTask } from './shootingWorkflow';
+export type { ScriptGapTask } from './shootingWorkflow';
+
+export const SCRIPT_GAP_QUEUE_EVENT = 'lingshu:script-gap-queue-updated';
+
+async function request<T>(path = '', body?: unknown): Promise<T> {
+  const response = await fetch(`/api/overseas/studio/shooting-tasks${path}`, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || '待拍任务服务暂不可用');
+  return result as T;
 }
 
-const KEY = 'lingshu:script-gap-queue';
-const EVENT = 'lingshu:script-gap-queue-updated';
+export function readScriptGapTasks(): Promise<ScriptGapTask[]> { return request(); }
 
-export function readScriptGapTasks(): ScriptGapTask[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(KEY) || '[]');
-    return Array.isArray(value) ? value : [];
-  } catch { return []; }
+export async function updateScriptGapTask(id: string, patch: { uploadedMaterialIds: string[] }): Promise<void> {
+  await request(`/${encodeURIComponent(id)}/uploads`, patch);
+  window.dispatchEvent(new Event(SCRIPT_GAP_QUEUE_EVENT));
 }
 
-export function writeScriptGapTasks(tasks: ScriptGapTask[]): void {
-  localStorage.setItem(KEY, JSON.stringify(tasks));
-  window.dispatchEvent(new Event(EVENT));
-}
-
-export function updateScriptGapTask(id: string, patch: Partial<ScriptGapTask>): void {
-  writeScriptGapTasks(readScriptGapTasks().map(task => task.id === id ? { ...task, ...patch } : task));
-}
-
-export function createScriptGapTask(input: Omit<ScriptGapTask, 'id' | 'origin' | 'createdAt' | 'uploadedMaterialIds'>): ScriptGapTask {
-  const task: ScriptGapTask = { ...input, id: `script-gap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, origin: 'script_gap', createdAt: new Date().toISOString(), uploadedMaterialIds: [] };
-  writeScriptGapTasks([task, ...readScriptGapTasks()]);
+export async function createScriptGapTask(input: Omit<ScriptGapTask, 'id' | 'origin' | 'createdAt' | 'uploadedMaterialIds'>): Promise<ScriptGapTask> {
+  const task = await request<ScriptGapTask>('', input);
+  window.dispatchEvent(new Event(SCRIPT_GAP_QUEUE_EVENT));
   return task;
 }
-
-export const SCRIPT_GAP_QUEUE_EVENT = EVENT;

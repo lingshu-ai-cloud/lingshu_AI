@@ -58,6 +58,18 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   const objective = socialText(record.objective);
   if (!title || !objective) throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   const requested = record.requestedOutputCount;
+  const optionalStoredNumber = (field: string, maximum: number, integer = false): number | null => {
+    const raw = record[field];
+    if (raw === undefined || raw === null || raw === '') return null;
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || raw > maximum || (integer && !Number.isSafeInteger(raw))) {
+      throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+    }
+    return raw;
+  };
+  const planningMode = socialText(record.planningMode) || 'auto_adjust';
+  if (!['fixed', 'auto_adjust'].includes(planningMode)) {
+    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  }
   return {
     title,
     objective,
@@ -70,6 +82,12 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     aspectRatio: nullable(record.aspectRatio),
     cadence: nullable(record.cadence),
     requestedOutputCount: typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0 ? requested : null,
+    weeklyBudgetCny: optionalStoredNumber('weeklyBudgetCny', 10_000_000),
+    perItemBudgetCny: optionalStoredNumber('perItemBudgetCny', 1_000_000),
+    retryReserveCny: optionalStoredNumber('retryReserveCny', 10_000_000),
+    planningMode: planningMode as SocialContentTaskBrief['planningMode'],
+    shootingWindowMinutes: optionalStoredNumber('shootingWindowMinutes', 10_080, true),
+    specialRequirements: nullable(record.specialRequirements),
     dueAt: nullable(record.dueAt),
     brandNotes: nullable(record.brandNotes),
     restrictions: strings(record.restrictions, 'social_content_task_record_invalid'),

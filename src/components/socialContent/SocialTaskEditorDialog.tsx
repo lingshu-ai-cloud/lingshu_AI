@@ -2,17 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
-  Building2,
   CalendarDays,
   Check,
   Loader2,
-  PackageCheck,
   X,
 } from 'lucide-react';
 import type {
   SocialContentTaskDetail,
   SocialWorkPackageCard,
-  SocialWorkPackageKind,
 } from '../../../shared/contracts/socialContentWorkflow';
 import {
   validateSocialContentDraft,
@@ -25,17 +22,13 @@ import {
 import {
   FORMAT_OPTIONS,
   GOAL_OPTIONS,
-  PACKAGE_META,
   PLATFORM_OPTIONS,
-  availablePackagesByKind,
   optionLabel,
-  packageVersionLabel,
   taskToDraft,
 } from './socialContentUi';
 import SocialTaskSourcesStep from './SocialTaskSourcesStep';
 
-const STEPS = ['任务', '资料', '发布要求', '作业方案', '确认'] as const;
-const PACKAGE_KINDS: SocialWorkPackageKind[] = ['industry_launch', 'content_rocket', 'task_express'];
+const STEPS = ['本周重点', '资料', '规模与要求', '确认'] as const;
 const INPUT_CLASS = 'mt-1.5 h-11 w-full rounded-xl border border-border bg-white px-3 text-sm text-text-primary outline-none transition placeholder:text-text-muted focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100';
 
 interface SocialTaskEditorDialogProps {
@@ -79,9 +72,9 @@ function ToggleGroup({
 function BriefStep({ draft, update }: { draft: SocialContentDraft; update: (changes: Partial<SocialContentDraft>) => void }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <label className="text-xs font-bold text-text-secondary md:col-span-2">任务名称<span className="text-rose-600"> *</span><input autoFocus value={draft.title} onChange={event => update({ title: event.target.value })} maxLength={100} placeholder="例如：九月新品社媒内容" className={INPUT_CLASS} /></label>
-      <label className="text-xs font-bold text-text-secondary">产品或业务主题<span className="text-rose-600"> *</span><input value={draft.productName} onChange={event => update({ productName: event.target.value })} maxLength={160} placeholder="填写产品、服务或活动" className={INPUT_CLASS} /></label>
-      <label className="text-xs font-bold text-text-secondary">主要目标<span className="text-rose-600"> *</span><select value={draft.primaryGoal} onChange={event => update({ primaryGoal: event.target.value })} className={INPUT_CLASS}><option value="">请选择</option>{GOAL_OPTIONS.map(goal => <option key={goal}>{goal}</option>)}</select></label>
+      <label className="text-xs font-bold text-text-secondary md:col-span-2">本周任务名称<span className="text-rose-600"> *</span><input autoFocus value={draft.title} onChange={event => update({ title: event.target.value })} maxLength={100} placeholder="例如：九月新品内容周" className={INPUT_CLASS} /></label>
+      <label className="text-xs font-bold text-text-secondary">本周重点产品<span className="text-rose-600"> *</span><input value={draft.productName} onChange={event => update({ productName: event.target.value })} maxLength={160} placeholder="填写主推产品、服务或活动" className={INPUT_CLASS} /></label>
+      <label className="text-xs font-bold text-text-secondary">本周目标<span className="text-rose-600"> *</span><select value={draft.primaryGoal} onChange={event => update({ primaryGoal: event.target.value })} className={INPUT_CLASS}><option value="">请选择</option>{GOAL_OPTIONS.map(goal => <option key={goal}>{goal}</option>)}</select></label>
       <label className="text-xs font-bold text-text-secondary">目标客户<span className="text-rose-600"> *</span><input value={draft.audience} onChange={event => update({ audience: event.target.value })} maxLength={500} placeholder="例如：德国户外露营家庭" className={INPUT_CLASS} /></label>
       <label className="text-xs font-bold text-text-secondary">目标市场<span className="text-rose-600"> *</span><input value={draft.market} onChange={event => update({ market: event.target.value })} maxLength={160} placeholder="多个市场用逗号分隔" className={INPUT_CLASS} /></label>
       <label className="text-xs font-bold text-text-secondary">内容语言<span className="text-rose-600"> *</span><input value={draft.language} onChange={event => update({ language: event.target.value })} maxLength={120} placeholder="多个语言用逗号分隔" className={INPUT_CLASS} /></label>
@@ -90,40 +83,30 @@ function BriefStep({ draft, update }: { draft: SocialContentDraft; update: (chan
   );
 }
 
-function PublishingStep({ draft, update }: { draft: SocialContentDraft; update: (changes: Partial<SocialContentDraft>) => void }) {
+function optionalNumber(value: string): number | null {
+  return value === '' ? null : Number(value);
+}
+
+function ScaleStep({ draft, update }: { draft: SocialContentDraft; update: (changes: Partial<SocialContentDraft>) => void }) {
   return (
     <div className="space-y-6">
       <ToggleGroup label="发布平台 *" options={PLATFORM_OPTIONS} selected={draft.platforms} onChange={platforms => update({ platforms })} />
       <ToggleGroup label="内容形式 *" options={FORMAT_OPTIONS} selected={draft.formats} onChange={formats => update({ formats })} />
       <div className="grid gap-4 md:grid-cols-3">
-        <label className="text-xs font-bold text-text-secondary">内容数量<input type="number" min={1} max={50} value={draft.quantity} onChange={event => update({ quantity: Number(event.target.value) })} className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary">本周计划数量<input type="number" min={1} max={100} value={draft.quantity} onChange={event => update({ quantity: Number(event.target.value) })} className={INPUT_CLASS} /></label>
         <label className="text-xs font-bold text-text-secondary">画面比例<select value={draft.aspectRatio} onChange={event => update({ aspectRatio: event.target.value })} className={INPUT_CLASS}><option>9:16</option><option>1:1</option><option>4:5</option><option>16:9</option></select></label>
         <label className="text-xs font-bold text-text-secondary">发布节奏<input value={draft.cadence} onChange={event => update({ cadence: event.target.value })} maxLength={200} placeholder="例如：每周二、四发布" className={INPUT_CLASS} /></label>
       </div>
-    </div>
-  );
-}
-
-function PackagesStep({ draft, update, catalog }: { draft: SocialContentDraft; update: (changes: Partial<SocialContentDraft>) => void; catalog: SocialWorkPackageCard[] }) {
-  return (
-    <div className="grid gap-3 lg:grid-cols-3">
-      {PACKAGE_KINDS.map(kind => {
-        const options = availablePackagesByKind(catalog, kind);
-        const selectedKey = draft.packageSelection[kind];
-        const selected = options.find(item => item.packageKey === selectedKey);
-        return (
-          <section key={kind} className="rounded-2xl border border-emerald-200 bg-emerald-50/35 p-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm"><PackageCheck size={18} /></div>
-            <h3 className="mt-4 text-sm font-black text-text-primary">{PACKAGE_META[kind].title}</h3>
-            <p className="mt-1 text-xs text-text-muted">{PACKAGE_META[kind].caption}</p>
-            <label className="mt-5 block text-[11px] font-bold text-text-secondary">本次使用<select value={selectedKey} onChange={event => update({ packageSelection: { ...draft.packageSelection, [kind]: event.target.value } })} className={INPUT_CLASS} disabled={options.length <= 1}>{options.map(item => <option key={`${item.packageKey}:${item.version}`} value={item.packageKey}>{item.name}</option>)}</select></label>
-            {selected?.summary && <p className="mt-3 text-[11px] leading-5 text-text-secondary">{selected.summary}</p>}
-            {selected?.requiredInputs.length ? <div className="mt-3"><p className="text-[10px] font-bold text-text-muted">需要资料</p><ul className="mt-1 space-y-1 text-[11px] text-text-secondary">{selected.requiredInputs.slice(0, 3).map(item => <li key={item}>· {item}</li>)}</ul></div> : null}
-            {selected?.deliverables.length ? <div className="mt-3"><p className="text-[10px] font-bold text-text-muted">会完成</p><ul className="mt-1 space-y-1 text-[11px] text-text-secondary">{selected.deliverables.slice(0, 3).map(item => <li key={item}>· {item}</li>)}</ul></div> : null}
-            {selected?.version && <p className="mt-3 text-[10px] font-semibold text-text-muted">{packageVersionLabel(selected.version)}</p>}
-          </section>
-        );
-      })}
+      <div className="grid gap-4 rounded-2xl border border-border bg-white p-4 md:grid-cols-3">
+        <label className="text-xs font-bold text-text-secondary">本周预算<input type="number" min={0} step="0.01" value={draft.weeklyBudgetCny ?? ''} onChange={event => update({ weeklyBudgetCny: optionalNumber(event.target.value) })} placeholder="选填，人民币" className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary">单条预算上限<input type="number" min={0} step="0.01" value={draft.perItemBudgetCny ?? ''} onChange={event => update({ perItemBudgetCny: optionalNumber(event.target.value) })} placeholder="选填，人民币" className={INPUT_CLASS} /></label>
+        <label className="text-xs font-bold text-text-secondary">重试预留<input type="number" min={0} step="0.01" value={draft.retryReserveCny ?? ''} onChange={event => update({ retryReserveCny: optionalNumber(event.target.value) })} placeholder="选填，人民币" className={INPUT_CLASS} /></label>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="text-xs font-bold text-text-secondary">产量安排<select value={draft.planningMode} onChange={event => update({ planningMode: event.target.value as SocialContentDraft['planningMode'] })} className={INPUT_CLASS}><option value="auto_adjust">根据素材和预算自动调整</option><option value="fixed">数量固定，缺口集中补齐</option></select></label>
+        <label className="text-xs font-bold text-text-secondary">可集中拍摄时间<input type="number" min={0} max={10080} value={draft.shootingWindowMinutes ?? ''} onChange={event => update({ shootingWindowMinutes: optionalNumber(event.target.value) })} placeholder="选填，分钟" className={INPUT_CLASS} /></label>
+      </div>
+      <label className="block text-xs font-bold text-text-secondary">本周特殊要求<textarea value={draft.specialRequirements} onChange={event => update({ specialRequirements: event.target.value })} maxLength={2000} rows={3} placeholder="例如：新品上市，本周暂不使用促销表达" className="mt-1.5 w-full resize-y rounded-xl border border-border bg-white px-3 py-2.5 text-sm leading-6 text-text-primary outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" /></label>
     </div>
   );
 }
@@ -131,18 +114,20 @@ function PackagesStep({ draft, update, catalog }: { draft: SocialContentDraft; u
 function ReviewStep({ draft, files, task }: { draft: SocialContentDraft; files: File[]; task: SocialContentTaskDetail | null }) {
   const existingCount = task?.sources.filter(source => source.status === 'active' && !draft.removedSourceIds.includes(source.sourceId)).length || 0;
   const rows = [
-    ['任务', draft.title],
-    ['产品', draft.productName],
-    ['目标', draft.primaryGoal],
+    ['本周任务', draft.title],
+    ['重点产品', draft.productName],
+    ['本周目标', draft.primaryGoal],
     ['市场与语言', [draft.market, draft.language].filter(Boolean).join(' · ')],
     ['发布平台', draft.platforms.map(value => optionLabel(PLATFORM_OPTIONS, value)).join('、')],
     ['内容形式', `${draft.formats.map(value => optionLabel(FORMAT_OPTIONS, value)).join('、')} · ${draft.quantity} 项`],
+    ['本周预算', draft.weeklyBudgetCny === null ? '未设置' : `¥${draft.weeklyBudgetCny.toLocaleString('zh-CN')}`],
+    ['集中拍摄', draft.shootingWindowMinutes === null ? '按需安排' : `${draft.shootingWindowMinutes} 分钟`],
     ['本次资料', `${existingCount} 项已关联 · ${draft.selectedSources.length + files.length + draft.referenceLinks.length} 项新增`],
   ];
   return (
     <div className="grid gap-5 lg:grid-cols-[1.2fr_.8fr]">
       <section className="rounded-2xl border border-border bg-white p-5"><h3 className="text-sm font-black text-text-primary">任务摘要</h3><dl className="mt-4 divide-y divide-border">{rows.map(([label, value]) => <div key={label} className="grid gap-1 py-3 sm:grid-cols-[120px_1fr]"><dt className="text-xs font-semibold text-text-muted">{label}</dt><dd className="text-xs font-bold text-text-primary">{value || '未填写'}</dd></div>)}</dl></section>
-      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5"><div className="flex items-center gap-2"><Building2 size={17} className="text-emerald-700" /><h3 className="text-sm font-black text-text-primary">本次方案</h3></div><div className="mt-4 space-y-3">{PACKAGE_KINDS.map(kind => <div key={kind} className="rounded-xl bg-white px-3 py-2.5"><p className="text-xs font-bold text-text-primary">{PACKAGE_META[kind].title}</p><p className="mt-0.5 text-[10px] text-text-muted">{PACKAGE_META[kind].caption}</p></div>)}</div>{draft.desiredDeliveryAt && <div className="mt-4 flex items-center gap-2 text-xs font-bold text-text-secondary"><CalendarDays size={14} />期望 {new Date(`${draft.desiredDeliveryAt}T12:00:00`).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })} 交付</div>}</section>
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5"><h3 className="text-sm font-black text-text-primary">灵小枢自动安排</h3><div className="mt-4 space-y-2 text-xs font-semibold text-text-secondary"><p className="rounded-xl bg-white px-3 py-2.5">形成本周内容计划</p><p className="rounded-xl bg-white px-3 py-2.5">先出代表样片，再批量生产</p><p className="rounded-xl bg-white px-3 py-2.5">集中处理素材缺口与异常内容</p></div>{draft.desiredDeliveryAt && <div className="mt-4 flex items-center gap-2 text-xs font-bold text-text-secondary"><CalendarDays size={14} />期望 {new Date(`${draft.desiredDeliveryAt}T12:00:00`).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })} 交付</div>}</section>
     </div>
   );
 }
@@ -215,9 +200,8 @@ export default function SocialTaskEditorDialog({ open, sessionKey, task, catalog
         <main className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
           {step === 0 && <BriefStep draft={draft} update={update} />}
           {step === 1 && <SocialTaskSourcesStep draft={draft} update={update} files={files} setFiles={setFiles} onFileError={message => setErrors([message])} task={task} />}
-          {step === 2 && <PublishingStep draft={draft} update={update} />}
-          {step === 3 && <PackagesStep draft={draft} update={update} catalog={catalog} />}
-          {step === 4 && <ReviewStep draft={draft} files={files} task={task} />}
+          {step === 2 && <ScaleStep draft={draft} update={update} />}
+          {step === 3 && <ReviewStep draft={draft} files={files} task={task} />}
           {errors.length > 0 && <div role="alert" className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3"><p className="text-xs font-bold text-rose-800">请先完成以下内容</p><ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-rose-700">{errors.map(error => <li key={error}>{error}</li>)}</ul></div>}
         </main>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-white px-5 py-4 sm:px-6">

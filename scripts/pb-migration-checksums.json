@@ -57,6 +57,8 @@
     "1788999000_create_review_todo_boards.js": "8226364e27ee4b7e2135bd1e3f8d708cb22474d11564dbc49d58fb9d745690a5",
     "1789084800_remove_registered_password_cipher.js": "b12704935c8fd58fd999abea5a89b1052d15b4689b8cd107d3cbbfde0a1a57bd",
     "1789171200_unique_tenant_api_keys.js": "2d2c65a9613be584dbf5694e6fb78d3835bebce266b66e943f246f0c7d4e1d80",
+    "1789199000_create_quote_skill_drafts.js": "e6d9114d8cab884fd9305a1d2bf92865cf7251d5ef316c88aeb36032cd24c67a",
+    "1789199100_create_quote_skill_events.js": "73fbb263bd0405557952fd6af9989df7afc0530440cef5d86d77714abb9a596b",
     "1789257600_create_starter198_quotation.js": "1fed329e0af9703f2a92b438380f4d9f6929085aa872a2bbe40b67827576a05e",
     "1789344000_create_starter198_foundation.js": "70574af4cdf80ce1c8ab4d825b4fb3e639c84795cc0a85d52cb4f07b5a2420a9",
     "1789430400_create_starter198_orchestrator_inbox.js": "151b77b1f14bc993aff152441f4eb55430cc85b1186abbef59921dd6f09b4c23",

@@ -6,12 +6,12 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow';
 
 export const SOCIAL_CONTENT_STAGES = [
-  { id: 'prepare', label: '准备资料' },
-  { id: 'plan', label: '确认方案' },
-  { id: 'produce', label: '内容制作' },
-  { id: 'review', label: '确认成品' },
+  { id: 'prepare', label: '本周设定' },
+  { id: 'plan', label: '周计划' },
+  { id: 'produce', label: '批量生产' },
+  { id: 'review', label: '批次验收' },
   { id: 'deliver', label: '交付发布' },
-  { id: 'measure', label: '数据回收' },
+  { id: 'measure', label: '周复盘' },
 ] as const;
 
 export type SocialContentStageId = typeof SOCIAL_CONTENT_STAGES[number]['id'];
@@ -166,6 +166,12 @@ export interface SocialContentDraft {
   platforms: string[];
   formats: string[];
   quantity: number;
+  weeklyBudgetCny: number | null;
+  perItemBudgetCny: number | null;
+  retryReserveCny: number | null;
+  planningMode: 'fixed' | 'auto_adjust';
+  shootingWindowMinutes: number | null;
+  specialRequirements: string;
   aspectRatio: string;
   cadence: string;
   packageSelection: Record<'industry_launch' | 'content_rocket' | 'task_express', string>;
@@ -188,6 +194,12 @@ export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   platforms: [],
   formats: [],
   quantity: 1,
+  weeklyBudgetCny: null,
+  perItemBudgetCny: null,
+  retryReserveCny: null,
+  planningMode: 'auto_adjust',
+  shootingWindowMinutes: null,
+  specialRequirements: '',
   aspectRatio: '9:16',
   cadence: '',
   packageSelection: {
@@ -228,6 +240,23 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   });
   if (draft.platforms.length === 0) add(2, '请至少选择一个发布平台');
   if (draft.formats.length === 0) add(2, '请至少选择一种内容形式');
-  if (!Number.isInteger(draft.quantity) || draft.quantity < 1 || draft.quantity > 50) add(2, '内容数量应为 1 至 50');
+  if (!Number.isInteger(draft.quantity) || draft.quantity < 1 || draft.quantity > 100) add(2, '内容数量应为 1 至 100');
+  for (const [value, label] of [
+    [draft.weeklyBudgetCny, '本周预算'],
+    [draft.perItemBudgetCny, '单条预算上限'],
+    [draft.retryReserveCny, '重试预留'],
+  ] as const) {
+    if (value !== null && (!Number.isFinite(value) || value < 0)) add(2, `${label}不能小于 0`);
+  }
+  if (draft.weeklyBudgetCny !== null && draft.perItemBudgetCny !== null && draft.perItemBudgetCny > draft.weeklyBudgetCny) {
+    add(2, '单条预算上限不能高于本周预算');
+  }
+  if (draft.weeklyBudgetCny !== null && draft.retryReserveCny !== null && draft.retryReserveCny > draft.weeklyBudgetCny) {
+    add(2, '重试预留不能高于本周预算');
+  }
+  if (draft.shootingWindowMinutes !== null && (!Number.isInteger(draft.shootingWindowMinutes) || draft.shootingWindowMinutes < 0 || draft.shootingWindowMinutes > 10_080)) {
+    add(2, '集中拍摄时间应为 0 至 10080 分钟');
+  }
+  if (draft.specialRequirements.length > 2_000) add(2, '本周特殊要求不超过 2000 字');
   return issues;
 }

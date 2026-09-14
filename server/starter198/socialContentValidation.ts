@@ -6,6 +6,7 @@ import {
   type CreateSocialArtifactInput,
   type CreateSocialContentTaskInput,
   type CreateSocialDeliveryPackageInput,
+  type DecideSocialArtifactBatchInput,
   type DecideSocialArtifactInput,
   type RegisterSocialPublicationInput,
   type SelectSocialWorkPackagesInput,
@@ -113,8 +114,19 @@ function safeRecord(value: unknown, code: string, maxBytes: number): Record<stri
 
 const BRIEF_KEYS = [
   'title', 'objective', 'productRef', 'audience', 'markets', 'languages', 'platforms', 'formats',
-  'aspectRatio', 'cadence', 'requestedOutputCount', 'dueAt', 'brandNotes', 'restrictions', 'callToAction',
+  'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny',
+  'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
+  'brandNotes', 'restrictions', 'callToAction',
 ] as const;
+
+function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > maximum || (integer && !Number.isSafeInteger(parsed))) {
+    throw new SocialContentWorkflowError(code, 400);
+  }
+  return Math.round(parsed * 100) / 100;
+}
 
 export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskInput {
   const source = socialObject(value);
@@ -125,6 +137,10 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     : Number(source.requestedOutputCount);
   if (requestedOutputCount !== null && (!Number.isSafeInteger(requestedOutputCount) || requestedOutputCount < 1 || requestedOutputCount > 100)) {
     throw new SocialContentWorkflowError('social_content_output_count_invalid', 400);
+  }
+  const planningMode = source.planningMode === undefined ? 'auto_adjust' : socialText(source.planningMode);
+  if (!['fixed', 'auto_adjust'].includes(planningMode)) {
+    throw new SocialContentWorkflowError('social_content_planning_mode_invalid', 400);
   }
   return {
     title: requiredText(source.title, 'social_content_title_invalid', 120),
@@ -138,6 +154,12 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     aspectRatio: optionalText(source.aspectRatio, 'social_content_aspect_ratio_invalid', 40),
     cadence: optionalText(source.cadence, 'social_content_cadence_invalid', 200),
     requestedOutputCount,
+    weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
+    perItemBudgetCny: optionalNumber(source.perItemBudgetCny, 'social_content_item_budget_invalid', 1_000_000),
+    retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
+    planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],
+    shootingWindowMinutes: optionalNumber(source.shootingWindowMinutes, 'social_content_shooting_window_invalid', 10_080, true),
+    specialRequirements: optionalText(source.specialRequirements, 'social_content_special_requirements_invalid', 2_000),
     dueAt: isoTime(source.dueAt, 'social_content_due_at_invalid'),
     brandNotes: optionalText(source.brandNotes, 'social_content_brand_notes_invalid', 3_000),
     restrictions: textList(source.restrictions, 'social_content_restrictions_invalid', 30, 240),
@@ -237,6 +259,36 @@ export function parseArtifactDecision(value: unknown): DecideSocialArtifactInput
   return {
     expectedVersion: requiredText(source.expectedVersion, 'social_artifact_version_required', 80),
     decision: decision as DecideSocialArtifactInput['decision'],
+    note: optionalText(source.note, 'social_artifact_note_invalid', 2_000),
+  };
+}
+
+export function parseArtifactBatchDecision(value: unknown): DecideSocialArtifactBatchInput {
+  const source = socialObject(value);
+  if (!source) throw new SocialContentWorkflowError('social_artifact_batch_decision_invalid', 400);
+  assertKeys(source, ['artifacts', 'decision', 'note']);
+  if (!Array.isArray(source.artifacts) || source.artifacts.length < 1 || source.artifacts.length > 100) {
+    throw new SocialContentWorkflowError('social_artifact_batch_invalid', 400);
+  }
+  const artifacts = source.artifacts.map(item => {
+    const record = socialObject(item);
+    if (!record) throw new SocialContentWorkflowError('social_artifact_batch_invalid', 400);
+    assertKeys(record, ['artifactId', 'expectedVersion']);
+    return {
+      artifactId: safeId(record.artifactId, 'social_artifact_id_invalid'),
+      expectedVersion: requiredText(record.expectedVersion, 'social_artifact_version_required', 80),
+    };
+  });
+  if (new Set(artifacts.map(item => item.artifactId)).size !== artifacts.length) {
+    throw new SocialContentWorkflowError('social_artifact_batch_invalid', 400);
+  }
+  const decision = socialText(source.decision);
+  if (!['approved', 'changes_requested'].includes(decision)) {
+    throw new SocialContentWorkflowError('social_artifact_decision_invalid', 400);
+  }
+  return {
+    artifacts,
+    decision: decision as DecideSocialArtifactBatchInput['decision'],
     note: optionalText(source.note, 'social_artifact_note_invalid', 2_000),
   };
 }

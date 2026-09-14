@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Home, Users, LayoutGrid,
+  Home, Users, LayoutGrid, BarChart3, Megaphone, Bot,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
   Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send, Target, PanelRightOpen,
@@ -47,6 +47,15 @@ const SOCIAL_NAV: NavSection = {
   ],
 };
 
+const ADS_NAV: NavSection = {
+  label: '平台投放',
+  items: [
+    { id: 'adsOverview', label: '投放总览', icon: <BarChart3 size={16} /> },
+    { id: 'adsPlans', label: '投放计划', icon: <Megaphone size={16} /> },
+    { id: 'adsManaged', label: 'AI 托管', icon: <Bot size={16} /> },
+  ],
+};
+
 const CUSTOMER_NAV: NavSection = {
   label: '客户管理',
   items: [
@@ -80,7 +89,7 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const STARTER_HOME_NAV_ITEM = { id: 'digitalEmployees' as Page, label: '灵小枢工作台', icon: <Home size={16} /> };
 const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
@@ -91,9 +100,9 @@ const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
 };
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'scheduled']),
+  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
   customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'orders', 'scheduled']),
 };
 

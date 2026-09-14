@@ -100,6 +100,12 @@ export interface SocialContentTaskBrief {
   aspectRatio: string | null;
   cadence: string | null;
   requestedOutputCount: number | null;
+  weeklyBudgetCny?: number | null;
+  perItemBudgetCny?: number | null;
+  retryReserveCny?: number | null;
+  planningMode?: 'fixed' | 'auto_adjust';
+  shootingWindowMinutes?: number | null;
+  specialRequirements?: string | null;
   dueAt: string | null;
   brandNotes: string | null;
   restrictions: string[];
@@ -263,6 +269,12 @@ export interface CreateSocialContentTaskInput {
   aspectRatio?: string | null;
   cadence?: string | null;
   requestedOutputCount?: number | null;
+  weeklyBudgetCny?: number | null;
+  perItemBudgetCny?: number | null;
+  retryReserveCny?: number | null;
+  planningMode?: 'fixed' | 'auto_adjust';
+  shootingWindowMinutes?: number | null;
+  specialRequirements?: string | null;
   dueAt?: string | null;
   brandNotes?: string | null;
   restrictions?: string[];
@@ -299,6 +311,12 @@ export interface CreateSocialArtifactInput {
 
 export interface DecideSocialArtifactInput {
   expectedVersion: string;
+  decision: 'approved' | 'changes_requested';
+  note?: string | null;
+}
+
+export interface DecideSocialArtifactBatchInput {
+  artifacts: Array<{ artifactId: string; expectedVersion: string }>;
   decision: 'approved' | 'changes_requested';
   note?: string | null;
 }

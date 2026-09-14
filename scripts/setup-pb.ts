@@ -27,9 +27,51 @@ const WORKBENCH_ADMIN_PASSWORD = String(process.env.WORKBENCH_ADMIN_PASSWORD ?? 
 const WORKBENCH_ADMIN_NAME = String(process.env.WORKBENCH_ADMIN_NAME ?? '灵枢管理员').trim() || '灵枢管理员';
 
 type Field = { name: string; type: string; required?: boolean; [k: string]: unknown };
+type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 
 /** Collection definitions, derived from what the route handlers write/read. */
-const COLLECTIONS: { name: string; fields: Field[]; indexes?: string[] }[] = [
+const COLLECTIONS: CollectionSpec[] = [
+  {
+    name: 'quote_skill_drafts',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'customer_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 500000 },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE INDEX `idx_quote_skill_customer` ON `quote_skill_drafts` (`tenant_id`, `customer_id`, `updated_at`)',
+      'CREATE INDEX `idx_quote_skill_status` ON `quote_skill_drafts` (`tenant_id`, `status`)',
+    ],
+  },
+  {
+    name: 'quote_skill_events',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'customer_id', type: 'text', required: true },
+      { name: 'quote_id', type: 'text', required: true },
+      { name: 'actor_id', type: 'text', required: true },
+      { name: 'action', type: 'text', required: true },
+      { name: 'revision', type: 'number', required: true, min: 1, onlyInt: true },
+      { name: 'details', type: 'json', maxSize: 100000 },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE INDEX `idx_quote_event_quote` ON `quote_skill_events` (`tenant_id`, `quote_id`, `created_at`)',
+      'CREATE INDEX `idx_quote_event_customer` ON `quote_skill_events` (`tenant_id`, `customer_id`, `created_at`)',
+    ],
+  },
+  { name: 'studio_production_defaults', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }] },
+  { name: 'studio_avatar_jobs', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }, { name: 'input', type: 'json', maxSize: 2000000 }] },
+  {
+    name: 'studio_shooting_tasks',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'payload', type: 'json', maxSize: 2000000 },
+    ],
+  },
   {
     name: 'assistant_threads',
     fields: [
@@ -788,38 +830,24 @@ async function createCollection(token: string, name: string, fields: Field[], in
   console.log(`  ✓ created ${name}`);
 }
 
-/** Add only missing named indexes without removing PocketBase/system indexes. */
-async function ensureIndexes(token: string, name: string, want: string[]): Promise<void> {
-  if (!want.length) return;
-  const res = await fetch(`${PB_URL}/api/collections/${name}`, {
-    headers: { Authorization: token },
-  });
-  if (!res.ok) return;
-  const col = (await res.json()) as { indexes?: string[] };
-  const current = col.indexes ?? [];
-  const indexName = (definition: string) => definition.match(/INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"']?([^\s`"']+)/i)?.[1] ?? definition;
-  const have = new Set(current.map(indexName));
-  const missing = want.filter(definition => !have.has(indexName(definition)));
-  if (!missing.length) return;
-  const up = await fetch(`${PB_URL}/api/collections/${name}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Authorization: token },
-    body: JSON.stringify({ indexes: [...current, ...missing] }),
-  });
-  if (!up.ok) throw new Error(`patch ${name} indexes failed: ${up.status} ${await up.text()}`);
-  console.log(`  ✓ ${name}: added ${missing.map(indexName).join(', ')}`);
+function indexName(sql: string): string {
+  return sql.match(/\bINDEX\s+[`"]?([^`"\s]+)[`"]?/i)?.[1]?.toLowerCase() || sql.trim().toLowerCase();
 }
 
 /** Add any missing fields to an existing collection (idempotent schema sync). */
-async function ensureFields(token: string, name: string, want: Field[]): Promise<void> {
+async function ensureFields(token: string, name: string, want: Field[], wantIndexes: string[] = []): Promise<void> {
   const res = await fetch(`${PB_URL}/api/collections/${name}`, {
     headers: { Authorization: token },
   });
   if (!res.ok) return;
-  const col = (await res.json()) as { fields?: { name: string }[] };
+  const col = (await res.json()) as { fields?: { name: string }[]; indexes?: string[] };
   const have = new Set((col.fields ?? []).map((f) => f.name));
   const missing = want.filter((f) => !have.has(f.name));
-  if (!missing.length) {
+  const existingIndexes = col.indexes ?? [];
+  const existingIndexNames = new Set(existingIndexes.map(indexName));
+  const indexes = [...existingIndexes, ...wantIndexes.filter(index => !existingIndexNames.has(indexName(index)))];
+  const indexesChanged = indexes.length !== (col.indexes ?? []).length;
+  if (!missing.length && !indexesChanged) {
     console.log(`  = ${name} up to date`);
     return;
   }
@@ -830,10 +858,10 @@ async function ensureFields(token: string, name: string, want: Field[]): Promise
   const up = await fetch(`${PB_URL}/api/collections/${name}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: token },
-    body: JSON.stringify({ fields: merged }),
+    body: JSON.stringify({ fields: merged, indexes }),
   });
   if (!up.ok) throw new Error(`patch ${name} fields failed: ${up.status} ${await up.text()}`);
-  console.log(`  ✓ ${name}: added ${missing.map((f) => f.name).join(', ')}`);
+  console.log(`  ✓ ${name}: synchronized ${[...missing.map((f) => f.name), ...(indexesChanged ? ['indexes'] : [])].join(', ')}`);
 }
 
 export function withoutLegacyRegistrationCredentialField<T extends { name: string }>(fields: T[]): T[] {
@@ -991,8 +1019,7 @@ export async function main(): Promise<void> {
 
   for (const { name, fields, indexes = [] } of COLLECTIONS) {
     if (existing.has(name)) {
-      await ensureFields(token, name, fields);
-      await ensureIndexes(token, name, indexes);
+      await ensureFields(token, name, fields, indexes);
       continue;
     }
     await createCollection(token, name, fields, indexes);

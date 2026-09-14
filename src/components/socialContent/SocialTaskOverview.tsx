@@ -25,8 +25,6 @@ import type {
   SocialContentArtifact,
   SocialContentTaskDetail,
   SocialContentTaskSummary,
-  SocialWorkPackageCard,
-  SocialWorkPackageKind,
 } from '../../../shared/contracts/socialContentWorkflow';
 import {
   SOCIAL_CONTENT_STAGES,
@@ -38,9 +36,9 @@ import {
 } from '../../lib/socialContentModel';
 import SocialArtifactPreviewDialog from './SocialArtifactPreviewDialog';
 import SocialTaskCommandPanel from './SocialTaskCommandPanel';
-import { PACKAGE_META, PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, dueDateLabel, optionLabel, packageVersionLabel } from './socialContentUi';
+import SocialWeeklySummary from './SocialWeeklySummary';
+import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, dueDateLabel, optionLabel, packageVersionLabel } from './socialContentUi';
 
-const PACKAGE_KINDS: SocialWorkPackageKind[] = ['industry_launch', 'content_rocket', 'task_express'];
 const ARTIFACT_STATUS: Record<SocialContentArtifact['status'], string> = {
   draft: '制作中',
   review_required: '待确认',
@@ -73,7 +71,6 @@ interface SocialTaskOverviewProps {
   taskTotalItems: number;
   hasMoreTasks: boolean;
   loadingMoreTasks: boolean;
-  catalog: SocialWorkPackageCard[];
   busy: boolean;
   onSelectTask: (taskId: string) => void;
   onLoadMoreTasks: () => void;
@@ -84,6 +81,7 @@ interface SocialTaskOverviewProps {
   onOpenPublication: () => void;
   onOpenMetrics: () => void;
   onArtifactDecision: (artifact: SocialContentArtifact, decision: 'approved' | 'changes_requested') => void;
+  onBatchDecision: (decision: 'approved' | 'changes_requested') => void;
   onCreateDeliveryPackage: () => void;
   onRefresh: () => void;
   onNavigate: (page: Page) => void;
@@ -105,30 +103,6 @@ function TaskStageBar({ task }: { task: SocialContentTaskDetail }) {
         );
       })}
     </ol>
-  );
-}
-
-function PackageCards({ task, catalog }: { task: SocialContentTaskDetail; catalog: SocialWorkPackageCard[] }) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-3">
-      {PACKAGE_KINDS.map(kind => {
-        const selection = task.packageSelection.find(item => item.kind === kind);
-        const card = catalog.find(item => item.kind === kind && item.packageKey === selection?.packageKey && item.version === selection?.version);
-        const displayName = selection?.name && selection.name !== PACKAGE_META[kind].title
-          ? selection.name
-          : PACKAGE_META[kind].caption;
-        return (
-          <article key={kind} className="rounded-xl border border-border bg-white p-3.5">
-            <div className="flex items-center justify-between gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><Layers3 size={15} /></span>{selection && <span className="text-[10px] font-semibold text-text-muted">{packageVersionLabel(selection.version)}</span>}</div>
-            <h4 className="mt-3 text-xs font-black text-text-primary">{PACKAGE_META[kind].title}</h4>
-            <p className="mt-1 text-[11px] text-text-muted">{displayName}</p>
-            {card?.summary && <p className="mt-2 text-[11px] leading-5 text-text-secondary">{card.summary}</p>}
-            {card?.requiredInputs.length ? <p className="mt-2 text-[10px] leading-4 text-text-muted">需要：{card.requiredInputs.slice(0, 2).join('、')}</p> : null}
-            {card?.deliverables.length ? <p className="mt-1 text-[10px] leading-4 text-text-muted">交付：{card.deliverables.slice(0, 2).join('、')}</p> : null}
-          </article>
-        );
-      })}
-    </div>
   );
 }
 
@@ -186,12 +160,13 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   );
 }
 
-function ArtifactPanel({ task, busy, onArtifactDecision, onNavigate }: Pick<SocialTaskOverviewProps, 'busy' | 'onArtifactDecision' | 'onNavigate'> & { task: SocialContentTaskDetail }) {
+function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onNavigate }: Pick<SocialTaskOverviewProps, 'busy' | 'onArtifactDecision' | 'onBatchDecision' | 'onNavigate'> & { task: SocialContentTaskDetail }) {
   const currentArtifacts = socialContentCurrentArtifacts(task.artifacts);
+  const pendingArtifacts = currentArtifacts.filter(artifact => artifact.status === 'review_required');
   const [previewArtifact, setPreviewArtifact] = useState<SocialContentArtifact | null>(null);
   return (
     <section id="social-task-artifacts" className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">内容与交付</p><h3 className="mt-1 text-base font-black text-text-primary">{currentArtifacts.length > 0 ? `${currentArtifacts.length} 项内容` : '内容制作'}</h3></div><button type="button" onClick={() => onNavigate('smartAssets')} className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:underline">打开内容创作<ArrowRight size={13} /></button></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">批次验收</p><h3 className="mt-1 text-base font-black text-text-primary">{currentArtifacts.length > 0 ? `${currentArtifacts.length} 项内容` : '内容制作'}</h3></div><div className="flex flex-wrap items-center gap-2">{pendingArtifacts.length > 0 && <><button type="button" disabled={busy} onClick={() => onBatchDecision('changes_requested')} className="rounded-lg border border-border px-3 py-2 text-[11px] font-bold text-text-secondary disabled:opacity-50">批量退回</button><button type="button" disabled={busy} onClick={() => onBatchDecision('approved')} className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50">确认本批 {pendingArtifacts.length} 项</button></>}<button type="button" onClick={() => onNavigate('smartAssets')} className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:underline">打开内容创作<ArrowRight size={13} /></button></div></div>
       {currentArtifacts.length === 0 ? <div className="mt-5 rounded-xl bg-surface-2 px-4 py-6 text-center"><Sparkles size={18} className="mx-auto text-emerald-600" /><p className="mt-2 text-xs font-semibold text-text-muted">首批内容完成后将在这里出现</p></div> : <div role="list" aria-label={`全部 ${currentArtifacts.length} 项内容成品`} className="mt-4 max-h-[34rem] divide-y divide-border overflow-y-auto overscroll-contain pr-1">{currentArtifacts.map(artifact => {
         const preview = artifactPreview(artifact.content);
         return <article role="listitem" key={artifact.artifactId} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-text-muted"><FileCheck2 size={16} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-text-primary">{artifactKindLabel(artifact.kind)}</p><p className="mt-0.5 text-[10px] text-text-muted">{[artifact.platform && optionLabel(PLATFORM_OPTIONS, artifact.platform), contentLanguageLabel(artifact.language), packageVersionLabel(artifact.version)].filter(Boolean).join(' · ')}</p>{preview && <p className="mt-1 truncate text-[11px] text-text-secondary">{preview}</p>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${artifact.status === 'review_required' ? 'bg-amber-50 text-amber-800' : artifact.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : 'bg-surface-2 text-text-muted'}`}>{ARTIFACT_STATUS[artifact.status]}</span><button type="button" onClick={() => setPreviewArtifact(artifact)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">预览</button>{artifact.status === 'review_required' && <div className="flex gap-1.5"><button type="button" disabled={busy} onClick={() => onArtifactDecision(artifact, 'changes_requested')} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">退回修改</button><button type="button" disabled={busy} onClick={() => onArtifactDecision(artifact, 'approved')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white">确认</button></div>}</article>;
@@ -228,8 +203,8 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
     return (
       <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
         <div className="grid items-center gap-6 px-6 py-8 lg:grid-cols-[1.3fr_.7fr] lg:px-8">
-          <div><span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Sparkles size={20} /></span><h2 className="mt-5 text-2xl font-black tracking-tight text-text-primary">开始一条社媒内容任务</h2><p className="mt-2 max-w-xl text-sm leading-6 text-text-muted">准备好产品资料、素材和发布要求，灵小枢将完成内容制作并整理交付包。</p><button type="button" onClick={onCreate} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700"><Plus size={16} />新建内容任务</button></div>
-          <div className="grid grid-cols-3 gap-2">{PACKAGE_KINDS.map(kind => <div key={kind} className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 text-center"><Layers3 size={16} className="mx-auto text-emerald-700" /><p className="mt-2 text-[11px] font-black text-text-primary">{PACKAGE_META[kind].title}</p></div>)}</div>
+          <div><span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Sparkles size={20} /></span><h2 className="mt-5 text-2xl font-black tracking-tight text-text-primary">安排本周社媒内容</h2><p className="mt-2 max-w-xl text-sm leading-6 text-text-muted">设置本周重点、数量和预算，灵小枢会安排样片、批量生产和交付。</p><button type="button" onClick={onCreate} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700"><Plus size={16} />安排本周内容</button></div>
+          <div className="grid grid-cols-3 gap-2">{[['周计划', '确定本周重点'], ['代表样片', '一次确认方向'], ['交付包', '批量下载发布']].map(([label, caption]) => <div key={label} className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 text-center"><Layers3 size={16} className="mx-auto text-emerald-700" /><p className="mt-2 text-[11px] font-black text-text-primary">{label}</p><p className="mt-1 text-[10px] text-text-muted">{caption}</p></div>)}</div>
         </div>
         <div className="grid border-t border-border sm:grid-cols-4">{[['企业资料', 'enterprise'], ['灵感中心', 'socialInspiration'], ['内容创作', 'smartAssets'], ['发布与数据', 'traffic']].map(([label, page]) => <button key={page} type="button" onClick={() => onNavigate(page as Page)} className="flex items-center justify-between border-b border-border px-4 py-3 text-xs font-bold text-text-secondary hover:bg-surface-2 sm:border-b-0 sm:border-r last:border-r-0">{label}<ArrowRight size={13} /></button>)}</div>
       </section>
@@ -240,9 +215,9 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
       <TaskHeader {...props} task={task} />
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-4">
+          <SocialWeeklySummary task={task} onEdit={props.onEdit} />
           <div className="grid gap-4 xl:grid-cols-2"><ReadinessPanel task={task} /><DeliveryPanel task={task} busy={props.busy} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} /></div>
-          <ArtifactPanel task={task} busy={props.busy} onArtifactDecision={props.onArtifactDecision} onNavigate={props.onNavigate} />
-          <details className="rounded-2xl border border-border bg-white shadow-sm"><summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4"><div><p className="text-[11px] font-bold text-text-muted">本次方案</p><h3 className="mt-1 text-sm font-black text-text-primary">三项作业方案</h3></div><ChevronDown size={15} className="text-text-muted" /></summary><div className="border-t border-border bg-[#f8faf9] p-4"><PackageCards task={task} catalog={props.catalog} /></div></details>
+          <ArtifactPanel task={task} busy={props.busy} onArtifactDecision={props.onArtifactDecision} onBatchDecision={props.onBatchDecision} onNavigate={props.onNavigate} />
         </div>
         <SocialTaskCommandPanel task={task} busy={props.busy} onCreate={props.onCreate} onEdit={props.onEdit} onStart={props.onStart} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} onCreateDeliveryPackage={props.onCreateDeliveryPackage} onRefresh={props.onRefresh} onNavigate={props.onNavigate} />
       </div>

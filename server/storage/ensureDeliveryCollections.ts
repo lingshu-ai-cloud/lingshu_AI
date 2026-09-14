@@ -89,6 +89,30 @@ const POSTING_STATS_FIELDS: FieldDef[] = [
   { name: 'captured_at', type: 'text' },
 ];
 
+const PLATFORM_AD_TASK_FIELDS: FieldDef[] = [
+  { name: 'version', type: 'number' },
+  { name: 'authorization', type: 'json' },
+  { name: 'proposal', type: 'json' },
+  { name: 'sourceContext', type: 'json' },
+  { name: 'managementHistory', type: 'json' },
+  { name: 'creationSource', type: 'text' },
+  { name: 'managementMode', type: 'text' },
+  { name: 'configuration', type: 'json' },
+  { name: 'tenant_id', type: 'text', required: true },
+  { name: 'created_by', type: 'text', required: true },
+  { name: 'name', type: 'text', required: true },
+  { name: 'video', type: 'text', required: true },
+  { name: 'goal', type: 'text', required: true },
+  { name: 'market', type: 'text', required: true },
+  { name: 'budget', type: 'number', required: true },
+  { name: 'currency', type: 'select', required: true, values: ['USD', 'CNY'] },
+  { name: 'channels', type: 'json', required: true },
+  { name: 'status', type: 'select', required: true, values: ['draft', 'paused', 'active', 'error', 'unknown'] },
+  { name: 'createdAt', type: 'text', required: true },
+  { name: 'updatedAt', type: 'text', required: true },
+  ...RECORD_TIMESTAMP_FIELDS,
+];
+
 const STYLE_MEMORY_FIELDS: FieldDef[] = [
   { name: 'tenant_id', type: 'text', required: true },
   { name: 'customer_id', type: 'text' },
@@ -330,11 +354,77 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
 }
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('platform_ad_imports', [
+    ...['tenant_id', 'provider', 'accountId', 'connectionId', 'campaignId', 'taskId', 'status', 'capability', 'createdAt', 'updatedAt'].map(name => ({ name, type: 'text' as const })),
+    { name: 'providerSnapshot', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_launches', [
+    ...['tenant_id', 'taskId', 'connectionId', 'status', 'createdAt', 'updatedAt', 'error'].map(name => ({ name, type: 'text' as const })),
+    { name: 'launchMode', type: 'select', values: ['create_paused', 'create_and_activate'] },
+    { name: 'taskVersion', type: 'number' },
+    { name: 'meta', type: 'json' },
+    { name: 'receipt', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_approvals', [
+    ...['tenant_id', 'taskId', 'status', 'createdBy', 'decidedBy', 'createdAt', 'expiresAt', 'updatedAt', 'error'].map(name => ({ name, type: 'text' as const })),
+    { name: 'taskVersion', type: 'number' },
+    { name: 'payload', type: 'json' },
+    { name: 'receipt', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_oauth_states', [
+    ...['tenant_id', 'userId', 'stateHash', 'expiresAt', 'status', 'tokenCipher'].map(name => ({ name, type: 'text' as const })),
+    { name: 'accounts', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_automation_rules', [
+    ...['tenant_id', 'taskId', 'connectionId', 'resourceId', 'updatedAt'].map(name => ({ name, type: 'text' as const, required: true })),
+    ...['targetCpc', 'minClicks', 'cooldownMinutes', 'maxMetricAgeMinutes'].map(name => ({ name, type: 'number' as const, required: true })),
+    { name: 'enabled', type: 'bool' },
+  ]);
+  await ensureCollection('platform_ad_automation_runs', [
+    ...['tenant_id', 'taskId', 'ruleId', 'status', 'reason', 'createdAt'].map(name => ({ name, type: 'text' as const })),
+    { name: 'metrics', type: 'json' },
+    { name: 'receipt', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_executions', [
+    { name: 'expectedDailyBudget', type: 'number' },
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'taskId', type: 'text', required: true },
+    { name: 'requestId', type: 'text', required: true },
+    { name: 'action', type: 'text', required: true },
+    { name: 'connectionId', type: 'text', required: true },
+    { name: 'resourceId', type: 'text' },
+    { name: 'status', type: 'text', required: true },
+    { name: 'createdAt', type: 'text', required: true },
+    { name: 'error', type: 'text' },
+    { name: 'result', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_handoffs', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'goalId', type: 'text', required: true },
+    { name: 'adTaskId', type: 'text' },
+    { name: 'objective', type: 'text' },
+    { name: 'evidence', type: 'text' },
+    { name: 'expectedOutcome', type: 'text' },
+    { name: 'constraints', type: 'json' },
+    { name: 'createdAt', type: 'text' },
+    { name: 'createdBy', type: 'text' },
+  ]);
+  await ensureCollection('platform_ad_connections', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'provider', type: 'text', required: true },
+    { name: 'accountId', type: 'text', required: true },
+    { name: 'name', type: 'text' },
+    { name: 'currency', type: 'text' },
+    { name: 'tokenCipher', type: 'text' },
+    { name: 'status', type: 'text' },
+    { name: 'updatedAt', type: 'text' },
+  ]);
   await ensureCollection('tenants', TENANTS_FIELDS);
   await ensureCollection('tenant_platform_apps', TENANT_PLATFORM_APP_FIELDS);
   await ensureCollection('posts', POSTS_FIELDS);
   await ensureCollection('recycle_lists', RECYCLE_LIST_FIELDS);
   await ensureCollection('posting_stats', POSTING_STATS_FIELDS);
+  await ensureCollection('platform_ad_tasks', PLATFORM_AD_TASK_FIELDS);
   await ensureCollection('style_memory', STYLE_MEMORY_FIELDS);
   await ensureCollection('response_strategy_memory', RESPONSE_STRATEGY_MEMORY_FIELDS);
   await ensureCollection('customer_memory', CUSTOMER_MEMORY_FIELDS);

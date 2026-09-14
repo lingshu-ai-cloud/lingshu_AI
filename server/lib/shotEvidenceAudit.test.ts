@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { auditShotEvidence } from './shotEvidenceAudit.js';
+const spec: any = { activeAssemblyId: 'a', shootingSlots: [{ id: 'shot', slotId: 's1', duration: 2, detail: '画面：工具在面部涂抹凝胶' }], storyboardAssignments: { s1: 'm' }, clipEdits: { 's1:m': { trimStart: 4, trimEnd: 6 } }, shotProductions: {} };
+const material: any = { id: 'm', tenantId: 'A', type: 'video', duration: 20, segments: [{ id: 'segment', start: 4, end: 8, quality: 90, confidence: 0.9, subject: ['面部'], action: '工具在面部涂抹凝胶', needsReview: false }] };
+assert.deepEqual(auditShotEvidence(spec, [material], 'A'), []);
+assert.equal(auditShotEvidence({}, [material], 'A')[0].code, 'no_storyboard');
+assert.equal(auditShotEvidence({ ...spec, clipEdits: { 's1:m': { trimStart: 4, trimEnd: 6, speed: 2 } } }, [material], 'A')[0].code, 'timing');
+assert.equal(auditShotEvidence(spec, [material], 'B')[0].code, 'unavailable');
+assert.equal(auditShotEvidence(spec, [{ ...material, usage: 'reference' }], 'A')[0].code, 'unavailable');
+assert.equal(auditShotEvidence(spec, [{ ...material, segments: [] }], 'A')[0].code, 'action_unverified');
+spec.clipEdits['s1:m'].trimEnd = 21;
+assert.equal(auditShotEvidence(spec, [material], 'A')[0].code, 'range');
+spec.storyboardAssignments = {};
+assert.equal(auditShotEvidence(spec, [material], 'A')[0].code, 'missing');
+spec.shotProductions['a:shot'] = { source: 'avatar' };
+assert.equal(auditShotEvidence(spec, [material], 'A')[0].canShoot, false);
+console.log('saved shot evidence audit tests passed');

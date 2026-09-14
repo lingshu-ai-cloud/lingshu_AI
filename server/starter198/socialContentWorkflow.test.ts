@@ -226,7 +226,9 @@ async function request(pathname: string, options: {
 const completeBrief = {
   title: '秋季新品内容', objective: '制作新品介绍内容', productRef: 'product:chair', audience: '海外家具采购商',
   markets: ['US'], languages: ['en'], platforms: ['instagram'], formats: ['short_video'], aspectRatio: '9:16',
-  cadence: '每周两次', requestedOutputCount: 2, restrictions: ['不得虚构认证'], callToAction: '访问产品页',
+  cadence: '每周两次', requestedOutputCount: 2, weeklyBudgetCny: 2_000, perItemBudgetCny: 600,
+  retryReserveCny: 300, planningMode: 'auto_adjust', shootingWindowMinutes: 30,
+  specialRequirements: '新品先验证代表样片', restrictions: ['不得虚构认证'], callToAction: '访问产品页',
 };
 
 try {
@@ -363,6 +365,9 @@ try {
   assert.equal(created.body.task.status, 'draft');
   assert.equal(created.body.task.brief.aspectRatio, '9:16');
   assert.equal(created.body.task.brief.cadence, '每周两次');
+  assert.equal(created.body.task.brief.weeklyBudgetCny, 2_000);
+  assert.equal(created.body.task.brief.planningMode, 'auto_adjust');
+  assert.equal(created.body.task.brief.shootingWindowMinutes, 30);
   assert.equal(created.body.task.packageSelection.length, 3);
 
   const replay = await request('/api/overseas/starter-198/social-content/tasks', {
@@ -692,6 +697,26 @@ try {
   });
   assert.equal(manualFallbackArtifact.status, 201);
   assert.equal(manualFallbackArtifact.body.task.status, 'asset_review', 'a complete plan may use the safe manual fallback');
+  const secondBatchArtifact = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts`, {
+    idempotencyKey: 'social-manual-ready-two',
+    body: { kind: 'publish_copy', origin: 'manual', content: { body: '同批第二项真实成果' } },
+  });
+  assert.equal(secondBatchArtifact.status, 201);
+  const batchDecisionInput = {
+    artifacts: [manualFallbackArtifact.body.artifact, secondBatchArtifact.body.artifact]
+      .map((artifact: any) => ({ artifactId: artifact.artifactId, expectedVersion: artifact.version })),
+    decision: 'approved',
+  };
+  const batchApproved = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/batch-decision`, {
+    idempotencyKey: 'social-batch-approve', body: batchDecisionInput,
+  });
+  assert.equal(batchApproved.status, 200);
+  assert.equal(batchApproved.body.task.approvedArtifactCount, 2);
+  const batchReplay = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/batch-decision`, {
+    idempotencyKey: 'social-batch-approve', body: batchDecisionInput,
+  });
+  assert.equal(batchReplay.status, 200);
+  assert.equal(batchReplay.body.task.approvedArtifactCount, 2, 'batch decision replay cannot apply twice');
 
   const internalDenied = await request('/api/overseas/starter-198/social-content/internal/work-packages');
   assert.equal(internalDenied.status, 403);

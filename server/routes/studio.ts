@@ -1,4 +1,16 @@
 import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
+import { createShootingTasksRouter } from './shootingTasks.js';
+import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
+import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
+import { studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
+import { createStudioAsrRouter } from '../lib/studioAsrRouter.js';
+import type { AvatarMediaCheck } from '../lib/avatarMediaCheck.js';
+import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProduction.js';
+import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
+import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
+export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
+import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
@@ -78,7 +90,6 @@ import {
    负责脚本 / 文案 / 封面标题 / 智能选材 / Seedance 视频生成等工作台能力。
    视频生成必须真实调用外部模型；失败时返回明确错误，不生成本地假预览。
 ─────────────────────────────────────────────────────────────────────────── */
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const studioTenantContext = new AsyncLocalStorage<string>();
 function scopedStudioAssetDir(root: string): string {
@@ -95,14 +106,13 @@ const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
   composite: (manifest: unknown, onProgress?: (pct: number) => void, outDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
-
 function publishingRenderDir(tenantId: string): string {
   const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
   return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
 }
 
 function publishingRenderPreviewUrl(tenantId: string, outputPath: string): string {
-  const route = `/api/overseas/publishing/local-videos/${encodeURIComponent(path.basename(outputPath))}`;
+  const route = `/api/overseas/studio/local-renders/${encodeURIComponent(path.basename(outputPath))}`;
   return signAssetUrl(route, tenantId, 24 * 60 * 60 * 1000);
 }
 
@@ -1603,17 +1613,6 @@ export function normalizeMaterialInfos(value: unknown, fallbackNames: unknown, t
   }));
 }
 
-function materialRoleFromFolder(info: ScriptMaterialInfo): string {
-  if (info.role) return info.role;
-  if (info.folder === 'presenter') return '真人口播素材';
-  if (info.folder === 'detail') return '产品细节素材';
-  if (info.folder === 'factory') return '工厂/实力素材';
-  if (info.folder === 'scene') return '场景使用素材';
-  if (info.folder === 'model') return '模特/效果素材';
-  if (info.type === 'image') return '静态产品图';
-  return '产品展示素材';
-}
-
 function materialInfoLines(infos: ScriptMaterialInfo[]): string {
   return infos.map((info, index) => [
     `${index + 1}. 素材名：${info.name}`,
@@ -1629,42 +1628,9 @@ function materialInfoLines(infos: ScriptMaterialInfo[]): string {
   ].filter(Boolean).join('；')).join('\n');
 }
 
-function safeMaterialVoicePlan(infos: ScriptMaterialInfo[], cta: string, language: string): string[] {
-  const selected = infos.slice(0, 5);
-  const english = /english|英语|^en\b/i.test(language);
-  const lines = selected.map((info, index) => {
-    const name = String(info.name || `素材 ${index + 1}`).trim();
-    if (index === 0) return english
-      ? 'Brand buyers, which visible detail should you verify first?'
-      : '品牌方采购时，哪个可见细节最该先确认？';
-    return english ? `Review ${name}.` : `查看素材：${name}。`;
-  });
-  const safeCta = /whatsapp/i.test(cta)
-    ? (english ? 'Message us on WhatsApp for verified product details.' : '通过 WhatsApp 获取已核实的产品资料。')
-    : (english ? 'Message us for verified product details.' : '私信获取已核实的产品资料。');
-  if (!lines.length) return [];
-  lines[lines.length - 1] = safeCta;
-  return lines;
-}
-
-function safeMaterialScenes(infos: ScriptMaterialInfo[]): LockedStoryboardScene[] {
-  return infos.slice(0, 5).map((info, index) => {
-    const name = String(info.name || `素材 ${index + 1}`).trim();
-    const role = materialRoleFromFolder(info);
-    return {
-      environment: '按素材实际可见环境',
-      shot: info.type === 'image' ? '静态画面' : '按素材原镜头',
-      camera: info.type === 'image' ? '固定' : '沿用素材原运镜',
-      composition: '保留素材主体，不补写不可见细节',
-      purpose: index === 0 ? '主题钩子' : index === Math.min(4, infos.length - 1) ? 'CTA' : role,
-      visual: `使用素材《${name}》，仅展示素材中实际可见内容`,
-      music: '轻量中性节奏',
-    };
-  });
-}
-
 export const studioRouter = Router();
 studioRouter.use(requireAuth);
+studioRouter.use('/local-renders', studioRenderMediaRouter(path.resolve(process.cwd(), 'data/publishing-uploads')));
 studioRouter.use((_req, res, next) => {
   studioTenantContext.run((res.locals as AuthLocals).tenantId, next);
 });
@@ -1754,6 +1720,12 @@ studioRouter.get('/subscription', async (req, res) => {
 /* 收费墙：以下所有 AI / 渲染路由都需有效订阅（未启用强制时直通）。 */
 studioRouter.use(contentLibraryRouter);
 studioRouter.use(entitlementGate());
+
+studioRouter.use('/shooting-tasks', createShootingTasksRouter(store, async (id, tenantId) => {
+  return loadMaterials().some(item => item.id === id && item.tenantId === tenantId && item.type === 'video' && !isReferenceOnlyMaterial(item));
+}));
+
+studioRouter.use('/production', createStudioAvatarProductionRouter(store));
 
 /* ── Seedance 视频生成 ─────────────────────────────────────────────────── */
 // POST /studio/seedance-video  Body: { script, productInfo, language, ratio, duration, resolution, title? }
@@ -2087,9 +2059,7 @@ studioRouter.post('/script', async (req, res) => {
   const forbiddenLine = forbiddenTerms.length
     ? `Reference-only forbidden terms: ${forbiddenTerms.join(', ')}. Do not output these words, hashtags, brand names, original captions, or original product claims.`
     : 'Do not output reference-video brand names, hashtags, original captions, or original product claims.';
-  // Default remains Qwen. Product-only provider comparisons are an explicit server opt-in;
-  // material/reference generation and persisted script contracts remain unchanged.
-  const providerOpt: 'qwen' | 'gemini' = generationMode === 'product' && process.env.STUDIO_SCRIPT_BACKEND === 'gemini' ? 'gemini' : 'qwen';
+  const providerOpt = 'qwen' as const;
   const hasNarrationDraft = voiceoverMode === 'ai' || voiceoverMode === 'unselected';
   const selectedProductBrief = productBrief(productInfo);
   const selectedProductCategory = selectedProductBrief.category || compactBriefCategory(selectedProductBrief);
@@ -2414,6 +2384,9 @@ ${lockedNarrationRules}
 请生成 ${platform} 分镜脚本，语言为 ${lang}。总时长、分镜数量和时间段必须跟随对标视频脚本详析，不得套用 ${duration} 秒或固定段数模板。
 
 已选素材：${clips}
+可用素材的片段观察（仅这些观察可以作为已有画面依据）：
+${structuredMaterials}
+素材文件名、分类、产品资料和参考片均不能证明本企业已经拍到某个动作。没有片段观察时按缺口处理，不得声称已有对应画面。
 产品信息：
 	${product || '未选择产品。请拒绝生成具体产品脚本。'}
 产品行业锁定：${selectedProductCategory || '以产品信息为准'}
@@ -2437,6 +2410,7 @@ ${scriptFactRules}
 
 每个场景必须严格对应“对标视频脚本详析”的同一时间段，不要合并、跳段或擅自重排。使用以下固定格式，不要 markdown 符号，不要缺字段：
 [start-end s]
+素材：<已有素材写准确文件名及原素材起止秒；无对应片段写“待拍：具体动作要求”；数字人讲解写“待生成：数字人口播”>
 环境：<按迁移方式保留原环境，或重建为适合企业产品的可拍场景>
 景别：<照抄原详析景别>
 运镜：<照抄原详析运镜>
@@ -2799,8 +2773,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     const nonBlockingQualityIssues = Array.from(new Set(validationIssues.filter(isNonBlockingScriptQualityIssue)));
     const materialStrictHardIssues = strictCommercialIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
     const materialHardIssues = Array.from(new Set([
-      voiceoverMode !== 'none' && !spokenLanguageMatches(spokenText(script), language) ? '口播语言与所选目标语言不一致，请重新生成' : '',
       ...mixedIssues,
+      voiceoverMode !== 'none' && !spokenLanguageMatches(spokenText(script), language) ? '口播语言与所选目标语言不一致，请重新生成' : '',
       ...(materialQualityV2?.hardIssues || []),
       missingProduct ? '缺少产品信息' : '',
       missingSelectedProduct ? `脚本未完整覆盖选定产品名称：${selectedNames.join('、')}` : '',
@@ -2879,6 +2853,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
     });
   } catch (error) {
     const rawError = String(error instanceof Error ? error.message : error);
+    const upstreamQuota = /429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing/i.test(rawError);
+    const upstreamAuth = /401|403|api.?key|unauthorized|permission/i.test(rawError);
     console.warn('[studio] script generation failed:', rawError.slice(0, 500));
     const publicFailureReason = /429|RESOURCE_EXHAUSTED|prepayment credits|quota|billing/i.test(rawError)
       ? '上游模型额度不足，未生成脚本。请更换模型 Key 或稍后重试。'
@@ -2892,6 +2868,8 @@ ${script}`, { backend: providerOpt, systemPrompt: await enterpriseCtx() || undef
       source: 'ai_failed',
       script: '',
       qualityStatus: 'failed',
+      code: upstreamQuota ? 'UPSTREAM_QUOTA_EXHAUSTED' : upstreamAuth ? 'UPSTREAM_AUTH_UNAVAILABLE' : 'UPSTREAM_GENERATION_FAILED',
+      retryable: !upstreamQuota && !upstreamAuth && /timeout|timed out|超时|503|502|504|UNAVAILABLE/i.test(rawError),
       error: publicFailureReason,
       validationIssues: [publicFailureReason],
     });
@@ -3663,7 +3641,10 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
       const rel = urlByName.get(item.name);
       const directUrl = 'url' in item && typeof item.url === 'string' ? item.url : undefined;
       const resolvedUrl = absoluteAssetUrl(base, directUrl || rel);
-      return { index, ...item, url: resolvedUrl }; // 优先使用逐镜传入 URL，避免 AI/临时素材被名称映射覆盖
+      return { index, ...item, url: resolvedUrl,
+        productUrl: absoluteAssetUrl(base, 'productUrl' in item ? String(item.productUrl || '') : ''),
+        backgroundUrl: absoluteAssetUrl(base, 'backgroundUrl' in item ? String(item.backgroundUrl || '') : ''),
+      }; // 优先使用逐镜传入 URL，避免 AI/临时素材被名称映射覆盖
     }),
     voiceover: { voice: spec.voice ?? null, url: absoluteAssetUrl(base, spec.voiceoverUrl) },
     cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteAssetUrl(base, spec.coverUrl) },
@@ -3813,6 +3794,9 @@ function appendVideoVersion(input: Omit<VideoGenerationVersion, 'id' | 'versionN
 }
 
 interface Material {
+  avatarMediaCheck?: AvatarMediaCheck;
+  transcript?: string;
+  transcriptCues?: SubCue[];
   id: string;
   name: string;
   folder: string;
@@ -6075,7 +6059,7 @@ function proportionalCues(text: string, duration: number): AlignedCue[] {
   });
 }
 
-function localTtsFile(url?: string): { bytes: Buffer; mimeType: string } | null {
+function localTtsFile(url?: string): { bytes: Buffer; mimeType: string; filePath: string } | null {
   if (!url || (!url.startsWith('/tts/') && !url.includes('/private-assets/tts/'))) return null;
   const filePath = path.join(scopedStudioAssetDir(TTS_ROOT), path.basename(new URL(url, 'http://local').pathname));
   if (!fs.existsSync(filePath)) return null;
@@ -6086,7 +6070,7 @@ function localTtsFile(url?: string): { bytes: Buffer; mimeType: string } | null 
         : ext === '.webm' ? 'audio/webm'
           : ext === '.aac' ? 'audio/aac'
             : 'audio/wav';
-  return { bytes: fs.readFileSync(filePath), mimeType };
+  return { bytes: fs.readFileSync(filePath), mimeType, filePath };
 }
 
 function studioAudioCapabilities() {
@@ -6387,6 +6371,8 @@ studioRouter.post('/tts', async (req, res) => {
 });
 
 // POST /studio/tts/align Body: { text, url, duration }
+studioRouter.use('/tts', createStudioAsrRouter(url => localTtsFile(url), ffmpegStatic));
+
 // Kept separate from synthesis so slow alignment never discards a valid audio result.
 studioRouter.post('/tts/align', async (req, res) => {
   const text = String(req.body?.text || '').trim();
@@ -6829,8 +6815,16 @@ interface StudioProject {
 
 type StoredStudioProject = StudioProject & { tenant_id: string };
 
-function projectFromRecord(record: any): StudioProject {
-  return { id: String(record.id), title: String(record.title || '未命名草稿'), status: record.status || 'draft', spec: record.spec || {}, thumbSeed: record.thumb_seed || undefined, createdAt: String(record.created_at || record.created || ''), updatedAt: String(record.updated_at || record.updated || '') };
+function projectFromRecord(record: any, tenantId: string): StudioProject {
+  return {
+    id: String(record.id),
+    title: String(record.title || '未命名草稿'),
+    status: record.status || 'draft',
+    spec: { ...refreshStudioProjectAssetUrls(record.spec || {}, tenantId), _baseUpdatedAt: String(record.updated_at || record.updated || '') },
+    thumbSeed: record.thumb_seed || undefined,
+    createdAt: String(record.created_at || record.created || ''),
+    updatedAt: String(record.updated_at || record.updated || ''),
+  };
 }
 
 // GET /studio/projects → 列表（更新时间倒序）
@@ -6838,7 +6832,9 @@ studioRouter.get('/projects', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const result = await store.list<StoredStudioProject>('studio_projects', { where: { tenant_id: tenantId }, sort: '-updated_at', perPage: 500 });
   const taskId = socialProjectTaskId(res.locals);
-  res.json(result.items.filter(project => socialProjectBelongs(project, taskId)).map(projectFromRecord));
+  res.json(result.items
+    .filter(project => socialProjectBelongs(project, taskId))
+    .map(project => projectFromRecord(project, tenantId)));
 });
 
 // POST /studio/projects  Body: { id?, title?, status?, spec, thumbSeed? } → 新建或更新
@@ -6846,7 +6842,7 @@ studioRouter.post('/projects', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
-  const spec = bindSocialProjectSpec(rawSpec, socialTaskId) as Record<string, unknown>;
+  const spec = studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId));
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
     ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
@@ -6867,7 +6863,7 @@ studioRouter.post('/projects', async (req, res) => {
         || String(existing.status || '') !== String(status || '');
       await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
       if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
-      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }) });
+      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }, tenantId) });
       return;
     }
   }
@@ -6883,7 +6879,19 @@ studioRouter.post('/projects', async (req, res) => {
   };
   const created = await store.create<any>('studio_projects', { tenant_id: tenantId, title: project.title, status, spec, thumb_seed: thumbSeed || '', created_at: now, updated_at: now });
   if (!created) { res.status(503).json({ ok: false, error: 'project storage unavailable' }); return; }
-  res.status(201).json({ ok: true, project: projectFromRecord(created) });
+  res.status(201).json({ ok: true, project: projectFromRecord(created, tenantId) });
+});
+
+// GET /studio/projects/:id/evidence → verify that shot assignments remain grounded in owned material ranges.
+studioRouter.get('/projects/:id/evidence', async (req, res) => {
+  try {
+    const tenantId = res.locals.tenantId as string;
+    const project = await store.getById<any>('studio_projects', req.params.id);
+    if (!project || project.tenant_id !== tenantId || !socialProjectBelongs(project, socialProjectTaskId(res.locals))) { res.status(404).json({ error: '草稿不存在' }); return; }
+    const gaps = auditShotEvidence(project.spec || {}, loadMaterials().filter(item => !isReferenceOnlyMaterial(item)), tenantId);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, projectId: project.id, revision: project.updated_at, gaps, status: gaps.length ? 'needs_review' : 'range_checked', note: '范围和动作文本校验，不代表视觉或产品功效已验证；未读取到的云端素材需人工核对。' });
+  } catch { res.status(503).json({ error: '素材依据检查失败，请稍后重试' }); }
 });
 
 // GET /studio/projects/:id → 单个（用于再编辑）
@@ -6891,7 +6899,7 @@ studioRouter.get('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const p = await store.getById<any>('studio_projects', req.params.id);
   if (!p || p.tenant_id !== tenantId || !socialProjectBelongs(p, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
-  res.json(projectFromRecord(p));
+  res.json(projectFromRecord(p, tenantId));
 });
 
 // DELETE /studio/projects/:id
@@ -7436,3 +7444,4 @@ function fallbackSelect(list: { id: string; type: string; duration: number }[], 
   }
   return { selectedIds: picked.length ? picked : list.slice(0, 3).map(c => c.id), reason: '按视频优先、贴合目标时长自动选取' };
 }
+import { createProjectRevisionGuard, projectRevisionMatches } from '../lib/projectRevision.js';

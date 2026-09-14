@@ -153,6 +153,19 @@ function decodeCsv(bytes: Uint8Array): string {
   return decoded;
 }
 
+function assertCsvQuoteStructure(value: string): void {
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== '"') continue;
+    if (quoted && value[index + 1] === '"') {
+      index += 1;
+      continue;
+    }
+    quoted = !quoted;
+  }
+  if (quoted) throw importError('CSV 文件存在未闭合的引号');
+}
+
 function rangeDimensions(sheet: XLSX.WorkSheet): { rows: number; columns: number; cells: number } {
   const reference = String(sheet['!fullref'] || sheet['!ref'] || '').trim();
   if (!reference) return { rows: 0, columns: 0, cells: 0 };
@@ -255,7 +268,9 @@ export async function readSafeProductWorkbook(file: File): Promise<XLSX.WorkBook
   let workbook: XLSX.WorkBook;
   if (fileType === 'csv') {
     assertSafeCsvEnvelope(bytes);
-    workbook = XLSX.read(decodeCsv(bytes), { ...WORKBOOK_READ_OPTIONS, type: 'string' });
+    const decoded = decodeCsv(bytes);
+    assertCsvQuoteStructure(decoded);
+    workbook = XLSX.read(decoded, { ...WORKBOOK_READ_OPTIONS, type: 'string' });
   } else {
     if (fileType === 'xlsx') assertSafeXlsxArchive(bytes);
     else assertSafeXlsEnvelope(bytes);

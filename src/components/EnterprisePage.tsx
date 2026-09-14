@@ -1,4 +1,5 @@
 import { useState, useEffect, useId, useRef } from 'react';
+import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { motion } from 'motion/react';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
@@ -1858,7 +1859,7 @@ export default function EnterprisePage() {
           </div>
 
           {knowledgeView === 'company' && <>{marketSection}{companySection}</>}
-          {knowledgeView === 'socialStrategy' && socialStrategySection}
+          {knowledgeView === 'socialStrategy' && <>{socialStrategySection}<EnterprisePresenters /></>}
 
           {knowledgeView === 'products' && (
           <KnowledgeCard
@@ -1892,7 +1893,7 @@ export default function EnterprisePage() {
               <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
                 {productImporting ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
                 导入产品表
-                <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
+                <input type="file" accept=".xlsx,.csv" className="hidden" disabled={productImporting} onChange={e => { void importProductSheet(e.currentTarget.files?.[0] ?? null); e.currentTarget.value = ''; }} />
               </label>
               <button type="button" onClick={addProduct} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">
                 <Plus size={12} />添加产品
@@ -2556,7 +2557,7 @@ export default function EnterprisePage() {
                   导入产品表
                   <input
                     type="file"
-                    accept=".xlsx,.xls,.csv"
+                    accept=".xlsx,.csv"
                     className="hidden"
                     disabled={productImporting}
                     onChange={e => {

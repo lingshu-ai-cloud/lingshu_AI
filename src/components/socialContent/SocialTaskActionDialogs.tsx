@@ -106,6 +106,26 @@ export function ArtifactChangesDialog({ artifact, busy, onClose, onSubmit }: { a
   );
 }
 
+export function ArtifactBatchChangesDialog({ count, busy, onClose, onSubmit }: { count: number; busy: boolean; onClose: () => void; onSubmit: (note: string) => Promise<void> }) {
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const submit = async () => {
+    if (note.trim().length < 3) { setError('请填写本批统一修改要求'); return; }
+    try {
+      await onSubmit(note.trim());
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : '修改要求未提交，请重试');
+    }
+  };
+  return (
+    <DialogFrame title="批量退回修改" eyebrow={`本批 ${count} 项内容`} busy={busy} onClose={onClose} footer={<><button type="button" disabled={busy} onClick={onClose} className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-text-secondary">取消</button><button type="button" disabled={busy} onClick={() => void submit()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-black text-white disabled:opacity-50">{busy && <Loader2 size={14} className="animate-spin" />}提交本批修改</button></>}>
+      <label className="block text-xs font-bold text-text-secondary">本批统一修改要求<textarea autoFocus value={note} onChange={event => { setNote(event.target.value); setError(''); }} maxLength={2000} rows={6} placeholder="例如：本批开头过于像广告，保留产品事实，统一改为客户问题切入" className={TEXTAREA_CLASS} /></label>
+      <p className="mt-3 text-xs leading-5 text-text-muted">这条要求会应用到本批所有待验收内容；单项例外可在内容创作页单独处理。</p>
+      {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+    </DialogFrame>
+  );
+}
+
 const METRIC_FIELDS = [
   ['views', '播放／浏览'],
   ['likes', '点赞'],

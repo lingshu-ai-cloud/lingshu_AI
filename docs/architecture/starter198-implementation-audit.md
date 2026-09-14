@@ -27,7 +27,7 @@
 7. processing 命令可从租户内持久事实恢复：orchestrator inbox、初始设置、发布包／发布证据以及报价命令均不会仅凭“目标状态看起来相同”猜测成功；暂停、恢复、取消、内容审批和报价审批使用精确 command/idempotency/request/actor 证据归因。
 8. starter 开通前会扫描 legacy 凭据、账号、待发布任务和待发送跟进；Product API、legacy 定时发布与跟进发送在最终权限读取至外部动作之间与开通共用数据库仲裁的有界 transition lease。Product API Key 新凭据只持久化 tenant-bound HMAC 摘要，旧明文记录被清空并要求轮换。
 9. 三个 starter worker 均要求开关值精确为 `true`，生产环境缺 PocketBase 依赖时 fail closed，并使用禁止本地 JSON fallback 的严格存储；发布包与报价产物修复扫描具有有界、公平、可续传且校验严格的 cursor，orchestrator 过期 lease 可在 grace 后换代并使用 fencing token。
-10. 67 个现有 PocketBase migration 已纳入 checksum manifest 与历史基线不可变门禁；发布证据／结果摘要合并后的稳定工作树已通过 `pnpm run quality` 和全量 `pnpm test`。
+10. 70 个现有 PocketBase migration 已纳入 checksum manifest 与历史基线不可变门禁；发布证据／结果摘要合并后的稳定工作树已通过 `pnpm run quality` 和全量 `pnpm test`。
 11. Starter workspace 与四类生产现场不再转发原始记录：任务文案由固定 task schema 投影，usage 只暴露公开异常码，趋势／内容／销售记录采用字段白名单、公开 ID 和联系方式清理；`production_site.read` 会在服务端同时阻断现场记录读取与产物下载。
 12. starter 探测豁免只接受 `/auth/me` 由服务端管理员校验产生的 `platformAdmin: true`；订阅套餐名、邮箱或 browser-read token 都不能伪造该权限。browser-read 会话仍可访问获准的普通只读路由，但不能借此绕过 starter legacy boundary。
 13. `pnpm run audit:production` 当前报告 0 项生产依赖漏洞；SheetJS 固定为官方发布的 vendored `xlsx@0.20.3`，质量门禁验证来源、版本、LICENSE 和 SHA-256 `8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8`。产品导入还增加文件格式／签名和资源上限，避免压缩炸弹或超大稀疏工作簿占满浏览器资源。
@@ -205,7 +205,7 @@ starter 新文件已经通过架构预算拆分，但 enterprise/knowledge/Whats
 
 ### P1-6 真实迁移、备份与恢复门禁未验证
 
-当前 67 个 PocketBase migration 已全部登记 SHA-256 checksum；门禁会同时校验当前目录／manifest 一致性，并从 Git baseline blob 校验历史 migration 与 checksum manifest 不可改写，缺失 baseline blob 也 fail closed。该 checksum／fixture 门禁即使通过也不执行 PocketBase，不等于生产历史链升级、回滚或备份恢复通过。仍必须在生产同等 PocketBase 版本／真实基线或后续 PostgreSQL 迁移环境中完成空库创建、旧库升级、数据校验和隔离恢复演练。
+当前 70 个 PocketBase migration 已全部登记 SHA-256 checksum；门禁会同时校验当前目录／manifest 一致性，并从 Git baseline blob 校验历史 migration 与 checksum manifest 不可改写，缺失 baseline blob 也 fail closed。该 checksum／fixture 门禁即使通过也不执行 PocketBase，不等于生产历史链升级、回滚或备份恢复通过。仍必须在生产同等 PocketBase 版本／真实基线或后续 PostgreSQL 迁移环境中完成空库创建、旧库升级、数据校验和隔离恢复演练。
 
 ### P1-7 支持授权与凭据治理仍未到目标态
 
@@ -225,7 +225,7 @@ starter 新文件已经通过架构预算拆分，但 enterprise/knowledge/Whats
 
 | 门禁 | 本文判定 |
 | --- | --- |
-| `pnpm run quality` | **通过**；包含架构及 ratchet、67 项 migration checksum／guard、共享契约、进程角色、安全边界、前端安全、starter 专项、`tsc --noEmit` 与生产构建 |
+| `pnpm run quality` | **通过**；包含架构及 ratchet、70 项 migration checksum／guard、共享契约、进程角色、安全边界、前端安全、starter 专项、`tsc --noEmit` 与生产构建 |
 | `pnpm test` | **通过**；覆盖全量既有回归脚本及本轮新增内容／报价／发布／摘要测试；新增 transition lease 后暴露的跟进 worker 测试夹具缺口已补齐并完成重跑 |
 | `pnpm run audit:production` | **通过**；0 项生产依赖漏洞 |
 | `pnpm dlx npm@11.6.2 audit --audit-level=high` | **未通过**；开发链仍有 Electron 33 与 `extract-zip` 两项 high，自动修复要求破坏性升级到 Electron 44 |

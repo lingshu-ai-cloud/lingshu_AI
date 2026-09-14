@@ -49,6 +49,8 @@ import {
 } from '../knowledge/strategyRetrieve.js';
 import { customerServicePolicy, readTenantEnterpriseProfile, type BizRules, type SalesStyleProfile } from './enterprise.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { knowledgeGapCustomerServiceDecision } from '../customerService/decision.js';
+import { directConversationPayload } from '../customerService/directConversationPayload.js';
 
 export const draftReplyRouter = Router();
 draftReplyRouter.use(requireAuth);
@@ -191,21 +193,11 @@ function knowledgeGapPayload(
           : '未回答无依据事实；先用自然追问澄清，不制造人工已接管的假象',
       ],
     },
-  };
-}
-
-function directConversationPayload(pair: { draft: string; draftZh: string }, category: string) {
-  const messages = splitMobileChatMessages(pair.draft);
-  const translatedMessages = splitMobileChatMessages(pair.draftZh);
-  return {
-    draft: messages.join('\n\n'),
-    messages,
-    translatedDraft: translatedMessages.join('\n\n'),
-    translatedMessages,
-    handoffRequired: false,
-    knowledgeMiss: false,
-    category,
-    verification: { status: 'verified', issues: [] },
+    decision: knowledgeGapCustomerServiceDecision({
+      handoffRequired, handlingReason: plan.handlingReason, safeBridgeAllowed: plan.safeToSendBeforeHandoff,
+      knowledgeReady: context.knowledgeReady, fallbackCount, strategyIds: strategies.map(match => match.strategy.id),
+      blockingIssues, evidence: context.evidence,
+    }),
   };
 }
 

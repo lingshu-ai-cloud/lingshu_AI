@@ -1,7 +1,39 @@
-import { adminFetch, getPbUrl } from '../storage/pb.js';
+import { adminFetch } from '../storage/pb.js';
 import { createFilePlaybackUrl } from '../storage/files.js';
 
 export interface CloudMaterialRecord extends Record<string, unknown> { id: string; videoFile?: string; posterFile?: string }
+
+const PLAYBACK_URL_CACHE_TTL_MS = 45_000;
+const playbackUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const playbackUrlRequests = new Map<string, Promise<string | null>>();
+
+async function resolveCloudMaterialPlaybackUrl(
+  id: string,
+  field: 'videoFile' | 'posterFile',
+  tenantId?: string,
+  forceRefresh = false,
+): Promise<string | null> {
+  const cacheKey = `${tenantId || 'unscoped'}:${id}:${field}`;
+  if (forceRefresh) playbackUrlCache.delete(cacheKey);
+  const cached = playbackUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  const pending = playbackUrlRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
+    if (!response.ok) return null;
+    const record = await response.json() as CloudMaterialRecord;
+    if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
+    const filename = String(record[field] || '');
+    if (!filename) return null;
+    const url = await createFilePlaybackUrl('materials', id, filename);
+    if (url) playbackUrlCache.set(cacheKey, { url, expiresAt: Date.now() + PLAYBACK_URL_CACHE_TTL_MS });
+    return url;
+  })().finally(() => playbackUrlRequests.delete(cacheKey));
+  playbackUrlRequests.set(cacheKey, request);
+  return request;
+}
 
 function materialTenantId(item: Record<string, unknown>): string {
   return String(item.tenantId || item.tenant_id || '').trim();
@@ -93,15 +125,14 @@ function parseSegments(value: unknown): unknown[] {
 }
 
 export async function fetchCloudMaterial(id: string, field: 'videoFile' | 'posterFile', range?: string, tenantId?: string): Promise<Response | null> {
-  const response = await adminFetch(`/api/collections/materials/records/${encodeURIComponent(id)}`);
-  if (!response.ok) return null;
-  const record = await response.json() as CloudMaterialRecord;
-  if (tenantId && !canAccessCloudMaterial(record, tenantId)) return null;
-  const filename = String(record[field] || '');
-  if (!filename) return null;
-  const url = await createFilePlaybackUrl('materials', id, filename);
+  let url = await resolveCloudMaterialPlaybackUrl(id, field, tenantId);
   if (!url) return null;
-  const upstream = await fetch(url, { headers: range ? { Range: range } : undefined });
+  let upstream = await fetch(url, { headers: range ? { Range: range } : undefined });
+  if (upstream.status === 401 || upstream.status === 403) {
+    url = await resolveCloudMaterialPlaybackUrl(id, field, tenantId, true);
+    if (!url) return null;
+    upstream = await fetch(url, { headers: range ? { Range: range } : undefined });
+  }
   return upstream.ok ? upstream : null;
 }
 

@@ -33,6 +33,12 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
     aspectRatio: draft.aspectRatio || null,
     cadence: draft.cadence.trim() || null,
     requestedOutputCount: Number.isInteger(draft.quantity) && draft.quantity > 0 ? draft.quantity : null,
+    weeklyBudgetCny: draft.weeklyBudgetCny,
+    perItemBudgetCny: draft.perItemBudgetCny,
+    retryReserveCny: draft.retryReserveCny,
+    planningMode: draft.planningMode,
+    shootingWindowMinutes: draft.shootingWindowMinutes,
+    specialRequirements: draft.specialRequirements.trim() || null,
     dueAt: draft.desiredDeliveryAt ? new Date(`${draft.desiredDeliveryAt}T12:00:00`).toISOString() : null,
     brandNotes: draft.keyFacts.trim() || null,
     restrictions: splitLines(draft.prohibitedClaims),
@@ -376,6 +382,28 @@ export function useSocialContentWorkspace() {
     }, decision === 'approved' ? '成品已确认' : '修改要求已提交');
   }, [workspace?.currentTask, run, applyTask]);
 
+  const decideArtifactBatch = useCallback(async (decision: 'approved' | 'changes_requested', note: string | null = null) => {
+    const task = workspace?.currentTask;
+    if (!task) return;
+    const artifacts = task.artifacts
+      .filter(artifact => artifact.status === 'review_required')
+      .map(artifact => ({ artifactId: artifact.artifactId, expectedVersion: artifact.version }));
+    if (artifacts.length === 0) {
+      setError('当前没有待验收内容');
+      return;
+    }
+    await run(async () => {
+      const input = { artifacts, decision, note } as const;
+      const next = await socialContentApi.decideArtifactBatch(
+        task.taskId,
+        input,
+        `social:artifact-batch:${operationSuffix(`${task.taskId}:${JSON.stringify(input)}`)}`,
+      );
+      applyTask(next);
+      return next;
+    }, decision === 'approved' ? `已确认 ${artifacts.length} 项内容` : `已退回 ${artifacts.length} 项内容`);
+  }, [workspace?.currentTask, run, applyTask]);
+
   const createDeliveryPackage = useCallback(async () => {
     const task = workspace?.currentTask;
     if (!task) return;
@@ -448,6 +476,7 @@ export function useSocialContentWorkspace() {
     saveDraft,
     startTask,
     decideArtifact,
+    decideArtifactBatch,
     createDeliveryPackage,
     downloadLatest,
     registerPublication,

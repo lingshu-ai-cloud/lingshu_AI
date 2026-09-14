@@ -18,7 +18,11 @@ import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
-import { readScriptGapTasks, updateScriptGapTask, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { updateScriptGapTask, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { canProcessVideo, displayDuration, resultEmptyState, sourceScopeLabel, trendFromEvidence } from '../lib/inspirationDataQuality';
+export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
+import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
+import InspirationEmptyState from './InspirationEmptyState';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -2654,13 +2658,13 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
   return records
     .filter((r): r is CrawlerRecord & { id: string; platform: Exclude<Platform, 'all'> } => Boolean(r.id && r.platform))
     .map(record => {
-      let views = 'New';
+      let views = '—';
       let analysis: VideoAnalysisPayload = {};
       try {
         analysis = JSON.parse(record.aiAnalysis || '{}') as VideoAnalysisPayload;
         if (analysis.views) views = analysis.views;
       } catch {}
-      const trend: TrendVideo['trend'] = record.status === 'analyzed' ? 'hot' : record.status === 'failed' ? 'stable' : 'rising';
+      const trend = trendFromEvidence(analysis);
       const title = record.title || 'Untitled crawled video';
       const tags = parseRecordTags(record.tags);
       const recordThumbnail = record.thumbnailUrl || (record.videoFileId ? `/api/overseas/videos/${record.id}/thumbnail` : '');
@@ -2943,7 +2947,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
   const [generatingNeedId, setGeneratingNeedId] = useState('');
-  const [scriptGapTasks, setScriptGapTasks] = useState<ScriptGapTask[]>(() => readScriptGapTasks());
+  const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
   const [classifyingMaterialId, setClassifyingMaterialId] = useState('');
   const [showAccountsModal, setShowAccountsModal] = useState(false);
@@ -2952,12 +2956,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
   const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按热度';
   const contentFormatLabel = contentFormat === 'video' ? '视频' : '图文';
-  useEffect(() => {
-    const refresh = () => setScriptGapTasks(readScriptGapTasks());
-    window.addEventListener(SCRIPT_GAP_QUEUE_EVENT, refresh);
-    return () => window.removeEventListener(SCRIPT_GAP_QUEUE_EVENT, refresh);
-  }, []);
-
   const openMaterialSmartGeneration = () => {
     window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
     onNavigate?.('smartAssets');
@@ -3108,7 +3106,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         duration: material.duration,
         tags: ['片段已分析', '置顶素材'],
         views: '本地素材',
-        trend: 'hot',
+        trend: 'stable',
         videoUrl: material.url,
         status: persistedAnalysis?.status || 'analyzed',
         crawledAt: material.createdAt,
@@ -3360,6 +3358,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setContentFormat(nextFormat);
   };
 
+  const resetInspirationFilters = () => {
+    setLastCrawlVideoIds([]);
+    setSearch('');
+    setPlatform('all');
+    setCrawlTimeRange('all');
+  };
+
   const handleWatch = (video: TrendVideo) => {
     if (video.videoUrl || sourceEmbedUrl(video)) {
       setWatchVideo(video);
@@ -3373,12 +3378,20 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   const toggleScriptPanel = (video: TrendVideo) => {
+    if (!canProcessVideo(video)) {
+      setMaterialMessage('该视频时长未知，请补全元数据后再分析或生成。');
+      return;
+    }
     setScriptPanelTab('analysis');
     setSelectedVideo(current => current?.id === video.id ? null : video);
   };
 
   const openScriptAnalysis = (video: TrendVideo) => {
     setMaterialMessage('');
+    if (!canProcessVideo(video)) {
+      setMaterialMessage('该视频时长未知，请补全元数据后再分析或生成。');
+      return;
+    }
     if (needsVideoEnhancement(video)) void analyzeVideoOnly(video);
     setScriptPanelTab('analysis');
     setSelectedVideo(video);
@@ -3861,25 +3874,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           {innerView === 'inspiration' && (
             <>
               {filtered.length === 0 ? (
-                <div className="min-h-72 rounded-xl border border-dashed border-border bg-surface flex flex-col items-center justify-center gap-3 text-center px-6">
-                  <div className="w-11 h-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted">
-                    <Download size={18} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">暂无真实{contentFormat === 'image' ? '图文' : '视频'}数据</p>
-                    <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开{contentFormat === 'image' ? '图文' : '视频'}，或从对标账号导入真实内容。</p>
-                  </div>
-                  {localMaterials.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setInnerView('library')}
-                      className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white"
-                    >
-                      <Film size={15} />
-                      查看 {localMaterials.length} 条素材
-                    </button>
-                  )}
-                </div>
+                <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
               ) : viewMode === 'grid' ? (
                 <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-start">
                   {filtered.map((video, i) => (
@@ -4071,24 +4066,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           <button
                             type="button"
                             aria-label={`播放 ${material.name}`}
-                            onClick={() => setPreviewMaterial(material)}
-                            className="absolute inset-0 flex items-center justify-center bg-black/0 transition focus:bg-black/20"
+                            onClick={event => { event.stopPropagation(); setPreviewMaterial(material); }}
+                            className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white"
                           >
-                            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition-opacity group-hover:opacity-0">
-                              <Play size={19} fill="currentColor" />
-                            </span>
+                            <Play size={19} fill="currentColor" />
                           </button>
-                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                          <div className="pointer-events-none absolute inset-0 z-10 flex items-end justify-center bg-black/40 pb-4 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                             <button
                               type="button"
-                              onClick={() => setPreviewMaterial(material)}
-                              className="pointer-events-auto rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow-sm transition hover:bg-slate-100"
-                            >
-                              播放
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => enterMaterialSmartGeneration(material)}
+                              onClick={event => { event.stopPropagation(); enterMaterialSmartGeneration(material); }}
+                              disabled={!Number.isFinite(material.duration) || material.duration <= 0}
+                              title={material.duration > 0 ? '用此素材生成' : '缺少有效时长，暂不能生成'}
                               className="pointer-events-auto inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:brightness-110"
                             >
                               <Sparkles size={14} /> 用此素材生成
@@ -4112,7 +4100,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </div>
                   )}
 
-                      <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || `${material.duration}s`}</p>
+                      <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || (material.duration > 0 ? `${material.duration}s` : '时长未知')}</p>
                       <div className="mt-2 flex flex-wrap gap-1">
                         {[
                           MATERIAL_SOURCE_LABELS[materialSourceOf(material)],

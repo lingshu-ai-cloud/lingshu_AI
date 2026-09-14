@@ -121,6 +121,12 @@ export function taskToDraft(task: SocialContentTaskDetail | SocialContentTaskSum
     aspectRatio: task.brief.aspectRatio || EMPTY_SOCIAL_CONTENT_DRAFT.aspectRatio,
     cadence: task.brief.cadence || '',
     quantity: task.brief.requestedOutputCount || 1,
+    weeklyBudgetCny: task.brief.weeklyBudgetCny ?? null,
+    perItemBudgetCny: task.brief.perItemBudgetCny ?? null,
+    retryReserveCny: task.brief.retryReserveCny ?? null,
+    planningMode: task.brief.planningMode ?? 'auto_adjust',
+    shootingWindowMinutes: task.brief.shootingWindowMinutes ?? null,
+    specialRequirements: task.brief.specialRequirements || '',
     packageSelection,
   };
 }

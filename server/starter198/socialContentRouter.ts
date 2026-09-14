@@ -29,6 +29,7 @@ import {
 import {
   createSocialContentArtifact,
   createSocialDeliveryPackage,
+  decideSocialContentArtifactBatch,
   decideSocialContentArtifact,
   readSocialDeliveryPackage,
   registerSocialPublication,
@@ -45,6 +46,7 @@ import { socialTaskFileCapacity } from './socialContentLimits.js';
 import {
   SocialContentWorkflowError,
   parseArtifactDecision,
+  parseArtifactBatchDecision,
   parseCreateSocialTask,
   parseDeliveryPackage,
   parseMetrics,
@@ -461,6 +463,20 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       value: parseArtifactDecision(req.body),
       now: now(),
     }));
+  }));
+
+  router.post('/tasks/:taskId/artifacts/batch-decision', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'write');
+    bodyWithinLimit(req);
+    const task = await decideSocialContentArtifactBatch({
+      repository,
+      ...identity,
+      taskId: requireSocialId(req.params.taskId),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: parseArtifactBatchDecision(req.body),
+      now: now(),
+    });
+    res.json({ task });
   }));
 
   router.post('/tasks/:taskId/delivery-packages', asyncRoute(async (req, res) => {

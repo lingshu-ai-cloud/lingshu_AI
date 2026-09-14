@@ -42,6 +42,9 @@ PB_ADMIN_PASSWORD=your-strong-password
 RENDER_TOKEN_SECRET=change-to-a-long-random-secret
 TENANT_PLATFORM_APP_KEY=generate-with-openssl-rand-base64-32
 PUBLIC_BASE_URL=https://your-cloudbase-domain.example.com
+QUOTE_SKILL_ENABLED=true
+# 首次发布建议只填写内部测试租户 ID；多个租户用逗号分隔，留空表示全部租户。
+QUOTE_SKILL_TENANT_ALLOWLIST=your-internal-tenant-id
 ```
 
 至少配置一个大模型服务：

@@ -1,6 +1,5 @@
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
-
 async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortSignal): Promise<T & { source?: string }> {
   const retryablePaths = new Set(['script', 'translate', 'translate/batch', 'tts', 'tts/batch']);
   const maxAttempts = path === 'script' ? 4 : retryablePaths.has(path) ? 2 : 1;
@@ -48,7 +47,6 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
   }
   return { ...fallback, source: 'local', error: lastError };
 }
-
 export type StudioScriptQualityStatus =
   | 'passed'
   | 'passed_with_warnings'
@@ -60,7 +58,6 @@ export type StudioScriptQualityStatus =
   | 'recovered'
   | 'fallback'
   | 'failed';
-
 export interface StudioScriptQualityChecks {
   materialGrounded?: boolean;
   timelineGrounded?: boolean;
@@ -72,7 +69,6 @@ export interface StudioScriptQualityChecks {
   materialCoveragePercent?: number;
   [key: string]: boolean | number | string | StudioScriptMaterialCoverage | undefined;
 }
-
 export interface StudioScriptMaterialCoverage {
   covered?: number;
   total?: number;
@@ -87,7 +83,6 @@ export interface StudioScriptMaterialCoverage {
   missing?: string[];
   missingShots?: string[];
 }
-
 export interface StudioScriptResult {
   script: string;
   source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected' | string;
@@ -497,7 +492,7 @@ export const studioApi = {
     existingScripts?: string[];
     variantSeed?: number;
   }, fb: string, options?: { signal?: AbortSignal }) =>
-    post<StudioScriptResult>('script', b, { script: '' }, options?.signal),
+    post<StudioScriptResult>('script', { ...b, provider: 'qwen' }, { script: '' }, options?.signal),
 
   covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, fb: string[]) =>
     post<{ covers: string[] }>('covers', b, { covers: fb }),
@@ -548,9 +543,12 @@ export const studioApi = {
   ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string }[]; style?: Partial<TtsStyleOptions> }) =>
     post<{ ok: boolean; audios: Record<string, TtsAudioResult>; error?: string }>('tts/batch', b, { ok: false, audios: {} }),
   alignTts: (b: { text: string; url: string; duration: number }) =>
-    post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
+    post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
+  qwenAsr: (b: { text?: string; url: string; duration: number; confirmed?: boolean }) =>
+    post<{ ok: boolean; id?: string; taskId?: string; status?: string; text?: string; cues?: SubCue[]; matches?: boolean; source?: 'qwen_asr'; error?: string }>('tts/asr', b, { ok: false }),
+  transcribeMaterial: (id: string) => post<{ ok: boolean; text?: string; error?: string }>(`materials/${encodeURIComponent(id)}/transcribe`, {}, { ok: false }),
   transcribeVoiceover: (b: { url: string; duration: number; language?: string; transcriptHint?: string }) =>
-    post<{ ok: boolean; text: string; cues: SubCue[]; source?: 'audio_ai' | 'proportional'; error?: string }>('tts/transcribe', b, { ok: false, text: '', cues: [] }),
+    post<{ ok: boolean; text: string; cues: SubCue[]; matches?: boolean; status?: string; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/transcribe', b, { ok: false, text: '', cues: [] }),
   audioCapabilities: async () => {
     try {
       const r = await fetch('/api/overseas/studio/tts/capabilities', { headers: authHeader() });
@@ -840,6 +838,8 @@ export interface CoverStyle {
 }
 
 export interface Material {
+  transcript?: string;
+  transcriptCues?: SubCue[];
   id: string;
   name: string;
   folder: string;

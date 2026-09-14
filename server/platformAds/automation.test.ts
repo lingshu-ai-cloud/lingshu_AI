@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ads-automation-'));
+process.env.LOCAL_STORE_DIR = directory;
+process.env.PB_URL = 'http://127.0.0.1:1';
+process.env.NODE_ENV = 'test';
+process.env.META_ADS_API_VERSION = 'v99.0';
+const originalFetch = globalThis.fetch;
+try {
+  const { store } = await import('../storage/index.js');
+  const { encryptSecret } = await import('../lib/tenantPlatformApps.js');
+  const { createPlatformAdTask, changePlatformAdManagement } = await import('./tasks.js');
+  const { decideAdOptimization, saveAdAutomationRule, runAdAutomationRule, AD_AUTOMATION_RUNS } = await import('./automation.js');
+  const connection = await store.create('platform_ad_connections', { tenant_id: 'tenant', provider: 'meta', accountId: '100', currency: 'USD', status: 'connected', tokenCipher: encryptSecret('fake-test-token') });
+  const task = await createPlatformAdTask('tenant', 'user', { name: '测试', video: '测试视频', goal: '提升网站访问', market: '美国', budget: 500, channels: ['Facebook'] });
+  const managed = (await changePlatformAdManagement('tenant', 'user', task.id, { expectedVersion: task.version, managementMode: 'managed', authorization: { accountIds: [connection!.id], allowedActions: ['adjust_budget', 'pause'], maxDailyBudget: 100, maxTotalBudget: 500, maxAdjustmentPercent: 20, expiresAt: new Date(Date.now() + 86400000).toISOString() } }))!;
+  await store.create('platform_ad_executions', { tenant_id: 'tenant', taskId: task.id, connectionId: connection!.id, action: 'create', requestId: 'test_created', resourceId: '200', status: 'VERIFIED', createdAt: new Date(Date.now() - 86400000).toISOString(), result: { campaignId: '200', adsetId: '300', adId: '400', dailyBudgetMinor: 5000 } });
+  const rule = await saveAdAutomationRule('tenant', task.id, { expectedVersion: managed.version, connectionId: connection!.id, resourceId: '200', targetCpc: 1, enabled: true });
+  const metrics = { clicks: 100, spend: 50, lifetimeSpend: 50, dailyBudget: 50, fetchedAt: new Date().toISOString(), status: 'ACTIVE' };
+  assert.equal(decideAdOptimization(managed, rule, metrics).action, 'adjust_budget');
+  assert.equal(decideAdOptimization(managed, rule, { ...metrics, clicks: 1 }).action, null);
+  assert.equal(decideAdOptimization(managed, rule, { ...metrics, fetchedAt: 'bad' }).action, null);
+  assert.equal(decideAdOptimization(managed, rule, { ...metrics, lifetimeSpend: 500 }).action, 'pause');
+  assert.equal(decideAdOptimization(managed, rule, { ...metrics, spend: 300 }).action, 'pause');
+  assert.equal(decideAdOptimization(managed, rule, metrics, new Date().toISOString()).action, null);
+  assert.equal(decideAdOptimization({ ...managed, managementMode: 'manual' }, rule, metrics).action, null);
+  let budget = 5000, writes = 0, missingLinkClicks = false;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const parsed = new URL(String(url));
+    if (parsed.hostname !== 'graph.facebook.com') return originalFetch(url, init);
+    let body: unknown;
+    if (init?.method === 'POST') { writes++; budget = Number(new URLSearchParams(String(init.body)).get('daily_budget')); body = { success: true }; }
+    else if (parsed.pathname.endsWith('/insights')) body = { data: [{ spend: '50', clicks: '1000', ...(missingLinkClicks ? {} : { inline_link_clicks: '100' }) }] };
+    else if (parsed.searchParams.get('fields') === 'account_id') body = { account_id: '100' };
+    else if (parsed.pathname.endsWith('/300')) body = { id: '300', daily_budget: String(budget), status: 'ACTIVE' };
+    else body = { id: '200', status: 'ACTIVE', spend_cap: '50000' };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as typeof fetch;
+  await runAdAutomationRule(rule);
+  assert.equal(writes, 1, 'one persisted automatic action reaches provider');
+  assert.equal(budget, 5500);
+  const runs = await store.list(AD_AUTOMATION_RUNS, { where: { tenant_id: 'tenant', taskId: task.id } });
+  assert.ok(runs.items.some(r => r.status === 'VERIFIED'));
+  await runAdAutomationRule(rule);
+  assert.equal(writes, 1, 'cooldown prevents repeated writes');
+  missingLinkClicks = true;
+  await runAdAutomationRule(rule);
+  assert.equal(writes, 1, 'all clicks cannot substitute missing link clicks');
+  assert.ok((await store.list(AD_AUTOMATION_RUNS, { where: { tenant_id: 'tenant', taskId: task.id } })).items.some(r => r.status === 'BLOCKED' && String(r.reason).includes('链接点击')));
+  missingLinkClicks = false;
+  budget = 6000;
+  await runAdAutomationRule(rule);
+  assert.equal(writes, 1, 'external manual budget change must not be overwritten');
+  assert.equal((await store.getById('platform_ad_automation_rules', rule.id))?.enabled, false);
+  console.log('platform ads automation tests passed');
+} finally { globalThis.fetch = originalFetch; fs.rmSync(directory, { recursive: true, force: true }); }

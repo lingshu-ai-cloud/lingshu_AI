@@ -4,7 +4,7 @@ import type { Page } from '../../App';
 import type { RegisterSocialPublicationInput, SocialContentArtifact, SocialContentTaskDetail, SubmitSocialMetricsInput } from '../../../shared/contracts/socialContentWorkflow';
 import { attachSocialContentNavigationState } from '../../lib/socialContentContext';
 import { socialContentCanRegisterPublication } from '../../lib/socialContentModel';
-import { ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
+import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
 import SocialTaskEditorDialog from './SocialTaskEditorDialog';
 import SocialTaskOverview from './SocialTaskOverview';
 import { useSocialContentWorkspace, type SocialContentSaveTarget } from './useSocialContentWorkspace';
@@ -26,6 +26,7 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
   const [publicationOpen, setPublicationOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [changeArtifact, setChangeArtifact] = useState<SocialContentArtifact | null>(null);
+  const [batchChangesOpen, setBatchChangesOpen] = useState(false);
   const task = state.workspace?.currentTask || null;
 
   const navigateWithTask = useCallback((page: Page) => {
@@ -81,7 +82,6 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
         taskTotalItems={state.workspace.taskList.totalItems}
         hasMoreTasks={state.workspace.taskList.page < state.workspace.taskList.totalPages}
         loadingMoreTasks={state.loadingMoreTasks}
-        catalog={state.workspace.catalog}
         busy={state.busy}
         onSelectTask={state.selectTask}
         onLoadMoreTasks={() => void state.loadMoreTasks()}
@@ -96,6 +96,10 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
         onArtifactDecision={(artifact, decision) => {
           if (decision === 'changes_requested') { setChangeArtifact(artifact); return; }
           void state.decideArtifact(artifact, decision).catch(() => {});
+        }}
+        onBatchDecision={decision => {
+          if (decision === 'changes_requested') { setBatchChangesOpen(true); return; }
+          void state.decideArtifactBatch('approved').catch(() => {});
         }}
         onCreateDeliveryPackage={() => void state.createDeliveryPackage().catch(() => {})}
         onRefresh={() => void state.refresh()}
@@ -114,6 +118,7 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
       {publicationOpen && task && socialContentCanRegisterPublication(task) && <PublicationDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setPublicationOpen(false); }} onSubmit={submitPublication} />}
       {metricsOpen && task && <MetricsDialog task={task} busy={state.busy} onClose={() => { if (!state.busy) setMetricsOpen(false); }} onSubmit={submitMetrics} />}
       {changeArtifact && <ArtifactChangesDialog artifact={changeArtifact} busy={state.busy} onClose={() => { if (!state.busy) setChangeArtifact(null); }} onSubmit={async note => { await state.decideArtifact(changeArtifact, 'changes_requested', note); setChangeArtifact(null); }} />}
+      {batchChangesOpen && task && <ArtifactBatchChangesDialog count={task.artifacts.filter(artifact => artifact.status === 'review_required').length} busy={state.busy} onClose={() => { if (!state.busy) setBatchChangesOpen(false); }} onSubmit={async note => { await state.decideArtifactBatch('changes_requested', note); setBatchChangesOpen(false); }} />}
     </section>
   );
 }

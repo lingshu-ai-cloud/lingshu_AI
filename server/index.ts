@@ -48,6 +48,13 @@ import { startBackgroundJobs } from './runtime/backgroundJobs.js';
 import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
 import { starter198Router } from './starter198/router.js';
 import { requireAuth } from './middleware/auth.js';
+import { quoteSkillRouter } from './routes/quoteSkill.js';
+import { platformAdsRouter } from './routes/platformAds.js';
+import { platformAdHandoffRouter } from './routes/platformAdHandoff.js';
+import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
+import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
+import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
+import { platformAdImportsRouter } from './routes/platformAdImports.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
@@ -120,6 +127,7 @@ app.get('/api/overseas/health', (_req, res) => {
     featureLocks: {
       geminiVideo: process.env.GEMINI_VIDEO_ENABLED !== 'true',
       seedanceVideo: process.env.SEEDANCE_VIDEO_ENABLED !== 'true',
+      quoteSkill: process.env.NODE_ENV === 'production' && process.env.QUOTE_SKILL_ENABLED !== 'true',
       digitalHuman: !String(process.env.DIGITAL_HUMAN_API_URL || '').trim(),
     },
   });
@@ -164,6 +172,13 @@ app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
 app.use('/api/overseas/digital-employees/followup', followupTemplatesRouter);
 app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
+app.use('/api/overseas/quote-skill', quoteSkillRouter);
+app.use('/api/overseas/platform-ads', platformAdConnectionsRouter);
+app.use('/api/overseas/platform-ads', platformAdsRouter);
+app.use('/api/overseas/platform-ads', platformAdHandoffRouter);
+app.use('/api/overseas/platform-ads', platformAdExecutionRouter);
+app.use('/api/overseas/platform-ads', platformAdMetricsRouter);
+app.use('/api/overseas/platform-ads', platformAdImportsRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 

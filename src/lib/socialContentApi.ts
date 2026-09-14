@@ -4,6 +4,7 @@ import type {
   CreateSocialContentTaskInput,
   CreateSocialDeliveryPackageInput,
   DecideSocialArtifactInput,
+  DecideSocialArtifactBatchInput,
   RegisterSocialPublicationInput,
   SelectSocialWorkPackagesInput,
   SocialContentArtifact,
@@ -402,6 +403,9 @@ export const socialContentApi = {
   ),
   decideArtifact: async (taskId: string, artifactId: string, input: DecideSocialArtifactInput, operationKey?: string): Promise<{ artifact: SocialContentArtifact; task: SocialContentTaskDetail }> => (
     socialMutationEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}/decision`, { method: 'POST', body: JSON.stringify(input) }, operationKey), 'artifact') as unknown as { artifact: SocialContentArtifact; task: SocialContentTaskDetail }
+  ),
+  decideArtifactBatch: async (taskId: string, input: DecideSocialArtifactBatchInput, operationKey?: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(
+    await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/artifacts/batch-decision`, { method: 'POST', body: JSON.stringify(input) }, operationKey),
   ),
   createDeliveryPackage: async (taskId: string, input: CreateSocialDeliveryPackageInput, operationKey?: string): Promise<{ deliveryPackage: SocialDeliveryPackage; task: SocialContentTaskDetail }> => (
     socialMutationEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/delivery-packages`, { method: 'POST', body: JSON.stringify(input) }, operationKey), 'deliveryPackage') as unknown as { deliveryPackage: SocialDeliveryPackage; task: SocialContentTaskDetail }
