@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { followupItemContentHash } from './customerWorkflow.js';
 import { store } from '../storage/index.js';
 import { buildWeeklyPlan, normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
@@ -7,6 +10,9 @@ import { withExecutionAdapters, currentExecutionAdapters } from './executionAdap
 import { digitalEmployeesRouter, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
 
 const tenant = 'isolated-full-chain-mock';
+const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-full-chain-'));
+const fixtureVideo = path.join(fixtureDirectory, 'final.mp4');
+fs.writeFileSync(fixtureVideo, 'synthetic test video');
 const config = normalizeDigitalEmployeeConfig({companyName:'MOCK company',industry:'Clothing',primaryBusiness:'MOCK shirts',targetMarkets:'US',focusProducts:'MOCK cotton shirt',autonomyMode:'managed',approvalOwner:'fixture-reviewer',enabledWorkflows:['scheduled_social','viral_clone','product_content','material_content','content_publish','customer_segmentation','batch_followup'],publishingTargets:[{platform:'facebook',accountId:'mock-account',accountLabel:'MOCK page'}],allowRealPublishing:false,allowRealCustomerMessages:false,approvalPolicy:{contentPublish:true,batchFollowup:true,commercialCommitment:true}});
 const goalInput = normalizeWeeklyGoal({title:'MOCK 16 node plan',objective:'Isolated simulation',businessLine:'full_funnel',metric:'published_posts',target:1,startsAt:'2026-09-01',endsAt:'2026-09-30',contentPlatforms:['facebook']},config);
 const plan = buildWeeklyPlan(goalInput,config);
@@ -35,7 +41,7 @@ const prepare=async({task:t}:any)=>{
  const c=t.task_key;
  if(c==='scheduled_source_collection')records.scheduled_tasks=[{id:'mock-schedule',tenant_id:tenant,enabled:true,task_id:'mock-schedule',config:{workflowTaskId:t.id,synthetic:true}}];
  if(c==='viral_analysis'&&permitAnalysis)records.trend_videos=[{id:'mock-reference',tenantId:tenant,...scope(c),aiAnalysis:{analysisMode:'exact',analysisQuality:'video',gemini:{synthetic:true,shots:[{text:'MOCK shot'}]}}}];
- if(c==='content_production')records.studio_projects=[{id:'mock-project',tenant_id:tenant,...scope(c),status:'ready_for_approval',spec:{caption:'MOCK content - simulation only',automation:{managedBy:'digital_employee',stage:'completed',renderOutputPath:'/MOCK-NOT-A-REAL-VIDEO.mp4',quality:{passed:permitQuality,synthetic:true}}}}];
+ if(c==='content_production')records.studio_projects=[{id:'mock-project',tenant_id:tenant,...scope(c),status:'ready_for_approval',spec:{caption:'MOCK content - simulation only',automation:{managedBy:'digital_employee',stage:'completed',renderOutputPath:fixtureVideo,quality:{passed:permitQuality,ruleVersion:9,synthetic:true}}}}];
  if(c==='content_quality_gate'&&permitQuality)records.studio_projects[0].spec.automation.quality.passed=true;
  if(c==='platform_publish'&&permitPublish){for(const post of records.posts||[]){post.platform_post_id='MOCK-platform-receipt';post.stats={...post.stats,status:'published',publishResults:{'mock-account':{accountId:'mock-account',platform:'facebook',status:'published',platformPostId:'MOCK-platform-receipt'}},synthetic:true};customer.sourcePostId=post.id;}}
  if(c==='customer_segmentation')records.customer_segments=[{id:'mock-segment',tenant_id:tenant,run_id:run.id,task_id:t.id,status:'ready',version:1,member_count:1,synthetic:true}];
@@ -82,4 +88,4 @@ try {
  assert.equal(result.steps.at(-1)?.name,'all_terminal');
  assert.equal(result.steps.at(-1)?.status,'succeeded');
  console.log('16-node real-orchestrator mock integration passed; in-memory summary validated; all external outputs synthetic; network calls 0');
-} finally {Object.assign(store,original);globalThis.fetch=originalFetch;}
+} finally {Object.assign(store,original);globalThis.fetch=originalFetch;fs.rmSync(fixtureDirectory,{recursive:true,force:true});}

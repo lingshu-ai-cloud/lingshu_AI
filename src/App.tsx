@@ -233,14 +233,14 @@ export default function App() {
     return loadPage() === 'smartAssets' && detail?.page === 'smartAssets' && detail.view === 'publish' ? 'publish' : 'create';
   });
   const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
-  const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string } | null>(() => {
+  const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string } | null>(() => {
     const target = window.__agentProductionTarget;
     if (target?.link.page === 'smartAssets') return { runId: target.link.runId, taskId: target.link.taskId, taskKey: target.link.businessRef.taskKey, entityId: target.projectId };
     const detail = window.history.state?.productionDetail;
     if (loadPage() !== 'smartAssets' || detail?.page !== 'smartAssets') return null;
     const runId = String(detail.workflowRunId || '');
     const taskId = String(detail.workflowTaskId || '');
-    return runId && taskId || detail.businessRef?.entityId ? { runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId } : null;
+    return runId && taskId || detail.businessRef?.entityId ? { runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId, contentId: detail.businessRef?.contentId, referenceId: detail.businessRef?.referenceId } : null;
   });
 
   useEffect(() => {
@@ -436,7 +436,7 @@ export default function App() {
         studioPanel?: 'projects';
         workflowRunId?: string;
         workflowTaskId?: string;
-        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
+        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
@@ -456,7 +456,7 @@ export default function App() {
         const taskKey = String(detail.businessRef?.taskKey || '').trim();
         const preview = detail.businessRef?.preview === true;
         if ((runId && taskId) || detail.businessRef?.entityId || (preview && taskKey)) {
-          setSmartAssetsWorkflowContext({ runId, taskId, taskKey, entityId: detail.businessRef?.entityId, ...(preview ? { preview: true } : {}) });
+          setSmartAssetsWorkflowContext({ runId, taskId, taskKey, entityId: detail.businessRef?.entityId, contentId: detail.businessRef?.contentId, referenceId: detail.businessRef?.referenceId, ...(preview ? { preview: true } : {}) });
         } else setSmartAssetsWorkflowContext(null);
       }
     };

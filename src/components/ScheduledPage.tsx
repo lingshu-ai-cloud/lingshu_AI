@@ -457,7 +457,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       setActiveGroup('social');
       setSocialTaskTab('crawler');
       setShowAdd(false);
-      setWorkspaceMessage('已进入行业 Agent 的定时采集工作区。');
+      setWorkspaceMessage('已进入编导 Agent 的定时采集工作区。');
     };
     const handoff = consumeScheduledWorkflowHandoff();
     if (handoff) focusSourceCollection(handoff.entityId);

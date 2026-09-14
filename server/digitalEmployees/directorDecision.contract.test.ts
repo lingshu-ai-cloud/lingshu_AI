@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const source = fs.readFileSync(path.resolve('server/routes/digitalEmployees.ts'), 'utf8');
+const productionSource = fs.readFileSync(path.resolve('server/digitalEmployees/contentProduction.ts'), 'utf8');
+const start = source.indexOf("digitalEmployeesRouter.post('/tasks/:taskId/director-decision'");
+const end = source.indexOf("digitalEmployeesRouter.post('/tasks/:taskId/retry'", start);
+assert.notEqual(start, -1, 'director decision endpoint must exist');
+const route = source.slice(start, end);
+assert.match(route, /continue.*adjust.*abandon/s, 'the endpoint must accept the three stable direction decisions');
+assert.match(route, /applyDirectorDecision/, 'the decision must update the persisted weekly content plan');
+assert.match(route, /applyTaskControl/, 'adjust and abandon must restart the affected production chain through audited task control');
+assert.match(route, /content_mode_routing/, 'direction changes must restart from routing so the content agent receives rebuilt orders');
+assert.match(route, /appendAudit/, 'direction decisions must be written to the audit log');
+assert.match(route, /applyToSimilar/, 'the explicit weekly-similar scope must be supported');
+assert.match(route, /plan:\s*original/, 'a failed task-control application must restore the prior plan');
+assert.match(source, /affectedKeys\.has\('content_mode_routing'\)[\s\S]*?contentBatchPlans[\s\S]*?status: 'superseded'/, 'routing corrections must supersede the frozen content batch');
+assert.match(source, /supersededReason: '编导方向调整后原内容订单失效'/, 'projects created from the old order must retain an explicit superseded reason');
+assert.match(productionSource, /projectAutomation\(record\)\.stage !== 'superseded'/, 'the content agent must exclude superseded projects from its active production set');
+assert.match(source, /generateDirectorScriptContracts[\s\S]*?orders: constrainedOrders/, 'routing must generate and freeze director scripts with operating constraints before persisting content orders');
+assert.match(productionSource, /contentOrder\?\.contractVersion === 1/, 'production must recognize versioned director-script contracts');
+assert.match(productionSource, /内容订单缺少编导已确认脚本版本，内容 Agent 不得自行生成或修改脚本/, 'production must stop when a versioned order lacks a valid confirmed director script');
+assert.match(productionSource, /script: frozenDirectorScript\.body/, 'content production must consume the frozen director script body');
+assert.match(productionSource, /directorScriptHash: frozenDirectorScript\.hash/, 'the produced project must retain the exact director script version and hash');
+assert.match(source, /task\.task_key === 'goal_decomposition'[\s\S]*?directorBrief:[\s\S]*?productionBudget:[\s\S]*?autonomyMode:/, 'the business agent must persist an explicit budget, target and autonomy handoff for the director');
+assert.match(source, /operatingContext:[\s\S]*?packageRevision:/, 'every new content order must freeze the business package revision and director operating limits');
+console.log('director decision route contract tests passed');

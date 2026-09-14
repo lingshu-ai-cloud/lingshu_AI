@@ -1,5 +1,6 @@
 import { boundedPublishingSlots } from './continuationPolicy.js';
 import { createHash } from 'node:crypto';
+import type { MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
 import { createTrackedPostDraft } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 import type { PublishingPlatform, PublishingTarget } from './domain.js';
@@ -23,6 +24,7 @@ export interface PublishingApprovalItem {
   videoPath: string;
   scheduledAt: string;
   sourceClaim: FrozenPublishSourceClaim;
+  plannedPublishDate?: string;
 }
 
 export interface PublishingApprovalPackage {
@@ -55,7 +57,8 @@ export function buildPublishingApprovalPackage(input: {
   allowRealPublishing: boolean;
   now?: Date;
   scheduling?: { startsAt: string; endsAt: string; timezone: 'account' | 'Asia/Shanghai' };
-}): PublishingApprovalPackage {
+  matrixPlan?: MatrixAccountPlan[];
+}, dependencies: { sourceClaim: typeof digitalEmployeePublishSourceClaim } = { sourceClaim: digitalEmployeePublishSourceClaim }): PublishingApprovalPackage {
   const now = input.now || new Date();
   const selectedPlatforms = new Set(input.goalPlatforms);
   const targetsByPlatform = new Map<PublishingPlatform, PublishingTarget[]>();
@@ -65,22 +68,50 @@ export function buildPublishingApprovalPackage(input: {
   const items: PublishingApprovalItem[] = [];
   for (const project of input.projects) {
     const spec = record(project.spec);
-    for (const videoPath of currentPublishableVideoPaths(spec)) {
-      let sourceClaim: FrozenPublishSourceClaim;
-      try { sourceClaim = digitalEmployeePublishSourceClaim(input.tenantId, project, videoPath); }
-      catch { continue; }
-      for (const [platform, targets] of targetsByPlatform.entries()) {
-        items.push({
-          sourceProjectId: project.id,
-          platform,
-          accountIds: targets.map(target => target.accountId),
-          accountLabels: targets.map(target => target.accountLabel),
-          title: text(project.title) || `内容作品 ${project.id}`,
-          description: text(spec.caption) || text(spec.script) || '',
-          videoPath,
-          scheduledAt: nextDailySlot(items.length, now),
-          sourceClaim,
+    if (!input.matrixPlan) {
+      for (const videoPath of currentPublishableVideoPaths(spec)) {
+        let sourceClaim: FrozenPublishSourceClaim;
+        try { sourceClaim = dependencies.sourceClaim(input.tenantId, project, videoPath); }
+        catch { continue; }
+        for (const [platform, targets] of targetsByPlatform.entries()) items.push({
+          sourceProjectId: project.id, platform, accountIds: targets.map(target => target.accountId), accountLabels: targets.map(target => target.accountLabel),
+          title: text(project.title) || `内容作品 ${project.id}`, description: text(spec.caption) || text(spec.script) || '', videoPath,
+          scheduledAt: nextDailySlot(items.length, now), sourceClaim,
         });
+      }
+      continue;
+    }
+    const videoPlan = record(record(spec.contentOrder).videoPlan);
+    const binding = record(videoPlan.matrix);
+    const matrixRows = input.matrixPlan?.filter(row => row.sourceProjectIds.includes(project.id) || row.accountId === binding.accountId);
+    const boundIds = matrixRows ? new Set(matrixRows.map(row => row.accountId)) : videoPlan.matrix ? new Set(binding.accountId ? [text(binding.accountId)] : []) : null;
+    const publishablePaths = currentPublishableVideoPaths(spec);
+    for (const [platform, targets] of targetsByPlatform.entries()) {
+      const eligible = targets.filter(target => !boundIds || boundIds.has(target.accountId) && (!matrixRows || matrixRows.some(row => row.accountId === target.accountId && row.platform === platform)));
+      if (!eligible.length) continue;
+      const groups = input.matrixPlan ? eligible.map(target => [target]) : [eligible];
+      for (const group of groups) {
+        const row = matrixRows?.find(item => item.accountId === group[0]!.accountId);
+        const language = row?.language;
+        const automation = record(spec.automation);
+        if (language && (automation.renderOutputPath || !Object.keys(record(spec.languageRenderOutputs)).length) && text(spec.lang || videoPlan.language) && text(spec.lang || videoPlan.language) !== language) throw Error(`作品 ${project.id} 的语言与账号安排不一致，请制作对应语言版本后再发布`);
+        const languagePath = language ? text(record(record(spec.languageRenderOutputs)[language]).path) : '';
+        const declaredLanguage = text(spec.lang || videoPlan.language);
+        const paths = language ? publishablePaths.filter(path => path === languagePath || (!languagePath && (!declaredLanguage || declaredLanguage === language))) : publishablePaths;
+        if (language && !paths.length) throw Error(`作品 ${project.id} 尚无账号所需的 ${language} 语言成片`);
+        for (const videoPath of paths) {
+          let sourceClaim: FrozenPublishSourceClaim;
+          try { sourceClaim = dependencies.sourceClaim(input.tenantId, project, videoPath); }
+          catch { continue; }
+          items.push({
+            sourceProjectId: project.id, platform,
+            accountIds: group.map(target => target.accountId), accountLabels: group.map(target => target.accountLabel),
+            title: text(project.title) || `内容作品 ${project.id}`,
+            description: text(spec.caption) || text(spec.script) || '', videoPath,
+            scheduledAt: nextDailySlot(items.length, now), sourceClaim,
+            ...(text(videoPlan.plannedPublishDate) ? { plannedPublishDate: text(videoPlan.plannedPublishDate) } : {}),
+          });
+        }
       }
     }
   }
@@ -92,7 +123,10 @@ export function buildPublishingApprovalPackage(input: {
       if (!own.length) continue;
       const timezone = input.scheduling.timezone === 'account' ? target.timezone || '' : 'Asia/Shanghai';
       const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: own.length, now });
-      own.forEach((item, index) => { item.scheduledAt = slots[index]; });
+      own.forEach((item, index) => {
+        const requested = item.plannedPublishDate;
+        item.scheduledAt = requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt ? new Date(`${requested}T20:00:00+08:00`).toISOString() : slots[index];
+      });
     }
     items.splice(0, items.length, ...expanded);
   }

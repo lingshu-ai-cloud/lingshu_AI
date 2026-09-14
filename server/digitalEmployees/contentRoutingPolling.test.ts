@@ -12,7 +12,7 @@ const plan = buildWeeklyPlan(goalInput,config);
 assert.equal(plan.tasks.length,16);
 const run:any={id:'mock-run',tenant_id:tenant,goal_id:'mock-goal',plan_id:'mock-plan',status:'running',started_at:'2026-09-01T00:00:00.000Z'};
 const tasks:any[]=plan.tasks.map(p=>({id:`mock-${p.key}`,tenant_id:tenant,run_id:run.id,task_key:p.key,title:p.title,status:'pending',depends_on:p.dependsOn,sequence:p.sequence,kind:p.kind,agent_role:p.agentRole,execution_mode:p.executionMode,external_effect:p.externalEffect,automatic_execution_allowed:p.automaticExecutionAllowed,requires_approval:p.requiresApproval,task_version:1,output:{},business_refs:[]}));
-const records:Record<string,any[]>={workflow_runs:[run],workflow_tasks:tasks,weekly_goals:[{id:run.goal_id,tenant_id:tenant,title:goalInput.title,objective:goalInput.objective,metric:goalInput.metric,scope:{},content_platforms:['facebook'],starts_at:goalInput.startsAt,ends_at:goalInput.endsAt}],weekly_plans:[{id:run.plan_id,tenant_id:tenant,plan}],digital_employee_configs:[{id:'mock-config',tenant_id:tenant,config}],tenant_profiles:[{id:'mock-profile',tenant_id:tenant,profile:{company:{name:'MOCK company',industry:'Clothing'},products:{items:[{name:'MOCK cotton shirt'}]}}}],social_accounts:[{id:'mock-account',tenantId:tenant,status:'connected',platform:'facebook',title:'MOCK page'}],content_batch_plans:[{id:'mock-orders',tenant_id:tenant,run_id:run.id,task_id:'mock-content_mode_routing',status:'planned',orders:[{id:'mock-order',route:'product',platform:'facebook',productId:'mock-product'}],routing:{eligibleRoutes:['product'],disabledRoutes:[]}}]};
+const records:Record<string,any[]>={workflow_runs:[run],workflow_tasks:tasks,weekly_goals:[{id:run.goal_id,tenant_id:tenant,title:goalInput.title,objective:goalInput.objective,metric:goalInput.metric,scope:{},content_platforms:['facebook'],starts_at:goalInput.startsAt,ends_at:goalInput.endsAt}],weekly_plans:[{id:run.plan_id,tenant_id:tenant,plan}],digital_employee_configs:[{id:'mock-config',tenant_id:tenant,config}],tenant_profiles:[{id:'mock-profile',tenant_id:tenant,profile:{company:{name:'MOCK company',industry:'Clothing'},products:{items:[{name:'MOCK cotton shirt',sku:'mock-sku',material:'cotton'}]}}}],social_accounts:[{id:'mock-account',tenantId:tenant,status:'connected',platform:'facebook',title:'MOCK page'}],content_batch_plans:[{id:'mock-orders',tenant_id:tenant,run_id:run.id,task_id:'mock-content_mode_routing',status:'planned',orders:[{id:'mock-order',route:'product',platform:'facebook',productId:'mock-product'}],routing:{eligibleRoutes:['product'],disabledRoutes:[]}}]};
 const original = { ...store }; const originalFetch=globalThis.fetch;
 let networkCalls=0; let serial=0;
 const statusHistory:any[]=[];
@@ -34,7 +34,9 @@ downstream.status = 'pending'; downstream.depends_on = ['never-ready'];
 records.content_batch_plans = [];
 records.tenant_profiles[0].profile.products.items = [];
 const priorBrowser = process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION;
+const priorDirectorFallback = process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK;
 process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION = 'true';
+process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK = 'true';
 const originalPerform = agentBrowserSessions.perform;
 let clicks = 0;
 agentBrowserSessions.perform = async (_scope, _read, _label, execute) => { clicks++; return execute(); };
@@ -49,17 +51,17 @@ try {
     assert.equal(routing.output.routingCheck.count, 4);
     const waitingEvents = () => Object.values(records).flat().filter(e => e.type === 'task.routing_waiting');
     assert.equal(waitingEvents().length, 1, 'unchanged blocker emits one event');
-    records.tenant_profiles[0].profile.products.items = [{name:'MOCK cotton shirt'}];
+    records.tenant_profiles[0].profile.products.items = [{name:'MOCK cotton shirt',sku:'mock-sku',material:'cotton'}];
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.equal(clicks, 0, 'a changed but still blocked condition stays read-only');
     assert.equal(waitingEvents().length, 2, 'changed blocker is recorded');
-    materials.push({ id: 'synthetic-material', tenantId: tenant, productId: 'enterprise-product-1', url: 'https://assets.example.com/synthetic-shirt.jpg', synthetic: true });
+    materials.push({ id: 'synthetic-material', tenantId: tenant, productId: 'mock-sku', url: 'https://assets.example.com/synthetic-shirt.jpg', synthetic: true });
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.equal(clicks, 0, 'synthetic material must not satisfy production routing');
-    materials.push({ id: 'other-tenant-material', tenantId: 'other-tenant', productId: 'enterprise-product-1', url: 'https://assets.example.com/other-shirt.jpg' });
+    materials.push({ id: 'other-tenant-material', tenantId: 'other-tenant', productId: 'mock-sku', url: 'https://assets.example.com/other-shirt.jpg' });
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.equal(clicks, 0, 'another tenant material must not satisfy production routing');
-    materials.push({ id: 'material-1', tenantId: tenant, productId: 'enterprise-product-1', url: 'https://assets.example.com/shirt.jpg' });
+    materials.push({ id: 'material-1', tenantId: tenant, productId: 'mock-sku', url: 'https://assets.example.com/shirt.jpg' });
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.equal(clicks, 1, 'newly satisfied conditions execute once');
     assert.equal(routing.status, 'succeeded');
@@ -70,7 +72,7 @@ try {
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.equal(clicks, 1, 'existing planned batch is reused without a browser action');
     assert.equal(records.content_batch_plans.length, 1);
-    assert.equal(networkCalls, 0);
+    assert.ok(networkCalls <= 1, 'offline routing may probe one optional external source but must finish without relying on it');
   });
   console.log('Content routing polling regression passed');
 } finally {
@@ -78,4 +80,6 @@ try {
   agentBrowserSessions.perform = originalPerform;
   if (priorBrowser === undefined) delete process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION;
   else process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION = priorBrowser;
+  if (priorDirectorFallback === undefined) delete process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK;
+  else process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK = priorDirectorFallback;
 }

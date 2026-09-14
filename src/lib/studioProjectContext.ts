@@ -1,5 +1,5 @@
 import type { StudioProject } from './studioApi';
-export type StudioWorkflowContext = { runId: string; taskId: string; taskKey?: string; preview?: boolean; entityId?: string };
+export type StudioWorkflowContext = { runId: string; taskId: string; taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
 
 export function studioWorkflowContextFromSpec(spec: Record<string, unknown>): StudioWorkflowContext | null {
   const runId = typeof spec.workflowRunId === 'string' ? spec.workflowRunId.trim() : '';
