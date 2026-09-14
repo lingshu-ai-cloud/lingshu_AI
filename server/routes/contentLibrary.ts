@@ -6,6 +6,7 @@ import { execFile } from 'node:child_process';
 import { store } from '../storage/index.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { contentAccepted } from '../digitalEmployees/contentAcceptance.js';
+import { publishableStudioGenerationFromSpec } from '../lib/studioGenerationVerification.js';
 
 type Row = Record<string, any>;
 const object = (value: any): Row => { try { return typeof value === 'string' ? JSON.parse(value || '{}') : value && typeof value === 'object' ? value : {}; } catch { return {}; } };
@@ -104,7 +105,9 @@ contentLibraryRouter.get('/library/publish-draft/:id', async (req, res) => {
   const row = (await library(res.locals.tenantId)).find(item => item.id === req.params.id);
   if (!row || !row.current || !safeContentFile(res.locals.tenantId, row.file)) { res.status(404).json({ error: '当前成片不可用' }); return; }
   if (row.runId && row.reviewStatus !== 'approved') { res.status(409).json({ error: '数字员工成片需先在交付看板审核通过' }); return; }
-  res.json({ videoPath: row.file, title: row.title, description: row.spec.caption || '', ratio: row.spec.ratio || '9:16', platform: row.platform || 'youtube', sourceProjectId: row.projectId, workflowRunId: row.runId || undefined, workflowTaskId: row.taskId || undefined, workflowTaskKey: row.runId ? 'content_production' : undefined, language: row.language });
+  const generation = publishableStudioGenerationFromSpec(row.spec);
+  if (!generation) { res.status(409).json({ error: '当前脚本缺少与正文一致且已通过的 AI 质量记录，请返回内容创作重新审核' }); return; }
+  res.json({ videoPath: row.file, title: row.title, description: row.spec.caption || '', ratio: row.spec.ratio || '9:16', platform: row.platform || 'youtube', sourceProjectId: row.projectId, workflowRunId: row.runId || undefined, workflowTaskId: row.taskId || undefined, workflowTaskKey: row.runId ? 'content_production' : undefined, language: row.language, ...generation });
 });
 contentLibraryRouter.get('/library/cover/:projectId', async (req, res) => {
   const tenant = res.locals.tenantId;

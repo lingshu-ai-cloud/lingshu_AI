@@ -26,9 +26,10 @@ const registrationRoute = authSource.slice(
   authSource.indexOf("authRouter.post('/register'"),
   authSource.indexOf('// POST /auth/login'),
 );
+const inviteRegistrationSource = fs.readFileSync(path.join(root, 'server/auth/inviteRegistration.ts'), 'utf8');
 assert.match(
-  registrationRoute,
-  /pbCreate\('users',[\s\S]*?role:\s*'super_admin'/,
+  `${registrationRoute}\n${inviteRegistrationSource}`,
+  /pbCreate(?:Strict)?\('users',[\s\S]*?role:\s*'super_admin'/,
   'the first user created from a one-use tenant invite must be assigned the tenant Owner compatibility role explicitly',
 );
 

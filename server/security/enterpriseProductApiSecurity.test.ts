@@ -32,11 +32,13 @@ const [
     assertProductApiCredentialEnvironment,
     productApiSecretForKey,
   },
+  { issueLocalIdentityTokenForTest },
 ] = await Promise.all([
   import('../storage/index.js'),
   import('../routes/enterprise.js'),
   import('../digitalEmployees/browserReadSession.js'),
   import('../lib/productApiCredentials.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 const attackerTenantId = 'product-api-attacker-tenant';
@@ -221,12 +223,12 @@ const origin = `http://127.0.0.1:${address.port}/api/overseas/enterprise`;
 const productOrigin = `http://127.0.0.1:${address.port}/api/v1/products`;
 
 function localToken(tenantId: string, role?: 'super_admin' | 'admin' | 'social_operator' | 'customer_service'): string {
-  return `local-demo.${Buffer.from(JSON.stringify({
-    userId: `${tenantId}-user`,
+  return issueLocalIdentityTokenForTest({
+    userId: `${tenantId}-${role || 'missing'}-user`,
     tenantId,
     email: `${tenantId}@example.test`,
     ...(role ? { role } : {}),
-  }), 'utf8').toString('base64url')}`;
+  });
 }
 
 async function request(
@@ -265,6 +267,7 @@ const browserSession = createBrowserReadSession({
   tenantId: attackerTenantId,
   userId: `${attackerTenantId}-browser-agent`,
   role: 'admin',
+  dataAuthority: 'local',
 });
 const enterpriseSource = fs.readFileSync(path.join(originalCwd, 'server/routes/enterprise.ts'), 'utf8');
 const credentialSource = fs.readFileSync(path.join(originalCwd, 'server/lib/productApiCredentials.ts'), 'utf8');

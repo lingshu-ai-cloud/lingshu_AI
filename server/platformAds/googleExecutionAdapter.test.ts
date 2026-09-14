@@ -10,15 +10,17 @@ assert.equal(operations[1].campaignOperation.create.advertisingChannelType, 'DEM
 assert.equal(operations[2].adGroupOperation.create.demandGenAdGroupSettings.channelControls.selectedChannels.display, false);
 assert.throws(() => demandGenOperations({ ...plan, videoAssetId: '../2' }));
 const calls: any[] = [];
+let writeFences = 0;
 const adapter = new GoogleExecutionAdapter('private', (async (_url: any, init: any) => {
   calls.push({ body: JSON.parse(init.body), headers: init.headers });
   return Response.json({ mutateOperationResponses: [{ campaignBudgetResult: { resourceName: 'customers/1234567890/campaignBudgets/1' } }, { campaignResult: { resourceName: 'customers/1234567890/campaigns/2' } }, { adGroupResult: { resourceName: 'customers/1234567890/adGroups/3' } }, { adGroupAdResult: { resourceName: 'customers/1234567890/adGroupAds/3~4' } }] });
-}) as typeof fetch);
+}) as typeof fetch, async () => { writeFences += 1; });
 assert.equal((await adapter.createPaused(plan)).campaignId, 'customers/1234567890/campaigns/2');
 assert.equal(calls[0].body.validateOnly, true);
 assert.equal(calls[1].body.validateOnly, false);
 assert.equal(calls[1].body.partialFailure, false);
 assert.equal(calls[0].headers['developer-token'], undefined);
+assert.equal(writeFences, 1, 'validate-only is read-only and the real Google mutation is fenced once');
 let changed = false;
 const uncertain = new GoogleExecutionAdapter('private', (async (_url: any, init: any) => {
   const body = JSON.parse(init.body);

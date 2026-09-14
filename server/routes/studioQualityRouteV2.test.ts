@@ -42,13 +42,27 @@ process.env.DASHSCOPE_BASE_URL = `http://127.0.0.1:${providerAddress.port}/v1`;
 process.env.GEMINI_API_KEY = '';
 process.env.SUBSCRIPTION_ENFORCED = 'false';
 process.env.DEMO_MODE = 'false';
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.DISABLE_LOCAL_AUTH_FALLBACK = 'false';
 
 const { auth, store } = await import('../storage/index.js');
-auth.verifyToken = async () => ({ userId: 'quality-route-user', tenantId: 'quality-route-tenant' });
-store.list = (async collection => collection === 'tenant_profiles'
-  ? ({
+const { bindDataAuthority, dataAuthorityRequestScope } = await import('../storage/dataAuthority.js');
+const tenantId = 'local_tenant_quality_route';
+let starterAccessLookups = 0;
+auth.verifyToken = async () => {
+  bindDataAuthority('local');
+  return { userId: 'quality-route-user', tenantId, dataAuthority: 'local' };
+};
+store.list = (async collection => {
+  if (collection === 'starter_198_access') {
+    starterAccessLookups += 1;
+    return { items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 };
+  }
+  return collection === 'tenant_profiles'
+    ? ({
     items: [{
       id: 'quality-route-enterprise-profile',
+      tenant_id: tenantId,
       profile: {
         company: { name: 'LX 测试制造企业', companyType: '制造工厂' },
         products: { items: [{
@@ -60,10 +74,12 @@ store.list = (async collection => collection === 'tenant_profiles'
       },
     }],
     page: 1, perPage: 20, totalItems: 1, totalPages: 1,
-  })
-  : ({ items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 })) as typeof store.list;
+    })
+    : ({ items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 });
+}) as typeof store.list;
 const { studioRouter } = await import('./studio.js');
 const app = express();
+app.use(dataAuthorityRequestScope);
 app.use(express.json({ limit: '2mb' }));
 app.use('/studio', studioRouter);
 const apiServer = app.listen(0, '127.0.0.1');
@@ -115,6 +131,7 @@ try {
   assert.doesNotMatch((body.validationIssues || []).join('\n'), /Factory Automation Manager.*品牌|Project Buyer.*设备/);
   assert.match((body.validationWarnings || []).join('\n'), /素材覆盖不足/);
   assert.ok(providerCalls >= 1);
+  assert.ok(starterAccessLookups >= 1, 'the route must explicitly exercise the unprovisioned Starter access boundary');
 } finally {
   await new Promise<void>(resolve => apiServer.close(() => resolve()));
   qwenStub.closeAllConnections();

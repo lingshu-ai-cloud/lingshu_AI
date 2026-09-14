@@ -1,114 +1,114 @@
-# LingShu 备份与恢复流程
+# 灵枢生产备份与恢复
 
-## 这次改动会不会导致历史客户消息消失？
+生产恢复的权威工件是一个同时包含 PocketBase `pb_data` 与应用 `data/` 的 age 加密快照，以及配套 SHA-256 清单。应用内的每日 R2 JSON 同步只是一层增量保护，不能代替完整快照。
 
-不会。应用的每日任务会先把当前数据复制到 `data/backups/YYYY-MM-DD/`，再把这些备份文件上传到 Cloudflare R2。同步成功后，只会删除 7 天前的本地备份目录。
+## 准备 age 密钥
 
-它不会删除这些正在使用的数据源：
-
-- `data/whatsapp-customers.json`
-- `data/whatsapp-interactions.json`
-- PocketBase 正库数据
-- 最近 7 天的本地备份
-
-## 生产环境变量
-
-在服务器 `.env.production` 中配置：
+在受控机器生成身份文件；身份文件不得进入仓库或普通服务器目录：
 
 ```bash
-R2_ACCOUNT_ID=你的 Cloudflare Account ID
-R2_ACCESS_KEY_ID=你的 R2 Access Key
-R2_SECRET_ACCESS_KEY=你的 R2 Secret Key
-R2_BUCKET_NAME=overseas-assets
-R2_PUBLIC_URL=https://你的公开域名或 r2.dev
+age-keygen -o /secure/lingshu-backup.agekey
+chmod 600 /secure/lingshu-backup.agekey
+age-keygen -y /secure/lingshu-backup.agekey
+```
+
+最后一条输出的 `age1...` 是公钥，可以提供给备份服务器；私钥只能交给获准执行恢复的人。
+
+## 创建完整快照
+
+在仓库根目录执行：
+
+```bash
+AGE_RECIPIENT=age1... pnpm run backup:production-data
+```
+
+`deploy/backup.sh` 委托给同一个实现。脚本会：
+
+1. 记录 app/PocketBase 原先是否运行，并只暂停正在运行的服务；
+2. 一致性复制 PocketBase volume 与 `data/`；
+3. 在临时目录内打包并直接加密，不把明文归档写入备份目录；
+4. 生成 `lingshu-production-<UTC>.tar.gz.age` 和同名 `.manifest.txt`；
+5. 恢复备份前的服务运行状态。
+
+`AGE_RECIPIENT`、age、应用数据、Docker Compose 或 PocketBase 容器缺失时会失败，不会退化成未加密备份，也不会在生产环境自动改读可能陈旧的本地 `pb_data/`。
+
+仅在隔离的本地/离线目录、明确知道 `PB_DATA_DIR` 是目标数据源时，才可显式选择文件系统模式：
+
+```bash
+BACKUP_SOURCE_MODE=local-filesystem \
+PB_DATA_DIR=/isolated/pb_data \
+APP_DATA_DIR=/isolated/data \
+AGE_RECIPIENT=age1... \
+  bash scripts/backup-production-data.sh
+```
+
+`deploy/backup.sh`、更新前快照和线上恢复前快照都会强制使用 `production-docker`，不会继承这个离线选择。
+
+## 异地保存
+
+把 `.tar.gz.age` 和 `.manifest.txt` 一起上传到受控对象存储。示例：
+
+```bash
+rclone copy ./backups r2:overseas-assets/lingshu-full-backups --include '*.tar.gz.age' --include '*.manifest.txt'
+```
+
+对象存储应启用版本控制/保留策略，并限制删除权限。只上传清单而漏掉密文，或只上传密文而漏掉清单，都不算可恢复备份。
+
+## 必做：非破坏性恢复演练
+
+先下载一对密文与清单，在隔离机器或隔离目录执行：
+
+```bash
+AGE_IDENTITY=/secure/lingshu-backup.agekey \
+  pnpm run restore:production-data -- backups/lingshu-production-20260914T000000Z.tar.gz.age
+```
+
+默认只会：
+
+- 校验 SHA-256；
+- 验证 age 认证解密；
+- 拒绝绝对路径、`..` 穿越和 `pb_data`/`data` 之外的归档成员；
+- 解压到新的 `restore/<UTC>/` 目录。
+
+它不会替换线上数据，也不会覆盖已有演练目录。演练后至少检查 PocketBase 能启动、migration 状态正常、客户/素材数量合理，以及 `/api/overseas/ready` 返回 `status=ready`。
+
+## 替换线上数据
+
+仅在已经完成上述演练、明确选择目标服务器和备份版本后执行：
+
+```bash
+AGE_IDENTITY=/secure/lingshu-backup.agekey \
+AGE_RECIPIENT=age1... \
+RESTORE_APPLY=true \
+RESTORE_CONFIRM=replace-live-data \
+  pnpm run restore:production-data -- backups/lingshu-production-20260914T000000Z.tar.gz.age
+```
+
+线上替换需要两个显式开关，并会先再次创建“当前线上状态”的加密、带校验清单快照。替换期间服务暂停；中途失败时脚本会尝试从临时快照恢复原数据并恢复此前正在运行的服务。不要删除预恢复加密备份，直到业务校验完成。
+
+恢复完成后检查：
+
+```bash
+docker compose --env-file .env.production ps
+curl -fsS https://你的域名/api/overseas/ready
+docker compose --env-file .env.production logs --tail=120 app pocketbase
+```
+
+## 应用内 R2 增量备份的边界
+
+`R2_BACKUP_PREFIX` 与 `R2_BACKUP_LOCAL_RETENTION_DAYS` 控制应用内 WhatsApp/本地 JSON 备份上传和本地保留：
+
+```bash
 R2_BACKUP_PREFIX=lingshu-backups
 R2_BACKUP_LOCAL_RETENTION_DAYS=7
 ```
 
-`R2_BACKUP_PREFIX` 对应 R2 里的目录前缀。默认备份路径类似：
+这条链路不包含完整 PocketBase volume，也不覆盖所有对象存储素材，因此不能单独用于灾难恢复。它适合辅助找回近期 JSON 状态；完整恢复仍必须使用前述加密快照。
 
-```text
-lingshu-backups/2026-07-14/whatsapp-customers.json
-lingshu-backups/2026-07-14/whatsapp-interactions.json
-lingshu-backups/2026-07-14/whatsapp-import-status.json
-lingshu-backups/2026-07-14/enterprise.json
-```
+## 运行制度
 
-## 恢复演练：从 R2 恢复到新服务器
-
-以下命令假设你已经把新服务器代码部署到 `/opt/lingshu`，并且已经配置好 `.env.production`。
-
-### 方式 A：用 rclone 拉取最新备份
-
-1. 安装 rclone：
-
-```bash
-curl https://rclone.org/install.sh | sudo bash
-```
-
-2. 配置 R2：
-
-```bash
-rclone config
-```
-
-选择 `n` 新建 remote，类型选择 `s3`，provider 选择 `Cloudflare`，填入 R2 的 `access_key_id`、`secret_access_key`、`endpoint`：
-
-```text
-https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
-```
-
-假设 remote 名叫 `r2`。
-
-3. 查看备份日期：
-
-```bash
-rclone lsf r2:overseas-assets/lingshu-backups/
-```
-
-4. 拉取最新日期备份：
-
-```bash
-cd /opt/lingshu
-mkdir -p data
-rclone copy r2:overseas-assets/lingshu-backups/2026-07-14 ./data --progress
-```
-
-5. 重启服务：
-
-```bash
-docker compose --env-file .env.production up -d --build
-```
-
-### 方式 B：用 AWS CLI 拉取
-
-```bash
-aws configure
-export AWS_ENDPOINT_URL=https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
-cd /opt/lingshu
-mkdir -p data
-aws s3 sync s3://overseas-assets/lingshu-backups/2026-07-14 ./data --endpoint-url "$AWS_ENDPOINT_URL"
-docker compose --env-file .env.production up -d --build
-```
-
-## PocketBase 备份恢复
-
-如果你使用 `deploy/backup.sh` 生成了 `pb_data_*.tar.gz`，恢复新服务器 PocketBase 数据：
-
-```bash
-cd /opt/lingshu
-docker compose --env-file .env.production stop pocketbase
-mkdir -p pb_data
-tar xzf backups/pb_data_YYYY-MM-DD_HHMMSS.tar.gz -C pb_data
-docker compose --env-file .env.production up -d pocketbase
-```
-
-## 每月恢复演练
-
-建议每月至少演练一次：
-
-1. 新开一台临时服务器。
-2. 从 R2 拉取最新备份。
-3. 启动服务。
-4. 检查“我的客户”是否能看到最近客户消息。
-5. 演练完成后销毁临时服务器。
+- 每次更新前创建完整快照；日常至少每日一份并异地保存。
+- 至少每月在隔离环境做一次实际恢复演练并保存结果。
+- 清单、密文、Git revision、目标环境和演练记录一起归档。
+- 定期验证 age 私钥可读；不要在备份服务器上长期保存私钥。
+- 容量验收和恢复演练都不得直接触发 AI 生成、消息发送或社媒发布。

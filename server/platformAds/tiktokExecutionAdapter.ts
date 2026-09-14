@@ -14,10 +14,15 @@ export function validateTikTokVideoPlan(value: TikTokVideoPlan) {
 /** Isolated adapter: not yet exposed by task execution routes. Requires an authorized
  * TT_USER identity and existing promotable TikTok post. No arbitrary request passthrough. */
 export class TikTokExecutionAdapter {
-  constructor(private token: string, private transport: typeof fetch = fetch) {}
+  constructor(
+    private token: string,
+    private transport: typeof fetch = fetch,
+    private beforeProviderWrite?: () => Promise<void>,
+  ) {}
   private async request(path: string, params: Record<string, unknown>, method: 'GET' | 'POST') {
     const url = new URL(`https://business-api.tiktok.com/open_api/v1.3/${path}/`);
     if (method === 'GET') for (const [key, value] of Object.entries(params)) url.searchParams.set(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    if (method === 'POST') await this.beforeProviderWrite?.();
     let response: Response;
     try { response = await this.transport(url, { method, headers: { 'Access-Token': this.token, 'Content-Type': 'application/json' }, body: method === 'POST' ? JSON.stringify(params) : undefined, signal: AbortSignal.timeout(30000) }); }
     catch { throw new AdProviderError('TikTok 请求超时，需对账确认结果', 'NETWORK_ERROR', method === 'POST'); }

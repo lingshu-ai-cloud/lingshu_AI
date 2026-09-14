@@ -25,4 +25,8 @@ const uncertain = new MetaAdsAdapter('token', (async () => { throw new Error('to
 await assert.rejects(() => uncertain.request('123', { status: 'ACTIVE' }, 'POST'), (e: unknown) => e instanceof AdProviderError && e.uncertain && !e.message.includes('token'));
 const denied = new MetaAdsAdapter('secret-token', (async () => Response.json({ error: { code: 10, error_subcode: 1341012, message: 'secret-token' } }, { status: 403 })) as typeof fetch);
 await assert.rejects(() => denied.request('123', {}, 'POST'), (e: unknown) => e instanceof AdProviderError && e.code === '10' && e.message.includes('1341012') && !e.message.includes('secret-token') && !e.uncertain);
+let fencedTransportCalled = false;
+const fenced = new MetaAdsAdapter('token', (async () => { fencedTransportCalled = true; return Response.json({ id: '1' }); }) as typeof fetch, async () => { throw new Error('lease generation lost'); });
+await assert.rejects(fenced.request('123', { status: 'ACTIVE' }, 'POST'), /lease generation lost/);
+assert.equal(fencedTransportCalled, false, 'a lost task lease must fence Meta before transport');
 console.log('meta adapter tests passed');

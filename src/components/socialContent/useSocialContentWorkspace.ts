@@ -14,6 +14,7 @@ import { socialContentApi } from '../../lib/socialContentApi';
 import { readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
 import type { SocialContentDraft } from '../../lib/socialContentModel';
 import { mergeSocialContentTaskSummaries, restoreSavedSocialContentTask } from '../../lib/socialContentTaskPagination';
+import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import { splitBusinessList, splitLines } from './socialContentUi';
 
 export type SocialContentSaveTarget =
@@ -396,6 +397,7 @@ export function useSocialContentWorkspace() {
     if (!task) return;
     const artifacts = task.artifacts
       .filter(artifact => artifact.status === 'review_required')
+      .filter(artifact => decision !== 'approved' || socialArtifactGenerationDisclosure(artifact).approvalAllowed)
       .map(artifact => ({ artifactId: artifact.artifactId, expectedVersion: artifact.version }));
     if (artifacts.length === 0) {
       setError('当前没有待验收内容');

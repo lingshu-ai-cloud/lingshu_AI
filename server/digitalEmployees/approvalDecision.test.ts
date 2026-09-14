@@ -70,6 +70,12 @@ const publishingPackage: PublishingApprovalPackage = {
     description: 'Frozen caption',
     videoPath: '/render/final.mp4',
     scheduledAt: '2026-09-13T12:00:00.000Z',
+    sourceClaim: {
+      schemaVersion: 1, sourceKind: 'digital_employee_project', projectId: 'project-1',
+      sourceVideoPath: '/render/final.mp4', deliveryVideoPath: '/render/final.mp4',
+      generationKind: 'digital_employee', generationProvenance: 'digital_employee',
+      qualityStatus: 'passed', publishable: true, generationRecordId: 'generation-1', sourceFingerprint: 'fingerprint-1',
+    },
   }],
 };
 

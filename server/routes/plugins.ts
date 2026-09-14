@@ -1,10 +1,10 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { testShopify } from '../integrations/shopify.js';
 import { callLLM } from '../agents/llm.js';
 import { requireAuth } from '../middleware/auth.js';
-import { requireAdminUser } from '../lib/demoAccounts.js';
+import { adminUserForHttp, requireInternalAdmin } from '../lib/demoAccounts.js';
 import {
   mutatePluginRegistry,
   PluginRegistryUnavailableError,
@@ -82,15 +82,6 @@ function mergeWithCatalog(installed: Plugin[], managementAllowed: boolean) {
 
 export const pluginsRouter = Router();
 
-async function requireInternalAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const admin = await requireAdminUser(req);
-  if (!admin) {
-    res.status(403).json({ error: 'admin_required' });
-    return;
-  }
-  next();
-}
-
 function registryUnavailable(res: Response, error: unknown): void {
   console.error('[plugin-registry]', {
     errorType: error instanceof Error ? error.name : 'UnknownError',
@@ -110,7 +101,9 @@ function configPatch(value: unknown): Record<string, string> | null {
 pluginsRouter.use(requireAuth);
 
 pluginsRouter.get('/', async (req, res) => {
-  const managementAllowed = Boolean(await requireAdminUser(req));
+  const admin = await adminUserForHttp(req, res);
+  if (admin === undefined) return;
+  const managementAllowed = Boolean(admin);
   try {
     res.json(mergeWithCatalog(managementAllowed ? readPluginRegistry(DATA) : [], managementAllowed));
   } catch (error) {

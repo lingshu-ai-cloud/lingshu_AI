@@ -112,17 +112,10 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
 }
 export type StudioGenerationProvenance = 'ai' | 'ai_rejected' | 'ai_failed' | 'template' | 'manual_draft';
 export type StudioScriptQualityStatus =
-  | 'passed'
-  | 'passed_with_warnings'
-  | 'warning'
-  | 'needs_material'
-  | 'unreviewed'
-  | 'rejected'
+  | 'passed' | 'passed_with_warnings' | 'warning' | 'needs_material'
+  | 'unreviewed' | 'rejected'
   // Legacy statuses remain readable while old drafts/backends are in flight.
-  | 'repaired'
-  | 'recovered'
-  | 'fallback'
-  | 'failed';
+  | 'repaired' | 'recovered' | 'fallback' | 'failed';
 export interface StudioScriptQualityChecks {
   materialGrounded?: boolean;
   timelineGrounded?: boolean;

@@ -23,7 +23,10 @@ assert.equal(seed.contentMode, 'video');
 assert.equal(seed.creationMode, 'material');
 assert.deepEqual(seed.languageCodes, ['de', 'fr']);
 assert.deepEqual(seed.selectedMaterialIds, ['material-123']);
-assert.match(seed.productInfo, /不得承诺绝对续航/);
+assert.equal(seed.productInfo, '', 'free-text productRef must not hydrate Studio as confirmed product data');
+assert.equal(seed.sellingPoints, '', 'free-text brandNotes must not hydrate Studio as confirmed selling points');
+assert.match(seed.factVerificationNotice, /未作为已确认企业事实导入/);
+assert.doesNotMatch(seed.productInfo, /户外便携储能电源|容量与认证|不得承诺/);
 assert.equal(seed.audience, '户外露营家庭；目标市场：德国、法国');
 
 const poster = socialTaskToStudioSeed({ ...task, brief: { ...task.brief, formats: ['image_post'], languages: ['未支持语言'], platforms: ['instagram'], aspectRatio: null }, sources: [] });

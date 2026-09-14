@@ -4,10 +4,14 @@ import { assetIdentity, verifyAssetToken } from '../lib/assetAccess.js';
 import { browserReadIdentity, isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
 import { enforceStarter198LegacyMutationBoundary } from '../starter198/legacyBoundary.js';
 import { isSideEffectingReadPath } from '../security/readOnlyHttp.js';
+import { bindDataAuthority } from '../storage/dataAuthority.js';
+import type { DataAuthority } from '../storage/dataAuthority.js';
 
 export interface AuthLocals {
   userId: string;
   tenantId: string;
+  dataAuthority?: DataAuthority;
+  browserReadRole?: 'social_operator' | 'customer_service' | 'admin';
   starter198SocialContext?: {
     taskId: string;
     page: string;
@@ -62,7 +66,15 @@ export async function requireAuth(
       res.status(403).json({ error: 'agent_browser_read_only' });
       return;
     }
-    Object.assign(res.locals, { userId: identity.userId, tenantId: identity.tenantId });
+    // The browser credential is derived from an already authenticated task
+    // session. Restore that exact authority before any route can read data.
+    bindDataAuthority(identity.dataAuthority);
+    Object.assign(res.locals, {
+      userId: identity.userId,
+      tenantId: identity.tenantId,
+      dataAuthority: identity.dataAuthority,
+      browserReadRole: identity.role,
+    });
     // Browser-read credentials are a transport restriction, not an authority
     // to bypass the customer's product profile. Starter tenants must still use
     // the whitelisted production projections instead of arbitrary legacy GETs.
@@ -72,7 +84,20 @@ export async function requireAuth(
   // Media elements cannot attach the localStorage bearer header. The API call
   // that loads the studio first synchronizes the same token into an HttpOnly,
   // same-site asset session cookie, so proxied video/audio routes can use it.
-  const result = await auth.verifyToken(req.headers.authorization) || await assetIdentity(req);
+  let result;
+  try {
+    result = await auth.verifyToken(req.headers.authorization) || await assetIdentity(req);
+  } catch (error) {
+    console.error('[auth] identity verification unavailable', {
+      errorType: error instanceof Error ? error.name : 'UnknownError',
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(503).json({
+      error: 'auth_provider_unavailable',
+      message: '登录验证服务暂时不可用，请稍后重试。',
+    });
+    return;
+  }
   const authenticated = result
     && typeof result.userId === 'string'
     && typeof result.tenantId === 'string'
@@ -97,6 +122,7 @@ export async function requireAuth(
   const locals = res.locals as AuthLocals;
   locals.userId = authenticated?.userId || 'signed-media';
   locals.tenantId = authenticated?.tenantId || signedMedia!.tenantId;
+  locals.dataAuthority = authenticated?.dataAuthority;
   locals.supportAccess = authenticated?.supportAccess;
   if (locals.supportAccess) { enforceSupportSessionReadOnly(req, res, next); return; }
   // A signed media URL is already bound to one tenant, one exact path and a

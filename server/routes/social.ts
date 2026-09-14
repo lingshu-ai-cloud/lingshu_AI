@@ -27,6 +27,8 @@ import {
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
 import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
+export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 
 const COL = 'social_accounts';
@@ -37,17 +39,9 @@ const META_AUTH_URL = 'https://www.facebook.com';
 
 const TIKTOK_SCOPES = ['user.info.basic', 'user.info.profile', 'user.info.stats', 'video.list', 'video.publish'];
 const META_SCOPES = [
-  'pages_show_list',
-  'pages_manage_metadata',
-  'pages_read_engagement',
-  'pages_manage_posts',
-  'pages_read_user_content',
-  'business_management',
-  'instagram_basic',
-  'instagram_content_publish',
-  'instagram_manage_comments',
-  'instagram_manage_insights',
-  'read_insights',
+  'pages_show_list', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_posts',
+  'pages_read_user_content', 'business_management', 'instagram_basic', 'instagram_content_publish',
+  'instagram_manage_comments', 'instagram_manage_insights', 'read_insights',
 ];
 
 export const socialRouter = Router();
@@ -881,7 +875,7 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'Account is not connected' });
     return;
   }
-  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean };
+  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean; generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string };
   if (!body.title || (!body.videoPath && !body.videoUrl)) {
     res.status(400).json({ error: 'title and videoPath/videoUrl are required' });
     return;
@@ -902,8 +896,12 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       contentId: body.contentId,
       language: body.language,
       trackWaLink: body.trackWaLink,
+      generationKind: body.generationKind, generationProvenance: body.generationProvenance,
+      qualityStatus: body.qualityStatus, publishable: body.publishable, generationRecordId: body.generationRecordId,
+      sourceKind: body.sourceKind, sourceVideoPath: body.sourceVideoPath,
     });
-    res.status(201).json({ ok: true, video: result.video, tracking: result.tracking, publishRecord: result.publishRecord });
+    const response = socialUploadHttpResponse(result);
+    res.status(response.statusCode).json(response.body);
   } catch (error: any) {
     console.error(`${account.platform} upload error:`, error?.response?.data ?? error?.message ?? error);
     const status = error?.statusCode || error?.response?.status || 500;

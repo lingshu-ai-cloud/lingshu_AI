@@ -7,11 +7,11 @@
  * interfaces and switch the export in `index.ts` — nothing else changes.
  */
 import {
-  pbGet,
-  pbCreate,
-  pbPatch,
-  pbDelete,
-  pbList,
+  pbGetStrict,
+  pbCreateStrict,
+  pbPatchStrict,
+  pbDeleteStrict,
+  pbListStrict,
   getTenantIdFromToken,
 } from './pb.js';
 import fs from 'node:fs';
@@ -28,35 +28,28 @@ import type {
   Where,
 } from './datastore.js';
 import { verifySupportAccessToken } from '../lib/supportAccess.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
+import { bindDataAuthority, currentDataAuthority } from './dataAuthority.js';
+import {
+  createLocalDataTenant,
+  deleteLocalInviteTenant,
+  listLocalTenants,
+  updateLocalDataTenant,
+} from '../lib/localTenants.js';
 
-const LOCAL_AUTH_PREFIX = 'local-demo.';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOCAL_STORE_DIR = process.env.LOCAL_STORE_DIR?.trim()
   ? path.resolve(process.env.LOCAL_STORE_DIR)
   : path.join(__dirname, '../../data/local-store');
-
-function isLocalDevFallbackEnabled(): boolean {
-  return process.env.NODE_ENV !== 'production' && process.env.DISABLE_LOCAL_AUTH_FALLBACK !== 'true';
-}
-
-function parseLocalToken(authHeader: string | undefined): Identity | null {
-  if (!isLocalDevFallbackEnabled()) return null;
-  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
-  if (!token?.startsWith(LOCAL_AUTH_PREFIX)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(token.slice(LOCAL_AUTH_PREFIX.length), 'base64url').toString('utf8')) as Partial<Identity>;
-    return data.userId && data.tenantId ? { userId: data.userId, tenantId: data.tenantId } : null;
-  } catch {
-    return null;
-  }
-}
 
 function localCollectionPath(collection: string): string {
   return path.join(LOCAL_STORE_DIR, `${collection.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
 }
 
 function readLocalCollection<T = Record_>(collection: string): T[] {
-  if (!isLocalDevFallbackEnabled()) return [];
+  if (!localFallbacksEnabled()) return [];
+  if (collection === 'tenants') return listLocalTenants() as T[];
   try {
     const parsed = JSON.parse(fs.readFileSync(localCollectionPath(collection), 'utf8'));
     return Array.isArray(parsed) ? parsed : [];
@@ -68,7 +61,9 @@ function readLocalCollection<T = Record_>(collection: string): T[] {
 function writeLocalCollection(collection: string, records: unknown[]): void {
   fs.mkdirSync(LOCAL_STORE_DIR, { recursive: true });
   const file = localCollectionPath(collection);
-  fs.writeFileSync(file, JSON.stringify(records, null, 2), { encoding: 'utf8', mode: 0o600 });
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(records, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(temporary, file);
   try {
     fs.chmodSync(file, 0o600);
   } catch {
@@ -98,7 +93,8 @@ function filterLocalRecords<T extends Record<string, unknown>>(items: T[], where
 }
 
 function localCreate<T = Record_>(collection: string, data: Record<string, unknown>): T | null {
-  if (!isLocalDevFallbackEnabled()) return null;
+  if (!localFallbacksEnabled()) return null;
+  if (collection === 'tenants') return createLocalDataTenant(data) as T;
   const records = readLocalCollection<Record_>(collection);
   const now = new Date().toISOString();
   const record = {
@@ -113,7 +109,8 @@ function localCreate<T = Record_>(collection: string, data: Record<string, unkno
 }
 
 function localUpdate(collection: string, id: string, data: Record<string, unknown>): boolean {
-  if (!isLocalDevFallbackEnabled()) return false;
+  if (!localFallbacksEnabled()) return false;
+  if (collection === 'tenants') return updateLocalDataTenant(id, data);
   const records = readLocalCollection<Record_>(collection);
   const index = records.findIndex(record => record.id === id);
   if (index < 0) return false;
@@ -123,7 +120,8 @@ function localUpdate(collection: string, id: string, data: Record<string, unknow
 }
 
 function localDelete(collection: string, id: string): boolean {
-  if (!isLocalDevFallbackEnabled()) return false;
+  if (!localFallbacksEnabled()) return false;
+  if (collection === 'tenants') return deleteLocalInviteTenant(id);
   const records = readLocalCollection<Record_>(collection);
   const next = records.filter(record => record.id !== id);
   if (next.length === records.length) return false;
@@ -162,54 +160,74 @@ function toPbFilter(where?: Where): string | undefined {
 
 export const pbStore: DataStore = {
   async getById<T = Record_>(collection: string, id: string) {
+    const authority = currentDataAuthority();
+    if (authority === 'local') {
+      return readLocalCollection<T & { id: string }>(collection).find(record => record.id === id) ?? null;
+    }
     try {
-      const remote = await pbGet(collection, id) as T | null;
+      const remote = await pbGetStrict(collection, id) as T | null;
       if (remote) return remote;
-      return readLocalCollection<T & { id: string }>(collection).find(record => record.id === id) ?? null;
-    } catch {
-      return readLocalCollection<T & { id: string }>(collection).find(record => record.id === id) ?? null;
+      return null;
+    } catch (error) {
+      if (!authority && localFallbacksEnabled()) {
+        return readLocalCollection<T & { id: string }>(collection).find(record => record.id === id) ?? null;
+      }
+      throw error;
     }
   },
 
   async create<T = Record_>(collection: string, data: Record<string, unknown>) {
+    const authority = currentDataAuthority();
+    if (authority === 'local') return localCreate<T>(collection, data);
     try {
-      const remote = await pbCreate(collection, data) as T | null;
-      return remote ?? localCreate<T>(collection, data);
-    } catch {
-      return localCreate<T>(collection, data);
+      const remote = await pbCreateStrict(collection, data) as T | null;
+      return remote;
+    } catch (error) {
+      if (!authority && localFallbacksEnabled()) return localCreate<T>(collection, data);
+      throw error;
     }
   },
 
   async update(collection: string, id: string, data: Record<string, unknown>) {
+    const authority = currentDataAuthority();
+    if (authority === 'local') return localUpdate(collection, id, data);
     try {
-      const remote = await pbPatch(collection, id, data);
-      return remote || localUpdate(collection, id, data);
-    } catch {
-      return localUpdate(collection, id, data);
+      const remote = await pbPatchStrict(collection, id, data);
+      return remote;
+    } catch (error) {
+      if (!authority && localFallbacksEnabled()) return localUpdate(collection, id, data);
+      throw error;
     }
   },
 
   async delete(collection: string, id: string) {
+    const authority = currentDataAuthority();
+    if (authority === 'local') return localDelete(collection, id);
     try {
-      const remote = await pbDelete(collection, id);
-      return remote || localDelete(collection, id);
-    } catch {
-      return localDelete(collection, id);
+      const remote = await pbDeleteStrict(collection, id);
+      return remote;
+    } catch (error) {
+      if (!authority && localFallbacksEnabled()) return localDelete(collection, id);
+      throw error;
     }
   },
 
   async list<T = Record_>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
+    const authority = currentDataAuthority();
+    if (authority === 'local') return localList<T>(collection, query);
     try {
-      const remote = await pbList<T>(collection, {
+      const remote = await pbListStrict<T>(collection, {
         filter: toPbFilter(query.where),
         sort: query.sort, // PB's `-field`/`field` convention matches our neutral one
         page: query.page,
         perPage: query.perPage,
       });
-      if (remote.totalItems > 0) return remote;
-      return localList<T>(collection, query);
-    } catch {
-      return localList<T>(collection, query);
+      // An authoritative empty collection is still a successful PocketBase
+      // response. Never replace it with realistic-looking demo records.
+      return remote;
+    } catch (error) {
+      if (!authority && localFallbacksEnabled()) return localList<T>(collection, query);
+      throw error;
     }
   },
 };
@@ -217,9 +235,19 @@ export const pbStore: DataStore = {
 export const pbAuth: AuthProvider = {
   async verifyToken(authHeader: string | undefined): Promise<Identity | null> {
     const supportAccess = verifySupportAccessToken(authHeader);
-    if (supportAccess) return supportAccess;
-    const local = parseLocalToken(authHeader);
-    if (local) return local;
-    return getTenantIdFromToken(authHeader);
+    if (supportAccess) {
+      bindDataAuthority('pocketbase');
+      return { ...supportAccess, dataAuthority: 'pocketbase' };
+    }
+    if (isLocalDemoAuthorization(authHeader)) {
+      const local = verifyLocalIdentity(authHeader);
+      if (!local) return null;
+      bindDataAuthority('local');
+      return { userId: local.userId, tenantId: local.tenantId, dataAuthority: 'local' };
+    }
+    const remote = await getTenantIdFromToken(authHeader);
+    if (!remote) return null;
+    bindDataAuthority('pocketbase');
+    return { ...remote, dataAuthority: 'pocketbase' };
   },
 };

@@ -14,7 +14,6 @@ import {
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { PAGE_REGISTRY } from '../pageRegistry';
-
 export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
 export type ScheduledWorkflowHandoff = {

@@ -21,14 +21,15 @@
 构建过程会执行：
 
 ```bash
-npm ci
-npm run build
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run build
 ```
 
 启动命令已写在镜像里：
 
 ```bash
-npm run start
+pnpm run start
 ```
 
 ## 必填环境变量
@@ -67,30 +68,26 @@ SEEDANCE_API_KEY=your-key
 SEEDANCE_VIDEO_ENABLED=true
 ```
 
-## PocketBase 初始化
+## PocketBase migration
 
-PocketBase 服务启动后，在本项目环境变量指向该 PocketBase，再执行一次初始化：
+正式 schema 的唯一写入源是仓库 `pb_migrations/`。推荐使用仓库的 `Dockerfile.pocketbase` 部署独立 PocketBase，并把该目录只读挂载到它的 migrations 目录；PocketBase 启动时会按版本自动执行。
 
-```bash
-npm run setup:pb
-```
-
-如果是在本地执行初始化，需要先在本地 `.env` 中填好同样的 `PB_URL`、`PB_ADMIN_EMAIL`、`PB_ADMIN_PASSWORD`。
+不要把 `pnpm run setup:pb` 加入应用启动命令，也不要让多个应用副本并发补表。升级前先备份目标实例，并在隔离副本跑 migration preflight 与恢复演练。
 
 ## 健康检查
 
 部署完成后访问：
 
 ```bash
-https://your-domain.example.com/api/overseas/health
+https://your-domain.example.com/api/overseas/ready
 ```
 
 正常会返回：
 
 ```json
 {
-  "status": "ok",
-  "service": "overseas-marketing-agent"
+  "status": "ready",
+  "issues": []
 }
 ```
 
@@ -100,14 +97,13 @@ CloudBase Run 容器本地目录适合临时文件，不适合保存正式客户
 
 本演示版的灵感大屏视频文件已随仓库放在 `data/media/`，CloudBase Run 必须用 Dockerfile 构建完整应用，不能只部署 `dist/` 静态前端。部署后可访问任意 `/media/<文件名>` 检查视频文件是否随镜像发布成功。
 
-如果灵感大屏页面显示“暂无真实视频数据”，说明线上 PocketBase 还没有导入演示视频元数据。先确认 `.env.production` 里配置了线上 `PB_URL` / `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD`，然后执行：
+如果灵感大屏页面显示“暂无真实视频数据”，这是该租户当前没有真实记录，不应给正式租户导入演示数据。仅在隔离 demo 环境明确启用 `ENABLE_LOCAL_DEV_FALLBACK=true` 后，才可执行演示初始化命令。
 
 ```bash
-npm run setup:pb
-npm run demo:sync-accounts
-npm run import:trend-videos
+pnpm run demo:sync-accounts
+pnpm run import:trend-videos
 ```
 
-导入完成后，测试账号刷新灵感大屏；试用租户会自动同步共享视频池。
+导入完成后仅用测试账号验收，禁止把该流程用于正式客户租户。
 
 如果只做小范围演示，可以先用 CloudBase Run + 外部 PocketBase 跑起来；如果要给付费客户长期使用，应优先完成文件存储迁移和定期备份。

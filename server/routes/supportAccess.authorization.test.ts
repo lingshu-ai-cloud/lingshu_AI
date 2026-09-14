@@ -19,7 +19,10 @@ process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.DISABLE_LOCAL_AUTH_FALLBACK = 'false';
 process.env.LOCAL_STORE_DIR = path.join(temporaryCwd, 'local-store');
 
-const { supportAccessRouter } = await import(`./supportAccess.js?authorization-test=${Date.now()}`);
+const [{ supportAccessRouter }, { issueLocalIdentityTokenForTest }] = await Promise.all([
+  import(`./supportAccess.js?authorization-test=${Date.now()}`),
+  import('../auth/localIdentity.js'),
+]);
 
 const app = express();
 app.use(express.json());
@@ -32,12 +35,12 @@ if (!address || typeof address === 'string') throw new Error('test server did no
 const origin = `http://127.0.0.1:${address.port}`;
 
 function localToken(role: 'super_admin' | 'admin' | 'social_operator' | 'customer_service'): string {
-  return `local-demo.${Buffer.from(JSON.stringify({
+  return issueLocalIdentityTokenForTest({
     userId: `support-access-${role}`,
     tenantId: 'support-access-tenant',
     email: `${role}@example.test`,
     role,
-  }), 'utf8').toString('base64url')}`;
+  });
 }
 
 async function request(

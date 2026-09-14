@@ -1,4 +1,8 @@
-import { assertNoUnresolvedPublishing } from './pendingPublishGuard.js';
+import {
+  assertNoUnresolvedPublishing,
+  withDirectPublishingLease,
+  type DirectPublishingLeaseGuard,
+} from './pendingPublishGuard.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -18,6 +22,12 @@ import { recordSuccessfulPublish, type PublishPlatform } from '../lib/publishHis
 import { store } from '../storage/index.js';
 import { r2Upload } from '../storage/r2.js';
 import { appendTrackedWaLink, createTrackedPostDraft, finalizeTrackedPost, type PostRecord } from './waLink.js';
+import {
+  freezePublishSourceClaim,
+  verifyFrozenPublishSourceClaim,
+  type FrozenPublishSourceClaim,
+  type PublishSourceRequestKind,
+} from './publishSourceClaim.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -53,6 +63,14 @@ export interface PublishToAccountInput {
   madeForKids?: boolean;
   projectId?: string;
   generationVersionId?: string;
+  generationKind?: 'script' | 'poster';
+  generationProvenance?: string;
+  qualityStatus?: string;
+  publishable?: boolean;
+  generationRecordId?: string;
+  sourceKind?: PublishSourceRequestKind;
+  sourceVideoPath?: string;
+  sourceClaim?: FrozenPublishSourceClaim;
   ratio?: string;
   language?: string;
   contentId?: string;
@@ -98,6 +116,11 @@ function parseTags(tags: unknown, description: string): string[] {
 
 function accountStatus(error: any): number {
   return Number(error?.statusCode || error?.response?.status || 500) || 500;
+}
+
+async function revalidatePublishSource(input: PublishToAccountInput): Promise<void> {
+  if (!input.sourceClaim) throw publishError('发布来源校验记录缺失', 409);
+  await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath);
 }
 
 async function trackingPost(input: PublishToAccountInput): Promise<PostRecord> {
@@ -248,7 +271,7 @@ async function persistProviderAccepted(input: {
   }
 }
 
-async function beginDirectSocialAttempt(
+async function beginDirectAttempt(
   input: PublishToAccountInput,
   tracked: PostRecord,
 ): Promise<{ attemptId: string; startedAt: string } | null> {
@@ -275,6 +298,40 @@ async function beginDirectSocialAttempt(
   });
   if (!updated) throw publishError('无法保存发布尝试，尚未调用平台', 503);
   return { attemptId, startedAt };
+}
+
+async function markDirectAttemptNotSubmitted(
+  input: PublishToAccountInput,
+  tracked: PostRecord,
+  attempt: { attemptId: string; startedAt: string } | null,
+  error: unknown,
+): Promise<void> {
+  if (!attempt) return;
+  const current = await store.getById<PostRecord>('posts', tracked.id).catch(() => null);
+  if (!current) return;
+  const stats = recordObject(current.stats);
+  const publishResults = recordObject(stats.publishResults);
+  const existing = recordObject(publishResults[input.accountId]);
+  if (String(existing.attemptId || '') !== attempt.attemptId || existing.status !== 'in_flight') return;
+  const message = error instanceof Error && error.message.trim() ? error.message.trim() : '发布安全锁不可用';
+  await store.update('posts', tracked.id, {
+    stats: {
+      ...stats,
+      status: 'failed',
+      publishResults: {
+        ...publishResults,
+        [input.accountId]: {
+          ...existing,
+          status: 'failed',
+          error: message,
+          failedAt: new Date().toISOString(),
+          providerCalled: false,
+        },
+      },
+      publishError: message,
+      warnings: [message],
+    },
+  }).catch(() => undefined);
 }
 
 async function markDirectAttemptUnknown(
@@ -370,8 +427,10 @@ async function finalizeIfRequested(input: PublishToAccountInput, tracked: PostRe
   });
 }
 
-export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
-  if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
+async function publishVideoToAccountWithLease(
+  input: PublishToAccountInput,
+  publishLease: DirectPublishingLeaseGuard,
+): Promise<PublishToAccountResult> {
   await assertNoUnresolvedPublishing({ tenantId: input.tenantId, platform: input.platform, accountIds: [input.accountId], contentId: input.contentId, videoPath: input.videoPath, videoUrl: input.videoUrl, currentPostId: input.trackingPost?.id, currentAttemptId: input.publishAttemptId });
   if (input.platform === 'youtube') {
     const account = await store.getById<YouTubeAccountRecord>('youtube_accounts', input.accountId);
@@ -388,7 +447,13 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
       refreshToken: account.refreshToken,
       accessToken: account.accessToken,
     };
+    let directAttempt: { attemptId: string; startedAt: string } | null = null;
+    let providerStarted = false;
     try {
+      directAttempt = await beginDirectAttempt(input, tracked);
+      await publishLease.beforeEffect();
+      await revalidatePublishSource(input);
+      providerStarted = true;
       const video = await uploadVideoToYouTube(config, {
         filePath,
         title: input.title,
@@ -420,8 +485,10 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
       } catch (error) {
         console.error('[publishing] YouTube history write failed:', error);
       }
-      return { video, tracking: tracked, publishRecord, platformPostId: id };
+      return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published' };
     } catch (error) {
+      if (providerStarted) await markDirectAttemptUnknown(input, tracked, directAttempt, error);
+      else await markDirectAttemptNotSubmitted(input, tracked, directAttempt, error);
       const status = accountStatus(error);
       if (status === 401 || status === 403) await store.update('youtube_accounts', input.accountId, { status: 'error' });
       throw error;
@@ -449,17 +516,38 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     description: appendTrackedWaLink(account.platform, input.description || '', tracked.wa_link || ''),
     privacyStatus: input.privacyStatus,
   };
-  const directAttempt = await beginDirectSocialAttempt(input, tracked);
+  let directAttempt: { attemptId: string; startedAt: string } | null = null;
+  let providerStarted = false;
   try {
+    directAttempt = await beginDirectAttempt(input, tracked);
     let video: unknown;
-    if (account.platform === 'tiktok') video = await uploadTikTokVideo(account.accessToken, socialInput);
-    if (account.platform === 'facebook') video = await uploadFacebookVideo(account.providerAccountId, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
+    if (account.platform === 'tiktok') {
+      await publishLease.beforeEffect();
+      await revalidatePublishSource(input);
+      providerStarted = true;
+      video = await uploadTikTokVideo(account.accessToken, socialInput);
+    }
+    if (account.platform === 'facebook') {
+      await publishLease.beforeEffect();
+      await revalidatePublishSource(input);
+      providerStarted = true;
+      video = await uploadFacebookVideo(account.providerAccountId, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
+    }
     if (account.platform === 'instagram') {
       const compatibleFilePath = socialInput.videoUrl ? undefined : await instagramCompatibleVideo(filePath);
+      if (!socialInput.videoUrl) {
+        await publishLease.beforeEffect();
+        await revalidatePublishSource(input);
+        providerStarted = true;
+      }
+      const publicVideoUrl = socialInput.videoUrl || await publicVideoUrlIfNeeded(compatibleFilePath);
+      await publishLease.beforeEffect();
+      await revalidatePublishSource(input);
+      providerStarted = true;
       video = await publishInstagramReel(account.providerAccountId, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', {
         ...socialInput,
         filePath: compatibleFilePath,
-        videoUrl: socialInput.videoUrl || await publicVideoUrlIfNeeded(compatibleFilePath),
+        videoUrl: publicVideoUrl,
       });
     }
     const deliveryStatus = (video as { deliveryStatus?: unknown } | undefined)?.deliveryStatus;
@@ -506,9 +594,26 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     }
     return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published' };
   } catch (error) {
-    await markDirectAttemptUnknown(input, tracked, directAttempt, error);
+    if (providerStarted) await markDirectAttemptUnknown(input, tracked, directAttempt, error);
+    else await markDirectAttemptNotSubmitted(input, tracked, directAttempt, error);
     const status = accountStatus(error);
     if (status === 401 || status === 403) await store.update('social_accounts', input.accountId, { status: 'error' });
     throw error;
   }
+}
+
+export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
+  if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
+  const sourceClaim = input.sourceClaim
+    ? await verifyFrozenPublishSourceClaim(input.tenantId, input.sourceClaim, input.videoPath)
+    : await freezePublishSourceClaim(input.tenantId, input);
+  const verifiedInput = { ...input, projectId: sourceClaim.projectId || undefined, sourceClaim };
+  return withDirectPublishingLease({
+    tenantId: verifiedInput.tenantId,
+    platform: verifiedInput.platform,
+    accountId: verifiedInput.accountId,
+    contentId: verifiedInput.contentId,
+    videoPath: verifiedInput.videoPath,
+    videoUrl: verifiedInput.videoUrl,
+  }, publishLease => publishVideoToAccountWithLease(verifiedInput, publishLease));
 }

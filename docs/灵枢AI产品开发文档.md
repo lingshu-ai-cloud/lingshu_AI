@@ -752,7 +752,7 @@ flowchart TB
 - 单一 Express 进程提供 API、静态站点、私有媒体代理和多数后台 Worker。
 - 路由只依赖 `DataStore`/`AuthProvider`，当前实现切到 `pbStore`/`pbAuth`。
 - PocketBase 客户端不使用 SDK，而是通过 Fetch 调用管理和记录 API。
-- 服务启动会尝试补齐核心集合与字段；Docker 启动命令还会先执行 `setup:pb`。
+- 生产服务启动依赖 PocketBase 版本化 migration；部署入口在 migration 后单独运行只写账号记录的幂等工作台管理员 bootstrap，不执行全量 `setup:pb`，应用副本也不在运行时补表。
 - Webhook 请求保留原始请求体，便于签名校验。
 - JSON 请求上限为 120MB，主要为管理上传兼容；普通接口仍应限制业务字段。
 - SSE 和 TTS 响应跳过压缩，避免缓冲或长调用阻塞。
@@ -1241,7 +1241,7 @@ Studio 路由规模较大，按职责维护：
 ### 15.1 前置环境
 
 - Node.js 22。
-- npm（按 `package-lock.json` 安装）。
+- pnpm 11.19.0（由 `packageManager`/Corepack 固定，按 `pnpm-lock.yaml` 安装）。
 - PocketBase 0.39.x 或 Docker。
 - 需要本地视频处理时准备 FFmpeg/`ffmpeg-static`。
 - 需要真实外部功能时准备对应服务端 Key 和 OAuth 应用。
@@ -1250,7 +1250,8 @@ Studio 路由规模较大，按职责维护：
 
 ~~~bash
 git checkout 前端大修改终极版
-npm ci
+corepack enable
+pnpm install --frozen-lockfile
 cp .env.example .env.local
 ~~~
 
@@ -1263,12 +1264,13 @@ cp .env.example .env.local
 1. 使用已有 PocketBase，设置 `PB_URL`、`PB_ADMIN_EMAIL`、`PB_ADMIN_PASSWORD`。
 2. 本地设置 `PB_AUTO_START=true`、`PB_BIN` 和 `PB_DATA_DIR`，让服务在需要时启动。
 
-初始化或补齐集合：
+本地 PocketBase 应从 `pb_migrations/` 执行版本化 migration。校验 migration：
 
 ~~~bash
-npm run setup:pb
-npm run check:digital-employee-migrations
+pnpm run check:digital-employee-migrations
 ~~~
+
+`pnpm run setup:pb` 仅保留给隔离开发库的人工修复，不属于正常启动或生产升级流程。
 
 ### 15.4 启动前后端
 
@@ -1276,10 +1278,10 @@ npm run check:digital-employee-migrations
 
 ~~~bash
 # 终端 1；在 .env.local 中设置 PORT=8790
-npm run dev:server
+pnpm run dev:server
 
 # 终端 2
-npm run dev
+pnpm run dev
 ~~~
 
 打开 `http://127.0.0.1:5177/`，健康检查为 `http://127.0.0.1:8790/api/overseas/health`。
@@ -1319,8 +1321,8 @@ Docker Compose 启动：
 
 | 服务 | 端口/暴露 | 数据 |
 | --- | --- | --- |
-| `app` | 容器 8788，宿主桥接端口默认 18788 | `./data:/app/data` |
-| `pocketbase` | 容器 8090，仅宿主 `127.0.0.1:8090` | 外部命名卷 `pb_data` |
+| `app` | 容器 8788，宿主回环探针端口默认 18788 | `./data:/app/data` |
+| `pocketbase` | 容器 8090，仅宿主 `127.0.0.1:8090` | `PB_DATA_VOLUME_NAME` 指定的外部命名卷 |
 | `caddy` | 80/443 | 证书与配置卷 |
 
 Caddy 使用 `APP_DOMAIN` 自动 HTTPS，并反向代理到 `app:8788`。PocketBase 不得直接暴露公网。
@@ -1329,15 +1331,14 @@ Caddy 使用 `APP_DOMAIN` 自动 HTTPS，并反向代理到 `app:8788`。PocketB
 
 ~~~bash
 cp .env.production.example .env.production
-# 填写真实环境变量并检查权限
-docker compose --env-file .env.production build
-docker compose --env-file .env.production up -d
-docker compose --env-file .env.production exec app npm run setup:pb
+# 填写真实环境变量并检查权限，然后通过唯一部署入口启动
+chmod 600 .env.production
+bash deploy/start.sh
 docker compose --env-file .env.production ps
-curl -fsS https://lingshu.site/api/overseas/health
+curl -fsS https://lingshu.site/api/overseas/ready
 ~~~
 
-也可使用 `deploy/start.sh`；执行前先审查脚本和目标环境。
+不要用裸 `docker compose up` 代替 `deploy/start.sh`：部署入口负责命名 volume 校验、migration 后的管理员记录 bootstrap 和最终 readiness 门禁。
 
 ### 16.3 更新流程
 
@@ -1345,7 +1346,7 @@ curl -fsS https://lingshu.site/api/overseas/health
 2. 备份 PocketBase 数据、本地 `data/` 与对象存储关键索引。
 3. 在 CI 或隔离环境完成类型检查、构建、迁移预检和回归测试。
 4. 拉取代码并重建镜像。
-5. 先执行数据库迁移/`setup:pb`，确认向后兼容。
+5. 由 PocketBase 单一迁移器执行版本化 migration，确认 checksum 与向后兼容；应用副本不得运行时补表。
 6. 启动应用并检查健康、登录、核心页面和 Worker。
 7. 执行一个不产生真实外部动作的 Smoke Test。
 8. 在明确授权的验收租户执行发布/消息等真实通道验收。
@@ -1354,10 +1355,10 @@ curl -fsS https://lingshu.site/api/overseas/health
 
 ### 16.4 备份与恢复
 
-- 使用 `deploy/backup.sh` 或 `npm run backup:production-data`。
+- 使用 `AGE_RECIPIENT=age1... ./deploy/backup.sh` 或 `AGE_RECIPIENT=age1... pnpm run backup:production-data`。
 - 备份应包含 PocketBase SQLite/文件、本地 `data/` 必要状态和对象存储清单。
 - 本地备份默认保留天数由 `R2_BACKUP_LOCAL_RETENTION_DAYS` 控制。
-- 恢复使用 `npm run restore:production-data` 前，必须先在隔离环境演练。
+- 恢复使用 `AGE_IDENTITY=... pnpm run restore:production-data -- <backup.tar.gz.age>` 前，必须先在隔离目录演练；替换线上数据还需显式双重确认，并会先创建新的加密回滚备份。
 - 每次发布前备份，至少每周做一次可恢复性验证。
 - 备份也属于敏感数据，必须加密、限制访问和设定保留期。
 

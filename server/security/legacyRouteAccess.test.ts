@@ -54,6 +54,7 @@ const [
   { translationRouter },
   { competitorRouter },
   { webhookRouter },
+  { issueLocalIdentityTokenForTest },
 ] = await Promise.all([
   import('../routes/channels.js'),
   import('../routes/plugins.js'),
@@ -61,6 +62,7 @@ const [
   import('../routes/translation.js'),
   import('../routes/competitor.js'),
   import('../routes/webhooks.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 const app = express();
@@ -106,11 +108,11 @@ try {
     assert.equal(response.status, 401, `${pathname} must reject anonymous callers before business logic`);
   }
 
-  const ordinaryToken = `local-demo.${Buffer.from(JSON.stringify({
+  const ordinaryToken = issueLocalIdentityTokenForTest({
     userId: 'ordinary-route-test-user',
     tenantId: 'ordinary-route-test-tenant',
     email: 'ordinary-route-test@example.test',
-  }), 'utf8').toString('base64url')}`;
+  });
   const authorization = { Authorization: `Bearer ${ordinaryToken}` };
   const deniedChannels = await request('/channels', { headers: authorization });
   assert.equal(deniedChannels.status, 403, 'global channel management must reject an authenticated ordinary tenant');
@@ -119,13 +121,13 @@ try {
   const tenantPlugins = JSON.parse(tenantPluginCatalog.body) as Array<Record<string, unknown>>;
   assert.ok(tenantPlugins.length > 0 && tenantPlugins.every(plugin => !('config' in plugin)));
 
-  const adminToken = `local-demo.${Buffer.from(JSON.stringify({
+  const adminToken = issueLocalIdentityTokenForTest({
     userId: 'local_user_admin_route_admin_example_test',
     tenantId: 'local_tenant_admin_route_admin_example_test',
     email: 'route-admin@example.test',
     accountType: 'admin',
     role: 'super_admin',
-  }), 'utf8').toString('base64url')}`;
+  });
   const managementResponse = await request('/channels', {
     headers: { Authorization: `Bearer ${adminToken}` },
   });

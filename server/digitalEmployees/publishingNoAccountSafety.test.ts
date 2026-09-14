@@ -57,6 +57,7 @@ assert.ok(safePlan.tasks.some(task => task.key === 'content_production'));
 assert.ok(!safePlan.tasks.some(task => ['content_release_approval', 'publishing_calendar', 'platform_publish'].includes(task.key)));
 
 const emptyPackage = buildPublishingApprovalPackage({
+  tenantId: 'tenant-isolated',
   projects: [{
     id: 'project-1',
     title: '已完成成片',

@@ -25,6 +25,7 @@ import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type 
 import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
@@ -616,7 +617,10 @@ export async function browserTaskWorkspace(scope: BrowserScope): Promise<Browser
 
 async function executeInTaskBrowser<T>(input: { tenantId: string; run: RunRecord; task: TaskRecord }, label: string, action: () => Promise<T>): Promise<T> {
   if (!browserExecutionEnabled()) return action();
-  const scope = { tenantId: input.tenantId, runId: input.run.id, taskId: input.task.id };
+  // Request-driven runs inherit their authenticated authority. Background runs
+  // default to PB, which fails closed instead of turning an unbound worker into
+  // a local-fallback browser identity.
+  const scope = { tenantId: input.tenantId, runId: input.run.id, taskId: input.task.id, dataAuthority: currentDataAuthority() ?? 'pocketbase' as const };
   const read = () => browserTaskWorkspace(scope);
   if (input.task.task_key === 'content_production') {
     const target = await read();
@@ -1133,6 +1137,7 @@ async function publishingApprovalPackage(
   const scope = taskScope(task, tasks);
   const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
   return buildPublishingApprovalPackage({
+    tenantId,
     projects: completed,
     targets: config.publishingTargets,
     goalPlatforms: goalInput(goal).contentPlatforms,
@@ -2219,7 +2224,7 @@ digitalEmployeesRouter.get('/planning-options', async (_req, res) => {
 
 digitalEmployeesRouter.get('/package-options', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const [members, projects] = await Promise.all([listTenantEmployees(req.headers.authorization), store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 })]);
+  const [members, projects] = await Promise.all([listTenantEmployees(res.locals as AuthLocals, req.headers.authorization), store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 })]);
   res.json({ members: members.map(m => ({ id: m.id, name: m.name || m.email })), projects: projects.items.filter(studioProjectRendered).map(p => ({ id: p.id, title: String(p.title || p.id) })), customers: getWhatsAppCustomers(tenantId).map(c => ({ id: c.id, name: String(c.name || c.id) })) });
 });
 
@@ -2230,7 +2235,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
   const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
   const current = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
-  const members = await listTenantEmployees(req.headers.authorization);
+  const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const member = members.find(m => m.id === userId);
   const proposal = recommendPackage(goalInput(goal), { ...config, operatingMaturity: current?.maturity || config.operatingMaturity, operatingAssessment: current?.operatingAssessment || config.operatingAssessment, defaultParticipation: current?.participation || config.defaultParticipation }, userId, member?.name);
   proposal.revision = current?.revision || 0;
@@ -2254,7 +2259,7 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     if (pack.revision !== (old?.revision || 0)) { res.status(409).json({ error: 'package_changed', message: '计划已更新，请刷新后重新调整。' }); return; }
     // Drafts may contain missing dependencies so deleting a producer can be
     // followed by selecting an existing input. Execution validates completeness.
-    const members = await listTenantEmployees(req.headers.authorization);
+    const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { res.status(400).json({ error: 'invalid_owner', message: '负责人必须是当前企业成员。' }); return; }
     for (const task of pack.tasks) task.ownerName = members.find(m => m.id === task.ownerId)?.name || '';
     const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
@@ -2456,7 +2461,7 @@ async function approveGoalForReview(tenantId: string, userId: string, goalId: st
 }
 digitalEmployeesRouter.post('/goals/:goalId/approve', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
-  const members = await listTenantEmployees(req.headers.authorization);
+  const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const result = await approveGoalForReview(tenantId, userId, req.params.goalId, req.body?.packageRevision, members);
   res.status(result.status).json(result.body);
 });
@@ -2822,7 +2827,12 @@ digitalEmployeesRouter.get('/runs/:runId/events', async (req, res) => {
 digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/workspace', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   try {
-    const target = await browserTaskWorkspace({ tenantId, runId: req.params.runId, taskId: req.params.taskId });
+    const target = await browserTaskWorkspace({
+      tenantId,
+      runId: req.params.runId,
+      taskId: req.params.taskId,
+      dataAuthority: currentDataAuthority() ?? 'pocketbase',
+    });
     const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
     const events = await listRunEventsAfter<EventRecord>(tenantId, req.params.runId, 0);
     const output = jsonObject<Record<string, any>>(task?.output, {});
@@ -2842,7 +2852,7 @@ digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/workspace', async (req, r
 
 digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/browser-stream', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const scope = { tenantId, runId: req.params.runId, taskId: req.params.taskId };
+  const scope = { tenantId, runId: req.params.runId, taskId: req.params.taskId, dataAuthority: currentDataAuthority() ?? 'pocketbase' as const };
   const [run, task] = await Promise.all([
     tenantRecord<RunRecord>(COLLECTION.runs, scope.runId, tenantId),
     tenantRecord<TaskRecord>(COLLECTION.tasks, scope.taskId, tenantId),
@@ -2868,7 +2878,7 @@ digitalEmployeesRouter.get('/runs/:runId/tasks/:taskId/browser-stream', async (r
 
 digitalEmployeesRouter.post('/runs/:runId/tasks/:taskId/browser-refresh', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const scope = { tenantId, runId: req.params.runId, taskId: req.params.taskId };
+  const scope = { tenantId, runId: req.params.runId, taskId: req.params.taskId, dataAuthority: currentDataAuthority() ?? 'pocketbase' as const };
   const [run, task] = await Promise.all([
     tenantRecord<RunRecord>(COLLECTION.runs, scope.runId, tenantId),
     tenantRecord<TaskRecord>(COLLECTION.tasks, scope.taskId, tenantId),

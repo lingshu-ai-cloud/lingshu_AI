@@ -14,10 +14,11 @@ import {
 
 type Row = Record_ & Record<string, unknown>;
 
-function memoryStore(): { dataStore: DataStore; rows: Row[]; setUnavailable(value: boolean): void } {
+function memoryStore(): { dataStore: DataStore; rows: Row[]; setUnavailable(value: boolean): void; updateCount(): number } {
   const rows: Row[] = [];
   let sequence = 0;
   let unavailable = false;
+  let updates = 0;
   const clone = <T>(value: T): T => structuredClone(value);
   const ensureAvailable = () => { if (unavailable) throw new Error('injected storage outage'); };
   const dataStore: DataStore = {
@@ -36,8 +37,14 @@ function memoryStore(): { dataStore: DataStore; rows: Row[]; setUnavailable(valu
       rows.push(row);
       return clone(row) as T;
     },
-    async update(): Promise<boolean> {
-      throw new Error('task lock does not renew leases');
+    async update(collection: string, id: string, data: Record<string, unknown>): Promise<boolean> {
+      ensureAvailable();
+      assert.equal(collection, DURABLE_OPERATION_LEASE_COLLECTION);
+      const row = rows.find(candidate => candidate.id === id);
+      if (!row) return false;
+      Object.assign(row, clone(data));
+      updates += 1;
+      return true;
     },
     async delete(collection: string, id: string): Promise<boolean> {
       ensureAvailable();
@@ -63,7 +70,7 @@ function memoryStore(): { dataStore: DataStore; rows: Row[]; setUnavailable(valu
       };
     },
   };
-  return { dataStore, rows, setUnavailable(value) { unavailable = value; } };
+  return { dataStore, rows, setUnavailable(value) { unavailable = value; }, updateCount() { return updates; } };
 }
 
 const tenantId = 'tenant-a';
@@ -91,6 +98,41 @@ const start = new Date('2026-09-14T00:00:00.000Z');
   assert.equal(await first, 'first');
   assert.equal(shared.rows.length, 0, 'successful completion releases the durable lease');
   assert.equal(await instanceB(tenantId, taskId, async () => 'after-release'), 'after-release');
+}
+
+{
+  const shared = memoryStore();
+  const instance = createPlatformAdTaskLock({
+    dataStore: shared.dataStore,
+    ownerId: 'platform-ads-heartbeat',
+    heartbeatIntervalMs: 5,
+  });
+  await instance(tenantId, taskId, async guard => {
+    const afterInitialFence = shared.updateCount();
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.ok(shared.updateCount() > afterInitialFence, 'a held callback continuously renews its database lease');
+    await guard.beforeEffect();
+  });
+  assert.equal(shared.rows.length, 0);
+}
+
+{
+  const shared = memoryStore();
+  const instance = createPlatformAdTaskLock({ dataStore: shared.dataStore, ownerId: 'platform-ads-fenced' });
+  let providerCalled = false;
+  await instance(tenantId, taskId, async guard => {
+    shared.rows[0]!.lease_token = 'successor-generation';
+    await assert.rejects(
+      guard.beforeEffect(),
+      error => error instanceof PlatformAdTaskLockError && error.code === 'platform_ad_task_lock_unavailable',
+      'a stolen/expired lease generation fences the old worker before its next provider effect',
+    );
+    try {
+      await guard.beforeEffect();
+      providerCalled = true;
+    } catch { /* expected fail-closed fence */ }
+  });
+  assert.equal(providerCalled, false);
 }
 
 {

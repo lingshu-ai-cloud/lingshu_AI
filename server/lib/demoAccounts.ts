@@ -2,9 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'url';
-import type { Request } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { auth } from '../storage/index.js';
-import { pbGet, pbPatch } from '../storage/pb.js';
+import type { Identity } from '../storage/datastore.js';
+import { pbGetStrict, pbPatch } from '../storage/pb.js';
+import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REGISTRY_FILE = process.env.NODE_ENV === 'test' && process.env.DEMO_ACCOUNT_REGISTRY_FILE
@@ -92,30 +94,6 @@ function norm(email: string): string {
 
 function localId(value: string): string {
   return norm(value).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'demo';
-}
-
-interface LocalTokenClaims {
-  userId: string;
-  tenantId: string;
-  email: string;
-  accountType: string;
-}
-
-function localTokenClaims(authHeader?: string): LocalTokenClaims | null {
-  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
-  if (!token?.startsWith('local-demo.')) return null;
-  try {
-    const payload = JSON.parse(Buffer.from(token.slice('local-demo.'.length), 'base64url').toString('utf8')) as Partial<LocalTokenClaims>;
-    const claims = {
-      userId: String(payload.userId || ''),
-      tenantId: String(payload.tenantId || ''),
-      email: norm(payload.email || ''),
-      accountType: String(payload.accountType || ''),
-    };
-    return claims.userId && claims.tenantId && claims.email ? claims : null;
-  } catch {
-    return null;
-  }
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -567,7 +545,7 @@ interface AdminIdentityDependencies {
 }
 
 const defaultAdminIdentityDependencies: AdminIdentityDependencies = {
-  getUser: userId => pbGet('users', userId),
+  getUser: userId => pbGetStrict('users', userId),
   readRegistry: readDemoAccountRegistry,
 };
 let adminIdentityDependencies = defaultAdminIdentityDependencies;
@@ -577,19 +555,54 @@ export function setAdminIdentityDependenciesForTests(overrides: Partial<AdminIde
   adminIdentityDependencies = overrides ? { ...defaultAdminIdentityDependencies, ...overrides } : defaultAdminIdentityDependencies;
 }
 
-export async function requireAdminUser(req: Request): Promise<{ userId: string; tenantId: string; email: string } | null> {
-  const id = await auth.verifyToken(req.headers.authorization);
+export interface AdminIdentity {
+  userId: string;
+  tenantId: string;
+  email: string;
+}
+
+export class AdminIdentityUnavailableError extends Error {
+  constructor(readonly reason: unknown) {
+    super('admin_identity_provider_unavailable');
+    this.name = 'AdminIdentityUnavailableError';
+  }
+}
+
+const adminIdentityByRequest = new WeakMap<Request, Promise<AdminIdentity | null>>();
+
+async function resolveAdminUser(req: Request, verifiedIdentity?: Identity): Promise<AdminIdentity | null> {
+  let id;
+  if (verifiedIdentity) {
+    id = verifiedIdentity;
+  } else {
+    try {
+      id = await auth.verifyToken(req.headers.authorization);
+    } catch (error) {
+      throw new AdminIdentityUnavailableError(error);
+    }
+  }
   if (!id || id.supportAccess || typeof id.userId !== 'string' || typeof id.tenantId !== 'string') return null;
   const userId = id.userId;
   const tenantId = id.tenantId;
   if (!userId || !tenantId || userId !== userId.trim() || tenantId !== tenantId.trim()) return null;
-  let user: Record<string, unknown> | null = null;
-  try {
-    user = await adminIdentityDependencies.getUser(userId);
-  } catch {
-    user = null;
+  const local = isLocalDemoAuthorization(req.headers.authorization)
+    ? verifyLocalIdentity(req.headers.authorization)
+    : null;
+  if (isLocalDemoAuthorization(req.headers.authorization) && !local) return null;
+  let user: Record<string, unknown> | null = local ? {
+    id: local.userId,
+    tenantId: local.tenantId,
+    email: local.email,
+    role: local.role,
+  } : null;
+  if (!local) {
+    try {
+      user = await adminIdentityDependencies.getUser(userId);
+    } catch (error) {
+      throw new AdminIdentityUnavailableError(error);
+    }
   }
-  const claims = localTokenClaims(req.headers.authorization);
+  const claims = local;
   if (claims && (claims.userId !== userId || claims.tenantId !== tenantId)) return null;
   let userEmail = '';
   if (user) {
@@ -612,14 +625,69 @@ export async function requireAdminUser(req: Request): Promise<{ userId: string; 
     || Boolean(entry.userId && entry.userId !== userId)
     || Boolean(entry.tenantId && entry.tenantId !== tenantId)
   )) return null;
-  const explicitLocalAdmin = Boolean(claims
-    && claims.accountType === 'admin'
-    && claims.userId === `local_user_admin_${localId(email)}`
-    && claims.tenantId === `local_tenant_admin_${localId(email)}`);
-  const allowed = Boolean(adminUserEntries.length || emailEntries.some(entry => entry.status === 'admin') || (user && hasPlatformAdminClaim(user))
-    || (isConfiguredAdminEmail(email) && (Boolean(user) || explicitLocalAdmin)));
+  const explicitLocalAdmin = Boolean(local
+    && local.accountType === 'admin'
+    && local.userId === `local_user_admin_${localId(email)}`
+    && local.tenantId === `local_tenant_admin_${localId(email)}`);
+  const allowed = Boolean(adminUserEntries.length || emailEntries.some(entry => entry.status === 'admin')
+    || (user && hasPlatformAdminClaim(user) && (!local || local.accountType === 'admin'))
+    || (isConfiguredAdminEmail(email) && (local ? explicitLocalAdmin : Boolean(user))));
   if (!allowed) return null;
   return { userId, tenantId, email };
+}
+
+export function requireAdminUser(req: Request, verifiedIdentity?: Identity): Promise<AdminIdentity | null> {
+  const cached = adminIdentityByRequest.get(req);
+  if (cached) return cached;
+  const pending = resolveAdminUser(req, verifiedIdentity);
+  adminIdentityByRequest.set(req, pending);
+  return pending;
+}
+
+function respondAdminIdentityUnavailable(res: Response, error: unknown): void {
+  console.error('[admin-auth] identity verification unavailable', {
+    errorType: error instanceof Error ? error.name : 'UnknownError',
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(503).json({
+    error: 'auth_provider_unavailable',
+    message: '登录验证服务暂时不可用，请稍后重试。',
+  });
+}
+
+/**
+ * Resolve optional platform-admin authority for an HTTP response. `undefined`
+ * means an authority outage has already been rendered as a fail-closed 503;
+ * `null` remains an ordinary authenticated non-admin.
+ */
+export async function adminUserForHttp(
+  req: Request,
+  res: Response,
+): Promise<AdminIdentity | null | undefined> {
+  try {
+    const locals = res.locals as Partial<Identity>;
+    const verifiedIdentity = typeof locals.userId === 'string' && typeof locals.tenantId === 'string'
+      && Boolean(locals.userId && locals.tenantId)
+      ? { userId: locals.userId, tenantId: locals.tenantId, supportAccess: locals.supportAccess }
+      : undefined;
+    return await requireAdminUser(req, verifiedIdentity);
+  } catch (error) {
+    respondAdminIdentityUnavailable(res, error);
+    return undefined;
+  }
+}
+
+/** Express 4-safe internal-admin guard: its promise never escapes the middleware. */
+export function requireInternalAdmin(req: Request, res: Response, next: NextFunction): void {
+  void adminUserForHttp(req, res).then(admin => {
+    if (admin === undefined) return;
+    if (!admin) {
+      res.status(403).json({ error: 'admin_required' });
+      return;
+    }
+    res.locals.internalAdmin = admin;
+    next();
+  }, next);
 }
 
 export interface AccountUsageSummary {

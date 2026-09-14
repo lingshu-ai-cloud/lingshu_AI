@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT_DIR"
+
 if [ -f .env.production ]; then
   read -r -p ".env.production already exists. Overwrite it? Type yes to continue: " confirm
   if [ "$confirm" != "yes" ]; then
@@ -10,7 +13,6 @@ if [ -f .env.production ]; then
 fi
 
 read -r -p "Customer app domain, for example app.example.com: " app_domain
-read -r -p "PocketBase admin domain, for example pb.example.com: " pb_domain
 read -r -p "PocketBase admin email: " pb_email
 
 read -r -s -p "PocketBase admin password. Leave empty to generate one: " pb_password
@@ -19,8 +21,31 @@ if [ -z "$pb_password" ]; then
   pb_password="$(openssl rand -base64 24 | tr -d '\n')"
 fi
 
-read -r -p "Gemini API key. Leave empty if you will use Qwen/DashScope: " gemini_key
-read -r -p "DashScope API key. Leave empty if unused: " dashscope_key
+read -r -p "Workbench administrator email: " workbench_admin_email
+read -r -s -p "Workbench administrator password. Leave empty to generate one: " workbench_admin_password
+echo
+if [ -z "$workbench_admin_password" ]; then
+  workbench_admin_password="$(openssl rand -base64 24 | tr -d '\n')"
+fi
+
+[[ "$app_domain" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "A valid app domain is required." >&2; exit 1; }
+[[ "$pb_email" == *@* && "$workbench_admin_email" == *@* ]] || { echo "Valid PocketBase and workbench administrator emails are required." >&2; exit 1; }
+[[ "$(printf '%s' "$pb_email" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$workbench_admin_email" | tr '[:upper:]' '[:lower:]')" ]] || {
+  echo "PocketBase and workbench administrator emails must be different." >&2
+  exit 1
+}
+volume_slug="$(printf '%s' "$app_domain" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-80)"
+[[ -n "$volume_slug" ]] || { echo "Could not derive a PocketBase volume name from the app domain." >&2; exit 1; }
+pb_data_volume_name="lingshu-${volume_slug}-pb-data"
+pb_data_volume_owner="lingshu-install-$(openssl rand -hex 16)"
+
+read -r -p "Gemini API key. Leave empty if unused (optional visual/auxiliary provider): " gemini_key
+read -r -p "DashScope API key (required by core Qwen workflows): " dashscope_key
+[[ -n "$dashscope_key" ]] || {
+  echo "DashScope is required because customer replies, knowledge retrieval and Studio core workflows currently use Qwen." >&2
+  exit 1
+}
+overseas_llm_backend="qwen"
 read -r -p "Seedance API key. Leave empty if unused: " seedance_key
 read -r -p "YouTube OAuth Client ID. Leave empty if unused: " youtube_oauth_client_id
 read -r -s -p "YouTube OAuth Client Secret. Leave empty if unused: " youtube_oauth_client_secret
@@ -41,14 +66,19 @@ product_api_key_pepper="$(openssl rand -base64 48 | tr -d '\n')"
 
 cat > .env.production <<EOF
 APP_DOMAIN=${app_domain}
-PB_DOMAIN=${pb_domain}
 PUBLIC_BASE_URL=https://${app_domain}
 
 PB_VERSION=0.39.5
+PB_DATA_VOLUME_NAME=${pb_data_volume_name}
+PB_DATA_VOLUME_OWNER=${pb_data_volume_owner}
 PB_ADMIN_EMAIL=${pb_email}
 PB_ADMIN_PASSWORD=${pb_password}
+WORKBENCH_ADMIN_EMAIL=${workbench_admin_email}
+WORKBENCH_ADMIN_PASSWORD=${workbench_admin_password}
+WORKBENCH_ADMIN_NAME=灵枢管理员
 
 PORT=8788
+APP_HOST_PORT=18788
 PROCESS_ROLE=all
 RENDER_TOKEN_SECRET=${render_secret}
 TENANT_PLATFORM_APP_KEY=${tenant_platform_app_key}
@@ -63,11 +93,24 @@ PRODUCT_API_KEY_PEPPER=${product_api_key_pepper}
 # the legacy subscription wall disabled until entitlement issuance is live.
 SUBSCRIPTION_ENFORCED=false
 DISABLE_LOCAL_AUTH_FALLBACK=true
+ENABLE_LOCAL_DEV_FALLBACK=false
+PB_AUTH_CACHE_TTL_MS=5000
+PB_REQUEST_TIMEOUT_MS=10000
+RUNTIME_SCHEMA_REPAIR_ENABLED=false
+API_RATE_LIMIT_WINDOW_MS=60000
+API_RATE_LIMIT_REQUESTS=300
+TRUST_PROXY_HOPS=1
+LEGACY_JSON_UPLOAD_LIMIT_MB=32
+VOICE_JSON_UPLOAD_LIMIT_MB=24
+READINESS_CACHE_TTL_MS=2000
+# The installer configures a text model plus the platform credential key.
+# Append optional sold capabilities only after their providers/workers pass
+# acceptance; otherwise a fresh base install could never become ready.
+REQUIRED_CAPABILITIES=text_generation,qwen_generation,platform_ads
 
 GEMINI_API_KEY=${gemini_key}
 
-# If using Qwen / DashScope, uncomment OVERSEAS_LLM_BACKEND.
-# OVERSEAS_LLM_BACKEND=qwen
+OVERSEAS_LLM_BACKEND=${overseas_llm_backend}
 DASHSCOPE_API_KEY=${dashscope_key}
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 
@@ -107,6 +150,9 @@ STARTER_QUOTE_ARTIFACT_WORKER_ENABLED=false
 STARTER_QUOTE_ARTIFACT_WORKER_INTERVAL_MS=30000
 STARTER_QUOTE_ARTIFACT_WORKER_MAX_DRAFTS=100
 STARTER_QUOTE_ARTIFACT_WORKER_MAX_TENANTS=100
+QUOTE_SKILL_ENABLED=false
+QUOTE_SKILL_TENANT_ALLOWLIST=
+HEYGEN_GENERATION_ENABLED=false
 APIFY_TOKEN=
 R2_PUBLIC_URL=
 EOF
@@ -116,5 +162,5 @@ chmod 600 .env.production
 echo
 echo ".env.production created."
 echo "PocketBase admin email: ${pb_email}"
-echo "PocketBase admin password was written only to .env.production (mode 0600); it is not echoed to terminal logs."
+echo "PocketBase and workbench administrator passwords were written only to .env.production (mode 0600); they are not echoed to terminal logs."
 echo "Move production secrets to your approved secret manager before deployment."

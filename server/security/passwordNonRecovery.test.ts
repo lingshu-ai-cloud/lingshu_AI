@@ -127,6 +127,7 @@ const tenant: Record<string, unknown> = {
   createdAt: '2026-09-12T00:00:00.000Z',
 };
 let customerUser: Record<string, unknown> | null = null;
+let registrationLease: Record<string, unknown> | null = null;
 
 const pbApp = express();
 pbApp.use(express.json());
@@ -149,10 +150,15 @@ pbApp.get('/api/collections/:collection/records', (req, res) => {
       ? (tenant.inviteCode === 'invite-password-contract' ? [tenant] : [])
       : [tenant];
   } else if (collection === 'users') {
-    items = [
+    const users = [
       ...(customerUser ? [customerUser] : []),
       { id: 'admin-password-contract', email: 'admin@example.test', tenantId: 'admin-tenant' },
     ];
+    const tenantMatch = filter.match(/tenantId\s*=\s*"([^"]+)"/);
+    items = users.filter(user => !tenantMatch || user.tenantId === tenantMatch[1]);
+    if (filter.includes('role = "super_admin"')) items = items.filter(user => user.role === 'super_admin');
+  } else if (collection === 'durable_operation_leases' && registrationLease) {
+    items = [registrationLease];
   }
   res.json({ items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 });
 });
@@ -163,9 +169,15 @@ pbApp.post('/api/collections/users/records', (req, res) => {
     email: String(req.body?.email || '').toLowerCase(),
     name: req.body?.name,
     tenantId: req.body?.tenantId,
+    role: req.body?.role,
     password: req.body?.password,
   };
   res.status(200).json(customerUser);
+});
+pbApp.post('/api/collections/durable_operation_leases/records', (req, res) => {
+  if (registrationLease) { res.status(400).json({ error: 'duplicate' }); return; }
+  registrationLease = { ...req.body, id: 'invite-registration-lease' };
+  res.status(200).json(registrationLease);
 });
 pbApp.get('/api/collections/:collection/records/:id', (req, res) => {
   if (req.params.collection === 'tenants' && req.params.id === tenant.id) {
@@ -180,6 +192,10 @@ pbApp.get('/api/collections/:collection/records/:id', (req, res) => {
     res.json({ id: 'admin-password-contract', email: 'admin@example.test', tenantId: 'admin-tenant' });
     return;
   }
+  if (req.params.collection === 'durable_operation_leases' && req.params.id === registrationLease?.id) {
+    res.json(registrationLease);
+    return;
+  }
   res.status(404).json({ error: 'not_found' });
 });
 pbApp.patch('/api/collections/:collection/records/:id', (req, res) => {
@@ -187,6 +203,11 @@ pbApp.patch('/api/collections/:collection/records/:id', (req, res) => {
   if (req.params.collection === 'tenants' && req.params.id === tenant.id) Object.assign(tenant, req.body);
   if (req.params.collection === 'users' && req.params.id === customerUser?.id && customerUser) Object.assign(customerUser, req.body);
   res.json({ ok: true });
+});
+pbApp.delete('/api/collections/durable_operation_leases/records/:id', (req, res) => {
+  if (req.params.id !== registrationLease?.id) { res.status(404).json({ error: 'not_found' }); return; }
+  registrationLease = null;
+  res.status(204).end();
 });
 
 const pbServer = pbApp.listen(0, '127.0.0.1');

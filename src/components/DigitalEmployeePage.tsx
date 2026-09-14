@@ -3388,7 +3388,6 @@ function BatchFollowupTruthPanel({
   );
 }
 
-
 function AgentOperationFeed({ task, events }: { task?: WorkflowTask; events: RunEvent[] }) {
   const actions = events.map(agentUiActionFromEvent).filter((item): item is AgentUiAction => Boolean(item));
   const latestScreenshot = [...actions].reverse().find((item) => item.kind === "screenshot" && item.screenshotUrl);

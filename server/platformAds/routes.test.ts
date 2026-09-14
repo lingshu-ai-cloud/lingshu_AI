@@ -14,13 +14,14 @@ const { platformAdsRouter } = await import('../routes/platformAds.js');
 const { platformAdConnectionsRouter } = await import('../routes/platformAdConnections.js');
 const { platformAdExecutionRouter } = await import('../routes/platformAdExecution.js');
 const { platformAdMetricsRouter } = await import('../routes/platformAdMetrics.js');
+const { issueLocalIdentityTokenForTest } = await import('../auth/localIdentity.js');
 const app = express(); app.use(express.json());
 app.use('/ads', platformAdConnectionsRouter, platformAdsRouter, platformAdExecutionRouter, platformAdMetricsRouter);
 const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const address = server.address() as { port: number };
 const base = `http://127.0.0.1:${address.port}/ads`;
-const token = (tenantId: string, role: string) => 'Bearer local-demo.' + Buffer.from(JSON.stringify({ userId: 'route-test-user', tenantId, role })).toString('base64url');
+const token = (tenantId: string, role: string) => `Bearer ${issueLocalIdentityTokenForTest({ userId: `route-test-${role}`, tenantId, role })}`;
 const request = (url: string, tenant = 'tenant-a', role = 'admin', body?: unknown) => fetch(base + url, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: token(tenant, role), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 try {
   const callback = await fetch(base + '/oauth/meta/callback');

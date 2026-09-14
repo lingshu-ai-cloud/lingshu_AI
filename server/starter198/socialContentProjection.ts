@@ -57,15 +57,17 @@ export async function readSocialContentSourceCoverage(input: {
   taskId: string;
 }): Promise<{ total: number; knowledge: number; material: number }> {
   const where = { task_id: input.taskId, status: 'active' };
-  const [total, knowledge, textNotes, materials, references] = await Promise.all([
+  const [total, knowledge, materials, references] = await Promise.all([
     count({ ...input, collection: STARTER_COLLECTIONS.socialTaskSources, where }),
     count({ ...input, collection: STARTER_COLLECTIONS.socialTaskSources, where: { ...where, source_kind: 'knowledge' } }),
-    count({ ...input, collection: STARTER_COLLECTIONS.socialTaskSources, where: { ...where, source_kind: 'text_note' } }),
     count({ ...input, collection: STARTER_COLLECTIONS.socialTaskSources, where: { ...where, source_kind: 'material' } }),
     count({ ...input, collection: STARTER_COLLECTIONS.socialTaskSources, where: { ...where, source_kind: 'reference_link' } }),
   ]);
-  const coverage = { total, knowledge: knowledge + textNotes, material: materials + references };
-  if (coverage.total !== coverage.knowledge + coverage.material) {
+  // A text_note is user-authored task context, not authenticated enterprise
+  // knowledge and not source material. It remains in total for lineage/capacity,
+  // but must never make either readiness gate pass.
+  const coverage = { total, knowledge, material: materials + references };
+  if (coverage.total < coverage.knowledge + coverage.material) {
     throw new SocialContentWorkflowError('social_content_projection_integrity_violation', 503);
   }
   return coverage;

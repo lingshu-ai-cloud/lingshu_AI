@@ -171,7 +171,11 @@ assert.match(studioSource, /activeFormalPreviewUrl[\s\S]*正式成片 · 连续 
 assert.doesNotMatch(studioSource, /方向不一致，已阻止加入/, '不同画幅素材应自动裁切，不应被硬拦截');
 assert.doesNotMatch(studioSource, /当前草稿不能进入配音、选材或成片/, '人工审核流程不应保留旧硬拦截文案');
 assert.doesNotMatch(studioSource, /Factory-direct home essentials|tiktokmademebuyit|You NEED this in 2026/, '发布文案和封面不得残留无关的家居演示默认值');
-assert.match(studioSource, /qualityStatus: 'warning',[\s\S]*内容已手动修改，等待人工审核/, '人工修改后必须转入待审核状态');
+assert.match(
+  studioSource,
+  /qualityStatus: 'unreviewed',[\s\S]*内容已手动修改，等待基于企业中心资料重新审核/,
+  '人工修改后必须失效旧质量结论并转入待审核状态',
+);
 assert.match(studioSource, /当前测试账号素材太少啦，换个创作模式再试试！/, '分镜校验失败时必须使用指定的灵小枢提示');
 assert.match(studioSource, /announceRejectedStoryboard\(response\)/, 'AI 分镜返回后必须检查是否需要触发灵小枢提示');
 assert.match(assistantSource, /lingshu-assistant-say/, '全局灵小枢必须监听一次性说话事件');

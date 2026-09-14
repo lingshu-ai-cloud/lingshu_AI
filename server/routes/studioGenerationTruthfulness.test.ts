@@ -3,9 +3,58 @@ import {
   auditCommercialClaims,
   confirmedEnterpriseContextForProduct,
   hasConfirmedEnterpriseFacts,
+  studioRouter,
+  terminalPublishedPlatformPostId,
   unconfirmedEnterpriseProductFields,
   unpublishableGenerationReasons,
 } from './studio.js';
+
+assert.equal(terminalPublishedPlatformPostId({
+  deliveryStatus: 'provider_accepted',
+  providerReceiptId: 'tiktok-provider-receipt',
+  platformPostId: '',
+}), '', 'provider acceptance must not create a Studio published link');
+assert.equal(terminalPublishedPlatformPostId({
+  ok: true,
+  deliveryStatus: 'published',
+  platformPostId: '',
+}), '', 'a published label without a platform post id is not terminal evidence');
+assert.equal(terminalPublishedPlatformPostId({
+  deliveryStatus: 'published',
+  platformPostId: 'unconfirmed-post',
+}), '', 'a terminal label without an ok result is not terminal evidence');
+assert.equal(terminalPublishedPlatformPostId({
+  ok: true,
+  deliveryStatus: 'published',
+  platformPostId: 'tiktok-public-post',
+}), 'tiktok-public-post');
+
+const publishLinksLayer = (studioRouter as any).stack.find((layer: any) => (
+  layer.route?.path === '/publish-links' && layer.route?.methods?.post
+));
+assert.ok(publishLinksLayer, 'Studio publish-links route must exist');
+const publishLinksHandler = publishLinksLayer.route.stack.at(-1).handle as (req: unknown, res: unknown) => void;
+let rejectedStatus = 0;
+let rejectedBody: Record<string, unknown> = {};
+const rejectedResponse = {
+  locals: { tenantId: 'tenant-receipt-contract' },
+  status(value: number) { rejectedStatus = value; return this; },
+  json(value: Record<string, unknown>) { rejectedBody = value; return this; },
+};
+publishLinksHandler({
+  body: {
+    projectId: 'project-receipt-contract',
+    publishResult: {
+      ok: true,
+      deliveryStatus: 'provider_accepted',
+      providerReceiptId: 'tiktok-provider-receipt',
+      platformPostId: '',
+    },
+  },
+}, rejectedResponse);
+assert.equal(rejectedStatus, 409, 'Studio must reject a provider-accepted result before constructing publishedAt');
+assert.equal(rejectedBody.ok, false);
+assert.equal('publishedAt' in rejectedBody, false);
 
 const normalizedEmptyProfile = 'Business rules: quoteMode=not_configured; priceRange=; moq=; samplePolicy=; paymentTerms=; leadTime=; bargainPolicy=; bargainFloor=';
 assert.equal(hasConfirmedEnterpriseFacts(normalizedEmptyProfile), false, 'normalized defaults are not confirmed enterprise facts');

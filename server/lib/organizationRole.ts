@@ -1,4 +1,5 @@
 import { pbGet } from '../storage/pb.js';
+import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
 
 export type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
 
@@ -8,7 +9,6 @@ const ORGANIZATION_ROLES = new Set<OrganizationRole>([
   'social_operator',
   'customer_service',
 ]);
-const LOCAL_AUTH_PREFIX = 'local-demo.';
 
 export function organizationRoleOrNull(value: unknown): OrganizationRole | null {
   return ORGANIZATION_ROLES.has(value as OrganizationRole) ? value as OrganizationRole : null;
@@ -22,17 +22,8 @@ export function normalizeOrganizationRole(
 }
 
 function localTokenRole(authorization: string | undefined): OrganizationRole | null | undefined {
-  if (process.env.NODE_ENV === 'production' || process.env.DISABLE_LOCAL_AUTH_FALLBACK === 'true') return undefined;
-  const token = authorization?.replace(/^Bearer\s+/i, '').trim();
-  if (!token?.startsWith(LOCAL_AUTH_PREFIX)) return undefined;
-  try {
-    const payload = JSON.parse(
-      Buffer.from(token.slice(LOCAL_AUTH_PREFIX.length), 'base64url').toString('utf8'),
-    ) as { role?: unknown };
-    return organizationRoleOrNull(payload.role);
-  } catch {
-    return null;
-  }
+  if (!isLocalDemoAuthorization(authorization)) return undefined;
+  return verifyLocalIdentity(authorization)?.role ?? null;
 }
 
 /** Resolve a role for a security-sensitive action; missing or malformed roles fail closed. */

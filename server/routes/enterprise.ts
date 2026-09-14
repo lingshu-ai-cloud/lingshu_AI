@@ -7,7 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes, randomUUID } from 'crypto';
 import type { Request } from 'express';
-import { auth, store } from '../storage/index.js';
+import { store } from '../storage/index.js';
 import type { AutonomyLevel } from '../autonomy/actionRules.js';
 import { callLLM } from '../agents/llm.js';
 import { notifyDeliveryTeam } from '../lib/tenantPlatformApps.js';
@@ -31,6 +31,8 @@ import {
   Starter198LegacyEffectError,
   withLegacyExternalEffectAllowed,
 } from '../starter198/legacyEffectGuard.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
@@ -391,14 +393,14 @@ async function listStoredTenantOrders(tenantId: string): Promise<Record<string, 
 }
 
 export async function readOrders(tenantId: string): Promise<OrderRecord[]> {
-  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) return readLocalTenantOrders(tenantId);
+  if (usesLocalOrderAuthority(tenantId)) return readLocalTenantOrders(tenantId);
   const records = await listStoredTenantOrders(tenantId);
   const orders = records.map(storedOrder).filter(Boolean) as OrderRecord[];
   return orders;
 }
 
 async function persistOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
-  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) {
+  if (usesLocalOrderAuthority(tenantId)) {
     const orders = readLocalTenantOrders(tenantId);
     writeLocalTenantOrders(tenantId, [order, ...orders.filter(item => item.orderNo !== order.orderNo)]);
     return true;
@@ -439,7 +441,7 @@ async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolea
 }
 
 async function deleteOrder(tenantId: string, orderId: string): Promise<boolean> {
-  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) {
+  if (usesLocalOrderAuthority(tenantId)) {
     const orders = readLocalTenantOrders(tenantId);
     const next = orders.filter(order => order.id !== orderId);
     if (next.length === orders.length) return false;
@@ -451,8 +453,15 @@ async function deleteOrder(tenantId: string, orderId: string): Promise<boolean> 
   return record?.id ? store.delete('tenant_orders', String(record.id)) : false;
 }
 
-async function authenticatedTenantId(req: Request): Promise<string | null> {
-  return (await auth.verifyToken(req.headers.authorization))?.tenantId || null;
+function usesLocalOrderAuthority(tenantId: string): boolean {
+  return localFallbacksEnabled()
+    && currentDataAuthority() !== 'pocketbase'
+    && tenantId.startsWith('local_tenant_');
+}
+
+function authenticatedTenantId(res: { locals: Record<string, unknown> }): string | null {
+  const tenantId = (res.locals as unknown as Partial<AuthLocals>).tenantId;
+  return typeof tenantId === 'string' && tenantId ? tenantId : null;
 }
 
 function parseNumber(value: unknown): number {
@@ -1839,7 +1848,7 @@ const orderMutations = new Map<string, Promise<void>>();
 enterpriseRouter.use('/orders', async (req, res, next) => {
   if (req.method === 'GET') { next(); return; }
   if (isBrowserReadToken(req.headers.authorization)) { res.status(403).json({ error: 'agent_browser_read_only' }); return; }
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const previous = orderMutations.get(tenantId) || Promise.resolve();
   let release!: () => void;
@@ -1853,7 +1862,7 @@ enterpriseRouter.use('/orders', async (req, res, next) => {
 
 enterpriseRouter.get('/orders', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   res.json({ items: await readOrders(tenantId) });
   } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
@@ -1861,7 +1870,7 @@ enterpriseRouter.get('/orders', async (req, res) => {
 
 enterpriseRouter.post('/orders', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const order = normalizeOrder({ ...(req.body || {}), id: undefined, audit: [], afterSales: undefined, afterSalesHistory: [], paidAt: undefined, refundedAt: undefined, refundAmount: undefined, source: req.body?.source || '手工录入' });
   if (!order) {
@@ -1897,7 +1906,7 @@ enterpriseRouter.post('/orders', async (req, res) => {
 
 enterpriseRouter.patch('/orders/:id/status', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const status = req.body?.status;
   const orders = await readOrders(tenantId);
@@ -1918,7 +1927,7 @@ enterpriseRouter.patch('/orders/:id/status', async (req, res) => {
 
 enterpriseRouter.post('/orders/:id/sync-customer', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const order = (await readOrders(tenantId)).find(item => item.id === req.params.id);
   if (!order) { res.status(404).json({ error: 'order not found' }); return; }
@@ -1929,7 +1938,7 @@ enterpriseRouter.post('/orders/:id/sync-customer', async (req, res) => {
 
 enterpriseRouter.patch('/orders/:id/aftersales', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const order = (await readOrders(tenantId)).find(item => item.id === req.params.id);
   if (!order) { res.status(404).json({ error: 'order not found' }); return; }
@@ -1943,7 +1952,7 @@ enterpriseRouter.patch('/orders/:id/aftersales', async (req, res) => {
 
 enterpriseRouter.delete('/orders/:id', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const target = (await readOrders(tenantId)).find(item => item.id === req.params.id);
   if (target && (target.status !== '待付款' || target.audit?.length || target.customerId)) {
@@ -1959,7 +1968,7 @@ enterpriseRouter.delete('/orders/:id', async (req, res) => {
 
 enterpriseRouter.post('/orders/import', async (req, res) => {
   try {
-  const tenantId = await authenticatedTenantId(req);
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const { csv } = req.body as { csv?: string };
   if (!csv?.trim()) {
@@ -2147,13 +2156,17 @@ productApiRouter.post('/bulk', async (req, res) => {
       return;
     }
     const products = payload.map(item => normalizeApiProduct(item)).filter(Boolean) as NonNullable<EnterpriseProfile['products']['items']>;
-    const total = await withLegacyExternalEffectAllowed(secret.tenantId, async () => {
+    const total = await withLegacyExternalEffectAllowed(secret.tenantId, async guard => {
       const profile = await readTenantProfile(secret.tenantId);
       const nextItems = upsertProductItems(profile.products.items ?? [], products);
       const last = products.at(-1);
+      await guard.beforeEffect();
       await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: nextItems } }, 'product-api');
       const keyRecord = await store.list<Record<string, unknown>>('tenant_api_keys', { where: { tenant_id: secret.tenantId }, page: 1, perPage: 1 });
-      if (keyRecord.items[0]?.id) await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
+      if (keyRecord.items[0]?.id) {
+        await guard.beforeEffect();
+        await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
+      }
       return nextItems.length;
     });
     res.json({ ok: true, received: payload.length, upserted: products.length, total });
@@ -2192,10 +2205,11 @@ productApiRouter.delete('/:sku?', async (req, res) => {
       res.status(400).json({ error: 'Missing sku' });
       return;
     }
-    const result = await withLegacyExternalEffectAllowed(secret.tenantId, async () => {
+    const result = await withLegacyExternalEffectAllowed(secret.tenantId, async guard => {
       const profile = await readTenantProfile(secret.tenantId);
       const before = profile.products.items ?? [];
       const after = before.filter(item => item.sku !== sku);
+      await guard.beforeEffect();
       await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: after } }, 'product-api');
       return { deleted: before.length - after.length, total: after.length };
     });

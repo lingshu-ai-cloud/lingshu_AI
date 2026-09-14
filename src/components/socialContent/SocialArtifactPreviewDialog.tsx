@@ -3,6 +3,8 @@ import { Download, ExternalLink, FileText, Loader2, X } from 'lucide-react';
 import type { SocialContentArtifact } from '../../../shared/contracts/socialContentWorkflow';
 import { useModalFocus } from '../../hooks/useModalFocus';
 import { socialContentApi } from '../../lib/socialContentApi';
+import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
+export { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import {
   PLATFORM_OPTIONS,
   artifactKindLabel,
@@ -40,6 +42,7 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
   const [error, setError] = useState('');
   const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const copy = useMemo(() => socialArtifactReadableCopy(artifact), [artifact]);
+  const generation = useMemo(() => socialArtifactGenerationDisclosure(artifact), [artifact]);
 
   useEffect(() => {
     if (!socialArtifactHasArchivedMedia(artifact)) return;
@@ -65,6 +68,8 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
     artifact.platform ? optionLabel(PLATFORM_OPTIONS, artifact.platform) : null,
     contentLanguageLabel(artifact.language),
     packageVersionLabel(artifact.version),
+    generation.sourceLabel,
+    generation.verificationLabel,
   ].filter(Boolean).join(' · ');
   const isVideo = media?.type.startsWith('video/');
 

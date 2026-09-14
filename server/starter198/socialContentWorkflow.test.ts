@@ -93,6 +93,7 @@ const [
   { assertSocialTaskCapacity, assertSocialTaskChildCapacity, socialTaskFileCapacity },
   { createStarter198OrchestratorQueue },
   { MAX_SOCIAL_WORK_PACKAGE_VERSIONS, SOCIAL_PACKAGE_CATALOG_TENANT },
+  { issueLocalIdentityTokenForTest },
 ] = await Promise.all([
   import('./repository.js'),
   import('./socialContentRouter.js'),
@@ -101,6 +102,7 @@ const [
   import('./socialContentLimits.js'),
   import('./orchestratorQueue.js'),
   import('./socialWorkPackages.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 const tenant = 'social-content-tenant';
@@ -187,7 +189,7 @@ if (!address || typeof address === 'string') throw new Error('test server did no
 const origin = `http://127.0.0.1:${address.port}`;
 
 function token(tenantId: string): string {
-  return `local-demo.${Buffer.from(JSON.stringify({ userId: `${tenantId}-user`, tenantId })).toString('base64url')}`;
+  return issueLocalIdentityTokenForTest({ userId: `${tenantId}-user`, tenantId });
 }
 
 async function request(pathname: string, options: {
@@ -682,8 +684,16 @@ try {
   });
   assert.equal(referenceOnly.status, 201);
   assert.deepEqual(referenceOnly.body.task.readiness.missing, ['enterprise_knowledge']);
+  const freeTextNote = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/sources`, {
+    idempotencyKey: 'social-bypass-free-text-note',
+    body: { kind: 'text_note', sourceRef: 'brief:brand-notes', label: '用户填写的企业与产品关键信息' },
+  });
+  assert.equal(freeTextNote.status, 201);
+  assert.equal(freeTextNote.body.task.knowledgeSourceCount, 0);
+  assert.deepEqual(freeTextNote.body.task.readiness.missing, ['enterprise_knowledge'],
+    'request free text must not be promoted to confirmed enterprise knowledge');
   const bypassStart = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/start`, {
-    idempotencyKey: 'social-bypass-start', body: { expectedVersion: referenceOnly.body.task.version },
+    idempotencyKey: 'social-bypass-start', body: { expectedVersion: freeTextNote.body.task.version },
   });
   assert.equal(bypassStart.status, 409, 'a reference link alone cannot bypass the knowledge requirement');
   assert.equal(bypassStart.body.error, 'social_content_task_inputs_incomplete');

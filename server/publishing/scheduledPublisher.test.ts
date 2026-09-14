@@ -8,6 +8,7 @@ import {
 import type { PostRecord } from './waLink.js';
 import { store } from '../storage/index.js';
 import { Starter198LegacyEffectError } from '../starter198/legacyEffectGuard.js';
+import { PublishSourceVerificationError } from './publishSourceClaim.js';
 
 const now = Date.parse('2026-07-29T10:00:00.000Z');
 
@@ -104,6 +105,7 @@ store.update = (async (_collection: string, _id: string, patch: Record<string, u
   return true;
 }) as typeof store.update;
 const dependencies = {
+  verifySource: async () => { /* source contract is isolated in this state-machine fixture */ },
   assertLegacyAccess: async () => {},
   executeLegacyEffect: async <T>(_tenantId: string, effect: () => Promise<T>) => effect(),
   acquirePublishLease: noOpPublishLease,
@@ -160,6 +162,7 @@ store.update = (async (_collection: string, id: string, patch: Record<string, un
   Object.assign(row, clone(patch)); return true;
 }) as typeof store.update;
 const localDependencies = {
+  verifySource: async () => { /* source contract is isolated in this state-machine fixture */ },
   assertLegacyAccess: async () => {},
   executeLegacyEffect: async <T>(_tenantId: string, effect: () => Promise<T>) => effect(),
   acquirePublishLease: noOpPublishLease,
@@ -221,6 +224,16 @@ try {
 
   const providerCallsAfterBoundaryTests = providerCalls;
   rows = [post('scheduled', {}, { targetAccountIds: ['c'], videoPath: '/isolated.mp4' })];
+  const callsBeforeStaleSource = providerCalls;
+  await runScheduledPublishingCycle(now, {
+    ...localDependencies,
+    verifySource: async () => { throw new PublishSourceVerificationError('publish_source_claim_stale', 409, 'source changed'); },
+  });
+  assert.equal(providerCalls, callsBeforeStaleSource, 'stale source must be rejected before every new provider effect');
+  assert.equal((rows[0].stats as any).status, 'awaiting_reapproval');
+  assert.equal((rows[0].stats as any).realPublishingAuthorized, false);
+
+  rows = [post('scheduled', {}, { targetAccountIds: ['c'], videoPath: '/isolated.mp4' })];
   let ambiguousCalls = 0;
   await runScheduledPublishingCycle(now, { ...localDependencies, publish: async () => { ambiguousCalls++; throw new Error('socket closed after acceptance'); } });
   assert.equal((rows[0].stats as any).status, 'needs_attention');
@@ -260,12 +273,18 @@ try {
   let tiktokSubmissions = 0;
   let tiktokStatusChecks = 0;
   let tiktokResolution: 'processing' | 'published' = 'processing';
+  let sourceVerificationCalls = 0;
+  let sourceStillCurrent = true;
   rows = [post('scheduled', { platform: 'tiktok' }, {
     targetAccountIds: ['tiktok-account'],
     videoPath: '/isolated.mp4',
   })];
   const tiktokDependencies = {
     ...localDependencies,
+    verifySource: async () => {
+      sourceVerificationCalls += 1;
+      if (!sourceStillCurrent) throw new PublishSourceVerificationError('publish_source_claim_stale');
+    },
     publish: async () => {
       tiktokSubmissions += 1;
       return {
@@ -296,10 +315,13 @@ try {
   assert.equal((rows[0].stats as any).publishResults['tiktok-account'].platformPostId, undefined,
     'TikTok init receipt must not be recorded as a public post');
 
+  const verificationCallsAfterSubmit = sourceVerificationCalls;
+  sourceStillCurrent = false;
   await runScheduledPublishingCycle(now + 30_000, tiktokDependencies);
   assert.equal(tiktokSubmissions, 1, 'status recovery must never submit the video again');
   assert.equal(tiktokStatusChecks, 1);
   assert.equal((rows[0].stats as any).status, 'provider_processing');
+  assert.equal(sourceVerificationCalls, verificationCallsAfterSubmit, 'receipt polling must remain recoverable after the source changes');
 
   tiktokResolution = 'published';
   await runScheduledPublishingCycle(now + 60_000, tiktokDependencies);

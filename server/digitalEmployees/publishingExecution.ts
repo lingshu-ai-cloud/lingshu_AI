@@ -4,6 +4,12 @@ import { createTrackedPostDraft } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 import type { PublishingPlatform, PublishingTarget } from './domain.js';
 import { runExternalActionBlockedReason, withDigitalEmployeeRunLock } from './runControl.js';
+import {
+  currentPublishableVideoPaths,
+  digitalEmployeePublishSourceClaim,
+  verifyFrozenPublishSourceClaim,
+  type FrozenPublishSourceClaim,
+} from '../publishing/publishSourceClaim.js';
 
 type StoredProject = { id: string; title?: unknown; status?: unknown; spec?: unknown };
 
@@ -16,6 +22,7 @@ export interface PublishingApprovalItem {
   description: string;
   videoPath: string;
   scheduledAt: string;
+  sourceClaim: FrozenPublishSourceClaim;
 }
 
 export interface PublishingApprovalPackage {
@@ -27,21 +34,6 @@ export interface PublishingApprovalPackage {
 
 const text = (value: unknown): string => String(value ?? '').trim();
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-
-function outputPaths(spec: Record<string, unknown>): string[] {
-  const automation = record(spec.automation);
-  // Automation owns a single current deliverable. Historical render versions
-  // remain in the library, but are never implicit approval subjects.
-  if (text(automation.renderOutputPath)) return [text(automation.renderOutputPath)];
-  const outputs = record(spec.languageRenderOutputs);
-  if (Object.keys(outputs).length) {
-    return [...new Set(Object.values(outputs).map(record)
-      .filter(item => text(item.status) === 'done' && text(item.path))
-      .map(item => text(item.path)))];
-  }
-  const legacy = ['renderOutputPath', 'videoPath', 'outputPath'].map(key => text(spec[key])).find(Boolean);
-  return legacy ? [legacy] : [];
-}
 
 function nextDailySlot(index: number, now: Date): string {
   const slot = new Date(now);
@@ -56,6 +48,7 @@ function contentFingerprint(items: PublishingApprovalItem[], allowRealPublishing
 
 /** Build the exact, human-readable subject of a batch approval. */
 export function buildPublishingApprovalPackage(input: {
+  tenantId: string;
   projects: StoredProject[];
   targets: PublishingTarget[];
   goalPlatforms: PublishingPlatform[];
@@ -72,7 +65,10 @@ export function buildPublishingApprovalPackage(input: {
   const items: PublishingApprovalItem[] = [];
   for (const project of input.projects) {
     const spec = record(project.spec);
-    for (const videoPath of outputPaths(spec)) {
+    for (const videoPath of currentPublishableVideoPaths(spec)) {
+      let sourceClaim: FrozenPublishSourceClaim;
+      try { sourceClaim = digitalEmployeePublishSourceClaim(input.tenantId, project, videoPath); }
+      catch { continue; }
       for (const [platform, targets] of targetsByPlatform.entries()) {
         items.push({
           sourceProjectId: project.id,
@@ -83,6 +79,7 @@ export function buildPublishingApprovalPackage(input: {
           description: text(spec.caption) || text(spec.script) || '',
           videoPath,
           scheduledAt: nextDailySlot(items.length, now),
+          sourceClaim,
         });
       }
     }
@@ -119,18 +116,23 @@ export async function createPublishingCalendarEntries(input: {
   approvalId: string;
   approvedContentHash: string;
   package: PublishingApprovalPackage;
-}): Promise<Array<{ id: string; status: string }>> {
+}, dependencies: {
+  verifySource: (tenantId: string, claim: unknown, videoPath?: unknown) => Promise<unknown>;
+} = { verifySource: verifyFrozenPublishSourceClaim }): Promise<Array<{ id: string; status: string }>> {
   if (input.package.contentHash !== input.approvedContentHash
     || contentFingerprint(input.package.items, input.package.allowRealPublishing) !== input.approvedContentHash) throw new Error('approval_subject_changed');
   return withDigitalEmployeeRunLock(input.tenantId, input.runId, async () => {
   const existing = await tenantPosts(input.tenantId);
   const result: Array<{ id: string; status: string }> = [];
   for (const item of input.package.items) {
+    try { await dependencies.verifySource(input.tenantId, item.sourceClaim, item.videoPath); }
+    catch { throw new Error('approval_subject_changed'); }
     const found = existing.find(post => {
       const stats = record(post.stats);
       return text(stats.workflowRunId) === input.runId && text(stats.sourceProjectId) === item.sourceProjectId
         && text(post.platform) === item.platform && text(stats.approvedContentHash) === input.approvedContentHash
         && text(stats.videoPath) === item.videoPath
+        && JSON.stringify(stats.publishSourceClaim) === JSON.stringify(item.sourceClaim)
         && (!Array.isArray(stats.targetAccountIds) || JSON.stringify(stats.targetAccountIds.slice().sort()) === JSON.stringify([...item.accountIds].sort()));
     });
     if (found) { result.push({ id: found.id, status: text(record(found.stats).status) }); continue; }
@@ -143,6 +145,7 @@ export async function createPublishingCalendarEntries(input: {
         status, description: item.description, videoPath: item.videoPath,
         targetAccountIds: item.accountIds, targetAccountLabels: item.accountLabels,
         publishAttempts: 0, publishResults: {}, warnings: [], sourceProjectId: item.sourceProjectId,
+        publishSourceClaim: item.sourceClaim,
         workflowRunId: input.runId, workflowTaskId: input.approvalTaskId, workflowTaskKey: 'content_release_approval',
         approvalId: input.approvalId, approvedContentHash: input.approvedContentHash,
         realPublishingAuthorized: input.package.allowRealPublishing,

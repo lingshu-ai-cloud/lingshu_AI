@@ -11,6 +11,8 @@ const originalEnvironment = {
   WORKBENCH_ADMIN_EMAIL: process.env.WORKBENCH_ADMIN_EMAIL,
   ADMIN_DASHBOARD_EMAILS: process.env.ADMIN_DASHBOARD_EMAILS,
   CHANNELS_DATA_FILE: process.env.CHANNELS_DATA_FILE,
+  ENABLE_LOCAL_DEV_FALLBACK: process.env.ENABLE_LOCAL_DEV_FALLBACK,
+  LOCAL_STORE_DIR: process.env.LOCAL_STORE_DIR,
 };
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-admin-identity-'));
 const channelsDataFile = path.join(temporaryDirectory, 'channels.json');
@@ -21,15 +23,22 @@ process.env.LOCAL_ADMIN_EMAIL = 'local-admin@example.test';
 process.env.WORKBENCH_ADMIN_EMAIL = '';
 process.env.ADMIN_DASHBOARD_EMAILS = 'configured-admin@example.test';
 process.env.CHANNELS_DATA_FILE = channelsDataFile;
+// This isolated route test has no PocketBase fixture. Explicitly opt into the
+// local test adapter and point it at the test directory; production remains
+// fail-closed and never inherits this behavior from NODE_ENV alone.
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.LOCAL_STORE_DIR = path.join(temporaryDirectory, 'local-store');
 
 const [
   { auth },
   { channelsRouter },
   { setAdminIdentityDependenciesForTests },
+  { issueLocalIdentityTokenForTest },
 ] = await Promise.all([
   import('../storage/index.js'),
   import('../routes/channels.js'),
   import('../lib/demoAccounts.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 const originalVerifyToken = auth.verifyToken;
@@ -87,7 +96,13 @@ const registry = {
 };
 
 function localToken(payload: Record<string, string>): string {
-  return `local-demo.${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
+  return issueLocalIdentityTokenForTest({
+    userId: payload.userId,
+    tenantId: payload.tenantId,
+    email: payload.email,
+    accountType: payload.accountType,
+    role: payload.role,
+  });
 }
 
 const canonicalLocalAdminToken = localToken({

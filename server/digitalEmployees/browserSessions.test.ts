@@ -14,7 +14,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-production-page-test-'
 process.env.LOCAL_STORE_DIR = temp;
 process.env.NODE_ENV = 'test';
 process.env.PB_URL = 'http://127.0.0.1:1';
-const scope = { tenantId: 'browser-test-a', runId: 'run-a', taskId: 'script-a' };
+const scope = { tenantId: 'browser-test-a', runId: 'run-a', taskId: 'script-a', dataAuthority: 'local' as const };
 const projectId = 'browser-test-project';
 const project = { id: projectId, tenant_id: scope.tenantId, title: '隔离测试项目', status: 'draft', spec: { mode: 'material_mix', productName: '浏览器回归产品', script: '', duration: 15 }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
 fs.writeFileSync(path.join(temp, 'studio_projects.json'), JSON.stringify([project]));
@@ -68,7 +68,7 @@ const clicks: unknown[] = [];
 const read = async (): Promise<BrowserProductionTarget> => ({ userId: 'browser-test-user', projectId, stage: 'script', revision: String(executions), link: { page: 'smartAssets', runId: scope.runId, taskId: scope.taskId, businessRef: { entityId: projectId, taskKey: 'content_production' } } });
 manager.setTelemetry(async (_, action) => { if (action.kind === 'click') clicks.push(action); });
 try {
-  const credential = createBrowserReadSession({ tenantId: scope.tenantId, userId: 'test', role: 'social_operator' });
+  const credential = createBrowserReadSession({ tenantId: scope.tenantId, userId: 'test', role: 'social_operator', dataAuthority: scope.dataAuthority });
   const req = { headers: { authorization: `Bearer ${credential.token}` }, method: 'GET', originalUrl: '/api/overseas/studio/projects', url: '' };
   assert.equal(browserReadIdentity(req)?.tenantId, scope.tenantId);
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal(browserReadIdentity({ ...req, method }), null);
@@ -129,7 +129,7 @@ try {
   // and retains that attribution after refresh. Watching starts no business work.
   const browser = await (manager as unknown as { browser: Promise<Browser> }).browser;
   const viewer = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  const viewerIdentity = createBrowserReadSession({ tenantId: scope.tenantId, userId: 'scene-viewer', role: 'social_operator' });
+  const viewerIdentity = createBrowserReadSession({ tenantId: scope.tenantId, userId: 'scene-viewer', role: 'social_operator', dataAuthority: scope.dataAuthority });
   await viewer.addInitScript(token => localStorage.setItem('overseas_token', token), viewerIdentity.token);
   await viewer.route('**/*', route => ['GET', 'HEAD'].includes(route.request().method()) ? route.continue() : route.abort());
   try {

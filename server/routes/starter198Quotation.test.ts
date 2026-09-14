@@ -8,6 +8,7 @@ import { STARTER_198_CAPABILITIES, STARTER_198_PROFILE, STARTER_198_PROFILE_VERS
 import { STARTER_198_DEFAULT_LIMITS } from '../starter198/provisioning.js';
 import type { Starter198AccessSnapshot } from '../starter198/profile.js';
 import { createStarter198Repository, Starter198RepositoryError } from '../starter198/repository.js';
+import { issueLocalIdentityTokenForTest } from '../auth/localIdentity.js';
 
 class MemoryStore implements DataStore {
   private sequence = 0;
@@ -73,8 +74,11 @@ class MemoryStore implements DataStore {
 }
 
 function token(tenantId: string, role?: string): string {
-  const payload = Buffer.from(JSON.stringify({ userId: `${tenantId}-user`, tenantId, ...(role ? { role } : {}) })).toString('base64url');
-  return `local-demo.${payload}`;
+  return issueLocalIdentityTokenForTest({
+    userId: `${tenantId}-${role || 'missing'}-user`,
+    tenantId,
+    ...(role ? { role } : {}),
+  });
 }
 
 function ruleSet(version: string, unitPrice: string): QuoteRuleSetInput {

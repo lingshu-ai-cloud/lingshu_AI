@@ -5,6 +5,7 @@ import { getConnectionCredential } from './connections.js';
 import { AdProviderError, MetaAdsAdapter, validateMetaVideoInput } from './metaAdapter.js';
 import { executeTikTokWithinLock, reconcileTikTokWithinLock } from './tiktokExecution.js';
 import { executeGoogleWithinLock, reconcileGoogleWithinLock } from './googleExecution.js';
+import type { PlatformAdTaskLeaseGuard } from './taskLock.js';
 export const AD_EXECUTIONS = 'platform_ad_executions';
 export type AdExecution = { id: string; tenant_id: string; taskId: string; requestId: string; action: string; connectionId: string; resourceId: string; status: string; createdAt: string; result?: unknown; error?: string; expectedDailyBudget?: number };
 const publicReceipt = ({ tenant_id: _tenant, ...receipt }: AdExecution) => receipt;
@@ -22,7 +23,7 @@ export async function executeApprovedAdAction(tenantId: string, taskId: string, 
 }
 async function execute(tenantId: string, taskId: string, input: Record<string, unknown>, mode: 'manual' | 'automatic' | 'approved') {
   const automatic = mode === 'automatic';
-  return withPlatformAdTaskLock(tenantId, taskId, async () => {
+  return withPlatformAdTaskLock(tenantId, taskId, async (leaseGuard: PlatformAdTaskLeaseGuard) => {
     const task = await getPlatformAdTask(tenantId, taskId);
     if (!task) throw new AdProviderError('未找到投放任务', 'NOT_FOUND');
     if (task.creationSource === 'platform_import') throw new AdProviderError('导入计划当前仅支持查看，尚未建立可执行资源绑定', 'NOT_SUPPORTED');
@@ -39,8 +40,8 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     const connectionId = String(input.connectionId || '');
     const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
     assertAdReleaseAction(connection.provider, action);
-    if (connection.provider === 'tiktok') return executeTikTokWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts);
-    if (connection.provider === 'google') return executeGoogleWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts);
+    if (connection.provider === 'tiktok') return executeTikTokWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, leaseGuard);
+    if (connection.provider === 'google') return executeGoogleWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, leaseGuard);
     if (connection.provider !== 'meta') throw new AdProviderError('此平台执行适配尚未开放', 'NOT_SUPPORTED');
     if (connection.status !== 'connected') throw new AdProviderError('账户受限，请重新验证账户', 'AUTH_REQUIRED');
     if (task.currency !== connection.currency) throw new AdProviderError('任务与广告账户币种不一致', 'CURRENCY_MISMATCH');
@@ -89,7 +90,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     if (action !== 'create' && (!resources.adsetId || !resources.adId)) throw new AdProviderError('完整广告组和广告尚未关联，无法执行', 'PREFLIGHT_REQUIRED');
     const dailyBudget = Number(input.dailyBudget);
     if (action === 'adjust_budget' && (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > task.budget)) throw new AdProviderError('日预算必须在任务预算范围内', 'INVALID_INPUT');
-    const adapter = new MetaAdsAdapter(accessToken);
+    const adapter = new MetaAdsAdapter(accessToken, fetch, () => leaseGuard.beforeEffect());
     if (action === 'activate' || action === 'resume') {
       const campaignBudget = await adapter.request(resourceId, { fields: 'spend_cap' });
       const adsetBudget = await adapter.request(resources.adsetId, { fields: 'daily_budget' });
@@ -111,6 +112,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       if (!Number(campaign.spend_cap) || Number(campaign.spend_cap) / 100 > grant.maxTotalBudget) throw new AdProviderError('平台总预算上限高于授权额度，需人工调整', 'BUDGET_LIMIT');
     }
     const now = new Date().toISOString();
+    await leaseGuard.beforeEffect();
     const receipt = await store.create<AdExecution>(AD_EXECUTIONS, { tenant_id: tenantId, taskId, requestId, action, connectionId, resourceId, status: 'EXECUTING', createdAt: now, expectedDailyBudget: action === 'adjust_budget' ? dailyBudget : 0 });
     if (!receipt) throw new AdProviderError('无法保存执行记录，未发起操作', 'STORAGE_ERROR');
     let accepted = false;

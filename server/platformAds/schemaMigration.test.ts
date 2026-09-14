@@ -212,4 +212,27 @@ forward(adopted);
 assertSchemaParity(adopted);
 assert.equal(adopted.findCollectionByNameOrId('platform_ad_connections').fields.getByName('tenant_id').required, true, 'adopted runtime collections must normalize required fields');
 
+const uniqueMigrationPath = new URL('../../pb_migrations/1790208001_unique_platform_ad_execution_requests.js', import.meta.url);
+const uniqueMigrationSource = fs.readFileSync(uniqueMigrationPath, 'utf8');
+let uniqueForward: MigrationCallback | undefined;
+let uniqueBackward: MigrationCallback | undefined;
+vm.runInNewContext(uniqueMigrationSource, {
+  migrate: (up: MigrationCallback, down: MigrationCallback) => {
+    uniqueForward = up;
+    uniqueBackward = down;
+  },
+});
+assert.ok(uniqueForward && uniqueBackward, 'execution-idempotency migration must register both callbacks');
+const indexed = new FakeApp();
+forward(indexed);
+uniqueForward(indexed);
+let executionIndexes = indexed.findCollectionByNameOrId('platform_ad_executions').indexes;
+assert.equal(executionIndexes.filter(index => index.includes('idx_platform_ad_execution_request')).length, 1);
+assert.match(executionIndexes[0] || '', /tenant_id, taskId, requestId/);
+uniqueForward(indexed);
+executionIndexes = indexed.findCollectionByNameOrId('platform_ad_executions').indexes;
+assert.equal(executionIndexes.filter(index => index.includes('idx_platform_ad_execution_request')).length, 1, 'follow-up migration is idempotent');
+uniqueBackward(indexed);
+assert.equal(indexed.findCollectionByNameOrId('platform_ad_executions').indexes.some(index => index.includes('idx_platform_ad_execution_request')), false);
+
 console.log('Platform advertising migration fresh/adoption/rollback parity tests passed (in-memory only; no PocketBase connection)');

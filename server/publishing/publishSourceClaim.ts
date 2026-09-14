@@ -1,0 +1,326 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from '../digitalEmployees/contentQualityContract.js';
+import { contentAcceptanceHash } from '../digitalEmployees/contentAcceptance.js';
+import {
+  claimedStudioGeneration,
+  verifiedStudioGenerationFromSpec,
+  type StudioGenerationMetadata,
+} from '../lib/studioGenerationVerification.js';
+import { store } from '../storage/index.js';
+
+export const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
+export type PublishSourceRequestKind = 'project' | 'manual_upload';
+export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload';
+
+export interface PublishSourceRequest {
+  sourceKind?: PublishSourceRequestKind;
+  projectId?: string;
+  videoPath?: string;
+  videoUrl?: string;
+  sourceVideoPath?: string;
+  generationKind?: 'script' | 'poster';
+  generationProvenance?: string;
+  qualityStatus?: string;
+  publishable?: boolean;
+  generationRecordId?: string;
+}
+
+export interface FrozenPublishSourceClaim {
+  schemaVersion: 1;
+  sourceKind: FrozenPublishSourceKind;
+  projectId: string;
+  sourceVideoPath: string;
+  deliveryVideoPath: string;
+  generationKind: 'script' | 'poster' | 'digital_employee' | 'manual_upload';
+  generationProvenance: 'ai' | 'digital_employee' | 'human_upload';
+  qualityStatus: 'passed' | 'not_applicable';
+  publishable: true;
+  generationRecordId: string;
+  sourceFingerprint: string;
+}
+
+type StoredProject = { id: string; tenant_id?: unknown; tenantId?: unknown; status?: unknown; spec?: unknown };
+
+export class PublishSourceVerificationError extends Error {
+  constructor(public readonly code: string, public readonly statusCode = 409, message = code) {
+    super(message);
+    this.name = 'PublishSourceVerificationError';
+  }
+}
+
+const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+const record = (value: unknown): Record<string, any> => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, any>;
+    } catch { /* malformed source records are not publishable */ }
+  }
+  return {};
+};
+
+const fingerprint = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+function normalizedFilePath(value: unknown): string {
+  const raw = text(value);
+  if (!raw) return '';
+  try { return raw.startsWith('file://') ? path.resolve(fileURLToPath(raw)) : path.resolve(raw); }
+  catch { return ''; }
+}
+
+export function publishingUploadDir(tenantId: string): string {
+  const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
+  return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
+}
+
+export function localPublishingVideo(tenantId: string, videoPath: unknown): string | null {
+  const resolved = normalizedFilePath(videoPath);
+  const uploadDir = publishingUploadDir(tenantId);
+  if (!resolved || !resolved.startsWith(`${uploadDir}${path.sep}`)) return null;
+  if (!PUBLISH_VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return null;
+  return resolved;
+}
+
+function assertReadableVideo(videoPath: string, statusCode = 409): void {
+  if (!videoPath || !PUBLISH_VIDEO_EXTENSIONS.has(path.extname(videoPath).toLowerCase())) {
+    throw new PublishSourceVerificationError('publish_source_video_invalid', 400, '发布来源必须绑定受支持的视频文件。');
+  }
+  try {
+    if (!fs.statSync(videoPath).isFile()) throw new Error('not_file');
+  } catch {
+    throw new PublishSourceVerificationError('publish_source_video_missing', statusCode, '已审核的视频产物不存在，请重新上传或生成后审批。');
+  }
+}
+
+export function currentPublishableVideoPaths(spec: Record<string, any>): string[] {
+  const automation = record(spec.automation);
+  if (text(automation.renderOutputPath)) return [normalizedFilePath(automation.renderOutputPath)].filter(Boolean);
+  const outputs = record(spec.languageRenderOutputs);
+  const current = Object.values(outputs).map(record)
+    .filter(item => text(item.status) === 'done' && text(item.path))
+    .map(item => normalizedFilePath(item.path)).filter(Boolean);
+  if (current.length) return [...new Set(current)];
+  return ['renderOutputPath', 'videoPath', 'outputPath']
+    .map(key => normalizedFilePath(spec[key])).filter(Boolean).slice(0, 1);
+}
+
+function projectTenant(project: StoredProject): string {
+  return text(project.tenant_id) || text(project.tenantId);
+}
+
+function assertProjectArtifact(project: StoredProject, sourceVideoPath: string): Record<string, any> {
+  const spec = record(project.spec);
+  if (!sourceVideoPath || !currentPublishableVideoPaths(spec).includes(sourceVideoPath)) {
+    throw new PublishSourceVerificationError(
+      'publish_source_artifact_stale',
+      409,
+      '当前排期绑定的成片已不是项目的当前产物，请重新审核后发布。',
+    );
+  }
+  return spec;
+}
+
+function assertDeliveryArtifact(tenantId: string, deliveryVideoPath: string, sourceVideoPath: string): void {
+  const controlledCopy = localPublishingVideo(tenantId, deliveryVideoPath);
+  if (deliveryVideoPath !== sourceVideoPath && !controlledCopy) {
+    throw new PublishSourceVerificationError('publish_delivery_artifact_uncontrolled', 400, '发布文件不是当前项目产物或本企业受控副本。');
+  }
+  assertReadableVideo(deliveryVideoPath, 409);
+}
+
+function digitalEmployeeClaim(input: {
+  tenantId: string;
+  project: StoredProject;
+  sourceVideoPath: string;
+  deliveryVideoPath: string;
+}): FrozenPublishSourceClaim {
+  const spec = assertProjectArtifact(input.project, input.sourceVideoPath);
+  const automation = record(spec.automation);
+  const quality = record(automation.quality);
+  if (text(input.project.status) !== 'ready_for_approval'
+    || automation.managedBy !== 'digital_employee'
+    || automation.stage !== 'completed'
+    || quality.passed !== true
+    || Number(quality.ruleVersion) !== CONTENT_SCRIPT_QUALITY_RULE_VERSION) {
+    throw new PublishSourceVerificationError('digital_employee_generation_stale', 409, '数字员工成片不再是当前已通过质检的版本，请重新质检和审批。');
+  }
+  const generationRecordId = contentAcceptanceHash(spec);
+  return {
+    schemaVersion: 1,
+    sourceKind: 'digital_employee_project',
+    projectId: input.project.id,
+    sourceVideoPath: input.sourceVideoPath,
+    deliveryVideoPath: input.deliveryVideoPath,
+    generationKind: 'digital_employee',
+    generationProvenance: 'digital_employee',
+    qualityStatus: 'passed',
+    publishable: true,
+    generationRecordId,
+    sourceFingerprint: fingerprint({
+      projectId: input.project.id,
+      projectStatus: text(input.project.status),
+      sourceVideoPath: input.sourceVideoPath,
+      deliveryVideoPath: input.deliveryVideoPath,
+      generationRecordId,
+      qualityRuleVersion: Number(quality.ruleVersion),
+    }),
+  };
+}
+
+function studioClaim(input: {
+  tenantId: string;
+  project: StoredProject;
+  sourceVideoPath: string;
+  deliveryVideoPath: string;
+  generation: unknown;
+}): FrozenPublishSourceClaim {
+  const spec = assertProjectArtifact(input.project, input.sourceVideoPath);
+  const verification = verifiedStudioGenerationFromSpec(spec, input.generation);
+  if (!verification.ok) {
+    throw new PublishSourceVerificationError(verification.code, 409, verification.message);
+  }
+  const generation = verification.metadata;
+  return {
+    schemaVersion: 1,
+    sourceKind: 'studio_project',
+    projectId: input.project.id,
+    sourceVideoPath: input.sourceVideoPath,
+    deliveryVideoPath: input.deliveryVideoPath,
+    ...generation,
+    sourceFingerprint: fingerprint({
+      projectId: input.project.id,
+      sourceVideoPath: input.sourceVideoPath,
+      deliveryVideoPath: input.deliveryVideoPath,
+      generation,
+    }),
+  };
+}
+
+export function projectPublishSourceClaim(input: {
+  tenantId: string;
+  project: StoredProject;
+  videoPath: string;
+  sourceVideoPath?: string;
+  generation?: unknown;
+  requireReadableVideo?: boolean;
+}): FrozenPublishSourceClaim {
+  if (projectTenant(input.project) && projectTenant(input.project) !== input.tenantId) {
+    throw new PublishSourceVerificationError('publish_source_project_not_found', 404, '当前企业的发布项目不存在。');
+  }
+  const sourceVideoPath = normalizedFilePath(input.sourceVideoPath || input.videoPath);
+  const deliveryVideoPath = normalizedFilePath(input.videoPath);
+  const spec = record(input.project.spec);
+  const claim = record(spec.automation).managedBy === 'digital_employee'
+    ? digitalEmployeeClaim({ ...input, sourceVideoPath, deliveryVideoPath })
+    : studioClaim({ ...input, sourceVideoPath, deliveryVideoPath, generation: input.generation });
+  if (input.requireReadableVideo !== false) assertDeliveryArtifact(input.tenantId, deliveryVideoPath, sourceVideoPath);
+  return claim;
+}
+
+function manualUploadClaim(tenantId: string, videoPathValue: unknown): FrozenPublishSourceClaim {
+  const videoPath = localPublishingVideo(tenantId, videoPathValue);
+  if (!videoPath || !path.basename(videoPath).startsWith('manual-')) {
+    throw new PublishSourceVerificationError('manual_upload_source_uncontrolled', 400, '手工发布必须重新选择并上传本企业的视频文件。');
+  }
+  assertReadableVideo(videoPath, 400);
+  const stat = fs.statSync(videoPath);
+  const generationRecordId = fingerprint({ path: videoPath, size: stat.size, mtimeMs: Math.floor(stat.mtimeMs) });
+  return {
+    schemaVersion: 1,
+    sourceKind: 'manual_upload',
+    projectId: '',
+    sourceVideoPath: videoPath,
+    deliveryVideoPath: videoPath,
+    generationKind: 'manual_upload',
+    generationProvenance: 'human_upload',
+    qualityStatus: 'not_applicable',
+    publishable: true,
+    generationRecordId,
+    sourceFingerprint: fingerprint({ tenantId, generationRecordId }),
+  };
+}
+
+function sameClaim(left: FrozenPublishSourceClaim, right: FrozenPublishSourceClaim): boolean {
+  return fingerprint(left) === fingerprint(right);
+}
+
+export async function freezePublishSourceClaim(
+  tenantId: string,
+  request: PublishSourceRequest,
+): Promise<FrozenPublishSourceClaim> {
+  if (request.videoUrl || !text(request.videoPath)) {
+    throw new PublishSourceVerificationError('publish_source_local_video_required', 400, '发布必须绑定当前项目成片或本企业手工上传的视频。');
+  }
+  const projectId = text(request.projectId);
+  if (!projectId) {
+    if (request.sourceKind !== 'manual_upload') {
+      throw new PublishSourceVerificationError('publish_source_required', 400, '请选择明确的项目产物或手工上传来源后再发布。');
+    }
+    return manualUploadClaim(tenantId, request.videoPath);
+  }
+  if (request.sourceKind && request.sourceKind !== 'project') {
+    throw new PublishSourceVerificationError('publish_source_kind_mismatch', 400, '项目产物不能伪装为手工上传来源。');
+  }
+  const project = await store.getById<StoredProject>('studio_projects', projectId);
+  if (!project || projectTenant(project) !== tenantId) {
+    throw new PublishSourceVerificationError('publish_source_project_not_found', 404, '当前企业的发布项目不存在。');
+  }
+  return projectPublishSourceClaim({
+    tenantId,
+    project,
+    videoPath: text(request.videoPath),
+    sourceVideoPath: text(request.sourceVideoPath),
+    generation: claimedStudioGeneration(request),
+  });
+}
+
+export async function verifyFrozenPublishSourceClaim(
+  tenantId: string,
+  claimValue: unknown,
+  deliveryVideoPathValue?: unknown,
+): Promise<FrozenPublishSourceClaim> {
+  const claim = record(claimValue) as unknown as FrozenPublishSourceClaim;
+  if (claim.schemaVersion !== 1) {
+    throw new PublishSourceVerificationError('publish_source_claim_missing', 409, '排期缺少冻结的发布来源，请重新审核。');
+  }
+  let current: FrozenPublishSourceClaim;
+  if (claim.sourceKind === 'manual_upload') {
+    current = manualUploadClaim(tenantId, claim.deliveryVideoPath);
+  } else {
+    const project = await store.getById<StoredProject>('studio_projects', text(claim.projectId));
+    if (!project || projectTenant(project) !== tenantId) {
+      throw new PublishSourceVerificationError('publish_source_project_not_found', 404, '排期绑定的项目已不存在或不属于当前企业。');
+    }
+    current = projectPublishSourceClaim({
+      tenantId,
+      project,
+      videoPath: text(claim.deliveryVideoPath),
+      sourceVideoPath: text(claim.sourceVideoPath),
+      generation: claim.sourceKind === 'studio_project' ? claim : undefined,
+    });
+  }
+  if (deliveryVideoPathValue !== undefined
+    && normalizedFilePath(deliveryVideoPathValue) !== text(claim.deliveryVideoPath)) {
+    throw new PublishSourceVerificationError('publish_delivery_artifact_stale', 409, '排期中的发布文件与已审核产物不一致，请重新审核。');
+  }
+  if (!sameClaim(current, claim)) {
+    throw new PublishSourceVerificationError('publish_source_claim_stale', 409, '项目、生成记录或视频产物已变化，请重新审核后发布。');
+  }
+  return current;
+}
+
+export function digitalEmployeePublishSourceClaim(
+  tenantId: string,
+  project: StoredProject,
+  videoPath: string,
+): FrozenPublishSourceClaim {
+  return projectPublishSourceClaim({ tenantId, project, videoPath, requireReadableVideo: false });
+}
+
+export function studioGenerationFromClaim(claim: FrozenPublishSourceClaim): StudioGenerationMetadata | null {
+  return claim.sourceKind === 'studio_project' ? claimedStudioGeneration(claim) : null;
+}

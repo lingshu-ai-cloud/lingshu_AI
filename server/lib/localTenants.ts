@@ -24,6 +24,7 @@ export interface LocalTenantRecord {
   registeredAt?: string;
   registeredEmail?: string;
   registrationInviteCode?: string;
+  [key: string]: unknown;
 }
 
 type LegacyLocalTenantRecord = LocalTenantRecord & { registeredPasswordCipher?: unknown };
@@ -94,6 +95,42 @@ export function getLocalTenant(tenantId: string): LocalTenantRecord | null {
   return readLocalTenants().find(tenant => tenant.id === tenantId) ?? null;
 }
 
+export function createLocalDataTenant(data: Record<string, unknown>): LocalTenantRecord {
+  const companyName = String(data.companyName || data.name || '').trim();
+  const contactName = String(data.contactName || data.contact || '').trim();
+  const now = new Date().toISOString();
+  const tenant = sanitizeLocalTenantRecord({
+    ...data,
+    id: String(data.id || `local_tenant_customer_${randomUUID().replaceAll('-', '')}`),
+    name: String(data.name || companyName),
+    companyName,
+    contactName,
+    contact: String(data.contact || contactName),
+    industry: String(data.industry || ''),
+    notes: String(data.notes || ''),
+    inviteCode: String(data.inviteCode || ''),
+    subscriptionStatus: String(data.subscriptionStatus || 'pending_delivery'),
+    subscriptionPlan: String(data.subscriptionPlan || 'delivery'),
+    subscriptionExpiresAt: typeof data.subscriptionExpiresAt === 'string' ? data.subscriptionExpiresAt : null,
+    createdAt: String(data.createdAt || data.created || now),
+  } as LegacyLocalTenantRecord);
+  writeLocalTenants([tenant, ...readLocalTenants().filter(item => item.id !== tenant.id)]);
+  return tenant;
+}
+
+export function updateLocalDataTenant(tenantId: string, data: Record<string, unknown>): boolean {
+  const tenants = readLocalTenants();
+  const index = tenants.findIndex(tenant => tenant.id === tenantId);
+  if (index < 0) return false;
+  tenants[index] = sanitizeLocalTenantRecord({
+    ...tenants[index],
+    ...data,
+    id: tenantId,
+  } as LegacyLocalTenantRecord);
+  writeLocalTenants(tenants);
+  return true;
+}
+
 export function clearLocalTenantRegisteredCredential(tenantId: string, email: string): boolean {
   const tenants = readStoredLocalTenants();
   const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -111,7 +148,13 @@ export function clearLocalTenantRegisteredCredential(tenantId: string, email: st
 export function findLocalTenantByInvite(inviteCode: string): LocalTenantRecord | null {
   const code = String(inviteCode || '').trim();
   if (!code) return null;
-  return readLocalTenants().find(tenant => tenant.inviteCode === code && !tenant.registeredAt) ?? null;
+  return readLocalTenants().find(tenant => {
+    const status = String(tenant.subscriptionStatus || '').trim().toLowerCase();
+    return tenant.inviteCode === code
+      && !tenant.registeredAt
+      && status !== 'provisioning_pending'
+      && status !== 'provisioning_failed';
+  }) ?? null;
 }
 
 export function findLocalTenantByRegistrationInvite(inviteCode: string): LocalTenantRecord | null {
@@ -127,24 +170,39 @@ export function createLocalInviteTenant(input: {
   notes?: string;
   inviteCode: string;
 }): LocalTenantRecord {
-  const companyName = String(input.companyName || '').trim();
-  const contactName = String(input.contactName || '').trim();
-  const tenant: LocalTenantRecord = {
-    id: `local_tenant_customer_${randomUUID().replaceAll('-', '')}`,
-    name: companyName,
-    companyName,
-    contactName,
-    contact: contactName,
-    industry: String(input.industry || '').trim(),
-    notes: String(input.notes || '').trim(),
-    inviteCode: String(input.inviteCode || '').trim(),
-    subscriptionStatus: 'pending_delivery',
-    subscriptionPlan: 'delivery',
-    subscriptionExpiresAt: null,
-    createdAt: new Date().toISOString(),
-  };
-  writeLocalTenants([tenant, ...readLocalTenants()]);
-  return tenant;
+  return createLocalDataTenant(input);
+}
+
+export function deleteLocalInviteTenant(tenantId: string): boolean {
+  const tenants = readLocalTenants();
+  const next = tenants.filter(tenant => tenant.id !== tenantId);
+  if (next.length === tenants.length) return false;
+  writeLocalTenants(next);
+  return true;
+}
+
+export function ensureLocalIdentityTenant(input: {
+  tenantId: string;
+  name: string;
+  accountType: 'trial' | 'admin';
+  email: string;
+  expiresAt?: string | null;
+}): LocalTenantRecord {
+  const current = getLocalTenant(input.tenantId);
+  if (current) return current;
+  const now = new Date().toISOString();
+  return createLocalDataTenant({
+    id: input.tenantId,
+    name: input.name,
+    companyName: input.name,
+    inviteCode: '',
+    subscriptionStatus: input.accountType === 'trial' ? 'trialing' : 'active',
+    subscriptionPlan: input.accountType,
+    subscriptionExpiresAt: input.expiresAt ?? null,
+    createdAt: now,
+    registeredAt: now,
+    registeredEmail: input.email,
+  });
 }
 
 export function promoteLocalTrialTenant(input: {

@@ -21,6 +21,11 @@ assert.equal(calls[1].body.optimization_goal, 'ENGAGED_VIEW');
 assert.equal(calls[1].body.billing_event, 'CPV');
 assert.equal(calls[1].body.budget_mode, 'BUDGET_MODE_TOTAL');
 assert.equal(calls[2].body.creatives[0].identity_type, 'TT_USER');
+let writeFences = 0;
+const guardedResult = await new TikTokExecutionAdapter('private-token', mock, async () => { writeFences += 1; })
+  .createPaused(plan, async () => undefined);
+assert.equal(guardedResult.adId, '3');
+assert.equal(writeFences, 3, 'every TikTok create mutation is fenced separately');
 let campaignStatus = 'DISABLE';
 const statusAdapter = new TikTokExecutionAdapter('private-token', (async (url: any, init: any) => {
   if (init.method === 'POST') { campaignStatus = JSON.parse(init.body).operation_status; return Response.json({ code: 0, data: {} }); }

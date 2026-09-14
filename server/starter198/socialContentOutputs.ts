@@ -34,6 +34,8 @@ import {
 } from './socialContentValidation.js';
 import { requireOwnedSocialFileRef } from './socialContentFiles.js';
 import { assertSocialTaskChildCapacity } from './socialContentLimits.js';
+import { store } from '../storage/index.js';
+import { verifiedStudioGenerationFromSpec } from '../lib/studioGenerationVerification.js';
 import {
   readSocialContentSourceCoverage,
   reconcileSocialContentTask,
@@ -51,6 +53,32 @@ import {
 
 const OUTPUT_EDITABLE_STATES = new Set(['producing', 'asset_review', 'attention']);
 const MAX_SOCIAL_DELIVERY_MANIFEST_BYTES = 2 * 1024 * 1024;
+
+async function assertStudioSocialArtifactGeneration(
+  tenantId: string,
+  kind: string,
+  contentValue: unknown,
+): Promise<void> {
+  const content = socialObject(socialJson(contentValue)) || {};
+  if (!/^studio_/i.test(socialText(content.sourceKey))) return;
+  const projectId = socialText(content.projectId);
+  const expectedKind = kind === 'image_post' ? 'poster' : 'script';
+  if (!projectId || socialText(content.generationKind) !== expectedKind) {
+    throw new SocialContentWorkflowError('social_artifact_generation_metadata_invalid', 409);
+  }
+  let project: Record<string, unknown> | null;
+  try {
+    project = await store.getById<Record<string, unknown>>('studio_projects', projectId);
+  } catch {
+    throw new SocialContentWorkflowError('social_artifact_generation_verification_unavailable', 503);
+  }
+  if (!project || socialText(project.tenant_id) !== tenantId) {
+    throw new SocialContentWorkflowError('social_artifact_generation_project_not_found', 404);
+  }
+  if (!verifiedStudioGenerationFromSpec(project.spec, content).ok) {
+    throw new SocialContentWorkflowError('social_artifact_generation_unverified', 409);
+  }
+}
 
 function nextVersion(value: unknown, code: string): string {
   const parsed = Number(value);
@@ -89,6 +117,7 @@ export async function createSocialContentArtifact(input: {
   trustedAgentOrigin?: boolean;
   now?: Date;
 }): Promise<{ artifact: SocialContentArtifact; task: SocialContentTaskDetail }> {
+  await assertStudioSocialArtifactGeneration(input.tenantId, input.value.kind, input.value.content);
   if (input.value.origin === 'agent' && !input.trustedAgentOrigin) {
     throw new SocialContentWorkflowError('social_artifact_agent_origin_forbidden', 403);
   }
@@ -231,6 +260,9 @@ export async function decideSocialContentArtifact(input: {
       if (!['review_required', 'changes_requested'].includes(socialText(artifact.status))) {
         throw new SocialContentWorkflowError('social_artifact_not_decidable', 409);
       }
+      if (input.value.decision === 'approved') {
+        await assertStudioSocialArtifactGeneration(input.tenantId, socialText(artifact.artifact_kind), artifact.content);
+      }
       const timestamp = (input.now ?? new Date()).toISOString();
       await input.repository.update(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, artifact.id, {
         status: input.value.decision,
@@ -283,6 +315,14 @@ export async function decideSocialContentArtifactBatch(input: {
         where: { artifact_id: item.artifactId, task_id: input.taskId },
         notFoundCode: 'social_artifact_not_found',
       })));
+
+      if (input.value.decision === 'approved') {
+        await Promise.all(records.map(record => assertStudioSocialArtifactGeneration(
+          input.tenantId,
+          socialText(record.artifact_kind),
+          record.content,
+        )));
+      }
 
       records.forEach((record, index) => {
         if (socialText(record.last_operation_id) === operationId) return;
@@ -360,6 +400,7 @@ export async function createSocialDeliveryPackage(input: {
         });
         const artifact = socialArtifact(record);
         if (artifact.status !== 'approved') throw new SocialContentWorkflowError('social_delivery_artifact_not_approved', 409);
+        await assertStudioSocialArtifactGeneration(input.tenantId, artifact.kind, artifact.content);
         const resolvedMedia = await resolveSocialArtifactMedia({
           repository: input.repository,
           tenantId: input.tenantId,

@@ -173,7 +173,8 @@ assert.match(materialAssets, /MATERIAL_ASSET_PREFIX = 'materials\/tenants'/, 'pr
 assert.match(materialAssets, /materialAssetTenantKey\(tenantId\)/, 'material object keys must derive their tenant segment from authenticated tenant data');
 const studio = read('server/routes/studio.ts');
 assert.match(studio, /materialAssetObjectKey\(tenantId, file\)/, 'material uploads must use an authenticated tenant COS prefix');
-assert.match(studio, /r2SignedGetUrl\(key, materialSignedUrlTtlSeconds\(\)\)/, 'private COS material reads must use short-lived signed URLs');
+assert.match(studio, /material\.objectKey[\s\S]*?privateStudioAssetUrl\('materials', tenantId/, 'private COS material reads must use the signed application route');
+assert.match(studio, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?r2GetObject\(tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'the private asset route must bind object reads to the authenticated tenant');
 assert.match(studio, /item\.id === req\.params\.id && item\.tenantId === tenantId/, 'material mutations must enforce tenant ownership');
 assert.match(studio, /where: \{ tenant_id: tenantId \}/, 'studio projects must be queried by authenticated tenant');
 assert.match(studio, /existing\.tenant_id !== tenantId/, 'studio project mutations must enforce tenant ownership');
@@ -195,7 +196,10 @@ const compose = read('docker-compose.yml');
 assert.doesNotMatch(compose, /pocketbase:[\s\S]*?ports:\s*\n\s*-\s*["']?8090/m, 'PocketBase must not publish port 8090');
 
 const setup = read('scripts/setup-pb.ts');
-assert.match(setup, /ensureWorkbenchAdmin\(token\)/, 'production setup must provision the workbench administrator');
+assert.doesNotMatch(setup, /WORKBENCH_ADMIN|ensureWorkbenchAdmin/, 'schema repair must not own application-account creation');
+const workbenchBootstrap = read('scripts/bootstrap-workbench-admin.mjs');
+assert.match(workbenchBootstrap, /role:\s*'super_admin'/, 'the one-time record bootstrap must provision the workbench administrator explicitly');
+assert.doesNotMatch(workbenchBootstrap, /\/api\/collections\/(?:\$\{[^}]+\}|[^/`'"?]+)(?:[`'"?]|$)(?!\/records)/, 'the workbench bootstrap must not mutate collection schemas');
 assert.match(read('server/lib/demoAccounts.ts'), /WORKBENCH_ADMIN_EMAIL/, 'workbench administrator must receive dashboard access');
 assert.match(read('Dockerfile.pocketbase'), /TARGETARCH/, 'PocketBase image must follow the server CPU architecture');
 assert.match(read('scripts/backup-production-data.sh'), /docker cp/, 'production backup must read the PocketBase Docker volume');

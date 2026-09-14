@@ -263,6 +263,36 @@ export function normalizePlatformCopies(
   return output;
 }
 
+/** Normalize only model-authored fields. Missing/repeated visible copy is a failure, never a local fallback. */
+export function normalizeVerifiedPlatformCopies(
+  raw: unknown,
+  platforms: PublishCopyPlatform[],
+  options: { currentCopy?: Partial<Record<PublishCopyPlatform, PlatformCopy>>; requireAlternative?: boolean } = {},
+): Record<string, PlatformCopy> {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const output: Record<string, PlatformCopy> = {};
+  for (const platform of platforms) {
+    const candidate = cleanPlatformCopy(source[platform]);
+    if (!visibleCopyFingerprint(platform, candidate)) throw new Error(`missing_${platform}_copy`);
+    if (options.requireAlternative
+      && visibleCopyFingerprint(platform, candidate) === visibleCopyFingerprint(platform, options.currentCopy?.[platform])) {
+      throw new Error(`unchanged_${platform}_copy`);
+    }
+    output[platform] = candidate;
+  }
+  return output;
+}
+
+export function platformCopiesAuditText(value: Record<string, PlatformCopy>): string {
+  return Object.entries(value).flatMap(([platform, copy]) => [
+    `platform=${platform}`,
+    ...STRING_FIELDS.map(field => copy[field]).filter((item): item is string => Boolean(item)),
+    ...ARRAY_FIELDS.flatMap(field => copy[field] || []),
+  ]).join('\n');
+}
+
 export function sanitizePublishCopyPlatforms(value: unknown): PublishCopyPlatform[] {
   if (!Array.isArray(value)) return [];
   const allowed = new Set<string>(PUBLISH_COPY_PLATFORMS);

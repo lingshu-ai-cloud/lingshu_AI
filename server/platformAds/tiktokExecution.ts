@@ -4,8 +4,9 @@ import type { AdConnection } from './connections.js';
 import { AdProviderError } from './metaAdapter.js';
 import { TikTokExecutionAdapter, validateTikTokVideoPlan, type TikTokVideoPlan, type TikTokResources } from './tiktokExecutionAdapter.js';
 import type { AdExecution } from './execution.js';
+import type { PlatformAdTaskLeaseGuard } from './taskLock.js';
 /** Called only while the common task lock is held and duplicate/unknown checks passed. */
-export async function executeTikTokWithinLock(tenantId: string, task: PlatformAdTask, connection: AdConnection, token: string, input: Record<string, unknown>, mode: string, receipts: Omit<AdExecution, 'tenant_id'>[]) {
+export async function executeTikTokWithinLock(tenantId: string, task: PlatformAdTask, connection: AdConnection, token: string, input: Record<string, unknown>, mode: string, receipts: Omit<AdExecution, 'tenant_id'>[], leaseGuard: PlatformAdTaskLeaseGuard) {
   if (mode !== 'manual' || task.managementMode !== 'manual') throw new AdProviderError('TikTok 当前支持人工执行，请先人工接管；自动与审批执行尚未开放', 'NOT_SUPPORTED');
   if (connection.status !== 'connected' || connection.currency !== 'USD' || task.currency !== 'USD') throw new AdProviderError('TikTok 需有效 USD 广告账户', 'AUTH_REQUIRED');
   const action = String(input.action);
@@ -21,12 +22,13 @@ export async function executeTikTokWithinLock(tenantId: string, task: PlatformAd
   const previous = receipts.find(item => item.action === 'create' && item.connectionId === connection.id && item.resourceId === resourceId && item.status === 'VERIFIED');
   const existing = previous?.result as TikTokResources | undefined;
   if (action !== 'create' && (!existing?.campaignId || !existing.adgroupId || !existing.adId)) throw new AdProviderError('TikTok 资源未关联到此计划', 'RESOURCE_MISMATCH');
-  const adapter = new TikTokExecutionAdapter(token);
+  const adapter = new TikTokExecutionAdapter(token, fetch, () => leaseGuard.beforeEffect());
   if (action === 'activate' || action === 'resume') {
     if (task.configuration.endsAt && Date.parse(task.configuration.endsAt) <= Date.now()) throw new AdProviderError('投放排期已结束', 'INVALID_INPUT');
     const actual = await adapter.read(connection.accountId, 'campaign', existing!.campaignId);
     if (actual.budget_mode !== 'BUDGET_MODE_TOTAL' || !Number(actual.budget) || Number(actual.budget) > task.budget) throw new AdProviderError('TikTok 平台预算超出任务预算', 'BUDGET_LIMIT');
   }
+  await leaseGuard.beforeEffect();
   const receipt = await store.create<AdExecution>('platform_ad_executions', { tenant_id: tenantId, taskId: task.id, connectionId: connection.id, requestId: input.requestId, action, resourceId, status: 'EXECUTING', createdAt: new Date().toISOString() });
   if (!receipt) throw new AdProviderError('无法持久化执行请求', 'STORAGE_ERROR');
   let accepted = false;

@@ -38,7 +38,10 @@ process.env.WORKBENCH_ADMIN_EMAIL = '';
 process.env.ADMIN_DASHBOARD_EMAILS = '';
 process.env.PLUGINS_DATA_FILE = pluginsFile;
 
-const { pluginsRouter } = await import('../routes/plugins.js');
+const [{ pluginsRouter }, { issueLocalIdentityTokenForTest }] = await Promise.all([
+  import('../routes/plugins.js'),
+  import('../auth/localIdentity.js'),
+]);
 const app = express();
 app.use(express.json());
 app.use('/plugins', pluginsRouter);
@@ -48,7 +51,13 @@ const address = server.address();
 if (!address || typeof address === 'string') throw new Error('test server did not bind a TCP port');
 const origin = `http://127.0.0.1:${address.port}`;
 
-const localToken = (claims: Record<string, string>) => `local-demo.${Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url')}`;
+const localToken = (claims: Record<string, string>) => issueLocalIdentityTokenForTest({
+  userId: claims.userId,
+  tenantId: claims.tenantId,
+  email: claims.email,
+  accountType: claims.accountType,
+  role: claims.role,
+});
 const tenantToken = localToken({
   userId: 'plugin-tenant-member',
   tenantId: 'plugin-customer-tenant',

@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import { createBrowserReadSession } from './browserReadSession.js';
 import type { AgentProductionTarget } from '../../src/lib/agentProductionSession.js';
+import type { DataAuthority } from '../storage/dataAuthority.js';
 export interface BrowserProductionTarget extends AgentProductionTarget { userId: string; revision?: string }
 
-export interface BrowserScope { tenantId: string; runId: string; taskId: string }
+export interface BrowserScope { tenantId: string; runId: string; taskId: string; dataAuthority: DataAuthority }
 export interface BrowserFrame {
   type: 'frame'; image: string; sequence: number; capturedAt: string;
   width: number; height: number; executing: boolean;
@@ -23,7 +24,7 @@ interface Session {
   watchTimer?: ReturnType<typeof setInterval>;
   flushTimer?: ReturnType<typeof setTimeout>; queuedFrame?: { image: string; capturedAt: string };
 }
-const keyFor = (scope: BrowserScope) => JSON.stringify([scope.tenantId, scope.runId, scope.taskId]);
+const keyFor = (scope: BrowserScope) => JSON.stringify([scope.tenantId, scope.runId, scope.taskId, scope.dataAuthority]);
 
 export function browserExecutionEnabled() { return process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION === 'true'; }
 
@@ -71,7 +72,12 @@ export class AgentBrowserSessions {
     const context = await browser.newContext({ viewport: { width: 1100, height: 700 }, deviceScaleFactor: 1, acceptDownloads: false, serviceWorkers: 'block' });
     try {
       const target = await read();
-      const credential = createBrowserReadSession({ tenantId: scope.tenantId, userId: target.userId, role: target.link.page === 'conversion' ? 'customer_service' : target.link.page === 'enterprise' ? 'admin' : 'social_operator' });
+      const credential = createBrowserReadSession({
+        tenantId: scope.tenantId,
+        userId: target.userId,
+        role: target.link.page === 'conversion' ? 'customer_service' : target.link.page === 'enterprise' ? 'admin' : 'social_operator',
+        dataAuthority: scope.dataAuthority,
+      });
       context.on('close', credential.revoke);
       const appOrigin = new URL(this.options.appOrigin || process.env.AGENT_BROWSER_APP_ORIGIN || `http://127.0.0.1:${process.env.PORT || 8790}`).origin;
       await context.route('**/*', route => {

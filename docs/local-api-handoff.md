@@ -64,10 +64,11 @@ openssl rand -base64 32
 ## 交接前检查
 
 ```bash
-npm install
-npm run lint
-npm run dev:server
-npm run dev
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run lint
+pnpm run dev:server
+pnpm run dev
 ```
 
 启动后分别验证登录、模型分析、Apify 抓取、配音和视频生成。任何未配置能力都应明确显示“未配置”，不要静默使用 Mock 结果冒充真实调用。

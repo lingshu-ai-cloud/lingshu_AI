@@ -18,9 +18,43 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { CalendarPost } from './publishing/CalendarPlanner';
-import type { PublishDeliveryMode } from './publishing/schedulePolicy';
 import type { ConversationContext, Page, RestoreSignal, KickoffSignal, AgentAction } from '../App';
 import { authHeader } from '../lib/auth';
+import {
+  PUBLISH_STATUS_META,
+  PUBLISH_QUEUE_STORAGE_KEY,
+  browserVideoUrl,
+  classifyDirectPublishResponse,
+  createPublishItem,
+  createPublishItems,
+  dateTimeLocalValue,
+  mergePublishItems,
+  nextScheduleValue,
+  publishItemId,
+  publishSourceRequestFields,
+  publishStorageKey,
+  readStoredPublishDraft,
+  readStoredPublishQueue,
+  studioGenerationIsVerified,
+  titleFromVideoPath,
+  type CopyAuditRecord,
+  type DeliveryMode,
+  type DirectPublishResponse,
+  type PlatformCopy,
+  type PublishDraft,
+  type PublishItemStatus,
+  type PublishPlatform,
+  type PublishQueueItem,
+} from '../lib/publishQueueState';
+export {
+  PUBLISH_STATUS_META,
+  classifyDirectPublishResponse,
+  normalizeStoredPublishDraft,
+  normalizeStoredPublishQueueItem,
+  publishSourceRequestFields,
+  publishStorageKey,
+  studioGenerationIsVerified,
+} from '../lib/publishQueueState';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
@@ -35,7 +69,6 @@ const AccountActivity = lazy(() => import('./AccountActivity'));
 const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(module => ({ default: module.CalendarPlanner })));
 
 type ViewMode = TrafficViewMode;
-type PublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
 
 export type DigitalEmployeeWorkflowContext = {
   runId: string;
@@ -96,23 +129,6 @@ export function consumeDigitalEmployeeWorkflowContext(): DigitalEmployeeWorkflow
   }
 }
 
-type PublishDraftItem = {
-  videoPath?: string;
-  previewUrl?: string;
-  title: string;
-  description: string;
-  ratio?: string;
-  sourceProjectId?: string;
-  platform?: PublishPlatform;
-  workflowRunId?: string;
-  workflowTaskId?: string;
-  workflowTaskKey?: string;
-};
-
-type PublishDraft = PublishDraftItem & {
-  items?: PublishDraftItem[];
-};
-
 type PublishAccount = {
   id: string;
   platform: PublishPlatform;
@@ -120,44 +136,6 @@ type PublishAccount = {
   handle?: string;
   status: 'connected' | 'error' | 'expired';
   avatarUrl?: string;
-};
-
-type PlatformCopy = {
-  title?: string;
-  description?: string;
-  caption?: string;
-  text?: string;
-  tags?: string[];
-  hashtags?: string[];
-  firstComment?: string;
-};
-
-type PublishItemStatus = 'draft' | 'ready' | 'publishing' | 'scheduled' | 'published' | 'partial' | 'failed';
-type DeliveryMode = PublishDeliveryMode;
-
-type PublishQueueItem = {
-  id: string;
-  selected: boolean;
-  videoPath: string;
-  previewUrl?: string;
-  title: string;
-  description: string;
-  ratio?: string;
-  sourceProjectId?: string;
-  sourcePlatform?: PublishPlatform;
-  workflowRunId?: string;
-  workflowTaskId?: string;
-  workflowTaskKey?: string;
-  targetAccountIds: string[];
-  platformCopy: Record<string, PlatformCopy>;
-  firstComment: string;
-  trackWaLink: boolean;
-  deliveryMode: DeliveryMode;
-  scheduledAt: string;
-  calendarPostIds?: string[];
-  status: PublishItemStatus;
-  completedTargets: number;
-  error?: string;
 };
 
 interface Props {
@@ -222,256 +200,6 @@ function platformTitle(platform: PublishPlatform, copy?: PlatformCopy, fallback 
   if (platform === 'youtube') return copy?.title || fallback;
   return fallback;
 }
-
-function publishItemId() {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-const PUBLISH_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'instagram', 'facebook']);
-const PUBLISH_ITEM_STATUSES = new Set<PublishItemStatus>(['draft', 'ready', 'publishing', 'scheduled', 'published', 'partial', 'failed']);
-const PUBLISH_DELIVERY_MODES = new Set<DeliveryMode>(['now', 'flexible', 'schedule']);
-
-function storedString(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function storedOptionalString(value: unknown): string | undefined {
-  const normalized = storedString(value);
-  return normalized || undefined;
-}
-
-function storedStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
-    : [];
-}
-
-function storedPlatform(value: unknown): PublishPlatform | undefined {
-  return typeof value === 'string' && PUBLISH_PLATFORMS.has(value as PublishPlatform)
-    ? value as PublishPlatform
-    : undefined;
-}
-
-function normalizeStoredPlatformCopy(value: unknown): Record<string, PlatformCopy> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([platform, rawCopy]) => {
-    if (!rawCopy || typeof rawCopy !== 'object' || Array.isArray(rawCopy)) return [];
-    const copy = rawCopy as Record<string, unknown>;
-    return [[platform, {
-      title: storedOptionalString(copy.title),
-      description: storedOptionalString(copy.description),
-      caption: storedOptionalString(copy.caption),
-      text: storedOptionalString(copy.text),
-      tags: storedStringArray(copy.tags),
-      hashtags: storedStringArray(copy.hashtags),
-      firstComment: storedOptionalString(copy.firstComment),
-    } satisfies PlatformCopy]];
-  }));
-}
-
-export function normalizeStoredPublishDraft(value: unknown): PublishDraft | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const normalizeItem = (item: unknown): PublishDraftItem | null => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-    const record = item as Record<string, unknown>;
-    return {
-      videoPath: storedOptionalString(record.videoPath),
-      previewUrl: storedOptionalString(record.previewUrl),
-      title: storedString(record.title),
-      description: storedString(record.description),
-      ratio: storedOptionalString(record.ratio),
-      sourceProjectId: storedOptionalString(record.sourceProjectId),
-      platform: storedPlatform(record.platform),
-      workflowRunId: storedOptionalString(record.workflowRunId),
-      workflowTaskId: storedOptionalString(record.workflowTaskId),
-      workflowTaskKey: storedOptionalString(record.workflowTaskKey),
-    };
-  };
-  const base = normalizeItem(raw);
-  if (!base) return null;
-  const items = Array.isArray(raw.items)
-    ? raw.items.map(normalizeItem).filter((item): item is PublishDraftItem => Boolean(item))
-    : [];
-  return items.length ? { ...base, items } : base;
-}
-
-export function normalizeStoredPublishQueueItem(value: unknown): PublishQueueItem | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const id = storedString(raw.id).trim();
-  if (!id) return null;
-  const status = typeof raw.status === 'string' && PUBLISH_ITEM_STATUSES.has(raw.status as PublishItemStatus)
-    ? raw.status as PublishItemStatus
-    : 'draft';
-  const deliveryMode = typeof raw.deliveryMode === 'string' && PUBLISH_DELIVERY_MODES.has(raw.deliveryMode as DeliveryMode)
-    ? raw.deliveryMode as DeliveryMode
-    : 'now';
-  const completedTargets = Number(raw.completedTargets);
-  return {
-    id,
-    selected: raw.selected === true,
-    videoPath: storedString(raw.videoPath),
-    previewUrl: storedOptionalString(raw.previewUrl),
-    title: storedString(raw.title),
-    description: storedString(raw.description),
-    ratio: storedOptionalString(raw.ratio),
-    sourceProjectId: storedOptionalString(raw.sourceProjectId),
-    sourcePlatform: storedPlatform(raw.sourcePlatform),
-    workflowRunId: storedOptionalString(raw.workflowRunId),
-    workflowTaskId: storedOptionalString(raw.workflowTaskId),
-    workflowTaskKey: storedOptionalString(raw.workflowTaskKey),
-    targetAccountIds: storedStringArray(raw.targetAccountIds),
-    platformCopy: normalizeStoredPlatformCopy(raw.platformCopy),
-    firstComment: storedString(raw.firstComment),
-    trackWaLink: raw.trackWaLink !== false,
-    deliveryMode,
-    scheduledAt: storedString(raw.scheduledAt),
-    calendarPostIds: storedStringArray(raw.calendarPostIds),
-    status,
-    completedTargets: Number.isFinite(completedTargets) ? Math.max(0, completedTargets) : 0,
-    error: storedOptionalString(raw.error),
-  };
-}
-
-function titleFromVideoPath(videoPath: string) {
-  const filename = videoPath.trim().split(/[\\/]/).pop() || '';
-  return filename.replace(/\.(mp4|mov|webm|mkv|avi)$/i, '') || '未命名视频';
-}
-
-function browserVideoUrl(value: string | undefined): string {
-  const candidate = String(value || '').trim();
-  if (/^(?:https?:\/\/|blob:|data:video\/)/i.test(candidate)) return candidate;
-  if (/^\/(?:api\/|media\/|covers\/|generated\/)/i.test(candidate)) return candidate;
-  return '';
-}
-
-function createPublishItem(
-  draft?: PublishDraftItem | null,
-  targetAccountIds: string[] = [],
-  workflowContext?: DigitalEmployeeWorkflowContext | null,
-): PublishQueueItem {
-  const sourcePlatform = draft?.platform;
-  const videoPath = storedString(draft?.videoPath);
-  const title = storedString(draft?.title);
-  const description = storedString(draft?.description);
-  const initialCopy: Record<string, PlatformCopy> = sourcePlatform
-    ? {
-      [sourcePlatform]: sourcePlatform === 'youtube'
-        ? { title, description }
-        : sourcePlatform === 'facebook'
-          ? { text: description }
-          : { caption: description },
-    }
-    : {};
-  return {
-    id: publishItemId(),
-    selected: Boolean(videoPath.trim()),
-    videoPath,
-    previewUrl: storedOptionalString(draft?.previewUrl) || browserVideoUrl(videoPath),
-    title,
-    description,
-    ratio: draft?.ratio,
-    sourceProjectId: draft?.sourceProjectId,
-    sourcePlatform,
-    workflowRunId: draft?.workflowRunId || workflowContext?.runId,
-    workflowTaskId: draft?.workflowTaskId || workflowContext?.taskId,
-    workflowTaskKey: draft?.workflowTaskKey || workflowContext?.taskKey,
-    targetAccountIds,
-    platformCopy: initialCopy,
-    firstComment: '',
-    trackWaLink: true,
-    deliveryMode: 'now',
-    scheduledAt: '',
-    status: 'draft',
-    completedTargets: 0,
-  };
-}
-
-function expandPublishDraft(draft?: PublishDraft | null): PublishDraftItem[] {
-  if (!draft) return [];
-  const { items, ...base } = draft;
-  if (!Array.isArray(items) || !items.length) return [base];
-  return items.map(item => ({ ...base, ...item }));
-}
-
-function createPublishItems(
-  draft?: PublishDraft | null,
-  targetAccountIds: string[] = [],
-  workflowContext?: DigitalEmployeeWorkflowContext | null,
-): PublishQueueItem[] {
-  const drafts = expandPublishDraft(draft).filter(item => Boolean(item.videoPath?.trim()));
-  return drafts.length
-    ? drafts.map(item => createPublishItem(item, targetAccountIds, workflowContext))
-    : draft ? [] : [createPublishItem(null, targetAccountIds, workflowContext)];
-}
-
-function mergePublishItems(previous: PublishQueueItem[], additions: PublishQueueItem[]): PublishQueueItem[] {
-  if (!additions.length) return previous;
-  const onlyBlank = previous.length === 1 && !previous[0].videoPath.trim() && !previous[0].title.trim();
-  const replacementProjectIds = new Set(additions.map(item => item.sourceProjectId).filter(Boolean));
-  const base = onlyBlank
-    ? []
-    : previous.filter(item => !item.sourceProjectId || !replacementProjectIds.has(item.sourceProjectId));
-  const existingKeys = new Set(base.map(item => item.videoPath.trim() || item.title.trim()).filter(Boolean));
-  const unique = additions.filter(item => {
-    const key = item.videoPath.trim() || item.title.trim();
-    if (!key || existingKeys.has(key)) return false;
-    existingKeys.add(key);
-    return true;
-  });
-  return unique.length ? [...base, ...unique] : previous;
-}
-
-function dateTimeLocalValue(date: Date): string {
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-
-function nextScheduleValue(): string {
-  const next = new Date(Date.now() + 60 * 60_000);
-  next.setMinutes(next.getMinutes() < 30 ? 30 : 0, 0, 0);
-  if (next.getMinutes() === 0) next.setHours(next.getHours() + 1);
-  return dateTimeLocalValue(next);
-}
-
-export function publishStorageKey(base: string, storageScope?: string): string {
-  const scope = String(storageScope || '').trim();
-  return scope ? `${base}:${encodeURIComponent(scope)}` : base;
-}
-
-function readStoredPublishDraft(storageScope?: string): PublishDraft | null {
-  try {
-    return normalizeStoredPublishDraft(JSON.parse(localStorage.getItem(publishStorageKey('ow_publish_draft', storageScope)) || 'null'));
-  } catch {
-    return null;
-  }
-}
-
-const PUBLISH_QUEUE_STORAGE_KEY = 'ow_publish_queue';
-
-function readStoredPublishQueue(storageScope?: string): PublishQueueItem[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(publishStorageKey(PUBLISH_QUEUE_STORAGE_KEY, storageScope)) || '[]');
-    return Array.isArray(parsed)
-      ? parsed.map(normalizeStoredPublishQueueItem).filter((item): item is PublishQueueItem => Boolean(item))
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-const PUBLISH_STATUS_META: Record<PublishItemStatus, { label: string; className: string }> = {
-  draft: { label: '待配置', className: 'bg-slate-100 text-slate-600' },
-  ready: { label: '待发布', className: 'bg-emerald-50 text-emerald-700' },
-  publishing: { label: '发布中', className: 'bg-sky-50 text-sky-700' },
-  scheduled: { label: '已排期', className: 'bg-violet-50 text-violet-700' },
-  published: { label: '已完成', className: 'bg-emerald-50 text-emerald-700' },
-  partial: { label: '部分失败', className: 'bg-amber-50 text-amber-700' },
-  failed: { label: '发布失败', className: 'bg-red-50 text-red-700' },
-};
 
 export default function TrafficPage({
   onNavigate,
@@ -810,6 +538,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     (item.deliveryMode === 'now' || Boolean(item.scheduledAt)) &&
     item.videoPath.trim() &&
     item.title.trim() &&
+    (!item.sourceProjectId || studioGenerationIsVerified(item)) &&
     item.targetAccountIds.some(id => connectedAccountIds.has(id)) &&
     ['ready', 'partial', 'failed'].includes(item.status)
   ));
@@ -822,7 +551,17 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   );
 
   const updateItem = (id: string, patch: Partial<PublishQueueItem>) => {
-    setItems(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item));
+    setItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      if (item.status === 'provider_processing' && patch.status === 'draft') return item;
+      const copyChanged = ['title', 'description', 'platformCopy', 'firstComment'].some(key => key in patch);
+      return {
+        ...item,
+        ...(patch.status === 'draft' ? { deliveryResults: {}, completedTargets: 0 } : {}),
+        ...(copyChanged ? { copyAudit: undefined } : {}),
+        ...patch,
+      };
+    }));
   };
 
   useEffect(() => {
@@ -886,10 +625,15 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
   const saveCurrentContent = async () => {
     if (!activeItem) return;
+    if (activeItem.status === 'provider_processing') { setError('平台仍在处理这条发布，请等待最终回执后再创建新版本。'); return; }
     const targets = connectedAccounts.filter(account => activeItem.targetAccountIds.includes(account.id));
     if (!activeItem.videoPath.trim()) { setError('请先上传视频'); return; }
     if (!activeItem.title.trim()) { setError('请填写视频标题'); return; }
     if (!activeItem.description.trim()) { setError('请填写发布文案'); return; }
+    if (activeItem.sourceProjectId && !studioGenerationIsVerified(activeItem)) {
+      setError('当前 Studio 作品缺少已通过的 AI 来源、质量和可发布记录，请返回内容创作重新审核。');
+      return;
+    }
     if (activeItem.calendarPostIds?.length) {
       if (!targets.length) { setError('日历内容需要至少选择一个发布平台账号'); return; }
       const calendarPlatform = activeItem.sourcePlatform || selectedPlatforms[0];
@@ -1146,7 +890,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       setItems(previous => previous.map(item => {
         const video = imported.get(item.videoPath.trim());
         if (!video) return item;
-        if (video.videoPath) return { ...item, videoPath: video.videoPath, previewUrl: video.previewUrl, selected: true, error: undefined };
+        if (video.videoPath) return { ...item, sourceVideoPath: item.sourceVideoPath || item.videoPath, videoPath: video.videoPath, previewUrl: video.previewUrl, selected: true, error: undefined };
         return { ...item, videoPath: '', previewUrl: undefined, selected: false, error: '原成片文件已失效，请返回内容创作重新生成此版本。' };
       }));
     }).catch(importError => {
@@ -1180,7 +924,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
   const applyContentToAll = () => {
     if (!activeItem) return;
-    const lockedStatuses: PublishItemStatus[] = ['publishing', 'scheduled', 'published'];
+    const lockedStatuses: PublishItemStatus[] = ['publishing', 'provider_processing', 'scheduled', 'published'];
     const targetIds = new Set(
       items
         .filter(item => item.id !== activeItem.id && !lockedStatuses.includes(item.status))
@@ -1289,6 +1033,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
   const adaptCopy = async (platform?: PublishPlatform) => {
     if (!activeItem || adaptingTarget) return;
+    if (activeItem.status === 'provider_processing') {
+      setError('平台仍在处理这条发布，请等待最终回执后再创建新版本。');
+      return;
+    }
     if (!activeItem.title.trim() && !activeItem.description.trim()) {
       setError('请先在“通用内容”中填写作品标题或发布配文');
       return;
@@ -1300,7 +1048,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setError('');
     setNotice('');
     try {
-      const data = await fetchJson<{ copy: Record<string, PlatformCopy>; source?: 'ai' | 'fallback' }>('/api/overseas/publishing/adapt-copy', {
+      const data = await fetchJson<{ ok: boolean; copy: Record<string, PlatformCopy>; source?: string; provenance?: string; qualityStatus?: string; publishable?: boolean; audit?: CopyAuditRecord }>('/api/overseas/publishing/adapt-copy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1309,14 +1057,20 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
           platforms,
           language: 'English',
           mode,
+          projectId: requestItem.sourceProjectId,
           currentCopy: Object.fromEntries(platforms.map(target => [target, requestItem.platformCopy[target] || {}])),
         }),
       });
+      if (data.ok !== true || data.source !== 'ai' || data.provenance !== 'ai'
+        || data.qualityStatus !== 'passed' || data.publishable !== true || !data.audit) {
+        throw new Error('平台文案未返回可审计的 AI 事实校验结果，原内容已保留。');
+      }
       const first = platforms[0];
       setItems(previous => previous.map(item => item.id === requestItem.id ? {
         ...item,
         platformCopy: { ...item.platformCopy, ...data.copy },
         firstComment: data.copy[first]?.firstComment || item.firstComment,
+        copyAudit: data.audit,
         status: 'draft',
         error: undefined,
       } : item));
@@ -1350,13 +1104,14 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setNotice('');
     setError('');
     let successfulTargets = 0;
+    let processingTargets = 0;
     let scheduledTargets = 0;
     let failedTargets = 0;
     let skippedItems = 0;
 
     for (const item of items) {
       if (!item.selected) continue;
-      if (item.status === 'published' || item.status === 'scheduled') continue;
+      if (item.status === 'published' || item.status === 'provider_processing' || item.status === 'scheduled') continue;
       if (item.deliveryMode === 'flexible') continue;
       const targets = connectedAccounts.filter(account => item.targetAccountIds.includes(account.id));
       if (!item.videoPath.trim() || !item.title.trim() || !targets.length) {
@@ -1403,6 +1158,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 title: platformTitle(platform, copy, item.title.trim()),
                 description: platformBody(platform, copy, item.description.trim()),
                 contentId: item.sourceProjectId,
+                ...publishSourceRequestFields(item),
                 firstComment: copy?.firstComment || item.firstComment,
                 videoPath: item.videoPath.trim(),
                 targetAccountIds: platformAccounts.map(account => account.id),
@@ -1432,6 +1188,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       updateItem(item.id, { status: 'publishing', completedTargets: 0, error: undefined });
       const itemFailures: string[] = [];
       let itemSuccesses = 0;
+      let itemProcessing = 0;
+      const deliveryResults = { ...item.deliveryResults };
       for (const account of targets) {
         const meta = PLATFORM_META[account.platform];
         const copy = item.platformCopy[account.platform];
@@ -1439,7 +1197,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
           const url = account.platform === 'youtube'
             ? `/api/overseas/youtube/accounts/${account.id}/upload`
             : `/api/overseas/social/accounts/${account.id}/upload`;
-          const publishResult = await fetchJson<{ ok: boolean; video?: unknown; tracking?: unknown }>(url, {
+          const publishResult = await fetchJson<DirectPublishResponse>(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1450,9 +1208,15 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               trackWaLink: item.trackWaLink,
               privacyStatus: 'public',
               madeForKids: false,
+              ...publishSourceRequestFields(item),
             }),
           });
-          if (item.sourceProjectId) {
+          const delivery = classifyDirectPublishResponse(account.platform, publishResult);
+          deliveryResults[account.id] = delivery;
+          if (delivery.deliveryStatus === 'provider_accepted') {
+            itemProcessing += 1;
+            processingTargets += 1;
+          } else if (item.sourceProjectId) {
             await fetch('/api/overseas/studio/publish-links', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -1462,23 +1226,39 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 platform: account.platform,
                 title: item.title.trim(),
                 publishResult,
+                generationKind: item.generationKind,
+                generationProvenance: item.generationProvenance,
+                qualityStatus: item.qualityStatus,
+                publishable: item.publishable,
+                generationRecordId: item.generationRecordId,
               }),
             });
+            itemSuccesses += 1;
+            successfulTargets += 1;
+          } else {
+            itemSuccesses += 1;
+            successfulTargets += 1;
           }
-          itemSuccesses += 1;
-          successfulTargets += 1;
         } catch (e) {
           failedTargets += 1;
           itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}`);
         }
-        updateItem(item.id, { completedTargets: itemSuccesses + itemFailures.length });
+        updateItem(item.id, {
+          completedTargets: itemSuccesses + itemProcessing + itemFailures.length,
+          deliveryResults,
+        });
       }
       updateItem(item.id, {
-        status: itemFailures.length ? (itemSuccesses ? 'partial' : 'failed') : 'published',
+        status: itemProcessing
+          ? (itemFailures.length ? 'partial' : 'provider_processing')
+          : itemFailures.length
+            ? (itemSuccesses ? 'partial' : 'failed')
+            : 'published',
         completedTargets: targets.length,
+        deliveryResults,
         error: itemFailures.length ? itemFailures.join('；') : undefined,
       });
-      if (!itemFailures.length && itemSuccesses > 0 && item.calendarPostIds?.length) {
+      if (!itemFailures.length && !itemProcessing && itemSuccesses > 0 && item.calendarPostIds?.length) {
         await Promise.all(item.calendarPostIds.map(postId =>
           fetch(`/api/overseas/publishing/calendar/${postId}`, {
             method: 'DELETE',
@@ -1490,8 +1270,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setPublishing(false);
     setCalendarRefreshKey(value => value + 1);
     if (failedTargets || skippedItems) setError(`${failedTargets} 个发布目标失败，${skippedItems} 条视频配置不完整；可在队列中查看并修改。`);
-    if (successfulTargets) setNotice(`已完成 ${successfulTargets} 个账号发布，每条发布均生成独立追踪码。`);
-    if (scheduledTargets) setNotice(previous => `${previous ? `${previous} ` : ''}已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在设定时间自动发布到已选账号。`);
+    const notices: string[] = [];
+    if (successfulTargets) notices.push(`已确认 ${successfulTargets} 个账号完成发布，每条发布均生成独立追踪码。`);
+    if (processingTargets) notices.push(`${processingTargets} 个账号已由平台受理，正在处理；收到最终公开视频回执前不会标记为已发布。`);
+    if (scheduledTargets) notices.push(`已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在设定时间自动发布到已选账号。`);
+    if (notices.length) setNotice(notices.join(' '));
   };
 
   const previewRatio = activeItem?.ratio || (selectedPlatforms.length > 0 && selectedPlatforms.every(platform => platform === 'youtube') ? '16:9' : '9:16');
@@ -1559,7 +1342,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 <button
                   type="button"
                   onClick={applyContentToAll}
-                  disabled={!activeItem || items.every(item => item.id === activeItem.id || ['publishing', 'scheduled', 'published'].includes(item.status))}
+                  disabled={!activeItem || items.every(item => item.id === activeItem.id || ['publishing', 'provider_processing', 'scheduled', 'published'].includes(item.status))}
                   title="复制当前视频的标题、发布配文、分平台文案、首评和询盘追踪设置；不会覆盖视频文件、平台账号和发布时间"
                   className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-accent/30 bg-accent-glow px-3 text-xs font-bold text-accent hover:border-accent disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -1714,7 +1497,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                   <button
                     type="button"
                     onClick={() => void saveCurrentContent()}
-                    disabled={savingContent || !activeItem || activeItem.status === 'publishing' || activeItem.status === 'scheduled' || activeItem.status === 'published'}
+                    disabled={savingContent || !activeItem || activeItem.status === 'publishing' || activeItem.status === 'provider_processing' || activeItem.status === 'scheduled' || activeItem.status === 'published'}
                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     {savingContent ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}

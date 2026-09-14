@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Request } from 'express';
+import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
+import { withLegacyExternalEffectAllowed } from '../starter198/legacyEffectGuard.js';
+import { createStarter198Repository } from '../starter198/repository.js';
 import { getPublicOrigin, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
 import { sendDingTalkMarkdown, sendDingTalkText } from '../integrations/dingtalk.js';
 import { sendFeishuCard, sendFeishuText } from '../integrations/feishu.js';
@@ -138,12 +141,20 @@ function randomToken(): string {
   return crypto.randomBytes(24).toString('base64url');
 }
 
-export async function getTenantPlatformApp(tenantId: string, platform: TenantPlatform): Promise<TenantPlatformAppRecord | null> {
-  const result = await store.list<TenantPlatformAppRecord>(COL, {
+async function getTenantPlatformAppFrom(
+  dataStore: DataStore,
+  tenantId: string,
+  platform: TenantPlatform,
+): Promise<TenantPlatformAppRecord | null> {
+  const result = await dataStore.list<TenantPlatformAppRecord>(COL, {
     where: { tenant_id: tenantId, platform },
     perPage: 1,
   });
   return result.items[0] ?? null;
+}
+
+export async function getTenantPlatformApp(tenantId: string, platform: TenantPlatform): Promise<TenantPlatformAppRecord | null> {
+  return getTenantPlatformAppFrom(store, tenantId, platform);
 }
 
 export async function listTenantPlatformApps(): Promise<TenantPlatformAppRecord[]> {
@@ -214,6 +225,7 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
 export async function upsertTenantPlatformApp(input: {
   tenantId: string;
   platform: TenantPlatform;
+  dataStore?: DataStore;
   appId?: string;
   appSecret?: string;
   waConfigId?: string;
@@ -233,37 +245,41 @@ export async function upsertTenantPlatformApp(input: {
   checklist?: Record<string, boolean>;
   notes?: string;
 }): Promise<TenantPlatformAppRecord> {
-  const existing = await getTenantPlatformApp(input.tenantId, input.platform);
-  const patch: Record<string, unknown> = {
-    tenant_id: input.tenantId,
-    platform: input.platform,
-    webhook_verify_token: input.webhookVerifyToken || existing?.webhook_verify_token || randomToken(),
-    token_type: input.tokenType || existing?.token_type || 'user_60d',
-    status: input.status || existing?.status || 'pending',
-  };
-  if (input.appId !== undefined) patch.app_id = input.appId;
-  if (input.appSecret) patch.app_secret = encryptSecret(input.appSecret);
-  if (input.waConfigId !== undefined) patch.wa_config_id = input.waConfigId;
-  if (input.businessId !== undefined) patch.business_id = input.businessId;
-  if (input.wabaId !== undefined) patch.waba_id = input.wabaId;
-  if (input.phoneNumberId !== undefined) patch.phone_number_id = input.phoneNumberId;
-  if (input.waPublicNumber !== undefined) patch.wa_public_number = input.waPublicNumber;
-  if (input.pageId !== undefined) patch.page_id = input.pageId;
-  if (input.igUserId !== undefined) patch.ig_user_id = input.igUserId;
-  if (input.youtubeChannelId !== undefined) patch.youtube_channel_id = input.youtubeChannelId;
-  if (input.wecomEncodingAesKey) patch.wecom_encoding_aes_key = encryptSecret(input.wecomEncodingAesKey);
-  if (input.accessToken) patch.access_token = encryptSecret(input.accessToken);
-  if (input.tokenExpiresAt !== undefined) patch.token_expires_at = input.tokenExpiresAt;
-  if (input.checklist !== undefined) patch.last_checklist = JSON.stringify(input.checklist);
-  if (input.notes !== undefined) patch.notes = input.notes;
+  const dataStore = input.dataStore ?? store;
+  return withLegacyExternalEffectAllowed(input.tenantId, async transitionGuard => {
+    const existing = await getTenantPlatformAppFrom(dataStore, input.tenantId, input.platform);
+    const patch: Record<string, unknown> = {
+      tenant_id: input.tenantId,
+      platform: input.platform,
+      webhook_verify_token: input.webhookVerifyToken || existing?.webhook_verify_token || randomToken(),
+      token_type: input.tokenType || existing?.token_type || 'user_60d',
+      status: input.status || existing?.status || 'pending',
+    };
+    if (input.appId !== undefined) patch.app_id = input.appId;
+    if (input.appSecret) patch.app_secret = encryptSecret(input.appSecret);
+    if (input.waConfigId !== undefined) patch.wa_config_id = input.waConfigId;
+    if (input.businessId !== undefined) patch.business_id = input.businessId;
+    if (input.wabaId !== undefined) patch.waba_id = input.wabaId;
+    if (input.phoneNumberId !== undefined) patch.phone_number_id = input.phoneNumberId;
+    if (input.waPublicNumber !== undefined) patch.wa_public_number = input.waPublicNumber;
+    if (input.pageId !== undefined) patch.page_id = input.pageId;
+    if (input.igUserId !== undefined) patch.ig_user_id = input.igUserId;
+    if (input.youtubeChannelId !== undefined) patch.youtube_channel_id = input.youtubeChannelId;
+    if (input.wecomEncodingAesKey) patch.wecom_encoding_aes_key = encryptSecret(input.wecomEncodingAesKey);
+    if (input.accessToken) patch.access_token = encryptSecret(input.accessToken);
+    if (input.tokenExpiresAt !== undefined) patch.token_expires_at = input.tokenExpiresAt;
+    if (input.checklist !== undefined) patch.last_checklist = JSON.stringify(input.checklist);
+    if (input.notes !== undefined) patch.notes = input.notes;
 
-  if (existing) {
-    await store.update(COL, existing.id, patch);
-    return { ...existing, ...patch } as TenantPlatformAppRecord;
-  }
-  const created = await store.create<TenantPlatformAppRecord>(COL, patch);
-  if (!created) throw new Error('tenant_platform_app_create_failed');
-  return created;
+    await transitionGuard.beforeEffect();
+    if (existing) {
+      if (!await dataStore.update(COL, existing.id, patch)) throw new Error('tenant_platform_app_update_failed');
+      return { ...existing, ...patch } as TenantPlatformAppRecord;
+    }
+    const created = await dataStore.create<TenantPlatformAppRecord>(COL, patch);
+    if (!created) throw new Error('tenant_platform_app_create_failed');
+    return created;
+  }, createStarter198Repository(dataStore), dataStore);
 }
 
 export async function markTenantPlatformStatus(id: string, status: TenantPlatformStatus, notes?: string): Promise<void> {

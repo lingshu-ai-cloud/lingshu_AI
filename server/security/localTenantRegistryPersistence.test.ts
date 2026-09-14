@@ -53,7 +53,9 @@ process.env.LOCAL_TENANTS_DATA_FILE = registryFile;
 
 const {
   clearLocalTenantRegisteredCredential,
+  createLocalDataTenant,
   createLocalInviteTenant,
+  findLocalTenantByInvite,
   getLocalTenant,
   listLocalTenants,
 } = await import('../lib/localTenants.js');
@@ -73,6 +75,19 @@ try {
   assert.equal(fs.readFileSync(registryFile, 'utf8'), beforeWrongIdentity, 'a non-matching identity must not alter the registry');
 
   createLocalInviteTenant({ companyName: 'New tenant', inviteCode: 'new-invite' });
+  assert.ok(findLocalTenantByInvite('new-invite'), 'a published delivery invite must be registrable');
+  createLocalDataTenant({
+    companyName: 'Pending provisioning tenant',
+    inviteCode: 'pending-provisioning-invite',
+    subscriptionStatus: 'provisioning_pending',
+  });
+  createLocalDataTenant({
+    companyName: 'Failed provisioning tenant',
+    inviteCode: 'failed-provisioning-invite',
+    subscriptionStatus: 'provisioning_failed',
+  });
+  assert.equal(findLocalTenantByInvite('pending-provisioning-invite'), null, 'pending provisioning must never expose an invite');
+  assert.equal(findLocalTenantByInvite('failed-provisioning-invite'), null, 'failed provisioning must never expose an invite');
   const afterMetadataWrite = JSON.parse(fs.readFileSync(registryFile, 'utf8')) as Array<Record<string, unknown>>;
   assert.equal(afterMetadataWrite.find(record => record.id === 'tenant-target')?.registeredPasswordCipher, 'v1:target-legacy-cipher');
   assert.equal(afterMetadataWrite.find(record => record.id === 'tenant-other')?.registeredPasswordCipher, 'v1:other-legacy-cipher');

@@ -5,6 +5,11 @@ import { store, auth } from '../storage/index.js';
 import { digitalEmployeesRouter, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
 import { runDigitalEmployeeRuntimeCycle } from './runtimeOrchestrator.js';
 import { reopenNoDataCustomerBranch } from './customerReentry.js';
+import { dataAuthorityRequestScope } from '../storage/dataAuthority.js';
+const previousLocalFallback = process.env.ENABLE_LOCAL_DEV_FALLBACK;
+const previousNodeEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = 'test';
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 const tenant = 'continuation-integration';
 const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
 const config = { autonomyMode: 'managed', enabledWorkflows: ['customer_segmentation', 'batch_followup'], reviewSchedule: '月底有空时', continuationPolicy: { newCustomers: 'reopen', missedFollowup: 'catch_up', overlappingCycles: 'allow_disjoint' } };
@@ -21,17 +26,18 @@ store.list = (async (collection: string, query: any = {}) => {
 store.getById = (async (collection: string, id: string) => structuredClone((rows[collection] || []).find(row => row.id === id) || null)) as typeof store.getById;
 store.create = (async (collection: string, body: any) => { const record = { ...body, id: `test-${collection}-${(rows[collection] || []).length}` }; (rows[collection] ||= []).push(record); return structuredClone(record); }) as typeof store.create;
 store.update = (async (collection: string, id: string, patch: any) => { if (collection === 'workflow_tasks' && id === failTask) return false; const record = (rows[collection] || []).find(row => row.id === id); if (!record) return false; Object.assign(record, structuredClone(patch)); return true; }) as typeof store.update;
-auth.verifyToken = (async () => ({ userId: 'test-user', tenantId: tenant })) as typeof auth.verifyToken;
+auth.verifyToken = (async () => ({ userId: 'test-user', tenantId: tenant, dataAuthority: 'local' })) as typeof auth.verifyToken;
 fs.readFileSync = ((path: any, ...args: any[]) => {
   if (String(path).includes('/data/') && String(path).endsWith('.json')) return String(path).endsWith('whatsapp-customers.json') ? JSON.stringify(customers) : String(path).endsWith('enterprise.json') ? '{}' : '[]';
   return (original.readFileSync as any)(path, ...args);
 }) as typeof fs.readFileSync;
 fs.writeFileSync = ((path: any, ...args: any[]) => { if (String(path).includes('/data/')) throw Error('isolated test forbids business filesystem writes'); return (original.writeFileSync as any)(path, ...args); }) as typeof fs.writeFileSync;
 globalThis.fetch = (async (url: any, options?: any) => { if (String(url).startsWith('http://127.0.0.1:')) return original.fetch(url, options); unexpectedNetwork++; throw Error('isolated test forbids external network'); }) as typeof fetch;
-const app = express(); app.use(express.json(), digitalEmployeesRouter);
+const app = express(); app.use(dataAuthorityRequestScope, express.json(), digitalEmployeesRouter);
 const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
 const endpoint = `http://127.0.0.1:${(server.address() as any).port}`;
-const token = 'local-demo.' + Buffer.from(JSON.stringify({ userId: 'test-user', tenantId: tenant })).toString('base64url');
+const { issueLocalIdentityTokenForTest } = await import('../auth/localIdentity.js');
+const token = issueLocalIdentityTokenForTest({ userId: 'test-user', tenantId: tenant });
 function setup() {
   customers = [];
   rows = { digital_employee_configs: [{ id: 'cfg', tenant_id: tenant, config }], tenant_profiles: [{ id: 'profile', tenant_id: tenant, profile: { company: { name: 'Test', industry: 'Test' }, products: { items: [] } } }],
@@ -97,5 +103,9 @@ try {
 } finally {
   Object.assign(store, { list: original.list, getById: original.getById, create: original.create, update: original.update }); auth.verifyToken = original.verifyToken;
   fs.readFileSync = original.readFileSync; fs.writeFileSync = original.writeFileSync; globalThis.fetch = original.fetch;
+  if (previousLocalFallback === undefined) delete process.env.ENABLE_LOCAL_DEV_FALLBACK;
+  else process.env.ENABLE_LOCAL_DEV_FALLBACK = previousLocalFallback;
+  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnv;
   server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
 }

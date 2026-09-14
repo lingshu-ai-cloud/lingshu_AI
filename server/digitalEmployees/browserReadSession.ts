@@ -1,7 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import type { Request } from 'express';
+import type { DataAuthority } from '../storage/dataAuthority.js';
 
-type ReadSession = { tenantId: string; userId: string; role: 'social_operator' | 'customer_service' | 'admin'; expiresAt: number };
+export type ReadSession = {
+  tenantId: string;
+  userId: string;
+  role: 'social_operator' | 'customer_service' | 'admin';
+  dataAuthority: DataAuthority;
+  expiresAt: number;
+};
 const sessions = new Map<string, ReadSession>();
 const prefix = 'agent-browser-read.';
 

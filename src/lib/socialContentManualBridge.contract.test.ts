@@ -7,6 +7,7 @@ const studio = readFileSync(new URL('../components/AiCreateStudio.tsx', import.m
 const navigationHook = readFileSync(new URL('../components/socialContent/useSocialContentNavigation.ts', import.meta.url), 'utf8');
 const submissionHook = readFileSync(new URL('../components/socialContent/useStudioSocialArtifactSubmission.ts', import.meta.url), 'utf8');
 const boundary = readFileSync(new URL('../../server/starter198/legacyBoundary.ts', import.meta.url), 'utf8');
+const socialOutputs = readFileSync(new URL('../../server/starter198/socialContentOutputs.ts', import.meta.url), 'utf8');
 
 assert.match(
   app,
@@ -34,13 +35,24 @@ assert.match(
 );
 assert.match(
   studio,
-  /primaryGeneratesVideo[\s\S]{0,220}socialContentTaskId[\s\S]{0,120}!socialVideoArtifactReady/,
+  /primaryGeneratesVideo[\s\S]{0,220}socialContentTaskId[\s\S]{0,120}!socialVideoMediaReady/,
   'a desktop-only task output must retain a path to generate a browser-readable video',
 );
 assert.match(studio, /renderSelectedLanguageVersion\(undefined, Boolean\(socialContentTaskId\)\)/,
   'task video recovery must request a server-readable preview without changing the legacy render path');
 assert.match(studio, /outputUrl:\s*contentMode === 'poster' \? posterImageUrl : workbenchFormalPreviewUrl/,
   'video submission must use the resolved readable preview rather than a local output path');
+assert.match(studio, /generationProvenance:\s*contentMode === 'poster'[\s\S]{0,500}generationRecordId:/,
+  'Studio task submissions must carry their generation provenance and record identity');
+assert.match(studio, /manualScriptDraft\(item, (?:cleaned|value|nextScript)\)/,
+  'manual timeline/script edits must invalidate the previously verified generation record');
+assert.match(submissionHook, /submitManualSocialArtifact\(taskId, snapshot\)/);
+assert.match(socialOutputs, /createSocialContentArtifact[\s\S]{0,500}assertStudioSocialArtifactGeneration/,
+  'the server must validate Studio generation metadata on artifact ingest');
+assert.match(socialOutputs, /decision === 'approved'[\s\S]{0,200}assertStudioSocialArtifactGeneration/,
+  'the server must revalidate Studio generation metadata on approval');
+assert.match(socialOutputs, /artifact\.status !== 'approved'[\s\S]{0,200}assertStudioSocialArtifactGeneration/,
+  'the server must revalidate Studio generation metadata while packaging delivery');
 assert.doesNotMatch(studio, /new CustomEvent\('lingshu:navigate'/,
   'Studio must not bypass its task-aware navigation callback');
 assert.match(studio, /onNavigate\?\.\('socialInspiration'\)/);

@@ -23,6 +23,11 @@ export interface ManualSocialArtifactSnapshot {
   body?: string | null;
   coverTitle?: string | null;
   projectId?: string | null;
+  generationKind?: 'script' | 'poster' | null;
+  generationProvenance?: string | null;
+  qualityStatus?: string | null;
+  publishable?: boolean | null;
+  generationRecordId?: string | null;
   outputUrl?: string | null;
   outputMedia?: ManualSocialArtifactMediaSource;
 }
@@ -92,6 +97,19 @@ async function contentDigest(value: unknown): Promise<string> {
 export function buildManualSocialArtifact(snapshot: ManualSocialArtifactSnapshot): CreateSocialArtifactInput {
   const sourceKey = cleanText(snapshot.sourceKey, 200);
   if (!SOCIAL_ID.test(sourceKey)) throw new Error('当前作品无法关联到社媒任务，请重新打开内容创作');
+  const projectId = cleanText(snapshot.projectId, 200);
+  const generationKind = snapshot.generationKind === 'script' || snapshot.generationKind === 'poster'
+    ? snapshot.generationKind
+    : '';
+  const generationRecordId = cleanText(snapshot.generationRecordId, 200);
+  if (!projectId
+    || !generationKind
+    || cleanText(snapshot.generationProvenance, 40) !== 'ai'
+    || cleanText(snapshot.qualityStatus, 40) !== 'passed'
+    || snapshot.publishable !== true
+    || !generationRecordId) {
+    throw new Error('当前作品缺少已通过的 AI 来源、质量或可发布记录，请重新审核后再提交');
+  }
 
   const content = definedRecord({
     sourceKey,
@@ -103,7 +121,12 @@ export function buildManualSocialArtifact(snapshot: ManualSocialArtifactSnapshot
       ? Math.round(Number(snapshot.durationSeconds) * 10) / 10
       : null,
     coverTitle: cleanText(snapshot.coverTitle, 500),
-    projectId: cleanText(snapshot.projectId, 200),
+    projectId,
+    generationKind,
+    generationProvenance: 'ai',
+    qualityStatus: 'passed',
+    publishable: true,
+    generationRecordId,
   });
 
   return {

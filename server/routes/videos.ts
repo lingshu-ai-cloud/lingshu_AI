@@ -22,6 +22,8 @@ import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/v
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl } from '../lib/assetAccess.js';
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 
 export const videosRouter = Router();
 videosRouter.use(requireAuth);
@@ -183,13 +185,9 @@ function isTestTenantRecord(tenant: Record<string, unknown> | null): boolean {
   return plan === 'trial' || plan === 'admin' || status === 'trialing';
 }
 
-function isLocalTenant(tenantId: string): boolean {
-  return tenantId.startsWith('local_tenant_');
-}
-
 async function isTestTenantId(tenantId: string): Promise<boolean> {
   if (!tenantId) return false;
-  if (isLocalTenant(tenantId)) return true;
+  if (localFallbacksEnabled() && currentDataAuthority() !== 'pocketbase' && tenantId.startsWith('local_tenant_')) return true;
   const tenant = await store.getById<Record<string, unknown>>('tenants', tenantId);
   return isTestTenantRecord(tenant);
 }

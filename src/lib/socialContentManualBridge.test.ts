@@ -82,6 +82,7 @@ const port: ManualSocialArtifactPort = {
 
 const snapshot = {
   sourceKey: 'studio_session_1',
+  projectId: 'project-1',
   title: '新品短视频',
   contentMode: 'video' as const,
   platform: 'tiktok',
@@ -89,6 +90,11 @@ const snapshot = {
   aspectRatio: '9:16',
   durationSeconds: 20,
   body: '真实正文',
+  generationKind: 'script' as const,
+  generationProvenance: 'ai',
+  qualityStatus: 'passed',
+  publishable: true,
+  generationRecordId: 'script-v1',
   outputUrl: 'file:///private/output.mp4',
 };
 const validSnapshot = {
@@ -102,6 +108,21 @@ assert.equal(payload.origin, 'manual');
 assert.equal(payload.kind, 'short_video');
 assert.equal(payload.resourceRef, null, 'local filesystem paths must never cross the task API boundary');
 assert.equal(payload.content?.title, '新品短视频');
+assert.equal(payload.content?.projectId, 'project-1');
+assert.equal(payload.content?.generationProvenance, 'ai');
+assert.equal(payload.content?.qualityStatus, 'passed');
+assert.equal(payload.content?.publishable, true);
+assert.equal(payload.content?.generationRecordId, 'script-v1');
+assert.throws(
+  () => buildManualSocialArtifact({ ...snapshot, generationProvenance: 'manual_draft' }),
+  /缺少已通过的 AI 来源、质量或可发布记录/,
+  'a manually edited Studio script must not reuse an earlier generation approval',
+);
+assert.throws(
+  () => buildManualSocialArtifact({ ...snapshot, generationRecordId: '' }),
+  /缺少已通过的 AI 来源、质量或可发布记录/,
+  'a Studio submission must be bound to an auditable generation record',
+);
 
 await assert.rejects(() => submitManualSocialArtifact(taskId, snapshot, port), /无法安全读取/);
 

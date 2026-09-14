@@ -344,6 +344,11 @@ type StudioPublishItem = {
   workflowRunId?: string;
   workflowTaskId?: string;
   workflowTaskKey?: string;
+  generationKind: 'script';
+  generationProvenance: string;
+  qualityStatus: string;
+  publishable: boolean;
+  generationRecordId: string;
 };
 type StudioPublishPayload = StudioPublishItem & { items?: StudioPublishItem[] };
 
@@ -3357,14 +3362,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
       setPlatform(seed.platform); setRatio(seed.aspectRatio); setLang(seed.languageCodes[0]!);
       setVoiceLangs(seed.languageCodes); setActiveVoiceLang(seed.languageCodes[0]!);
-      setProductInfo(seed.productInfo); setAudience(seed.audience); setPrimaryCta(seed.primaryCta); setSellingPoints(seed.sellingPoints);
-      const taskProduct = productOptionFromInfo(seed.productInfo, `social-task-product:${socialContentTaskId}`);
-      if (taskProduct) {
-        setProductOptions(current => [taskProduct, ...current.filter(item => item.id !== taskProduct.id)]);
-        setSelectedProductIds([taskProduct.id]);
-      }
+      setAudience(seed.audience); setPrimaryCta(seed.primaryCta);
       if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
-      if (seed.unsupportedLanguages.length) setModeNotice(`本次任务中的${seed.unsupportedLanguages.join('、')}暂不在创作语言列表中，请先选择可用语言。`);
+      const hydrationNotices = [
+        seed.factVerificationNotice,
+        seed.unsupportedLanguages.length ? `本次任务中的${seed.unsupportedLanguages.join('、')}暂不在创作语言列表中，请先选择可用语言。` : '',
+      ].filter(Boolean);
+      if (hydrationNotices.length) setModeNotice(hydrationNotices.join(' '));
     },
   });
   const [showProjects, setShowProjects] = useState(false);
@@ -3883,6 +3887,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   // before the production step where avatar/material bindings are resolved.
   const activeScriptQualityApplies = Boolean(activeScriptQualityItem?.script)
     && String(activeScriptQualityItem?.script || '').trim() === String(script || '').trim();
+  const activeScriptGenerationIsVerified = activeScriptQualityApplies
+    && String(activeScriptQualityItem?.generationProvenance || activeScriptQualityItem?.generationSource || '').toLowerCase() === 'ai'
+    && activeScriptQualityStatus === 'passed'
+    && activeScriptQualityItem?.publishable === true
+    && Boolean(activeScriptQualityItem?.id);
   const activeScriptQualityBlocked = activeScriptQualityApplies
     && (activeScriptQualityStatus === 'rejected' || activeScriptQualityStatus === 'failed');
   const canNext = contentMode === 'video' && step === 'script'
@@ -4959,7 +4968,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setLang(enterpriseScriptLanguage);
       setScriptType('storyboard');
       if (outputs[0]) {
-        applyTimestampScript(outputs[0].script);
+        applyTimestampScript(outputs[0].script, activeProductInfo, false);
         setActiveVoiceLang(enterpriseScriptLanguage);
         setScriptView('timestamp');
         setActiveModeScriptId(outputs[0].id);
@@ -5058,7 +5067,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const firstScript = outputs[0]?.script || script;
       setLang(enterpriseScriptLanguage);
       setScriptType('storyboard');
-      applyTimestampScript(firstScript);
+      applyTimestampScript(firstScript, activeProductInfo, false);
       setActiveVoiceLang(enterpriseScriptLanguage);
       setScriptView('timestamp');
       if (outputs[0]) setActiveModeScriptId(outputs[0].id);
@@ -5083,11 +5092,14 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     }
   };
 
-  const applyTimestampScript = (value: string, productInfoOverride = activeProductInfo) => {
+  const applyTimestampScript = (value: string, productInfoOverride = activeProductInfo, invalidateGeneration = true) => {
     const cleaned = normalizeScriptTimestamps(sanitizeStoryboardScript(value, productInfoOverride, activeProductLabel));
     const spoken = extractVoiceoverText(cleaned);
     const sourceLanguage = detectScriptLanguageCode(spoken);
     setScript(cleaned);
+    if (invalidateGeneration && activeModeScriptId) {
+      setModeScripts(current => current.map(item => item.id === activeModeScriptId ? manualScriptDraft(item, cleaned) : item));
+    }
     setVoiceoverLines(spoken);
     setVoiceLangs(current => [sourceLanguage, ...current.filter(code => code !== sourceLanguage)]);
     setActiveVoiceLang(sourceLanguage);
@@ -5115,7 +5127,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   const openModeScript = (item: ModeScriptOutput) => {
     setActiveModeScriptId(item.id);
-    applyTimestampScript(item.script);
+    applyTimestampScript(item.script, activeProductInfo, false);
   };
 
   useEffect(() => {
@@ -5250,7 +5262,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setModeScripts(prev => [...prev, ...outputs]);
       if (firstNewScript) {
         setActiveModeScriptId(firstNewScript.id);
-        applyTimestampScript(firstNewScript.script);
+        applyTimestampScript(firstNewScript.script, activeProductInfo, false);
       }
       setModeNotice(qualitySuccessNotice(
         qualityResponses[0] || { script: firstNewScript?.script || '' },
@@ -5340,7 +5352,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ? cloneOptimized.script
         : sanitizeStoryboardScript(optimized, activeProductInfo, activeProductLabel);
       if (!sanitizedOptimized.trim()) throw new Error('模型没有返回可用脚本。');
-      applyTimestampScript(sanitizedOptimized);
+      applyTimestampScript(sanitizedOptimized, activeProductInfo, false);
       setModeNotice(qualitySuccessNotice(response, mode === 'clone'
         ? '已按当前产品信息和标准分镜字段优化脚本。'
         : '已按当前产品信息和口播约束优化脚本。'));
@@ -5942,6 +5954,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setTimeout(() => setSavedToWorks(false), 2200);
   };
 
+  const currentPublishGeneration = () => ({
+    generationKind: 'script' as const,
+    generationProvenance: activeScriptQualityApplies
+      ? String(activeScriptQualityItem?.generationProvenance || activeScriptQualityItem?.generationSource || '')
+      : 'manual_draft',
+    qualityStatus: activeScriptQualityApplies ? String(activeScriptQualityStatus || 'unreviewed') : 'unreviewed',
+    publishable: activeScriptGenerationIsVerified,
+    generationRecordId: activeScriptQualityApplies ? String(activeScriptQualityItem?.id || '') : '',
+  });
+
   const buildPublishVersions = (): StudioPublishItem[] => {
     const publishPlatform = platform as StudioPublishPlatform;
     const baseTitle = projectTitle.trim() || coverTitle || 'AI 快剪成片';
@@ -5959,6 +5981,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (videoPath) seenPaths.add(videoPath);
       const versionName = `${plan.name || `视频${planIndex + 1}`} * ${langZh(code) || `语种${languageIndex + 1}`}`;
       return {
+        ...currentPublishGeneration(),
         videoPath,
         previewUrl: output?.previewUrl || latestDone?.previewUrl || (key === activeRenderCombinationKey ? renderOutputPreviewUrl || undefined : undefined),
         title: `${baseTitle} - ${versionName}`,
@@ -5976,6 +5999,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const buildPublishPayload = (): StudioPublishPayload => {
     const items = buildPublishVersions();
     const fallback: StudioPublishItem = {
+      ...currentPublishGeneration(),
       videoPath: renderOutputPath || '',
       previewUrl: renderOutputPreviewUrl || undefined,
       title: projectTitle.trim() || coverTitle || 'AI 快剪成片',
@@ -6002,11 +6026,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     } catch { /* ignore */ }
     // Keep the top-level publish tab in sync with the latest generated combinations.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRenderCombinationKey, activeVoiceLang, assemblyBgms, bgm, caption, contentPlanVersions, languageRenderOutputs, languageRenderVersions, materialVersionBgms, platform, projectId, projectTitle, publishStorageScope, ratio, renderOutputPath, renderOutputPreviewUrl, voiceDrafts, voiceLangs, voiceoverAudios, voiceoverMode, voiceoverUrl]);
+  }, [activeModeScriptId, activeRenderCombinationKey, activeVoiceLang, assemblyBgms, bgm, caption, contentPlanVersions, languageRenderOutputs, languageRenderVersions, materialVersionBgms, modeScripts, platform, projectId, projectTitle, publishStorageScope, ratio, renderOutputPath, renderOutputPreviewUrl, voiceDrafts, voiceLangs, voiceoverAudios, voiceoverMode, voiceoverUrl]);
 
   const goPublishCurrentWork = () => {
     const payload = buildPublishPayload();
     const items = payload.items?.length ? payload.items : [payload];
+    if (!activeScriptGenerationIsVerified) {
+      setModeNotice('当前脚本不是与正文一致且已通过质量校验的 AI 版本。请重新生成或审核后再进入发布。');
+      return;
+    }
     if (Object.keys(shotProductions).length && items.some(item => item.videoPath && renderProductionSignatures[item.videoPath] !== productionSignature)) {
       setModeNotice('镜头或声音已修改，当前成片版本与草稿不一致。请重新生成并确认成片后发布；已排期成片不会被替换。'); return;
     }
@@ -11393,6 +11421,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const primaryReturnsToExistingScript = contentMode === 'video' && step === 'mode' && hasTimestampScript && !setupChangedSinceGeneration;
   const primaryGeneratesStoryboard = contentMode === 'video' && step === 'script' && scriptStageTab === 'theme' && !hasTimestampScript;
   const socialPosterArtifactReady = posterGenerationIsVerified
+    && Boolean(projectId)
     && isSocialArtifactMediaSourceEligible({ source: posterImageUrl, contentMode: 'poster' });
   const primaryGeneratesPoster = contentMode === 'poster' && step === 'poster' && !(socialContentTaskId && socialPosterArtifactReady);
   const primaryGeneratesCopy = contentMode === 'video' && step === 'script' && scriptStageTab === 'voiceover' && !hasRequestedVoiceDrafts;
@@ -11663,8 +11692,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const workbenchHasFormalVideo = Boolean(
     renderOutputPath || Object.values(languageRenderOutputs).some(output => output.status === 'done' && output.path),
   );
-  const socialVideoArtifactReady = isSocialArtifactMediaSourceEligible({ source: workbenchFormalPreviewUrl, contentMode: 'video' });
-  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && (!workbenchHasFormalVideo || Boolean(socialContentTaskId && !socialVideoArtifactReady));
+  const socialVideoMediaReady = isSocialArtifactMediaSourceEligible({ source: workbenchFormalPreviewUrl, contentMode: 'video' });
+  const socialVideoArtifactReady = activeScriptGenerationIsVerified
+    && Boolean(projectId)
+    && socialVideoMediaReady;
+  const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && (!workbenchHasFormalVideo || Boolean(socialContentTaskId && !socialVideoMediaReady));
   const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
   const { ready: primarySubmitsSocialArtifact, submitting: socialArtifactSubmitting, submit: submitCurrentSocialArtifact } = useStudioSocialArtifactSubmission({
     enabled: Boolean(socialContentTaskId && (contentMode === 'poster' ? step === 'poster' && socialPosterArtifactReady : step === 'preview' && socialVideoArtifactReady)),
@@ -11675,6 +11707,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       language: contentMode === 'video' ? activeVoiceLang : lang, aspectRatio: ratio, durationSeconds: contentMode === 'video' ? duration : null,
       body: contentMode === 'poster' ? caption.trim() || posterJsonText.trim() : caption.trim() || voiceDrafts[activeVoiceLang]?.trim() || activeSpokenScript || script,
       coverTitle, projectId, outputUrl: contentMode === 'poster' ? posterImageUrl : workbenchFormalPreviewUrl,
+      generationKind: contentMode === 'poster' ? 'poster' : 'script',
+      generationProvenance: contentMode === 'poster'
+        ? String(posterDraft?.provenance || posterDraft?.source || '')
+        : currentPublishGeneration().generationProvenance,
+      qualityStatus: contentMode === 'poster'
+        ? String(posterDraft?.qualityStatus || 'unreviewed')
+        : currentPublishGeneration().qualityStatus,
+      publishable: contentMode === 'poster' ? posterGenerationIsVerified : activeScriptGenerationIsVerified,
+      generationRecordId: contentMode === 'poster' ? 'poster-current' : currentPublishGeneration().generationRecordId,
     },
     onSubmitted: () => { setSavedTick(true); setAutosaveStatus('saved'); setLastAutosavedAt(new Date()); window.setTimeout(() => setSavedTick(false), 1_800); },
     onNotice: setModeNotice,

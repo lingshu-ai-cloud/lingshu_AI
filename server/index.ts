@@ -55,22 +55,47 @@ import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
 import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
 import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
 import { platformAdImportsRouter } from './routes/platformAdImports.js';
+import {
+  apiRateLimitConfig,
+  configureHttpServer,
+  createRateLimiter,
+  jsonBodyLimits,
+  requestSafetyHeaders,
+} from './runtime/httpSafety.js';
+import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/readiness.js';
+import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
 console.log(`[runtime] role=${processRole} http=${processRoleStartsHttp(processRole)} backgroundJobs=${processRoleStartsBackgroundJobs(processRole)}`);
 await ensureLocalPocketBase();
 configureNetworkProxy();
-try {
-  await ensureDeliveryCollections();
-  await ensureTrendVideoAnalysisCapacity();
-  await backfillTrendVideoContentFormat();
-} catch (error) {
-  console.error('[pb-init] failed to ensure tenants / tenant_platform_apps collections:', error instanceof Error ? error.message : error);
+const startupReadinessIssues: string[] = [];
+const runtimeSchemaRepairRequested = process.env.RUNTIME_SCHEMA_REPAIR_ENABLED === 'true';
+if (runtimeSchemaRepairRequested && process.env.NODE_ENV === 'production') {
+  // Production schema has one authority: versioned PocketBase migrations.
+  // Keeping runtime repair code available in non-production makes local
+  // recovery possible without allowing application replicas to race writes.
+  startupReadinessIssues.push('runtime_schema_repair_forbidden_in_production');
+  console.error('[pb-init] RUNTIME_SCHEMA_REPAIR_ENABLED is forbidden in production; run versioned migrations instead');
+} else if (runtimeSchemaRepairRequested) {
+  try {
+    await ensureDeliveryCollections();
+    await ensureTrendVideoAnalysisCapacity();
+    await backfillTrendVideoContentFormat();
+  } catch (error) {
+    startupReadinessIssues.push('runtime_schema_repair_failed');
+    console.error('[pb-init] runtime schema repair failed:', error instanceof Error ? error.message : error);
+  }
 }
 
 const PORT = Number(process.env.PORT ?? 8788);
 const app = express();
+const limits = jsonBodyLimits();
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isSafeInteger(trustProxyHops) && trustProxyHops > 0 && trustProxyHops <= 10) {
+  app.set('trust proxy', trustProxyHops);
+}
 
 async function ensureLocalPocketBase(): Promise<void> {
   if (process.env.NODE_ENV === 'production' || process.env.PB_AUTO_START !== 'true') return;
@@ -90,7 +115,40 @@ async function ensureLocalPocketBase(): Promise<void> {
   console.error(`[pb] auto-start failed at ${url}`);
 }
 
-// 璺宠繃 SSE 娴佸紡鍝嶅簲锛坱ext/event-stream锛夛紝鍚﹀垯 gzip 缂撳啿浼氭嫋鎱㈤瀛?
+app.use(requestSafetyHeaders);
+app.use(dataAuthorityRequestScope);
+const readinessProbe = createRuntimeReadinessProbe({ role: processRole, startupIssues: startupReadinessIssues });
+
+// Liveness and dependency-aware readiness are operational probes, not product
+// traffic. Register them before the general API limiter and cache readiness
+// briefly so load balancers cannot amplify PocketBase load.
+app.get('/api/overseas/health', (_req, res) => {
+  res.json({
+    status: startupReadinessIssues.length ? 'degraded' : 'ok',
+    service: 'overseas-marketing-agent',
+    port: PORT,
+    role: processRole,
+    demoMode: isDemoMode(),
+    demoLimits: demoLimits(),
+    capabilities: runtimeCapabilities(processRole),
+    startupIssues: startupReadinessIssues,
+  });
+});
+
+app.get('/api/overseas/ready', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const report = await readinessProbe();
+  if (report.status !== 'ready') {
+    res.status(503).json(report);
+    return;
+  }
+  res.json(report);
+});
+
+app.use('/api', createRateLimiter(apiRateLimitConfig()));
+
+// Skip compression for SSE and long TTS responses so intermediary buffering
+// cannot delay the first byte or strand a completed synthesis response.
 app.use(compression({
   filter: (req, res) => {
     if (res.getHeader('Content-Type') === 'text/event-stream') return false;
@@ -109,29 +167,13 @@ const jsonBody = (limit: string) => express.json({ limit, verify: captureRawJson
 // Large JSON bodies are legacy base64 upload compatibility paths only. Authenticate
 // before buffering them and keep the rest of the API at a small default limit.
 // New clients should use the streamed `/studio/materials/file` endpoint.
-app.use('/api/overseas/studio/materials', requireAuth, jsonBody('120mb'));
-app.use('/api/overseas/enterprise/assets', requireAuth, jsonBody('120mb'));
-app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody('30mb'));
-app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody('30mb'));
-app.use('/api/overseas/studio/bgm', requireAuth, jsonBody('30mb'));
-app.use(jsonBody('2mb'));
+app.use('/api/overseas/studio/materials', requireAuth, jsonBody(`${limits.legacyUpload}mb`));
+app.use('/api/overseas/enterprise/assets', requireAuth, jsonBody(`${limits.legacyUpload}mb`));
+app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use(jsonBody(`${limits.default}mb`));
 app.use(syncAssetSession);
-
-app.get('/api/overseas/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'overseas-marketing-agent',
-    port: PORT,
-    demoMode: isDemoMode(),
-    demoLimits: demoLimits(),
-    featureLocks: {
-      geminiVideo: process.env.GEMINI_VIDEO_ENABLED !== 'true',
-      seedanceVideo: process.env.SEEDANCE_VIDEO_ENABLED !== 'true',
-      quoteSkill: process.env.NODE_ENV === 'production' && process.env.QUOTE_SKILL_ENABLED !== 'true',
-      digitalHuman: !String(process.env.DIGITAL_HUMAN_API_URL || '').trim(),
-    },
-  });
-});
 
 // Legacy routes (stub 鈫?to be implemented separately)
 app.use('/api/overseas/copywriting', copywritingRouter);
@@ -230,9 +272,28 @@ app.get('*', (_req, res) => {
 });
 
 if (processRoleStartsHttp(processRole)) {
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
   });
+  configureHttpServer(server);
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[runtime] ${signal} received; draining HTTP connections`);
+    server.close(error => {
+      if (error) console.error('[runtime] graceful shutdown failed:', error);
+      process.exitCode = error ? 1 : 0;
+    });
+    server.closeIdleConnections?.();
+    setTimeout(() => {
+      console.error('[runtime] graceful shutdown deadline exceeded');
+      process.exitCode = 1;
+      server.closeAllConnections?.();
+    }, 30_000).unref();
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 } else {
   console.log('[overseas-agent] HTTP listener disabled for worker role');
 }

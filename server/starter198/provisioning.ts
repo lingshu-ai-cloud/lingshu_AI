@@ -93,6 +93,7 @@ export async function provisionStarter198(input: {
     throw new Starter198ProvisioningError('starter_198_provisioning_input_invalid', 400);
   }
   const repository = input.repository ?? starter198Repository;
+  const transitionStore = input.compatibilityStore ?? repository.dataStore ?? store;
   const entitlements = DEFAULT_CAPABILITIES.map(capability => ({ capability, enabled: true }));
   const subject = {
     tenantId,
@@ -102,7 +103,7 @@ export async function provisionStarter198(input: {
     resourceLimits: STARTER_198_DEFAULT_LIMITS,
   };
   const requestHash = hash(subject);
-  return withStarter198TenantTransitionLock(tenantId, async () => {
+  return withStarter198TenantTransitionLock(tenantId, async transitionGuard => {
     const existing = await repository.list(STARTER_COLLECTIONS.access, tenantId, { perPage: 2 });
     if (existing.totalItems > 1 || existing.items.length > 1) {
       throw new Starter198ProvisioningError('starter_198_access_integrity_violation', 503);
@@ -115,7 +116,7 @@ export async function provisionStarter198(input: {
       return { access: await repository.access(tenantId), created: false };
     }
     try {
-      await assertStarter198ProvisioningCompatible(tenantId, input.compatibilityStore);
+      await assertStarter198ProvisioningCompatible(tenantId, transitionStore);
     } catch (error) {
       if (error instanceof Starter198ProvisioningCompatibilityError) {
         throw new Starter198ProvisioningError(error.code, error.status, error.blockers);
@@ -126,6 +127,7 @@ export async function provisionStarter198(input: {
     const timestamp = cycleStartedAt.toISOString();
     const cycleEndsAt = new Date(cycleStartedAt.getTime() + 7 * 24 * 60 * 60 * 1_000).toISOString();
     try {
+      await transitionGuard.beforeEffect();
       await repository.create(STARTER_COLLECTIONS.access, tenantId, {
         product_profile: STARTER_198_PROFILE,
         profile_version: STARTER_198_PROFILE_VERSION,
@@ -153,5 +155,5 @@ export async function provisionStarter198(input: {
       return { access: await repository.access(tenantId), created: false };
     }
     return { access: await repository.access(tenantId), created: true };
-  }, input.compatibilityStore ?? store);
+  }, transitionStore);
 }

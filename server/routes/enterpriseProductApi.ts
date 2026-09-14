@@ -100,7 +100,10 @@ enterpriseProductApiRouter.post('/', async (req, res) => {
     if (!identity) return;
     const result = await withLegacyExternalEffectAllowed(
       identity.tenantId,
-      () => createProductApiCredential(identity.tenantId),
+      async guard => {
+        await guard.beforeEffect();
+        return createProductApiCredential(identity.tenantId);
+      },
     );
     if (result.kind === 'exists') {
       res.status(409).json({
@@ -126,7 +129,10 @@ enterpriseProductApiRouter.post('/rotate', async (req, res) => {
     if (!identity) return;
     const result = await withLegacyExternalEffectAllowed(
       identity.tenantId,
-      () => rotateProductApiCredential(identity.tenantId),
+      async guard => {
+        await guard.beforeEffect();
+        return rotateProductApiCredential(identity.tenantId);
+      },
     );
     if (result.kind === 'missing') {
       res.status(404).json({ error: 'tenant_api_key_not_found' });

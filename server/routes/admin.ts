@@ -1,5 +1,4 @@
 import { Router, type Response } from 'express';
-import crypto from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { writeAuditLog } from '../lib/auditLog.js';
 import fs from 'node:fs';
@@ -20,6 +19,7 @@ import {
   demoCredentialPresentation,
   demoUsageForTenant,
   readDemoAccountRegistry,
+  requireInternalAdmin,
   requireAdminUser,
   type DemoCredentialState,
   upsertDemoAccountRegistry,
@@ -51,29 +51,20 @@ import {
 import { store } from '../storage/index.js';
 import axios from 'axios';
 import {
-  createLocalInviteTenant,
   getLocalTenant,
   listLocalTenants,
   promoteLocalTrialTenant,
 } from '../lib/localTenants.js';
+import {
+  deliveryProvisioningHidden,
+} from '../starter198/deliveryProvisioning.js';
 import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { createAdminDeliveryStarterRouter } from './adminDeliveryStarter.js';
+import { accountStage, trialDay } from './adminAccountPresentation.js';
 
 export const adminRouter = Router();
-
-function trialDay(activatedAt?: string | null): number | null {
-  if (!activatedAt) return null;
-  const start = new Date(activatedAt).getTime();
-  if (!Number.isFinite(start)) return null;
-  return Math.max(1, Math.floor((Date.now() - start) / (24 * 3600 * 1000)) + 1);
-}
-
-function accountStage(entry: { status?: string; activatedAt?: string | null; expiresAt?: string | null; rotatedAt?: string | null }): string {
-  if (entry.status === 'admin') return '长期维护';
-  if (entry.rotatedAt) return '已到期/已轮换密码';
-  if (!entry.activatedAt) return '未激活';
-  if (entry.expiresAt && new Date(entry.expiresAt).getTime() <= Date.now()) return '已到期';
-  return '试用中';
-}
+adminRouter.use(requireInternalAdmin);
 
 type VideoAlertAccountType = 'trial' | 'customer' | 'admin' | 'unknown';
 
@@ -457,10 +448,6 @@ function graphVersion() {
   return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
 }
 
-function inviteCode(): string {
-  return crypto.randomBytes(8).toString('base64url');
-}
-
 function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp>[0], tenantId: string, platform: TenantPlatform) {
   return {
     id: '',
@@ -547,6 +534,10 @@ function publicDeliveryTenant(req: Parameters<typeof publicTenantPlatformApp>[0]
     }),
   };
 }
+
+adminRouter.use(createAdminDeliveryStarterRouter({
+  presentTenant: (req, tenant) => ({ ...publicDeliveryTenant(req, tenant, []), productProfile: 'starter_198' }),
+}));
 
 const DELIVERY_TEST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -827,7 +818,7 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
     const updated = await pbPatch('tenants', tenantId, patch);
     if (updated) tenant = { ...existingTenant, ...patch };
   }
-  if (!tenant && process.env.NODE_ENV !== 'production') {
+  if (!tenant && localFallbacksEnabled()) {
     tenant = promoteLocalTrialTenant({
       tenantId,
       companyName,
@@ -887,7 +878,7 @@ adminRouter.post('/support-access/session', async (req, res) => {
   }
 
   const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => entry.tenantId === tenantId);
-  const localTenant = getLocalTenant(tenantId);
+  const localTenant = localFallbacksEnabled() ? getLocalTenant(tenantId) : null;
   const remoteTenant = await safePbGet('tenants', tenantId);
   if (!registryEntry && !localTenant && !remoteTenant) {
     res.status(404).json({ error: 'tenant_not_found' });
@@ -1116,7 +1107,7 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
       pbListStrict<TenantPlatformAppRecord>('tenant_platform_apps', { perPage: 500, sort: 'tenant_id' }).then(result => result.items),
     ]);
   } catch (error) {
-    if (process.env.NODE_ENV !== 'production') {
+    if (localFallbacksEnabled()) {
       tenants = { items: listLocalTenants() as unknown as Record<string, any>[] };
       apps = [];
     } else {
@@ -1138,6 +1129,10 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
     admin: admin.email,
     tenants: Array.from(tenantIds)
       .filter(tenantId => tenantId !== admin.tenantId)
+      .filter(tenantId => {
+        const tenant = tenants.items.find(item => item.id === tenantId || item.tenantId === tenantId);
+        return !deliveryProvisioningHidden(tenant);
+      })
       .map(tenantId => {
         const tenant = tenants.items.find(item => item.id === tenantId || item.tenantId === tenantId) || { id: tenantId, name: tenantId };
         return publicDeliveryTenant(req, tenant, apps);
@@ -1152,52 +1147,6 @@ adminRouter.get('/style-adoption-trends', async (req, res) => {
     return;
   }
   res.json({ admin: admin.email, items: await listStyleAdoptionTrends() });
-});
-
-adminRouter.post('/delivery/tenants', async (req, res) => {
-  const admin = await requireAdminUser(req);
-  if (!admin) {
-    res.status(403).json({ error: 'admin_required' });
-    return;
-  }
-
-  const companyName = bodyText(req.body?.companyName) || bodyText(req.body?.name);
-  if (!companyName) {
-    res.status(400).json({ error: 'company_name_required', message: '公司名称必填' });
-    return;
-  }
-  const code = inviteCode();
-  const now = new Date().toISOString();
-  try {
-    let tenant = await store.create<Record<string, any>>('tenants', {
-      name: companyName,
-      companyName,
-      contactName: bodyText(req.body?.contactName) || bodyText(req.body?.contact),
-      contact: bodyText(req.body?.contactName) || bodyText(req.body?.contact),
-      industry: bodyText(req.body?.industry),
-      notes: bodyText(req.body?.notes),
-      inviteCode: code,
-      subscriptionStatus: 'pending_delivery',
-      subscriptionPlan: 'delivery',
-      createdAt: now,
-    });
-    if (!tenant && process.env.NODE_ENV !== 'production') {
-      tenant = createLocalInviteTenant({
-        companyName,
-        contactName: bodyText(req.body?.contactName) || bodyText(req.body?.contact),
-        industry: bodyText(req.body?.industry),
-        notes: bodyText(req.body?.notes),
-        inviteCode: code,
-      });
-    }
-    if (!tenant) throw new Error('tenant_create_failed');
-    res.json({
-      ok: true,
-      tenant: publicDeliveryTenant(req, tenant, []),
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'tenant_create_failed', detail: error instanceof Error ? error.message : 'unknown_error' });
-  }
 });
 
 adminRouter.put('/delivery/platform-apps/:tenantId/:platform', async (req, res) => {

@@ -3,6 +3,7 @@ import {
   groundedCaptionFallback,
   groundedCoverTitleFallbacks,
   normalizePlatformCopies,
+  normalizeVerifiedPlatformCopies,
   platformCopyFallback,
   sanitizePublishCopyPlatforms,
 } from './copyAdaptation.js';
@@ -56,5 +57,15 @@ const instagramOnly = normalizePlatformCopies(
 );
 assert.deepEqual(Object.keys(instagramOnly), ['instagram']);
 assert.deepEqual(instagramOnly.instagram.hashtags, ['#b2b', '#factory']);
+
+assert.throws(
+  () => normalizeVerifiedPlatformCopies({}, ['tiktok']),
+  /missing_tiktok_copy/,
+  'verified adaptation must not synthesize a local platform fallback',
+);
+assert.deepEqual(
+  normalizeVerifiedPlatformCopies({ tiktok: { caption: 'Model-authored copy.' } }, ['tiktok']),
+  { tiktok: { caption: 'Model-authored copy.' } },
+);
 
 console.log('publishing copy adaptation tests passed');

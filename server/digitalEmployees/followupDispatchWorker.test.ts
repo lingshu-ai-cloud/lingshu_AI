@@ -63,6 +63,12 @@ store.list = (async (collection: string, query = {}) => {
   return { items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 100 };
 }) as typeof store.list;
 store.update = (async (collection: string, id: string, patch: Record<string, unknown>) => {
+  if (collection === 'durable_operation_leases') {
+    const lease = durableLeases.find(candidate => candidate.id === id);
+    if (!lease) return false;
+    Object.assign(lease, patch);
+    return true;
+  }
   const target = collection === 'followup_batches' && id === records.batch.id
     ? records.batch as unknown as Record<string, unknown>
     : collection === 'followup_batch_items' && id === records.item.id

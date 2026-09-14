@@ -34,13 +34,13 @@ import { planVideoSourceSegments, resolveSourceDurations } from '../lib/videoSou
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
 import { contentProjectLineageFields } from './contentProjectLineage.js';
 import { notifyStarterReviewableContentProjects } from '../starter198/contentArtifactWakeup.js';
+import { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js'; export { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
   composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
 export type ContentProductionRoute = 'clone' | 'product' | 'material';
 type ProductionStage = 'script' | 'material_match' | 'voice_subtitles' | 'heygen' | 'render' | 'quality' | 'completed' | 'blocked';
-export const CONTENT_SCRIPT_QUALITY_RULE_VERSION = 9;
 export const CONTENT_PRODUCTION_SCHEMA_VERSION = 3;
 export const CONTENT_PRODUCTION_MAX_CONCURRENCY = 2;
 type StoredRecord = { id: string; [key: string]: unknown };

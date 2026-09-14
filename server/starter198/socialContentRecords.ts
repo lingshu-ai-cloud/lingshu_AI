@@ -151,7 +151,9 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
   const materialSourceCount = storedCount(record.material_source_count);
   const artifactCount = storedCount(record.artifact_count);
   const approvedArtifactCount = storedCount(record.approved_artifact_count);
-  if (knowledgeSourceCount + materialSourceCount !== sourceCount || approvedArtifactCount > artifactCount) {
+  // Supplemental text notes count toward lineage but are deliberately excluded
+  // from both confirmed-knowledge and source-material readiness counters.
+  if (knowledgeSourceCount + materialSourceCount > sourceCount || approvedArtifactCount > artifactCount) {
     throw new SocialContentWorkflowError('social_content_task_counter_invalid', 503);
   }
   return {
@@ -339,7 +341,7 @@ export async function readSocialTaskDetail(input: {
   const activeSources = sourceViews.filter(source => source.status === 'active');
   const actual = {
     sourceCount: activeSources.length,
-    knowledgeSourceCount: activeSources.filter(source => ['knowledge', 'text_note'].includes(source.kind)).length,
+    knowledgeSourceCount: activeSources.filter(source => source.kind === 'knowledge').length,
     materialSourceCount: activeSources.filter(source => ['material', 'reference_link'].includes(source.kind)).length,
     artifactCount: artifacts.length,
     approvedArtifactCount: artifactViews.filter(artifact => artifact.status === 'approved').length,

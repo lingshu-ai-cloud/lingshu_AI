@@ -30,7 +30,7 @@ const [{
   createSupportAccessRequest,
   issueSupportAccessToken,
   setSupportAccessDefaultAuthorized,
-}, { store }, { digitalEmployeesRouter }, { enterpriseRouter }, { studioRouter }, { socialRouter }, { youtubeRouter }, { agentMemoryRouter }, { videosRouter }, { assistantThreadsRouter }, { authRouter }, { customerSuggestionsRouter }, { schedulerRouter }, { createBrowserReadSession }, { isSideEffectingReadPath }] = await Promise.all([
+}, { store }, { digitalEmployeesRouter }, { enterpriseRouter }, { studioRouter }, { socialRouter }, { youtubeRouter }, { agentMemoryRouter }, { videosRouter }, { assistantThreadsRouter }, { authRouter }, { customerSuggestionsRouter }, { schedulerRouter }, { createBrowserReadSession }, { isSideEffectingReadPath }, { issueLocalIdentityTokenForTest }] = await Promise.all([
   import('../lib/supportAccess.js'),
   import('../storage/index.js'),
   import('../routes/digitalEmployees.js'),
@@ -46,6 +46,7 @@ const [{
   import('../routes/scheduler.js'),
   import('../digitalEmployees/browserReadSession.js'),
   import('./readOnlyHttp.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 assert.equal(isSideEffectingReadPath({
@@ -76,6 +77,7 @@ const browserReadSession = createBrowserReadSession({
   tenantId,
   userId: 'support-read-only-browser-agent',
   role: 'admin',
+  dataAuthority: 'pocketbase',
 });
 
 const originalStore = {
@@ -249,10 +251,10 @@ try {
   }
   assert.equal(mutationCalls, 0, 'denied browser-read requests must not reach persistent mutations');
 
-  const ordinaryToken = `local-demo.${Buffer.from(JSON.stringify({
+  const ordinaryToken = issueLocalIdentityTokenForTest({
     userId: 'ordinary-user',
     tenantId,
-  }), 'utf8').toString('base64url')}`;
+  });
   const ordinaryResponse = await fetch(`${origin}/approvals/missing/decide`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${ordinaryToken}`, 'Content-Type': 'application/json' },

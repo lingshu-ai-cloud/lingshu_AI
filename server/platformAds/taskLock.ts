@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
-import { store } from '../storage/index.js';
 import {
   acquireDurableOperationLease,
   assertDurableOperationLease,
   releaseDurableOperationLease,
+  renewDurableOperationLease,
   type DurableOperationLease,
 } from '../runtime/durableLease.js';
+import { externalEffectLeaseStore } from '../runtime/externalEffectLeaseStore.js';
 
 export const PLATFORM_AD_TASK_LEASE_SCOPE = 'platform-ad-task';
 export const PLATFORM_AD_TASK_LOCK_MESSAGE = '投放任务正在执行或需要恢复核对，请稍后重试';
@@ -33,6 +34,12 @@ export interface PlatformAdTaskLockDependencies {
   now?: () => Date;
   leaseDurationMs?: number;
   reclaimGraceMs?: number;
+  heartbeatIntervalMs?: number;
+}
+
+export interface PlatformAdTaskLeaseGuard {
+  /** Renew and fence immediately before a durable receipt or provider write. */
+  beforeEffect(now?: Date): Promise<void>;
 }
 
 /** Stable, storage-safe subject key; the tenant remains a separate lease dimension. */
@@ -58,11 +65,18 @@ export function createPlatformAdTaskLock(dependencies: PlatformAdTaskLockDepende
   const leaseDurationMs = configuredLeaseDuration(dependencies.leaseDurationMs);
   const reclaimGraceMs = dependencies.reclaimGraceMs ?? DEFAULT_RECLAIM_GRACE_MS;
 
-  return async function withLock<T>(tenantId: string, id: string, fn: () => Promise<T>): Promise<T> {
+  return async function withLock<T>(
+    tenantId: string,
+    id: string,
+    fn: (guard: PlatformAdTaskLeaseGuard) => Promise<T>,
+  ): Promise<T> {
     const localKey = JSON.stringify([tenantId, id]);
     if (localClaims.has(localKey)) throw new PlatformAdTaskLockError('platform_ad_task_busy');
     localClaims.add(localKey);
     let lease: DurableOperationLease | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let leaseLost = false;
+    let renewalTail: Promise<void> = Promise.resolve();
     try {
       try {
         lease = await acquireDurableOperationLease({
@@ -79,18 +93,43 @@ export function createPlatformAdTaskLock(dependencies: PlatformAdTaskLockDepende
         throw new PlatformAdTaskLockError('platform_ad_task_lock_unavailable');
       }
       if (!lease) throw new PlatformAdTaskLockError('platform_ad_task_busy');
-      try {
-        await assertDurableOperationLease({
-          dataStore: dependencies.dataStore,
-          lease,
-          now: now(),
-          minimumRemainingMs: 1_000,
+      const renewAndFence = async (effectNow?: Date): Promise<void> => {
+        const operation = renewalTail.then(async () => {
+          if (leaseLost || !lease) throw new PlatformAdTaskLockError('platform_ad_task_lock_unavailable');
+          const renewalNow = effectNow ?? now();
+          try {
+            lease = await renewDurableOperationLease({
+              dataStore: dependencies.dataStore,
+              lease,
+              now: renewalNow,
+              leaseDurationMs,
+            });
+            await assertDurableOperationLease({
+              dataStore: dependencies.dataStore,
+              lease,
+              now: renewalNow,
+              minimumRemainingMs: Math.min(30_000, Math.max(1_000, Math.floor(leaseDurationMs / 3))),
+            });
+          } catch {
+            leaseLost = true;
+            throw new PlatformAdTaskLockError('platform_ad_task_lock_unavailable');
+          }
         });
-      } catch {
-        throw new PlatformAdTaskLockError('platform_ad_task_lock_unavailable');
-      }
-      return await fn();
+        renewalTail = operation.then(() => undefined, () => undefined);
+        return operation;
+      };
+      const guard: PlatformAdTaskLeaseGuard = { beforeEffect: renewAndFence };
+      await guard.beforeEffect();
+      const configuredHeartbeat = Number(dependencies.heartbeatIntervalMs);
+      const heartbeatIntervalMs = Number.isFinite(configuredHeartbeat)
+        ? Math.min(Math.max(Math.floor(configuredHeartbeat), 5), Math.max(5, Math.floor(leaseDurationMs / 2)))
+        : Math.max(1_000, Math.floor(leaseDurationMs / 3));
+      heartbeat = setInterval(() => { void renewAndFence().catch(() => undefined); }, heartbeatIntervalMs);
+      heartbeat.unref?.();
+      return await fn(guard);
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
+      await renewalTail;
       if (lease) {
         try {
           await releaseDurableOperationLease({ dataStore: dependencies.dataStore, lease });
@@ -105,10 +144,14 @@ export function createPlatformAdTaskLock(dependencies: PlatformAdTaskLockDepende
 }
 
 const productionTaskLock = createPlatformAdTaskLock({
-  dataStore: store,
+  dataStore: externalEffectLeaseStore,
   leaseDurationMs: configuredLeaseDuration(process.env.PLATFORM_AD_TASK_LEASE_MS),
 });
 
-export function withPlatformAdTaskLock<T>(tenantId: string, id: string, fn: () => Promise<T>): Promise<T> {
+export function withPlatformAdTaskLock<T>(
+  tenantId: string,
+  id: string,
+  fn: (guard: PlatformAdTaskLeaseGuard) => Promise<T>,
+): Promise<T> {
   return productionTaskLock(tenantId, id, fn);
 }

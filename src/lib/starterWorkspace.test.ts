@@ -262,9 +262,9 @@ assert.match(appSource, /!starterMode && !isAgentProductionSession\(\) && <Globa
 assert.match(appSource, /shouldBypassStarter198Probe\(session\)/, 'the app must use the tested authoritative-probe policy');
 assert.doesNotMatch(appSource, /session\.supportAccess \|\| isAdminSession\(session\)/,
   'a subscription-plan presentation label must not bypass the authoritative starter access probe');
-assert.match(authRouteSource, /platformAdmin:\s*Boolean\(await requireAdminUser\(req\)\)/,
-  'the explicit platform-admin signal must come from the hardened server identity check');
-assert.equal(authRouteSource.match(/platformAdmin:\s*Boolean\(await requireAdminUser\(req\)\)/g)?.length, 2,
+assert.equal(authRouteSource.match(/const admin = await adminUserForHttp\(req, res\);/g)?.length, 2,
+  'the explicit platform-admin signal must come from the outage-safe hardened server identity check');
+assert.equal(authRouteSource.match(/platformAdmin:\s*Boolean\(admin\)/g)?.length, 2,
   'both local and persistent /auth/me responses must emit the verified platform-admin signal');
 for (const source of [appSource, layoutSource]) {
   assert.match(source, /!session(?:\?|)\.supportAccess && session(?:\?|)\.platformAdmin === true/,

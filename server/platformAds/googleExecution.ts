@@ -5,13 +5,14 @@ import type { AdExecution } from './execution.js';
 import { AdProviderError } from './metaAdapter.js';
 import { GoogleExecutionAdapter, demandGenOperations, type GoogleDemandGenPlan } from './googleExecutionAdapter.js';
 import { GoogleAdsAdapter } from './otherAdapters.js';
+import type { PlatformAdTaskLeaseGuard } from './taskLock.js';
 type GoogleResources = { campaignId: string; budgetId: string; adgroupId: string; adId: string };
-export async function executeGoogleWithinLock(tenantId: string, task: PlatformAdTask, connection: AdConnection, token: string, input: Record<string, unknown>, mode: string, receipts: Omit<AdExecution, 'tenant_id'>[]) {
+export async function executeGoogleWithinLock(tenantId: string, task: PlatformAdTask, connection: AdConnection, token: string, input: Record<string, unknown>, mode: string, receipts: Omit<AdExecution, 'tenant_id'>[], leaseGuard: PlatformAdTaskLeaseGuard) {
   if (mode !== 'manual' || task.managementMode !== 'manual') throw new AdProviderError('Google 当前支持人工执行；自动和审批执行尚未开放', 'NOT_SUPPORTED');
   if (connection.status !== 'connected' || connection.currency !== 'USD' || task.currency !== 'USD') throw new AdProviderError('Google 需有效 USD 广告账户及 USD 任务', 'AUTH_REQUIRED');
   const action = String(input.action);
   if (!['create', 'activate', 'pause', 'resume'].includes(action)) throw new AdProviderError('Google 当前仅支持创建和启停', 'NOT_SUPPORTED');
-  const adapter = new GoogleExecutionAdapter(token);
+  const adapter = new GoogleExecutionAdapter(token, fetch, () => leaseGuard.beforeEffect());
   let plan: GoogleDemandGenPlan | null = null;
   if (action === 'create') {
     if (task.goal !== '获取线索或转化' || task.channels.length !== 1 || task.channels[0] !== 'YouTube') throw new AdProviderError('Google 创建支持 YouTube Demand Gen 线索或转化目标，标准视频观看广告不支持写入', 'UNSUPPORTED_OBJECTIVE');
@@ -40,6 +41,7 @@ export async function executeGoogleWithinLock(tenantId: string, task: PlatformAd
     const actual = await adapter.campaign(connection.accountId, resources!.campaignId);
     if (!Number(actual.campaignBudget?.totalAmountMicros) || Number(actual.campaignBudget.totalAmountMicros) / 1e6 > task.budget) throw new AdProviderError('Google 平台总预算超出计划', 'BUDGET_LIMIT');
   }
+  await leaseGuard.beforeEffect();
   const receipt = await store.create<AdExecution>('platform_ad_executions', { tenant_id: tenantId, taskId: task.id, connectionId: connection.id, requestId: input.requestId, action, resourceId, status: 'EXECUTING', createdAt: new Date().toISOString() });
   if (!receipt) throw new AdProviderError('无法保存 Google 执行记录', 'STORAGE_ERROR');
   let accepted = false;

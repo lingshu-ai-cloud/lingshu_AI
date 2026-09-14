@@ -50,6 +50,13 @@ export interface AuthSession {
   };
 }
 
+export class AuthSessionUnavailableError extends Error {
+  constructor(readonly status?: number) {
+    super('session_refresh_unavailable');
+    this.name = 'AuthSessionUnavailableError';
+  }
+}
+
 export interface EmployeeAccount { id: string; email: string; name: string; role: OrganizationRole; isCurrent: boolean; created: string }
 
 const JIANGZHE_TEST_EMAIL = 'wenlantianxia-test@local.test';
@@ -116,6 +123,47 @@ async function call(path: string, body: unknown): Promise<{ token: string; user:
   return normalizeSessionIdentity(j);
 }
 
+export async function refreshAuthSession(fetchImpl: typeof fetch = fetch): Promise<AuthSession | null> {
+  if (!getToken()) return null;
+  try {
+    const r = await fetchImpl('/api/overseas/auth/me', { headers: authHeader() });
+    if (!r.ok) {
+      const original = (r.status === 401 || r.status === 402)
+        ? localStorage.getItem(SUPPORT_ORIGINAL_TOKEN_KEY)
+        : null;
+      if (original) {
+        const restored = await fetchImpl('/api/overseas/auth/me', {
+          headers: { Authorization: `Bearer ${original}`, ...socialContentTaskRequestHeaders() },
+        });
+        if (restored.ok) {
+          localStorage.removeItem(SUPPORT_ORIGINAL_TOKEN_KEY);
+          setToken(original);
+          return normalizeSessionIdentity((await restored.json()) as AuthSession);
+        }
+        if (restored.status === 401 || restored.status === 402) {
+          clearToken();
+          localStorage.removeItem(SUPPORT_ORIGINAL_TOKEN_KEY);
+          return null;
+        }
+        // Do not switch tokens until the original session is verified. This
+        // keeps the retained UI session and bearer credential consistent.
+        throw new AuthSessionUnavailableError(restored.status);
+      }
+      if (r.status === 401 || r.status === 402) {
+        clearToken();
+        return null;
+      }
+      throw new AuthSessionUnavailableError(r.status);
+    }
+    return normalizeSessionIdentity((await r.json()) as AuthSession);
+  } catch (error) {
+    if (error instanceof AuthSessionUnavailableError) throw error;
+    // Network failures are not authentication decisions. Keep the token and
+    // let the application retain its last server-verified session.
+    throw new AuthSessionUnavailableError();
+  }
+}
+
 export const authApi = {
   register: (email: string, password: string, inviteCode: string) =>
     call('register', { email, password, inviteCode }),
@@ -129,23 +177,7 @@ export const authApi = {
     if (!r.ok && !j.companyName) throw new Error(j.error || '邀请码无效或已使用');
     return j;
   },
-  me: async (): Promise<AuthSession | null> => {
-    if (!getToken()) return null;
-    try {
-      const r = await fetch('/api/overseas/auth/me', { headers: authHeader() });
-      if (!r.ok) {
-        if ((r.status === 401 || r.status === 402) && exitSupportSession()) {
-          const restored = await fetch('/api/overseas/auth/me', { headers: authHeader() });
-          if (restored.ok) return normalizeSessionIdentity((await restored.json()) as AuthSession);
-        }
-        if (r.status === 401 || r.status === 402) clearToken();
-        return null;
-      }
-      return normalizeSessionIdentity((await r.json()) as AuthSession);
-    } catch {
-      return null;
-    }
-  },
+  me: refreshAuthSession,
   guideSeen: async (): Promise<void> => {
     if (!getToken()) return;
     await fetch('/api/overseas/auth/guide-seen', { method: 'POST', headers: authHeader() }).catch(() => {});

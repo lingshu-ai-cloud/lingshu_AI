@@ -47,7 +47,7 @@
 | **已实现（运行守卫）** | starter 开通先拒绝残留 legacy 凭据／账号／待执行发布或跟进；legacy Product API、定时发布和跟进旁路均有 authority guard。三个 starter worker 生产存储 fail closed、必须显式精确启用；发布包／报价产物扫描有公平 cursor，orchestrator 可安全换代过期 lease。平台管理员豁免只认 `/auth/me` 的服务端布尔值，browser-read token 不能绕过 starter boundary | 能说明当前局部恢复、身份来源与旁路隔离已有自动化门禁；不能据此宣称 BullMQ、PostgreSQL、独立 Worker 或多实例安全已经完成 |
 | **未实现／未验证** | 当前仍以 PocketBase 和同进程扫描 worker 为主；starter 的短时 run 变更、发布证据、Product API 档位切换等窄路径虽已使用数据库仲裁 lease，但跨多条记录的业务提交仍不是一个事务 | PostgreSQL、BullMQ、通用数据库 CAS、事务 outbox/inbox、完整多实例正确性与 1,200 已登录会话容量均未完成或未压测 |
 
-2026-09-14 本轮最终验证以实现审计文档记录为准；migration guard 当前覆盖全部 70 个 PocketBase migration 的 checksum 与历史基线不可变校验。这类门禁即使通过，也不证明生产迁移、真实 provider、完整四 Agent 闭环或 1,200 会话容量。
+2026-09-14 本轮最终验证以实现审计文档记录为准；migration guard 当前覆盖全部 71 个 PocketBase migration 的 checksum 与历史基线不可变校验。这类门禁即使通过，也不证明生产迁移、真实 provider、完整四 Agent 闭环或 1,200 会话容量。
 
 因此，当前可以演示“灵小枢如何收口、如何诚实展示等待、如何完成规则型报价”，不能宣称四 Agent 已经从内容到成交全自动运行。
 
@@ -461,7 +461,7 @@ FOB Shenzhen 处理费                         USD   180
 
 以上是 legacy 领域能力。除此之外，starter 专用层已实现灵小枢低交互工作台、四 Agent 卡、差异化只读生产现场、固定 10 节点图、持久 run/task、用量账本、发布 manifest worker，以及从规则／结构化询盘到确定性报价草稿和不可变报价产物的纵向链路。
 
-本轮工程加固还完成了：processing command 的持久事实恢复与精确命令归因；短时 run mutation、发布证据变更和产品档位切换使用数据库仲裁的有界 lease，进程内队列／run lock 只作为降争用手段而不是跨实例权威；开通前 legacy 状态兼容性扫描，以及 Product API、定时发布、跟进发送的旁路 guard；Product API Key 改为 tenant-bound HMAC 校验，存储只保留 key id、前缀、末四位和摘要，迁移前密钥清空后必须旋转；三个 starter worker 的显式 opt-in、生产 strict PocketBase store；发布包与报价 artifact 的有界公平 cursor；orchestrator 过期 lease 的 grace 回收与 fencing token 换代；workspace／生产现场字段白名单和 `production_site.read` 服务端门禁；只信任 `/auth/me` 服务端 `platformAdmin`、禁止 browser-read 绕过 starter boundary；全部 70 个 PocketBase migration 的 checksum／历史不可变门禁。
+本轮工程加固还完成了：processing command 的持久事实恢复与精确命令归因；短时 run mutation、发布证据变更和产品档位切换使用数据库仲裁的有界 lease，进程内队列／run lock 只作为降争用手段而不是跨实例权威；开通前 legacy 状态兼容性扫描，以及 Product API、定时发布、跟进发送的旁路 guard；Product API Key 改为 tenant-bound HMAC 校验，存储只保留 key id、前缀、末四位和摘要，迁移前密钥清空后必须旋转；三个 starter worker 的显式 opt-in、生产 strict PocketBase store；发布包与报价 artifact 的有界公平 cursor；orchestrator 过期 lease 的 grace 回收与 fencing token 换代；workspace／生产现场字段白名单和 `production_site.read` 服务端门禁；只信任 `/auth/me` 服务端 `platformAdmin`、禁止 browser-read 绕过 starter boundary；全部 71 个 PocketBase migration 的 checksum／历史不可变门禁。
 
 固定 10 节点当前均有明确的处理或受控投影路径：上下文与调研可确定性执行；内容生产／质检只观察具有精确 `tenant + run + task` 血缘、文件与质检哈希的既有真实产物；内容审批与发布包由专用桥接／worker 推进；询盘与报价按 run／cycle／task 血缘读取并可幂等唤醒；人工证据提交先落库，再 best-effort 投影待验状态，只有已持久化的可信验证回执满足精确工作流绑定时才可投影成功；结果摘要会重新核验 canonical 报价／批准证据与发布证据，只汇总已验证事实，并把流量、发送、成交等未观察结果列为缺口，全部通过时结束当前 run。这里的“有路径”不等于全自动：starter 仍未主动调用内容生成／渲染 provider，真实平台 verifier 的运行调用方与隔离登录态 session broker 未接入，所以生产链不会自然抵达结果成功终点；询盘仍只支持结构化输入，发布包仍是 JSON manifest 而非素材 ZIP；真实模型调用计量、事务 outbox/inbox、BullMQ／PostgreSQL、API 与 Worker 独立部署以及 1,200 会话压测也均未成立。当前不能宣称完整 GA 或已支持千人并发。
 

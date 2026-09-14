@@ -3,7 +3,9 @@
 node_modules
 dist
 backups
+restore
 pb_data
+/*.mp4
 pocketbase
 pocketbase.exe
 pocketbase.zip
@@ -17,20 +19,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Demo inspiration videos are committed under data/media and must be present in
-# the CloudBase Run image for /media/* preview URLs to work.
-data/bgm
-data/tts
-data/covers
-data/analysis-temp
-data/logs
-data/renders
-data/demo-usage.json
-data/crawler-ops-queue.json
-data/apify-video-usage.json
+# `data/` is runtime state mounted separately by Compose. It may contain tenant
+# identities, auth registries, customer conversations, uploads and provider
+# receipts. No file below it is permitted in a Docker build context; immutable
+# demo media belongs under public/demo instead.
+data/
+data/**
 
 *.bak.*
 *.tmp
 *.log
-*.gif
-*.png
+# Runtime UI assets under public/ include PNG/GIF files. Generated media is
+# excluded by the data directories above instead of a global extension rule.

@@ -28,13 +28,27 @@ cloudMaterialMediaRouter.use(async (req, res, next) => {
   // elements still have no Authorization header, which incorrectly becomes
   // a 401 even though the URL signature is valid.
   const signed = verifyAssetToken(signedMatch[2], originalPath);
-  const identity = signed ? null : await assetIdentity(req);
+  let identity = null;
+  try {
+    identity = signed ? null : await assetIdentity(req);
+  } catch (error) {
+    console.error('[cloud-material-auth] identity verification unavailable', {
+      errorType: error instanceof Error ? error.name : 'UnknownError',
+    });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.status(503).json({
+      error: 'auth_provider_unavailable',
+      message: '登录验证服务暂时不可用，请稍后重试。',
+    });
+    return;
+  }
   if (!identity && !signed) {
     res.status(401).end();
     return;
   }
   (res.locals as AuthLocals).userId = identity?.userId || 'signed-media';
   (res.locals as AuthLocals).tenantId = identity?.tenantId || signed!.tenantId;
+  (res.locals as AuthLocals).dataAuthority = identity?.dataAuthority;
   next();
 });
 cloudMaterialMediaRouter.use(entitlementGate());

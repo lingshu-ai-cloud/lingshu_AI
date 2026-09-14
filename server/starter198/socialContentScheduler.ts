@@ -315,7 +315,7 @@ function assertSubjectMatches(input: {
   }
   const readiness = socialTaskReadiness(task.brief, {
     total: input.sources.length,
-    knowledge: input.sources.filter(source => ['knowledge', 'text_note'].includes(source.kind)).length,
+    knowledge: input.sources.filter(source => source.kind === 'knowledge').length,
     material: input.sources.filter(source => ['material', 'reference_link'].includes(source.kind)).length,
   });
   if (!readiness.complete) fail('social_content_task_inputs_incomplete', 409);

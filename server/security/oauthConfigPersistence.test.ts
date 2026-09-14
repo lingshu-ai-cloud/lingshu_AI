@@ -67,7 +67,10 @@ fs.chmodSync(configFile, 0o600);
 fs.writeFileSync(configFile, '{ malformed route fixture', { mode: 0o600 });
 const malformedBytes = fs.readFileSync(configFile);
 const malformedMtime = fs.statSync(configFile).mtimeMs;
-const { adminRouter } = await import('../routes/admin.js');
+const [{ adminRouter }, { issueLocalIdentityTokenForTest }] = await Promise.all([
+  import('../routes/admin.js'),
+  import('../auth/localIdentity.js'),
+]);
 const app = express();
 app.use(express.json());
 app.use('/admin', adminRouter);
@@ -76,12 +79,12 @@ await new Promise<void>(resolve => server.once('listening', resolve));
 const address = server.address();
 if (!address || typeof address === 'string') throw new Error('test server did not bind a TCP port');
 const origin = `http://127.0.0.1:${address.port}`;
-const adminToken = `local-demo.${Buffer.from(JSON.stringify({
+const adminToken = issueLocalIdentityTokenForTest({
   userId: 'local_user_admin_oauth_admin_example_test',
   tenantId: 'local_tenant_admin_oauth_admin_example_test',
   email: 'oauth-admin@example.test',
   accountType: 'admin',
-}), 'utf8').toString('base64url')}`;
+});
 
 async function request(pathname: string, init: RequestInit = {}) {
   const response = await fetch(`${origin}${pathname}`, {

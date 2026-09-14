@@ -16,6 +16,12 @@ import {
   renewDurableOperationLease,
   type DurableOperationLease,
 } from '../runtime/durableLease.js';
+import { externalEffectLeaseStore } from '../runtime/externalEffectLeaseStore.js';
+import {
+  PublishSourceVerificationError,
+  verifyFrozenPublishSourceClaim,
+  type FrozenPublishSourceClaim,
+} from './publishSourceClaim.js';
 
 type LegacyEffectExecutor = <T>(tenantId: string, effect: () => Promise<T>) => Promise<T>;
 export interface ScheduledPublishLeaseGuard {
@@ -31,6 +37,7 @@ interface ScheduledPublishingDependencies {
   assertLegacyAccess?: (tenantId: string) => Promise<void>;
   executeLegacyEffect?: LegacyEffectExecutor;
   acquirePublishLease?: ScheduledPublishLeaseAcquirer;
+  verifySource?: (tenantId: string, claim: unknown, videoPath?: unknown) => Promise<unknown>;
 }
 const defaultDependencies: ScheduledPublishingDependencies = {
   publish: publishVideoToAccount,
@@ -38,6 +45,7 @@ const defaultDependencies: ScheduledPublishingDependencies = {
   finalize: finalizeTrackedPost,
   assertLegacyAccess: assertLegacyExternalEffectAllowed,
   executeLegacyEffect: withLegacyExternalEffectAllowed,
+  verifySource: verifyFrozenPublishSourceClaim,
 };
 
 const POLL_INTERVAL_MS = 30_000;
@@ -142,7 +150,7 @@ function publishLeaseDurationMs(): number {
 async function acquireScheduledPublishLease(post: PostRecord, now: Date): Promise<ScheduledPublishLeaseGuard | null> {
   const leaseDurationMs = publishLeaseDurationMs();
   let lease: DurableOperationLease | null = await acquireDurableOperationLease({
-    dataStore: store,
+    dataStore: externalEffectLeaseStore,
     tenantId: text(post.tenant_id),
     scope: SCHEDULED_PUBLISH_LEASE_SCOPE,
     subjectId: text(post.id),
@@ -155,20 +163,20 @@ async function acquireScheduledPublishLease(post: PostRecord, now: Date): Promis
   return {
     async beforeEffect(effectNow = new Date()) {
       lease = await renewDurableOperationLease({
-        dataStore: store,
+        dataStore: externalEffectLeaseStore,
         lease: lease!,
         now: effectNow,
         leaseDurationMs,
       });
       await assertDurableOperationLease({
-        dataStore: store,
+        dataStore: externalEffectLeaseStore,
         lease,
         now: effectNow,
         minimumRemainingMs: 30_000,
       });
     },
     async release() {
-      if (lease) await releaseDurableOperationLease({ dataStore: store, lease });
+      if (lease) await releaseDurableOperationLease({ dataStore: externalEffectLeaseStore, lease });
     },
   };
 }
@@ -263,6 +271,7 @@ async function publishScheduledPost(
   }
 
   const results = resultMap(initialStats);
+  const sourceClaim = initialStats.publishSourceClaim as FrozenPublishSourceClaim | undefined;
   for (const accountId of accountIds) {
     if (results[accountId]?.status === 'published') continue;
     if (results[accountId]?.status === 'provider_accepted') {
@@ -353,6 +362,7 @@ async function publishScheduledPost(
     if (!await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: { ...results } } })) throw new Error('无法保存平台发送尝试，尚未调用平台');
     try {
       await lease.beforeEffect();
+      await (dependencies.verifySource ?? verifyFrozenPublishSourceClaim)(post.tenant_id, sourceClaim, videoPath);
       const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
         accountId,
@@ -368,6 +378,7 @@ async function publishScheduledPost(
         trackingPost: post,
         finalizeTracking: false,
         publishAttemptId: attemptId,
+        sourceClaim,
       });
       const guardedPublish = () => (dependencies.executeLegacyEffect ?? withLegacyExternalEffectAllowed)(post.tenant_id, publish);
       const result = workflowRunId
@@ -391,6 +402,19 @@ async function publishScheduledPost(
         };
       }
     } catch (error) {
+      if (error instanceof PublishSourceVerificationError) {
+        delete results[accountId];
+        await store.update('posts', post.id, { stats: {
+          ...lockedStats,
+          status: 'awaiting_reapproval',
+          publishResults: results,
+          approvedContentHash: '',
+          realPublishingAuthorized: false,
+          publishError: error.message,
+          warnings: [error.message],
+        } });
+        return;
+      }
       if (error instanceof WorkflowRunBlockedError) {
         delete results[accountId];
         await store.update('posts', post.id, { stats: {

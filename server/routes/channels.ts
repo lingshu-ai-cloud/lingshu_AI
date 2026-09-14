@@ -1,4 +1,4 @@
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
@@ -12,7 +12,7 @@ import { handleMetaWebhook } from '../whatsapp/historyImport.js';
 import { ingestFollowupDeliveryStatuses } from '../digitalEmployees/followupDispatchWorker.js';
 import { sendTenantWhatsAppText } from '../whatsapp/send.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { requireAdminUser } from '../lib/demoAccounts.js';
+import { adminUserForHttp, requireInternalAdmin } from '../lib/demoAccounts.js';
 import {
   getTenantPlatformApp,
   verifyMetaSignature,
@@ -114,15 +114,6 @@ function save(channels: Channel[]) {
 
 export const channelsRouter = Router();
 
-async function requireInternalAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const admin = await requireAdminUser(req);
-  if (!admin) {
-    res.status(403).json({ error: 'admin_required' });
-    return;
-  }
-  next();
-}
-
 type TenantChannelStatus = 'advisor_configuring' | 'waiting_customer' | 'importing' | 'connected' | 'needs_service';
 
 const USER_CHANNELS = [
@@ -149,7 +140,9 @@ function lastCheckedAt(app: TenantPlatformAppRecord | null): string | null {
 
 channelsRouter.get('/status', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const isAdmin = Boolean(await requireAdminUser(req));
+  const admin = await adminUserForHttp(req, res);
+  if (admin === undefined) return;
+  const isAdmin = Boolean(admin);
   const metaApp = await getTenantPlatformApp(tenantId, 'meta');
   const googleApp = await getTenantPlatformApp(tenantId, 'google');
   const wecomApp = await getTenantPlatformApp(tenantId, 'wecom');

@@ -38,9 +38,10 @@ process.env.LOCAL_AUTH_ACCOUNTS_FILE = accountsFile;
 const [{
   setPasswordChangeCredentialStateDependenciesForTests,
   syncPasswordChangeCredentialStateBestEffort,
-}, { authRouter }] = await Promise.all([
+}, { authRouter }, { issueLocalIdentityTokenForTest }] = await Promise.all([
   import('../lib/passwordChangeCredentialState.js'),
   import('../routes/auth.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 const helperWarnings: Array<{ message: string; details: Record<string, string> }> = [];
@@ -99,13 +100,13 @@ const server = app.listen(0, '127.0.0.1');
 await new Promise<void>(resolve => server.once('listening', resolve));
 const address = server.address();
 if (!address || typeof address === 'string') throw new Error('test server did not bind a TCP port');
-const token = `local-demo.${Buffer.from(JSON.stringify({
+const token = issueLocalIdentityTokenForTest({
   userId,
   tenantId,
   email,
   accountType: 'customer',
   role: 'super_admin',
-}), 'utf8').toString('base64url')}`;
+});
 
 try {
   const response = await fetch(`http://127.0.0.1:${address.port}/auth/change-password`, {

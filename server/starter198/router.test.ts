@@ -12,7 +12,7 @@ process.env.PB_URL = 'http://127.0.0.1:1';
 
 const [{ store }, { createStarter198Repository, STARTER_COLLECTIONS }, { createStarter198Router },
   { buildStarter198Workspace }, { STARTER_198_CAPABILITIES }, { studioRouter }, { socialRouter }, { publishingRouter },
-  { customerSuggestionsRouter }, { videosRouter }, { createBrowserReadSession }] = await Promise.all([
+  { customerSuggestionsRouter }, { videosRouter }, { createBrowserReadSession }, { issueLocalIdentityTokenForTest }] = await Promise.all([
   import('../storage/index.js'),
   import('./repository.js'),
   import('./router.js'),
@@ -24,6 +24,7 @@ const [{ store }, { createStarter198Repository, STARTER_COLLECTIONS }, { createS
   import('../routes/customerSuggestions.js'),
   import('../routes/videos.js'),
   import('../digitalEmployees/browserReadSession.js'),
+  import('../auth/localIdentity.js'),
 ]);
 
 type Row = { id: string } & Record<string, unknown>;
@@ -280,10 +281,15 @@ const browserReadSession = createBrowserReadSession({
   tenantId: starterTenant,
   userId: `${starterTenant}-browser-agent`,
   role: 'admin',
+  dataAuthority: 'local',
 });
 
 function token(tenantId: string, role?: string): string {
-  return `local-demo.${Buffer.from(JSON.stringify({ userId: `${tenantId}-user`, tenantId, ...(role ? { role } : {}) })).toString('base64url')}`;
+  return issueLocalIdentityTokenForTest({
+    userId: `${tenantId}-${role || 'missing'}-user`,
+    tenantId,
+    ...(role ? { role } : {}),
+  });
 }
 
 async function request(pathname: string, role = 'admin', init: RequestInit = {}) {

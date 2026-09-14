@@ -10,17 +10,22 @@ import { assetIdentity, signAssetUrl, verifyAssetToken } from '../lib/assetAcces
 import { getBestTimeScores } from '../publishing/bestTime.js';
 import {
   PUBLISH_COPY_PLATFORMS,
-  normalizePlatformCopies,
   sanitizePublishCopyPlatforms,
   type PlatformCopy,
   type PublishCopyPlatform,
 } from '../publishing/copyAdaptation.js';
+import { generateAuditedPlatformCopies } from '../publishing/auditedCopyAdaptation.js';
+import {
+  freezePublishSourceClaim,
+  localPublishingVideo,
+  PUBLISH_VIDEO_EXTENSIONS,
+  publishingUploadDir,
+  PublishSourceVerificationError,
+} from '../publishing/publishSourceClaim.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 
 export const publishingRouter = Router();
-
-const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
 
 interface RecycleListRecord {
   id: string;
@@ -97,21 +102,6 @@ async function verifiedWorkflowAttribution(
   } catch {
     return null;
   }
-}
-
-function publishingUploadDir(tenantId: string): string {
-  const tenantFolder = String(tenantId || 'local').replace(/[^\w.-]+/g, '-');
-  return path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantFolder);
-}
-
-function localPublishingVideo(tenantId: string, videoPath: unknown): string | null {
-  const requested = text(videoPath);
-  if (!requested) return null;
-  const uploadDir = publishingUploadDir(tenantId);
-  const resolved = path.resolve(requested);
-  if (!resolved.startsWith(`${uploadDir}${path.sep}`)) return null;
-  if (!PUBLISH_VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return null;
-  return resolved;
 }
 
 function publishingPreviewUrl(tenantId: string, videoPath: unknown): string {
@@ -264,7 +254,7 @@ publishingRouter.post('/local-videos', async (req, res) => {
     return;
   }
   const outputDir = publishingUploadDir(tenantId);
-  const outputPath = path.join(outputDir, `${randomUUID()}-${originalName}`);
+  const outputPath = path.join(outputDir, `manual-${randomUUID()}-${originalName}`);
   fs.mkdirSync(outputDir, { recursive: true });
   let receivedBytes = 0;
   const limiter = async function* (source: AsyncIterable<Buffer>) {
@@ -284,6 +274,7 @@ publishingRouter.post('/local-videos', async (req, res) => {
         videoPath: outputPath,
         previewUrl: publishingPreviewUrl(tenantId, outputPath),
         size: receivedBytes,
+        sourceKind: 'manual_upload',
       },
     });
   } catch (error: any) {
@@ -303,14 +294,12 @@ publishingRouter.post('/local-videos/import-rendered', (req, res) => {
     const filename = path.basename(sourcePath);
     const ext = path.extname(filename).toLowerCase();
     if (!PUBLISH_VIDEO_EXTENSIONS.has(ext)) return { sourcePath, error: 'unsupported_video' };
-    const targetPath = path.join(outputDir, filename);
-    if (!fs.existsSync(targetPath)) {
-      const resolvedSource = path.resolve(sourcePath);
-      if (!resolvedSource.startsWith(`${sourceRoot}${path.sep}`) || !fs.existsSync(resolvedSource) || !fs.statSync(resolvedSource).isFile()) {
-        return { sourcePath, error: 'video_not_found' };
-      }
-      fs.copyFileSync(resolvedSource, targetPath);
+    const targetPath = path.join(outputDir, `project-${randomUUID()}-${filename}`);
+    const resolvedSource = path.resolve(sourcePath);
+    if (!resolvedSource.startsWith(`${sourceRoot}${path.sep}`) || !fs.existsSync(resolvedSource) || !fs.statSync(resolvedSource).isFile()) {
+      return { sourcePath, error: 'video_not_found' };
     }
+    fs.copyFileSync(resolvedSource, targetPath);
     return {
       sourcePath,
       videoPath: targetPath,
@@ -427,8 +416,27 @@ publishingRouter.post('/calendar', async (req, res) => {
   try {
     await assertNoUnresolvedPublishing({ tenantId, platform, accountIds: Array.isArray(req.body?.targetAccountIds) ? req.body.targetAccountIds.map(String) : [], contentId: text(req.body?.contentId), videoPath: text(req.body?.videoPath), videoUrl: text(req.body?.videoUrl) });
   } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : '已有待核对发布' }); return; }
+  let publishSourceClaim;
+  try {
+    publishSourceClaim = await freezePublishSourceClaim(tenantId, {
+      sourceKind: req.body?.sourceKind,
+      projectId: text(req.body?.projectId || req.body?.contentId),
+      videoPath: text(req.body?.videoPath),
+      videoUrl: text(req.body?.videoUrl),
+      sourceVideoPath: text(req.body?.sourceVideoPath),
+      generationKind: req.body?.generationKind,
+      generationProvenance: text(req.body?.generationProvenance),
+      qualityStatus: text(req.body?.qualityStatus),
+      publishable: req.body?.publishable === true,
+      generationRecordId: text(req.body?.generationRecordId),
+    });
+  } catch (error) {
+    const status = error instanceof PublishSourceVerificationError ? error.statusCode : 500;
+    res.status(status).json({ error: error instanceof PublishSourceVerificationError ? error.code : 'publish_source_verification_failed', message: error instanceof Error ? error.message : '发布来源校验失败' });
+    return;
+  }
   const tracked = await createTrackedPostDraft(tenantId, {
-    contentId: text(req.body?.contentId),
+    contentId: publishSourceClaim.projectId,
     platform,
     title,
     language: text(req.body?.language),
@@ -442,6 +450,8 @@ publishingRouter.post('/calendar', async (req, res) => {
       description: text(req.body?.description),
       firstComment: text(req.body?.firstComment),
       videoPath: text(req.body?.videoPath),
+      sourceProjectId: publishSourceClaim.projectId,
+      publishSourceClaim,
       trackWaLink: req.body?.trackWaLink !== false,
       scheduleLocked: req.body?.scheduleLocked === true,
       targetAccountIds: Array.isArray(req.body?.targetAccountIds)
@@ -618,6 +628,7 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
 });
 
 publishingRouter.post('/adapt-copy', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
   const title = text(req.body?.title);
   const description = text(req.body?.description);
   const language = text(req.body?.language) || 'English';
@@ -637,41 +648,11 @@ publishingRouter.post('/adapt-copy', async (req, res) => {
   ) as Partial<Record<PublishCopyPlatform, PlatformCopy>>;
   const requireAlternative = mode === 'regenerate';
 
-  if (!title && !description) {
-    res.status(400).json({ error: 'copy_source_required', message: '请先填写作品标题或发布配文' });
-    return;
-  }
-
-  const prompt = [
-    'Generate platform-native publishing copy as strict JSON only.',
-    `Target language: ${language}`,
-    `Title: ${title}`,
-    `Draft copy: ${description}`,
-    `Requested platforms: ${targetPlatforms.join(', ')}`,
-    'Only return the requested platform keys.',
-    'youtube: { title <=70 chars, description, tags[], firstComment }',
-    'tiktok: { caption <=120 chars, hashtags[], firstComment }',
-    'instagram: { caption, hashtags[], firstComment }',
-    'facebook: { text, hashtags[], firstComment }',
-    'Make every platform different. Put hashtags and wa.me link friendly text in firstComment when useful.',
-    'Use only facts present in the title and draft copy. Do not invent features, specifications, certifications, prices, inventory, customer results, or delivery promises.',
-    requireAlternative
-      ? `Create a materially different alternative from this current version while preserving facts: ${JSON.stringify(currentCopy)}`
-      : '',
-  ].join('\n');
-  try {
-    const raw = await callLLM(prompt);
-    const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || raw);
-    res.json({
-      copy: normalizePlatformCopies(parsed, targetPlatforms, title, description, { currentCopy, requireAlternative }),
-      source: 'ai',
-    });
-  } catch {
-    res.json({
-      copy: normalizePlatformCopies({}, targetPlatforms, title, description, { currentCopy, requireAlternative }),
-      source: 'fallback',
-    });
-  }
+  const result = await generateAuditedPlatformCopies({
+    tenantId, title, description, language, targetPlatforms, currentCopy, requireAlternative,
+    projectId: text(req.body?.projectId) || undefined,
+  });
+  res.status(result.status).json(result.body);
 });
 
 publishingRouter.post('/queue/suggestions/regenerate', async (req, res) => {

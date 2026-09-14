@@ -4,7 +4,7 @@ import { Activity, Component, lazy, Suspense, useCallback, useEffect, useRef, us
 import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
-import { authApi, type AuthSession } from './lib/auth';
+import { authApi, getToken, type AuthSession } from './lib/auth';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
 import AssistLinkPage from './components/AssistLinkPage';
 import LegalPages from './components/LegalPages';
@@ -207,6 +207,11 @@ export default function App() {
           const detail = event.state.productionDetail;
           try { sessionStorage.setItem('digitalEmployee.businessDeepLink', JSON.stringify({ ...detail, issuedAt: Date.now() })); } catch { /* optional storage */ }
           window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...detail, restoreHistory: true } }));
+        } else {
+          try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); } catch { /* optional storage */ }
+          // A generic history entry is also authoritative: notify the page
+          // coordinator so it clears any task binding from the newer entry.
+          window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: previous, restoreHistory: true } }));
         }
       }
     };
@@ -258,6 +263,7 @@ export default function App() {
   // 账号会话
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [sessionRefreshError, setSessionRefreshError] = useState('');
   const [starterAccess, setStarterAccess] = useState<StarterAccessState>('loading');
   const [starterAccessError, setStarterAccessError] = useState('');
   const [starterProbeRetry, setStarterProbeRetry] = useState(0);
@@ -272,8 +278,10 @@ export default function App() {
     authApi.me().then(s => {
       setDemoProgressScope(progressScopeFor(s));
       setSession(s);
-      setAuthLoading(false);
-    });
+      setSessionRefreshError('');
+    }).catch(() => {
+      setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
+    }).finally(() => setAuthLoading(false));
   }, [isRegistrationEntry]);
   useEffect(() => {
     if (!session) return;
@@ -281,6 +289,9 @@ export default function App() {
       authApi.me().then(s => {
         setDemoProgressScope(progressScopeFor(s));
         setSession(s);
+        setSessionRefreshError('');
+      }).catch(() => {
+        setSessionRefreshError('网络或服务暂时不可用，已保留当前登录状态和页面。');
       });
     }, 300_000);
     return () => window.clearInterval(timer);
@@ -446,7 +457,7 @@ export default function App() {
         const preview = detail.businessRef?.preview === true;
         if ((runId && taskId) || detail.businessRef?.entityId || (preview && taskKey)) {
           setSmartAssetsWorkflowContext({ runId, taskId, taskKey, entityId: detail.businessRef?.entityId, ...(preview ? { preview: true } : {}) });
-        }
+        } else setSmartAssetsWorkflowContext(null);
       }
     };
     window.addEventListener('lingshu:navigate', handler);
@@ -474,24 +485,32 @@ export default function App() {
     setDemoProgressScope(progressScopeFor(s));
     starterWorkspaceApi.clearAll();
     setStarterAccess('loading');
+    setSessionRefreshError('');
     setSession(s);
   };
   const refreshSession = async () => {
-    const latest = await authApi.me();
-    if (!latest) {
-      setDemoProgressScope(null);
-      starterWorkspaceApi.clearAll();
-      setSession(null);
-      return;
+    try {
+      const latest = await authApi.me();
+      if (!latest) {
+        setDemoProgressScope(null);
+        starterWorkspaceApi.clearAll();
+        setSession(null);
+        setSessionRefreshError('');
+        return;
+      }
+      setDemoProgressScope(progressScopeFor(latest));
+      setSession(latest);
+      setSessionRefreshError('');
+    } catch {
+      setSessionRefreshError('网络或服务暂时不可用，已保留当前登录状态和页面。');
     }
-    setDemoProgressScope(progressScopeFor(latest));
-    setSession(latest);
   };
   const handleLogout = () => {
     authApi.logout();
     setDemoProgressScope(null);
     starterWorkspaceApi.clearAll();
     setStarterAccess('loading');
+    setSessionRefreshError('');
     setSession(null);
   };
   const handleSupportSessionStarted = (supportSession: AuthSession) => {
@@ -511,6 +530,17 @@ export default function App() {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center">
         <Loader2 size={22} className="animate-spin text-text-muted" />
+      </div>
+    );
+  }
+  if (!session && sessionRefreshError && getToken()) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-base font-semibold text-slate-900">服务连接暂时中断</p>
+          <p className="mt-2 text-sm text-slate-600">{sessionRefreshError} 请重试；不会因为一次服务抖动清除登录凭据。</p>
+          <button type="button" onClick={() => { setAuthLoading(true); void refreshSession().finally(() => setAuthLoading(false)); }} className="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">重新连接</button>
+        </div>
       </div>
     );
   }
@@ -577,7 +607,8 @@ export default function App() {
           onSessionRefresh={() => void refreshSession()}
         />}
       </Suspense>
-      {!isAgentProductionSession() && page !== 'agentMonitor' && window.history.state?.productionDepth > 0 && <button type="button" onClick={requestProductionBack} className="shrink-0 border-b bg-white px-5 py-2 text-left text-sm font-semibold text-blue-700">← 返回上一页（保留查看位置）</button>}
+      {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
+      {!isAgentProductionSession() && page !== 'agentMonitor' && window.history.state?.productionDepth > 0 && <button type="button" onClick={requestProductionBack} className="shrink-0 border-b bg-white px-5 py-2 text-left text-sm font-semibold text-blue-700">← 返回上一页</button>}
       {starterMode && isSocialTaskContextPage(page) && (
         <Suspense fallback={null}>
           <SocialTaskContextBar

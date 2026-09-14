@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { normalizeStoredPublishDraft, normalizeStoredPublishQueueItem, publishStorageKey } from './TrafficPage';
+import {
+  classifyDirectPublishResponse,
+  normalizeStoredPublishDraft,
+  normalizeStoredPublishQueueItem,
+  PUBLISH_STATUS_META,
+  publishStorageKey,
+  publishSourceRequestFields,
+  studioGenerationIsVerified,
+} from './TrafficPage';
 
 assert.equal(publishStorageKey('ow_publish_queue', 'tenant A'), 'ow_publish_queue:tenant%20A');
 assert.notEqual(publishStorageKey('ow_publish_queue', 'tenant-a'), publishStorageKey('ow_publish_queue', 'tenant-b'));
@@ -41,12 +49,93 @@ const validItem = normalizeStoredPublishQueueItem({
   scheduledAt: '2026-08-27T20:00',
   status: 'ready',
   completedTargets: 1,
+  sourceProjectId: 'project-1',
+  generationKind: 'script',
+  generationProvenance: 'ai',
+  qualityStatus: 'passed',
+  publishable: true,
+  generationRecordId: 'script-v1',
+  copyAudit: {
+    enterpriseFactsHash: 'a'.repeat(64),
+    sourceHash: 'b'.repeat(64),
+    outputHash: 'c'.repeat(64),
+    checkedAt: '2026-09-14T00:00:00.000Z',
+    projectId: 'project-1',
+    targetPlatforms: ['tiktok'],
+  },
 });
 assert.ok(validItem);
 assert.deepEqual(validItem.targetAccountIds, ['account-1']);
 assert.deepEqual(validItem.platformCopy.tiktok.hashtags, ['one']);
 assert.equal(validItem.deliveryMode, 'schedule');
 assert.equal(validItem.status, 'ready');
+assert.equal(validItem.sourceVideoPath, validItem.videoPath);
+assert.equal(studioGenerationIsVerified(validItem), true);
+assert.equal(validItem.copyAudit?.projectId, 'project-1');
+assert.equal(studioGenerationIsVerified({ ...validItem, generationProvenance: 'manual_draft' }), false);
+assert.deepEqual(publishSourceRequestFields(validItem), {
+  sourceKind: 'project', projectId: 'project-1', sourceVideoPath: validItem.videoPath,
+  generationKind: 'script', generationProvenance: 'ai', qualityStatus: 'passed',
+  publishable: true, generationRecordId: 'script-v1',
+});
+assert.equal(publishSourceRequestFields({ ...validItem, sourceProjectId: undefined }).sourceKind, 'manual_upload');
+
+const acceptedDelivery = classifyDirectPublishResponse('tiktok', {
+  ok: true,
+  deliveryStatus: 'provider_accepted',
+  providerReceiptId: 'tiktok-provider-receipt',
+  platformPostId: '',
+});
+assert.deepEqual(acceptedDelivery, {
+  platform: 'tiktok',
+  deliveryStatus: 'provider_accepted',
+  providerReceiptId: 'tiktok-provider-receipt',
+});
+assert.equal(PUBLISH_STATUS_META.provider_processing.label, '平台处理中');
+assert.throws(() => classifyDirectPublishResponse('tiktok', {
+  ok: true,
+  deliveryStatus: 'provider_accepted',
+}), /可追踪回执/);
+assert.throws(() => classifyDirectPublishResponse('tiktok', {
+  ok: true,
+  deliveryStatus: 'published',
+  platformPostId: '',
+}), /最终发布回执/);
+assert.deepEqual(classifyDirectPublishResponse('tiktok', {
+  ok: true,
+  deliveryStatus: 'published',
+  platformPostId: 'tiktok-public-post',
+}), {
+  platform: 'tiktok',
+  deliveryStatus: 'published',
+  platformPostId: 'tiktok-public-post',
+});
+
+const processingItem = normalizeStoredPublishQueueItem({
+  id: 'processing-item',
+  status: 'provider_processing',
+  deliveryResults: {
+    'tiktok-account': {
+      platform: 'tiktok',
+      deliveryStatus: 'provider_accepted',
+      providerReceiptId: 'tiktok-provider-receipt',
+      platformPostId: '',
+    },
+    invalid: {
+      platform: 'tiktok',
+      deliveryStatus: 'provider_accepted',
+    },
+  },
+});
+assert.ok(processingItem);
+assert.equal(processingItem.status, 'provider_processing');
+assert.deepEqual(processingItem.deliveryResults, {
+  'tiktok-account': {
+    platform: 'tiktok',
+    deliveryStatus: 'provider_accepted',
+    providerReceiptId: 'tiktok-provider-receipt',
+  },
+});
 
 const draft = normalizeStoredPublishDraft({
   title: 'Fallback title',

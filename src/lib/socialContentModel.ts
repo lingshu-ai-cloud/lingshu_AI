@@ -223,7 +223,7 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   const languages = list(draft.language);
   if (markets.length > 10 || markets.some(item => item.length > 80)) add(0, '目标市场最多 10 项，每项不超过 80 字');
   if (languages.length > 10 || languages.some(item => item.length > 40)) add(0, '内容语言最多 10 项，每项不超过 40 字');
-  if (!draft.selectedSources.some(item => item.kind === 'knowledge') && !draft.keyFacts.trim()) add(1, '请选择企业资料或填写本次关键信息');
+  if (!draft.selectedSources.some(item => item.kind === 'knowledge')) add(1, '请选择已确认的企业资料；本次任务备注不能替代企业知识');
   if (!draft.selectedSources.some(item => item.kind === 'material') && draft.referenceLinks.length === 0) add(1, '请选择素材、上传文件或添加参考链接');
   if (draft.keyFacts.length > 3_000) add(1, '企业与产品关键信息不超过 3000 字');
   const restrictions = draft.prohibitedClaims.split(/\r?\n/).map(item => item.trim()).filter(Boolean);

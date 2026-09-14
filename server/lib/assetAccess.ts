@@ -108,9 +108,25 @@ export function syncAssetSession(req: Request, res: Response, next: NextFunction
 }
 
 export async function requireScopedAsset(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const identity = await assetIdentity(req);
   const pathname = `${req.baseUrl}${req.path}`;
-  const signed = identity ? null : verifyAssetToken(req.query.assetToken, pathname);
+  const signed = verifyAssetToken(req.query.assetToken, pathname);
+  let identity: Identity | null = null;
+  try {
+    identity = await assetIdentity(req);
+  } catch (error) {
+    if (!signed) {
+      console.error('[asset-auth] identity verification unavailable', {
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.status(503).end();
+      return;
+    }
+  }
+  if (identity && signed && identity.tenantId !== signed.tenantId) {
+    res.status(403).end();
+    return;
+  }
   const viewerTenantId = identity?.tenantId || signed?.tenantId;
   if (!viewerTenantId) {
     res.status(401).end();

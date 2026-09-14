@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, Clipboard, KeyRound, Link2, Loader2, Plus, RefreshCcw, Save, ShieldCheck, X } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { clearDeliveryTenantRequestId, deliveryTenantRequestId } from '../lib/adminDeliveryTenantRequest';
 import AdminContentOpsAlerts from './AdminContentOpsAlerts';
 import AdminSocialAccountSetup from './AdminSocialAccountSetup';
 import AdminSocialWorkPackageCenter from './AdminSocialWorkPackageCenter';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-type Platform = 'meta' | 'google' | 'tiktok' | 'wecom';
-type Status = 'pending' | 'configuring' | 'waiting_customer' | 'importing_history' | 'verifying' | 'active' | 'needs_permanent_token' | 'token_expired' | 'error';
+type Platform = 'meta' | 'google' | 'tiktok' | 'wecom'; type Status = 'pending' | 'configuring' | 'waiting_customer' | 'importing_history' | 'verifying' | 'active' | 'needs_permanent_token' | 'token_expired' | 'error';
 interface DeliveryApp {
   id: string;
   tenantId: string;
@@ -53,11 +53,7 @@ interface TenantCard {
   apps: DeliveryApp[];
 }
 
-interface GeneratedInvite {
-  companyName: string;
-  inviteCode: string;
-  inviteUrl: string;
-}
+interface GeneratedInvite { companyName: string; inviteCode: string; inviteUrl: string }
 
 type Draft = Record<string, Partial<DeliveryApp> & { appSecret?: string; accessToken?: string; webhookVerifyToken?: string; wecomEncodingAesKey?: string }>;
 type TestState = Record<string, Record<string, 'idle' | 'running' | 'ok' | 'error'>>;
@@ -896,15 +892,19 @@ export default function AdminDeliveryPage() {
     setCreatingTenant(true);
     setError('');
     try {
+      const requestId = await deliveryTenantRequestId(tenantForm);
       const data = await jsonFetch('/api/overseas/admin/delivery/tenants', {
         method: 'POST',
+        headers: { 'Idempotency-Key': requestId },
         body: JSON.stringify({
+          requestId,
           companyName,
           contactName: tenantForm.contactName.trim(),
           industry: tenantForm.industry.trim(),
           notes: tenantForm.notes.trim(),
         }),
       });
+      clearDeliveryTenantRequestId(requestId);
       if (data.tenant) {
         setTenants(current => [data.tenant, ...current.filter(item => item.tenantId !== data.tenant.tenantId)]);
       }

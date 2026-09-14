@@ -13,6 +13,7 @@ export interface StudioSocialTaskSeed {
   audience: string;
   primaryCta: string;
   sellingPoints: string;
+  factVerificationNotice: string;
   selectedMaterialIds: string[];
   unsupportedLanguages: string[];
 }
@@ -60,13 +61,10 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     .filter(source => source.status === 'active' && source.kind === 'material')
     .map(source => materialId(source.sourceRef))
     .filter((id): id is string => Boolean(id)))];
-  const productInfo = [
-    brief.productRef ? `产品名称：${brief.productRef}` : '',
-    brief.objective ? `本次目标：${brief.objective}` : '',
-    brief.brandNotes ? `已确认信息：${brief.brandNotes}` : '',
-    brief.restrictions.length ? `内容边界：${brief.restrictions.join('；')}` : '',
-    brief.callToAction ? `行动引导：${brief.callToAction}` : '',
-  ].filter(Boolean).join('\n');
+  const pendingFacts = [
+    brief.productRef ? `产品引用“${brief.productRef}”` : '',
+    brief.brandNotes ? '任务备注' : '',
+  ].filter(Boolean);
   return {
     projectTitle: clean(brief.title) || '社媒内容任务',
     contentMode,
@@ -74,10 +72,15 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     platform: clean(brief.platforms[0]).toLowerCase() || (contentMode === 'poster' ? 'facebook' : 'tiktok'),
     aspectRatio: clean(brief.aspectRatio) || (contentMode === 'poster' ? '1:1' : '9:16'),
     languageCodes: languageCodes.length ? languageCodes : ['zh'],
-    productInfo,
+    // Brief productRef/brandNotes are request free text, not confirmed facts.
+    // Studio will hydrate its product input only from the tenant enterprise profile.
+    productInfo: '',
     audience: [clean(brief.audience), brief.markets.length ? `目标市场：${brief.markets.join('、')}` : ''].filter(Boolean).join('；'),
     primaryCta: clean(brief.callToAction),
-    sellingPoints: clean(brief.brandNotes),
+    sellingPoints: '',
+    factVerificationNotice: pendingFacts.length
+      ? `${pendingFacts.join('和')}未作为已确认企业事实导入；请在企业中心选择并核对产品资料后再生成。`
+      : '',
     selectedMaterialIds,
     unsupportedLanguages: languagePairs.filter(item => !item.code).map(item => item.language),
   };

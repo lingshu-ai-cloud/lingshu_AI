@@ -1,14 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import type { OrganizationRole } from './organizationRole.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export interface LocalStoredAccount {
   userId: string;
   tenantId: string;
   email: string;
   name: string;
-  accountType: 'customer';
+  accountType: 'customer' | 'trial' | 'admin';
   role?: OrganizationRole;
   salt: string;
   passwordHash: string;
@@ -31,10 +34,16 @@ function isErrno(error: unknown, code: string): boolean {
 function isStoredAccount(value: unknown): value is LocalStoredAccount {
   if (!value || typeof value !== 'object') return false;
   const account = value as Record<string, unknown>;
-  return account.accountType === 'customer'
+  return ['customer', 'trial', 'admin'].includes(String(account.accountType))
     && ['userId', 'tenantId', 'email', 'name', 'salt', 'passwordHash', 'createdAt']
       .every(key => typeof account[key] === 'string' && String(account[key]).length > 0)
     && (account.role === undefined || ['super_admin', 'admin', 'social_operator', 'customer_service'].includes(String(account.role)));
+}
+
+export function localAccountRecordsFile(): string {
+  return process.env.NODE_ENV === 'test' && process.env.LOCAL_AUTH_ACCOUNTS_FILE
+    ? path.resolve(process.env.LOCAL_AUTH_ACCOUNTS_FILE)
+    : path.join(__dirname, '../../data/local-auth-accounts.json');
 }
 
 /** Missing storage means an empty development registry; every other failure is fail-closed. */

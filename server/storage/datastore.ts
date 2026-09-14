@@ -46,6 +46,8 @@ export interface DataStore {
 export interface Identity {
   userId: string;
   tenantId: string;
+  /** Data source selected by verified authentication; never supplied by clients. */
+  dataAuthority?: 'pocketbase' | 'local';
   supportAccess?: {
     requestId: string;
     adminEmail: string;

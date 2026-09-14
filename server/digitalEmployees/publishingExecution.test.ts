@@ -3,7 +3,8 @@ import { buildPublishingApprovalPackage, createPublishingCalendarEntries, invali
 import { store } from '../storage/index.js';
 
 const base = {
-  projects: [{ id: 'project-1', title: '成片一', status: 'completed', spec: { caption: '正文', languageRenderOutputs: { en: { status: 'done', path: '/safe/final.mp4' } } } }],
+  tenantId: 'tenant-1',
+  projects: [{ id: 'project-1', title: '成片一', status: 'ready_for_approval', spec: { caption: '正文', automation: { managedBy: 'digital_employee', stage: 'completed', renderOutputPath: '/safe/final.mp4', quality: { passed: true, ruleVersion: 9 } } } }],
   targets: [{ platform: 'facebook' as const, accountId: 'account-1', accountLabel: '主页一' }],
   goalPlatforms: ['facebook' as const], allowRealPublishing: false,
   now: new Date('2026-09-04T02:00:00.000Z'),
@@ -17,17 +18,19 @@ assert.notEqual(buildPublishingApprovalPackage({ ...base, projects: [{ ...base.p
 assert.notEqual(buildPublishingApprovalPackage({ ...base, allowRealPublishing: true }).contentHash, manual.contentHash);
 
 const versioned = buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: {
-  automation: { renderOutputPath: '/current-v3.mp4' },
+  automation: { managedBy: 'digital_employee', stage: 'completed', renderOutputPath: '/current-v3.mp4', quality: { passed: true, ruleVersion: 9 } },
   languageRenderOutputs: { en: { status: 'done', path: '/old-v2.mp4' } },
   languageRenderVersions: { en: [{ status: 'done', path: '/old-v1.mp4' }] },
   renderOutputPath: '/legacy.mp4',
 } }] });
 assert.deepEqual(versioned.items.map(item => item.videoPath), ['/current-v3.mp4']);
 const historicalOnly = buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: {
+  automation: { managedBy: 'digital_employee', stage: 'completed', quality: { passed: true, ruleVersion: 9 } },
   languageRenderVersions: { en: [{ status: 'done', path: '/old.mp4' }] },
 } }] });
 assert.equal(historicalOnly.items.length, 0, 'history alone is not a publishable current deliverable');
 const rerendering = buildPublishingApprovalPackage({ ...base, projects: [{ ...base.projects[0], spec: {
+  automation: { managedBy: 'digital_employee', stage: 'rendering', quality: { passed: true, ruleVersion: 9 } },
   languageRenderOutputs: { en: { status: 'rendering', path: '/old.mp4' } },
   renderOutputPath: '/legacy.mp4',
 } }] });
@@ -73,6 +76,7 @@ const frozen = buildPublishingApprovalPackage(base);
 const approved = { id: 'already-materialized', tenant_id: 'tenant-1', platform: 'facebook', stats: {
   status: 'scheduled', workflowRunId: 'run-1', sourceProjectId: 'project-1',
   approvedContentHash: frozen.contentHash, videoPath: '/safe/final.mp4', approvalId: 'approval-1',
+  publishSourceClaim: frozen.items[0]?.sourceClaim,
 } };
 const calendarRows: any[] = [...pagedPosts, approved];
 store.list = (async (_collection: string, query: { page?: number; perPage?: number } = {}) => {
@@ -88,7 +92,7 @@ store.getById = (async () => null) as typeof store.getById;
 const originalCreate = store.create;
 store.create = (async () => { throw Error('idempotent retry must not create another draft'); }) as typeof store.create;
 try {
-  const entries = await createPublishingCalendarEntries({ tenantId: 'tenant-1', runId: 'run-1', approvalTaskId: 'task-1', approvalId: 'approval-1', approvedContentHash: frozen.contentHash, package: frozen });
+  const entries = await createPublishingCalendarEntries({ tenantId: 'tenant-1', runId: 'run-1', approvalTaskId: 'task-1', approvalId: 'approval-1', approvedContentHash: frozen.contentHash, package: frozen }, { verifySource: async (_tenantId, claim) => claim });
   assert.deepEqual(entries, [{ id: approved.id, status: 'scheduled' }]);
   assert.equal(await invalidatePublishingApprovalForProject('tenant-1', 'project-1'), 1);
   assert.equal(approved.stats.status, 'awaiting_reapproval', 'source invalidation must also reach later pages');

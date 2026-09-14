@@ -27,10 +27,11 @@ const account = (tenantId: string, suffix: string) => ({
 });
 fs.writeFileSync(accountsFile, JSON.stringify([account(starterTenant, 'a'), account(legacyTenant, 'b')]), { mode: 0o600 });
 
-const [{ authRouter }, { store }, { STARTER_198_CAPABILITIES, STARTER_198_PROFILE_VERSION }] = await Promise.all([
+const [{ authRouter }, { store }, { STARTER_198_CAPABILITIES, STARTER_198_PROFILE_VERSION }, { issueLocalIdentityTokenForTest }] = await Promise.all([
   import('../routes/auth.js'),
   import('../storage/index.js'),
   import('../../shared/contracts/starter198.js'),
+  import('../auth/localIdentity.js'),
 ]);
 const originalList = store.list;
 let accessFailure = false;
@@ -65,10 +66,10 @@ await new Promise<void>(resolve => server.once('listening', resolve));
 const address = server.address();
 if (!address || typeof address === 'string') throw new Error('member quota test server did not bind');
 const origin = `http://127.0.0.1:${address.port}`;
-const token = (tenantId: string, suffix: string) => `local-demo.${Buffer.from(JSON.stringify({
+const token = (tenantId: string, suffix: string) => issueLocalIdentityTokenForTest({
   userId: `owner-${suffix}`, tenantId, email: `owner-${suffix}@example.com`, name: `Owner ${suffix}`,
   accountType: 'customer', role: 'super_admin',
-})).toString('base64url')}`;
+});
 const add = (tenantId: string, suffix: string, email: string) => fetch(`${origin}/api/overseas/auth/employees`, {
   method: 'POST',
   headers: { Authorization: `Bearer ${token(tenantId, suffix)}`, 'Content-Type': 'application/json' },

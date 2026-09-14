@@ -22,11 +22,11 @@ services:
     expose:
       - "8788"
     ports:
-      # The shared Caddy container reaches this bridge-only address. It is not
-      # bound to the server's public network interface.
-      - "172.17.0.1:${APP_HOST_PORT:-18788}:8788"
+      # Host-side probes use this loopback binding; Caddy reaches app:8788 on
+      # the private Compose network, so the API is never published directly.
+      - "127.0.0.1:${APP_HOST_PORT:-18788}:8788"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/ready"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -74,8 +74,8 @@ services:
 volumes:
   pb_data:
     external: true
-    # Keep the test environment attached to its original persistent dataset,
-    # even when the Compose project name or checkout directory changes.
-    name: ${PB_DATA_VOLUME_NAME:-lingshu-ai-cs-preview_preview_pb_data}
+    # No historical preview fallback: deployment entrypoints explicitly create
+    # or validate this installation-specific, labelled volume before Compose.
+    name: ${PB_DATA_VOLUME_NAME:?PB_DATA_VOLUME_NAME must be set in the production env file}
   caddy_data:
   caddy_config:

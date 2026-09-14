@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -5,6 +6,8 @@ import {
   acquireDurableOperationLease,
   assertDurableOperationLease,
   releaseDurableOperationLease,
+  renewDurableOperationLease,
+  type DurableOperationLease,
 } from '../runtime/durableLease.js';
 import {
   Starter198RepositoryError,
@@ -26,12 +29,37 @@ export class Starter198LegacyEffectError extends Error {
 const tenantQueues = new Map<string, Promise<void>>();
 const PROFILE_TRANSITION_LEASE_SCOPE = 'product-profile-transition';
 const DEFAULT_TRANSITION_LEASE_MS = 30 * 60_000;
+const heldTransition = new AsyncLocalStorage<{
+  tenantId: string;
+  dataStore: DataStore;
+  guard: Starter198TransitionLeaseGuard;
+}>();
 
-function transitionLeaseDurationMs(): number {
-  const parsed = Number(process.env.LEGACY_EXTERNAL_EFFECT_LEASE_MS);
+export interface Starter198TransitionLeaseGuard {
+  /** Renew and fence immediately before an irreversible write or provider call. */
+  beforeEffect(now?: Date): Promise<void>;
+}
+
+export interface Starter198TransitionLeaseOptions {
+  ownerId?: string;
+  now?: () => Date;
+  leaseDurationMs?: number;
+  reclaimGraceMs?: number;
+  heartbeatIntervalMs?: number;
+}
+
+function transitionLeaseDurationMs(value: unknown = process.env.LEGACY_EXTERNAL_EFFECT_LEASE_MS): number {
+  const parsed = Number(value);
   return Number.isFinite(parsed)
     ? Math.min(Math.max(Math.floor(parsed), 30_000), 2 * 60 * 60_000)
     : DEFAULT_TRANSITION_LEASE_MS;
+}
+
+function transitionHeartbeatIntervalMs(leaseDurationMs: number, value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? Math.min(Math.max(Math.floor(parsed), 5), Math.max(5, Math.floor(leaseDurationMs / 2)))
+    : Math.max(1_000, Math.floor(leaseDurationMs / 3));
 }
 
 /**
@@ -41,16 +69,27 @@ function transitionLeaseDurationMs(): number {
  */
 export async function withStarter198TenantTransitionLock<T>(
   tenantId: string,
-  action: () => Promise<T>,
+  action: (guard: Starter198TransitionLeaseGuard) => Promise<T>,
   dataStore: DataStore = store,
+  options: Starter198TransitionLeaseOptions = {},
 ): Promise<T> {
+  const inherited = heldTransition.getStore();
+  if (inherited?.tenantId === tenantId && inherited.dataStore === dataStore) {
+    await inherited.guard.beforeEffect();
+    return action(inherited.guard);
+  }
   const prior = tenantQueues.get(tenantId) ?? Promise.resolve();
   let release = () => {};
   const gate = new Promise<void>(resolve => { release = resolve; });
   const tail = prior.catch(() => undefined).then(() => gate);
   tenantQueues.set(tenantId, tail);
   await prior.catch(() => undefined);
-  let lease: Awaited<ReturnType<typeof acquireDurableOperationLease>> = null;
+  const now = options.now ?? (() => new Date());
+  const leaseDurationMs = transitionLeaseDurationMs(options.leaseDurationMs);
+  let lease: DurableOperationLease | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let leaseLost = false;
+  let renewalTail: Promise<void> = Promise.resolve();
   try {
     try {
       lease = await acquireDurableOperationLease({
@@ -58,16 +97,47 @@ export async function withStarter198TenantTransitionLock<T>(
         tenantId,
         scope: PROFILE_TRANSITION_LEASE_SCOPE,
         subjectId: tenantId,
-        ownerId: `profile-transition:${process.pid}:${randomUUID()}`,
-        leaseDurationMs: transitionLeaseDurationMs(),
+        ownerId: options.ownerId ?? `profile-transition:${process.pid}:${randomUUID()}`,
+        now: now(),
+        leaseDurationMs,
+        reclaimGraceMs: options.reclaimGraceMs,
       });
     } catch {
       throw new Starter198LegacyEffectError('starter_198_access_unavailable', 503);
     }
     if (!lease) throw new Starter198LegacyEffectError('starter_198_access_unavailable', 503);
-    await assertDurableOperationLease({ dataStore, lease, minimumRemainingMs: 1_000 });
-    return await action();
+    const renewAndFence = async (effectNow?: Date): Promise<void> => {
+      const operation = renewalTail.then(async () => {
+        if (leaseLost || !lease) throw new Starter198LegacyEffectError('starter_198_access_unavailable', 503);
+        const renewalNow = effectNow ?? now();
+        try {
+          lease = await renewDurableOperationLease({ dataStore, lease, now: renewalNow, leaseDurationMs });
+          await assertDurableOperationLease({
+            dataStore,
+            lease,
+            now: renewalNow,
+            minimumRemainingMs: Math.min(30_000, Math.max(1_000, Math.floor(leaseDurationMs / 3))),
+          });
+        } catch {
+          leaseLost = true;
+          throw new Starter198LegacyEffectError('starter_198_access_unavailable', 503);
+        }
+      });
+      renewalTail = operation.then(() => undefined, () => undefined);
+      return operation;
+    };
+    const guard: Starter198TransitionLeaseGuard = { beforeEffect: renewAndFence };
+    await guard.beforeEffect();
+    const heartbeatIntervalMs = transitionHeartbeatIntervalMs(
+      leaseDurationMs,
+      options.heartbeatIntervalMs ?? process.env.LEGACY_EXTERNAL_EFFECT_HEARTBEAT_MS,
+    );
+    heartbeat = setInterval(() => { void renewAndFence().catch(() => undefined); }, heartbeatIntervalMs);
+    heartbeat.unref?.();
+    return await heldTransition.run({ tenantId, dataStore, guard }, () => action(guard));
   } finally {
+    if (heartbeat) clearInterval(heartbeat);
+    await renewalTail;
     if (lease) {
       try {
         await releaseDurableOperationLease({ dataStore, lease });
@@ -103,12 +173,13 @@ export async function assertLegacyExternalEffectAllowed(
 /** Hold the local transition lock from the final authority read through the effect. */
 export function withLegacyExternalEffectAllowed<T>(
   tenantId: string,
-  action: () => Promise<T>,
+  action: (guard: Starter198TransitionLeaseGuard) => Promise<T>,
   repository: Starter198Repository = starter198Repository,
   dataStore: DataStore = store,
 ): Promise<T> {
-  return withStarter198TenantTransitionLock(tenantId, async () => {
+  return withStarter198TenantTransitionLock(tenantId, async guard => {
     await assertLegacyExternalEffectAllowed(tenantId, repository);
-    return action();
+    await guard.beforeEffect();
+    return action(guard);
   }, dataStore);
 }

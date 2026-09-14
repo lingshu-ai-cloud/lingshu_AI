@@ -8,7 +8,11 @@ export function metaAccountId(value: string): string {
   return id;
 }
 export class MetaAdsAdapter {
-  constructor(private token: string, private transport: typeof fetch = fetch) {}
+  constructor(
+    private token: string,
+    private transport: typeof fetch = fetch,
+    private beforeProviderWrite?: () => Promise<void>,
+  ) {}
   async request(path: string, params: Record<string, unknown> = {}, method: 'GET' | 'POST' = 'GET'): Promise<any> {
     if (!/^(?:act_)?\d+(?:\/[a-z_]+)?$/.test(path)) throw new AdProviderError('广告资源路径无效', 'INVALID_INPUT');
     const version = process.env.META_ADS_API_VERSION;
@@ -17,6 +21,7 @@ export class MetaAdsAdapter {
     const body = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) if (value !== undefined) body.set(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
     if (method === 'GET') url.search = body.toString();
+    if (method === 'POST') await this.beforeProviderWrite?.();
     let response: Response;
     try { response = await this.transport(url, { method, headers: { Authorization: `Bearer ${this.token}` }, body: method === 'POST' ? body : undefined, signal: AbortSignal.timeout(30000) }); }
     catch { throw new AdProviderError('广告平台请求超时或网络异常', 'NETWORK_ERROR', method === 'POST'); }

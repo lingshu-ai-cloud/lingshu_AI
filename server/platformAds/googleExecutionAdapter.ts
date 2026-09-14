@@ -23,12 +23,17 @@ export function demandGenOperations(plan: GoogleDemandGenPlan): Record<string, u
   ];
 }
 export class GoogleExecutionAdapter {
-  constructor(private token: string, private transport: typeof fetch = fetch) {}
+  constructor(
+    private token: string,
+    private transport: typeof fetch = fetch,
+    private beforeProviderWrite?: () => Promise<void>,
+  ) {}
   private async mutate(customerId: string, mutateOperations: Record<string, unknown>[], validateOnly = false) {
     const version = process.env.GOOGLE_ADS_API_VERSION;
     if (!version || !/^v\d+$/.test(version) || !/^\d{10}$/.test(customerId)) throw new AdProviderError('Google Ads 版本或客户 ID 无效', 'NOT_CONFIGURED');
     const headers: Record<string, string> = { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' };
     if (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID) headers['login-customer-id'] = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    if (!validateOnly) await this.beforeProviderWrite?.();
     let response: Response;
     try { response = await this.transport(`https://googleads.googleapis.com/${version}/customers/${customerId}/googleAds:mutate`, { method: 'POST', headers, body: JSON.stringify({ mutateOperations, partialFailure: false, validateOnly }), signal: AbortSignal.timeout(30000) }); }
     catch { throw new AdProviderError('Google 请求超时，需核对平台结果', 'NETWORK_ERROR', !validateOnly); }

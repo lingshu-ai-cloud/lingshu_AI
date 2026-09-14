@@ -50,6 +50,14 @@ find data/media data/bgm data/tts data/covers -type f -mtime +7 -delete
 
 后续建议把创作室生成的视频/音频上传 R2 后，仅在本机保留 7 天缓存。
 
+R2 的应用内 JSON 同步不是完整灾备。PocketBase 与 `data/` 的权威快照必须另外执行：
+
+```bash
+AGE_RECIPIENT=age1... pnpm run backup:production-data
+```
+
+密文和 `.manifest.txt` 必须成对异地保存，并按 `docs/backup-restore-r2.md` 每月做非破坏性恢复演练。
+
 ## 3. 日志轮转，上限 500MB
 
 如果使用 PM2：
@@ -73,10 +81,10 @@ logging:
     max-file: "5"
 ```
 
-然后重启服务：
+然后通过受控入口重启服务（保留 volume、migration、账号 bootstrap 和 readiness 校验）：
 
 ```bash
-docker compose --env-file .env.production up -d
+bash deploy/start.sh
 ```
 
 ## 4. 加 2GB swap
@@ -100,7 +108,7 @@ free -h
 - 配磁盘告警：磁盘使用率 >85%。
 - 配 CPU 告警：CPU 连续 5 分钟 >70%。
 - 配公网流量告警。
-- 配外部拨测：UptimeRobot 免费版，5 分钟探测一次 `https://lingshu.site/api/overseas/health`，微信/邮件告警。
+- 配外部拨测：UptimeRobot 免费版，5 分钟探测一次 `https://lingshu.site/api/overseas/ready`，微信/邮件告警。
 
 ## 6. 建议每周巡检
 
