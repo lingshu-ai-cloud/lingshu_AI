@@ -18,6 +18,7 @@ export const STARTER_COLLECTIONS = {
   quoteApprovalEvidence: 'quote_approval_evidence',
   quoteArtifacts: 'starter_quote_artifacts',
   quoteSendEvidence: 'quote_external_send_evidence',
+  plans: 'weekly_plans',
   runs: 'workflow_runs',
   tasks: 'workflow_tasks',
   approvals: 'approval_requests',

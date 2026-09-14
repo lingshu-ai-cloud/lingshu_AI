@@ -178,14 +178,17 @@ export function useSocialContentWorkspace() {
     }
   }, [workspace]);
 
-  const run = useCallback(async <T,>(operation: () => Promise<T>, success: string): Promise<T> => {
+  const run = useCallback(async <T,>(
+    operation: () => Promise<T>,
+    success: string | ((result: T) => string),
+  ): Promise<T> => {
     busyOperations.current += 1;
     setBusy(true);
     setError('');
     setNotice('');
     try {
       const result = await operation();
-      if (mounted.current) setNotice(success);
+      if (mounted.current) setNotice(typeof success === 'function' ? success(result) : success);
       return result;
     } catch (operationError) {
       if (mounted.current) setError(operationError instanceof Error ? operationError.message : '操作未完成，请重试');
@@ -355,7 +358,11 @@ export function useSocialContentWorkspace() {
       }
       throw error;
     }
-  }, start ? '内容任务已开始' : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
+  }, start
+    ? (result: SocialContentTaskDetail) => result.status === 'attention'
+      ? '制作记录已保存；当前需要进入内容创作工作台继续制作'
+      : '内容生产任务已进入执行队列'
+    : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
 
   const startTask = useCallback(async () => {
     const task = workspace?.currentTask;
@@ -364,7 +371,9 @@ export function useSocialContentWorkspace() {
       const next = await socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`);
       applyTask(next);
       return next;
-    }, '内容任务已开始');
+    }, (result: SocialContentTaskDetail) => result.status === 'attention'
+      ? '制作记录已保存；当前需要进入内容创作工作台继续制作'
+      : '内容生产任务已进入执行队列');
   }, [workspace?.currentTask, run, applyTask]);
 
   const decideArtifact = useCallback(async (artifact: SocialContentArtifact, decision: 'approved' | 'changes_requested', note: string | null = null) => {

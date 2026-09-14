@@ -428,7 +428,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
       now: now(),
     });
-    res.status(202).json({
+    res.status(task.status === 'attention' ? 200 : 202).json({
       task,
       ...(task.status === 'attention'
         ? { nextAction: { type: 'open_professional_workspace', page: 'smartAssets' } }

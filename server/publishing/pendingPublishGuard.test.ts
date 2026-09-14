@@ -12,6 +12,13 @@ store.update = (async () => { mutations++; return true; }) as typeof store.updat
 store.delete = (async () => { mutations++; return true; }) as typeof store.delete;
 try {
   assert.equal(publishingMutationBlocked(post), true, 'changing parent status cannot erase unresolved receipts');
+  assert.equal(publishingMutationBlocked({
+    ...post,
+    stats: {
+      status: 'provider_processing',
+      publishResults: { account: { status: 'provider_accepted', providerReceiptId: 'tiktok-receipt' } },
+    },
+  }), true, 'an accepted asynchronous provider receipt must block resubmission until terminal reconciliation');
   const input = { tenantId: 'tenant', platform: 'youtube', accountIds: ['account'], videoPath: 'file:///isolated/video.mp4' };
   await assert.rejects(() => assertNoUnresolvedPublishing(input), /禁止重复/);
   await assert.rejects(() => assertNoUnresolvedPublishing({ ...input, currentPostId: post.id, currentAttemptId: 'attempt' }), /禁止重复/, 'even a matching token cannot resend an unknown outcome');

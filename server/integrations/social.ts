@@ -22,6 +22,18 @@ export interface SocialUploadResult {
   title: string;
   privacyStatus: string;
   url: string;
+  /** TikTok FILE_UPLOAD is asynchronous; init/upload acceptance is not publication. */
+  deliveryStatus?: 'published' | 'provider_accepted';
+  providerReceiptId?: string;
+}
+
+export interface TikTokPublishStatusResult {
+  state: 'processing' | 'published' | 'failed' | 'unknown';
+  publishId: string;
+  platformPostId: string;
+  url: string;
+  providerStatus: string;
+  failureReason: string;
 }
 
 export interface TikTokTokens {
@@ -285,10 +297,63 @@ export async function uploadTikTokVideo(accessToken: string, input: SocialUpload
   });
 
   return {
-    id: String(publishId),
+    // publish_id identifies the asynchronous operation, not a public post.
+    id: '',
     title,
     privacyStatus: input.privacyStatus === 'public' ? 'public' : 'private',
     url: '',
+    deliveryStatus: 'provider_accepted',
+    providerReceiptId: String(publishId),
+  };
+}
+
+/** Read-only recovery for a TikTok Content Posting API init receipt. */
+export async function getTikTokPublishStatus(
+  accessToken: string,
+  publishId: string,
+): Promise<TikTokPublishStatusResult> {
+  const normalizedPublishId = publishId.trim();
+  if (!normalizedPublishId || normalizedPublishId.length > 240 || /[\u0000-\u001f\u007f]/.test(normalizedPublishId)) {
+    throw new Error('TikTok 发布回执无效');
+  }
+  const response = await axios.post(
+    `${TIKTOK_API}/v2/post/publish/status/fetch/`,
+    { publish_id: normalizedPublishId },
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+    },
+  );
+  const data = response.data?.data;
+  const providerStatus = String(data?.status || '').trim().toUpperCase();
+  const rawIds = data?.publicaly_available_post_id ?? data?.publicly_available_post_id;
+  const ids = (Array.isArray(rawIds) ? rawIds : rawIds ? [rawIds] : [])
+    .map(String).map(value => value.trim()).filter(Boolean);
+  const platformPostId = ids[0] || '';
+  const url = String(data?.share_url || data?.public_url || '').trim();
+  const failureReason = String(data?.fail_reason || data?.failure_reason || '').trim();
+  const processing = new Set([
+    'PROCESSING_UPLOAD',
+    'PROCESSING_DOWNLOAD',
+    'SEND_TO_USER_INBOX',
+    'PENDING',
+    'PROCESSING',
+  ]);
+  return {
+    state: providerStatus === 'PUBLISH_COMPLETE'
+      ? platformPostId ? 'published' : 'unknown'
+      : providerStatus === 'FAILED'
+        ? 'failed'
+        : processing.has(providerStatus)
+          ? 'processing'
+          : 'unknown',
+    publishId: normalizedPublishId,
+    platformPostId,
+    url,
+    providerStatus,
+    failureReason,
   };
 }
 

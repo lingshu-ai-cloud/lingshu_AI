@@ -61,6 +61,20 @@ assert.equal(
   'an active publishing lock must not run twice',
 );
 assert.equal(isScheduledPostDue(post('failed', {}, { publishAttempts: 3 }), now), false, 'exhausted tasks must stop retrying');
+assert.equal(isScheduledPostDue(post('provider_processing', {}, {
+  nextProviderCheckAt: '2026-07-29T10:01:00.000Z',
+  publishResults: { account: { status: 'provider_accepted', providerReceiptId: 'provider-1' } },
+}), now), false, 'an accepted provider receipt waits for its next status check');
+assert.equal(isScheduledPostDue(post('provider_processing', {}, {
+  nextProviderCheckAt: '2026-07-29T09:59:00.000Z',
+  publishResults: { account: { status: 'provider_accepted', providerReceiptId: 'provider-1' } },
+}), now), true, 'an accepted provider receipt is queried after its poll time');
+assert.equal(isScheduledPostDue(post('provider_processing', {}, {
+  workflowRunId: 'paused-run',
+  realPublishingAuthorized: false,
+  nextProviderCheckAt: '2026-07-29T09:59:00.000Z',
+  publishResults: { account: { status: 'provider_accepted', providerReceiptId: 'provider-1' } },
+}), now), true, 'an existing provider receipt remains recoverable after workflow authorization changes');
 
 assert.equal(scheduledRetryDelay(1), 60_000);
 assert.equal(scheduledRetryDelay(2), 300_000);
@@ -230,6 +244,69 @@ try {
   assert.equal((rows[0].stats as any).publishResults.c.status, 'unknown', 'first receipt write loss retains durable attempt');
   await runScheduledPublishingCycle(now + 86400000, localDependencies);
   assert.equal(providerCalls, providerCallsAfterBoundaryTests + 1, 'first receipt persistence outage cannot cause duplicate delivery');
+
+  store.update = updating;
+  rows = [post('provider_processing', { platform: 'tiktok' }, {
+    targetAccountIds: ['tiktok-account'],
+    videoPath: '/isolated.mp4',
+    nextProviderCheckAt: new Date(now - 1).toISOString(),
+    publishResults: {},
+  })];
+  await runScheduledPublishingCycle(now, localDependencies);
+  assert.equal((rows[0].stats as any).status, 'needs_attention');
+  assert.equal(providerCalls, providerCallsAfterBoundaryTests + 1,
+    'corrupt provider-processing state without a receipt must never resubmit');
+
+  let tiktokSubmissions = 0;
+  let tiktokStatusChecks = 0;
+  let tiktokResolution: 'processing' | 'published' = 'processing';
+  rows = [post('scheduled', { platform: 'tiktok' }, {
+    targetAccountIds: ['tiktok-account'],
+    videoPath: '/isolated.mp4',
+  })];
+  const tiktokDependencies = {
+    ...localDependencies,
+    publish: async () => {
+      tiktokSubmissions += 1;
+      return {
+        video: { deliveryStatus: 'provider_accepted', providerReceiptId: 'tiktok-publish-1' },
+        tracking: rows[0],
+        publishRecord: null,
+        platformPostId: '',
+        deliveryStatus: 'provider_accepted' as const,
+        providerReceiptId: 'tiktok-publish-1',
+      };
+    },
+    resolvePending: async () => {
+      tiktokStatusChecks += 1;
+      return {
+        status: tiktokResolution,
+        providerReceiptId: 'tiktok-publish-1',
+        platformPostId: tiktokResolution === 'published' ? 'tiktok-public-post-1' : '',
+        platformUrl: '',
+        providerStatus: tiktokResolution === 'published' ? 'PUBLISH_COMPLETE' : 'PROCESSING_UPLOAD',
+        error: '',
+      };
+    },
+  };
+  await runScheduledPublishingCycle(now, tiktokDependencies);
+  assert.equal(tiktokSubmissions, 1);
+  assert.equal((rows[0].stats as any).status, 'provider_processing');
+  assert.equal((rows[0].stats as any).publishResults['tiktok-account'].providerReceiptId, 'tiktok-publish-1');
+  assert.equal((rows[0].stats as any).publishResults['tiktok-account'].platformPostId, undefined,
+    'TikTok init receipt must not be recorded as a public post');
+
+  await runScheduledPublishingCycle(now + 30_000, tiktokDependencies);
+  assert.equal(tiktokSubmissions, 1, 'status recovery must never submit the video again');
+  assert.equal(tiktokStatusChecks, 1);
+  assert.equal((rows[0].stats as any).status, 'provider_processing');
+
+  tiktokResolution = 'published';
+  await runScheduledPublishingCycle(now + 60_000, tiktokDependencies);
+  assert.equal(tiktokSubmissions, 1);
+  assert.equal(tiktokStatusChecks, 2);
+  assert.equal((rows[0].stats as any).status, 'published');
+  assert.equal((rows[0].stats as any).publishResults['tiktok-account'].platformPostId, 'tiktok-public-post-1');
 } finally {
   Object.assign(store, original);
 }

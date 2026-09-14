@@ -20,6 +20,7 @@ type RuntimeConfig = StoredRecord & { tenant_id: string; config: unknown };
 
 const RECONCILABLE_STATUSES = new Set(['planning', 'running', 'waiting_external', 'waiting_approval']);
 const REVIEWABLE_STATUSES = new Set([...RECONCILABLE_STATUSES, 'waiting_human', 'succeeded', 'failed']);
+const DEDICATED_WORKFLOW_PROFILES = new Set(['starter_198', 'starter_social_content']);
 
 export interface RuntimeCycleResult {
   scanned: number;
@@ -52,7 +53,7 @@ async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
         where: { status }, page, perPage: Math.min(100, limit - byId.size), sort: '-started_at',
       });
       result.items.forEach(run => {
-        if (run.product_profile !== 'starter_198') byId.set(run.id, run);
+        if (!DEDICATED_WORKFLOW_PROFILES.has(String(run.product_profile || ''))) byId.set(run.id, run);
       });
       if (page >= result.totalPages || !result.items.length) break;
       page += 1;
@@ -67,7 +68,7 @@ async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
         where: { status }, page, perPage: 100, sort: '-started_at',
       });
       for (const run of result.items) {
-        if (run.product_profile === 'starter_198') continue;
+        if (DEDICATED_WORKFLOW_PROFILES.has(String(run.product_profile || ''))) continue;
         const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id);
         if (!goal) continue;
         const config = await runConfig(run);
@@ -128,7 +129,7 @@ export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<
   // the legacy reconciler's permissive task fallback.
   const runs = (await listRuns(maxRuns, now)).filter(run => run.id
     && run.tenant_id
-    && run.product_profile !== 'starter_198'
+    && !DEDICATED_WORKFLOW_PROFILES.has(String(run.product_profile || ''))
     && REVIEWABLE_STATUSES.has(run.status));
   const result: RuntimeCycleResult = { scanned: runs.length, reconciled: 0, reviewsGenerated: 0, errors: [] };
   for (const run of runs) {

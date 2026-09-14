@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
-import { publishVideoToAccount } from './platformPublisher.js';
+import { publishVideoToAccount, resolvePendingPublishToAccount } from './platformPublisher.js';
 import { finalizeTrackedPost, type PostRecord } from './waLink.js';
 import { digitalEmployeeRunBlockedReason, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
 import {
@@ -26,6 +26,7 @@ type ScheduledPublishLeaseAcquirer = (post: PostRecord, now: Date) => Promise<Sc
 
 interface ScheduledPublishingDependencies {
   publish: typeof publishVideoToAccount;
+  resolvePending?: typeof resolvePendingPublishToAccount;
   finalize: typeof finalizeTrackedPost;
   assertLegacyAccess?: (tenantId: string) => Promise<void>;
   executeLegacyEffect?: LegacyEffectExecutor;
@@ -33,6 +34,7 @@ interface ScheduledPublishingDependencies {
 }
 const defaultDependencies: ScheduledPublishingDependencies = {
   publish: publishVideoToAccount,
+  resolvePending: resolvePendingPublishToAccount,
   finalize: finalizeTrackedPost,
   assertLegacyAccess: assertLegacyExternalEffectAllowed,
   executeLegacyEffect: withLegacyExternalEffectAllowed,
@@ -46,10 +48,14 @@ const SUPPORTED_PLATFORMS = new Set<PublishPlatform>(['youtube', 'tiktok', 'inst
 const SCHEDULED_PUBLISH_LEASE_SCOPE = 'legacy-scheduled-publish';
 
 type PublishResult = {
-  status: 'published' | 'failed' | 'in_flight' | 'unknown';
+  status: 'published' | 'failed' | 'in_flight' | 'provider_accepted' | 'unknown';
   attemptId?: string;
   startedAt?: string;
   platformPostId?: string;
+  platformUrl?: string;
+  providerReceiptId?: string;
+  providerStatus?: string;
+  lastCheckedAt?: string;
   publishedAt?: string;
   error?: string;
   failedAt?: string;
@@ -84,14 +90,21 @@ export function scheduledRetryDelay(attempt: number): number {
 export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean {
   const stats = statsOf(post);
   const status = text(stats.status);
+  const continuingExistingDelivery = ['provider_processing', 'finalize_pending'].includes(status);
   // Digital-employee calendar entries require an explicit, version-frozen
-  // tenant authorization in addition to the human content approval.
-  if (text(stats.workflowRunId) && stats.realPublishingAuthorized !== true) return false;
+  // tenant authorization in addition to the human content approval. Once a
+  // provider receipt exists, status recovery/local finalization is read-only
+  // with respect to external delivery and must remain recoverable.
+  if (text(stats.workflowRunId) && !continuingExistingDelivery && stats.realPublishingAuthorized !== true) return false;
   const scheduledAt = Date.parse(text(post.published_at));
   if (!Number.isFinite(scheduledAt) || scheduledAt > now) return false;
   if (Object.values(resultMap(stats)).some(result => result.status === 'unknown')) return false;
   if (status === 'finalize_pending') {
     const retryAt = Date.parse(text(stats.nextPublishAttemptAt));
+    return !Number.isFinite(retryAt) || retryAt <= now;
+  }
+  if (status === 'provider_processing') {
+    const retryAt = Date.parse(text(stats.nextProviderCheckAt));
     return !Number.isFinite(retryAt) || retryAt <= now;
   }
   if (attemptsOf(stats) >= MAX_ATTEMPTS) return false;
@@ -165,16 +178,18 @@ async function markFailed(post: PostRecord, stats: Record<string, unknown>, atte
   const results = resultMap(stats);
   const hasSuccess = Object.values(results).some(result => result.status === 'published');
   const unknown = Object.values(results).some(result => ['unknown', 'in_flight'].includes(result.status));
+  const providerProcessing = Object.values(results).some(result => result.status === 'provider_accepted');
   if (unknown) for (const result of Object.values(results)) { if (result.status === 'in_flight') result.status = 'unknown'; }
   await store.update('posts', post.id, {
     stats: {
       ...stats,
-      status: unknown ? 'needs_attention' : exhausted ? (hasSuccess ? 'partial' : 'failed') : 'failed',
+      status: unknown ? 'needs_attention' : providerProcessing ? 'provider_processing' : exhausted ? (hasSuccess ? 'partial' : 'failed') : 'failed',
       publishResults: results,
       publishAttempts: attempts,
       publishError: message,
       warnings: [message],
-      nextPublishAttemptAt: exhausted ? '' : new Date(Date.now() + scheduledRetryDelay(attempts)).toISOString(),
+      nextPublishAttemptAt: providerProcessing || exhausted ? '' : new Date(Date.now() + scheduledRetryDelay(attempts)).toISOString(),
+      nextProviderCheckAt: providerProcessing ? new Date(Date.now() + POLL_INTERVAL_MS).toISOString() : '',
     },
   });
 }
@@ -190,11 +205,28 @@ async function publishScheduledPost(
   try {
   const post = await store.getById<PostRecord>('posts', queuedPost.id);
   if (!post || text(post.tenant_id) !== text(queuedPost.tenant_id) || !isScheduledPostDue(post, cycleNow)) return;
-  await (dependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(post.tenant_id);
   const initialStats = statsOf(post);
+  const recoveringAcceptedReceipt = Object.values(resultMap(initialStats))
+    .some(result => result.status === 'provider_accepted');
+  const localFinalizationOnly = text(initialStats.status) === 'finalize_pending';
+  if (text(initialStats.status) === 'provider_processing' && !recoveringAcceptedReceipt) {
+    await store.update('posts', post.id, { stats: {
+      ...initialStats,
+      status: 'needs_attention',
+      publishError: '平台处理中记录缺少可恢复回执，禁止自动重发',
+      nextProviderCheckAt: '',
+      warnings: ['平台处理中记录缺少可恢复回执，禁止自动重发'],
+    } });
+    return;
+  }
+  if (!recoveringAcceptedReceipt && !localFinalizationOnly) {
+    await (dependencies.assertLegacyAccess ?? assertLegacyExternalEffectAllowed)(post.tenant_id);
+  }
   const workflowRunId = text(initialStats.workflowRunId);
-  if (workflowRunId && await digitalEmployeeRunBlockedReason(post.tenant_id, workflowRunId)) return;
-  const attempts = attemptsOf(initialStats) + (text(initialStats.status) === 'finalize_pending' ? 0 : 1);
+  if (workflowRunId && !recoveringAcceptedReceipt && !localFinalizationOnly
+    && await digitalEmployeeRunBlockedReason(post.tenant_id, workflowRunId)) return;
+  const continuingReceipt = ['finalize_pending', 'provider_processing'].includes(text(initialStats.status));
+  const attempts = attemptsOf(initialStats) + (continuingReceipt ? 0 : 1);
   const attemptStartedAt = new Date().toISOString();
   const lockedStats = {
     ...initialStats,
@@ -233,6 +265,83 @@ async function publishScheduledPost(
   const results = resultMap(initialStats);
   for (const accountId of accountIds) {
     if (results[accountId]?.status === 'published') continue;
+    if (results[accountId]?.status === 'provider_accepted') {
+      const accepted = results[accountId];
+      const providerReceiptId = text(accepted.providerReceiptId);
+      if (!providerReceiptId) {
+        results[accountId] = {
+          ...accepted,
+          status: 'unknown',
+          error: '平台处理中记录缺少 provider receipt，禁止自动重发',
+          failedAt: new Date().toISOString(),
+        };
+      } else {
+        try {
+          const resolution = await (dependencies.resolvePending ?? resolvePendingPublishToAccount)({
+            tenantId: post.tenant_id,
+            accountId,
+            platform,
+            providerReceiptId,
+          });
+          if (resolution.providerReceiptId !== providerReceiptId) {
+            throw new Error('平台状态回执与原发送回执不一致');
+          }
+          const checkedAt = new Date().toISOString();
+          if (resolution.status === 'published' && text(resolution.platformPostId)) {
+            results[accountId] = {
+              ...accepted,
+              status: 'published',
+              providerStatus: resolution.providerStatus,
+              platformPostId: resolution.platformPostId,
+              platformUrl: resolution.platformUrl,
+              publishedAt: checkedAt,
+              lastCheckedAt: checkedAt,
+              error: '',
+            };
+          } else if (resolution.status === 'processing') {
+            results[accountId] = {
+              ...accepted,
+              status: 'provider_accepted',
+              providerStatus: resolution.providerStatus,
+              lastCheckedAt: checkedAt,
+              error: '',
+            };
+          } else {
+            results[accountId] = {
+              ...accepted,
+              status: 'unknown',
+              providerStatus: resolution.providerStatus,
+              lastCheckedAt: checkedAt,
+              error: resolution.error || (resolution.status === 'failed'
+                ? 'TikTok 报告发布失败，需人工确认后再决定是否重发'
+                : 'TikTok 返回未知发布状态，禁止自动重发'),
+              failedAt: checkedAt,
+            };
+          }
+        } catch (error) {
+          results[accountId] = {
+            ...accepted,
+            status: 'unknown',
+            error: errorMessage(error),
+            failedAt: new Date().toISOString(),
+          };
+        }
+      }
+      if (!await store.update('posts', post.id, { stats: { ...lockedStats, publishResults: { ...results } } })) {
+        throw new Error('平台状态回执保存失败');
+      }
+      if (results[accountId].status === 'unknown') {
+        await store.update('posts', post.id, { stats: {
+          ...lockedStats,
+          publishResults: results,
+          status: 'needs_attention',
+          publishError: results[accountId].error || '平台结果不明，需核对回执，禁止自动重发',
+          nextProviderCheckAt: '',
+        } });
+        return;
+      }
+      continue;
+    }
     if (results[accountId]?.status === 'in_flight' || results[accountId]?.status === 'unknown'
       || (text(initialStats.status) === 'publishing' && !results[accountId])) {
       results[accountId] = { ...results[accountId], status: 'unknown', error: '平台发布结果不明，需核对回执，禁止自动重发' };
@@ -264,12 +373,23 @@ async function publishScheduledPost(
       const result = workflowRunId
         ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, guardedPublish)
         : await guardedPublish();
-      if (!text(result.platformPostId)) throw new Error('平台未返回有效发布回执');
-      results[accountId] = {
-        status: 'published', attemptId, startedAt: attemptStartedAt,
-        platformPostId: result.platformPostId,
-        publishedAt: new Date().toISOString(),
-      };
+      if (result.deliveryStatus === 'provider_accepted' && text(result.providerReceiptId)) {
+        results[accountId] = {
+          status: 'provider_accepted',
+          attemptId,
+          startedAt: attemptStartedAt,
+          providerReceiptId: result.providerReceiptId,
+          lastCheckedAt: '',
+        };
+      } else {
+        if (!text(result.platformPostId)) throw new Error('平台未返回最终发布内容 id');
+        results[accountId] = {
+          status: 'published', attemptId, startedAt: attemptStartedAt,
+          platformPostId: result.platformPostId,
+          platformUrl: result.platformUrl,
+          publishedAt: new Date().toISOString(),
+        };
+      }
     } catch (error) {
       if (error instanceof WorkflowRunBlockedError) {
         delete results[accountId];
@@ -303,6 +423,19 @@ async function publishScheduledPost(
     }
   }
 
+  const providerAccepted = accountIds.filter(accountId => results[accountId]?.status === 'provider_accepted');
+  if (providerAccepted.length) {
+    if (!await store.update('posts', post.id, { stats: {
+      ...lockedStats,
+      status: 'provider_processing',
+      publishResults: results,
+      publishError: '',
+      nextProviderCheckAt: new Date(cycleNow + POLL_INTERVAL_MS).toISOString(),
+      warnings: ['平台已接收上传，正在等待最终公开视频回执。'],
+    } })) throw new Error('平台处理中回执保存失败');
+    return;
+  }
+
   const failures = accountIds.filter(accountId => results[accountId]?.status !== 'published');
   if (failures.length) {
     const message = failures
@@ -324,6 +457,7 @@ async function publishScheduledPost(
         publishedAt: new Date().toISOString(),
         publishError: '',
         nextPublishAttemptAt: '',
+        nextProviderCheckAt: '',
         warnings: [],
       },
     });
@@ -356,9 +490,12 @@ export async function runScheduledPublishingCycle(now = Date.now(), dependencies
     for (let page = 1; duePosts.length < 20; page += 1) {
       const result = await store.list<PostRecord>('posts', { page, perPage: 500, sort: 'published_at' });
       for (const post of result.items) {
-        if (!isScheduledPostDue(post, now)) continue;
-        const runId = text(statsOf(post).workflowRunId);
-        if (runId && await digitalEmployeeRunBlockedReason(post.tenant_id, runId)) continue;
+      if (!isScheduledPostDue(post, now)) continue;
+      const postStats = statsOf(post);
+      const runId = text(postStats.workflowRunId);
+      const continuingExistingDelivery = ['provider_processing', 'finalize_pending'].includes(text(postStats.status));
+      if (runId && !continuingExistingDelivery
+        && await digitalEmployeeRunBlockedReason(post.tenant_id, runId)) continue;
         duePosts.push(post);
         if (duePosts.length >= 20) break;
       }

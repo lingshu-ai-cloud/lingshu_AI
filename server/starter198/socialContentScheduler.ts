@@ -32,6 +32,8 @@ type SocialQueueInput = Parameters<Starter198OrchestratorQueuePort['enqueue']>[0
 
 const STARTABLE_STATUSES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
 const MANUAL_PRODUCTION_REASON = 'social_content_package_executor_requires_professional_workspace';
+const SOCIAL_WORKFLOW_PROFILE = 'starter_social_content';
+const SOCIAL_WORKFLOW_TASK_KEY = 'social_content_manual_production';
 
 function fail(code: string, status: number): never {
   throw new Starter198RuntimePortError(code, status);
@@ -53,6 +55,182 @@ function queueItemId(input: SocialQueueInput): string {
     taskId: input.subject?.id,
   })).digest('hex').slice(0, 32);
   return `social-content:${digest}`;
+}
+
+function workflowId(namespace: string, tenantId: string, taskId: string): string {
+  return createHash('sha256').update(`${namespace}:${tenantId}:${taskId}`).digest('hex').slice(0, 15);
+}
+
+async function ensureRecord(input: {
+  repository: Starter198Repository;
+  collection: Parameters<Starter198Repository['get']>[0];
+  tenantId: string;
+  id: string;
+  data: Record<string, unknown>;
+  valid: (record: StarterRecord) => boolean;
+}): Promise<StarterRecord> {
+  const current = await input.repository.get(input.collection, input.tenantId, input.id);
+  if (current) {
+    if (!input.valid(current)) fail('social_content_execution_record_integrity_violation', 503);
+    return current;
+  }
+  try {
+    const created = await input.repository.create(input.collection, input.tenantId, {
+      id: input.id,
+      ...input.data,
+    });
+    if (!input.valid(created)) fail('social_content_execution_record_integrity_violation', 503);
+    return created;
+  } catch (error) {
+    const raced = await input.repository.get(input.collection, input.tenantId, input.id).catch(() => null);
+    if (!raced || !input.valid(raced)) throw error;
+    return raced;
+  }
+}
+
+/**
+ * Persist an honest, recoverable execution checkpoint for a social order even
+ * when no automatic package executor is installed. It is deliberately outside
+ * the starter_198 standard graph so its worker cannot mistake this manual
+ * checkpoint for the unrelated ten-node sales workflow.
+ */
+async function ensureManualExecution(input: {
+  repository: Starter198Repository;
+  queue: SocialQueueInput;
+  task: StarterRecord;
+  sources: SocialTaskSource[];
+  now: Date;
+}): Promise<string> {
+  const tenantId = input.queue.tenantId;
+  const taskId = socialText(input.queue.subject?.id);
+  const taskSummary = socialTaskSummary(input.task);
+  const workflowSubject = `${taskId}:${taskSummary.version}`;
+  const goalId = workflowId('social-goal', tenantId, workflowSubject);
+  const planId = workflowId('social-plan', tenantId, workflowSubject);
+  const runId = workflowId('social-run', tenantId, workflowSubject);
+  const executionTaskId = workflowId('social-task', tenantId, workflowSubject);
+  const initializationId = createHash('sha256').update(JSON.stringify({
+    schemaVersion: 1,
+    tenantId,
+    taskId,
+    sourceRefs: normalizedSources(input.sources.map(source => ({
+      id: source.sourceId,
+      ...(source.sourceVersion ? { version: source.sourceVersion } : {}),
+    }))),
+    packageSelection: normalizedPackages(input.queue.subject?.packageSelection ?? []),
+  })).digest('hex');
+  const createdAt = input.now.toISOString();
+  const lineage = {
+    schemaVersion: 'starter-social-content.manual-execution.v1',
+    socialTaskId: taskId,
+    socialTaskVersion: taskSummary.version,
+    sourceRefs: normalizedSources(input.sources.map(source => ({
+      id: source.sourceId,
+      ...(source.sourceVersion ? { version: source.sourceVersion } : {}),
+    }))),
+    packageSelection: normalizedPackages(taskSummary.packageSelection),
+    executorAvailable: false,
+    reasonCode: MANUAL_PRODUCTION_REASON,
+    nextDestination: 'smartAssets',
+  };
+  await ensureRecord({
+    repository: input.repository,
+    collection: STARTER_COLLECTIONS.goals,
+    tenantId,
+    id: goalId,
+    data: {
+      title: taskSummary.brief.title,
+      objective: taskSummary.brief.objective,
+      metric: 'approved_social_content_artifacts',
+      target: taskSummary.brief.requestedOutputCount ?? 1,
+      unit: 'artifact',
+      starts_at: createdAt.slice(0, 10),
+      ends_at: taskSummary.brief.dueAt?.slice(0, 10) || createdAt.slice(0, 10),
+      scope: { socialTaskId: taskId },
+      constraints: taskSummary.brief.restrictions,
+      owner_id: input.queue.userId,
+      status: 'waiting_human',
+      version: 1,
+      created_at: createdAt,
+      updated_at: createdAt,
+    },
+    valid: record => socialText(record.id) === goalId
+      && socialText(record.objective) === taskSummary.brief.objective,
+  });
+  await ensureRecord({
+    repository: input.repository,
+    collection: STARTER_COLLECTIONS.plans,
+    tenantId,
+    id: planId,
+    data: {
+      goal_id: goalId,
+      status: 'waiting_human',
+      plan: lineage,
+      created_at: createdAt,
+    },
+    valid: record => socialText(record.id) === planId && socialText(record.goal_id) === goalId,
+  });
+  await ensureRecord({
+    repository: input.repository,
+    collection: STARTER_COLLECTIONS.runs,
+    tenantId,
+    id: runId,
+    data: {
+      goal_id: goalId,
+      plan_id: planId,
+      status: 'waiting_human',
+      current_controller: 'human',
+      pause_reason: '当前套餐尚未接入自动生产执行器，请进入内容创作工作台完成制作。',
+      product_profile: SOCIAL_WORKFLOW_PROFILE,
+      starter_initialization_id: initializationId,
+      starter_input_version: taskSummary.version,
+      starter_plan_version: 1,
+      starter_context: lineage,
+      started_at: createdAt,
+      completed_at: '',
+    },
+    valid: record => socialText(record.id) === runId
+      && socialText(record.goal_id) === goalId
+      && socialText(record.plan_id) === planId
+      && socialText(record.product_profile) === SOCIAL_WORKFLOW_PROFILE
+      && socialText(record.status) === 'waiting_human',
+  });
+  await ensureRecord({
+    repository: input.repository,
+    collection: STARTER_COLLECTIONS.tasks,
+    tenantId,
+    id: executionTaskId,
+    data: {
+      goal_id: goalId,
+      plan_id: planId,
+      run_id: runId,
+      task_key: SOCIAL_WORKFLOW_TASK_KEY,
+      title: '在内容创作工作台完成社媒内容',
+      description: '自动套餐执行器未接入；保留本次任务、来源和套餐谱系，等待人工制作及成品登记。',
+      agent_role: 'content',
+      kind: 'production',
+      status: 'waiting_external',
+      sequence: 1,
+      priority: 'high',
+      requires_approval: false,
+      depends_on: [],
+      output: lineage,
+      blocked_reason: MANUAL_PRODUCTION_REASON,
+      owner_id: input.queue.userId,
+      execution_mode: 'manual',
+      external_effect: 'none',
+      automatic_execution_allowed: false,
+      policy_source: 'starter_social_content.v1',
+      task_version: 1,
+      correction_version: 0,
+      created_at: createdAt,
+      updated_at: createdAt,
+    },
+    valid: record => socialText(record.id) === executionTaskId
+      && socialText(record.run_id) === runId
+      && socialText(record.task_key) === SOCIAL_WORKFLOW_TASK_KEY,
+  });
+  return runId;
 }
 
 function normalizedSources(sources: Array<{ id: string; version?: string }>): Array<{ id: string; version: string }> {
@@ -164,9 +342,10 @@ function assertSubjectMatches(input: {
   }
 }
 
-function manualResult(input: SocialQueueInput): Starter198OrchestratorQueueResult {
+function manualResult(input: SocialQueueInput, runId: string): Starter198OrchestratorQueueResult {
   return {
     queueItemId: queueItemId(input),
+    runId,
     disposition: 'requires_manual_production',
     missingFacts: [],
     nextDestination: 'smartAssets',
@@ -175,11 +354,10 @@ function manualResult(input: SocialQueueInput): Starter198OrchestratorQueueResul
 }
 
 /**
- * Durable social-content admission path. It deliberately does not create a
- * workflow_run or the standard ten-node graph: that graph contains inquiry and
- * quotation work unrelated to a social-content order. Until a true package
- * executor exists, the honest terminal scheduling state is `attention`, which
- * remains editable and accepts real artifacts from the existing content studio.
+ * Durable social-content admission path. It never enters the unrelated
+ * ten-node starter sales graph. Until a true package executor exists, it writes
+ * a dedicated waiting-human run and task so recovery and lineage do not depend
+ * on an empty run id.
  */
 export async function scheduleSocialContentWork(input: {
   repository: Starter198Repository;
@@ -224,9 +402,10 @@ export async function scheduleSocialContentWork(input: {
         if (error instanceof SocialContentWorkflowError) fail(error.code, error.status);
         throw error;
       }
-      const result = manualResult(input.queue);
       if (socialText(record.last_operation_id) === input.queue.commandId) {
-        if (socialText(record.orchestrator_item_id) !== result.queueItemId
+        const existingRunId = socialText(record.run_id);
+        const result = manualResult(input.queue, existingRunId);
+        if (!existingRunId || socialText(record.orchestrator_item_id) !== result.queueItemId
           || socialText(record.status) !== 'attention') {
           fail('social_content_schedule_state_integrity_violation', 503);
         }
@@ -250,6 +429,15 @@ export async function scheduleSocialContentWork(input: {
         throw error;
       }
 
+      const runId = await ensureManualExecution({
+        repository: input.repository,
+        queue: input.queue,
+        task: record,
+        sources,
+        now: input.now,
+      });
+      const result = manualResult(input.queue, runId);
+
       await assertSocialContentSubjectLease({
         repository: input.repository,
         tenantId: input.queue.tenantId,
@@ -257,7 +445,7 @@ export async function scheduleSocialContentWork(input: {
       });
       await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.queue.tenantId, record.id, {
         status: 'attention',
-        run_id: '',
+        run_id: runId,
         orchestrator_item_id: result.queueItemId,
         version: nextVersion(record),
         last_operation_id: input.queue.commandId,
@@ -270,6 +458,7 @@ export async function scheduleSocialContentWork(input: {
         taskId: subject.id,
       });
       if (socialText(written.status) !== 'attention'
+        || socialText(written.run_id) !== runId
         || socialText(written.last_operation_id) !== input.queue.commandId
         || socialText(written.orchestrator_item_id) !== result.queueItemId) {
         fail('social_content_schedule_state_integrity_violation', 503);

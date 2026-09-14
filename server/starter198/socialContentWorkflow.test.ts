@@ -287,10 +287,22 @@ try {
     idempotencyKey: 'social-durable-start',
     body: { expectedVersion: durableKnowledge.body.task.version },
   });
-  assert.equal(durableStarted.status, 202);
+  assert.equal(durableStarted.status, 200, 'manual production is a completed admission decision, not a queued execution');
   assert.equal(durableStarted.body.task.status, 'attention', 'empty package frameworks route to recoverable professional production');
-  assert.equal(durableStarted.body.task.runId, null, 'social scheduling does not create a legacy workflow run');
+  assert.match(durableStarted.body.task.runId, /^[a-f0-9]{15}$/,
+    'manual production still receives a durable, recoverable run identity');
   assert.deepEqual(durableStarted.body.nextAction, { type: 'open_professional_workspace', page: 'smartAssets' });
+  const manualRun = dataStore.rows.get(STARTER_COLLECTIONS.runs)!
+    .find(row => row.id === durableStarted.body.task.runId)!;
+  assert.equal(manualRun.product_profile, 'starter_social_content');
+  assert.equal(manualRun.status, 'waiting_human');
+  assert.equal(manualRun.current_controller, 'human');
+  const manualExecutionTasks = dataStore.rows.get(STARTER_COLLECTIONS.tasks)!
+    .filter(row => row.run_id === durableStarted.body.task.runId);
+  assert.equal(manualExecutionTasks.length, 1);
+  assert.equal(manualExecutionTasks[0]?.task_key, 'social_content_manual_production');
+  assert.equal(manualExecutionTasks[0]?.status, 'waiting_external');
+  assert.equal(manualExecutionTasks[0]?.automatic_execution_allowed, false);
   const durableTaskRow = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!
     .find(row => row.task_id === durableTaskId)!;
   assert.match(String(durableTaskRow.orchestrator_item_id), /^social-content:[a-f0-9]{32}$/);
@@ -302,7 +314,7 @@ try {
     idempotencyKey: 'social-durable-start',
     body: { expectedVersion: durableKnowledge.body.task.version },
   });
-  assert.equal(durableReplay.status, 202);
+  assert.equal(durableReplay.status, 200);
   assert.equal(durableReplay.body.task.version, durableStarted.body.task.version);
   assert.equal(dataStore.rows.get(STARTER_COLLECTIONS.socialContentOperations)!
     .filter(row => row.idempotency_key === 'social-durable-start').length, 1);
@@ -314,7 +326,7 @@ try {
     idempotencyKey: 'social-durable-start',
     body: { expectedVersion: durableKnowledge.body.task.version },
   });
-  assert.equal(durableRecovered.status, 202);
+  assert.equal(durableRecovered.status, 200);
   assert.equal(durableRecovered.body.task.version, durableStarted.body.task.version,
     'recovery finalizes the receipt without scheduling or versioning the task twice');
   assert.equal(durableStartOperation.status, 'succeeded');
@@ -323,8 +335,8 @@ try {
     body: { expectedVersion: durableStarted.body.task.version },
   });
   assert.equal(durableConflict.status, 409, 'one idempotency key cannot schedule a different task version');
-  assert.equal(dataStore.rows.get(STARTER_COLLECTIONS.tasks)!.length, workflowRowsBefore,
-    'the dedicated scheduler never creates inquiry, quotation, or any legacy workflow task');
+  assert.equal(dataStore.rows.get(STARTER_COLLECTIONS.tasks)!.length, workflowRowsBefore + 1,
+    'the dedicated scheduler creates only its truthful manual checkpoint, not inquiry or quotation tasks');
 
   const scheduleRaceCreated = await request('/api/default-social-content/tasks', {
     idempotencyKey: 'social-schedule-race-create', body: { ...completeBrief, title: '并发调度校验' },
@@ -348,11 +360,12 @@ try {
       body: { expectedVersion: scheduleRaceKnowledge.body.task.version },
     },
   )));
-  assert.deepEqual(racedStarts.map(result => result.status).sort(), [202, 409],
+  assert.deepEqual(racedStarts.map(result => result.status).sort(), [200, 409],
     'one durable subject lease admits only one start for a task version');
   const scheduleRaceRead = await request(`/api/default-social-content/tasks/${scheduleRaceTaskId}`);
   assert.equal(scheduleRaceRead.body.task.status, 'attention');
-  assert.equal(dataStore.rows.get(STARTER_COLLECTIONS.tasks)!.length, workflowRowsBefore);
+  assert.equal(dataStore.rows.get(STARTER_COLLECTIONS.tasks)!.length, workflowRowsBefore + 2,
+    'each manual social order has one isolated execution checkpoint');
 
   const missingIdempotency = await request('/api/overseas/starter-198/social-content/tasks', { body: completeBrief });
   assert.equal(missingIdempotency.status, 400);

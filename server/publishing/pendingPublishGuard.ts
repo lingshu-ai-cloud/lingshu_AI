@@ -8,8 +8,8 @@ const object = (value: unknown): Record<string, any> => {
 };
 export function publishingMutationBlocked(post: PostRecord): boolean {
   const stats = object(post.stats);
-  return ['publishing', 'needs_attention', 'finalize_pending'].includes(String(stats.status))
-    || Object.values(object(stats.publishResults)).some((result: any) => ['in_flight', 'unknown'].includes(result.status));
+  return ['publishing', 'provider_processing', 'needs_attention', 'finalize_pending'].includes(String(stats.status))
+    || Object.values(object(stats.publishResults)).some((result: any) => ['in_flight', 'provider_accepted', 'unknown'].includes(result.status));
 }
 function file(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) return '';

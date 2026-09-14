@@ -47,7 +47,7 @@ function primaryAction(props: SocialTaskCommandPanelProps): { label: string; ico
   const { task } = props;
   const action = socialContentPrimaryActionForTask(task);
   if (action === 'continue') return { label: '继续填写', icon: <PencilLine size={16} />, onClick: props.onEdit };
-  if (action === 'start') return { label: '确认并开始制作', icon: <Sparkles size={16} />, onClick: props.onStart };
+  if (action === 'start') return { label: '确认制作方案', icon: <Sparkles size={16} />, onClick: props.onStart };
   if (action === 'resume') return { label: '继续制作', icon: <Sparkles size={16} />, onClick: props.onStart };
   if (action === 'open_studio') return { label: '进入内容创作', icon: <ArrowRight size={16} />, onClick: () => props.onNavigate('smartAssets') };
   if (action === 'review_assets') {

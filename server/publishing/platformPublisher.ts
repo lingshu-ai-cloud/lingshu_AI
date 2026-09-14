@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import ffmpegStatic from 'ffmpeg-static';
 import { uploadVideoToYouTube, type YouTubeConfig } from '../integrations/youtube.js';
 import {
+  getTikTokPublishStatus,
   publishInstagramReel,
   uploadFacebookVideo,
   uploadTikTokVideo,
@@ -66,6 +67,18 @@ export interface PublishToAccountResult {
   tracking: PostRecord;
   publishRecord: ReturnType<typeof recordSuccessfulPublish> | null;
   platformPostId: string;
+  deliveryStatus?: 'published' | 'provider_accepted';
+  providerReceiptId?: string;
+  platformUrl?: string;
+}
+
+export interface PendingPublishResolution {
+  status: 'processing' | 'published' | 'failed' | 'unknown';
+  providerReceiptId: string;
+  platformPostId: string;
+  platformUrl: string;
+  providerStatus: string;
+  error: string;
 }
 
 function publishError(message: string, statusCode: number): Error & { statusCode: number } {
@@ -186,12 +199,174 @@ function platformContentId(video: any): string {
   return String(video?.id || video?.videoId || video?.publishId || '').trim();
 }
 
+function recordObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch { /* empty */ }
+  }
+  return {};
+}
+
+async function persistProviderAccepted(input: {
+  request: PublishToAccountInput;
+  tracked: PostRecord;
+  providerReceiptId: string;
+}): Promise<void> {
+  if (input.request.finalizeTracking === false) return;
+  const now = new Date().toISOString();
+  const currentStats = recordObject(input.tracked.stats);
+  const publishResults = recordObject(currentStats.publishResults);
+  const attemptId = input.request.publishAttemptId || `provider:${input.providerReceiptId}`;
+  const updated = await store.update('posts', input.tracked.id, {
+    stats: {
+      ...currentStats,
+      status: 'provider_processing',
+      targetAccountIds: [input.request.accountId],
+      videoPath: input.request.videoPath || '',
+      videoUrl: input.request.videoUrl || '',
+      publishAttempts: Math.max(1, Number(currentStats.publishAttempts || 0)),
+      publishResults: {
+        ...publishResults,
+        [input.request.accountId]: {
+          status: 'provider_accepted',
+          attemptId,
+          startedAt: now,
+          providerReceiptId: input.providerReceiptId,
+          lastCheckedAt: '',
+        },
+      },
+      nextProviderCheckAt: now,
+      publishError: '',
+      warnings: ['TikTok 已接收上传，正在等待平台发布终态。'],
+    },
+  });
+  if (!updated) {
+    throw publishError('TikTok 已接收上传，但本地未能保存处理回执；禁止重复提交，请人工核对', 503);
+  }
+}
+
+async function beginDirectSocialAttempt(
+  input: PublishToAccountInput,
+  tracked: PostRecord,
+): Promise<{ attemptId: string; startedAt: string } | null> {
+  if (input.finalizeTracking === false) return null;
+  const attemptId = input.publishAttemptId || `direct:${tracked.id}`;
+  const startedAt = new Date().toISOString();
+  const currentStats = recordObject(tracked.stats);
+  const publishResults = recordObject(currentStats.publishResults);
+  const updated = await store.update('posts', tracked.id, {
+    stats: {
+      ...currentStats,
+      status: 'publishing',
+      targetAccountIds: [input.accountId],
+      videoPath: input.videoPath || '',
+      videoUrl: input.videoUrl || '',
+      publishAttempts: Math.max(1, Number(currentStats.publishAttempts || 0)),
+      publishResults: {
+        ...publishResults,
+        [input.accountId]: { status: 'in_flight', attemptId, startedAt },
+      },
+      publishError: '',
+      warnings: [],
+    },
+  });
+  if (!updated) throw publishError('无法保存发布尝试，尚未调用平台', 503);
+  return { attemptId, startedAt };
+}
+
+async function markDirectAttemptUnknown(
+  input: PublishToAccountInput,
+  tracked: PostRecord,
+  attempt: { attemptId: string; startedAt: string } | null,
+  error: unknown,
+): Promise<void> {
+  if (!attempt) return;
+  const current = await store.getById<PostRecord>('posts', tracked.id).catch(() => null);
+  if (!current) return;
+  const stats = recordObject(current.stats);
+  const publishResults = recordObject(stats.publishResults);
+  const existing = recordObject(publishResults[input.accountId]);
+  if (String(existing.attemptId || '') !== attempt.attemptId
+    || !['in_flight', 'provider_accepted'].includes(String(existing.status || ''))) return;
+  const message = error instanceof Error && error.message.trim()
+    ? error.message.trim()
+    : '平台结果不明，需人工核对';
+  await store.update('posts', tracked.id, {
+    stats: {
+      ...stats,
+      status: 'needs_attention',
+      publishResults: {
+        ...publishResults,
+        [input.accountId]: {
+          ...existing,
+          status: 'unknown',
+          error: message,
+          failedAt: new Date().toISOString(),
+        },
+      },
+      publishError: '平台结果不明，需核对回执，禁止自动重发',
+      warnings: ['平台结果不明，需核对回执，禁止自动重发'],
+    },
+  }).catch(() => undefined);
+}
+
+/** Resolve an already accepted provider receipt without submitting content again. */
+export async function resolvePendingPublishToAccount(input: {
+  tenantId: string;
+  accountId: string;
+  platform: PublishPlatform;
+  providerReceiptId: string;
+}): Promise<PendingPublishResolution> {
+  if (input.platform !== 'tiktok') {
+    return {
+      status: 'unknown',
+      providerReceiptId: input.providerReceiptId,
+      platformPostId: '',
+      platformUrl: '',
+      providerStatus: '',
+      error: '当前平台不支持自动查询发布终态',
+    };
+  }
+  const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
+  if (!account || account.tenantId !== input.tenantId || account.platform !== 'tiktok') {
+    throw publishError('TikTok account not found', 404);
+  }
+  if (account.status !== 'connected') throw publishError('TikTok account is not connected', 400);
+  const result = await getTikTokPublishStatus(account.accessToken, input.providerReceiptId);
+  return {
+    status: result.state,
+    providerReceiptId: result.publishId,
+    platformPostId: result.platformPostId,
+    platformUrl: result.url,
+    providerStatus: result.providerStatus,
+    error: result.failureReason,
+  };
+}
+
 async function finalizeIfRequested(input: PublishToAccountInput, tracked: PostRecord, platformPostId: string): Promise<void> {
   if (input.finalizeTracking === false) return;
+  const current = await store.getById<PostRecord>('posts', tracked.id);
+  const stats = recordObject(current?.stats);
+  const publishResults = recordObject(stats.publishResults);
+  const existing = recordObject(publishResults[input.accountId]);
+  const publishedAt = new Date().toISOString();
   await finalizeTrackedPost(tracked.id, {
     platformPostId,
     title: input.title,
-    stats: { status: 'published' },
+    stats: {
+      ...stats,
+      status: 'published',
+      publishResults: {
+        ...publishResults,
+        [input.accountId]: { ...existing, status: 'published', platformPostId, publishedAt },
+      },
+      publishedAt,
+      publishError: '',
+      warnings: [],
+    },
   });
 }
 
@@ -260,6 +435,9 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     ? validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm'], Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048))
     : undefined;
   if (!filePath && !input.videoUrl) throw publishError('缺少待发布的视频文件或公开视频地址', 400);
+  if (account.platform === 'tiktok' && !filePath) {
+    throw publishError('当前 TikTok 发布实现需要本地视频文件', 400);
+  }
   if (account.platform === 'instagram' && !input.videoUrl && !process.env.R2_PUBLIC_URL?.trim()) {
     throw publishError('Instagram 发布需要配置 R2_PUBLIC_URL 或提供公开视频地址', 400);
   }
@@ -271,6 +449,7 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     description: appendTrackedWaLink(account.platform, input.description || '', tracked.wa_link || ''),
     privacyStatus: input.privacyStatus,
   };
+  const directAttempt = await beginDirectSocialAttempt(input, tracked);
   try {
     let video: unknown;
     if (account.platform === 'tiktok') video = await uploadTikTokVideo(account.accessToken, socialInput);
@@ -283,9 +462,28 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
         videoUrl: socialInput.videoUrl || await publicVideoUrlIfNeeded(compatibleFilePath),
       });
     }
+    const deliveryStatus = (video as { deliveryStatus?: unknown } | undefined)?.deliveryStatus;
+    const providerReceiptId = String((video as { providerReceiptId?: unknown } | undefined)?.providerReceiptId || '').trim();
+    if (account.platform === 'tiktok' && deliveryStatus === 'provider_accepted') {
+      if (!providerReceiptId) throw publishError('TikTok 未返回可恢复的发布回执', 502);
+      await persistProviderAccepted({ request: input, tracked, providerReceiptId });
+      await store.update('social_accounts', input.accountId, { lastSyncAt: new Date().toISOString(), status: 'connected' })
+        .catch(error => console.error('[publishing] TikTok account sync update failed:', error));
+      const persistedTracking = input.finalizeTracking === false
+        ? tracked
+        : await store.getById<PostRecord>('posts', tracked.id) ?? tracked;
+      return {
+        video,
+        tracking: persistedTracking,
+        publishRecord: null,
+        platformPostId: '',
+        deliveryStatus: 'provider_accepted',
+        providerReceiptId,
+      };
+    }
     const id = platformContentId(video);
-    if (!video || !id) throw publishError('平台没有返回发布内容 id', 502);
-    await finalizeIfRequested(input, tracked, id).catch(error => console.error(`[publishing] ${account.platform} tracking update failed:`, error));
+    if (!video || !id) throw publishError('平台没有返回最终发布内容 id', 502);
+    await finalizeIfRequested(input, tracked, id);
     await store.update('social_accounts', input.accountId, { lastSyncAt: new Date().toISOString(), status: 'connected' })
       .catch(error => console.error(`[publishing] ${account.platform} account sync update failed:`, error));
     let publishRecord: ReturnType<typeof recordSuccessfulPublish> | null = null;
@@ -306,8 +504,9 @@ export async function publishVideoToAccount(input: PublishToAccountInput): Promi
     } catch (error) {
       console.error(`[publishing] ${account.platform} history write failed:`, error);
     }
-    return { video, tracking: tracked, publishRecord, platformPostId: id };
+    return { video, tracking: tracked, publishRecord, platformPostId: id, deliveryStatus: 'published' };
   } catch (error) {
+    await markDirectAttemptUnknown(input, tracked, directAttempt, error);
     const status = accountStatus(error);
     if (status === 401 || status === 403) await store.update('social_accounts', input.accountId, { status: 'error' });
     throw error;
