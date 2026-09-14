@@ -127,6 +127,11 @@
     "test:material-library": "tsx server/lib/materialLibrary.test.ts"
   },
   "packageManager": "pnpm@11.19.0",
+  "pnpm": {
+    "overrides": {
+      "qs": "6.16.0"
+    }
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1070.0",
     "@aws-sdk/s3-request-presigner": "^3.1096.0",
@@ -172,8 +177,5 @@
   },
   "engines": {
     "node": ">=22.19.0"
-  },
-  "overrides": {
-    "qs": "6.16.0"
   }
 }
