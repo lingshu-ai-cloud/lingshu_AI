@@ -1024,15 +1024,6 @@ function ChatThread({
               </div>
             </form>
           )}
-          <QuoteSkillCard
-            customer={customer}
-            onInsertReply={text => {
-              onManualActive();
-              onInputChange(text);
-              window.setTimeout(() => inputRef.current?.focus(), 0);
-            }}
-            onToast={onToast}
-          />
           {customer.timeline.map(event => {
             if (event.type !== 'whatsapp') {
               return (
@@ -1606,6 +1597,8 @@ function CustomerInfoRail({
   hasReplyReady,
   onToggleCustomerService,
   onEnablePartialAutoReply,
+  onInsertQuoteReply,
+  onQuoteCardSent,
 }: {
   customer: CustomerProfile | null;
   customerServiceStatus: CustomerServiceStatus | null;
@@ -1625,6 +1618,8 @@ function CustomerInfoRail({
   hasReplyReady: boolean;
   onToggleCustomerService: (enabled: boolean) => void;
   onEnablePartialAutoReply: () => void;
+  onInsertQuoteReply: (text: string) => void;
+  onQuoteCardSent: (summary: string, providerMessageId?: string) => void;
 }) {
   if (!customer) {
     return (
@@ -1649,6 +1644,13 @@ function CustomerInfoRail({
           customerServiceEnabled={customerServiceEnabled}
           autoReplyReady={autoReplyReady}
           hasReplyReady={hasReplyReady}
+        />
+        <QuoteSkillCard
+          customer={customer}
+          onInsertReply={onInsertQuoteReply}
+          onToast={onToast}
+          channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
+          onCardSent={onQuoteCardSent}
         />
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
         <TagsWidget customer={customer} />
@@ -2639,6 +2641,23 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           hasReplyReady={Boolean(draftSuggestion?.trim() || input.trim() || selected?.pendingDraft?.trim())}
           onToggleCustomerService={(enabled) => void changeCustomerServiceEnabled(enabled)}
           onEnablePartialAutoReply={() => void decidePartialAutoReply('enabled')}
+          onInsertQuoteReply={(text) => {
+            if (!selected) return;
+            reportManualActive();
+            setInput(text);
+            updateCustomer(selected.id, { pendingDraft: text });
+            setMobilePanel('chat');
+          }}
+          onQuoteCardSent={(summary, providerMessageId) => {
+            if (!selected) return;
+            appendTimelineEvent(selected.id, createMessageEvent(selected.id, summary, 'seller', {
+              type: 'quote',
+              title: '已发送报价卡片',
+              sendStatus: 'sent',
+              confirmedByHuman: true,
+              audit: { action: 'formal_quote_card_sent', risk: 'L4', providerMessageId },
+            }));
+          }}
         />
         </div>
       </div>

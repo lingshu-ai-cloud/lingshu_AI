@@ -17,6 +17,9 @@ import {
   type ScriptLibraryActionPrefill,
 } from '../lib/contentActionNavigation';
 import { useModalFocus } from '../hooks/useModalFocus';
+import DirectorTaskContext from './DirectorTaskContext';
+import { dispatchDigitalEmployeeDeepLink } from '../lib/digitalEmployees';
+import { useDeliveryHandoff } from '../hooks/useDeliveryHandoff';
 
 type ExactAnalysisDetail = {
   time?: string; timestamp?: string; environment?: string; shot?: string; camera?: string;
@@ -279,6 +282,7 @@ function PageShell({ icon, title, description, children }: {
 }
 
 export function ScriptLibraryPage() {
+  const directorHandoff = useDeliveryHandoff('scriptLibrary');
   const [tab, setTab] = useState<'inspiration' | 'studio'>('inspiration');
   const [videos, setVideos] = useState<Array<ExactVideoRecord & { analysis: ExactAnalysis }>>([]);
   const [drafts, setDrafts] = useState<StudioProject[]>([]);
@@ -355,7 +359,9 @@ export function ScriptLibraryPage() {
   const availablePlatforms = useMemo(() => [...new Set(videos.map(item => String(item.platform || '').toLowerCase()).filter(Boolean))].sort(), [videos]);
   const visibleCount = tab === 'inspiration' ? filteredVideos.length : filteredDrafts.length;
 
-  const openSmartAssets = () => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
+  const openSmartAssets = (businessRef: Record<string, unknown> = {}) => directorHandoff
+    ? dispatchDigitalEmployeeDeepLink({ ...directorHandoff, page: 'smartAssets', view: 'create', businessRef: { ...directorHandoff.businessRef, taskKey: 'content_production', ...businessRef } })
+    : window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
   const startViralClone = (item: ExactVideoRecord & { analysis: ExactAnalysis }) => {
     const analysis = item.analysis;
     localStorage.setItem('ow_video_kickoff', JSON.stringify({
@@ -376,12 +382,12 @@ export function ScriptLibraryPage() {
       },
     }));
     setSelectedVideo(null);
-    openSmartAssets();
+    openSmartAssets({ referenceId: item.id });
   };
   const continueDraft = (project: StudioProject) => {
     localStorage.setItem('ow_studio_open_project', JSON.stringify({ projectId: project.id, at: Date.now() }));
     setSelectedDraft(null);
-    openSmartAssets();
+    openSmartAssets({ entityId: project.id });
   };
   const copyDraft = async (project: StudioProject) => {
     setDraftBusyId(project.id); setActionError('');
@@ -406,6 +412,7 @@ export function ScriptLibraryPage() {
 
   return (
     <PageShell icon={<FileText size={14} />} title="脚本库" description="管理可直接裂变的爆款视频和全部历史创作草稿，让成熟内容可以持续复用。">
+      <DirectorTaskContext page="scriptLibrary" className="-mx-4 -mt-6 mb-5 sm:-mx-6" />
       <div className="mb-4 flex gap-7 border-b border-border">
         <button type="button" onClick={() => { setTab('inspiration'); setQuery(''); }} className={`h-11 border-b-2 px-1 text-sm font-semibold transition-colors ${tab === 'inspiration' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>可裂变爆款</button>
         <button type="button" onClick={() => { setTab('studio'); setQuery(''); }} className={`h-11 border-b-2 px-1 text-sm font-semibold transition-colors ${tab === 'studio' ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}>历史创作</button>

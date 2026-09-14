@@ -186,8 +186,8 @@ const agentRoleGroups: Array<{
   workflows: DigitalEmployeeWorkflow[];
 }> = [
   { id: "business", label: "经营 Agent", responsibility: "拆解经营目标、协调其他 Agent、汇总业务结果并完成周复盘", outputs: "周目标、执行计划、风险提醒、复盘报告", workflows: [] },
-  { id: "industry", label: "行业 Agent", responsibility: "跟踪目标市场、行业趋势、关键词和对标账号的公开内容", outputs: "行业情报、采集结果、趋势与选题依据", workflows: ["scheduled_social"] },
-  { id: "content", label: "内容 Agent", responsibility: "基于真实产品、企业素材和爆款证据生成内容，并进入审批发布流程", outputs: "脚本、素材方案、成片草稿、发布排期", workflows: ["viral_clone", "product_content", "material_content", "content_publish"] },
+  { id: "industry", label: "编导 Agent", responsibility: "统筹热点采集、内容矩阵、周计划、创作路径、脚本和表达质量", outputs: "采集依据、候选选题、脚本分镜意图、制作单与审片意见", workflows: ["scheduled_social"] },
+  { id: "content", label: "内容 Agent", responsibility: "根据脚本与分镜调用素材、生成、剪辑和渲染能力，完成平台适配与发布交付", outputs: "执行级分镜、素材匹配、成片、平台版本和发布回执", workflows: ["viral_clone", "product_content", "material_content", "content_publish"] },
   { id: "customer", label: "客服 Agent", responsibility: "承接真实询盘、完成客户分层，并按客户上下文生成跟进草稿", outputs: "客户标签、回复草稿、跟进批次、转人工提醒", workflows: ["customer_segmentation", "batch_followup"] },
 ];
 
@@ -196,7 +196,7 @@ const agentApprovalOptions = [
     { key: "activatePlan", label: "启动或调整经营计划", detail: "目标、指标、周期发生变化时必须审批" },
     { key: "changeGoalScope", label: "扩大经营范围", detail: "新增市场、产品或客户范围时必须审批" },
   ] },
-  { role: "industry", label: "行业 Agent", tone: "blue", items: [
+  { role: "industry", label: "编导 Agent", tone: "blue", items: [
     { key: "addUnverifiedSource", label: "采用未验证信息源", detail: "新增来源必须先确认可信度与合规性" },
     { key: "expandCollectionScope", label: "扩大采集范围", detail: "新增平台、账号、关键词或采集规模时必须审批" },
   ] },
@@ -442,8 +442,8 @@ const agentLabel: Record<string, string> = {
   planner: "经营 Agent",
   knowledge: "经营 Agent",
   review: "经营 Agent",
-  industry: "行业 Agent",
-  channel: "行业 Agent",
+  industry: "编导 Agent",
+  channel: "编导 Agent",
   content: "内容 Agent",
   risk: "内容 Agent",
   publishing: "内容 Agent",
@@ -452,9 +452,9 @@ const agentLabel: Record<string, string> = {
 
 const autonomyLabel: Record<string, string> = {
   suggest: "建议",
-  collaborate: "协同",
+  collaborate: "协作",
   managed: "托管",
-  automatic: "自动",
+  automatic: "全自动",
 };
 
 function Badge({ status, label }: { status: string; label?: string }) {
@@ -1216,12 +1216,12 @@ function OnboardingPanel({
               )
             }
           >
-            <option value="suggest">建议：只分析，不执行写操作</option>
-            <option value="collaborate">协同：生成草稿，对外动作确认</option>
-            <option value="managed">托管：低风险自动，关键节点审批</option>
-            <option value="automatic">自动：在授权边界内持续运行</option>
+            <option value="suggest">建议：方向决定均由人工选择</option>
+            <option value="collaborate">协作：高置信度方向自动推进</option>
+            <option value="managed">托管（推荐）：边界内自动编导</option>
+            <option value="automatic">全自动：按完整授权运行到发布</option>
           </select>
-          <p className="mt-1 text-[10px] leading-relaxed text-slate-500">建议：仅分析｜协同：可生成草稿｜托管：可自动采集与生成，发布、发送、报价仍审批｜自动：仅在下方边界内运行，商业承诺仍审批。</p>
+          <p className="mt-1 text-[10px] leading-relaxed text-slate-500">决定“继续 / 调整 / 放弃”由人还是 Agent 执行。建议：逐条确认｜协作：只处理临界方向｜托管：边界内自动编导｜全自动：需另行具备真实发布授权。</p>
         </Field>
         <Field
           label="审批负责人"

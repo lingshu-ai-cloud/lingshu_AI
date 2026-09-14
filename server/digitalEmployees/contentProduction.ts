@@ -32,6 +32,7 @@ import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/e
 import { inspectRenderedVisuals, inspectRenderedScenes } from '../lib/renderVisualQuality.js';
 import { planVideoSourceSegments, resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
+import type { DirectorScriptContract, FrozenDirectorScript } from '../../src/lib/directorScript.js';
 
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
@@ -102,7 +103,7 @@ export interface RouteSourcePlan {
   gap?: string;
 }
 
-export interface ContentProductionOrderInput {
+export interface ContentProductionOrderInput extends Partial<DirectorScriptContract> {
   videoPlan?: VideoCreationPlan;
   languages?: string[];
   id: string;
@@ -965,7 +966,7 @@ export function resumeContentProjectForTaskControl(input: {
 
 export function isLlmUnavailableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || '');
-  return /timed?\s*out|timeout|not set|unavailable|temporar|network|fetch|econn|socket|503|502|504|service/i.test(message);
+  return /timed?\s*out|timeout|not set|unavailable|temporar|network|fetch|connection|econn|socket|503|502|504|service/i.test(message);
 }
 
 function safeFactClauses(value: string): string[] {
@@ -1005,7 +1006,7 @@ export function deterministicClosedWorldStoryboard(input: {
 
 type GeneratedScript = { script: string; source: 'llm' | 'deterministic_closed_world_fallback'; degradedReason: string };
 
-async function generateScript(input: {
+export async function generateScript(input: {
   route: ContentProductionRoute; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; profile: EnterpriseProfile; assets: AssetCandidate[]; reference?: StoredRecord;
   productId?: string; platformBrief: string; contentOrder?: ContentProductionOrderInput;
 }): Promise<GeneratedScript> {
@@ -1014,7 +1015,7 @@ async function generateScript(input: {
   const referenceSummary = reference ? JSON.stringify(reference.structure).slice(0, 8_000) : '';
   const materialEvidence = input.assets.slice(0, 8).map(asset => `${asset.name}：${asset.observations.join('；')}`).join('\n');
   const brief = normalizeVideoPlan(input.contentOrder?.videoPlan || input.config.videoDefaults || {});
-  const lines = await generateNarration({ facts, theme: input.contentOrder?.theme?.label || input.goal.objective, audience: input.config.customerProfile,
+  const lines = await generateNarration({ facts, theme: input.contentOrder?.theme?.label || input.goal.objective, audience: brief.matrix?.audience || input.config.customerProfile,
     language: brief.language, duration: brief.duration, cta: input.contentOrder?.cta || '引导买家讨论当前问题，不承诺额外服务',
     constraints: [...(input.contentOrder?.constraints || input.goal.constraints), ...(brief.reviewRequirements?.length ? ['第一段口播必须能在3秒内自然读完，与首镜钩子对应；其余段落展开解释。'] : []), ...(brief.presenter === 'heygen' ? [`必须恰好分为 ${brief.scenePlan?.length || 4} 段口播，对应用户分镜画面安排；数字人段简短，素材段展开解释。`] : [])], reference: referenceSummary });
   if (brief.presenter === 'heygen' && brief.scenePlan?.length && lines.length !== brief.scenePlan.length) throw Error('口播段数与用户指定分镜数量不一致，请重新生成');
@@ -1022,9 +1023,9 @@ async function generateScript(input: {
   const step = hookEnd ? (brief.duration - hookEnd) / (lines.length - 1) : brief.duration / lines.length;
   const prompt = `你是严谨的 B2B 短视频分镜导演。根据已确认事实生成一条 ${brief.duration} 秒视频脚本。
 生产路径：${routeTitle(input.route)}
-目标：${input.goal.objective}
+目标：${brief.matrix?.objective || input.goal.objective}
 本条主题：${input.contentOrder?.theme?.label || '按周目标生成'}
-客户：${input.config.customerProfile}
+客户：${brief.matrix?.audience || input.config.customerProfile}
 市场：${input.goal.scope || input.config.targetMarkets}
 平台创作要求：${input.platformBrief}
 行动引导：${input.contentOrder?.cta || '私信获取方案'}
@@ -1075,7 +1076,52 @@ ${lines.map((line, index) => `[${(hookEnd ? index === 0 ? 0 : hookEnd + (index -
     if (brief.reviewRequirements?.length) { const first = storyboardSceneRanges(script)[0]; if (!first || first.start !== 0 || first.end !== 3) throw Error('复盘要求的首镜必须覆盖0–3秒，请重新生成分镜'); }
     if (voiceoverText(script).replace(/\s/g, '') !== lines.join('').replace(/\s/g, '')) throw new Error('分镜改变了已确认口播，需重新生成分镜');
     return { script, source: 'llm', degradedReason: generatedScript.fallbackReason };
-  } catch (error) { throw error; }
+  } catch (error) {
+    if (!isLlmUnavailableError(error)) throw error;
+    return {
+      script: deterministicClosedWorldStoryboard({ productFacts: facts, assets: input.assets }),
+      source: 'deterministic_closed_world_fallback',
+      degradedReason: error instanceof Error ? error.message : String(error || '脚本服务不可用'),
+    };
+  }
+}
+
+export async function generateDirectorScriptContracts(input: { tenantId: string; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; orders: ContentProductionOrderInput[]; now?: string }): Promise<ContentProductionOrderInput[]> {
+  const [profile, analysesResult] = await Promise.all([
+    readTenantEnterpriseProfile(input.tenantId),
+    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
+  ]);
+  const allAssets = await collectAssets(input.tenantId, profile);
+  const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
+  const generatedAt = input.now || new Date().toISOString();
+  const results: ContentProductionOrderInput[] = [];
+  for (const order of input.orders) {
+    const languages = (order.languages?.length ? order.languages : [order.videoPlan?.language || input.config.videoDefaults?.language || 'en']).map(normalizeVideoLanguage).filter((language, index, values) => language in VIDEO_LANGUAGES && values.indexOf(language) === index);
+    const scripts: Record<string, FrozenDirectorScript> = {};
+    const assets = allAssets.filter(asset => order.evidenceRefs.some(ref => ref.type === 'enterprise_material' && ref.id === asset.id));
+    const referenceId = order.evidenceRefs.find(ref => ref.type === 'exact_analysis')?.id || '';
+    const reference = analyses.find(item => item.id === referenceId);
+    for (const language of languages.length ? languages : ['en']) {
+      const directedOrder = { ...order, videoPlan: normalizeVideoPlan({ ...(order.videoPlan || input.config.videoDefaults || {}), language }) };
+      let generated: GeneratedScript;
+      if (process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK === 'true') {
+        generated = { script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets }), source: 'deterministic_closed_world_fallback', degradedReason: '已启用编导脚本离线降级模式' };
+      } else try {
+        generated = await generateScript({ route: order.route, config: input.config, goal: input.goal, profile, assets, reference, productId: order.productId, platformBrief: platformCreativeBrief(order.platform), contentOrder: directedOrder });
+      } catch (error) {
+        if (!isLlmUnavailableError(error)) throw error;
+        generated = {
+          script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets }),
+          source: 'deterministic_closed_world_fallback',
+          degradedReason: error instanceof Error ? error.message : String(error || '脚本服务不可用'),
+        };
+      }
+      if (!generated.script || storyboardSceneRanges(generated.script).length < 3) throw new Error(`编导脚本不完整：${order.id} / ${language}`);
+      scripts[language] = { version: 1, body: generated.script, hash: stableHash(generated.script), language, status: 'confirmed', generatedBy: 'director_agent', generatedAt, source: generated.source, degradedReason: generated.degradedReason };
+    }
+    results.push({ ...order, contractVersion: 1, scripts });
+  }
+  return results;
 }
 
 export async function advanceOneProject(input: {
@@ -1204,7 +1250,11 @@ export async function advanceOneProject(input: {
       let languageBindings: Array<{ sceneId: string; sourceText: string; translatedText: string }> = [];
       let masterProjectId = '';
       let masterDerivedSpec: Record<string, unknown> | undefined;
-      const generated: GeneratedScript = isTranslatedVariant ? await (async () => {
+      const frozenDirectorScript = contentOrder?.contractVersion === 1 ? contentOrder.scripts?.[brief.language] : undefined;
+      if (contentOrder?.contractVersion === 1 && (!frozenDirectorScript || frozenDirectorScript.status !== 'confirmed' || frozenDirectorScript.generatedBy !== 'director_agent' || frozenDirectorScript.hash !== stableHash(frozenDirectorScript.body))) {
+        return block('script', '内容订单缺少编导已确认脚本版本，内容 Agent 不得自行生成或修改脚本');
+      }
+      const generated: GeneratedScript = frozenDirectorScript ? { script: frozenDirectorScript.body, source: frozenDirectorScript.source, degradedReason: frozenDirectorScript.degradedReason } : isTranslatedVariant ? await (async () => {
         const master = input.allProjects.find(project => text(json<Record<string, unknown>>(project.spec, {}).contentOrderId) === masterContentOrderId);
         const masterSpec = master ? json<Record<string, unknown>>(master.spec, {}) : {};
         const masterScript = text(masterSpec.script, 30_000);
@@ -1261,9 +1311,10 @@ export async function advanceOneProject(input: {
         activeStepId: 'script',
         automation: stagePatch(freshSpec.automation, (masterDerivedSpec || usesDigitalPresenter(brief)) ? 'voice_subtitles' : 'material_match', {
           blocker: '',
-          scriptGeneratedAt: new Date().toISOString(),
+          scriptGeneratedAt: frozenDirectorScript?.generatedAt || new Date().toISOString(),
           scriptSource: generated.source,
-          contentVersion: Number(automation.contentVersion || 0) + 1,
+          contentVersion: frozenDirectorScript?.version || Number(automation.contentVersion || 0) + 1,
+          ...(frozenDirectorScript ? { directorScriptVersion: frozenDirectorScript.version, directorScriptHash: frozenDirectorScript.hash, directorScriptConfirmedAt: frozenDirectorScript.generatedAt } : {}),
           contentHash: stableHash(script), contentFingerprint: fingerprint,
           pathDifferenceCheck: duplication,
           scriptDegradedReason: generated.degradedReason || undefined,
@@ -1722,7 +1773,7 @@ export async function advanceAutomatedContentProduction(input: {
   const evidence: ContentRouteEvidence = { exactAnalysisIds: analyses.map(item => item.id), productNames, assetIds: assets.map(item => item.id) };
   let projects = existingProjects.filter(record => {
     const spec = json<Record<string, unknown>>(record.spec, {});
-    return spec.workflowRunId === input.runId && spec.workflowTaskId === input.taskId && projectAutomation(record).managedBy === 'digital_employee';
+    return spec.workflowRunId === input.runId && spec.workflowTaskId === input.taskId && projectAutomation(record).managedBy === 'digital_employee' && projectAutomation(record).stage !== 'superseded';
   });
   const requestedOrders = input.contentOrders?.filter(order => ['clone', 'product', 'material'].includes(order.route)) || [];
   if (input.contentOrders && (!requestedOrders.length || requestedOrders.length !== input.contentOrders.length

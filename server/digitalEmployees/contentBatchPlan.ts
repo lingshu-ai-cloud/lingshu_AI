@@ -1,5 +1,6 @@
 import { type VideoCreationPlan, videoPlanErrors } from '../../src/lib/videoCreationPlan.js';
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
+import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';
 
@@ -9,7 +10,7 @@ export interface ContentRoutingEvidence {
   materialIds: string[];
 }
 
-export interface ContentOrder {
+export interface ContentOrder extends Partial<DirectorScriptContract> {
   videoPlan?: VideoCreationPlan;
   /** Frozen autonomous deliverable languages for this approved order. */
   languages?: string[];
@@ -94,13 +95,17 @@ export function buildContentBatchPlan(input: {
       if (ids.some(id => !product.materialIds.includes(id))) errors.push(prefix + '所选素材不存在或不属于指定产品');
       if (!ids.length && plan.presenter === 'material' && plan.route !== 'product') errors.push(prefix + `${product.name} 缺少画面素材，请补充或明确选择数字人口播`);
       if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) referenceErrors.push(prefix + '参考视频尚无有效精确分析');
-      const account = input.config.publishingTargets.find(target => target.platform === plan.platform);
+      const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
       orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
-        languages: input.config.videoLanguages,
+        languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
-        route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: ctaFor(input.config.primaryGoal),
-        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
+        route: plan.route, videoPlan: plan, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
+        constraints: [...new Set([...input.config.constraints, ...input.goal.constraints,
+          ...(plan.buyerProblem ? [`必须回答的买家问题：${plan.buyerProblem}`] : []),
+          ...(plan.evidenceRequirement ? [`必须呈现并核验的证据：${plan.evidenceRequirement}`] : []),
+          ...(plan.matrix?.objective ? [`账号本周目标：${plan.matrix.objective}`] : []),
+          ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
         evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned' });
     });
     // A mixed batch keeps each requested route. Missing clone evidence blocks

@@ -219,7 +219,9 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
     version: 1,
     customerId: clean(input.customerId),
     customerName: clean(input.customerName),
+    customerNameSource: input.customerNameSource === 'whatsapp_profile' ? 'whatsapp_profile' : 'safe_fallback',
     customerLanguage: clean(input.customerLanguage) || 'English',
+    sellerName: clean(input.sellerName),
     status: missingFields.length || blockers.length ? 'needs_clarification' : 'ready_for_review',
     intentScore,
     productName,
@@ -252,6 +254,9 @@ export function buildQuoteDraft(input: BuildQuoteDraftInput): QuoteSkillDraft {
 
 export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<string, unknown>, source: QuoteFieldEvidence['source'] = 'human'): QuoteSkillDraft {
   const next = { ...draft };
+  const catalogMatch = source === 'product_catalog' && patch.matchedProduct && typeof patch.matchedProduct === 'object'
+    ? patch.matchedProduct as QuoteCatalogProduct
+    : null;
   const productIdentityChanged = ('productName' in patch && clean(patch.productName) !== draft.productName)
     || ('sku' in patch && clean(patch.sku) !== draft.sku);
   if ('productName' in patch) next.productName = clean(patch.productName);
@@ -269,7 +274,8 @@ export function applyQuoteDraftPatch(draft: QuoteSkillDraft, patch: Record<strin
   if ('quantity' in patch) next.quantity = numberFrom(patch.quantity);
   if ('unitPrice' in patch) next.unitPrice = numberFrom(patch.unitPrice);
   else if (productIdentityChanged) next.unitPrice = null;
-  if (productIdentityChanged) next.matchedProduct = null;
+  if (catalogMatch) next.matchedProduct = catalogMatch;
+  else if (productIdentityChanged) next.matchedProduct = null;
   if ('validityDays' in patch) next.validityDays = Math.max(1, Math.min(365, Math.round(numberFrom(patch.validityDays) || 15)));
   next.subtotal = next.quantity != null && next.unitPrice != null ? Number((next.quantity * next.unitPrice).toFixed(2)) : null;
   next.missingFields = requiredQuoteFields(next);

@@ -1,0 +1,101 @@
+import assert from 'node:assert/strict';
+import { mkdir, access } from 'node:fs/promises';
+import path from 'node:path';
+import { createServer, transformWithEsbuild } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwind from '@tailwindcss/vite';
+import { chromium } from 'playwright-core';
+
+// Isolated local component fixture; no application server or external service is called.
+const fixture = `import React, {useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import WeeklyPackagePanel from '/src/components/WeeklyPackagePanel.tsx';
+import '/src/index.css';
+const config = {publishingTargets:[{accountId:'a',accountLabel:'批发主页',platform:'facebook'},{accountId:'b',accountLabel:'零售主页',platform:'facebook'}],enabledWorkflows:['product_content','content_publish'],videoDefaults:{language:'en',presenter:'material'},focusProducts:'产品 A',customerProfile:'批发采购商',constraints:[],operatingMaturity:'growing'};
+const pack = {revision:1,maturity:'growing',participation:'agent',tasks:[{templateId:'publishing',title:'发布内容',ownerId:'',ownerName:'',dueAt:'2026-09-20',notes:'',sourceProjectIds:[]}],authorization:{mode:'each',accountIds:['a','b'],maxPublishItems:2,customerIds:[],maxCustomerMessages:0}};
+function App(){const [saved,setSaved]=useState(pack); const data={config,goal:{title:'本周经营',objective:'增加产品咨询',startsAt:'2026-09-14',endsAt:'2026-09-20',contentPlatforms:['facebook']},plan:{businessPackage:saved,tasks:[]},tasks:[],run:null,review:null};return <main className="mx-auto max-w-5xl p-6"><WeeklyPackagePanel data={data} readOnly={false} busy={false} onSave={async next=>{window.lastSaved=structuredClone(next);setSaved({...next,revision:next.revision+1});return true;}} onApprove={async()=>{window.approved=true;}} onOpen={()=>{}} onOpenNode={()=>{}} onTask={()=>{}} onLinkProject={async()=>{}}/></main>};createRoot(document.getElementById('root')).render(<App/>);`;
+let vite;
+let browser;
+try {
+  vite = await createServer({ configFile: false, plugins: [react(), tailwind(), {
+    name: 'matrix-local-fixture', configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (req.url !== '/matrix-fixture') return next();
+        const compiled = await transformWithEsbuild(fixture, 'fixture.tsx', { loader: 'tsx', jsx: 'automatic' });
+        const html = await server.transformIndexHtml('/matrix-fixture', `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"/></head><body><div id="root"></div><script type="module">${compiled.code}</script></body></html>`);
+        res.setHeader('Content-Type', 'text/html'); res.end(html);
+      });
+    },
+  }], server: { host: '127.0.0.1', port: 0, hmr: false } });
+  await vite.listen();
+  const chrome = process.env.MATRIX_TEST_BROWSER || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  await access(chrome);
+  browser = await chromium.launch({ executablePath: chrome, headless: true });
+  const page = await browser.newPage({ viewport: { width: 1365, height: 1000 } });
+  const errors = [];
+  page.setDefaultTimeout(10000);
+  page.on('pageerror', error => { errors.push(error.message); console.error('Browser:', error.message); });
+  await page.route('**/api/**', route => {
+    const url = route.request().url();
+    const body = url.includes('planning-options') ? {products:[{id:'p',name:'产品 A',materialIds:[]}],assets:[],references:[]} : url.includes('capabilities') ? {languages:[]} : {members:[],projects:[],customers:[]};
+    return route.fulfill({ json: body });
+  });
+  await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/matrix-fixture`);
+  await page.getByRole('button', { name: '安排账号与内容' }).click();
+  await page.getByLabel('加入本周账号').selectOption('a');
+  await page.getByLabel('配置批发主页').click();
+  await page.getByLabel('本周目标', {exact:true}).fill('获得批发合作咨询');
+  await page.getByLabel('内容方向', {exact:true}).fill('工厂与产品选型');
+  await page.getByLabel('行动引导', {exact:true}).fill('WhatsApp 咨询');
+  await page.getByLabel('关闭账号设置').click();
+  await page.getByLabel('加入本周账号').selectOption('b');
+  await page.getByLabel('配置零售主页').click();
+  await page.getByLabel('目标受众', {exact:true}).fill('西班牙零售买家');
+  await page.getByLabel('本周目标', {exact:true}).fill('增加产品互动');
+  await page.getByLabel('内容方向', {exact:true}).fill('真实使用场景');
+  await page.getByLabel('行动引导', {exact:true}).fill('评论分享使用需求');
+  await page.getByLabel('语言').selectOption('es');
+  await page.getByLabel('关闭账号设置').click();
+  await page.getByRole('button', { name: '按目标数量补齐候选内容' }).click();
+  await page.getByRole('button', { name: '按目标数量补齐候选内容' }).click();
+  assert.equal(await page.getByText(/主页 · 候选/).count(), 2);
+  await page.getByText('工厂与产品选型', {exact:true}).click();
+  await page.getByLabel('买家问题').fill('已确认的选型主题');
+  await page.getByLabel('必须呈现的证据').fill('展示真实尺寸测量结果');
+  await page.getByLabel('期望发布日期').selectOption('2026-09-18');
+  await page.getByRole('button', { name: '完成', exact: true }).click();
+  const output = path.resolve('reports/weekly-matrix');
+  await mkdir(output, {recursive:true});
+  await page.screenshot({path:path.join(output,'matrix-editor-desktop.png'),fullPage:true});
+  await page.getByRole('button', { name: '保存矩阵与内容安排' }).click();
+  const saved = await page.evaluate(() => window.lastSaved);
+  assert.deepEqual(saved.tasks.find(t=>t.templateId==='production').videoPlans.map(p=>[p.matrix.accountId,p.language]), [['a','en'],['b','es']]);
+  assert.equal(saved.tasks.find(t=>t.templateId==='production').videoPlans[0].theme,'已确认的选型主题');
+  assert.equal(saved.tasks.find(t=>t.templateId==='production').videoPlans[0].plannedPublishDate,'2026-09-18');
+  await page.getByRole('button', { name: '配置编导计划' }).click();
+  await page.getByLabel('内容生产预算').fill('2000');
+  await page.getByLabel('投流预算').fill('3000');
+  await page.getByLabel('原创内容目标').fill('2');
+  await page.getByLabel('平台版本目标').fill('2');
+  await page.getByLabel('成功发布目标').fill('2');
+  await page.getByRole('button', { name: '添加记录' }).click();
+  await page.getByLabel('事项').fill('筛选本周平台热点');
+  await page.getByRole('button', { name: '保存编导计划' }).click();
+  const directorSaved = await page.evaluate(() => window.lastSaved);
+  assert.equal(directorSaved.directorPlan.productionBudget, 2000);
+  assert.equal(directorSaved.directorPlan.progress[0].title, '筛选本周平台热点');
+  await page.getByRole('button', { name: '安排账号与内容' }).click();
+  await page.getByLabel('配置批发主页').click();
+  await page.getByLabel('本周目标', {exact:true}).fill('未保存的修改');
+  await page.getByRole('button', {name:'关闭',exact:true}).click();
+  assert.equal(await page.getByText('未保存的修改',{exact:true}).count(),0);
+  await page.getByRole('button', {name:'执行任务',exact:true}).first().click();
+  await page.getByRole('button', {name:'确认并执行任务',exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.approved),true);
+  await page.setViewportSize({width:390,height:844});
+  await page.getByRole('button', { name: '安排账号与内容' }).click();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= window.innerWidth),true);
+  await page.screenshot({path:path.join(output,'matrix-editor-mobile.png'),fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('Matrix UI passed: account-by-date editing, single-content drawer, director budget/progress, idempotent generation, save, cancel, execution confirmation and mobile layout.');
+} finally { await browser?.close(); await vite?.close(); }

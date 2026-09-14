@@ -26,9 +26,12 @@ export interface QuoteSkillDraft {
   version: number;
   supersedesId?: string;
   id?: string;
+  quoteNumber?: string;
   customerId: string;
   customerName: string;
+  customerNameSource: 'whatsapp_profile' | 'safe_fallback';
   customerLanguage: string;
+  sellerName: string;
   status: QuoteSkillStatus;
   intentScore: number;
   productName: string;
@@ -56,6 +59,12 @@ export interface QuoteSkillDraft {
   humanConfirmationRequired: true;
   confirmedBy?: string;
   confirmedAt?: string;
+  delivery?: {
+    status: 'sent';
+    sentAt: string;
+    providerMessageId: string;
+    imageSha256: string;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -63,7 +72,9 @@ export interface QuoteSkillDraft {
 export interface BuildQuoteDraftInput {
   customerId: string;
   customerName: string;
+  customerNameSource?: 'whatsapp_profile' | 'safe_fallback';
   customerLanguage?: string;
+  sellerName?: string;
   productHint?: string;
   messages: string[];
   products: QuoteCatalogProduct[];

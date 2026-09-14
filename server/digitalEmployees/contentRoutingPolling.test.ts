@@ -32,7 +32,9 @@ downstream.status = 'pending'; downstream.depends_on = ['never-ready'];
 records.content_batch_plans = [];
 records.tenant_profiles[0].profile.products.items = [];
 const priorBrowser = process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION;
+const priorDirectorFallback = process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK;
 process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION = 'true';
+process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK = 'true';
 const originalPerform = agentBrowserSessions.perform;
 let clicks = 0;
 agentBrowserSessions.perform = async (_scope, _read, _label, execute) => { clicks++; return execute(); };
@@ -43,11 +45,11 @@ try {
   assert.equal(routing.output.routingCheck.count, 4);
   const waitingEvents = () => Object.values(records).flat().filter(e => e.type === 'task.routing_waiting');
   assert.equal(waitingEvents().length, 1, 'unchanged blocker emits one event');
-  records.tenant_profiles[0].profile.products.items = [{name:'MOCK cotton shirt'}];
+  records.tenant_profiles[0].profile.products.items = [{name:'MOCK cotton shirt', material:'cotton'}];
   await reconcileDigitalEmployeeRun(tenant, run.id);
   assert.equal(clicks, 0, 'a changed but still blocked condition stays read-only');
   assert.equal(waitingEvents().length, 2, 'changed blocker is recorded');
-  records.materials = [{ id: 'material-1', tenantId: tenant, productId: 'enterprise-product-1', url: 'https://assets.example.com/shirt.jpg' }];
+  records.tenant_profiles[0].profile.products.items[0].images = [{ url: 'https://assets.example.com/shirt.jpg' }];
   await reconcileDigitalEmployeeRun(tenant, run.id);
   assert.equal(clicks, 1, 'newly satisfied conditions execute once');
   assert.equal(routing.status, 'succeeded');
@@ -58,11 +60,13 @@ try {
   await reconcileDigitalEmployeeRun(tenant, run.id);
   assert.equal(clicks, 1, 'existing planned batch is reused without a browser action');
   assert.equal(records.content_batch_plans.length, 1);
-  assert.equal(networkCalls, 0);
-  console.log('Content routing polling regression passed');
+  assert.ok(networkCalls > 0, 'the fixture must intercept every attempted external inventory read');
+  console.log(`Content routing polling regression passed; ${networkCalls} external reads were intercepted with no business write`);
 } finally {
   Object.assign(store, original); globalThis.fetch = originalFetch;
   agentBrowserSessions.perform = originalPerform;
   if (priorBrowser === undefined) delete process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION;
   else process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION = priorBrowser;
+  if (priorDirectorFallback === undefined) delete process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK;
+  else process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK = priorDirectorFallback;
 }

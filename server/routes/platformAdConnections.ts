@@ -43,7 +43,10 @@ platformAdConnectionsRouter.get('/connections/:id/campaigns', async (req, res) =
   try {
     const { connection, accessToken } = await getConnectionCredential((res.locals as AuthLocals).tenantId, req.params.id);
     const data = connection.provider === 'meta' ? await new MetaAdsAdapter(accessToken).campaigns(connection.accountId) : connection.provider === 'tiktok' ? await new TikTokAdsAdapter(accessToken).campaigns(connection.accountId) : await new GoogleAdsAdapter(accessToken).campaigns(connection.accountId);
-    res.json({ items: data.data || data.list || data.results?.map((item: any) => item.campaign) || [], hasMore: Boolean(data.paging?.next || data.nextPageToken || data.page_info?.total_page > 1) });
+    const items = connection.provider === 'tiktok'
+      ? (data.list || []).map((item: any) => ({ id: String(item.campaign_id), name: String(item.campaign_name || item.campaign_id), status: item.operation_status }))
+      : data.data || data.results?.map((item: any) => item.campaign) || [];
+    res.json({ items, hasMore: Boolean(data.paging?.next || data.nextPageToken || data.page_info?.total_page > 1) });
   } catch (error) { failure(res, error); }
 });
 platformAdConnectionsRouter.post('/connections/:id/verify', async (req, res) => {

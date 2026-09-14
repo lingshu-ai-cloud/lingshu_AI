@@ -23,6 +23,7 @@ import type { ConversationContext, Page, RestoreSignal, KickoffSignal, AgentActi
 import { authHeader } from '../lib/auth';
 import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
+import DirectorTaskContext from './DirectorTaskContext';
 import {
   resolveInitialTrafficViewMode,
   resolveNavigationEventViewMode,
@@ -46,6 +47,8 @@ export type DigitalEmployeeWorkflowContext = {
   taskId: string;
   taskKey: string;
   entityId?: string;
+  contentId?: string;
+  referenceId?: string;
   preview?: boolean;
 };
 
@@ -63,7 +66,7 @@ export function parseDigitalEmployeeWorkflowContext(
       workflowRunId?: string;
       workflowTaskId?: string;
       issuedAt?: number;
-      businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
+      businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
     };
     const runId = String(parsed.workflowRunId || parsed.runId || '').trim();
     const taskId = String(parsed.workflowTaskId || parsed.taskId || '').trim();
@@ -80,6 +83,8 @@ export function parseDigitalEmployeeWorkflowContext(
       taskId,
       taskKey: String(parsed.businessRef?.taskKey || ''),
       ...(parsed.businessRef?.entityId ? { entityId: parsed.businessRef.entityId } : {}),
+      ...(parsed.businessRef?.contentId ? { contentId: parsed.businessRef.contentId } : {}),
+      ...(parsed.businessRef?.referenceId ? { referenceId: parsed.businessRef.referenceId } : {}),
       ...(preview ? { preview: true } : {}),
     };
   } catch {
@@ -534,7 +539,7 @@ export default function TrafficPage({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ page?: Page; view?: ViewMode; studioPanel?: 'projects'; runId?: string; taskId?: string; workflowRunId?: string; workflowTaskId?: string; businessRef?: { taskKey?: string; entityId?: string } }>).detail;
+      const detail = (event as CustomEvent<{ page?: Page; view?: ViewMode; studioPanel?: 'projects'; runId?: string; taskId?: string; workflowRunId?: string; workflowTaskId?: string; businessRef?: { taskKey?: string; entityId?: string; contentId?: string; referenceId?: string } }>).detail;
       if (detail?.page === 'traffic' && detail.view) {
         setViewMode(current => resolveNavigationEventViewMode(current, detail.view!));
       }
@@ -542,7 +547,7 @@ export default function TrafficPage({
         const runId = String(detail.workflowRunId || detail.runId || '').trim();
         const taskId = String(detail.workflowTaskId || detail.taskId || '').trim();
         if (runId && taskId) {
-          setWorkflowContext({ runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId });
+          setWorkflowContext({ runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId, contentId: detail.businessRef?.contentId, referenceId: detail.businessRef?.referenceId });
           try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); } catch { /* optional handoff cache */ }
         } else {
           setWorkflowContext(null);
@@ -682,6 +687,7 @@ export default function TrafficPage({
         <AnimatePresence mode="wait">
           {viewMode === 'materials' ? (
             <motion.div key="materials" id="traffic-panel-materials" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-materials' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
+              <DirectorTaskContext page="socialInspiration" />
               <InspirationDashboard
                 onScriptPanelOpen={onScriptPanelOpen}
                 onScriptPanelClose={onScriptPanelClose}

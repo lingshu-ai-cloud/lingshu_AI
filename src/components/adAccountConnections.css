@@ -1,0 +1,36 @@
+.ad-connect { color: #264c40; display: grid; gap: 20px; }
+.ad-connect p { line-height: 1.65; }
+.ad-connect-platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ad-connect-platforms button { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 15px 12px; border: 1px solid #dce6e0; border-radius: 12px; background: #fff; text-align: left; cursor: pointer; }
+.ad-connect-platforms button.selected { border-color: #128257; background: #f0f8f3; box-shadow: inset 0 0 0 1px #128257; }
+.ad-connect-platforms small { font-size: 11px; color: #65796e; }
+.ad-platform-mark { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 8px; font-weight: 750; background: #edf3ff; color: #2165c6; }
+.ad-platform-mark.tiktok { background: #edf1f0; color: #182e2b; }
+.ad-platform-mark.google { background: #fff4e2; color: #97610f; }
+.ad-connect-steps { display: flex; gap: 12px; justify-content: space-between; list-style: none; padding: 0 0 14px; margin: 0; border-bottom: 1px solid #e5ece7; font-size: 12px; color: #748478; }
+.ad-connect-steps .current { font-weight: 700; color: #117952; }
+.ad-connect-steps .done { color: #385f4a; }
+.ad-connect-method, .ad-connect-oauth { display: grid; gap: 14px; }
+.ad-connect h3 { font-size: 16px; font-weight: 650; }
+.ad-connect-note { background: #f5f7f5; border-radius: 8px; padding: 12px 14px; font-size: 13px; }
+.ad-connect .ads-form-fields { gap: 12px; }
+.ad-connect .ads-form-fields small { line-height: 1.6; margin-top: -5px; }
+.ad-connect .ads-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ad-connect-help { font-size: 13px; line-height: 1.7; }
+.ad-connect-help summary { cursor: pointer; color: #117952; }
+.ad-connect-help p { margin-top: 8px; }
+.ad-connect-manual-toggle { justify-self: start; margin-top: 4px; }
+.ad-connect-success { border: 1px solid #badac7; border-radius: 12px; background: #f0f8f3; display: grid; gap: 10px; padding: 22px; }
+.ad-connect-success > svg { color: #118052; }
+.ad-connected-accounts { border-top: 1px solid #e5ece7; padding-top: 20px; }
+.ad-connected-accounts h3 { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
+.ad-connected-accounts h3 span { font-size: 12px; border-radius: 20px; background: #edf2ee; padding: 2px 8px; }
+.ad-connect .ads-account-option { padding: 13px; flex-wrap: wrap; }
+.ad-connect .ads-account-option > div { min-width: 140px; overflow-wrap: anywhere; }
+.ad-connect-footer { font-size: 12px; color: #687c70; border-top: 1px solid #e5ece7; padding-top: 14px; }
+.ad-connect button:disabled { opacity: .5; cursor: not-allowed; }
+.ad-connect :is(button, a, input, select, summary):focus-visible { outline: 3px solid #87bba2; outline-offset: 3px; }
+@media (max-width: 480px) { .ad-connect-platforms { gap: 6px; } .ad-connect-platforms button { padding: 12px 8px; } .ad-connect-platforms small { font-size: 10px; } .ad-connect-steps { gap: 6px; font-size: 11px; } .ad-connect .ads-actions > * { width: 100%; justify-content: center; } }
+
+.ad-connect .ads-muted { color: #64766c; font-size: 12px; }
+@media (max-width: 480px) { .ad-connect-platforms strong { font-size: 12px; white-space: nowrap; } .ad-connect-platforms small { line-height: 1.5; } }

@@ -9,6 +9,7 @@ process.env.LOCAL_STORE_DIR = temp;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
 process.env.META_ADS_API_VERSION = 'v25.0';
+process.env.TENANT_PLATFORM_APP_KEY = 'ad-connections-route-test-key-32bytes';
 const { platformAdsRouter } = await import('../routes/platformAds.js');
 const { platformAdConnectionsRouter } = await import('../routes/platformAdConnections.js');
 const { platformAdExecutionRouter } = await import('../routes/platformAdExecution.js');
@@ -50,6 +51,19 @@ try {
   assert.equal(conflict.status, 409);
   for (const suffix of ['automation', 'approvals', 'launch']) assert.equal((await request(`/tasks/${task.id}/${suffix}`, 'tenant-b')).status, 404);
   const { store } = await import('../storage/index.js');
+  const { encryptSecret } = await import('../lib/tenantPlatformApps.js');
+  const { TikTokAdsAdapter } = await import('./otherAdapters.js');
+  const connection = await store.create<any>('platform_ad_connections', { tenant_id: 'tenant-a', provider: 'tiktok', accountId: '123', tokenCipher: encryptSecret('test-only-token'), status: 'connected', currency: 'USD' });
+  const originalCampaigns = TikTokAdsAdapter.prototype.campaigns;
+  TikTokAdsAdapter.prototype.campaigns = async () => ({ list: [{ campaign_id: '789', campaign_name: '视频观看测试', operation_status: 'DISABLE' }], page_info: { total_page: 2 } });
+  try {
+    const response = await request(`/connections/${connection.id}/campaigns`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.deepEqual(body.items, [{ id: '789', name: '视频观看测试', status: 'DISABLE' }], 'TikTok campaign IDs must survive listing so the UI can import the selected campaign');
+    assert.equal(body.hasMore, true);
+    assert.equal((await request(`/connections/${connection.id}/campaigns`, 'tenant-b')).status, 404);
+  } finally { TikTokAdsAdapter.prototype.campaigns = originalCampaigns; }
   const originalList = store.list, originalGet = store.getById;
   store.list = async () => { throw new Error('private storage diagnostic'); };
   store.getById = async () => { throw new Error('private storage diagnostic'); };

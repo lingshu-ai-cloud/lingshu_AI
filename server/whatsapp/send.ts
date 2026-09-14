@@ -1,5 +1,5 @@
 import { decryptSecret, getTenantPlatformApp } from '../lib/tenantPlatformApps.js';
-import { sendWhatsAppTemplate, sendWhatsAppText, type WhatsAppConfig, type WhatsAppSendReceipt } from '../integrations/whatsapp.js';
+import { sendWhatsAppImage, sendWhatsAppTemplate, sendWhatsAppText, type WhatsAppConfig, type WhatsAppSendReceipt } from '../integrations/whatsapp.js';
 import { planMobileChatMessages } from '../agents/mobileChatStyle.js';
 
 function text(value: unknown): string {
@@ -33,6 +33,20 @@ function wait(ms: number): Promise<void> {
 
 export async function sendTenantWhatsAppText(tenantId: string, to: string, body: string): Promise<string[]> {
   return (await sendTenantWhatsAppTextWithReceipts(tenantId, to, body)).messages;
+}
+
+export async function sendTenantWhatsAppImageWithReceipt(input: {
+  tenantId: string;
+  to: string;
+  bytes: Buffer;
+  caption: string;
+  filename?: string;
+  callbackData?: string;
+}): Promise<WhatsAppSendReceipt> {
+  const to = text(input.to);
+  if (!to || !input.bytes.length) throw new Error('whatsapp_image_target_required');
+  const config = await getTenantWhatsAppConfig(input.tenantId);
+  return sendWhatsAppImage(config, to, input.bytes, text(input.caption), input.filename, input.callbackData);
 }
 
 export async function sendTenantWhatsAppTextWithReceipts(

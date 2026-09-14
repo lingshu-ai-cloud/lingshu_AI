@@ -10,46 +10,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : '�
 const statusLabel = (status: unknown) => (({ ACTIVE: '配置已启用（不代表审核通过或产生曝光）', active: '配置已启用（不代表审核通过或产生曝光）', PAUSED: '已暂停', DISABLE: '已停用', VERIFIED: '平台操作已核验', FAILED: '操作失败', UNKNOWN: '结果待核验', PENDING: '等待处理', APPROVING: '审批执行中', EXECUTED: '已执行', REJECTED: '已拒绝', EXPIRED: '已过期', INVALIDATED: '已失效', CREATING: '创建中', CREATED: '已创建', ACTIVATING: '启动中', BLOCKED: '等待处理问题' } as Record<string, string>)[String(status)] || String(status || '暂无状态'));
 const localDateInput = (value: string) => { if (!value || !value.endsWith('Z')) return value.slice(0, 16); const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 
-export function AdAccountConnections({ onTaskImported }: { onTaskImported?: (task: PlatformAdTask) => void } = {}) {
-  const [data, setData] = useState<Connections>({ items: [], capabilities: [] });
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [accountId, setAccountId] = useState('');
-  const [accessToken, setAccessToken] = useState('');
-  const [provider, setProvider] = useState('meta');
-  const [campaigns, setCampaigns] = useState<Array<{ id: string; name: string; effective_status?: string; status?: string }>>([]);
-  const [campaignConnectionId, setCampaignConnectionId] = useState('');
-  const [oauth, setOauth] = useState<{ sessionId: string; url: string; status: string; accounts: Array<{ id: string; name: string; currency: string }> } | null>(null);
-  const reload = () => platformAdsRequest<Connections>('/connections').then(setData);
-  useEffect(() => { reload().catch(e => setError(message(e))); }, []);
-  const connect = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError('');
-    try { await platformAdsRequest('/connections', { method: 'POST', body: JSON.stringify({ provider, accountId, accessToken }) }); setAccessToken(''); await reload(); }
-    catch (e) { setError(message(e)); } finally { setBusy(false); }
-  };
-  return <div className="ads-operations">
-    <p>通过官方授权或开发者令牌连接，验证真实账户后保存加密凭证。社媒发布授权与广告管理授权相互独立。</p>
-    {error && <p role="alert" className="ads-operation-error">{error}</p>}
-    {data.capabilities.map(c => <p key={c.provider}><strong>{c.provider}</strong> · {c.configured ? '服务已配置' : c.reason || '服务未配置'}</p>)}
-    <button className="ads-button primary" disabled={busy || !data.capabilities.some(c => c.provider === 'meta' && c.oauthConfigured)} onClick={async () => {
-      const popup = window.open('about:blank', '_blank');
-      if (popup) popup.opener = null;
-      setBusy(true); setError('');
-      try { const result = await platformAdsRequest<{ url: string; sessionId: string }>('/oauth/meta/start', { method: 'POST' }); setOauth({ ...result, status: 'pending', accounts: [] }); if (popup) popup.location.href = result.url; }
-      catch (e) { popup?.close(); setError(message(e)); } finally { setBusy(false); }
-    }}>通过 Meta 官方授权连接</button>
-    {oauth && <div className="ads-proposal"><p>授权状态：{oauth.status}。完成官方授权后刷新账户列表。</p><a href={oauth.url} target="_blank" rel="noopener noreferrer">打开 Meta 授权页</a><button className="ads-button" disabled={busy} onClick={async () => { setBusy(true); try { const result = await platformAdsRequest<{ status: string; accounts: typeof oauth.accounts }>(`/oauth/meta/${encodeURIComponent(oauth.sessionId)}/accounts`); setOauth({ ...oauth, ...result }); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>刷新授权账户</button>{oauth.accounts.map(account => <div key={account.id} className="ads-account-option"><span>{account.name} · {account.currency}</span><button className="ads-button" disabled={busy} onClick={async () => { setBusy(true); try { await platformAdsRequest(`/oauth/meta/${encodeURIComponent(oauth.sessionId)}/connect`, { method: 'POST', body: JSON.stringify({ accountId: account.id }) }); await reload(); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>连接此账户</button></div>)}</div>}
-    <form className="ads-form-fields" onSubmit={connect}>
-      <label>令牌连接平台<select value={provider} onChange={e => setProvider(e.target.value)}><option value="meta">Meta</option><option value="tiktok">TikTok</option><option value="google">Google Ads</option></select></label>
-      <label>广告账户 ID<input required value={accountId} onChange={e => setAccountId(e.target.value)} placeholder={provider === 'meta' ? 'act_123456789' : '平台广告账户 ID'} /></label>
-      <label>广告管理访问令牌<input required type="password" autoComplete="off" value={accessToken} onChange={e => setAccessToken(e.target.value)} /></label>
-      <button className="ads-button primary" disabled={busy}>{busy ? '验证连接中…' : '验证并连接真实账户'}</button>
-    </form>
-    {data.items.map(c => <div className="ads-account-option" key={c.id}><div><strong>{c.name}</strong><small>{c.provider} · {c.accountId} · {c.currency} · {c.status}</small></div><button className="ads-button" disabled={busy} onClick={async () => { setBusy(true); setError(''); try { const result = await platformAdsRequest<{ items: typeof campaigns }>(`/connections/${encodeURIComponent(c.id)}/campaigns`); setCampaigns(result.items); setCampaignConnectionId(c.id); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>读取平台计划</button></div>)}
-    {campaigns.map(c => <div key={c.id} className="ads-account-option"><span>{c.name} · {c.id} · {statusLabel(c.effective_status || c.status)}</span><button className="ads-button" disabled={busy} onClick={async () => { setBusy(true); setError(''); try { const result = await platformAdsRequest<{ task: PlatformAdTask }>(`/connections/${encodeURIComponent(campaignConnectionId)}/import`, { method: 'POST', body: JSON.stringify({ campaignId: c.id }) }); onTaskImported?.(result.task); } catch (e) { setError(message(e)); } finally { setBusy(false); } }}>导入灵枢（只读）</button></div>)}
-    <p className="ads-muted">读取平台计划不会改变广告。TikTok 与 Google 的可用范围以服务能力提示为准。</p>
-  </div>;
-}
+export { default as AdAccountConnections } from './AdAccountConnections';
 
 export function AdTaskControls({ task, onUpdate, onExecution }: { task: PlatformAdTask; onUpdate: (task: PlatformAdTask) => void; onExecution?: () => void }) {
   const currency = task.currency || 'USD';

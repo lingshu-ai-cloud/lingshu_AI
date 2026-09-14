@@ -43,8 +43,6 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
   const priorUntil = new Date(Date.parse(since + 'T00:00:00Z') - 86400000);
   const previous = Number.isFinite(priorUntil.getTime()) ? overviewData(entries, chosen, new Date(priorUntil.getTime() - Math.max(0, dates.length - 1) * 86400000).toISOString().slice(0, 10), priorUntil.toISOString().slice(0, 10)) : null;
   const hasData = data.spend !== null;
-  const missing = tasks.filter(t => t.currency === chosen).length - data.usable.length;
-  const status = loading || busy ? '正在读取' : data.stale ? '含历史快照 · 非实时' : !data.complete ? '数据覆盖不完整' : '平台报告 · 可能延迟';
   const cards = [
     { label: '广告花费', value: `${chosen} ${format(data.spend, 2)}`, note: percentChange(data.spend, previous?.spend ?? null, data.complete && !!previous?.complete) },
     { label: '询盘 / 单条询盘成本', value: '未接通', note: '点击、播放量不等于询盘' },
@@ -54,13 +52,9 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
   return <div className="ad-performance">
     <section className="ads-card ad-summary">
       <div className="ads-section-title"><div><p className="ads-muted">PERFORMANCE PULSE</p><h2>花费有依据，增长看全程</h2></div><button className="ads-button" disabled={busy || loading} onClick={() => setRefresh(r => r + 1)}>刷新数据</button></div>
-      <div className="ad-toolbar"><label>统计周期<select value={period} onChange={e => { setPeriod(e.target.value); if (e.target.value !== 'custom') { setSince(day(1 - Number(e.target.value))); setUntil(day()); } }}><option value="1">今天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="custom">自定义</option></select></label>{period === 'custom' && <><label>开始日期<input type="date" value={since} max={until} onChange={e => setSince(e.target.value)} /></label><label>结束日期<input type="date" value={until} min={since} max={day()} onChange={e => setUntil(e.target.value)} /></label></>}<label>币种<select value={chosen} onChange={e => setCurrency(e.target.value)}>{(currencies.length ? currencies : ['CNY']).map(c => <option key={c}>{c}</option>)}</select></label><span className="ad-status" role="status">{status}</span></div>
+      <div className="ad-toolbar"><label>统计周期<select value={period} onChange={e => { setPeriod(e.target.value); if (e.target.value !== 'custom') { setSince(day(1 - Number(e.target.value))); setUntil(day()); } }}><option value="1">今天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="custom">自定义</option></select></label>{period === 'custom' && <><label>开始日期<input type="date" value={since} max={until} onChange={e => setSince(e.target.value)} /></label><label>结束日期<input type="date" value={until} min={since} max={day()} onChange={e => setUntil(e.target.value)} /></label></>}<label>币种<select value={chosen} onChange={e => setCurrency(e.target.value)}>{(currencies.length ? currencies : ['CNY']).map(c => <option key={c}>{c}</option>)}</select></label></div>
       {!dates.length && <p role="alert">请选择有效日期范围（最多 366 天）。</p>}
-      <p className="ad-conclusion">{loading || busy ? '正在核对各计划的平台报告…' : !tasks.length ? '还没有投放计划。连接账户并创建计划后，这里展示真实表现。' : hasData ? `已返回日数据合计花费 ${chosen} ${format(data.spend, 2)}，记录 ${format(data.clicks)} 次点击。${data.stale ? '包含历史快照，不能据此判断当前投放趋势。' : '询盘及成交归因未接通，暂不能判断获客质量或盈利。'}` : '所选周期没有可核验的日数据，暂不足以判断投放表现。'}</p>
-      <p className="ads-muted">{since} — {until} · 日期筛选按 UTC · {chosen} 口径 · 已返回 {data.usable.length}/{tasks.filter(t => t.currency === chosen).length} 个计划报告{missing > 0 ? `，${missing} 个尚无报告` : ''}。缺失日期不补零；部分数据仅展示已返回小计。</p>
-      <p className="ads-muted">周期筛选仅使用接口已返回的日记录；近 30 天及自定义范围不会自动补采历史。日数据保留平台报告日期，不按浏览器时区重新归日。</p>
       <div className="ad-kpis">{cards.map(c => <article key={c.label}><span>{c.label}</span><strong>{c.value}</strong><small>{c.note}</small></article>)}</div>
-      <p className="ads-muted">预算参照：{chosen} {format(tasks.filter(t => t.currency === chosen).reduce((n, t) => n + (Number(t.budget) || 0), 0), 2)}（计划预算合计，非剩余预算；缺少累计消耗，暂不计算预算执行率）。</p>
     </section>
     <section className="ads-card"><div className="ads-section-title"><div><h2>从投放到成交</h2><p className="ads-muted">前两步来自平台报告；后四步尚未归因，不连线、不推算转化率。</p></div></div><div className="ad-funnel">{[
       ['广告花费', `${chosen} ${format(data.spend, 2)}`, '平台已返回小计'], ['点击', format(data.clicks), '平台点击，非独立客户'], ['进入会话', '未接通', '待关联广告来源'], ['有效询盘', '未接通', '待客服质量判定'], ['报价', '未接通', '待报价记录归因'], ['成交', '未接通', '待订单归因'],

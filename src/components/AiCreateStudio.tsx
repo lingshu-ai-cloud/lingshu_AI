@@ -3,6 +3,7 @@ import { ensureMaterialAnalysis } from '../lib/studioApi';
 import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import ProductionTaskScene from './ProductionTaskScene';
+import DirectorTaskContext from './DirectorTaskContext';
 import { requestProductionBack } from '../lib/productionNavigation';
 import ContentLibrary from './ContentLibrary';
 import ProductionRevisionPanel from './ProductionRevisionPanel';
@@ -560,7 +561,7 @@ interface StoryboardAssembly {
 }
 
 type StudioPublishPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
-export type StudioWorkflowContext = { runId: string; taskId: string; taskKey?: string; preview?: boolean; entityId?: string };
+export type StudioWorkflowContext = { runId: string; taskId: string; taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
 
 export function studioWorkflowContextFromSpec(spec: Record<string, unknown>): StudioWorkflowContext | null {
   const runId = typeof spec.workflowRunId === 'string' ? spec.workflowRunId.trim() : '';
@@ -12802,7 +12803,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   return (
     <div className="flex flex-col h-full relative">
-      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
+      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} directorContext={workflowContext || projectWorkflowContext || undefined} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
+      {!agentProduction.active && !(workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
       {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
       {managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">

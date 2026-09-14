@@ -12,6 +12,7 @@ import { analysisWait, basicTaskWait, collectionWait, followupComplete, followup
 import { listTenantEmployees } from './auth.js';
 import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
+import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { spokenLanguageMatches } from '../../src/lib/videoCreationPlan.js';
@@ -34,9 +35,10 @@ import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from '
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
-import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
+import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
 import { summarizeContentFeedback } from '../digitalEmployees/contentReview.js';
+import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
   configurationSnapshot,
   resolveDigitalEmployeeConfiguration,
@@ -388,8 +390,7 @@ const visibleAgentRole = (role: string, taskKey = ''): 'business' | 'industry' |
 };
 
 function stableProductId(product: Record<string, unknown>, index: number): string {
-  const sku = String(product.sku || '').trim();
-  return sku || `enterprise-product-${index + 1}`;
+  return productIdentity(product as Parameters<typeof productIdentity>[0], index);
 }
 
 function enterpriseMaterialIds(tenantId: string, products: Array<Record<string, unknown>>, originalIndexes: number[] = []): string[] {
@@ -484,18 +485,32 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
   const knowledgeBinding = jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {});
   if (existing?.status === 'planned') return { record: existing, created: false, draft };
   const now = new Date().toISOString();
+  const pack = planBody.businessPackage as WeeklyPackage | undefined;
+  const director = pack?.directorPlan;
+  const plans = pack?.tasks.find(item => item.templateId === 'production')?.videoPlans || [];
+  const estimatedTotal = plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
+  if (director && director.productionSpent + estimatedTotal > director.productionBudget) throw new Error('内容计划预计费用与已用金额超过生产预算');
+  const constrainedOrders = draft.orders.map(order => ({ ...order,
+    constraints: [...new Set([...(order.constraints || []), ...(director?.qualityStandard ? [`编导确认的脚本与审片标准：${director.qualityStandard}`] : [])])],
+    ...(director ? { operatingContext: { productionBudget: director.productionBudget, productionSpent: director.productionSpent, productionReserved: estimatedTotal, estimatedContentCost: Number(order.videoPlan?.estimatedCost || 0), originalTarget: director.originalTarget, platformVersionTarget: director.platformVersionTarget, publishTarget: director.publishTarget, qualityStandard: director.qualityStandard, packageRevision: Number(pack?.revision || 0) } } : {}),
+  }));
+  const effectiveDraft = draft.status === 'planned' ? { ...draft, orders: await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: constrainedOrders, now }) } : draft;
+  if (director && input.plan && director.productionReserved !== estimatedTotal) {
+    const nextPack = { ...pack!, directorPlan: { ...director, productionReserved: estimatedTotal } };
+    await store.update(COLLECTION.plans, input.plan.id, { plan: { ...planBody, businessPackage: nextPack } });
+  }
   if (existing) {
-    const patch = { status: draft.status, orders: draft.orders, routing: { blocker: draft.blocker, coverage: draft.coverage, eligibleRoutes: draft.eligibleRoutes, disabledRoutes: draft.disabledRoutes }, updated_at: now };
+    const patch = { status: effectiveDraft.status, orders: effectiveDraft.orders, routing: { blocker: effectiveDraft.blocker, coverage: effectiveDraft.coverage, eligibleRoutes: effectiveDraft.eligibleRoutes, disabledRoutes: effectiveDraft.disabledRoutes }, updated_at: now };
     await store.update(COLLECTION.contentBatchPlans, existing.id, patch);
-    return { record: { ...existing, ...patch }, created: false, draft };
+    return { record: { ...existing, ...patch }, created: false, draft: effectiveDraft };
   }
   const record = await requiredCreate<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, {
     tenant_id: input.tenantId, goal_id: input.goal.id, plan_id: input.run.plan_id, run_id: input.run.id, task_id: input.task.id,
-    status: draft.status, orders: draft.orders, routing: { blocker: draft.blocker, coverage: draft.coverage, eligibleRoutes: draft.eligibleRoutes, disabledRoutes: draft.disabledRoutes },
+    status: effectiveDraft.status, orders: effectiveDraft.orders, routing: { blocker: effectiveDraft.blocker, coverage: effectiveDraft.coverage, eligibleRoutes: effectiveDraft.eligibleRoutes, disabledRoutes: effectiveDraft.disabledRoutes },
     config_version: Number(planBody.configVersion || 1), policy_version: String(planBody.policyVersion || 'unknown'), facts_version: String(knowledgeBinding.factsVersion || 'unknown'),
     created_at: now, updated_at: now,
   });
-  return { record, created: true, draft };
+  return { record, created: true, draft: effectiveDraft };
 }
 
 function sendEvent(response: Response, event: EventRecord): void {
@@ -907,6 +922,9 @@ async function createApproval(tenantId: string, goal: GoalRecord, run: RunRecord
 }
 
 async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord, tasks: TaskRecord[]): Promise<void> {
+  const weeklyPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
+  const reviewPackage = jsonObject<{ businessPackage?: WeeklyPackage }>(weeklyPlan?.plan, {}).businessPackage;
+  const matrixPlan = reviewPackage?.matrixPlan;
   const existing = await first<StoredRecord & { tenant_id: string }>(COLLECTION.reviews, { tenant_id: tenantId, run_id: run.id });
   const [approvals, handoffs, businessSnapshot, batchPlans, projects, posts] = await Promise.all([
     store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 }),
@@ -939,12 +957,14 @@ async function completeReview(tenantId: string, goal: GoalRecord, run: RunRecord
     approvals: approvals.items.filter(approval => contentApprovalTaskIds.has(String(approval.task_id || ''))),
     posts: posts.items.filter(item => recordBelongsToTask(item, run, reviewScope)),
   });
+  const matrixPerformance = matrixPlan ? summarizeWeeklyMatrix(matrixPlan, projects.items.filter(item => recordBelongsToTask(item, run, reviewScope)), posts.items.filter(item => recordBelongsToTask(item, run, reviewScope)), reviewPackage?.tasks.some(task => task.templateId === 'publishing')) : undefined;
   const summary = {
     ...taskReview,
+    ...(matrixPerformance ? { matrixPerformance } : {}),
     ...runReviewSummary(reviewRun, tasks, businessSnapshot),
     contentPerformance: contentFeedback.items,
     approvalFeedback: contentFeedback.approvalFeedback,
-    nextPlanRecommendations: contentFeedback.nextPlanRecommendations,
+    nextPlanRecommendations: [...contentFeedback.nextPlanRecommendations, ...(matrixPerformance || []).map(row => `${row.platform} · ${row.accountId}：${row.recommendation}`)],
     routingEvidence: { priorRouteDistribution: contentFeedback.routeCounts, approvalFeedback: contentFeedback.approvalFeedback },
   };
   const payload = { status: 'generated', summary };
@@ -1124,6 +1144,7 @@ async function publishingApprovalPackage(
   const scope = taskScope(task, tasks);
   const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
   return buildPublishingApprovalPackage({
+    matrixPlan: jsonObject<{ businessPackage?: WeeklyPackage }>(plan?.plan, {}).businessPackage?.matrixPlan,
     projects: completed,
     targets: config.publishingTargets,
     goalPlatforms: goalInput(goal).contentPlatforms,
@@ -1776,6 +1797,10 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     await store.update(COLLECTION.tasks, task.id, { status: 'running', updated_at: new Date().toISOString() });
     await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.started', summary: `${task.agent_role} Agent 开始：${task.title}` });
     let output = buildTaskOutput(task.task_key, goalInput(goal), config);
+    if (task.task_key === 'goal_decomposition' && businessPackage?.directorPlan) {
+      const director = businessPackage.directorPlan;
+      output = { ...output, directorBrief: { packageRevision: businessPackage.revision, productionBudget: director.productionBudget, paidMediaBudget: director.paidMediaBudget, productionSpent: director.productionSpent, productionReserved: director.productionReserved, originalTarget: director.originalTarget, platformVersionTarget: director.platformVersionTarget, publishTarget: director.publishTarget, collectionBrief: director.collectionBrief, qualityStandard: director.qualityStandard, autonomyMode: config.autonomyMode } };
+    }
     if (metadata.executionMode === 'approval' && !task.requires_approval) {
       if (task.task_key === 'followup_batch_approval') {
         const batch = await first<FollowupBatchRecord>(COLLECTION.followupBatches, { tenant_id: tenantId, run_id: run.id }, '-version');
@@ -1920,7 +1945,19 @@ async function irreversibleEffects(tenantId: string, run: RunRecord, affected: T
 async function supersedeAffectedBusinessState(tenantId: string, run: RunRecord, affected: TaskRecord[], now: string): Promise<void> {
   const affectedIds = new Set(affected.map(task => task.id));
   const affectedKeys = new Set(affected.map(task => task.task_key));
-  if (affectedKeys.has('content_production')) {
+  if (affectedKeys.has('content_mode_routing')) {
+    const batches = await store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
+    for (const batch of batches.items.filter(item => item.status !== 'superseded')) {
+      await store.update(COLLECTION.contentBatchPlans, batch.id, { status: 'superseded', updated_at: now });
+    }
+    const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
+    for (const project of projects.items) {
+      const spec = jsonObject<Record<string, unknown>>(project.spec, {});
+      const automation = jsonObject<Record<string, unknown>>(spec.automation, {});
+      if (String(spec.workflowRunId || '') !== run.id || automation.managedBy !== 'digital_employee' || automation.stage === 'superseded') continue;
+      await store.update('studio_projects', project.id, { status: 'draft', spec: { ...spec, automation: { ...automation, stage: 'superseded', status: 'superseded', supersededAt: now, supersededReason: '编导方向调整后原内容订单失效' } }, updated_at: now });
+    }
+  } else if (affectedKeys.has('content_production')) {
     const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
     for (const project of projects.items) {
       const spec = resumeContentProjectForTaskControl({ project, runId: run.id, affectedTaskIds: affectedIds, now });
@@ -2234,9 +2271,10 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     for (const task of pack.tasks) task.ownerName = members.find(m => m.id === task.ownerId)?.name || '';
     const config = configSnapshotForPlan(plan, publicConfig(await configForTenant(tenantId))!);
     if (pack.authorization.accountIds.some(id => !config.publishingTargets.some(t => t.accountId === id))) { res.status(400).json({ error: 'invalid_account_scope', message: '请选择本计划绑定的发布账号。' }); return; }
+    if (pack.matrixPlan?.some(row => !config.publishingTargets.some(target => target.accountId === row.accountId && target.platform === row.platform) || !goalInput(goal).contentPlatforms.includes(row.platform))) { res.status(400).json({ error: 'invalid_matrix_account', message: '矩阵账号必须属于本计划及本周平台范围。' }); return; }
     const customerIds = new Set(getWhatsAppCustomers(tenantId).map(c => c.id));
     if (pack.authorization.customerIds.some(id => !customerIds.has(id))) { res.status(400).json({ error: 'invalid_customer_scope' }); return; }
-    for (const id of pack.tasks.flatMap(t => t.sourceProjectIds)) {
+    for (const id of [...new Set([...pack.tasks.flatMap(t => t.sourceProjectIds), ...(pack.matrixPlan || []).flatMap(row => row.sourceProjectIds)])]) {
       const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', id, tenantId);
       if (!project || !studioProjectRendered(project)) { res.status(400).json({ error: 'invalid_source_project', message: '已有作品不可用，请重新选择。' }); return; }
     }
@@ -2388,7 +2426,7 @@ async function approveGoalForReview(tenantId: string, userId: string, goalId: st
   if (pack) {
     if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
-    const issues = validatePackage(pack, goalInput(goal));
+    const issues = validatePackage(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
     if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
   }
   const planDraft = pack ? compilePackage(pack, goalInput(goal), config) : buildWeeklyPlan(goalInput(goal), config);
@@ -3308,6 +3346,48 @@ async function handleTaskControl(req: Request, res: Response, forcedAction?: Tas
 }
 
 digitalEmployeesRouter.post('/tasks/:taskId/corrections', async (req, res) => handleTaskControl(req, res));
+digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const decision = String(req.body?.decision || '') as DirectorDecision;
+  const reason = String(req.body?.reason || '') as DirectorDecisionReason;
+  const contentId = String(req.body?.contentId || '').trim().slice(0, 120);
+  if (!['continue', 'adjust', 'abandon'].includes(decision)) { res.status(400).json({ error: 'invalid_director_decision' }); return; }
+  if (!contentId) { res.status(400).json({ error: 'director_content_required' }); return; }
+  if (decision !== 'continue' && !(reason in DIRECTOR_REASON_LABELS)) { res.status(400).json({ error: 'director_reason_required' }); return; }
+  const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
+  if (!task) { res.status(404).json({ error: 'task_not_found' }); return; }
+  const plan = await tenantRecord<PlanRecord>(COLLECTION.plans, task.plan_id, tenantId);
+  if (!plan) { res.status(409).json({ error: 'correction_context_missing' }); return; }
+  const original = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const pack = original.businessPackage as WeeklyPackage | undefined;
+  if (!pack) { res.status(409).json({ error: 'weekly_package_missing' }); return; }
+  let taskControlApplied = false;
+  try {
+    const now = new Date().toISOString();
+    const applied = applyDirectorDecision({ pack, contentId, decision, ...(decision !== 'continue' ? { reason } : {}), applyToSimilar: req.body?.applyToSimilar === true, now });
+    await store.update(COLLECTION.plans, plan.id, { plan: { ...original, businessPackage: applied.pack, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
+    if (decision === 'continue') {
+      await appendEvent({ tenantId, runId: task.run_id, taskId: task.id, type: 'director.continue', level: 'info', summary: `${task.title}：人工选择继续当前内容方向`, payload: { contentId, affectedContentIds: applied.affectedContentIds } });
+      await appendAudit({ tenantId, userId, action: 'director_direction.continue', targetType: 'workflow_task', targetId: task.id, metadata: { runId: task.run_id, contentId, affectedContentIds: applied.affectedContentIds } });
+      await advanceRun(tenantId, task.run_id);
+      res.json(await buildOverview(tenantId, task.goal_id));
+      return;
+    }
+    const instruction = `${DIRECTOR_DECISION_LABELS[decision]}当前内容方向；原因：${DIRECTOR_REASON_LABELS[reason]}。${req.body?.applyToSimilar === true ? '同时调整本周同类内容。' : '仅作用于当前内容。'}`;
+    const runTasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: task.run_id }, sort: 'sequence', perPage: 100 });
+    const routingTask = runTasks.items.find(item => item.task_key === 'content_mode_routing');
+    if (!routingTask) throw new Error('director_routing_task_missing');
+    const result = await applyTaskControl({ tenantId, userId, taskId: routingTask.id, action: 'retry', scope: 'one_off', instruction, rerunDownstream: true });
+    taskControlApplied = true;
+    await appendAudit({ tenantId, userId, action: `director_direction.${decision}`, targetType: 'weekly_content', targetId: contentId, metadata: { runId: task.run_id, taskId: task.id, routingTaskId: routingTask.id, reason, applyToSimilar: req.body?.applyToSimilar === true, affectedContentIds: applied.affectedContentIds, replacementContentId: applied.replacementContentId } });
+    await advanceRun(tenantId, result.runId);
+    res.json(await buildOverview(tenantId, result.goalId));
+  } catch (error) {
+    if (!taskControlApplied) await store.update(COLLECTION.plans, plan.id, { plan: original }).catch(() => undefined);
+    const message = error instanceof Error ? error.message : 'director_decision_failed';
+    res.status(message === 'director_content_not_found' ? 404 : 409).json({ error: message });
+  }
+});
 digitalEmployeesRouter.post('/tasks/:taskId/retry', async (req, res) => handleTaskControl(req, res, 'retry'));
 digitalEmployeesRouter.post('/tasks/:taskId/skip', async (req, res) => handleTaskControl(req, res, 'skip'));
 digitalEmployeesRouter.post('/tasks/:taskId/complete', async (req, res) => handleTaskControl(req, res, 'manual_complete'));
@@ -3559,7 +3639,7 @@ export async function allocateReviewTodos(tenantId: string, userId: string, boar
     updated.authorization.mode = 'each';
     if (updated.tasks.some(t => t.ownerId)) throw Error('下周目标包含团队分工，请在目标页核对负责人后启动');
     const config = executionConfigForPlan(plan, resolved.config);
-    const issues = validatePackage(updated, goalInput(target));
+    const issues = validatePackage(updated, goalInput(target), configSnapshotForPlan(plan, resolved.config));
     if (issues.length) throw Error(issues.join('；'));
     if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...compilePackage(updated, goalInput(target), config) } })) throw Error('下周计划保存失败');
     return target.id;
