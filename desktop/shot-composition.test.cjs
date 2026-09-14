@@ -26,6 +26,8 @@ test('layout and audio filters reject missing layers and mute only the correct i
   const clips = [{ targetDuration: 1, production: { sound: 'source' } }, { targetDuration: 1, production: { sound: 'silent' } }];
   assert.match(muteIntervals(clips, 'voiceover'), /between\(t,0.000,1.000\).*between\(t,1.000,2.000\)/);
   assert.doesNotMatch(muteIntervals(clips, 'bgm'), /0.000,1.000/);
+  const portraitAvatar = layoutFilters({ source: '[0:v]null', index: 0, width: 1080, height: 1920, target: 1, layout: 'full', deletterbox: true });
+  assert.match(portraitAvatar.join(';'), /crop=iw:iw\*9\/16:0:\(ih-iw\*9\/16\)\/2/, 'full-screen avatar removes provider-baked 16:9 letterbox before portrait cover');
 });
 test('real FFmpeg exports full, split, pip and mixed source/voiceover audio locally', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'lingshu-shot-test-'));

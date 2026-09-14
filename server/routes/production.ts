@@ -88,12 +88,14 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (pendingJobs.items.some(item => item.payload.assemblyId === b.assemblyId && item.payload.shotId === b.shotId && item.payload.fingerprint === b.fingerprint && ['submitting', 'pending', 'uncertain'].includes(item.payload.status))) throw new Error('该镜头已有未结束任务，请刷新原任务，不重复提交');
         const shot = project.spec?.shotProductions?.[`${b.assemblyId}:${b.shotId}`] as ShotProduction | undefined;
         const context = project.spec?.shotProductionContext;
-        if (!shot || shot.source !== 'avatar' || shot.locked || shotFingerprint(shot, String(context || '')) !== b.fingerprint) throw new Error('镜头要求已变化或已锁定，请先保存最新草稿');
+        if (!shot) throw new Error('草稿中未找到当前镜头，请重新打开分镜');
+        if (shot.source !== 'avatar') throw new Error('当前镜头尚未保存为数字人来源');
+        if (shot.locked) throw new Error('当前镜头已锁定，请先解锁');
+        if (shotFingerprint(shot, String(context || '')) !== b.fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
         const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
         const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
         if (!presenter) throw new Error('请先保存已授权的人物与声音资产');
         if (shot.layout === 'pip' && !shot.transparent) throw new Error('数字人画中画需要去背景的透明人物层；请先核验透明支持，或改用全屏普通混剪');
-        if (b.ratio === '9:16' && !shot.transparent && presenter.nativeOrientation !== 'portrait') throw new Error('竖屏生成前须在人物资产中核验原生竖屏画幅；横屏或未知人物可能产生大面积留白，已阻止付费提交');
         if (shot.transparent && !presenter.supportsAlpha) throw new Error('该人物未确认支持透明视频，不能生成独立背景人物层');
         if (shot.backgroundMaterialId && shot.backgroundMode === 'baked') throw new Error('首版只支持独立背景合成，请改用透明人物层；不将新背景参数静默忽略');
         if (!shot.narration.trim() || shot.narration.length > 5000 || !['9:16', '16:9', '1:1'].includes(b.ratio) || b.ratio !== project.spec.ratio) throw new Error('台词或画幅无效，请先保存当前草稿');

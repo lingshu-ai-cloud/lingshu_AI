@@ -1,7 +1,10 @@
 /** Pure FFmpeg filter builders shared by native and server-local rendering. */
-function layoutFilters({ source, index, width, height, target, layout = 'full', productIndex, backgroundIndex, transparent = false }) {
+function layoutFilters({ source, index, width, height, target, layout = 'full', productIndex, backgroundIndex, transparent = false, deletterbox = false }) {
   const filters = [];
-  const normalize = (input, label, w, h, contain = false) => filters.push(`${input},scale=${w}:${h}:force_original_aspect_ratio=${contain ? 'decrease' : 'increase'},${contain ? `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black@0` : `crop=${w}:${h}`},setsar=1,fps=30,format=rgba[${label}]`);
+  // Some stock-avatar providers return a portrait file whose actual image is
+  // a centered 16:9 strip with baked-in top/bottom bars. Remove that strip's
+  // bars before applying the requested portrait cover layout.
+  const normalize = (input, label, w, h, contain = false) => filters.push(`${input}${deletterbox && !contain ? ',crop=iw:iw*9/16:0:(ih-iw*9/16)/2' : ''},scale=${w}:${h}:force_original_aspect_ratio=${contain ? 'decrease' : 'increase'},${contain ? `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black@0` : `crop=${w}:${h}`},setsar=1,fps=30,format=rgba[${label}]`);
   const aux = (input, label, w, h) => normalize(`[${input}:v]trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`, label, w, h, true);
   const personLayer = (w, h, contain = false) => {
     normalize(source, `person${index}`, w, h, contain);

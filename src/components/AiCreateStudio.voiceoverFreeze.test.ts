@@ -11,7 +11,8 @@ const names = new Set([
   'parseCueRange', 'normalizeTimeLabel', 'looksLikeProductionInstruction',
   'hasStoryboardFieldLabels', 'looksLikeOnScreenOnlyText', 'cleanVoiceoverLine',
   'mergeTimestampedVoiceoverSegments', 'parseTimestampedVoiceover',
-  'formatVoiceoverWithTimestamps', 'compactComparable', 'isNonSpeechSfx',
+  'formatVoiceoverWithTimestamps', 'voiceoverTimelineSignature',
+  'voiceoverDraftCoversSource', 'compactComparable', 'isNonSpeechSfx',
 ]);
 const declarations = ast.statements.filter(node =>
   ts.isFunctionDeclaration(node) && node.name && names.has(node.name.text)
@@ -36,5 +37,10 @@ const silent = '[0-7.3s]\n素材：Assembly line\n环境：工厂\n画面：LX-P
 assert.equal(evaluate(`formatVoiceoverWithTimestamps(${JSON.stringify(silent)})`), '');
 assert.equal(evaluate(`formatVoiceoverWithTimestamps(${JSON.stringify(silent.replaceAll('\n', ' '))})`), '');
 assert.match(String(evaluate('formatVoiceoverWithTimestamps("[0-3s]\\n画面：工厂\\n台词：欢迎了解我们的产品。\\n字幕：联系我")')), /欢迎了解我们的产品/);
+assert.equal(
+  evaluate('formatVoiceoverWithTimestamps("[0-4s]\\n数字人：正面出镜 画面：产品展示 台词：哈喽朋友们 字幕：无 配乐：无")'),
+  '[0-4s] 哈喽朋友们',
+);
+assert.equal(evaluate('voiceoverDraftCoversSource("[0-4s] 哈喽朋友们", "哈喽朋友们")'), true);
 assert.equal(evaluate('formatVoiceoverWithTimestamps("Send us your sample for a review.")'), 'Send us your sample for a review.');
 console.log('voiceover freeze regressions passed');
