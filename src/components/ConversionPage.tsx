@@ -39,6 +39,7 @@ import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
 import { getCustomerServiceStatus, updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 const EmojiPicker = lazy(async () => {
   const picker = await import('emoji-picker-react');
@@ -2484,20 +2485,20 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
 
   return (
-    <>
-    {deliveryHandoff?.runId && <CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} />}
-    {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 border-l-2 border-accent bg-accent-glow p-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    {deliveryHandoff?.runId && <div className="shrink-0"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
+    {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 shrink-0 border-l-2 border-accent bg-accent-glow p-3">
       <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={requestProductionBack} className="text-xs font-bold text-accent">返回上一页</button></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
         <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
-    <div className="flex h-full min-w-0 flex-col bg-ink" data-lingshu-guide="customer-workbench">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink" data-lingshu-guide="customer-workbench">
       <header className="flex min-h-[68px] shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4 sm:px-5">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">Customer workspace</p>
-          <h1 className="mt-0.5 truncate text-lg font-bold text-text-primary">我的客户</h1>
+          <h1 className="mt-0.5 truncate text-lg font-bold text-text-primary">{PAGE_REGISTRY.conversion.canonicalTitle}</h1>
         </div>
         <p className="hidden max-w-md text-right text-xs text-text-muted sm:block">{VIEW_META[view].desc}</p>
       </header>
@@ -2678,6 +2679,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         </div>
       )}
     </div>
-    </>
+    </div>
   );
 }

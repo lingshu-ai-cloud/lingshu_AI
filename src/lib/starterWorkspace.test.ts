@@ -244,6 +244,7 @@ const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
 const clientSource = fs.readFileSync('src/lib/starterWorkspace.ts', 'utf8');
 const starterPageSource = fs.readFileSync('src/components/starter/StarterWorkspacePage.tsx', 'utf8');
 const workflowContextSource = fs.readFileSync('src/components/starter/StarterWorkflowContextBar.tsx', 'utf8');
+const pageRegistrySource = fs.readFileSync('src/pageRegistry.ts', 'utf8');
 const productionSiteSource = fs.readFileSync('src/components/starter/StarterProductionSitePage.tsx', 'utf8');
 const productionSiteViewsSource = fs.readFileSync('src/components/starter/StarterProductionSiteViews.tsx', 'utf8');
 const workflowOverviewSource = fs.readFileSync('src/components/starter/StarterWorkflowOverview.tsx', 'utf8');
@@ -271,14 +272,17 @@ for (const source of [appSource, layoutSource]) {
   assert.doesNotMatch(source, /subscriptionPlan === 'admin'|subscription\?\.plan === 'admin'|lingshu-admin@local\.test/,
     'email and subscription labels must never unlock platform-admin UI');
 }
-for (const navigationLabel of ['经营概览', '灵感中心', '内容创作', '脚本库', '投流与发布', '账号管理', '我的会话', '订单管理', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
-  assert.match(layoutSource, new RegExp(navigationLabel), `starter navigation must preserve the ${navigationLabel} page`);
+for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与数据', '账号连接', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
+  assert.match(pageRegistrySource, new RegExp(navigationLabel), `starter navigation must register the ${navigationLabel} page`);
 }
+assert.match(layoutSource, /PRIMARY_SOCIAL_NAV_PAGES\.map/, 'organic-content navigation must come from the shared page registry');
+assert.doesNotMatch(layoutSource, /投流与发布|ContentCreationNav/, 'starter navigation must not restore the old umbrella page');
 assert.doesNotMatch(layoutSource, /Agent 生产现场（只读）/, 'starter navigation must not collapse the original product into four simplified read-only pages');
-assert.match(workflowContextSource, /灵小枢派发目标/);
-assert.match(workflowContextSource, /灵小图制作内容/);
-assert.match(workflowContextSource, /灵小量生成发布任务/);
-assert.match(workflowContextSource, /灵小售按规则报价/);
+assert.match(workflowContextSource, /筛选可用灵感/);
+assert.match(workflowContextSource, /制作并检查内容/);
+assert.match(workflowContextSource, /查看发布结果/);
+assert.match(workflowContextSource, /确认回复与报价/);
+assert.doesNotMatch(workflowContextSource, /灵小图|灵小量|灵小售|协调四个 Agent/);
 assert.match(workflowContextSource, /你可以在这里查看进度、调整内容，并将结果保存到当前任务/, 'each restored page must explain the customer action in business language');
 assert.doesNotMatch(clientSource, /subscriptionPlan\s*===\s*['"]starter_198/, 'starter access must not depend on purchase or subscription state');
 assert.match(clientSource, /shared\/contracts\/starter198/, 'the frontend must derive its types from the canonical shared contract');
@@ -303,8 +307,8 @@ assert.doesNotMatch(`${starterPageSource}\n${workflowContextSource}`, /购买|�
 assert.match(starterPageSource, /workspace\.controls\.find\(action => action\.command === 'submit_orchestrator_input'\)/, 'supplementary input must be driven by the server control manifest');
 assert.doesNotMatch(starterPageSource, /state\.execute\(\{ command: 'submit_orchestrator_input'/, 'the supplementary input must not invent an enabled orchestrator command');
 assert.match(starterPageSource, /starter_198_orchestrator_worker_unavailable/, 'an unavailable orchestrator queue must be disclosed rather than faked');
-assert.match(starterPageSource, /blocked: '系统能力待接通'/,
-  'a blocked item must be disclosed as unavailable instead of shown as running');
+assert.match(starterPageSource, /blocked: '暂时无法继续'/,
+  'a blocked item must be disclosed in customer-facing language instead of shown as running');
 assert.doesNotMatch(productionSiteSource, /WorkspaceActionButtons|starterWorkspaceApi\.download|resolve_decision|submit_publication_evidence/, 'read-only production sites must not expose download, approval, or evidence submission controls');
 for (const preservedWorkflow of ['趋势信号', '对标拆解', '脚本', '质检', '发布包', '证据回填', '询盘', '确定性计价', '报价审批']) {
   assert.match(productionSiteViewsSource, new RegExp(preservedWorkflow), `the read-only production sites must preserve the ${preservedWorkflow} business surface`);

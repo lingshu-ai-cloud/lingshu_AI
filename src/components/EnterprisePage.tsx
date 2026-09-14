@@ -13,6 +13,7 @@ import {
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 interface ProductAsset {
   name: string;
@@ -1774,7 +1775,7 @@ export default function EnterprisePage() {
           <span className="flex h-6 w-6 items-center justify-center text-accent">
             <Building2 size={13} />
           </span>
-          <div><h1 className="text-lg font-semibold text-text-primary">企业中心</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">统一维护企业事实、社媒策略与客户服务边界</p></div>
+          <div><h1 className="text-lg font-semibold text-text-primary">{PAGE_REGISTRY.enterprise.canonicalTitle}</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">统一维护企业事实、社媒策略与客户服务边界</p></div>
         </div>
         <div className="flex items-center gap-2">
           {saveError && <span className="max-w-72 truncate text-[11px] font-bold text-red-600" title={saveError}>{saveError}</span>}

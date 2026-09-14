@@ -29,6 +29,7 @@ import {
 import { authHeader } from '../lib/auth';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { normalizeSocialBrand, SocialPlatformIcon } from './SocialPlatformIcon';
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 
 
@@ -257,7 +258,7 @@ export default function OrderManagementPage() {
           <div className="flex h-6 w-6 items-center justify-center text-accent">
             <ShoppingCart size={13} />
           </div>
-          <div><h1 className="text-lg font-semibold text-text-primary">我的订单</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">跟踪成交、履约与收入表现</p></div>
+          <div><h1 className="text-lg font-semibold text-text-primary">{PAGE_REGISTRY.orders.canonicalTitle}</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">跟踪成交、履约与收入表现</p></div>
         </div>
         <div className="flex items-center gap-3">
           <span aria-live="polite" className="text-xs font-semibold text-text-muted">{feedback}</span>

@@ -1,29 +1,28 @@
-import { ArrowRight, Bot, Home } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Home } from 'lucide-react';
 import type { Page } from '../../App';
+import { PAGE_REGISTRY } from '../../pageRegistry';
 
 type WorkflowContext = {
-  agent: '灵小枢' | '灵小图' | '灵小量' | '灵小售';
-  stage: string;
   flow: [string, string, string];
 };
 
 const PAGE_WORKFLOW_CONTEXT: Partial<Record<Page, WorkflowContext>> = {
-  agentMonitor: { agent: '灵小枢', stage: '运行监控', flow: ['统筹经营任务', '协调四个 Agent', '查看运行与消耗'] },
-  strategy: { agent: '灵小枢', stage: '经营分析', flow: ['理解经营目标', '拆解执行计划', '回到工作台确认'] },
-  socialInspiration: { agent: '灵小图', stage: '灵感与选题', flow: ['灵小枢派发目标', '灵小图检索与筛选', '在灵感中心查看'] },
-  scriptLibrary: { agent: '灵小图', stage: '脚本沉淀', flow: ['选题形成', '灵小图生成脚本', '在脚本库复用'] },
-  smartAssets: { agent: '灵小图', stage: '内容生产', flow: ['选题与脚本确认', '灵小图制作内容', '在内容创作查看'] },
-  traffic: { agent: '灵小量', stage: '投流与发布', flow: ['内容通过审批', '灵小量生成发布任务', '在本页查看进度'] },
-  accountManagement: { agent: '灵小量', stage: '渠道准备', flow: ['灵小枢确定渠道', '灵小量读取账号状态', '在账号管理核对'] },
-  conversion: { agent: '灵小售', stage: '询盘与报价', flow: ['接收客户询盘', '灵小售按规则报价', '在会话中查看'] },
-  orders: { agent: '灵小售', stage: '成交跟进', flow: ['报价获得确认', '灵小售整理成交信息', '在订单管理跟进'] },
-  enterprise: { agent: '灵小枢', stage: '企业知识', flow: ['沉淀企业资料', '四个 Agent 受控读取', '在知识库维护'] },
-  agentMemory: { agent: '灵小枢', stage: '工作记忆', flow: ['汇总可靠事实', '按权限提供上下文', '在记忆页核对'] },
-  scheduled: { agent: '灵小枢', stage: '周期任务', flow: ['设定经营节奏', '到期自动派发', '在定时任务查看'] },
-  plugins: { agent: '灵小枢', stage: '能力接入', flow: ['连接外部能力', '按权限提供给 Agent', '在集成中心管理'] },
-  organizationPermissions: { agent: '灵小枢', stage: '组织权限', flow: ['设置成员角色', '约束页面与数据范围', '在权限页管理'] },
-  channels: { agent: '灵小量', stage: '渠道接入', flow: ['选择发布渠道', '校验连接状态', '在集成页管理'] },
-  youtube: { agent: '灵小量', stage: 'YouTube 渠道', flow: ['准备发布内容', '校验渠道连接', '在集成页管理'] },
+  agentMonitor: { flow: ['查看运行状态', '定位需要处理的事项', '回到业务页面处理'] },
+  strategy: { flow: ['查看经营信号', '确认优先事项', '推进今天的计划'] },
+  socialInspiration: { flow: ['明确内容目标', '筛选可用灵感', '进入内容制作'] },
+  scriptLibrary: { flow: ['整理选题', '沉淀可用脚本', '复用到内容制作'] },
+  smartAssets: { flow: ['确认选题与脚本', '制作并检查内容', '进入发布与数据'] },
+  traffic: { flow: ['检查待发布内容', '确认渠道与时间', '查看发布结果'] },
+  accountManagement: { flow: ['选择业务渠道', '完成账号连接', '核对连接状态'] },
+  conversion: { flow: ['接收客户消息', '确认回复与报价', '跟进处理结果'] },
+  orders: { flow: ['确认成交信息', '跟踪履约状态', '查看收入结果'] },
+  enterprise: { flow: ['维护企业资料', '确认业务边界', '供各业务页面使用'] },
+  agentMemory: { flow: ['汇总可靠事实', '核对可用信息', '按权限提供上下文'] },
+  scheduled: { flow: ['设定执行节奏', '到期自动处理', '查看任务结果'] },
+  plugins: { flow: ['选择外部能力', '完成授权连接', '核对可用状态'] },
+  organizationPermissions: { flow: ['设置成员角色', '限定数据范围', '保存权限配置'] },
+  channels: { flow: ['选择发布渠道', '完成授权连接', '核对可用状态'] },
+  youtube: { flow: ['准备发布渠道', '完成 YouTube 授权', '核对连接状态'] },
 };
 
 export default function StarterWorkflowContextBar({
@@ -37,13 +36,13 @@ export default function StarterWorkflowContextBar({
   if (!context) return null;
 
   return (
-    <section aria-label="当前页面与 AI 工作流的关系" className="shrink-0 border-b border-emerald-100 bg-[#f3f8f4] px-4 py-2.5 sm:px-6">
+    <section aria-label="当前页面与经营流程的关系" className="shrink-0 border-b border-emerald-100 bg-[#f3f8f4] px-4 py-2.5 sm:px-6">
       <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex shrink-0 items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-white"><Bot size={15} aria-hidden="true" /></span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent text-white"><BriefcaseBusiness size={15} aria-hidden="true" /></span>
           <div>
-            <p className="text-[10px] font-semibold text-text-muted">当前协作</p>
-            <p className="text-xs font-bold text-text-primary">{context.agent} · {context.stage}</p>
+            <p className="text-[10px] font-semibold text-text-muted">当前业务页面</p>
+            <p className="text-xs font-bold text-text-primary">{PAGE_REGISTRY[page].canonicalTitle}</p>
           </div>
         </div>
         <div className="flex min-w-[280px] flex-1 items-center gap-1.5 overflow-x-auto text-[11px] font-medium text-text-secondary" aria-label={context.flow.join('，然后')}>
@@ -55,7 +54,7 @@ export default function StarterWorkflowContextBar({
           ))}
         </div>
         <button type="button" onClick={() => onNavigate('digitalEmployees')} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-accent transition hover:bg-emerald-50">
-          <Home size={12} aria-hidden="true" />回到灵小枢
+          <Home size={12} aria-hidden="true" />返回智能经营
         </button>
         <p data-starter-ai-managed-notice className="w-full text-[10px] leading-relaxed text-text-muted">
           你可以在这里查看进度、调整内容，并将结果保存到当前任务。

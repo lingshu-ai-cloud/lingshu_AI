@@ -85,6 +85,7 @@ import {
   type WeeklyGoal,
   type WorkflowTask,
 } from "../lib/digitalEmployees";
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 const EMPTY_CONFIG: DigitalEmployeeConfig = {
   companyName: "",
@@ -3803,7 +3804,7 @@ export default function DigitalEmployeePage({
                 <Activity size={14} /> LingShu Operations
               </div>
               <h1 className="workspace-title mt-2">
-                数字员工经营驾驶舱
+                {PAGE_REGISTRY.digitalEmployees.canonicalTitle}
               </h1>
               <p className="workspace-subtitle mt-2">
                 从内容生产到客户承接，每个状态都来自服务端任务、业务快照或真实渠道回执。

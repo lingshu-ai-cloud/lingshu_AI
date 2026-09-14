@@ -13,6 +13,7 @@ import {
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
 import { useModalFocus } from '../hooks/useModalFocus';
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
@@ -1450,7 +1451,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
             <Clock size={13} />
           </div>
-          <span className="text-sm font-semibold text-text-primary">定时任务</span>
+          <h1 className="text-sm font-semibold text-text-primary">{PAGE_REGISTRY.scheduled.canonicalTitle}</h1>
         </div>
       </div>
 
@@ -1481,7 +1482,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div className="border-b border-gray-100 px-4 py-4 sm:px-6 md:px-8 md:py-5">
           <div className="flex items-center justify-between">
-            <h1 className="text-base font-semibold text-gray-900">{activeGroupMeta.label}</h1>
+            <h2 className="text-base font-semibold text-gray-900">{activeGroupMeta.label}</h2>
             <button
               type="button"
               data-demo-target={!showAdd && activeGroup === 'social' ? 'scheduled_run' : undefined}

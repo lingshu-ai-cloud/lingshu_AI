@@ -11,6 +11,7 @@ import LegalPages from './components/LegalPages';
 import { isSocialTaskContextPage } from './lib/socialTaskContext';
 import { readSocialContentNavigationTaskId } from './lib/socialContentContext';
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
+import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
@@ -34,31 +35,7 @@ const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWork
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
 
-export type Page =
-  | 'digitalEmployees'
-  | 'agentMonitor'
-  | 'strategy'
-  | 'traffic'
-  | 'socialInspiration'
-  | 'scriptLibrary'
-  | 'smartAssets'
-  | 'accountManagement'
-  | 'adsOverview'
-  | 'adsPlans'
-  | 'adsCreatives'
-  | 'adsManaged'
-  | 'conversion'
-  | 'retention'
-  | 'orders'
-  | 'enterprise'
-  | 'plugins'
-  | 'scheduled'
-  | 'admin'
-  | 'adminDelivery'
-  | 'channels'
-  | 'youtube'
-  | 'agentMemory'
-  | 'organizationPermissions';
+export type { Page } from './pageRegistry';
 
 export type AgentType = 'strategy' | 'traffic' | 'conversion' | 'retention';
 
@@ -92,11 +69,6 @@ const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>>
   social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
   customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'retention', 'orders', 'scheduled']),
 };
-const ALL_PAGES: Page[] = [
-  'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged',
-  'conversion', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins',
-  'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube',
-];
 type StarterAccessState = 'loading' | 'starter_198' | 'legacy' | 'unavailable';
 const isAdminSession = (session: AuthSession | null) => Boolean(
   session && !session.supportAccess && session.platformAdmin === true,
@@ -120,11 +92,13 @@ const loadConvs = (): Conversation[] => {
 const loadPage = (): Page => {
   try {
     if (window.location.pathname === '/admin/delivery') return 'adminDelivery';
-    const queryPage = new URLSearchParams(window.location.search).get('page') as Page | null;
-    if (queryPage && ALL_PAGES.includes(queryPage)) return queryPage === 'retention' ? 'conversion' : queryPage;
-    const saved = localStorage.getItem('ow_page') as Page | null;
-    if (saved && ALL_PAGES.includes(saved)) return saved === 'retention' ? 'conversion' : saved;
-    if (saved) localStorage.removeItem('ow_page');
+    const query = new URLSearchParams(window.location.search);
+    const queryPage = resolveNavigationPage(query.get('page'), query.get('view'));
+    if (queryPage) return queryPage;
+    const savedValue = localStorage.getItem('ow_page');
+    const saved = resolvePage(savedValue);
+    if (saved) return saved;
+    if (savedValue) localStorage.removeItem('ow_page');
     return 'digitalEmployees';
   } catch { return 'digitalEmployees'; }
 };
@@ -134,7 +108,7 @@ const pagePreferenceScope = (session: AuthSession) =>
 
 function PageLoading() {
   return (
-    <div className="flex-1 min-h-0 flex items-center justify-center bg-white">
+    <div className="flex h-full min-h-0 items-center justify-center bg-white">
       <Loader2 size={20} className="animate-spin text-text-muted" />
     </div>
   );
@@ -179,7 +153,7 @@ class PageErrorBoundary extends Component<
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div className="flex-1 min-h-0 flex items-center justify-center bg-white px-6">
+      <div className="flex h-full min-h-0 items-center justify-center bg-white px-6">
         <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 text-center shadow-sm">
           <p className="text-sm font-bold text-text-primary">页面加载异常</p>
           <p className="mt-2 text-sm leading-relaxed text-text-muted">
@@ -221,10 +195,13 @@ export default function App() {
   const [monitorMounted, setMonitorMounted] = useState(() => loadPage() === 'agentMonitor');
   useEffect(() => { if (page === 'agentMonitor') setMonitorMounted(true); }, [page]);
   useEffect(() => {
+    document.title = `${PAGE_REGISTRY[page].canonicalTitle} · 灵枢 AI`;
+  }, [page]);
+  useEffect(() => {
     window.history.replaceState({ ...window.history.state, productionPage: pageRef.current, productionDepth: 0 }, '');
     const restorePage = (event: PopStateEvent) => {
-      const previous = event.state?.productionPage;
-      if (ALL_PAGES.includes(previous)) {
+      const previous = resolveNavigationPage(event.state?.productionPage, event.state?.productionDetail?.view);
+      if (previous) {
         setPage(previous);
         if (event.state?.productionDetail) {
           const detail = event.state.productionDetail;
@@ -441,17 +418,20 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{
+      const incomingDetail = (event as CustomEvent<{
         restoreHistory?: boolean;
         page?: Page;
-        view?: 'create' | 'publish';
+        view?: LegacyTrafficView;
         studioPanel?: 'projects';
         workflowRunId?: string;
         workflowTaskId?: string;
         businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
       }>).detail;
-      const nextPage = detail?.page;
-      if (!nextPage || !ALL_PAGES.includes(nextPage)) return;
+      const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
+      if (!nextPage || !incomingDetail) return;
+      const detail = nextPage === incomingDetail.page
+        ? incomingDetail
+        : { ...incomingDetail, page: nextPage };
       if (!detail.restoreHistory) {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
         handleNavigate(nextPage);
@@ -529,7 +509,7 @@ export default function App() {
   }
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="flex min-h-[100dvh] items-center justify-center">
         <Loader2 size={22} className="animate-spin text-text-muted" />
       </div>
     );
@@ -537,7 +517,7 @@ export default function App() {
   if (!session) return <AuthScreen onAuthed={handleAuthed} />;
   if (session.demo?.enabled && session.demo.expired) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-2 px-6">
+      <div className="flex min-h-[100dvh] items-center justify-center bg-surface-2 px-6">
         <div className="w-full max-w-md rounded-2xl bg-white border border-border p-6 text-center shadow-sm">
           <p className="text-sm font-bold text-text-primary">Demo 试用已到期</p>
           <p className="text-sm text-text-muted mt-2 leading-relaxed">
@@ -553,7 +533,7 @@ export default function App() {
   }
   if (starterAccess === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-2">
+      <div className="flex min-h-[100dvh] items-center justify-center bg-surface-2">
         <Loader2 size={22} className="animate-spin text-accent" />
         <span className="ml-2 text-sm text-text-muted">正在核验工作区能力……</span>
       </div>
@@ -561,7 +541,7 @@ export default function App() {
   }
   if (starterAccess === 'unavailable') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-2 px-6">
+      <div className="flex min-h-[100dvh] items-center justify-center bg-surface-2 px-6">
         <div className="w-full max-w-md rounded-2xl border border-border bg-white p-6 text-center shadow-sm">
           <p className="text-sm font-bold text-text-primary">工作区能力暂时无法核验</p>
           <p className="mt-2 text-sm leading-relaxed text-text-muted">{starterAccessError || '请稍后重试。在能力边界确认前，系统不会降级打开可写生产页面。'}</p>
@@ -612,8 +592,9 @@ export default function App() {
           <StarterWorkflowContextBar page={page} onNavigate={handleNavigate} />
         </Suspense>
       )}
-      <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'strategy')}>
-        <Suspense fallback={<PageLoading />}>
+      <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
+        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'strategy')}>
+          <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} />
@@ -647,6 +628,9 @@ export default function App() {
               onScriptPanelOpen={() => setScriptPanelOpen(true)}
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               onSessionRefresh={() => void refreshSession()}
+              initialView="publish"
+              visibleModes={['publish', 'accounts']}
+              pageTitle={PAGE_REGISTRY.traffic.canonicalTitle}
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
             />
@@ -662,13 +646,13 @@ export default function App() {
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               initialView="materials"
               showModeTabs={false}
-              pageTitle="灵感中心"
+              pageTitle={PAGE_REGISTRY.socialInspiration.canonicalTitle}
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
             />
           )}
           {(page === 'smartAssets' || smartAssetsMounted) && (
-            <div className={page === 'smartAssets' ? 'h-full' : 'hidden'} aria-hidden={page !== 'smartAssets'}>
+            <div className={page === 'smartAssets' ? 'h-full min-h-0' : 'hidden'} aria-hidden={page !== 'smartAssets'}>
               <TrafficPage
                 key={`smart-assets-${smartAssetsInstanceKey}`}
                 onEnterConversation={enterConversation}
@@ -680,7 +664,7 @@ export default function App() {
                 initialView={smartAssetsView}
                 showModeTabs={false}
                 openProjectsSignal={openProjectsSignal}
-                pageTitle="内容创作"
+                pageTitle={PAGE_REGISTRY.smartAssets.canonicalTitle}
                 storageScope={session.tenant?.id || session.user.tenantId}
                 workflowContextSignal={smartAssetsWorkflowContext}
                 socialContentTaskId={activeSocialContentTaskId}
@@ -696,7 +680,7 @@ export default function App() {
               onNavigate={handleNavigate}
               initialView="accounts"
               showModeTabs={false}
-              pageTitle="账号管理"
+              pageTitle={PAGE_REGISTRY.accountManagement.canonicalTitle}
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
             />
@@ -731,8 +715,9 @@ export default function App() {
           {page === 'admin' && <AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} />}
           {page === 'adminDelivery' && <AdminDeliveryPage />}
           {(page === 'channels' || page === 'youtube') && <IntegrationsPage />}
-        </Suspense>
-      </PageErrorBoundary>
+          </Suspense>
+        </PageErrorBoundary>
+      </div>
     </Layout>
   );
 }

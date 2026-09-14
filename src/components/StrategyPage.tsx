@@ -4,6 +4,7 @@ import { LayoutGrid, BarChart3 } from 'lucide-react';
 import AgentWorkspace from './AgentWorkspace';
 import StrategyDataBoard from './StrategyDataBoard';
 import type { AgentAction, ConversationContext, KickoffSignal, Page, RestoreSignal } from '../App';
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 type ViewMode = 'workspace' | 'board';
 
@@ -27,7 +28,7 @@ export default function StrategyPage({ onAction, onNavigate, includeMockCustomer
     <div className="flex flex-col h-full">
       <header className="home-header flex items-center justify-between gap-4 border-b px-5 py-3 flex-shrink-0 sm:px-6">
         <div className="min-w-0">
-          <h1 className="truncate text-[18px] font-semibold tracking-[-.025em] text-text-primary">今日概览</h1>
+          <h1 className="truncate text-[18px] font-semibold tracking-[-.025em] text-text-primary">{PAGE_REGISTRY.strategy.canonicalTitle}</h1>
           <p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">从经营信号中找到今天最重要的动作</p>
         </div>
         <div className="flex items-center gap-5 self-stretch">

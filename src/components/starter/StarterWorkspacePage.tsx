@@ -14,28 +14,20 @@ import {
 import type { Page } from '../../App';
 import type {
   StarterAgentRole,
-  StarterProductionSiteId,
   StarterTodayItem,
 } from '../../lib/starterWorkspace';
 import SocialContentWorkspace from '../socialContent/SocialContentWorkspace';
-import AgentUsageCard from './AgentUsageCard';
 import WorkspaceActionButtons from './WorkspaceActionButtons';
 import { useStarterWorkspace } from './useStarterWorkspace';
+import { PAGE_REGISTRY } from '../../pageRegistry';
 
 type WorkspaceTab = 'today' | 'decisions' | 'results';
 
-const SITE_PAGE: Record<StarterProductionSiteId, Page> = {
-  inspiration: 'socialInspiration',
-  content: 'smartAssets',
-  traffic: 'traffic',
-  sales: 'conversion',
-};
-
-const AGENT_NAME: Record<StarterAgentRole, string> = {
-  orchestrator: '灵小枢',
-  content: '灵小图',
-  traffic: '灵小量',
-  sales: '灵小售',
+const BUSINESS_AREA_LABEL: Record<StarterAgentRole, string> = {
+  orchestrator: '经营统筹',
+  content: '内容制作',
+  traffic: '发布与数据',
+  sales: '客户跟进',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -47,7 +39,7 @@ const STATUS_LABEL: Record<string, string> = {
   waiting_approval: '等待审批',
   waiting_user: '等待你处理',
   waiting_human: '等待你处理',
-  blocked: '系统能力待接通',
+  blocked: '暂时无法继续',
   succeeded: '已完成',
   completed: '已完成',
   skipped: '无数据，已跳过',
@@ -115,7 +107,7 @@ function TodayCard({
     <article className="rounded-xl border border-border bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-accent">{AGENT_NAME[item.ownerAgent]}</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-accent">{BUSINESS_AREA_LABEL[item.ownerAgent]}</p>
           <h3 className="mt-1 text-sm font-bold text-text-primary">{item.what}</h3>
         </div>
         <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">{statusLabel(item.status)}</span>
@@ -137,9 +129,9 @@ function TodayCard({
 function TodayView({ state }: { state: ReturnType<typeof useStarterWorkspace> }) {
   const workspace = state.workspace!;
   const groups = [
-    { id: 'completed', title: 'AI 今天已完成', icon: <CheckCircle2 size={16} />, items: workspace.today.completed },
-    { id: 'progress', title: '正在进行／阻塞', icon: <Clock3 size={16} />, items: workspace.today.inProgress },
-    { id: 'next', title: '未来 24 小时', icon: <ArrowRight size={16} />, items: workspace.today.nextSteps },
+    { id: 'completed', title: '今天已完成', icon: <CheckCircle2 size={16} />, items: workspace.today.completed },
+    { id: 'progress', title: '正在进行／需要处理', icon: <Clock3 size={16} />, items: workspace.today.inProgress },
+    { id: 'next', title: '接下来 24 小时', icon: <ArrowRight size={16} />, items: workspace.today.nextSteps },
   ];
   return (
     <div className="space-y-6">
@@ -176,7 +168,7 @@ function TodayView({ state }: { state: ReturnType<typeof useStarterWorkspace> })
 
 function DecisionsView({ state }: { state: ReturnType<typeof useStarterWorkspace> }) {
   const decisions = state.workspace!.decisions;
-  if (decisions.length === 0) return <EmptyState text="目前没有需要你处理的决策，数字员工会继续自动运行。" />;
+  if (decisions.length === 0) return <EmptyState text="目前没有需要你处理的事项，其他工作会按已确认规则继续推进。" />;
   return (
     <div className="space-y-3">
       {decisions.map(decision => (
@@ -193,7 +185,7 @@ function DecisionsView({ state }: { state: ReturnType<typeof useStarterWorkspace
             {formatTime(decision.dueAt) && <span className="shrink-0 text-[10px] font-semibold text-text-muted">截止 {formatTime(decision.dueAt)}</span>}
           </div>
           <dl className="mt-4 grid gap-3 lg:grid-cols-3">
-            <div className="rounded-lg border border-accent/20 bg-[#edf7f1] p-3"><dt className="text-[10px] font-bold text-accent">灵小枢建议</dt><dd className="mt-1 text-xs leading-relaxed text-text-primary">{decision.recommendedOption || '尚无可靠建议'}</dd></div>
+            <div className="rounded-lg border border-accent/20 bg-[#edf7f1] p-3"><dt className="text-[10px] font-bold text-accent">处理建议</dt><dd className="mt-1 text-xs leading-relaxed text-text-primary">{decision.recommendedOption || '尚无可靠建议'}</dd></div>
             <div className="rounded-lg bg-surface-2 p-3"><dt className="text-[10px] font-bold text-text-muted">与当前版本的差异</dt><dd className="mt-1 text-xs leading-relaxed text-text-primary">{decision.difference || '无差异说明'}</dd></div>
             <div className="rounded-lg bg-surface-2 p-3"><dt className="text-[10px] font-bold text-text-muted">确认后会发生什么</dt><dd className="mt-1 text-xs leading-relaxed text-text-primary">{decision.effect || '等待系统说明'}</dd></div>
           </dl>
@@ -234,7 +226,7 @@ function ResultsView({ state }: { state: ReturnType<typeof useStarterWorkspace> 
             {results.artifacts.map(artifact => (
               <article key={artifact.id} className="rounded-xl border border-border bg-white p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div><p className="text-[10px] font-bold text-accent">{AGENT_NAME[artifact.agentRole]} · {artifactKindLabel(artifact.kind)}</p><h3 className="mt-1 text-sm font-bold text-text-primary">{artifact.title}</h3></div>
+                  <div><p className="text-[10px] font-bold text-accent">{BUSINESS_AREA_LABEL[artifact.agentRole]} · {artifactKindLabel(artifact.kind)}</p><h3 className="mt-1 text-sm font-bold text-text-primary">{artifact.title}</h3></div>
                   <span className="rounded-full bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">{statusLabel(artifact.status)}</span>
                 </div>
                 {artifact.evidence && <p className="mt-2 text-xs leading-relaxed text-text-muted">证据：{artifact.evidence}</p>}
@@ -254,9 +246,9 @@ export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page
   const [tab, setTab] = useState<WorkspaceTab>('today');
   const [supplement, setSupplement] = useState('');
   const tabs = useMemo(() => [
-    { id: 'today' as const, label: '今天', count: null },
-    { id: 'decisions' as const, label: '待决策', count: state.workspace?.decisions.length ?? null },
-    { id: 'results' as const, label: '成果', count: state.workspace?.results.artifacts.length ?? null },
+    { id: 'today' as const, label: '业务进度', count: null },
+    { id: 'decisions' as const, label: '待处理', count: state.workspace?.decisions.length ?? null },
+    { id: 'results' as const, label: '结果', count: state.workspace?.results.artifacts.length ?? null },
   ], [state.workspace]);
   const openWorkspaceTab = (nextTab: WorkspaceTab) => {
     setTab(nextTab);
@@ -273,8 +265,8 @@ export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page
       <div className="flex h-full items-center justify-center px-6">
         <div className="max-w-md rounded-xl border border-border bg-white p-6 text-center">
           <AlertCircle size={22} className="mx-auto text-amber-700" />
-          <h1 className="mt-3 text-base font-bold text-text-primary">灵小枢工作台暂时无法读取</h1>
-          <p className="mt-2 text-sm leading-relaxed text-text-muted">{state.error || '请稍后重试，已运行的后台任务不会因此中断。'}</p>
+          <h1 className="mt-3 text-base font-bold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
+          <p className="mt-2 text-sm leading-relaxed text-text-muted">{state.error || '业务进度暂时无法读取，请稍后重试。'}</p>
           <button type="button" onClick={() => void state.refresh()} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white"><RefreshCcw size={14} />重新读取</button>
         </div>
       </div>
@@ -285,9 +277,15 @@ export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page
   const orchestratorInputAction = workspace.controls.find(action => action.command === 'submit_orchestrator_input') || null;
   const runControls = workspace.controls.filter(action => action.command !== 'submit_orchestrator_input');
   const orchestratorInputDisabled = !orchestratorInputAction || Boolean(orchestratorInputAction.disabledReason);
+
   return (
-    <div className="h-full overflow-y-auto bg-[#f6f8f5]">
+    <div className="h-full min-h-0 overflow-y-auto overscroll-contain bg-[#f6f8f5]">
       <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
+        <header className="mb-5 border-b border-border pb-4">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">经营工作台</p>
+          <h1 className="mt-1 text-xl font-bold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
+          <p className="mt-1 text-xs text-text-muted">集中查看业务进度、结果和需要你处理的事项。</p>
+        </header>
         {(state.error || state.notice) && (
           <div className={`mb-4 rounded-lg border px-3 py-2 text-xs ${state.error ? 'border-red-200 bg-red-50 text-red-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
             {state.error || state.notice}
@@ -298,16 +296,7 @@ export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page
           <SocialContentWorkspace onNavigate={onNavigate} />
         </div>
 
-        <section aria-labelledby="agent-overview-heading" className="mt-6">
-          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-            <div><h2 id="agent-overview-heading" className="text-sm font-bold text-text-primary">四个 Agent 的消耗与产出</h2><p className="mt-1 text-xs text-text-muted">查看本轮 Token、成本预算和实际产出。</p></div>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {workspace.agents.map(agent => <AgentUsageCard key={agent.role} agent={agent} onOpenSite={site => onNavigate(SITE_PAGE[site])} />)}
-          </div>
-        </section>
-
-        <div id="starter-workspace-tabs" className="mt-7 scroll-mt-4 flex items-center gap-1 rounded-xl border border-border bg-white p-1" role="tablist" aria-label="灵小枢主视图">
+        <div id="starter-workspace-tabs" className="mt-7 scroll-mt-4 flex items-center gap-1 rounded-xl border border-border bg-white p-1" role="tablist" aria-label="智能经营主视图">
           {tabs.map(item => (
             <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => openWorkspaceTab(item.id)} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-bold transition ${tab === item.id ? 'bg-[#edf4ef] text-accent' : 'text-text-muted hover:bg-surface-2 hover:text-text-primary'}`}>
               {item.label}{item.count !== null && item.count > 0 ? <span className="ml-1.5 rounded-full bg-white px-1.5 py-0.5 text-[10px]">{item.count}</span> : null}
@@ -321,28 +310,31 @@ export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page
           {tab === 'results' && <ResultsView state={state} />}
         </main>
 
-        <section className="mt-7 rounded-xl border border-border bg-white p-4" aria-labelledby="supplement-heading">
-          <details>
-            <summary id="supplement-heading" className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-bold text-text-primary">
-              <span className="flex items-center gap-2"><MessageSquarePlus size={16} className="text-accent" />需要补充或纠正？</span>
-              <span className="text-xs font-normal text-text-muted">次要入口，无需持续对话</span>
-            </summary>
-            <div className="mt-4 border-t border-border pt-4">
-              <textarea value={supplement} onChange={event => setSupplement(event.target.value)} maxLength={4000} rows={3} placeholder="只写新信息，例如：把主推市场改为德国，或这个产品的 MOQ 是 500 件。" className="w-full resize-y border border-border px-3 py-2 text-sm leading-relaxed" />
-              {orchestratorInputDisabled && <p className="mt-2 text-xs text-amber-800">{orchestratorInputAction?.disabledReason === 'starter_198_orchestrator_worker_unavailable' ? '灵小枢任务队列尚未连接，当前只能查看工作状态。' : '当前工作区未开放补充输入能力。'}</p>}
-              <div className="mt-2 flex justify-end"><button type="button" disabled={!supplement.trim() || Boolean(state.pendingCommand) || orchestratorInputDisabled} onClick={() => {
-                if (!orchestratorInputAction?.command || orchestratorInputAction.disabledReason) return;
-                void state.execute({ command: orchestratorInputAction.command, targetId: workspace.run.id || 'workspace', expectedVersion: orchestratorInputAction.expectedVersion || undefined, payload: { input: supplement.trim() } }).then(() => setSupplement('')).catch(() => {});
-              }} className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><MessageSquarePlus size={14} />提交给灵小枢</button></div>
-            </div>
-          </details>
-        </section>
-
-        {runControls.length > 0 && (
-          <section className="mt-4 rounded-xl border border-border bg-white p-4" aria-labelledby="run-control-heading">
-            <div className="flex items-start gap-3"><RotateCcw size={16} className="mt-0.5 text-text-muted" /><div className="flex-1"><h2 id="run-control-heading" className="text-sm font-bold text-text-primary">运行控制</h2><p className="mt-1 text-xs text-text-muted">暂停、恢复和取消都由灵小枢统一处理。</p><WorkspaceActionButtons actions={runControls} targetId={workspace.run.id || 'workspace'} pendingCommand={state.pendingCommand} onExecute={state.execute} /></div></div>
+        {tab === 'decisions' && (
+          <section className="mt-7 rounded-xl border border-border bg-white p-4" aria-labelledby="supplement-heading">
+            <details>
+              <summary id="supplement-heading" className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-bold text-text-primary">
+                <span className="flex items-center gap-2"><MessageSquarePlus size={16} className="text-accent" />补充或纠正业务信息</span>
+                <span className="text-xs font-normal text-text-muted">有新信息时再填写</span>
+              </summary>
+              <div className="mt-4 border-t border-border pt-4">
+                <textarea value={supplement} onChange={event => setSupplement(event.target.value)} maxLength={4000} rows={3} placeholder="只写新信息，例如：把主推市场改为德国，或这个产品的 MOQ 是 500 件。" className="w-full resize-y border border-border px-3 py-2 text-sm leading-relaxed" />
+                {orchestratorInputDisabled && <p className="mt-2 text-xs text-amber-800">{orchestratorInputAction?.disabledReason === 'starter_198_orchestrator_worker_unavailable' ? '当前暂时无法接收补充信息，请稍后重试。' : '当前工作区未开放补充输入能力。'}</p>}
+                <div className="mt-2 flex justify-end"><button type="button" disabled={!supplement.trim() || Boolean(state.pendingCommand) || orchestratorInputDisabled} onClick={() => {
+                  if (!orchestratorInputAction?.command || orchestratorInputAction.disabledReason) return;
+                  void state.execute({ command: orchestratorInputAction.command, targetId: workspace.run.id || 'workspace', expectedVersion: orchestratorInputAction.expectedVersion || undefined, payload: { input: supplement.trim() } }).then(() => setSupplement('')).catch(() => {});
+                }} className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><MessageSquarePlus size={14} />提交补充信息</button></div>
+              </div>
+            </details>
           </section>
         )}
+
+        {tab === 'decisions' && runControls.length > 0 && (
+          <section className="mt-4 rounded-xl border border-border bg-white p-4" aria-labelledby="run-control-heading">
+            <div className="flex items-start gap-3"><RotateCcw size={16} className="mt-0.5 text-text-muted" /><div className="flex-1"><h2 id="run-control-heading" className="text-sm font-bold text-text-primary">计划控制</h2><p className="mt-1 text-xs text-text-muted">在这里暂停、恢复或取消当前业务计划。</p><WorkspaceActionButtons actions={runControls} targetId={workspace.run.id || 'workspace'} pendingCommand={state.pendingCommand} onExecute={state.execute} /></div></div>
+          </section>
+        )}
+
       </div>
     </div>
   );

@@ -25,6 +25,7 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
+import { PAGE_REGISTRY } from '../pageRegistry';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -481,7 +482,7 @@ export default function TrafficPage({
   initialView,
   showModeTabs = true,
   visibleModes,
-  pageTitle = '我的社媒',
+  pageTitle = PAGE_REGISTRY.traffic.canonicalTitle,
   openProjectsSignal = 0,
   storageScope,
   workflowContextSignal,
@@ -612,7 +613,7 @@ export default function TrafficPage({
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between gap-3 border-b border-border bg-white px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex h-6 w-6 items-center justify-center text-accent">
@@ -1778,7 +1779,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
             </section>
           </section>
 
-          <aside ref={publishSettingsRef} className="scroll-mt-24 rounded-2xl border border-border bg-white p-4 shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto">
+          <aside ref={publishSettingsRef} className="scroll-mt-24 rounded-2xl border border-border bg-white p-4 shadow-sm xl:sticky xl:top-4 xl:max-h-[calc(100dvh-7rem)] xl:overflow-y-auto">
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-sm font-bold text-text-primary">发布设置</h3>
               <button

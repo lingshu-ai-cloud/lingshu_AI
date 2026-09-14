@@ -4,9 +4,10 @@ import {
   Home, Users, LayoutGrid, BarChart3, Megaphone, Bot,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, FileText, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, FolderOpen, Send, Target, PanelRightOpen,
+  Clapperboard, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
+import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
 import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
@@ -19,83 +20,78 @@ interface NavSection {
   items: { id: Page; label: string; icon: ReactNode }[];
 }
 
-const HOME_NAV_ITEM = { id: 'strategy' as Page, label: '首页', icon: <Home size={16} /> };
+const navItem = (id: Page, icon: ReactNode) => ({ id, label: PAGE_REGISTRY[id].navLabel, icon });
 
-type ContentNavigationEntry = 'create' | 'works' | 'publish';
-
-const CONTENT_NAV_ITEMS: Array<{ id: ContentNavigationEntry; label: string; icon: ReactNode }> = [
-  { id: 'create', label: 'AI 智能创作', icon: <WandSparkles size={16} /> },
-  { id: 'works', label: '我的创作', icon: <FolderOpen size={16} /> },
-  { id: 'publish', label: '内容发布', icon: <Send size={16} /> },
-];
+const HOME_NAV_ITEM = navItem('strategy', <Home size={16} />);
 
 const OPERATIONS_NAV: NavSection = {
   label: '经营管理',
   items: [
-    { id: 'digitalEmployees', label: '智能经营', icon: <Target size={16} /> },
+    navItem('digitalEmployees', <Target size={16} />),
   ],
+};
+
+const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactNode> = {
+  socialInspiration: <Clapperboard size={16} />,
+  smartAssets: <WandSparkles size={16} />,
+  traffic: <Send size={16} />,
+  accountManagement: <RadioTower size={16} />,
 };
 
 const SOCIAL_NAV: NavSection = {
   label: '社媒运营',
-  items: [
-    { id: 'socialInspiration', label: '灵感中心', icon: <Clapperboard size={16} /> },
-    { id: 'smartAssets', label: '内容创作', icon: <WandSparkles size={16} /> },
-    { id: 'scriptLibrary', label: '脚本库', icon: <FileText size={16} /> },
-    { id: 'traffic', label: '投流与发布', icon: <Send size={16} /> },
-    { id: 'accountManagement', label: '账号管理', icon: <RadioTower size={16} /> },
-  ],
+  items: PRIMARY_SOCIAL_NAV_PAGES.map(id => navItem(id, SOCIAL_NAV_ICONS[id])),
 };
 
 const ADS_NAV: NavSection = {
   label: '平台投放',
   items: [
-    { id: 'adsOverview', label: '投放总览', icon: <BarChart3 size={16} /> },
-    { id: 'adsPlans', label: '投放计划', icon: <Megaphone size={16} /> },
-    { id: 'adsManaged', label: 'AI 托管', icon: <Bot size={16} /> },
+    navItem('adsOverview', <BarChart3 size={16} />),
+    navItem('adsPlans', <Megaphone size={16} />),
+    navItem('adsManaged', <Bot size={16} />),
   ],
 };
 
 const CUSTOMER_NAV: NavSection = {
   label: '客户管理',
   items: [
-    { id: 'conversion', label: '我的会话', icon: <Users size={16} /> },
-    { id: 'orders', label: '订单管理', icon: <LayoutGrid size={16} /> },
+    navItem('conversion', <Users size={16} />),
+    navItem('orders', <LayoutGrid size={16} />),
   ],
 };
 
 const AGENT_NAV: NavSection = {
   label: '智能体管理',
   items: [
-    { id: 'enterprise', label: '企业知识库', icon: <Building2 size={16} /> },
-    { id: 'agentMemory', label: '智能体记忆', icon: <BrainCircuit size={16} /> },
-    { id: 'scheduled', label: '定时任务', icon: <Clock size={16} /> },
+    navItem('enterprise', <Building2 size={16} />),
+    navItem('agentMemory', <BrainCircuit size={16} />),
+    navItem('scheduled', <Clock size={16} />),
   ],
 };
 
 const ADMIN_NAV: NavSection = {
   label: '管理员权限',
   items: [
-    { id: 'admin', label: '账号总控', icon: <ShieldCheck size={16} /> },
-    { id: 'adminDelivery', label: '客户运维', icon: <PlugZap size={16} /> },
+    navItem('admin', <ShieldCheck size={16} />),
+    navItem('adminDelivery', <PlugZap size={16} />),
   ],
 };
 
 const SYSTEM_NAV: NavSection = {
   label: '系统设置',
   items: [
-    { id: 'plugins', label: '集成中心', icon: <PlugZap size={16} /> },
-    { id: 'organizationPermissions', label: '组织与权限', icon: <UserRoundCog size={16} /> },
+    navItem('plugins', <PlugZap size={16} />),
+    navItem('organizationPermissions', <UserRoundCog size={16} />),
   ],
 };
 
 const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
-const STARTER_HOME_NAV_ITEM = { id: 'digitalEmployees' as Page, label: '灵小枢工作台', icon: <Home size={16} /> };
+const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
 const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
   label: '经营管理',
   items: [
-    { id: 'strategy', label: '经营概览', icon: <Target size={16} /> },
+    navItem('strategy', <Target size={16} />),
   ],
 };
 
@@ -169,64 +165,6 @@ function NavItem({
       </span>
       {!collapsed && <span className="relative flex-1 text-left">{item.label}</span>}
     </button>
-  );
-}
-
-function ContentCreationNav({
-  active,
-  activeEntry,
-  collapsed,
-  onNavigate,
-}: {
-  active: boolean;
-  activeEntry: ContentNavigationEntry;
-  collapsed: boolean;
-  onNavigate: (entry: ContentNavigationEntry) => void;
-}) {
-  const [expanded, setExpanded] = useState(true);
-
-  if (collapsed) {
-    return (
-      <NavItem
-        item={{ id: 'smartAssets', label: '内容创作', icon: <WandSparkles size={16} /> }}
-        active={active}
-        onClick={() => onNavigate('create')}
-        collapsed
-      />
-    );
-  }
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setExpanded(value => !value)}
-        aria-expanded={expanded}
-        data-demo-target="smartAssets"
-        className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-sm font-medium transition-colors ${active ? 'border-accent bg-[#edf4ef] text-text-primary' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2]'}`}
-      >
-        <span aria-hidden="true" className={active ? 'text-accent' : 'text-text-muted'}><WandSparkles size={16} /></span>
-        <span className="min-w-0 flex-1 text-left">内容创作</span>
-        <ChevronRight size={13} aria-hidden="true" className={`transition-transform ${expanded ? 'rotate-90' : ''} ${active ? 'text-accent' : 'text-text-muted'}`} />
-      </button>
-      {expanded && <div className="ml-5 border-l border-border pl-2" aria-label="内容创作入口">
-        {CONTENT_NAV_ITEMS.map(item => {
-          const itemActive = active && activeEntry === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onNavigate(item.id)}
-              aria-current={itemActive ? 'page' : undefined}
-              className={`relative mt-0.5 flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm font-medium transition-colors ${itemActive ? 'border-accent bg-white text-text-primary' : 'border-transparent text-text-secondary hover:bg-white hover:text-text-primary'}`}
-            >
-              <span aria-hidden="true" className={itemActive ? 'text-accent' : 'text-text-muted'}>{item.icon}</span>
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
-            </button>
-          );
-        })}
-      </div>}
-    </div>
   );
 }
 
@@ -304,11 +242,14 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     open: isInConversation && mobileRightPanelOpen,
     onClose: () => setMobileRightPanelOpen(false),
   });
-  const [activeContentEntry, setActiveContentEntry] = useState<ContentNavigationEntry>('create');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches) return true;
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
   });
+  const [mobileViewport, setMobileViewport] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches
+  ));
+  const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
+  const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : desktopSidebarCollapsed;
   const sessionScope = session?.demo?.guideScope || session?.demo?.expiresAt || null;
   const liveSessionScope = liveSession?.demo?.guideScope || liveSession?.demo?.expiresAt || null;
   const sessionIdentityScope = `${session?.user?.id || ''}:${session?.tenant?.id || ''}:${session?.supportAccess?.requestId || ''}:${sessionScope || ''}`;
@@ -347,15 +288,23 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     if (!isInConversation) setMobileRightPanelOpen(false);
   }, [isInConversation]);
   useEffect(() => {
-    const handler = (event: Event) => {
-      const entry = (event as CustomEvent<{ entry?: ContentNavigationEntry }>).detail?.entry;
-      if (entry === 'create' || entry === 'works' || entry === 'publish') setActiveContentEntry(entry);
+    const media = window.matchMedia('(max-width: 760px)');
+    const syncViewport = () => {
+      setMobileViewport(media.matches);
+      setMobileSidebarExpanded(false);
     };
-    window.addEventListener('lingshu:content-view-changed', handler);
-    return () => window.removeEventListener('lingshu:content-view-changed', handler);
+    syncViewport();
+    if (media.addEventListener) {
+      media.addEventListener('change', syncViewport);
+      return () => media.removeEventListener('change', syncViewport);
+    }
+    media.addListener(syncViewport);
+    return () => media.removeListener(syncViewport);
   }, []);
   useEffect(() => {
-    try { localStorage.setItem('lingshu:sidebar-collapsed', String(sidebarCollapsed)); } catch { /* storage can be unavailable */ }
+    try { localStorage.setItem('lingshu:sidebar-collapsed', String(desktopSidebarCollapsed)); } catch { /* storage can be unavailable */ }
+  }, [desktopSidebarCollapsed]);
+  useEffect(() => {
     if (sidebarCollapsed) { setQuotaOpen(false); setAccountMenuOpen(false); }
   }, [sidebarCollapsed]);
   useDismissibleLayer(quotaOpen || accountMenuOpen, quotaAreaRef, () => {
@@ -407,19 +356,17 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     setQuotaOpen(true);
     void refreshQuota();
   };
-  const navigateContent = (entry: ContentNavigationEntry) => {
-    setActiveContentEntry(entry);
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-      detail: {
-        page: 'smartAssets' as Page,
-        view: entry === 'publish' ? 'publish' : 'create',
-        studioPanel: entry === 'works' ? 'projects' : undefined,
-      },
-    }));
+  const navigateFromSidebar = (nextPage: Page) => {
+    if (mobileViewport) setMobileSidebarExpanded(false);
+    onNavigate(nextPage);
+  };
+  const toggleSidebar = () => {
+    if (mobileViewport) setMobileSidebarExpanded(value => !value);
+    else setDesktopSidebarCollapsed(value => !value);
   };
 
   return (
-    <div className="app-shell flex h-screen overflow-hidden">
+    <div className="app-shell flex h-[100dvh] min-h-0 overflow-hidden">
 
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
@@ -436,7 +383,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary font-display">{starterMode ? tenantName : '灵枢 AI'}</span>}
           <button
             type="button"
-            onClick={() => setSidebarCollapsed(value => !value)}
+            onClick={toggleSidebar}
             title={sidebarCollapsed ? '展开左侧栏' : '收起左侧栏'}
             aria-label={sidebarCollapsed ? '展开左侧栏' : '收起左侧栏'}
             className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-white hover:text-text-primary ${sidebarCollapsed ? 'border border-border bg-white' : ''}`}
@@ -449,7 +396,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           <DemoGuide
             key={guideScope}
             page={page}
-            onNavigate={onNavigate}
+            onNavigate={navigateFromSidebar}
             onShown={onDemoGuideShown}
             forceStart={Boolean(activeSession?.demo?.guideTrigger)}
           />
@@ -460,7 +407,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
           <NavItem
             item={homeNavItem}
             active={page === homeNavItem.id}
-            onClick={() => onNavigate(homeNavItem.id)}
+            onClick={() => navigateFromSidebar(homeNavItem.id)}
             collapsed={sidebarCollapsed}
           />
         </nav>
@@ -471,20 +418,12 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
               {index > 0 && <div className="mx-4 my-2 border-t border-border" />}
               <nav aria-label={section.label} className="px-3 space-y-0.5">
                 {!sidebarCollapsed && <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
-                {section.items.map(item => item.id === 'smartAssets' ? (
-                  <ContentCreationNav
-                    key={item.id}
-                    active={page === item.id}
-                    activeEntry={activeContentEntry}
-                    collapsed={sidebarCollapsed}
-                    onNavigate={navigateContent}
-                  />
-                ) : (
+                {section.items.map(item => (
                   <NavItem
                     key={item.id}
                     item={item}
-                    active={page === item.id}
-                    onClick={() => onNavigate(item.id)}
+                    active={page === item.id || PAGE_REGISTRY[page].navParent === item.id}
+                    onClick={() => navigateFromSidebar(item.id)}
                     collapsed={sidebarCollapsed}
                   />
                 ))}
@@ -506,7 +445,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                 transition={{ duration: 0.16 }}
                 role="dialog"
                 aria-label="Token 使用"
-                className="absolute left-3 bottom-[68px] z-50 max-h-[calc(100vh-96px)] w-[min(324px,calc(100vw-88px))] overflow-y-auto rounded-2xl border border-border bg-white p-3 shadow-xl"
+                className="absolute left-3 bottom-[68px] z-50 max-h-[calc(100dvh-96px)] w-[min(324px,calc(100vw-88px))] overflow-y-auto rounded-2xl border border-border bg-white p-3 shadow-xl"
               >
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div>
@@ -674,7 +613,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             </button>
           </div>
         )}
-        <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
+        <div data-app-content-stack className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
       </main>
 
       {/* ── Right panel (only in conversation mode) ── */}
@@ -702,7 +641,8 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className={`fixed inset-y-0 right-0 z-50 flex flex-col overflow-hidden bg-white md:hidden ${page === 'agentMonitor' ? 'left-0' : 'left-16'}`}
+            className="fixed inset-y-0 right-0 z-50 flex flex-col overflow-hidden bg-white md:hidden"
+            style={{ left: page === 'agentMonitor' ? 0 : sidebarCollapsed ? 64 : 220 }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="conversation-context-panel-mobile-title"

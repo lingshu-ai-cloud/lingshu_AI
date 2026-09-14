@@ -97,6 +97,8 @@ assert.match(appSource, /!isSocialTaskContextPage\(page\)[\s\S]*?<StarterWorkflo
 for (const phrase of ['服务端', '底层', '写入托管', '不会绕过', '工作图', '模型 Key', '接口']) {
   assert.doesNotMatch(barSource, new RegExp(phrase), `customer task bar must not expose: ${phrase}`);
 }
-assert.match(barSource, /返回灵小枢/);
+assert.match(barSource, /返回智能经营/);
+assert.doesNotMatch(barSource, /context\.ownerName|context\.pageStage/,
+  'the task bar must show the business destination instead of internal ownership labels');
 
 console.log('Social task context contract tests passed');
