@@ -40,6 +40,7 @@ command -v curl >/dev/null 2>&1 || fail "curl is required."
 "${docker_command[@]}" info >/dev/null
 
 registry_name="lingshu-manual-release-registry"
+legacy_registry_name="lingshu-release-registry"
 registry_port="15000"
 app_image="127.0.0.1:${registry_port}/lingshu-ai-app"
 pocketbase_image="127.0.0.1:${registry_port}/lingshu-ai-pocketbase"
@@ -47,6 +48,7 @@ image_tag="sha-${expected_sha}"
 
 cleanup_registry() {
   "${docker_command[@]}" rm -f "$registry_name" >/dev/null 2>&1 || true
+  "${docker_command[@]}" rm -f "$legacy_registry_name" >/dev/null 2>&1 || true
 }
 trap cleanup_registry EXIT
 
@@ -103,6 +105,7 @@ deployed_sha="$("${sudo_command[@]}" sed -n 's/^DEPLOYED_COMMIT=//p' \
 
 cleanup_registry
 trap - EXIT
+"${docker_command[@]}" image rm registry:2 >/dev/null 2>&1 || true
 "${docker_command[@]}" builder prune --all --force
 "${docker_command[@]}" image prune --force
 
