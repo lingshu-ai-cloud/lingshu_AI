@@ -867,6 +867,10 @@ export function automaticStoryboardTrim(sourceDuration: number, storyboardDurati
   };
 }
 
+export function resolveWorkbenchSeekTime(formalPreview: boolean, timelineTime: number, sourceTime: number): number {
+  return Math.max(0, formalPreview ? timelineTime : sourceTime);
+}
+
 type MaterialMatchAssessment = {
   score: number;
   level: 'direct' | 'review' | 'missing';
@@ -12277,6 +12281,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (nextSlot) setActiveStoryboardSlotId(nextSlot.id);
     setModeNotice(`已为分镜 ${currentIndex + 1} 选择“${clip.name}”，将从素材第一帧起按分镜时长自动裁切。`);
   };
+  const workbenchFormalPreviewUrl = languageRenderOutputs[activeRenderCombinationKey]?.previewUrl
+    || renderOutputPreviewUrl
+    || Object.values(languageRenderOutputs).find(output => output?.status === 'done' && output.previewUrl)?.previewUrl
+    || '';
   const workbenchSeekTime = activeWorkbenchSlot && activeWorkbenchClip?.type === 'video'
     ? (() => {
       const edit = editForSlot(activeWorkbenchClip, activeWorkbenchSlot);
@@ -12288,20 +12296,22 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     : 0;
   useEffect(() => {
     const video = workbenchVideoRef.current;
-    if (!video || activeWorkbenchClip?.type !== 'video') return;
+    const formalPreview = step === 'preview' && Boolean(workbenchFormalPreviewUrl);
+    if (!video || (!formalPreview && activeWorkbenchClip?.type !== 'video')) return;
+    const requestedTime = resolveWorkbenchSeekTime(formalPreview, workbenchTimelineTime, workbenchSeekTime);
     const seek = () => {
       const maxTime = Number.isFinite(video.duration) && video.duration > 0
         ? Math.max(0, video.duration - 0.05)
-        : workbenchSeekTime;
+        : requestedTime;
       try {
         video.pause();
-        video.currentTime = Math.min(Math.max(0, workbenchSeekTime), maxTime);
+        video.currentTime = Math.min(requestedTime, maxTime);
       } catch { /* 等待媒体元数据后由 loadedmetadata 再定位 */ }
     };
     if (video.readyState >= 1) seek();
     else video.addEventListener('loadedmetadata', seek, { once: true });
     return () => video.removeEventListener('loadedmetadata', seek);
-  }, [activeWorkbenchClip?.id, activeWorkbenchClip?.type, activeWorkbenchSlot?.id, workbenchSeekTime]);
+  }, [activeWorkbenchClip?.id, activeWorkbenchClip?.type, activeWorkbenchSlot?.id, step, workbenchFormalPreviewUrl, workbenchTimelineTime, workbenchSeekTime]);
   const focusWorkbenchStoryboardSlot = (slotId: string) => {
     const nextSlot = storyboardSlots.find(item => item.id === slotId);
     if (!nextSlot) return;
@@ -12330,8 +12340,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setCanvasView('creation');
     if (step === 'cover') setCoverTimelineCaptureMode(true);
     window.requestAnimationFrame(() => {
-      const clip = materialById.get(storyboardAssignments[nextSlot.id] || '');
       const video = workbenchVideoRef.current;
+      const formalPreview = step === 'preview' && Boolean(workbenchFormalPreviewUrl);
+      const clip = materialById.get(storyboardAssignments[nextSlot.id] || '');
+      if (formalPreview && video) {
+        const applyFormalSeek = () => {
+          const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, video.duration - 0.05) : safeTime;
+          try { video.pause(); video.currentTime = Math.min(safeTime, maxTime); } catch { /* wait for metadata */ }
+        };
+        if (video.readyState >= 1) applyFormalSeek();
+        else video.addEventListener('loadedmetadata', applyFormalSeek, { once: true });
+        return;
+      }
       if (!video || clip?.type !== 'video') return;
       const edit = editForSlot(clip, nextSlot);
       const localOffset = Math.max(0, Math.min(nextSlot.end - nextSlot.start, safeTime - nextSlot.start));
@@ -12706,10 +12726,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setMaterialVersionBgms(current => ({ ...current, [materialVersionKey(activeAssemblyId, activeVoiceLang)]: trackId }));
     setPreviewBgmOn(Boolean(trackId));
   };
-  const workbenchFormalPreviewUrl = languageRenderOutputs[activeRenderCombinationKey]?.previewUrl
-    || renderOutputPreviewUrl
-    || Object.values(languageRenderOutputs).find(output => output?.status === 'done' && output.previewUrl)?.previewUrl
-    || '';
   const workbenchProductionPanel = (step === 'bgm' || (step === 'script' && scriptStageTab === 'bgm')) ? (
     <section ref={bgmLibraryRef} className="space-y-3">
       <input ref={bgmInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleBgmUpload(event.target.files); event.target.value = ''; }} />
@@ -13172,11 +13188,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           ) : step === 'preview' && workbenchFormalPreviewUrl ? (
             <div className="flex h-full w-full items-center justify-center bg-black">
               <video
+                ref={workbenchVideoRef}
                 key={workbenchFormalPreviewUrl}
                 src={workbenchFormalPreviewUrl}
                 controls
                 playsInline
                 preload="metadata"
+                onLoadedMetadata={event => {
+                  const video = event.currentTarget;
+                  const maxTime = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, video.duration - 0.05) : workbenchTimelineTime;
+                  try { video.currentTime = Math.min(Math.max(0, workbenchTimelineTime), maxTime); } catch { /* ignore media seek edge cases */ }
+                }}
+                onTimeUpdate={event => setWorkbenchTimelineTime(Math.min(workbenchTimelineDuration, Math.max(0, event.currentTarget.currentTime)))}
                 className="h-full w-full object-contain"
               />
             </div>

@@ -5,6 +5,7 @@ import {
   fitTimelineToVoiceover,
   fitTimelineToVoiceoverCues,
   matchMaterialsToStoryboardLocally,
+  resolveWorkbenchSeekTime,
 } from './AiCreateStudio.js';
 
 const clips = [
@@ -57,6 +58,8 @@ assert.deepEqual(
   { trimStart: 0, trimEnd: 4, targetDuration: 4 },
   '长素材应从第一帧开始，只截取到分镜结束时间',
 );
+assert.equal(resolveWorkbenchSeekTime(true, 12.3, 0), 12.3, '正式成片预览必须按整片时间轴定位');
+assert.equal(resolveWorkbenchSeekTime(false, 12.3, 4.5), 4.5, '素材预览必须按分镜裁切后的源时间定位');
 assert.deepEqual(
   automaticStoryboardTrim(2.5, 4, 'video'),
   { trimStart: 0, trimEnd: 2.5, targetDuration: 4 },
