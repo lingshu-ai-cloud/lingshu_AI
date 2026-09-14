@@ -1,0 +1,267 @@
+name: Build release images
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character commit SHA to build (leave empty to build the selected ref)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-release-${{ inputs.source_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Validate requested source SHA
+        if: github.event_name == 'workflow_dispatch' && inputs.source_sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be a full lowercase 40-character Git commit SHA." >&2
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Lock source revision
+        id: source
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          if [[ -n "$REQUESTED_SHA" && "$source_sha" != "$REQUESTED_SHA" ]]; then
+            echo "Checked out $source_sha instead of requested $REQUESTED_SHA." >&2
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Building immutable source $source_sha"
+
+      - name: Use pnpm 11.19.0
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11.19.0
+          run_install: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm run lint
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          if node -e "const p=require('./package.json'); process.exit(p.scripts?.test ? 0 : 1)"; then
+            pnpm test
+          else
+            echo "This historical source does not define a test script."
+            echo "Type-check, production build, and container-level smoke checks remain mandatory."
+          fi
+
+      - name: Build application
+        run: pnpm run build
+
+  publish:
+    name: Publish ${{ matrix.name }} image
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            dockerfile: Dockerfile
+          - name: pocketbase
+            dockerfile: Dockerfile.pocketbase
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/lingshu-ai-${{ matrix.name }}:sha-${{ needs.verify.outputs.source_sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.verify.outputs.source_sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Record image in job summary
+        run: |
+          echo "### Published image" >> "$GITHUB_STEP_SUMMARY"
+          echo '```text' >> "$GITHUB_STEP_SUMMARY"
+          echo "ghcr.io/${{ github.repository_owner }}/lingshu-ai-${{ matrix.name }}:sha-${{ needs.verify.outputs.source_sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    name: Smoke-check published release pair
+    if: github.event_name != 'pull_request'
+    needs:
+      - verify
+      - publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify immutable image identities
+        env:
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ needs.verify.outputs.source_sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for image in "$APP_IMAGE" "$POCKETBASE_IMAGE"; do
+            docker pull "$image"
+            revision="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "$image")"
+            if [[ "$revision" != "$SOURCE_SHA" ]]; then
+              echo "Published image revision does not match the immutable source commit." >&2
+              exit 1
+            fi
+          done
+
+      - name: Smoke-check application, HTML, and PocketBase together
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ needs.verify.outputs.source_sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          app_container="release-pair-app-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          pocketbase_container="release-pair-pocketbase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_network="release-pair-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_admin_email="release-pair-smoke@example.invalid"
+          smoke_admin_password="release-pair-smoke-password-2026"
+          cleanup() {
+            docker rm -f "$app_container" "$pocketbase_container" >/dev/null 2>&1 || true
+            docker network rm "$smoke_network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+
+          docker network create "$smoke_network" >/dev/null
+          docker run --detach \
+            --name "$pocketbase_container" \
+            --network "$smoke_network" \
+            --publish 127.0.0.1:18090:8090 \
+            --env "PB_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
+            "$POCKETBASE_IMAGE" >/dev/null
+
+          wait_for_url() {
+            local label="$1"
+            local url="$2"
+            local output="$3"
+            local container="$4"
+            for attempt in $(seq 1 36); do
+              if curl --fail --silent --show-error --max-time 5 \
+                --output "$output" "$url"; then
+                echo "$label is ready."
+                return 0
+              fi
+              sleep 3
+            done
+            docker logs "$container" >&2 || true
+            echo "$label did not become ready." >&2
+            return 1
+          }
+
+          wait_for_url \
+            "PocketBase API" \
+            "http://127.0.0.1:18090/api/health" \
+            "$RUNNER_TEMP/pocketbase-health.json" \
+            "$pocketbase_container"
+          jq --exit-status '.code == 200' "$RUNNER_TEMP/pocketbase-health.json" >/dev/null
+
+          docker run --detach \
+            --name "$app_container" \
+            --network "$smoke_network" \
+            --publish 127.0.0.1:18788:8788 \
+            --env "PB_URL=http://${pocketbase_container}:8090" \
+            --env "PB_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
+            --env "WORKBENCH_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "WORKBENCH_ADMIN_PASSWORD=$smoke_admin_password" \
+            --env "TENANT_PLATFORM_APP_KEY=release-pair-smoke-tenant-platform-key-2026" \
+            "$APP_IMAGE" >/dev/null
+
+          wait_for_url \
+            "Application API" \
+            "http://127.0.0.1:18788/api/overseas/health" \
+            "$RUNNER_TEMP/app-health.json" \
+            "$app_container"
+          jq --exit-status 'type == "object"' "$RUNNER_TEMP/app-health.json" >/dev/null
+
+          curl --fail --silent --show-error --location --max-time 10 \
+            --dump-header "$RUNNER_TEMP/app-html.headers" \
+            --output "$RUNNER_TEMP/app.html" \
+            "http://127.0.0.1:18788/"
+          tr -d '\r' < "$RUNNER_TEMP/app-html.headers" \
+            | grep --ignore-case --quiet '^content-type:.*text/html'
+          grep --ignore-case --extended-regexp --quiet '<(!doctype|html)' \
+            "$RUNNER_TEMP/app.html"
