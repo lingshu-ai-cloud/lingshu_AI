@@ -81,3 +81,4 @@ __pycache__/
 /数字人0901_*.mp4
 # Downloaded licensed footage and local verification artifacts; provenance lives in docs.
 /data/acceptance-materials/
+data/analysis-locks/

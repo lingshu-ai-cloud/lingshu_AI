@@ -28,6 +28,7 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [resolution, setResolution] = useState<'retry' | 'relax_non_core' | 'rewrite_scene'>('retry');
 
   const load = () => api(base + encodeURIComponent(projectId) + '/production').then(value => { setData(value); setDirty(false); }).catch(error => setNotice(error.message));
 
@@ -40,6 +41,7 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
   useEffect(() => {
     const spec = data?.spec;
     if (!spec) return;
+    if (data.blocker?.resumeStage === 'material_match') setNode('shots');
     setValues(node === 'music'
       ? { bgm: spec.bgm || '', volume: spec.bgmVol ?? 24 }
       : node === 'voice'
@@ -57,6 +59,14 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
 
   if (!data) return <p role="status" className="border-y border-border bg-surface py-8 text-center text-sm text-text-muted">{notice || '正在读取生产配置…'}</p>;
 
+  const blocked = Boolean(data.blocker);
+  const blockerStage = ({ script: '脚本生成', material_match: '分镜素材匹配', voice_subtitles: '配音与字幕', heygen: '数字人口播', render: '成片渲染', quality: '成片质检' } as Record<string, string>)[data.blocker?.resumeStage] || '当前制作节点';
+  const resolutionOptions = [
+    { id: 'retry' as const, title: '重新执行当前节点', detail: '保留现有脚本、素材分析和已完成结果，从断点重新尝试。', impact: '不增加计划预算 · 预计 1–3 分钟' },
+    { id: 'relax_non_core' as const, title: '放宽非核心画面条件', detail: '允许构图和景别存在差异，仍严格保留产品事实与核心证据。', impact: '不增加计划预算 · 将重新匹配素材' },
+    { id: 'rewrite_scene' as const, title: '交给编导改写受阻分镜', detail: '编导保留买家问题和事实边界，调整镜头表达后重新制作。', impact: '不修改本周数量目标 · 将重跑脚本及下游节点' },
+  ];
+
   return <section className="space-y-4 border-y border-border bg-surface py-4">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
       <div>
@@ -70,7 +80,41 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
       当前节点：{({ script: '脚本', material_match: '分镜素材', voice_subtitles: '配音与字幕', heygen: '数字人及混剪合成', render: '合成', quality: '质检', completed: '待验收', blocked: '需要处理' } as any)[data.spec.stage] || data.spec.stage}。保存后撤销旧审批并从受影响节点重新制作。
     </p>
 
-    <section aria-labelledby="current-review-video" className="space-y-3 rounded-md border border-border bg-surface-2 p-3">
+    {blocked && <section aria-labelledby="blocker-resolution-title" className="rounded-md border border-amber-200 bg-amber-50/60 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-bold text-amber-700">1 个节点等待处理 · 其他已完成结果已保留</p>
+          <h4 id="blocker-resolution-title" className="mt-1 text-sm font-bold text-text-primary">{blockerStage}需要你选择处理策略</h4>
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-text-secondary">{data.blocker.reason}</p>
+        </div>
+        <span className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-[11px] font-bold text-amber-700">等待判断</span>
+      </div>
+      <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+        <div className="rounded border border-amber-100 bg-white p-2"><dt className="font-bold text-text-muted">受影响范围</dt><dd className="mt-1 text-text-secondary">仅当前内容的{blockerStage}</dd></div>
+        <div className="rounded border border-amber-100 bg-white p-2"><dt className="font-bold text-text-muted">Agent 已尝试</dt><dd className="mt-1 text-text-secondary">{data.blocker.attempts ? `${data.blocker.attempts} 轮素材分析与匹配` : '已完成自动检查与安全重试'}</dd></div>
+        <div className="rounded border border-amber-100 bg-white p-2"><dt className="font-bold text-text-muted">恢复位置</dt><dd className="mt-1 text-text-secondary">选择后从{blockerStage}继续</dd></div>
+      </dl>
+      <div role="radiogroup" aria-label="受阻处理策略" className="mt-4 grid gap-2 lg:grid-cols-3">
+        {resolutionOptions.map(option => <button key={option.id} type="button" role="radio" aria-checked={resolution === option.id} onClick={() => setResolution(option.id)} className={`rounded-md border p-3 text-left transition ${resolution === option.id ? 'border-accent bg-white ring-1 ring-accent/20' : 'border-amber-100 bg-white/70 hover:border-amber-300'}`}>
+          <span className="block text-xs font-bold text-text-primary">{option.title}</span>
+          <span className="mt-1 block text-[11px] leading-4 text-text-secondary">{option.detail}</span>
+          <span className="mt-2 block text-[10px] font-semibold text-accent">{option.impact}</span>
+        </button>)}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button type="button" disabled={busy} className={primaryButton} onClick={async () => {
+          setBusy(true); setNotice('');
+          try {
+            await api(base + encodeURIComponent(projectId) + '/resolve-blocker', { hash: data.hash, action: resolution });
+            setNotice(`已处理，Agent 将从${resolution === 'rewrite_scene' ? '脚本生成' : blockerStage}继续。`);
+            await load(); onSaved?.();
+          } catch (error) { setNotice((error as Error).message); } finally { setBusy(false); }
+        }}>{busy ? '正在恢复…' : `${resolutionOptions.find(option => option.id === resolution)?.title}并继续`}</button>
+        <p className="text-[11px] text-text-muted">操作会写入版本记录，并撤销受影响的旧审批。</p>
+      </div>
+    </section>}
+
+    {!blocked && <section aria-labelledby="current-review-video" className="space-y-3 rounded-md border border-border bg-surface-2 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h4 id="current-review-video" className="text-sm font-bold text-text-primary">当前待验收成片</h4>
@@ -103,7 +147,7 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
         >{data.approved ? '当前版本已确认' : '成片通过，确认当前版本'}</button>
         {!data.qualityPassed && <p className="text-xs text-amber">机器质检尚未通过，请先修改并重新制作。</p>}
       </div>
-    </section>
+    </section>}
 
     <nav aria-label="生产配置节点" className="flex flex-wrap border-b border-border">
       {[
@@ -265,7 +309,7 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
           }
         }}
       >
-        {busy ? '保存中…' : '保存并继续原任务'}
+        {busy ? '保存中…' : blocked && node === 'shots' ? '采用分镜设置并从素材匹配继续' : '保存并继续原任务'}
       </button>
       {!data.managed && <p className="text-xs text-text-muted">手动创作请在工作台编辑后重新生成。</p>}
       {dirty && <p className="text-xs font-medium text-amber">当前修改尚未进入上方成片，请保存并等待重新制作。</p>}

@@ -53,7 +53,7 @@ export function buildDirectorContextView(overview: DigitalEmployeeOverview, link
   const ends = overview.goal?.endsAt ? new Date(`${overview.goal.endsAt}T00:00:00`).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : '';
   return {
     goalTitle: overview.goal?.title || '本周内容任务包', week: starts && ends ? `${starts}—${ends}` : '', scope: content ? 'content' : 'week',
-    stage: taskLabels[task?.task_key || ref.taskKey] || task?.title || '内容编导', status: statusLabels[task?.status || content?.directorStatus || ''] || task?.status || content?.directorStatus || '待编排',
+    stage: taskLabels[task?.task_key || ref.taskKey] || task?.title || '内容编导', status: task?.blocked_reason && ['failed', 'blocked', 'waiting_external'].includes(task.status) ? '1 个节点等待处理' : statusLabels[task?.status || content?.directorStatus || ''] || task?.status || content?.directorStatus || '待编排',
     taskTitle: task?.title || '', blocker: task?.blocked_reason || '', content, scriptVersions: Object.entries(scripts).map(([language, script]) => ({ language, version: Number(script.version || 0), hash: String(script.hash || '') })),
     productionBudget: Number(director?.productionBudget || 0), productionSpent: Number(director?.productionSpent || 0), productionReserved: Number(director?.productionReserved || 0), paidMediaBudget: Number(director?.paidMediaBudget || 0),
     originalTarget: Number(director?.originalTarget || plans.length), platformVersionTarget: Number(director?.platformVersionTarget || plans.length), publishTarget: Number(director?.publishTarget || plans.length),

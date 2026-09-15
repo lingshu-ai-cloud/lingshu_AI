@@ -13,6 +13,7 @@ import { recommendPackage, normalizePackage, validatePackage, compilePackage, pa
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
+import { resolveContentBlocker, type ContentBlockerAction } from '../digitalEmployees/contentBlockerResolution.js';
 import { automationBgmCatalog } from './studio.js';
 import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
@@ -2153,7 +2154,38 @@ digitalEmployeesRouter.get('/content-projects/:projectId/production', async (req
     ? signAssetUrl(`/api/overseas/publishing/local-videos/${encodeURIComponent(path.basename(resolvedOutput))}`, tenantId)
     : '';
   const hash = contentAcceptanceHash(spec);
-  res.json({ projectId: project.id, hash, videoUrl, approved: contentAccepted(spec), qualityPassed: spec.automation?.quality?.passed === true, spec: { lang: spec.lang, duration: spec.duration, voice: spec.contentOrder?.videoPlan?.voice || spec.voice, voiceStyle: spec.voiceStyle, voiceoverUrl: spec.voiceoverUrl, bgm: spec.bgm, bgmVol: spec.bgmVol, bgmSelection: spec.bgmSelection, voiceSelection: spec.voiceSelection, scenePlan: spec.contentOrder?.videoPlan?.scenePlan, sceneSourcePlan: spec.sceneSourcePlan, materialIds: spec.automation?.routePlan?.assetIds || [], sceneOverrides: spec.sceneOverrides, cues: spec.alignedCuesByLang?.[spec.lang] || [], subtitleStyle: spec.subtitleStyle, subtitleAlignmentSource: spec.subtitleAlignmentSource, coverTitle: spec.coverTitle, coverFrameTime: spec.coverFrameTime, exportSpec: spec.exportSpec, ratio: spec.ratio, stage: spec.automation?.stage }, managed: spec.automation?.managedBy === 'digital_employee' });
+  const automation = jsonObject<Record<string, any>>(spec.automation, {});
+  const attempts = Object.values(jsonObject<Record<string, number>>(spec.materialAnalysisAttempts, {})).reduce((sum, value) => sum + Number(value || 0), 0);
+  res.json({ projectId: project.id, hash, videoUrl, approved: contentAccepted(spec), qualityPassed: automation.quality?.passed === true,
+    blocker: automation.stage === 'blocked' ? { reason: String(automation.blocker || '当前节点需要处理'), resumeStage: String(automation.resumeStage || 'script'), retryPolicy: String(automation.retryPolicy || ''), attempts, preserved: true } : null,
+    spec: { lang: spec.lang, duration: spec.duration, voice: spec.contentOrder?.videoPlan?.voice || spec.voice, voiceStyle: spec.voiceStyle, voiceoverUrl: spec.voiceoverUrl, bgm: spec.bgm, bgmVol: spec.bgmVol, bgmSelection: spec.bgmSelection, voiceSelection: spec.voiceSelection, scenePlan: spec.contentOrder?.videoPlan?.scenePlan, sceneSourcePlan: spec.sceneSourcePlan, materialIds: automation.routePlan?.assetIds || [], sceneOverrides: spec.sceneOverrides, cues: spec.alignedCuesByLang?.[spec.lang] || [], subtitleStyle: spec.subtitleStyle, subtitleAlignmentSource: spec.subtitleAlignmentSource, coverTitle: spec.coverTitle, coverFrameTime: spec.coverFrameTime, exportSpec: spec.exportSpec, ratio: spec.ratio, stage: automation.stage }, managed: automation.managedBy === 'digital_employee' });
+});
+
+digitalEmployeesRouter.post('/content-projects/:projectId/resolve-blocker', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const original = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+  const initial = jsonObject<Record<string, any>>(original?.spec, {});
+  if (!original || !initial.workflowRunId) { res.status(404).json({ error: 'project_not_found' }); return; }
+  await withDigitalEmployeeRunLock(tenantId, initial.workflowRunId, async () => {
+    try {
+      const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', req.params.projectId, tenantId);
+      const spec = jsonObject<Record<string, any>>(project?.spec, {});
+      const run = await tenantRecord<RunRecord>(COLLECTION.runs, initial.workflowRunId, tenantId);
+      if (!project || !run || ['cancelled', 'succeeded'].includes(run.status)) { res.status(409).json({ error: '当前运行不能继续处理' }); return; }
+      if (req.body?.hash !== contentAcceptanceHash(spec)) { res.status(409).json({ error: '后台已更新项目，请刷新后处理' }); return; }
+      const action = String(req.body?.action || '') as ContentBlockerAction;
+      const next = resolveContentBlocker(spec, action, String(req.body?.reason || ''));
+      const now = new Date().toISOString();
+      if (!await store.update('studio_projects', project.id, { status: 'draft', spec: next, ...contentProjectLineageFields({ tenantId, spec: next, current: project }), updated_at: now })) throw Error('项目保存失败');
+      await invalidatePublishingApprovalForProject(tenantId, project.id);
+      const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
+      for (const task of tasks.items.filter(t => ['content_production', 'content_quality_gate', 'weekly_review'].includes(t.task_key))) await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, updated_at: now });
+      await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', completed_at: '', pause_reason: '' });
+      if (run.goal_id) await store.update(COLLECTION.goals, run.goal_id, { status: 'active', updated_at: now });
+      await appendAudit({ tenantId, userId, action: `content.blocker.${action}`, targetType: 'studio_project', targetId: project.id, metadata: { resumeStage: next.automation.stage, version: next.automation.contentVersion } });
+      res.json({ ok: true, stage: next.automation.stage, version: next.automation.contentVersion });
+    } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+  });
 });
 digitalEmployeesRouter.post('/content-projects/:projectId/revise', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
