@@ -68,17 +68,17 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
   ];
 
   return <section className="space-y-4 border-y border-border bg-surface py-4">
-    <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
+    {!blocked && <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent">Revision control</p>
         <h3 className="mt-1 text-base font-bold text-text-primary">生产现场 · 查看与纠正</h3>
       </div>
       <button type="button" className={secondaryButton} onClick={() => void load()}>刷新</button>
-    </header>
+    </header>}
 
-    <p className="border-l-2 border-border-bright bg-surface-2 px-3 py-2 text-xs leading-5 text-text-secondary">
+    {!blocked && <p className="border-l-2 border-border-bright bg-surface-2 px-3 py-2 text-xs leading-5 text-text-secondary">
       当前节点：{({ script: '脚本', material_match: '分镜素材', voice_subtitles: '配音与字幕', heygen: '数字人及混剪合成', render: '合成', quality: '质检', completed: '待验收', blocked: '需要处理' } as any)[data.spec.stage] || data.spec.stage}。保存后撤销旧审批并从受影响节点重新制作。
-    </p>
+    </p>}
 
     {blocked && <section aria-labelledby="blocker-resolution-title" className="rounded-md border border-amber-200 bg-amber-50/60 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -149,6 +149,9 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
       </div>
     </section>}
 
+    <details open={!blocked} className="rounded-md border border-border bg-white p-3">
+      <summary className="cursor-pointer text-xs font-bold text-text-secondary">手动修改分镜、配音等具体配置</summary>
+      <div className="mt-4 space-y-4">
     <nav aria-label="生产配置节点" className="flex flex-wrap border-b border-border">
       {[
         ['music', '配乐'],
@@ -314,6 +317,9 @@ export default function ProductionRevisionPanel({ projectId, onSaved }: { projec
       {!data.managed && <p className="text-xs text-text-muted">手动创作请在工作台编辑后重新生成。</p>}
       {dirty && <p className="text-xs font-medium text-amber">当前修改尚未进入上方成片，请保存并等待重新制作。</p>}
     </footer>
+
+      </div>
+    </details>
 
     {notice && <p role="status" className="border-l-2 border-amber bg-amber-dim px-3 py-2 text-sm text-amber">{notice}</p>}
   </section>;
