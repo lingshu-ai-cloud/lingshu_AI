@@ -9,7 +9,6 @@ import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import ProductionTaskScene from './ProductionTaskScene';
 import DirectorTaskContext from './DirectorTaskContext';
-import { requestProductionBack } from '../lib/productionNavigation';
 import ContentLibrary from './ContentLibrary';
 import ProductionRevisionPanel from './ProductionRevisionPanel';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
@@ -3348,6 +3347,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [projectId, setProjectId] = useState<string | null>(null);
   const currentProjectRef = useRef(projectId); currentProjectRef.current = projectId;
   const managedProductionProjectRef = useRef(false);
+  const [managedProductionBlocked, setManagedProductionBlocked] = useState(false);
   const agentProduction = useAgentProductionAction('studio');
   const [projectWorkflowContext, setProjectWorkflowContext] = useState<StudioWorkflowContext | null>(workflowContext || null);
   const generationSessionId = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -7074,6 +7074,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const applySpec = (s: Record<string, unknown>) => {
     studioSettingsEditedRef.current = true;
     managedProductionProjectRef.current = Boolean(s.workflowRunId && (s.automation as { managedBy?: string } | undefined)?.managedBy === 'digital_employee');
+    setManagedProductionBlocked((s.automation as { stage?: string; status?: string } | undefined)?.stage === 'blocked' || (s.automation as { status?: string } | undefined)?.status === 'blocked');
     setProjectWorkflowContext(
       workflowContext?.taskKey === 'content_quality_gate'
         ? workflowContext
@@ -12078,22 +12079,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   ) : null;
 
   return (
-    <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} directorContext={workflowContext || projectWorkflowContext || undefined} initialExpanded={(workflowContext?.taskKey || projectWorkflowContext?.taskKey) !== 'content_quality_gate'} />}
+    <div className="flex h-full flex-col overflow-y-auto relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
+      {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} directorContext={workflowContext || projectWorkflowContext || undefined} initialExpanded={false} />}
       {!agentProduction.active && !(workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
       {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
-      {managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
-        <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
-        <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
-      </div>}
+      {managedProductionBlocked && <div role="alert" className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-950">需要你处理 1 个受阻节点：先在下方选择处理方式，系统随后从断点继续。</div>}
       {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
         ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
-        : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
+        : managedProductionBlocked
+          ? <details open className="mx-4 mt-3 shrink-0 rounded border border-amber-300 bg-white p-3 shadow-sm"><summary className="cursor-pointer font-bold text-amber-900">需要人工处理：查看受阻原因与处理方式</summary><ProductionRevisionPanel projectId={projectId}/></details>
+          : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">查看生产配置与版本</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      <div className={showProjects ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+      <div className={showProjects ? 'hidden' : 'flex min-h-[42rem] shrink-0 flex-col'}>
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
         projectTitle={projectTitle}
