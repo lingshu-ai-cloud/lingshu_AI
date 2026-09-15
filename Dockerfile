@@ -15,7 +15,7 @@ COPY shared ./shared
 COPY src ./src
 COPY server ./server
 COPY desktop ./desktop
-COPY scripts/bootstrap-workbench-admin.mjs scripts/gemini-video-worker.mjs scripts/render-task-report-pdf.py ./scripts/
+COPY scripts/bootstrap-workbench-admin.mjs scripts/gemini-video-worker.mjs scripts/render-task-report-pdf.py scripts/rekey-tenant-transfer.mjs ./scripts/
 RUN pnpm run build \
   && pnpm prune --prod
 

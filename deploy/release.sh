@@ -299,7 +299,7 @@ wait_for_health() {
       pocketbase_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$pocketbase_id" 2>/dev/null || true)"
 
       if [[ "$app_health" == "healthy" && "$pocketbase_health" == "healthy" ]] \
-        && curl -fsS --max-time 5 "http://${app_bind_address}:${app_host_port}/api/overseas/health" >/dev/null; then
+        && curl -fsS --max-time 5 "http://${app_bind_address}:${app_host_port}/api/overseas/ready" >/dev/null; then
         return 0
       fi
     fi

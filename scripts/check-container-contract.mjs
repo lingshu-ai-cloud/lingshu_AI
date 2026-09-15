@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const read = file => fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 const dockerfile = read('Dockerfile');
+const pocketbaseDockerfile = read('Dockerfile.pocketbase');
 const dockerignore = read('.dockerignore');
 const compose = read('docker-compose.yml');
 const packageJson = JSON.parse(read('package.json'));
@@ -19,6 +20,11 @@ assert.match(dockerfile, /AS build[\s\S]*pnpm prune --prod[\s\S]*AS runtime/, 'r
 assert.doesNotMatch(dockerfile, /\bnpm ci|\bnpm run|setup:pb/, 'the app image must use the same dependency graph and leave schema writes to PB migrations');
 assert.doesNotMatch(dockerignore, /^\*\.(?:png|gif)$/m, 'runtime UI images must not be globally excluded');
 assert.match(compose, /api\/overseas\/ready/, 'container health must exercise dependency readiness');
+assert.match(
+  pocketbaseDockerfile,
+  /COPY\s+pb_migrations\s+\/pb\/pb_migrations/,
+  'the immutable PocketBase image must contain the versioned migrations used at startup',
+);
 
 const ignoreRules = dockerignore.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
 for (const sensitiveRoot of ['backups', 'restore', 'pb_data']) {

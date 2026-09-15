@@ -12,6 +12,7 @@ RUN apk add --no-cache ca-certificates unzip wget \
   && rm /tmp/pocketbase.zip
 
 COPY scripts/pocketbase-entrypoint.sh /usr/local/bin/pocketbase-entrypoint
+COPY pb_migrations /pb/pb_migrations
 RUN chmod +x /usr/local/bin/pocketbase-entrypoint
 
 WORKDIR /pb

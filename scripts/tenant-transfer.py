@@ -125,7 +125,13 @@ def collect_rows(
                 changed = True
         return changed
 
-    add("users", [dict(user)])
+    tenant_users = connection.execute(
+        'SELECT * FROM users WHERE CAST("tenantId" AS TEXT)=?', (tenant_id,)
+    ).fetchall()
+    if not tenant_users:
+        raise RuntimeError(f"source tenant has no users: {tenant_id}")
+    tenant_user_ids = sorted({str(row["id"]) for row in tenant_users})
+    add("users", (dict(row) for row in tenant_users))
     if "tenants" in schemas:
         add(
             "tenants",
@@ -143,12 +149,12 @@ def collect_rows(
             if key in TENANT_COLUMNS:
                 clauses.append((column, tenant_id))
             elif key in USER_COLUMNS:
-                clauses.append((column, user_id))
+                clauses.extend((column, tenant_user_id) for tenant_user_id in tenant_user_ids)
         add(table, select_matching_rows(connection, table, columns, clauses))
 
     # Pull relation rows that do not carry tenant_id themselves. Limit traversal
     # to explicit id/ref columns and to ids already proven to belong to the tenant.
-    known_ids = {user_id, tenant_id}
+    known_ids = {*tenant_user_ids, tenant_id}
     for rows in selected.values():
         known_ids.update(str(row.get("id")) for row in rows.values() if row.get("id"))
     for _ in range(6):
