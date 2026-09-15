@@ -1,7 +1,6 @@
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
 import WeeklyReviewPanel from "./WeeklyReviewPanel";
-import AgentExecutionStatus from './AgentExecutionStatus';
 import { agentExecutionSummary } from '../lib/agentExecutionSummary';
 import { taskNeedsAttention, taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 import OperatingAssessmentEditor from './OperatingAssessmentEditor';
@@ -14,7 +13,7 @@ import { agentRuleFields } from '../lib/agentRuleFields';
 import VideoPlanEditor from './VideoPlanEditor';
 import { normalizeVideoPlan, videoPlanErrors } from '../lib/videoCreationPlan';
 import DeliveryBoard from "./DeliveryBoard";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -3430,9 +3429,6 @@ export default function DigitalEmployeePage({
   const [viewGoalId, setViewGoalId] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("today");
-  const [headerCollapsed, setHeaderCollapsed] = useState(true);
-  const headerDetailsId = useId();
-  const executionDetailId = useId();
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
   const [navigationNotice, setNavigationNotice] = useState("");
@@ -3808,30 +3804,13 @@ export default function DigitalEmployeePage({
   return (
     <div className="workspace-canvas digital-employee-page">
       <div className="workspace-frame">
-        <header className="workspace-header">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="workspace-kicker flex items-center gap-2">
-                <Activity size={14} /> LingShu Operations
-              </div>
-              <h1 className="workspace-title mt-2">
-                {PAGE_REGISTRY.digitalEmployees.canonicalTitle}
-              </h1>
-              <p className="workspace-subtitle mt-2">
-                从内容生产到客户承接，每个状态都来自服务端任务、业务快照或真实渠道回执。
-              </p>
-            </div>
+        <header className="flex min-h-[86px] items-center justify-between gap-4 border-b border-border bg-white px-1 py-4">
+          <div className="flex items-center gap-3">
+            <Activity size={18} className="text-accent" />
+            <h1 className="text-xl font-bold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
+          </div>
             {data?.config && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-secondary">
-                <span className="border-l border-border pl-3 font-semibold text-text-primary">
-                  {data.config.companyName}
-                </span>
-                <span>
-                  {autonomyLabel[data.config.autonomyMode]}模式
-                </span>
-                <span>
-                  {operatingState} · {cycleLabel}
-                </span>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
                 <button
                   type="button"
                   onClick={() => setWorkspaceView("rules")}
@@ -3849,41 +3828,8 @@ export default function DigitalEmployeePage({
                 >
                   <History size={13} /> 历史记录
                 </button>
-                <button
-                  type="button"
-                  aria-expanded={!headerCollapsed}
-                  aria-controls={data.run && !viewGoalId ? `${headerDetailsId} ${executionDetailId}` : headerDetailsId}
-                  onClick={() => setHeaderCollapsed(value => !value)}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-slate-50 hover:text-slate-900"
-                >
-                  {headerCollapsed ? '展开信息' : '收起信息'}
-                  <ChevronDown size={13} className={`transition-transform ${headerCollapsed ? '' : 'rotate-180'}`}/>
-                </button>
               </div>
             )}
-          </div>
-          {!data?.config && <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-text-primary">1</span>{operatingState}</div>}
-          {data?.config && data.run && !viewGoalId && <AgentExecutionStatus data={data} onOpen={goLive} collapsed={headerCollapsed} detailId={executionDetailId}/>}
-          <div id={headerDetailsId} hidden={headerCollapsed}>
-            {data?.config && workspaceView === "today" && (!newGoal || Boolean(goal)) && <TodayNextAction
-              data={presentedData || data}
-              onCreateGoal={() => {
-                if (activeRun) { setWorkspaceView("live"); return; }
-                setNewGoal(true);
-                scrollTo(goalPanelRef);
-              }}
-              onReviewPlan={() => goLive()}
-              onOpenExecution={goLive}
-              onOpenReview={() => setWorkspaceView("review")}
-            />}
-          {data?.config && (
-            <p className="mt-4 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-400">
-              <span>{autonomyLabel[data.config.autonomyMode]}模式</span>
-              <span aria-hidden="true">·</span>
-              <span>{goal ? `本轮周期 ${cycleLabel}` : cycleLabel}</span>
-            </p>
-          )}
-          </div>
         </header>
 
         {data?.config && <nav
