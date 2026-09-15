@@ -6,8 +6,8 @@ import { taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 
 const nodeGroups = [
   { id: 'preparation', title: '经营准备', keys: ['context_readiness', 'goal_decomposition'] },
-  { id: 'inspiration', title: '灵感采集', keys: ['scheduled_source_collection', 'viral_analysis'] },
-  { id: 'production', title: '内容生产', keys: ['content_mode_routing', 'content_production', 'content_quality_gate'] },
+  { id: 'director', title: '内容编导', keys: ['scheduled_source_collection', 'viral_analysis', 'content_mode_routing'] },
+  { id: 'production', title: '内容生产', keys: ['content_production', 'content_quality_gate'] },
   { id: 'publishing', title: '内容发布', keys: ['content_release_approval', 'publishing_calendar', 'platform_publish'] },
   { id: 'customers', title: '客户经营', keys: ['customer_attribution', 'customer_segmentation', 'followup_batch_draft', 'followup_batch_approval', 'followup_dispatch'] },
   { id: 'review', title: '经营复盘', keys: ['weekly_review'] },
@@ -67,6 +67,18 @@ export function nodeState(task?: WorkflowTask) {
   return { label: task.status === 'waiting_external' && waitState ? taskWaitLabels[waitState.kind] || labels[task.status] : labels[task.status] || '状态待确认', tone: neutral };
 }
 
+function nodeProgress(task?: WorkflowTask): string {
+  if (!task) return '等待任务包启动';
+  if (task.blocked_reason) return task.blocked_reason;
+  const output = task.output || {};
+  const proof = output.proof as { value?: unknown; status?: unknown } | undefined;
+  if (proof?.value !== undefined) return `当前结果：${String(proof.value)}${proof.status === 'pending' ? '，仍待补齐' : ''}`;
+  if (typeof output.blockedReason === 'string' && output.blockedReason) return output.blockedReason;
+  if (task.status === 'succeeded') return '结果已保存，可打开查看依据和产物';
+  if (task.status === 'running') return '正在处理，已有结果会持续写回';
+  return '打开可查看输入、执行记录和下一步';
+}
+
 export function groupedWeeklyExecutionNodes(data: DigitalEmployeeOverview) {
   const nodes = weeklyExecutionNodes(data).map((node, index) => ({ ...node, number: index + 1 }));
   const groups = nodeGroups.map(group => ({ ...group, nodes: nodes.filter(node => group.keys.includes(node.key)) }));
@@ -104,6 +116,7 @@ export default function WeeklyExecutionNodes({ data, onOpen, onDetails, onConfig
               <button type="button" aria-label={`${number}. ${title}，前往${destination}`} onClick={() => onOpen(link)} className="group h-full w-full rounded-md p-3 text-left hover:bg-surface-2/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/25">
                 <div className="flex items-start gap-2"><span className="pt-0.5 text-xs font-semibold tabular-nums text-text-muted">{String(number).padStart(2, '0')}</span><h4 className="min-w-0 flex-1 text-sm font-semibold leading-5 text-text-primary">{title}</h4><ArrowRight size={14} className="mt-0.5 shrink-0 text-text-muted group-hover:text-accent"/></div>
                 <div className={`mt-2 flex flex-wrap items-center justify-between gap-2 ${runtime ? 'pr-6' : ''}`}><span className={`rounded-sm px-1.5 py-0.5 text-[11px] ${state.tone}`}>{state.label}</span><span className="text-xs text-text-secondary">{destination}</span></div>
+                <p className="mt-2 line-clamp-2 text-xs leading-5 text-text-muted">{nodeProgress(runtime)}</p>
               </button>
               {runtime && <button type="button" onClick={() => onDetails(runtime.id)} aria-label={`执行详情：${title}`} title="执行详情" className="absolute bottom-3 right-2 rounded-sm p-0.5 text-text-muted hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/25"><FileText size={14}/></button>}
             </li>;

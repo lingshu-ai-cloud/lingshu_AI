@@ -119,7 +119,8 @@
     "test:agent-monitor": "tsx src/lib/agentMonitor.test.ts && tsx src/components/AgentMonitorPage.contract.test.ts && tsx server/digitalEmployees/runEventReplay.test.ts && tsx server/digitalEmployees/browserSessions.test.ts",
     "test:content-lifecycle": "tsx server/digitalEmployees/contentLifecycle.test.ts",
     "test:review-todos": "tsx server/digitalEmployees/reviewTodos.test.ts && tsx server/digitalEmployees/reviewTodos.integration.test.ts",
-    "test:weekly-package": "tsx server/digitalEmployees/weeklyPackage.test.ts",
+    "test:weekly-package": "tsx server/digitalEmployees/weeklyPackage.test.ts && tsx server/digitalEmployees/weeklyMatrix.test.ts && tsx src/components/DirectorTaskContext.test.ts && tsx server/digitalEmployees/directorDecision.contract.test.ts",
+    "test:director-context-ui": "node scripts/test-director-context-ui.mjs",
     "test:full-chain-mock": "tsx server/digitalEmployees/fullChainMock.test.ts && tsx server/digitalEmployees/customerCreationMock.test.ts",
     "test:execution-gaps": "tsx server/digitalEmployees/publishingAccountSlots.integration.test.ts && tsx server/digitalEmployees/continuationIntegration.test.ts && tsx server/digitalEmployees/continuationPolicy.test.ts && tsx server/digitalEmployees/customerReentry.test.ts && tsx server/routes/orderLifecycle.test.ts && tsx server/publishing/receiptRecovery.test.ts && tsx server/lib/analysisLease.test.ts && tsx server/lib/sourceAnalysisExecution.test.ts && tsx server/publishing/pendingPublishGuard.test.ts && tsx server/publishing/directPublishLease.test.ts && tsx server/publishing/platformPublisherTikTok.test.ts && tsx src/components/publishing/PublishingReceiptRecovery.test.tsx",
     "test:production-quality": "tsx server/digitalEmployees/contentFinish.test.ts && tsx server/digitalEmployees/sceneEvidence.test.ts && tsx server/digitalEmployees/sceneRepair.render.test.ts && tsx server/digitalEmployees/productionQualityWorkflow.test.ts && tsx server/digitalEmployees/productionMaterialAnalysis.test.ts && tsx server/digitalEmployees/productionPreflight.test.ts && tsx server/lib/renderVisualQuality.test.ts",
@@ -168,7 +169,8 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "electron": "^44.3.0",
-    "typescript": "~5.8.2"
+    "typescript": "~5.8.2",
+    "vite": "^8.0.16"
   },
   "engines": {
     "node": ">=22.19.0"

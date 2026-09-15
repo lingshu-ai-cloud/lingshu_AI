@@ -1,9 +1,11 @@
+import type { MatrixAccountReview } from './weeklyMatrix';
 import type { ContinuationPolicy } from './continuationPolicy';
 import type { ReviewTodoBoard } from './reviewTodos';
 import { type OperatingAssessment } from './operatingMaturity';
 import type { WeeklyPackage } from "./weeklyPackage";
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import { authHeader } from "./auth";
+import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 
@@ -412,6 +414,7 @@ export interface WeeklyReview {
   id: string;
   status: string;
   summary: {
+    matrixPerformance?: MatrixAccountReview[];
     completionRate: number;
     automationRate: number;
     approvalRate: number;
@@ -808,6 +811,8 @@ export const digitalEmployeeApi = {
       `/tasks/${encodeURIComponent(taskId)}/corrections`,
       { method: "POST", body: JSON.stringify(input) },
     ),
+  directorDecision: (taskId: string, input: { contentId: string; decision: DirectorDecision; reason?: DirectorDecisionReason; applyToSimilar?: boolean }) =>
+    request<DigitalEmployeeOverview>(`/tasks/${encodeURIComponent(taskId)}/director-decision`, { method: 'POST', body: JSON.stringify(input) }),
   retryTask: (taskId: string) =>
     request<DigitalEmployeeOverview>(
       `/tasks/${encodeURIComponent(taskId)}/retry`,

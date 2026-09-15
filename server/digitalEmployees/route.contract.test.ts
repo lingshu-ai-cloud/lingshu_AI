@@ -119,7 +119,7 @@ assert.match(source, /runReviewSummary/, 'active workflow runs must expose a liv
 assert.match(source, /liveReview/, 'overview must return a live review before the run is terminal');
 assert.match(source, /recordBelongsToTask/, 'business evidence must be scoped to the workflow run and task lineage');
 assert.match(source, /const canonicalBusinessRefs = observation\.businessRefs\.length[\s\S]{0,180}task\.business_refs/, 'observe reconciliation must preserve business refs prepared earlier in the same tick');
-assert.match(source, /status: 'waiting_external'[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting tasks must persist canonical prepared/observed business refs');
+assert.match(source, /status: (?:'waiting_external'|waitingStatus)[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting or input-blocked tasks must persist canonical prepared/observed business refs');
 assert.match(source, /status: 'succeeded'[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'successful tasks must persist the same canonical business refs contract');
 assert.match(source, /runScheduledTaskNow/, 'the first scheduled collection must reuse the real scheduler execution entry point');
 assert.match(source, /ensureContentBatchPlan/, 'content mode routing must persist a real content batch plan');

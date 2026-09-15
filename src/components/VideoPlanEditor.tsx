@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { authHeader } from '../lib/auth';
+import { bindMatrixVideo, type MatrixAccountPlan } from '../lib/weeklyMatrix';
 import type { DigitalEmployeeConfig, PublishingPlatform } from '../lib/digitalEmployees';
 import { VIDEO_LANGUAGES } from '../lib/videoLanguages';
 import { defaultMixedScenes, normalizeVideoPlan, usesDigitalPresenter, VIDEO_PRESENTATIONS, VIDEO_ROUTES, videoPlanErrors, type VideoCreationPlan } from '../lib/videoCreationPlan';
@@ -15,7 +16,7 @@ const selectField = `${field} ui-select`;
 const fieldLabel = 'block text-xs font-bold text-text-secondary';
 const secondaryButton = 'inline-flex min-h-9 items-center justify-center rounded-md border border-border bg-surface px-3 py-2 text-xs font-bold text-text-secondary transition hover:border-border-bright hover:bg-surface-2 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40';
 
-export default function VideoPlanEditor({ plans, config, platforms, onChange }: { plans: VideoCreationPlan[]; config: DigitalEmployeeConfig; platforms: PublishingPlatform[]; onChange: (plans: VideoCreationPlan[]) => void }) {
+export default function VideoPlanEditor({ plans, config, platforms, matrixPlan, onChange }: { plans: VideoCreationPlan[]; config: DigitalEmployeeConfig; platforms: PublishingPlatform[]; matrixPlan?: MatrixAccountPlan[]; onChange: (plans: VideoCreationPlan[]) => void }) {
   const [options, setOptions] = useState<Options>({ products: [], assets: [], references: [] });
   const [avatars, setAvatars] = useState<Array<{ id: string; name: string; gender?: string }>>([]);
   const [notice, setNotice] = useState('');
@@ -100,6 +101,7 @@ export default function VideoPlanEditor({ plans, config, platforms, onChange }: 
         </div>
 
         <div className="grid gap-x-4 gap-y-3 md:grid-cols-2">
+          {matrixPlan && <label className={`${fieldLabel} md:col-span-2`}>服务账号<select className={selectField} value={plan.matrix?.accountId || ''} onChange={event => onChange(plans.map((video, i) => i === index ? bindMatrixVideo(video, matrixPlan.find(row => row.accountId === event.target.value)) : video))}><option value="">仅制作，不发布</option>{matrixPlan.map(row => <option key={row.accountId} value={row.accountId}>{row.platform} · {config.publishingTargets.find(target => target.accountId === row.accountId)?.accountLabel || row.accountId}</option>)}</select>{plan.matrix?.accountId && <span className="mt-1 block font-normal text-text-muted">受众：{plan.matrix.audience} · 目标：{plan.matrix.objective} · 引导：{plan.matrix.cta}</span>}</label>}
           <label className={fieldLabel}>
             脚本来源
             <select className={selectField} value={plan.route} onChange={event => change(index, { route: event.target.value as VideoCreationPlan['route'], materialIds: [], referenceId: '' })}>
@@ -110,7 +112,7 @@ export default function VideoPlanEditor({ plans, config, platforms, onChange }: 
           </label>
           <label className={fieldLabel}>
             产品
-            <select className={selectField} value={plan.productName} onChange={event => change(index, { productName: event.target.value, materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) })}>
+            <select className={selectField} value={plan.productName} disabled={Boolean(matrixPlan && plan.matrix?.accountId)} onChange={event => change(index, { productName: event.target.value, materialIds: [], scenePlan: plan.scenePlan?.map(scene => ({ ...scene, materialId: '' })) })}>
               <option value="">请选择产品</option>
               {options.products.map(product => <option key={product.id} value={product.name}>{product.name}</option>)}
             </select>
@@ -121,7 +123,7 @@ export default function VideoPlanEditor({ plans, config, platforms, onChange }: 
           </label>
           <label className={fieldLabel}>
             语言
-            <select className={selectField} value={plan.language} onChange={event => change(index, { language: event.target.value })}>
+            <select className={selectField} value={plan.language} disabled={Boolean(matrixPlan && plan.matrix?.accountId)} onChange={event => change(index, { language: event.target.value })}>
               {Object.entries(VIDEO_LANGUAGES).map(([id, name]) => <option key={id} value={id} disabled={languages.some(item => item.code === id && !item.available)}>{name}{languages.some(item => item.code === id && !item.available) ? '（需配置配音服务）' : ''}</option>)}
             </select>
           </label>
@@ -131,7 +133,7 @@ export default function VideoPlanEditor({ plans, config, platforms, onChange }: 
           </label>
           <label className={fieldLabel}>
             制作平台
-            <select className={selectField} value={plan.platform} onChange={event => change(index, { platform: event.target.value as PublishingPlatform })}>
+            <select className={selectField} value={plan.platform} disabled={Boolean(matrixPlan && plan.matrix?.accountId)} onChange={event => change(index, { platform: event.target.value as PublishingPlatform })}>
               {platforms.map(platform => <option key={platform}>{platform}</option>)}
             </select>
             {!platforms.includes(plan.platform) && <span className="mt-1 block text-xs font-medium text-amber">请重新选择本周范围内的平台</span>}
