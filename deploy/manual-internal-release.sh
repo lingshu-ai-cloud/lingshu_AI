@@ -19,7 +19,7 @@ actual_sha="$(git -C "$repo_root" rev-parse HEAD)"
 [[ -z "$(git -C "$repo_root" status --porcelain)" ]] \
   || fail "The deployment checkout is not clean."
 
-release_script="${RELEASE_SCRIPT:-/opt/actions-runner/_work/lingshu_AI/lingshu_AI/deploy/release.sh}"
+release_script="${RELEASE_SCRIPT:-$repo_root/deploy/release.sh}"
 release_root="${DEPLOY_ROOT:-/opt/lingshu/internal}"
 [[ -x "$release_script" || -f "$release_script" ]] \
   || fail "Managed release script is missing: $release_script"
