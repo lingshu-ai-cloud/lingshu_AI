@@ -514,6 +514,12 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                 <div className="pt-2">
                   <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
+                  <div className="my-2 border-t border-border" />
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pb-2 text-[10px] font-semibold text-text-muted">
+                    <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
+                    <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">服务条款</a>
+                    <a href="/data-deletion" target="_blank" rel="noreferrer" className="hover:text-accent">数据删除</a>
+                  </div>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                 </div>
               </motion.div>

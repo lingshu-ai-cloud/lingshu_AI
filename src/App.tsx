@@ -183,6 +183,7 @@ export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
   if (publicPath.startsWith('/assist/')) return <AssistLinkPage />;
   if (publicPath === '/privacy') return <LegalPages kind="privacy" />;
+  if (publicPath === '/terms') return <LegalPages kind="terms" />;
   if (publicPath === '/data-deletion') return <LegalPages kind="data-deletion" />;
 
   const isRegistrationEntry = window.location.pathname === '/register' &&
