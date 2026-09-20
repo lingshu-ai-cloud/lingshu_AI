@@ -4211,16 +4211,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const renderTimeline = useMemo(() => {
     let timelineCursor = 0;
     const rows = storyboardSlots.map((slot, index) => {
-      const avatarSlot = presentationMode === 'avatar' || presentationMode === 'heygen' && (presentationSources[slot.id] || (index === 0 ? 'avatar' : 'material')) === 'avatar';
+      const production = productionFor(slot);
+      const adoptedAvatar = production.candidates.find(item => item.id === production.adoptedId && item.source === 'avatar');
+      const avatarSlot = Boolean(adoptedAvatar) || presentationMode === 'avatar' || presentationMode === 'heygen' && (presentationSources[slot.id] || (index === 0 ? 'avatar' : 'material')) === 'avatar';
       const clip = materialById.get(storyboardAssignments[slot.id] || '');
       const edit = clip ? editForSlot(clip, slot) : { trimStart: 0, trimEnd: slot.end - slot.start, speed: 1, targetDuration: slot.end - slot.start };
-      const targetDuration = Math.max(0.5, edit.targetDuration || slot.end - slot.start);
+      // A generated talking-head clip already contains the final spoken
+      // performance. Its real duration must drive this shot; stretching it to
+      // the old script range damages lip sync and makes timestamps misleading.
+      const targetDuration = Math.max(0.5, adoptedAvatar && clip?.duration
+        ? clip.duration
+        : edit.targetDuration || slot.end - slot.start);
       const targetStart = timelineCursor;
       timelineCursor += targetDuration;
       if (avatarSlot) {
-        const production = productionFor(slot);
-        const adopted = production.candidates.find(item => item.id === production.adoptedId && item.source === 'avatar');
-        if (adopted && clip) return { production, clipId: clip.id, name: clip.name, type: clip.type, url: clip.url, poster: clip.poster, trimStart: 0, trimEnd: Math.min(clip.duration || targetDuration, targetDuration), speed: 1, targetStart, targetEnd: timelineCursor, targetDuration };
+        if (adoptedAvatar && clip) return { production, clipId: clip.id, name: clip.name, type: clip.type, url: clip.url, poster: clip.poster, trimStart: 0, trimEnd: Math.min(clip.duration || targetDuration, targetDuration), speed: 1, targetStart, targetEnd: timelineCursor, targetDuration };
         return digitalHumanJob?.outputUrl ? { clipId: digitalHumanJob.outputMaterialId || digitalHumanJob.id, name: 'HeyGen 数字人', type: 'video' as const, url: digitalHumanJob.outputUrl, poster: undefined, trimStart: targetStart, trimEnd: timelineCursor, speed: 1, targetStart, targetEnd: timelineCursor, targetDuration } : null;
       }
       if (!clip) return null;
@@ -4630,6 +4635,18 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       setScriptStageTab('bgm');
       return;
     }
+    if (contentMode === 'video' && step === 'script' && scriptStageTab === 'bgm') {
+      const targetStepId: StepId = storyboardSlots.length > 0
+        && assignedCount === storyboardSlots.length
+        && storyboardMatchReviewPendingCount === 0
+        ? 'cover'
+        : 'material';
+      const targetStepIndex = activeSteps.findIndex(item => item.id === targetStepId);
+      if (targetStepIndex >= 0) {
+        setStepIdx(targetStepIndex);
+        return;
+      }
+    }
     if (contentMode === 'video' && step === 'material') {
       const qualityBlockers = storyboardSlots.flatMap(slot => {
         const plan = storyboardSourcePlans[slot.id];
@@ -4641,6 +4658,30 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const blockers = [...qualityBlockers, ...validateStudioTimeline(renderTimeline)];
       if (blockers.length) {
         alert(`无法进入配乐：\n${blockers.join('\n')}`);
+        return;
+      }
+      // Once narration/avatar media exists, its real duration becomes the
+      // timing source of truth. Rewrite only the time ranges; keep the spoken
+      // copy and generated audio valid, then shift every following shot.
+      const timelineDurations = renderTimeline.map(item => Math.max(0.5, item.targetDuration || 0));
+      const timingChanged = storyboardSlots.some((slot, index) => timelineDurations[index]
+        && Math.abs((slot.end - slot.start) - timelineDurations[index]) > 0.05);
+      if (timingChanged && timelineDurations.length === storyboardSlots.length) {
+        let cursor = 0;
+        const timingAlignedScript = storyboardSlots.map((slot, index) => {
+          const start = cursor;
+          cursor += timelineDurations[index];
+          return `[${start.toFixed(1)}s-${cursor.toFixed(1)}s]\n${slot.detail.trim()}`;
+        }).join('\n\n');
+        const cleaned = normalizeScriptTimestamps(sanitizeStoryboardScript(timingAlignedScript, activeProductInfo, activeProductLabel));
+        setScript(cleaned);
+        if (activeModeScriptId) setModeScripts(current => current.map(item => item.id === activeModeScriptId ? { ...item, script: cleaned } : item));
+        setModeNotice('已按生成口播和数字人素材的实际时长更新分镜时间戳，并顺延后续分镜。');
+      }
+      const scriptStepIndex = activeSteps.findIndex(item => item.id === 'script');
+      if (scriptStepIndex >= 0) {
+        setScriptStageTab('bgm');
+        setStepIdx(scriptStepIndex);
         return;
       }
     }
@@ -7547,8 +7588,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const slot = storyboardSlots.find(item => item.id === productionEditorId);
     if (!slot || productionFor(slot).locked) return;
     const narration = productionFor(slot).narration;
-    const labels = '环境|景别|运镜|镜头功能|画面|Visual|人物说|台词|Voiceover|VO|口播|字幕|Caption|配乐|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项';
-    const pattern = new RegExp(`(?:人物说|台词|Voiceover|VO|口播)\\s*[：:]\\s*.*?(?=\\s+(?:${labels})\\s*[：:]|$)`, 'i');
+    const labels = '环境|景别|运镜|镜头功能|画面|Visual|人物说|台词|Voiceover|VO|口播|旁白|字幕|Caption|文字后期添加|后期(?:依次)?显示|配乐|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项';
+    const pattern = new RegExp(`(?:人物说|台词|Voiceover|VO|口播|旁白)\\s*[：:]\\s*.*?(?=\\s*(?:${labels})\\s*[：:]|$)`, 'i');
     const detail = pattern.test(slot.detail) ? slot.detail.replace(pattern, `口播：${narration || '无'}`) : `${slot.detail} 口播：${narration || '无'}`;
     shootingSlotsRef.current = shootingSlotsRef.current.map(item => item.slotId === slot.id ? { ...item, detail } : item);
     const nextScript = storyboardSlots.map(item => `[${item.time}]\n${item.id === slot.id ? detail : item.detail}`).join('\n\n');
@@ -11507,6 +11548,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const activeWorkbenchClip = activeWorkbenchSlot
     ? materialById.get(storyboardAssignments[activeWorkbenchSlot.id] || '')
     : previewClip || selectedClips[0];
+  const activeWorkbenchProduction = activeWorkbenchSlot ? productionFor(activeWorkbenchSlot) : null;
+  const activeWorkbenchAdoptedCandidate = activeWorkbenchProduction?.candidates.find(item => item.id === activeWorkbenchProduction.adoptedId);
+  const activeWorkbenchAvatarStale = Boolean(activeWorkbenchProduction?.source === 'avatar' && activeWorkbenchAdoptedCandidate
+    && activeWorkbenchAdoptedCandidate.fingerprint !== shotFingerprint(activeWorkbenchProduction, shotProductionContext));
+  const staleAvatarSlots = storyboardSlots.filter(slot => {
+    const production = productionFor(slot);
+    const adopted = production.candidates.find(item => item.id === production.adoptedId && item.source === 'avatar');
+    return Boolean(production.source === 'avatar' && adopted
+      && adopted.fingerprint !== shotFingerprint(production, shotProductionContext));
+  });
   const activeMaterialPlan = activeWorkbenchSlot ? sourcePlanFor(activeWorkbenchSlot) : null;
   const activeMaterialAssessment = activeWorkbenchSlot && activeWorkbenchClip
     ? assessMaterialMatch(activeWorkbenchSlot, activeWorkbenchClip, ratio)
@@ -11719,6 +11770,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     && Boolean(projectId)
     && socialVideoMediaReady;
   const primaryGeneratesVideo = contentMode === 'video' && step === 'preview' && (!workbenchHasFormalVideo || Boolean(socialContentTaskId && !socialVideoMediaReady));
+  const primaryNeedsAvatarRefresh = primaryGeneratesVideo && staleAvatarSlots.length > 0;
   const workbenchRenderableVersionCount = primaryGeneratesVideo ? buildRenderableVideoVersions().length : 0;
   const { ready: primarySubmitsSocialArtifact, submitting: socialArtifactSubmitting, submit: submitCurrentSocialArtifact } = useStudioSocialArtifactSubmission({
     enabled: Boolean(socialContentTaskId && (contentMode === 'poster' ? step === 'poster' && socialPosterArtifactReady : step === 'preview' && socialVideoArtifactReady)),
@@ -11799,6 +11851,16 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       void generateSubtitleDrafts();
       return;
     }
+    if (primaryNeedsAvatarRefresh) {
+      const staleSlot = staleAvatarSlots[0];
+      const materialIndex = activeSteps.findIndex(item => item.id === 'material');
+      if (materialIndex >= 0) setStepIdx(materialIndex);
+      setActiveStoryboardSlotId(staleSlot.id);
+      setWorkbenchTimelineTime(staleSlot.start);
+      openProduction(staleSlot);
+      setModeNotice('当前数字人候选属于修改表演目标前的旧版本。请生成并采用符合“强惊喜感”的新候选后，再生成成片。');
+      return;
+    }
     if (primaryGeneratesVideo) {
       void renderSelectedLanguageVersion(undefined, Boolean(socialContentTaskId));
       return;
@@ -11820,6 +11882,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         ? '一键生成口播语音'
         : primaryGeneratesSubtitles
           ? '一键生成字幕文案'
+        : primaryNeedsAvatarRefresh
+          ? '生成强惊喜感候选'
         : primaryGeneratesVideo
           ? socialContentTaskId && workbenchHasFormalVideo ? '生成可提交成片' : '生成成片'
       : step === 'script'
@@ -11861,6 +11925,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       ? '请先一键生成所选语言文案，再生成口播语音。'
     : primaryGeneratesSubtitles && !hasRequestedVoiceDrafts
       ? '请先完成所选语言文案。'
+      : primaryNeedsAvatarRefresh
+        ? '当前采用的是旧数字人候选，不能直接合成正式成片。'
       : primaryGeneratesVideo && workbenchRenderableVersionCount === 0
         ? '请先完成一种语言的口播，并为所有分镜匹配素材。'
     : step === 'material' && !canNext
@@ -11884,7 +11950,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       : primaryGeneratesSubtitles
         ? subtitleGenerating || !hasRequestedVoiceDrafts
         : primaryGeneratesVideo
-          ? rendering || batchRenderingLangs || workbenchRenderableVersionCount === 0
+          ? primaryNeedsAvatarRefresh ? false : rendering || batchRenderingLangs || workbenchRenderableVersionCount === 0
       : step === 'preview'
         ? !workbenchHasFormalVideo || rendering || batchRenderingLangs
         : !canNext;
@@ -12099,7 +12165,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   ) : null;
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} directorContext={workflowContext || projectWorkflowContext || undefined} initialExpanded={false} />}
       {!agentProduction.active && !(workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
       {modeNotice && !managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
@@ -12111,7 +12177,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      <div className={showProjects ? 'hidden' : 'flex min-h-[42rem] shrink-0 flex-col'}>
+      <div className={showProjects ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
         projectTitle={projectTitle}
@@ -12202,7 +12268,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       <button
                         key={task.id}
                         type="button"
-                        onClick={() => { if (taskIndex >= 0) setStepIdx(taskIndex); }}
+                        onClick={() => {
+                          if (task.id === 'bgm') {
+                            const scriptStepIndex = activeSteps.findIndex(item => item.id === 'script');
+                            if (scriptStepIndex >= 0) {
+                              setScriptStageTab('bgm');
+                              setStepIdx(scriptStepIndex);
+                            }
+                            return;
+                          }
+                          if (taskIndex >= 0) setStepIdx(taskIndex);
+                        }}
                         className={`flex min-w-0 items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] font-bold transition ${active ? 'border-slate-400 bg-white text-text-primary shadow-sm' : 'border-transparent text-text-secondary hover:border-border hover:bg-white'}`}
                       >
                         <span className="truncate">{task.label}</span>
@@ -12364,7 +12440,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       <p className="text-xs font-black text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1}</p>
                       <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-secondary">{storyboardSlotScript(activeWorkbenchSlot.detail).visual || activeWorkbenchSlot.title}</p>
                     </div>
-                    <span className={`flex-shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${activeWorkbenchClip ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{activeWorkbenchClip ? '已匹配' : '待匹配'}</span>
+                    <span className={`flex-shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${activeWorkbenchAvatarStale ? 'bg-amber-100 text-amber-800' : activeWorkbenchClip ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{activeWorkbenchAvatarStale ? '旧候选 · 待重生成' : activeWorkbenchClip ? '已匹配' : '待匹配'}</span>
                   </div>
                   {activeWorkbenchClip && (
                     <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-white p-2">
@@ -12501,7 +12577,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
               />
             </div>
           ) : activeWorkbenchClip?.type === 'video' && activeWorkbenchClip.url ? (
-            <div className="flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl">
+            <div className="relative flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl">
+              {activeWorkbenchAvatarStale && <div role="status" className="absolute inset-x-3 top-3 z-10 rounded-lg border border-amber-300 bg-amber-50/95 px-3 py-2 text-center text-xs font-bold text-amber-900 shadow">这是修改表演目标前的旧候选，仅供对比；“强惊喜感”尚未生成。</div>}
               <video
                 ref={workbenchVideoRef}
                 key={`${activeWorkbenchClip.id}:${activeWorkbenchSlot?.id || 'preview'}`}

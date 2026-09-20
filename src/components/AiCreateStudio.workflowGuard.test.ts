@@ -20,6 +20,10 @@ assert.deepEqual(validateStudioTimeline([{
   type: 'video', url: '/material.mp4', trimStart: 0, trimEnd: 10, speed: 1, targetDuration: 10,
 }]), []);
 
+assert.deepEqual(validateStudioTimeline([{
+  type: 'video', url: '/avatar.mp4', trimStart: 0, trimEnd: 3.3, speed: 1, targetDuration: 4,
+}]), [], '不足 1 秒的短尾应由渲染器末帧停留补足，不阻断进入配乐');
+
 const invalidTimeline = validateStudioTimeline([{
   type: 'video', url: '', trimStart: 0, trimEnd: 5, speed: 1, targetDuration: 8,
 }]);
@@ -53,8 +57,10 @@ assert.doesNotMatch(studioSource, /qualityStatus: result\.qualityStatus \|\| \(r
 
 console.log('AiCreateStudio workflow guard tests passed');
 
-assert.match(studioSource, /modeNotice && <div role="status"/, '镜头制作和预览也必须显示操作及降级提示');
+assert.match(studioSource, /modeNotice &&[^\n]*<div role="status"/, '镜头制作和预览也必须显示操作及降级提示');
 assert.match(studioSource, /coverMaterialVersions\.filter\(item => Boolean\(materialVersionCovers\[item.key\]\)\)\.length/, '封面计数只能统计当前有效版本');
 assert.match(studioSource, /脚本已就绪 · 不配音 · 尚未配乐/, '不配音不能显示配音已生成');
 assert.match(studioSource, /activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab/, '草稿应保存工作位置');
 assert.match(studioSource, /s.activeStepId \?\? s.workspaceStep[^]*?restoredSteps\.findIndex\(item => item.id === restoredStepId\)/, '重新打开草稿应回到保存的步骤');
+assert.match(studioSource, /scriptStageTab === 'bgm'[^]*?assignedCount === storyboardSlots\.length[^]*?\? 'cover'[^]*?: 'material'/, '配乐完成后，已确认素材的项目必须进入封面，不能循环回素材匹配');
+assert.match(studioSource, /primaryNeedsAvatarRefresh[^]*?生成强惊喜感候选[^]*?旧数字人候选，不能直接合成正式成片/, '表演要求变化后必须阻止旧数字人候选直接生成正式成片');

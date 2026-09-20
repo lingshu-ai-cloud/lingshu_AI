@@ -117,7 +117,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           if (estimatedCost > singleTestCap + 0.0001) throw new Error(`本镜头预计费用 ¥${estimatedCost.toFixed(2)}，超过单次测试上限 ¥${singleTestCap.toFixed(2)}；请缩短镜头或调整管理员预算`);
         }
         const now = new Date().toISOString();
-        const requestedMotion = avatarMotionPrompt(shot);
+        const slot = (project.spec.shootingSlots || []).find((item: any) => item.id === b.shotId);
+        const requestedMotion = avatarMotionPrompt(shot, Number(slot?.duration ?? (Number(slot?.end) - Number(slot?.start))));
         if ((shot.performancePreset || 'natural') !== 'natural' && !motionPromptEnabled()) throw new Error('当前 HeyGen 账户尚未启用 Motion Prompt；已阻止付费提交，避免表演要求被静默忽略');
         const intensity = shot.emotionIntensity ?? 0.5;
         const input: HeyGenInput = { avatarId: presenter.avatarId, voiceId: presenter.voiceId, script: shot.narration, ratio: b.ratio, transparent: shot.transparent, title: `灵枢镜头 ${b.shotId}`,

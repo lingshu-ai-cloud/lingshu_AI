@@ -71,7 +71,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const duplicate = await (await request('/jobs', input)).json(); assert.equal(duplicate.id, first.id); assert.equal(calls.length, 1);
     assert.equal((await request('/jobs', { ...input, requestId: 'parallel-new-id' })).status, 400); assert.equal(calls.length, 1);
     assert.equal(calls[0].body.script, 'hello'); assert.equal(calls[0].body.avatar_id, 'avatar1');
-    assert.deepEqual(calls[0].body.engine, { type: 'avatar_iv' }); assert.equal(calls[0].body.expressiveness, 'high'); assert.match(calls[0].body.motion_prompt, /delighted smile/i);
+    assert.deepEqual(calls[0].body.engine, { type: 'avatar_iv' }); assert.equal(calls[0].body.expressiveness, 'high'); assert.match(calls[0].body.motion_prompt, /raise eyebrows.*never stretch lips.*original mouth and teeth shape/i);
     assert.deepEqual(await (await request('/jobs?projectId=draft', undefined, 'B')).json(), []);
     assert.equal((await request(`/jobs/${first.id}/refresh`, {}, 'B')).status, 400);
     const rejected = await (await request(`/jobs/${first.id}/refresh`, {})).json();

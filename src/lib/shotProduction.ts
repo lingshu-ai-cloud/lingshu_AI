@@ -5,6 +5,12 @@ export type ShotLayout = 'full' | 'split' | 'pip';
 export type AvatarProductionMode = 'presenter' | 'cinematic' | 'overlay';
 export type AvatarCameraMovement = 'fixed' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'handheld' | 'tracking' | 'orbit' | 'crane';
 export type AvatarPerformancePreset = 'natural' | 'professional' | 'warm' | 'surprise_marketing';
+export const AVATAR_PERFORMANCE_PRESETS: Record<AvatarPerformancePreset, { label: string; description: string; intensity: number }> = {
+  natural: { label: '自然讲解', description: '动作少，稳定说明', intensity: 0.45 },
+  professional: { label: '专业推荐', description: '稳定、自信、有说服力', intensity: 0.6 },
+  warm: { label: '营销种草', description: '微笑并用手势强调卖点', intensity: 0.75 },
+  surprise_marketing: { label: '强惊喜感', description: '明显反应，控制嘴型并保持本人特征', intensity: 0.7 },
+};
 export interface PresenterAsset { id: string; name: string; avatarId: string; voiceId: string; authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square'; imageUrl?: string; videoUrl?: string; creationMode?: 'quick' | 'expert' }
 export interface ProductionDefaults { preference: AppearancePreference; presenters: PresenterAsset[]; defaultPresenterId: string }
 export interface ShotCandidate { id: string; materialId: string; fingerprint: string; createdAt: string; source: ShotSource; jobId?: string }
@@ -25,15 +31,20 @@ export const newShotProduction = (narration = '', presenterId = ''): ShotProduct
   performancePreset: 'natural', emotionIntensity: 0.5, motionPrompt: '',
 });
 
-export function avatarMotionPrompt(shot: Pick<ShotProduction, 'performancePreset' | 'emotionIntensity' | 'motionPrompt'>): string {
+export function avatarMotionPrompt(shot: Pick<ShotProduction, 'performancePreset' | 'emotionIntensity' | 'motionPrompt'>, duration?: number): string {
   if (shot.motionPrompt?.trim()) return shot.motionPrompt.trim().slice(0, 300);
   const intensity = Math.max(0, Math.min(1, Number(shot.emotionIntensity ?? 0.5)));
   const degree = intensity >= 0.75 ? 'clearly' : intensity >= 0.45 ? 'noticeably' : 'subtly';
+  const seconds = Math.max(1, Number(duration) || 4);
+  const first = Math.max(0.5, Math.round(seconds * 0.25 * 10) / 10);
+  const second = Math.max(first + 0.5, Math.round(seconds * 0.75 * 10) / 10);
+  const timing = (opening: string, middle: string, ending: string) =>
+    `0-${first}s: ${opening} ${first}-${second}s: ${middle} ${second}-${seconds}s: ${ending} Preserve the person's original mouth and teeth shape; no enlarged, extra, or overly white teeth.`.slice(0, 300);
   return ({
-    natural: `Presenter speaks naturally with ${degree} warm facial movement and steady eye contact.`,
-    professional: `Presenter leans in ${degree}, nods confidently, and keeps composed eye contact.`,
-    warm: `Presenter smiles warmly and opens one hand toward the viewer ${degree}.`,
-    surprise_marketing: `Presenter leans in ${degree} with widened eyes and a delighted smile, then raises one hand to emphasize the key point.`,
+    natural: timing(`Begin calmly with ${degree} natural facial movement.`, 'Use steady eye contact and minimal gestures.', 'Finish relaxed.'),
+    professional: timing('Begin composed and confident.', `Nod ${degree} with one controlled gesture.`, 'Finish with confident eye contact.'),
+    warm: timing('Begin with a warm, natural smile.', `Open one hand and emphasize the benefit ${degree}.`, 'Finish with friendly eye contact.'),
+    surprise_marketing: timing('Show controlled surprise; gently raise eyebrows and keep the mouth relaxed.', `Use a natural light smile. Raise one hand ${degree}; never stretch lips or open wide.`, 'Finish confidently with the same facial identity.'),
   } as const)[shot.performancePreset || 'natural'];
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { avatarMotionPrompt, parseShotCommand, shotFingerprint, shotBlockers, type ShotProduction, type ProductionDefaults, type AvatarJob } from '../lib/shotProduction';
+import { AVATAR_PERFORMANCE_PRESETS, avatarMotionPrompt, parseShotCommand, shotFingerprint, shotBlockers, type AvatarPerformancePreset, type ShotProduction, type ProductionDefaults, type AvatarJob } from '../lib/shotProduction';
 import { avatarCandidateReady } from '../lib/shotProduction';
 import PresenterManager from './enterprise/PresenterManager';
 
@@ -31,6 +31,11 @@ export default function ShotProductionPanel(props: {
   const estimatedDuration = Math.max(0, Number(props.duration) || 0);
   const estimatedCost = props.costPerSecond ? estimatedDuration * props.costPerSecond : null;
   const cinematicDurationValid = estimatedDuration >= 4 && estimatedDuration <= 15;
+  const selectedPerformancePreset = shot.performancePreset || 'natural';
+  const applyPerformancePreset = (preset: AvatarPerformancePreset) => {
+    const emotionIntensity = AVATAR_PERFORMANCE_PRESETS[preset].intensity;
+    props.onChange({ performancePreset: preset, emotionIntensity, motionPrompt: avatarMotionPrompt({ performancePreset: preset, emotionIntensity, motionPrompt: '' }, estimatedDuration) });
+  };
   const dialogRef = useRef<HTMLElement>(null);
   useEffect(() => { const previous = document.activeElement as HTMLElement | null; dialogRef.current?.focus(); return () => previous?.focus(); }, []);
   const mediaSelect = (label: string, field: 'productMaterialId' | 'backgroundMaterialId') => <label className="block text-xs">{label}<select value={shot[field]} disabled={shot.locked} onChange={e => props.onChange({ [field]: e.target.value })} className="mt-1 w-full rounded-lg border p-2"><option value="">不使用</option>{props.materials.filter(item => item.type !== 'audio').map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>;
@@ -69,11 +74,15 @@ export default function ShotProductionPanel(props: {
             <button type="button" className="rounded-xl border bg-white p-3 text-left text-xs" onClick={() => { setManagerMode('quick'); setManagerOpen(true); }}><strong className="block text-sm">创建照片形象</strong><span className="mt-1 block text-text-muted">上传照片或从视频抽帧</span></button>
             <button type="button" className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-left text-xs text-emerald-900" onClick={() => { setManagerMode('expert'); setManagerOpen(true); }}><strong className="block text-sm">创建视频分身（专家）</strong><span className="mt-1 block">上传完整真人视频训练 Digital Twin</span></button>
           </div>
-          {avatarMode !== 'cinematic' && <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-xs">表演风格<select aria-label="表演风格" value={shot.performancePreset || 'natural'} onChange={e => props.onChange({ performancePreset: e.target.value as ShotProduction['performancePreset'], motionPrompt: '' })} className="mt-1 w-full rounded-lg border p-2"><option value="natural">自然可信</option><option value="professional">专业笃定</option><option value="warm">温暖亲和</option><option value="surprise_marketing">惊喜营销</option></select></label>
-            <label className="block text-xs">表现强度 · {Math.round((shot.emotionIntensity ?? 0.5) * 100)}%<input aria-label="表现强度" type="range" min="0.2" max="0.9" step="0.1" value={shot.emotionIntensity ?? 0.5} onChange={e => props.onChange({ emotionIntensity: Number(e.target.value), motionPrompt: '' })} className="mt-2 w-full accent-emerald-600" /></label>
-            <label className="block text-xs sm:col-span-2">动作提示<textarea aria-label="动作提示" rows={2} value={shot.motionPrompt || avatarMotionPrompt(shot)} onChange={e => props.onChange({ motionPrompt: e.target.value })} className="mt-1 w-full rounded-lg border p-2" /></label>
-            <p className={`rounded-lg p-2 text-[10px] sm:col-span-2 ${props.motionPromptEnabled ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{props.motionPromptEnabled ? `已接入 Avatar IV 动作控制${selectedPresenter?.creationMode === 'expert' ? '；当前为视频分身，可保留更多本人动作习惯。' : '；照片形象也可生成动作，但不会学习本人动作习惯。'}` : '动作提示已保存为创作意图，但当前账户尚未启用 Motion Prompt，生成时不会静默假装生效。'}</p>
+          {avatarMode !== 'cinematic' && <div className="space-y-3">
+            <div><p className="mb-2 text-xs font-bold">表演目标</p><div className="grid grid-cols-2 gap-2">{(Object.entries(AVATAR_PERFORMANCE_PRESETS) as [AvatarPerformancePreset, (typeof AVATAR_PERFORMANCE_PRESETS)[AvatarPerformancePreset]][]).map(([preset, config]) => <button aria-pressed={selectedPerformancePreset === preset} key={preset} type="button" onClick={() => applyPerformancePreset(preset)} className={`rounded-xl border p-3 text-left ${selectedPerformancePreset === preset ? 'border-accent bg-accent/10 text-accent' : 'bg-white'}`}><strong className="block text-xs">{config.label}</strong><span className="mt-1 block text-[10px] font-normal text-text-muted">{config.description} · {Math.round(config.intensity * 100)}%</span></button>)}</div></div>
+            <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900"><strong>{AVATAR_PERFORMANCE_PRESETS[selectedPerformancePreset].label}</strong><p className="mt-1 leading-5">已按 {estimatedDuration.toFixed(1)} 秒镜头生成分段动作：{shot.motionPrompt || avatarMotionPrompt(shot, estimatedDuration)}</p></div>
+            <details className="rounded-xl border bg-white p-3"><summary className="cursor-pointer text-xs font-bold">高级设置 · 强度与动作提示</summary><div className="mt-3 grid gap-3">
+              <label className="block text-xs">表现强度 · {Math.round((shot.emotionIntensity ?? AVATAR_PERFORMANCE_PRESETS[selectedPerformancePreset].intensity) * 100)}%<input aria-label="表现强度" type="range" min="0.2" max="0.9" step="0.05" value={shot.emotionIntensity ?? AVATAR_PERFORMANCE_PRESETS[selectedPerformancePreset].intensity} onChange={e => { const emotionIntensity = Number(e.target.value); props.onChange({ emotionIntensity, motionPrompt: avatarMotionPrompt({ performancePreset: selectedPerformancePreset, emotionIntensity, motionPrompt: '' }, estimatedDuration) }); }} className="mt-2 w-full accent-emerald-600" /></label>
+              {(shot.emotionIntensity ?? AVATAR_PERFORMANCE_PRESETS[selectedPerformancePreset].intensity) > 0.75 && <p role="status" className="rounded-lg bg-amber-50 p-2 text-[10px] text-amber-800">高于 75% 容易放大嘴型、牙齿和眼部重绘。真人视频分身建议保持在 60%–75%。</p>}
+              <label className="block text-xs">动作提示<textarea aria-label="动作提示" rows={4} value={shot.motionPrompt || avatarMotionPrompt(shot, estimatedDuration)} onChange={e => props.onChange({ motionPrompt: e.target.value })} className="mt-1 w-full rounded-lg border p-2" /></label>
+            </div></details>
+            <p className={`rounded-lg p-2 text-[10px] ${props.motionPromptEnabled ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{props.motionPromptEnabled ? `已接入 Avatar IV 动作控制${selectedPresenter?.creationMode === 'expert' ? '；当前为视频分身，可保留更多本人动作习惯。' : '；照片形象也可生成动作，但不会学习本人动作习惯。'}` : '动作提示已保存为创作意图，但当前账户尚未启用 Motion Prompt，生成时不会静默假装生效。'}</p>
             <label className="block text-xs">后期镜头运动（待合成接入）<select value={shot.cameraMovement || 'fixed'} onChange={e => props.onChange({ cameraMovement: e.target.value as ShotProduction['cameraMovement'] })} className="mt-1 w-full rounded-lg border p-2"><option value="fixed">固定镜头</option><option value="push_in">缓慢推近</option><option value="pull_out">缓慢拉远</option><option value="pan_left">向左平移</option><option value="pan_right">向右平移</option><option value="handheld">轻微手持</option></select></label>
           </div>}
           {avatarMode === 'cinematic' && <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">

@@ -73,7 +73,8 @@ test('recorded speech requires actual matching transcription, not a script hint'
 test('avatar performance presets produce bounded motion prompts and invalidate stale candidates', () => {
   const natural = newShotProduction('新品到了');
   const surprise = { ...natural, performancePreset: 'surprise_marketing' as const, emotionIntensity: 0.8 };
-  assert.match(avatarMotionPrompt(surprise), /delighted smile/i);
+  assert.match(avatarMotionPrompt(surprise, 4), /0-1s:.*raise eyebrows.*1-3s:.*never stretch lips.*3-4s:.*original mouth and teeth shape/i);
+  assert.match(avatarMotionPrompt(natural, 4), /original mouth and teeth shape.*no enlarged, extra, or overly white teeth/i);
   assert.notEqual(shotFingerprint(natural, 'ctx'), shotFingerprint(surprise, 'ctx'));
   assert.equal(avatarMotionPrompt({ ...surprise, motionPrompt: 'Point to the product.' }), 'Point to the product.');
 });
