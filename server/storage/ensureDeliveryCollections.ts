@@ -354,6 +354,23 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
 }
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('studio_production_defaults', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'payload', type: 'json', required: true },
+  ]);
+  await ensureCollection('studio_presenter_assets', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'request_id', type: 'text', required: true },
+    { name: 'kind', type: 'text', required: true },
+    { name: 'payload', type: 'json', required: true },
+  ]);
+  await ensureCollection('studio_avatar_jobs', [
+    { name: 'tenant_id', type: 'text', required: true },
+    { name: 'project_id', type: 'text', required: true },
+    { name: 'request_id', type: 'text', required: true },
+    { name: 'payload', type: 'json', required: true },
+    { name: 'input', type: 'json', required: true },
+  ]);
   await ensureCollection('platform_ad_imports', [
     ...['tenant_id', 'provider', 'accountId', 'connectionId', 'campaignId', 'taskId', 'status', 'capability', 'createdAt', 'updatedAt'].map(name => ({ name, type: 'text' as const })),
     { name: 'providerSnapshot', type: 'json' },

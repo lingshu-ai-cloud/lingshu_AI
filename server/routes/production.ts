@@ -5,8 +5,10 @@ import { withPaidOperationLock } from '../lib/paidOperationLock.js';
 import { studioPaidBudget } from '../lib/studioPaidBudget.js';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
-import { EMPTY_DEFAULTS, shotFingerprint, type AvatarJob, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
+import { EMPTY_DEFAULTS, avatarMotionPrompt, shotFingerprint, type AvatarJob, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
 import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAlignment.js';
+import { createPresenterAssetsRouter } from './presenterAssets.js';
+import { mediaUrl } from '../lib/heygenPresenters.js';
 
 type JobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: AvatarJob; input: HeyGenInput };
 export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string>, options: { client?: HeyGenClient; enabled?: () => boolean; lockRoot?: string; reserve?: (id: string) => Promise<void>; prepareAudio?: (ref: NonNullable<HeyGenInput['audioRef']>, tenantId: string) => Promise<Uint8Array> } = {}) {
@@ -18,12 +20,15 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     locks.set(key, next); try { return await next; } finally { if (locks.get(key) === next) locks.delete(key); }
   };
   const enabled = () => options.enabled?.() ?? Boolean(process.env.HEYGEN_API_KEY && process.env.HEYGEN_GENERATION_ENABLED === 'true');
+  const motionPromptEnabled = () => process.env.HEYGEN_MOTION_PROMPT_ENABLED === 'true';
   const client = () => options.client || new HeyGenClient(process.env.HEYGEN_API_KEY || '');
   const readDefaults = async (tenantId: string) => (await store.list<any>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 1 })).items[0];
+  router.use('/presenters', createPresenterAssetsRouter(store, exclusive));
   router.get('/capabilities', (_req, res) => {
     const rate = Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND);
+    const singleTestCap = Number(process.env.HEYGEN_SINGLE_TEST_CAP_CNY);
     const budget = studioPaidBudget.status('heygen');
-    res.json({ configured: enabled() && budget.allowed, reason: !enabled() ? '管理员须配置 HEYGEN_API_KEY 并明确启用 HEYGEN_GENERATION_ENABLED；当前不会发起付费生成' : budget.reason, costPerSecond: rate > 0 ? rate : null, budget });
+    res.json({ configured: enabled() && budget.allowed, motionPromptEnabled: motionPromptEnabled(), reason: !enabled() ? '管理员须配置 HEYGEN_API_KEY 并明确启用 HEYGEN_GENERATION_ENABLED；当前不会发起付费生成' : budget.reason, costPerSecond: rate > 0 ? rate : null, singleTestCapCny: singleTestCap > 0 ? singleTestCap : null, budget });
   });
   router.get('/defaults', async (_req, res) => {
     try { res.json((await readDefaults(res.locals.tenantId))?.payload || EMPTY_DEFAULTS); }
@@ -37,7 +42,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         || new Set(b.presenters.map(item => item.id)).size !== b.presenters.length || (b.defaultPresenterId && !b.presenters.some(item => item.id === b.defaultPresenterId))) {
         res.status(400).json({ error: '请完整填写人物、声音ID并确认已取得使用授权' }); return;
       }
-      const payload: ProductionDefaults = { preference: b.preference, defaultPresenterId: String(b.defaultPresenterId || ''), presenters: b.presenters.map(item => ({ id: String(item.id).slice(0, 100), name: String(item.name).slice(0, 100), avatarId: String(item.avatarId).slice(0, 200), voiceId: String(item.voiceId).slice(0, 200), authorized: item.authorized === true, supportsAlpha: item.supportsAlpha === true, nativeOrientation: ['portrait', 'landscape', 'square'].includes(item.nativeOrientation || '') ? item.nativeOrientation : 'unknown' })) };
+        const payload: ProductionDefaults = { preference: b.preference, defaultPresenterId: String(b.defaultPresenterId || ''), presenters: b.presenters.map(item => ({ id: String(item.id).slice(0, 100), name: String(item.name).slice(0, 100), avatarId: String(item.avatarId).slice(0, 200), voiceId: String(item.voiceId).slice(0, 200), authorized: item.authorized === true, supportsAlpha: item.supportsAlpha === true, imageUrl: mediaUrl(item.imageUrl), videoUrl: mediaUrl(item.videoUrl), creationMode: item.creationMode === 'expert' ? 'expert' : 'quick', nativeOrientation: ['portrait', 'landscape', 'square'].includes(item.nativeOrientation || '') ? item.nativeOrientation : 'unknown' })) };
       await exclusive(`defaults:${tenantId}`, async () => {
         const existing = await readDefaults(tenantId);
         const saved = existing ? await store.update('studio_production_defaults', existing.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenantId, payload });
@@ -90,6 +95,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const context = project.spec?.shotProductionContext;
         if (!shot) throw new Error('草稿中未找到当前镜头，请重新打开分镜');
         if (shot.source !== 'avatar') throw new Error('当前镜头尚未保存为数字人来源');
+        if (shot.avatarMode === 'cinematic') throw new Error('运镜口播需要 Cinematic / Avatar Shots 专用接口，当前不会使用普通口播接口代替或扣费');
+        if (shot.avatarMode === 'overlay' && !shot.transparent) throw new Error('透明人物层必须启用透明输出并使用已核验支持的人物');
         if (shot.locked) throw new Error('当前镜头已锁定，请先解锁');
         if (shotFingerprint(shot, String(context || '')) !== b.fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
         const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
@@ -100,8 +107,23 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (shot.transparent && !presenter.supportsAlpha) throw new Error('该人物未确认支持透明视频，不能生成独立背景人物层');
         if (shot.backgroundMaterialId && shot.backgroundMode === 'baked') throw new Error('首版只支持独立背景合成，请改用透明人物层；不将新背景参数静默忽略');
         if (!shot.narration.trim() || shot.narration.length > 5000 || !['9:16', '16:9', '1:1'].includes(b.ratio) || b.ratio !== project.spec.ratio) throw new Error('台词或画幅无效，请先保存当前草稿');
+        const rate = Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND);
+        const singleTestCap = Number(process.env.HEYGEN_SINGLE_TEST_CAP_CNY);
+        if (singleTestCap > 0) {
+          const slot = (project.spec.shootingSlots || []).find((item: any) => item.id === b.shotId);
+          const shotDuration = Number(slot?.duration ?? (Number(slot?.end) - Number(slot?.start)));
+          if (!(rate > 0) || !(shotDuration > 0)) throw new Error('无法核算本次数字人测试费用，已在调用供应商前停止');
+          const estimatedCost = rate * shotDuration;
+          if (estimatedCost > singleTestCap + 0.0001) throw new Error(`本镜头预计费用 ¥${estimatedCost.toFixed(2)}，超过单次测试上限 ¥${singleTestCap.toFixed(2)}；请缩短镜头或调整管理员预算`);
+        }
         const now = new Date().toISOString();
-        const input: HeyGenInput = { avatarId: presenter.avatarId, voiceId: presenter.voiceId, script: shot.narration, ratio: b.ratio, transparent: shot.transparent, title: `灵枢镜头 ${b.shotId}` };
+        const requestedMotion = avatarMotionPrompt(shot);
+        if ((shot.performancePreset || 'natural') !== 'natural' && !motionPromptEnabled()) throw new Error('当前 HeyGen 账户尚未启用 Motion Prompt；已阻止付费提交，避免表演要求被静默忽略');
+        const intensity = shot.emotionIntensity ?? 0.5;
+        const input: HeyGenInput = { avatarId: presenter.avatarId, voiceId: presenter.voiceId, script: shot.narration, ratio: b.ratio, transparent: shot.transparent, title: `灵枢镜头 ${b.shotId}`,
+          ...(motionPromptEnabled() ? presenter.creationMode === 'expert'
+            ? { engine: 'avatar_v' as const, motionPrompt: requestedMotion }
+            : { engine: 'avatar_iv' as const, motionPrompt: requestedMotion, expressiveness: intensity >= 0.67 ? 'high' as const : intensity >= 0.34 ? 'medium' as const : 'low' as const } : {}) };
         if (shot.sound === 'voiceover') {
           const language = project.spec.activeVoiceLang || project.spec.lang;
           const audio = project.spec.voiceoverAudios?.[language];
@@ -133,9 +155,14 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (!record || record.tenant_id !== res.locals.tenantId) throw new Error('镜头任务不存在');
         if (record.payload.status === 'completed' || record.payload.status === 'failed') return { ...record.payload, id: record.id };
         if (!record.payload.remoteId) {
-          throw new Error('提交结果未知：刷新不会再次付费生成。请管理员核对供应商任务和账单；不要创建新请求重试');
+          const matches = await client().reconcile(record.input.title, record.payload.createdAt);
+          if (matches.length > 1) throw new Error('供应商存在多个同时间镜头任务，需管理员核对账单后绑定，禁止重复提交');
+          if (!matches.length) return update(record, { status: 'failed', error: '已核对供应商任务列表：本次请求未创建任务，可重新生成。' });
+          const recovered = matches[0];
+          await update(record, { remoteId: recovered.id, status: recovered.status === 'failed' ? 'failed' : 'pending', error: '已找回供应商原任务，未重复生成。' });
+          if (recovered.status === 'failed') return { ...record.payload, id: record.id };
         }
-        const remote = await client().status(record.payload.remoteId);
+        const remote = await client().status(record.payload.remoteId!);
         if (remote.status === 'completed') {
           try {
             const materialId = await importVideo(remote.url!, remote.duration!, { ...record.payload, id: record.id }, record.input, record.tenant_id);

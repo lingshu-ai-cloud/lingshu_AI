@@ -5,7 +5,7 @@ import ShotProductionPanel from './ShotProductionPanel.js';
 import { newShotProduction, EMPTY_DEFAULTS } from '../lib/shotProduction.js';
 
 const props = {
-  context: '', title: '第一镜', defaults: EMPTY_DEFAULTS, materials: [], products: [], jobs: [],
+  context: '', title: '第一镜', duration: 7, defaults: EMPTY_DEFAULTS, materials: [], products: [], jobs: [],
   reason: '优先真实素材', error: '', busy: false, configured: false, costPerSecond: null,
   onChange: () => {}, onClose: () => {}, onNarration: () => {}, onDefaults: async () => {}, onGenerate: () => {},
   onAi: () => {}, onShoot: () => {}, onMaterial: () => {}, onAdopt: () => {}, onRefresh: () => {},
@@ -15,6 +15,21 @@ test('failed media verification is not presented as a usable completed candidate
   assert.match(html, /已生成 · 待入库核验/);
   assert.match(html, /技术通过不代表口型/);
   assert.doesNotMatch(html, /候选已就绪/);
+});
+test('avatar workflow separates precise speech, cinematic motion and transparent overlay', () => {
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} configured costPerSecond={0.6} singleTestCapCny={5} shot={{ ...newShotProduction('这是一段口播'), source: 'avatar' }} />);
+  for (const label of ['精准口播 · 台词与口型优先', '运镜口播 · 4–15秒', '透明人物层 · 灵枢合成', '后期镜头运动（待合成接入）', '镜头 7.0 秒，配置估价约 ¥4.20']) assert.match(html, new RegExp(label));
+  assert.match(html, /当前合成器尚未应用该参数/);
+  assert.match(html, /单次口播测试预算准入上限 ¥5\.00/);
+  assert.match(html, /创建照片形象/);
+  assert.match(html, /创建视频分身（专家）/);
+  assert.match(html, /上传完整真人视频训练 Digital Twin/);
+});
+test('cinematic mode states its integration boundary and cannot trigger billing', () => {
+  const html = renderToStaticMarkup(<ShotProductionPanel {...props} configured shot={{ ...newShotProduction('这是一段口播', 'person'), source: 'avatar', avatarMode: 'cinematic' }} />);
+  assert.match(html, /Cinematic \/ Avatar Shots API 尚未接入/);
+  assert.match(html, /当前镜头 7.0 秒；运镜口播要求 4–15 秒/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>等待接入运镜接口/);
 });
 test('unconfigured avatar cannot be billed and exposes all four source choices', () => {
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} capabilityReason="服务端未配置 HEYGEN_API_KEY" shot={{ ...newShotProduction('hello'), source: 'avatar' }} />);

@@ -37,20 +37,21 @@ export class StudioPaidBudget {
     if (!Number.isSafeInteger(value)) throw new Error('预算账本金额异常');
     return value;
   }
-  status(provider: PaidProvider) {
+  status(provider: PaidProvider, reservationCny?: string) {
     try {
       const config = this.config(), used = this.used(this.read(config));
-      return { allowed: used + config.reserve[provider] <= config.limit,
-        remainingCny: Math.max(0, config.limit - used) / 1e6, reservationCny: config.reserve[provider] / 1e6,
-        reason: used + config.reserve[provider] <= config.limit ? '' : '预算余额不足，已禁止新付费任务；已有任务仍可刷新' };
+      const amount = reservationCny === undefined ? config.reserve[provider] : units(reservationCny);
+      return { allowed: used + amount <= config.limit,
+        remainingCny: Math.max(0, config.limit - used) / 1e6, reservationCny: amount / 1e6,
+        reason: used + amount <= config.limit ? '' : '预算余额不足，已禁止新付费任务；已有任务仍可刷新' };
     } catch (error) { return { allowed: false, remainingCny: null, reservationCny: null, reason: error instanceof Error ? error.message : '预算不可用' }; }
   }
-  async reserve(provider: PaidProvider, operationId: string) {
+  async reserve(provider: PaidProvider, operationId: string, reservationCny?: string) {
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {
       const config = this.config(), ledger = this.read(config);
       const id = createHash('sha256').update(`${provider}:${operationId}`).digest('hex');
       if (ledger.entries[id]) return; // Same logical operation never consumes a second allocation.
-      const amount = config.reserve[provider];
+      const amount = reservationCny === undefined ? config.reserve[provider] : units(reservationCny);
       if (this.used(ledger) + amount > config.limit) throw new Error('预算余额不足，未调用供应商');
       ledger.entries[id] = { provider, amount, at: new Date().toISOString() };
       const temp = path.join(this.root, `ledger.${randomUUID()}.tmp`);

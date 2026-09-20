@@ -1,3 +1,4 @@
+import { createPersonSwapRouter } from './personSwap.js';
 import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
@@ -1522,6 +1523,7 @@ function materialInfoLines(infos: ScriptMaterialInfo[]): string {
 
 export const studioRouter = Router();
 studioRouter.use(requireAuth);
+studioRouter.use('/person-swap', createPersonSwapRouter(store));
 studioRouter.use('/local-renders', studioRenderMediaRouter(path.resolve(process.cwd(), 'data/publishing-uploads')));
 studioRouter.use((_req, res, next) => {
   studioTenantContext.run((res.locals as AuthLocals).tenantId, next);
@@ -2150,6 +2152,8 @@ ${normalizedMaterialInfos.map((info, index) => {
 ${previousCloneScripts.map(item => [...new Set(Array.from(item.matchAll(/^(?:台词|字幕)[：:]\s*(.+)$/gm)).map(match => match[1]))].join(' ').slice(0, 1200)).join('\n')}
 新版本至少改变钩子切口、证据顺序、叙述视角中的两项；不能只替换同义词。`
     : ''}`;
+  let durationFitWarning = '';
+  let storyboardFallbackWarning = '';
 
   try {
     const scriptSystemPrompt = `${presentationRule}\n${mixedRules}\n你是熟悉产品的讲解者，正在帮一个买家想清楚选择。只输出请求的 JSON。产品资料限定你可以陈述的事实；未知信息留作要确认的问题。保留支持、可配置等条件，不推导实施方式或效果，不许诺资料外的服务。`;
@@ -2193,6 +2197,7 @@ ${narrationBudget}
       throw new Error('口播模型未返回完整的结构化台词');
     }
     if (editedVoiceLines.length && lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
+      const originalVoiceLines = editedVoiceLines;
       const estimated = lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0);
       editedVoiceLines = scriptNarrationLinesFromPlan(await callLLM(`把口播缩到 ${productDuration} 秒；当前预估 ${estimated.toFixed(1)} 秒，至少减少 ${Math.max(20, Math.ceil((1 - productDuration / estimated) * 100))}% 内容。
 产品称呼：${spokenProductNames.join('、')}。本条事实：${spokenFact}
@@ -2202,13 +2207,8 @@ ${endingRules}
 ${narrationBudget}
 只输出 ${lang} JSON：{"narration":"缩短后的完整口播"}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), productSceneCount);
       if (!editedVoiceLines.length || lockedVoiceDurations(editedVoiceLines).reduce((sum, seconds) => sum + seconds, 0) > productDuration) {
-        res.status(422).json({
-          ok: false, source: 'ai_rejected', provenance: 'ai_rejected', publishable: false,
-          script: '', code: 'SCRIPT_DURATION_EXCEEDED', qualityStatus: 'rejected',
-          error: '口播仍超过目标时长，请增加时长或减少本条要讲的内容',
-          validationIssues: ['口播缩写后仍不满足目标时长'], validationWarnings: [],
-        });
-        return;
+        editedVoiceLines = editedVoiceLines.length ? editedVoiceLines : originalVoiceLines;
+        durationFitWarning = '口播预估超过目标时长，已保留生成结果；请在脚本与声音步骤精简口播或增加成片时长';
       }
     }
     const lockedVoiceLines = generationMode === 'product'
@@ -2219,7 +2219,7 @@ ${narrationBudget}
     const lockedNarrationRules = lockedVoiceLines.length
       ? `已锁定口播（不得改写；字幕逐字复制）：\n${lockedVoiceLines.join('\n')}`
       : '';
-    const generatedVisualScenes = generationMode === 'product' && lockedVoiceLines.length
+    let generatedVisualScenes = generationMode === 'product' && lockedVoiceLines.length
       ? parseLockedStoryboardScenes(await callLLM(`为以下锁定口播片段写可执行分镜，恰好 ${lockedVoiceLines.length} 段。
 成片约束：${presentationRule}\n${mixedRules}
 产品名称：${selectedProductNames(product).join('、')}
@@ -2235,7 +2235,8 @@ ${presentationMode === 'heygen' ? '混剪禁止补拍建议，缺少素材证明
 {"scenes":[{"environment":"拍摄地点；未知写按实物环境","shot":"仅景别名称，如特写","camera":"仅运镜名称，如固定","composition":"主体位置与朝向","purpose":"本镜作用短语","visual":"${presentationMode === 'heygen' ? '以数字人：或素材《完整素材名》；源片截取：a-bs；开头，后接已验证画面描述' : '完整动作描述；无素材时以建议补拍开头，不能只写建议补拍'}","music":"音乐或无"}]}。`, { backend: providerOpt, systemPrompt: scriptSystemPrompt }), lockedVoiceLines.length)
       : [];
     if (generationMode === 'product' && lockedVoiceLines.length && generatedVisualScenes.length !== lockedVoiceLines.length) {
-      throw new Error('分镜模型未返回完整的结构化画面');
+      generatedVisualScenes = safeProductScenes(product, lockedVoiceLines.length);
+      storyboardFallbackWarning = '分镜模型返回不完整，已生成保守分镜草案；请在成片制作前核对并补充真实画面';
     }
     const lockedVisualScenes = generationMode === 'material' && voiceoverMode === 'unselected' && lockedVoiceLines.length
       ? safeMaterialScenes(normalizedMaterialInfos)
@@ -2675,7 +2676,10 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
       /参考节奏|Reference video|对标视频|基础要求|分析摘要|竞品识别|产品替换|参考爆款|成片目标|指定画风|核心情绪|行业锁定|结构迁移|不迁移行业|不继承原视频|企业产品组合|主推产品|<具体|不得|必须满足/.test(script) ? '脚本泄漏了生成规则或占位说明' : '',
       /不破|不裂|纹丝不动|吹不烂|保证|最快|最低价|全网|no tear|won'?t tear|never breaks?|unbreakable/i.test(script) ? '脚本包含绝对化或不可验证承诺' : '',
     ].filter(Boolean);
-    const nonBlockingQualityIssues = Array.from(new Set(validationIssues.filter(isNonBlockingScriptQualityIssue)));
+    const nonBlockingQualityIssues = Array.from(new Set(validationIssues.filter(issue =>
+      isNonBlockingScriptQualityIssue(issue)
+      || Boolean(durationFitWarning && /口播过长|台词过长|目标时长/.test(issue)),
+    )));
     const materialStrictHardIssues = strictCommercialIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
     const materialHardIssues = Array.from(new Set([
       ...mixedIssues,
@@ -2692,6 +2696,8 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
     ].filter(Boolean)));
     const validationWarnings = generationMode === 'material'
       ? Array.from(new Set([
+        durationFitWarning,
+        storyboardFallbackWarning,
         ...(materialQualityV2?.warnings || []),
         ...strategyIssues,
         ...speechIssues,
@@ -2706,10 +2712,10 @@ ${script}`, { backend: providerOpt, systemPrompt: confirmedProductEnterprise || 
           ? `商业字段待企业中心确认：${commercialAudit.fieldsToConfirm.join('、')}`
           : '',
       ].filter(Boolean)))
-      : nonBlockingQualityIssues;
+      : Array.from(new Set([durationFitWarning, storyboardFallbackWarning, ...nonBlockingQualityIssues].filter(Boolean)));
     const hardValidationIssues = generationMode === 'material'
       ? materialHardIssues
-      : validationIssues.filter(issue => !isNonBlockingScriptQualityIssue(issue));
+      : validationIssues.filter(issue => !nonBlockingQualityIssues.includes(issue));
     const shouldBlockScript = hardValidationIssues.length > 0;
     if (shouldBlockScript) {
       console.warn('[studio] script rejected:', hardValidationIssues.join(' | ') || 'unsafe_script');

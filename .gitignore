@@ -82,3 +82,6 @@ __pycache__/
 # Downloaded licensed footage and local verification artifacts; provenance lives in docs.
 /data/acceptance-materials/
 data/analysis-locks/
+
+# Private person-swap uploads, outputs and admission ledger
+/data/person-swap/

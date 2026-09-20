@@ -172,10 +172,10 @@ try {
   shortenedLines = null;
   const stillLongStart = prompts.length;
   const stillLong = await generate();
-  assert.equal(stillLong.status, 422, 'a still-overlong draft cannot silently extend the requested duration');
-  assert.equal(stillLong.body.code, 'SCRIPT_DURATION_EXCEEDED');
-  assert.match(stillLong.body.error, /增加时长/);
-  assert.equal(prompts.length - stillLongStart, 3, 'no visuals after unsuccessful shortening');
+  assert.equal(stillLong.status, 200, JSON.stringify(stillLong.body));
+  assert.equal(stillLong.body.qualityStatus, 'warning');
+  assert.match(stillLong.body.validationWarnings.join(' '), /口播预估超过目标时长/);
+  assert.equal(prompts.length - stillLongStart, 4, 'visual generation continues after an overlong narration warning');
   editedLines = null;
 
   lines = ['先看看瓶子。', '容量是999ml。' , '再看看标签。', '私信了解产品资料。'];

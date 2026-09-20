@@ -837,7 +837,7 @@ function parseStandaloneTimeRangeLabel(value: string): { label: string; start: n
 }
 
 export function parseStoryboardSlots(value: string, totalDuration: number): StoryboardSlot[] {
-  const lines = String(value || '').split('\n');
+  const lines = normalizeClockTimelineSyntax(value).split('\n');
   const slots: StoryboardSlot[] = [];
   let current: { range: { label: string; start: number; end: number }; lines: string[] } | null = null;
   const push = () => {
@@ -960,10 +960,10 @@ export function fitStoryboardSlotsToDuration(slots: StoryboardSlot[], duration: 
 
 function storyboardSlotScript(detail: string) {
   const text = String(detail || '').replace(/\s+/g, ' ').trim();
-  const labels = '环境|景别|运镜|镜头功能|画面|Visual|人物说|台词|Voiceover|VO|口播|字幕|Caption|素材|素材依据|配乐|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项';
-  const pick = (field: string) => text.match(new RegExp(`(?:${field})\\s*[：:]\\s*[“\"]?(.+?)[”\"]?(?=\\s+(?:${labels})\\s*[：:]|$)`, 'i'))?.[1]?.trim() || '';
+  const labels = '环境|景别|运镜|镜头功能|画面|Visual|人物说|台词|Voiceover|VO|口播|旁白|字幕|Caption|屏幕文字|OnScreenText|文字后期添加|后期(?:依次)?显示|素材|素材依据|配乐|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项';
+  const pick = (field: string) => text.match(new RegExp(`(?:${field})\\s*[：:]\\s*[“\"]?(.+?)[”\"]?(?=\\s*(?:${labels})\\s*[：:]|$)`, 'i'))?.[1]?.trim() || '';
   const visual = pick('画面|Visual');
-  const voice = pick('人物说|台词|Voiceover|VO|口播').replace(/^“|”$/g, '');
+  const voice = pick('人物说|台词|Voiceover|VO|口播|旁白').replace(/^“|”$/g, '');
   const subtitle = pick('字幕|Caption');
   return {
     visual,
@@ -1143,8 +1143,19 @@ function cleanTimestampNumber(value: string): string {
   return number.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
-function normalizeScriptTimestamps(value: string): string {
+function normalizeClockTimelineSyntax(value: string): string {
   return String(value || '').replace(
+    /^(\s*)(\d{1,2}):([0-5]\d)\s*[-–—]\s*(\d{1,2}):([0-5]\d)\s*[｜|]\s*/gm,
+    (_match, indentation, startMinutes, startSeconds, endMinutes, endSeconds) => {
+      const start = Number(startMinutes) * 60 + Number(startSeconds);
+      const end = Number(endMinutes) * 60 + Number(endSeconds);
+      return `${indentation}[${cleanTimestampNumber(String(start))}-${cleanTimestampNumber(String(end))}s]\n`;
+    },
+  );
+}
+
+function normalizeScriptTimestamps(value: string): string {
+  return normalizeClockTimelineSyntax(value).replace(
     /\[\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?\s*[-–—]\s*(\d+(?:\.\d+)?)\s*(?:s|秒)?\s*\]/gi,
     (_match, start, end) => `[${cleanTimestampNumber(start)}-${cleanTimestampNumber(end)}s]`,
   );
@@ -2049,7 +2060,7 @@ function looksLikeProductionInstruction(value: string): boolean {
 // Storyboard rows can be persisted either one field per line or as one packed
 // line. Stop at the next field label so an inline `字幕：无` does not make a
 // valid `台词：...` look like a production instruction and disappear.
-const VOICEOVER_FIELD_RE = /(?:人物说|台词|Voiceover|VO|口播)\s*[：:]\s*(.*?)(?=\s+(?:环境|景别|运镜|构图|镜头功能|画面|Visual|字幕|Caption|屏幕文字|OnScreenText|配乐|音乐|音效|Sound|SFX|BGM|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项)\s*[：:]|$)/i;
+const VOICEOVER_FIELD_RE = /(?:人物说|台词|Voiceover|VO|口播|旁白)\s*[：:]\s*(.*?)(?=\s*(?:环境|景别|运镜|构图|镜头功能|画面|Visual|字幕|Caption|屏幕文字|OnScreenText|文字后期添加|后期(?:依次)?显示|配乐|音乐|音效|Sound|SFX|BGM|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项)\s*[：:]|$)/i;
 const NON_VOICE_FIELD_RE = /^(?:环境|景别|运镜|构图|镜头功能|画面|Visual|字幕|Caption|屏幕文字|OnScreenText|配乐|音乐|音效|Sound|SFX|BGM|真实性要求|可见事实|表达意图|未展示因果|Omni提示词|Omni禁止项)\s*[：:]/i;
 
 function hasStoryboardFieldLabels(lines: string[]): boolean {
@@ -2091,7 +2102,7 @@ function looksLikeStandaloneSpeech(value: string): boolean {
 function cleanVoiceoverLine(value: string): string {
   let text = String(value || '')
     .replace(/^\s*\[[^\]]+\]\s*/g, '')
-    .replace(/^(Hook|Body|CTA|口播|字幕|人物说|台词|Voiceover|VO|Caption)\s*[：:·-]?\s*/i, '')
+    .replace(/^(Hook|Body|CTA|口播|旁白|字幕|人物说|台词|Voiceover|VO|Caption)\s*[：:·-]?\s*/i, '')
     .replace(/[（(]\s*(?:参考原节奏|参考节奏|原节奏|参考原片|原片|原视频|日文原句|英文原句|韩文原句)[^）)]*[）)]/gi, '')
     .replace(/[（(][^）)]*(?:参考原节奏|参考节奏|原节奏|参考原片|原片|原视频|日文原句|英文原句|韩文原句)[^）)]*[）)]/gi, '')
     .replace(/[（(][^）)]*[\u3040-\u30ff\uac00-\ud7af][^）)]*[）)]/g, '')
@@ -2178,7 +2189,7 @@ function mergeTimestampedVoiceoverSegments(
 }
 
 function parseTimestampedVoiceover(value: string): Array<{ time: string; text: string }> {
-  const lines = String(value || '').split(/\n+/);
+  const lines = normalizeClockTimelineSyntax(value).split(/\n+/);
   const segments: Array<{ time: string; text: string }> = [];
   const structuredStoryboard = hasStoryboardFieldLabels(lines);
   let currentTime = '';
@@ -3032,7 +3043,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const productionRequestIds = useRef(new Map<string, string>());
   const projectRevisionRef = useRef<unknown>(undefined);
   const [productionError, setProductionError] = useState('');
-  const [productionCapability, setProductionCapability] = useState({ configured: false, reason: '正在读取数字人配置', costPerSecond: null as number | null });
+  const [productionCapability, setProductionCapability] = useState({ configured: false, motionPromptEnabled: false, reason: '正在读取数字人配置', costPerSecond: null as number | null, singleTestCapCny: null as number | null });
   const [digitalHumanNotice, setDigitalHumanNotice] = useState('');
   const [digitalHumanMode, setDigitalHumanMode] = useState<'fast' | 'quality'>('quality');
   const [digitalHumanConsent, setDigitalHumanConsent] = useState(false);
@@ -3498,7 +3509,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
   useEffect(() => {
     let live = true;
-    void Promise.all([productionApi.defaults(), productionApi.capabilities()]).then(([defaults, capability]) => { if (live) { setProductionDefaults(defaults); setProductionCapability(capability); } }).catch(error => { if (live) setProductionError(String(error)); });
+    void Promise.allSettled([productionApi.defaults(), productionApi.capabilities()]).then(([defaults, capability]) => {
+      if (!live) return;
+      if (defaults.status === 'fulfilled') setProductionDefaults(defaults.value);
+      if (capability.status === 'fulfilled') setProductionCapability(capability.value);
+      const failures = [defaults, capability].filter(result => result.status === 'rejected') as PromiseRejectedResult[];
+      if (failures.length) setProductionError(failures.map(result => String(result.reason?.message || result.reason)).join('；'));
+    });
     return () => { live = false; };
   }, []);
   useEffect(() => {
@@ -11562,7 +11579,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (video.readyState >= 1) seek();
     else video.addEventListener('loadedmetadata', seek, { once: true });
     return () => video.removeEventListener('loadedmetadata', seek);
-  }, [activeWorkbenchClip?.id, activeWorkbenchClip?.type, activeWorkbenchSlot?.id, step, workbenchFormalPreviewUrl, workbenchTimelineTime, workbenchSeekTime]);
+  // Slider seeks are handled by seekWorkbenchTimeline. Depending on the live
+  // playback clock here would pause and seek the video on every timeupdate,
+  // leaving an otherwise fully buffered preview stuck at the first frame.
+  }, [activeWorkbenchClip?.id, activeWorkbenchClip?.type, activeWorkbenchSlot?.id, step, workbenchFormalPreviewUrl]);
   const focusWorkbenchStoryboardSlot = (slotId: string) => {
     const nextSlot = storyboardSlots.find(item => item.id === slotId);
     if (!nextSlot) return;
@@ -12082,7 +12102,6 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     <div className="flex h-full flex-col overflow-y-auto relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {!agentProduction.active && (workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <ProductionTaskScene key={`${workflowContext?.runId || projectWorkflowContext?.runId}:${workflowContext?.taskId || projectWorkflowContext?.taskId}`} runId={workflowContext?.runId || projectWorkflowContext!.runId} taskId={workflowContext?.taskId || projectWorkflowContext!.taskId} directorContext={workflowContext || projectWorkflowContext || undefined} initialExpanded={false} />}
       {!agentProduction.active && !(workflowContext?.runId && workflowContext?.taskId || projectWorkflowContext?.runId && projectWorkflowContext?.taskId) && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
-      {!agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {modeNotice && !managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
       {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
         ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
@@ -12098,6 +12117,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         projectTitle={projectTitle}
         projectSubtitle={`${contentMode === 'video' ? '视频' : '图文'} · ${platform} · ${ratio}`}
         onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
+        onOpenProjects={!agentProduction.active ? () => void openProjects().catch(error => setModeNotice(error instanceof Error ? error.message : '作品列表读取失败，请稍后重试')) : undefined}
         onSave={!agentProduction.active && !managedProductionProjectRef.current ? () => void saveProject('draft').catch(error => setModeNotice(error.message)) : undefined}
         saveStatus={{
           state: savingProj ? 'saving' : autosaveStatus,
@@ -12536,6 +12556,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       {productionEditorSlot && (
         <ShotProductionPanel
           shot={productionFor(productionEditorSlot)}
+          duration={Math.max(0, productionEditorSlot.end - productionEditorSlot.start)}
           context={shotProductionContext}
           title={`分镜 ${storyboardSlots.findIndex(item => item.id === productionEditorSlot.id) + 1}`}
           defaults={productionDefaults}
@@ -12548,8 +12569,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           error={productionError || digitalHumanNotice}
           busy={productionBusy}
           configured={productionCapability.configured}
+          motionPromptEnabled={productionCapability.motionPromptEnabled}
           capabilityReason={productionCapability.reason}
           costPerSecond={productionCapability.costPerSecond}
+          singleTestCapCny={productionCapability.singleTestCapCny}
           onChange={patch => {
             try {
               const key = productionKey(productionEditorSlot.id);
