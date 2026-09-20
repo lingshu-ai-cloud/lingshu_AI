@@ -60,6 +60,20 @@ try {
   ), (error: unknown) => error instanceof SocialContentRequestError && error.status === 429);
   assert.equal(calls, 1, 'an upload is not blindly replayed even though it has an idempotency key');
 
+  const canonicalRef = `socialmaterial:${Buffer.from('material-a').toString('base64url')}`;
+  globalThis.fetch = async () => json(201, {
+    file: {
+      fileId: 'file-a', taskId: 'task-a', usage: 'source', fileRef: 'socialfile:file-a', name: '产品图.png',
+      mimeType: 'image/png', size: 5, sha256: 'a'.repeat(64), createdAt: new Date(0).toISOString(),
+    },
+    material: { id: 'material-a', sourceRef: canonicalRef, sourceVersion: 'a'.repeat(64) },
+  });
+  const canonicalUpload = await socialContentApi.uploadFile(
+    'task-a', new File(['image'], '产品图.png', { type: 'image/png' }), 'source', 'upload-canonical',
+  );
+  assert.equal(canonicalUpload.file.fileRef, 'socialfile:file-a', 'task file remains available for audit and recovery');
+  assert.equal(canonicalUpload.material?.sourceRef, canonicalRef, 'creative uploads expose the canonical My Materials source');
+
   calls = 0;
   const controller = new AbortController();
   controller.abort();

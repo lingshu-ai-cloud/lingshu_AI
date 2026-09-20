@@ -1,13 +1,77 @@
-import { Router } from 'express';
+import { Router, text as expressText, type RequestHandler } from 'express';
 import { decryptSecret, getTenantPlatformApp, verifyMetaSignature } from '../lib/tenantPlatformApps.js';
 import { handleMetaWebhook } from '../whatsapp/historyImport.js';
 import { ingestFollowupDeliveryStatuses } from '../digitalEmployees/followupDispatchWorker.js';
 import { decryptWeComEcho, verifyWeComSignature } from '../integrations/wecom.js';
+import {
+  weComCustomerService,
+  WeComCustomerServiceError,
+  type WeComCustomerService,
+} from '../wecom/customerService.js';
 
 export const webhookRouter = Router();
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+type WeComCallbackService = Pick<
+  WeComCustomerService,
+  'ingestCallback' | 'processCallback'
+>;
+
+export function createWeComCallbackPostHandler(input: {
+  service?: WeComCallbackService;
+  defer?: (work: () => void) => void;
+} = {}): RequestHandler {
+  const service = input.service ?? weComCustomerService;
+  const defer = input.defer ?? ((work: () => void) => { setImmediate(work); });
+  return async (req, res) => {
+    const tenantId = text(req.params.tenantId);
+    const rawXml = typeof req.body === 'string' ? req.body : '';
+    if (!rawXml) {
+      res.status(400).send('invalid_xml');
+      return;
+    }
+    try {
+      const ingestion = await service.ingestCallback({
+        tenantId,
+        signature: text(req.query.msg_signature),
+        timestamp: text(req.query.timestamp),
+        nonce: text(req.query.nonce),
+        rawXml,
+      });
+      // Only acknowledge after the authenticated callback and its encrypted
+      // sync token are durable. Provider I/O runs after the response.
+      res.status(200).type('text/plain').send('success');
+      if (ingestion.shouldProcess) {
+        try {
+          defer(() => {
+            void service.processCallback({ tenantId, callbackId: ingestion.callbackId }).catch(error => {
+              console.error('[wecom-webhook-process]', {
+                tenantId,
+                callbackId: ingestion.callbackId,
+                code: error instanceof WeComCustomerServiceError ? error.code : 'wecom_callback_processing_failed',
+              });
+            });
+          });
+        } catch (error) {
+          // Persistence already succeeded. The authenticated recovery endpoint
+          // can replay the queued record even if local scheduling fails.
+          console.error('[wecom-webhook-schedule]', {
+            tenantId,
+            callbackId: ingestion.callbackId,
+            errorType: error instanceof Error ? error.name : 'UnknownError',
+          });
+        }
+      }
+    } catch (error) {
+      const status = error instanceof WeComCustomerServiceError ? error.status : 503;
+      const code = error instanceof WeComCustomerServiceError ? error.code : 'wecom_webhook_ingestion_failed';
+      console.error('[wecom-webhook-ingest]', { tenantId, code });
+      res.status(status).type('text/plain').send(code);
+    }
+  };
 }
 
 webhookRouter.get('/meta/:tenantId', async (req, res) => {
@@ -101,12 +165,8 @@ webhookRouter.get('/wecom/:tenantId', async (req, res) => {
   }
 });
 
-webhookRouter.post('/wecom/:tenantId', async (req, res) => {
-  // Receiving WeCom messages safely requires signature validation, XML parsing,
-  // AES decryption and replay protection. None of those may be approximated by
-  // logging an anonymous body, so keep this write path explicitly unavailable
-  // until the complete adapter exists.
-  res.status(process.env.NODE_ENV === 'production' ? 503 : 501).json({
-    error: 'wecom_webhook_ingestion_not_implemented',
-  });
-});
+webhookRouter.post(
+  '/wecom/:tenantId',
+  expressText({ type: ['application/xml', 'text/xml', 'text/plain'], limit: '256kb' }),
+  createWeComCallbackPostHandler(),
+);

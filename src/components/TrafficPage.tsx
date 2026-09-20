@@ -60,6 +60,7 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
 import { PAGE_REGISTRY } from '../pageRegistry';
+import { DouyinPublicationPackagePanel } from './publishing/DouyinPublicationPackagePanel';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -1317,6 +1318,16 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
         ) : (
         <>
 
+        <DouyinPublicationPackagePanel source={activeItem ? {
+          id: activeItem.id,
+          videoPath: activeItem.videoPath,
+          title: activeItem.title,
+          description: activeItem.description,
+          firstComment: activeItem.firstComment,
+          sourceProjectId: activeItem.sourceProjectId,
+          generationRecordId: activeItem.generationRecordId,
+        } : null} />
+
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="space-y-4">
         <section data-lingshu-guide="publishing-workbench" className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm ring-1 ring-emerald-50">
@@ -1680,7 +1691,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
             <button type="button" onClick={requestPublishConfirmation} disabled={publishing || loading || publishableItems.length === 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-bold text-white shadow-sm hover:brightness-95 disabled:opacity-50">
               {publishing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
               {publishing
-                ? '正在遍历账号群发...'
+                ? '正在提交已确认的发布任务...'
                   : `发布已确定时间的内容 · ${publishableItems.length} 条 / ${publishableAssignments} 个账号目标`}
             </button>
           </aside>

@@ -4,6 +4,7 @@ import type {
   SocialContentTaskPage,
   SocialContentTaskSummary,
   SocialContentWorkspace,
+  SocialWeeklyPlan,
 } from '../../shared/contracts/socialContentWorkflow';
 import { SOCIAL_CONTENT_TASK_STATUSES } from '../../shared/contracts/socialContentWorkflow';
 
@@ -61,6 +62,20 @@ export function socialTaskEnvelope(value: unknown): SocialContentTaskDetail {
   const envelope = record(value);
   if (!envelope) invalidResponse();
   return socialTaskDetail(envelope.task);
+}
+
+export function socialWeeklyPlanEnvelope(value: unknown): { weeklyPlan: SocialWeeklyPlan; tasks: SocialContentTaskDetail[] } {
+  const envelope = record(value);
+  const plan = record(envelope?.weeklyPlan);
+  if (!envelope || !plan || !Array.isArray(envelope.tasks)
+    || typeof plan.weeklyPlanId !== 'string' || typeof plan.title !== 'string'
+    || typeof plan.objective !== 'string' || !Array.isArray(plan.taskIds)
+    || !['draft', 'active', 'completed'].includes(String(plan.status))
+    || typeof plan.version !== 'string' || !validTime(plan.createdAt) || !validTime(plan.updatedAt)) invalidResponse();
+  const tasks = envelope.tasks.map(socialTaskDetail);
+  if (tasks.some(task => task.weeklyPlanId !== plan.weeklyPlanId)
+    || tasks.map(task => task.taskId).join('|') !== plan.taskIds.join('|')) invalidResponse();
+  return { weeklyPlan: plan as unknown as SocialWeeklyPlan, tasks };
 }
 
 export function socialMutationEnvelope<T extends keyof typeof MUTATION_IDENTITY_FIELD>(value: unknown, entityKey: T): Record<T, Record<string, unknown>> & { task: SocialContentTaskDetail } {

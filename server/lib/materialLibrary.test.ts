@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readMaterialLibrary } from './materialLibrary.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { readLocalMaterials, readMaterialLibrary, upsertSocialTaskMaterial } from './materialLibrary.js';
 import { readCloudMaterialLibrary } from './cloudMaterials.js';
 const ready = { source: 'database' as const, state: 'ready' as const, message: 'ok' };
 const down = { source: 'database' as const, state: 'unavailable' as const, message: 'down' };
@@ -23,6 +26,34 @@ assert.equal(denied.source.state, 'unauthorized');
 const broken = await readCloudMaterialLibrary('a', async () => {throw Error('offline');});
 assert.equal(broken.source.state,'unavailable');
 console.log('material library: tenant isolation, empty/failed distinction, partial access, pagination and authorization passed');
+const originalCwd = process.cwd();
+const materialRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-upsert-'));
+try {
+  process.chdir(materialRoot);
+  const sha = 'a'.repeat(64);
+  const baseRecord = { id: 'material-a', name: '产品图.png', type: 'image', tenantId: 'a', scope: 'own', createdAt: new Date(0).toISOString() };
+  const first = upsertSocialTaskMaterial({
+    id: 'material-a', tenantId: 'a', taskId: 'task-a', taskFileRef: 'socialfile:file-a',
+    contentSha256: sha, productRef: '产品 A', record: baseRecord,
+  });
+  const reused = upsertSocialTaskMaterial({
+    id: 'ignored-second-id', tenantId: 'a', taskId: 'task-b', taskFileRef: 'socialfile:file-b',
+    contentSha256: sha, productRef: '产品 B', record: { ...baseRecord, id: 'ignored-second-id' },
+  });
+  const isolated = upsertSocialTaskMaterial({
+    id: 'material-b', tenantId: 'b', taskId: 'task-c', taskFileRef: 'socialfile:file-c',
+    contentSha256: sha, productRef: '产品 C', record: { ...baseRecord, id: 'material-b', tenantId: 'b' },
+  });
+  assert.equal(reused.id, first.id, 'same tenant and SHA reuse one material identity');
+  assert.deepEqual(reused.sourceTaskIds, ['task-a', 'task-b']);
+  assert.deepEqual(reused.productRefs, ['产品 A', '产品 B']);
+  assert.notEqual(isolated.id, first.id, 'a second tenant never reuses another tenant material identity');
+  assert.equal(readLocalMaterials().length, 2);
+} finally {
+  process.chdir(originalCwd);
+  fs.rmSync(materialRoot, { recursive: true, force: true });
+}
+console.log('social task material upsert: SHA deduplication, task/product associations and tenant isolation passed');
 const { normalizeMaterialObservations } = await import('./materialObservation.js');
 const continuous = normalizeMaterialObservations('real',32,{segments:[{start:0,end:32,observedFacts:['绿色电路板上有银色焊点'],confidence:.9,needsReview:false}]});
 assert.equal(continuous.length,1); assert.equal(continuous[0].end,32);

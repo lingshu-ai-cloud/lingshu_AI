@@ -29,6 +29,75 @@ export type SocialWorkPackageStatus = typeof SOCIAL_WORK_PACKAGE_STATUSES[number
 export const SOCIAL_SOURCE_KINDS = ['material', 'knowledge', 'reference_link', 'text_note'] as const;
 export type SocialSourceKind = typeof SOCIAL_SOURCE_KINDS[number];
 
+/** Customer-facing creation modes. Instant creation always represents one output. */
+export const SOCIAL_CONTENT_TASK_MODES = ['weekly', 'instant'] as const;
+export type SocialContentTaskMode = typeof SOCIAL_CONTENT_TASK_MODES[number];
+
+/**
+ * Stable first-level themes. A free-form topic is classified into one of these
+ * values (or kept pending confirmation); it never becomes a sixth theme.
+ */
+export const SOCIAL_CONTENT_THEME_IDS = [
+  'product_value',
+  'scenario_solution',
+  'supplier_capability',
+  'customization_process',
+  'customer_case',
+] as const;
+export type SocialContentThemeId = typeof SOCIAL_CONTENT_THEME_IDS[number];
+
+export type SocialThemeClassificationStatus = 'confirmed' | 'pending_confirmation';
+
+export interface SocialContentThemeCard {
+  themeId: SocialContentThemeId;
+  name: string;
+  description: string;
+  exampleTopics: string[];
+  minimumShots: string[];
+}
+
+export interface SocialContentThemeSelection {
+  themeId: SocialContentThemeId | null;
+  inputKind: 'preset' | 'custom';
+  topic: string;
+  classificationStatus: SocialThemeClassificationStatus;
+}
+
+export const SOCIAL_MATERIAL_REQUIREMENT_STATUSES = [
+  'missing',
+  'partial',
+  'pending_confirmation',
+  'satisfied',
+  'unusable',
+] as const;
+export type SocialMaterialRequirementStatus = typeof SOCIAL_MATERIAL_REQUIREMENT_STATUSES[number];
+
+/** Public material-readiness view. Internal formula identifiers are intentionally absent. */
+export interface SocialMaterialRequirement {
+  requirementId: string;
+  required: boolean;
+  targetTheme: SocialContentThemeId;
+  shotFunction: string;
+  subject: string;
+  action: string;
+  environment: string | null;
+  orientation: 'portrait' | 'landscape' | 'either';
+  durationSeconds: { minimum: number; maximum: number } | null;
+  status: SocialMaterialRequirementStatus;
+  matchedSourceIds: string[];
+  confidence: number | null;
+  reason: string | null;
+  recalculatedAt: string;
+  ruleVersion: string;
+}
+
+export interface SocialMaterialReadiness {
+  complete: boolean;
+  requiredCount: number;
+  satisfiedRequiredCount: number;
+  blockingRequirementIds: string[];
+}
+
 export const SOCIAL_ARTIFACT_STATUSES = ['draft', 'review_required', 'approved', 'changes_requested', 'superseded'] as const;
 export type SocialArtifactStatus = typeof SOCIAL_ARTIFACT_STATUSES[number];
 
@@ -112,6 +181,15 @@ export interface SocialContentTaskBrief {
   callToAction: string | null;
 }
 
+/** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
+export interface SocialScriptBaselineSummary {
+  version: string;
+  source: 'formula' | 'system_theme_baseline';
+  sceneCount: number;
+  language: 'zh' | 'en';
+  lockedAt: string;
+}
+
 export interface SocialContentTaskSummary {
   taskId: string;
   brief: SocialContentTaskBrief;
@@ -130,6 +208,12 @@ export interface SocialContentTaskSummary {
   metricSubmissionCount: number;
   createdAt: string;
   updatedAt: string;
+  /** Present for theme-driven tasks; omitted only for records created before this workflow. */
+  mode?: SocialContentTaskMode;
+  weeklyPlanId?: string | null;
+  theme?: SocialContentThemeSelection | null;
+  materialReadiness?: SocialMaterialReadiness;
+  scriptBaseline?: SocialScriptBaselineSummary;
 }
 
 export interface SocialTaskSource {
@@ -238,6 +322,36 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   deliveryPackages: SocialDeliveryPackage[];
   publications: SocialPublicationRecord[];
   metricSubmissions: SocialMetricSubmission[];
+  materialRequirements?: SocialMaterialRequirement[];
+}
+
+export interface SocialWeeklyPlanItemInput {
+  title: string;
+  objective: string;
+  themeId?: SocialContentThemeId | null;
+  customTopic?: string | null;
+  topic?: string | null;
+}
+
+export interface CreateSocialWeeklyPlanInput {
+  title: string;
+  objective: string;
+  productRef?: string | null;
+  audience?: string | null;
+  items: SocialWeeklyPlanItemInput[];
+}
+
+export interface SocialWeeklyPlan {
+  weeklyPlanId: string;
+  title: string;
+  objective: string;
+  productRef: string | null;
+  audience: string | null;
+  taskIds: string[];
+  status: 'draft' | 'active' | 'completed';
+  version: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SocialContentTaskPage {
@@ -255,6 +369,8 @@ export interface SocialContentWorkspace {
   tasks: SocialContentTaskSummary[];
   taskList: SocialContentTaskListMeta;
   currentTask: SocialContentTaskDetail | null;
+  weeklyPlans?: SocialWeeklyPlan[];
+  themes?: SocialContentThemeCard[];
 }
 
 export interface CreateSocialContentTaskInput {
@@ -279,6 +395,13 @@ export interface CreateSocialContentTaskInput {
   brandNotes?: string | null;
   restrictions?: string[];
   callToAction?: string | null;
+  mode?: SocialContentTaskMode;
+  weeklyPlanId?: string | null;
+  themeId?: SocialContentThemeId | null;
+  customTopic?: string | null;
+  topic?: string | null;
+  /** Compatibility marker for historic material/clone/product entry routes. */
+  legacyCreationRoute?: 'material' | 'clone' | 'product' | null;
 }
 
 export interface UpdateSocialContentTaskInput {

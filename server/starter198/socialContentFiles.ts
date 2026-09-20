@@ -5,7 +5,14 @@ import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { SocialContentFile } from '../../shared/contracts/socialContentWorkflow.js';
-import { tenantPrivateObjectKey, materialAssetTenantKey } from '../storage/materialAssets.js';
+import { tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
+import { upsertSocialTaskMaterial, type MaterialRecord } from '../lib/materialLibrary.js';
+import {
+  materialAssetObjectKey,
+  materialAssetTenantKey,
+  materialAssetTypeAllowed,
+  tenantPrivateObjectKey,
+} from '../storage/materialAssets.js';
 import { objectStorageEnabled, r2GetObject, r2Head, r2UploadFile } from '../storage/r2.js';
 import {
   acquireDurableOperationLease,
@@ -27,6 +34,7 @@ export const MAX_SOCIAL_CONTENT_FILE_BYTES = 110 * 1024 * 1024;
 export const MAX_CONCURRENT_SOCIAL_CONTENT_UPLOADS = 16;
 const ROOT = path.resolve(process.cwd(), 'data', 'social-content-sources');
 const TEMP = path.resolve(process.cwd(), 'data', 'social-content-upload-temp');
+const MATERIAL_ROOT = path.resolve(process.cwd(), 'data', 'media');
 const UPLOAD_POOL_TENANT = 'starter198-social-upload-pool';
 
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -159,6 +167,7 @@ export async function storeSocialContentFile(input: {
   mimeType: string;
   declaredLength?: number;
   maximumBytes?: number;
+  materialLibrary?: boolean;
 }): Promise<StoredSocialContentFile> {
   const name = safeName(input.name);
   const mimeType = mime(input.mimeType);
@@ -196,7 +205,12 @@ export async function storeSocialContentFile(input: {
     const sha256 = hash.digest('hex');
     const storedName = `${sha256}.${MIME_EXTENSIONS[mimeType]}`;
     if (objectStorageEnabled()) {
-      const storageKey = tenantPrivateObjectKey('social-content-sources', input.tenantId, storedName);
+      // Creative task uploads are the same bytes shown in "My Materials".
+      // Store one tenant-private object and let both records reference it;
+      // documents remain in the task-only namespace.
+      const storageKey = input.materialLibrary && materialAssetTypeAllowed(mimeType)
+        ? materialAssetObjectKey(input.tenantId, storedName)
+        : tenantPrivateObjectKey('social-content-sources', input.tenantId, storedName);
       const current = await r2Head(storageKey);
       if (!current || current.size !== byteSize || current.contentType !== mimeType) {
         await r2UploadFile({ key: storageKey, filePath: temporary, contentType: mimeType, contentLength: byteSize });
@@ -233,6 +247,123 @@ export async function storeSocialContentFile(input: {
   } finally {
     await fsp.rm(temporary, { force: true }).catch(() => undefined);
   }
+}
+
+function creativeMaterialType(mimeType: string): 'video' | 'image' | 'audio' | null {
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return null;
+}
+
+function humanFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function sha256File(file: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of fs.createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest('hex');
+}
+
+async function ensureLocalMaterialMirror(input: {
+  tenantId: string;
+  stored: StoredSocialContentFile;
+}): Promise<{ file: string; url: string }> {
+  const source = path.resolve(ROOT, input.stored.storageKey);
+  if (!source.startsWith(`${ROOT}${path.sep}`)) {
+    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+  }
+  const filename = path.basename(input.stored.storageKey);
+  const relative = tenantAssetRelativePath(input.tenantId, filename);
+  const targetDirectory = tenantAssetDir(MATERIAL_ROOT, input.tenantId);
+  const target = path.join(targetDirectory, filename);
+  await fsp.mkdir(targetDirectory, { recursive: true });
+  try {
+    await fsp.link(source, target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === 'EXDEV') {
+      try { await fsp.copyFile(source, target, fs.constants.COPYFILE_EXCL); }
+      catch (copyError) {
+        if ((copyError as NodeJS.ErrnoException)?.code !== 'EEXIST') throw copyError;
+      }
+    } else if (code !== 'EEXIST') {
+      throw error;
+    }
+  }
+  try {
+    const stat = await fsp.stat(target);
+    if (!stat.isFile() || stat.size !== input.stored.byteSize
+      || await sha256File(target) !== input.stored.sha256) {
+      throw new Error('material mirror integrity mismatch');
+    }
+  } catch {
+    throw new SocialContentWorkflowError('social_content_material_storage_unavailable', 503);
+  }
+  return { file: relative, url: `/media/${relative}` };
+}
+
+/**
+ * Bridge a user-provided task source into the canonical creative inventory.
+ * PDF/office/text evidence never reaches this function because it has no
+ * creative media type. Task-file ownership remains authoritative for reads.
+ */
+export async function registerSocialTaskCreativeMaterial(input: {
+  tenantId: string;
+  taskId: string;
+  productRef?: string | null;
+  file: SocialContentFile;
+  stored: StoredSocialContentFile;
+}): Promise<MaterialRecord | null> {
+  const type = creativeMaterialType(input.file.mimeType);
+  if (!type) return null;
+  if (input.file.sha256 !== input.stored.sha256) {
+    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+  }
+  const filename = path.basename(input.stored.storageKey);
+  const local = input.stored.storageKind === 'local'
+    ? await ensureLocalMaterialMirror({ tenantId: input.tenantId, stored: input.stored })
+    : { file: tenantAssetRelativePath(input.tenantId, filename), url: '' };
+  const timestamp = input.file.createdAt || new Date().toISOString();
+  const record: MaterialRecord = {
+    id: `social-${createHash('sha256').update(`${input.tenantId}\0${input.file.sha256}`).digest('hex').slice(0, 32)}`,
+    name: input.file.name,
+    folder: '任务素材',
+    type,
+    duration: 0,
+    size: humanFileSize(input.file.size),
+    file: local.file,
+    url: local.url,
+    ...(type === 'image' && local.url ? { poster: local.url } : {}),
+    ...(input.stored.storageKind === 'object' ? {
+      objectKey: input.stored.storageKey,
+      ...(type === 'image' ? { posterObjectKey: input.stored.storageKey } : {}),
+    } : {}),
+    scope: 'own',
+    tenantId: input.tenantId,
+    usage: 'editable',
+    sourceType: 'social_task_upload',
+    sourceTaskId: input.taskId,
+    sourceFileRef: input.file.fileRef,
+    // Social task briefs currently carry a product name/reference, not the
+    // enterprise product's stable identity. Keep the stable field explicitly
+    // empty so the UI may use an exact productName fallback without pretending
+    // that free text is a product ID.
+    productId: '',
+    createdAt: timestamp,
+  };
+  return upsertSocialTaskMaterial({
+    id: record.id,
+    tenantId: input.tenantId,
+    taskId: input.taskId,
+    taskFileRef: input.file.fileRef,
+    contentSha256: input.file.sha256,
+    productRef: input.productRef,
+    record,
+  });
 }
 
 export function socialContentFileView(record: StarterRecord): SocialContentFile {

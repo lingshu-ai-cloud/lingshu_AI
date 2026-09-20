@@ -37,6 +37,7 @@ data/digital-human-jobs.json
 data/digital-human-worker/
 data/generated/
 data/publishing-uploads/
+data/social-content-sources/
 data/crawler-ops-queue.json
 data/apify-video-usage.json
 data/video-admin-alerts.json

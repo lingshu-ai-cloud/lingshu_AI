@@ -14,6 +14,7 @@ assert.deepEqual([...SOCIAL_TASK_CONTEXT_PAGES].sort(), [
   'scriptLibrary',
   'smartAssets',
   'socialInspiration',
+  'socialMonitoring',
   'traffic',
 ]);
 assert.equal(isSocialTaskContextPage('socialInspiration'), true);
@@ -78,7 +79,7 @@ assert.deepEqual(resolveSocialTaskPresentation({
   navigation,
 }), {
   taskName: '秋季新品社媒内容',
-  pageStage: '投流与发布',
+  pageStage: '发布与渠道',
   ownerName: '灵小量',
   statusLabel: '等待登记发布结果',
 });

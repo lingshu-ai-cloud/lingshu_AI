@@ -1,8 +1,14 @@
 const ACTIVE_SOCIAL_CONTENT_TASK_KEY = 'lingshu_active_social_content_task';
+export const SOCIAL_CONTENT_NAVIGATION_EVENT = 'lingshu:social-content-navigation';
 
 export interface SocialContentNavigationState {
   socialContentTaskId: string;
   socialContentPage: string;
+}
+
+export interface SocialContentNavigationEventDetail {
+  taskId: string;
+  page: string;
 }
 
 const SOCIAL_CONTENT_CONTEXT_PAGES = new Set([
@@ -79,4 +85,8 @@ export function attachSocialContentNavigationState(taskId: string, page: string)
       socialContentPage: page,
     },
   }, '');
+  window.dispatchEvent(new CustomEvent<SocialContentNavigationEventDetail>(
+    SOCIAL_CONTENT_NAVIGATION_EVENT,
+    { detail: { taskId, page } },
+  ));
 }

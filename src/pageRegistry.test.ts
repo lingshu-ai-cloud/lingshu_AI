@@ -30,13 +30,13 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES, [
   'socialInspiration',
   'smartAssets',
   'traffic',
-  'accountManagement',
+  'socialMonitoring',
 ]);
 assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLabel), [
   '灵感中心',
   '内容制作',
-  '发布与数据',
-  '账号连接',
+  '发布与渠道',
+  '内容监控',
 ]);
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');

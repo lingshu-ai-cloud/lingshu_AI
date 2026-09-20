@@ -1,11 +1,13 @@
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
+  CreateSocialWeeklyPlanInput,
   SelectSocialWorkPackagesInput,
   SocialContentTaskDetail,
   SocialContentTaskPage,
   SocialContentTaskSummary,
   SocialContentWorkspace,
+  SocialWeeklyPlan,
   SocialTaskSource,
   UpdateSocialContentTaskInput,
 } from '../../shared/contracts/socialContentWorkflow.js';
@@ -23,6 +25,8 @@ import {
 } from './socialContentRecords.js';
 import {
   SocialContentWorkflowError,
+  socialJson,
+  socialObject,
   socialPublicId,
   socialRequestHash,
   socialText,
@@ -41,6 +45,19 @@ import {
   readSocialContentSourceCoverage,
   reconcileSocialContentTask,
 } from './socialContentProjection.js';
+import {
+  SOCIAL_THEME_CATALOG,
+  advisoryMaterialRequirements,
+  initialMaterialRequirements,
+  materialReadiness,
+  parseStoredMaterialRequirements,
+  resolveSocialThemeSelection,
+} from './socialContentThemes.js';
+import { resolveSocialContentFormula, resolveSocialContentFormulaReference } from './socialContentFormulas.js';
+import {
+  freezeSocialScriptBaseline,
+  parseStoredSocialScriptBaseline,
+} from './socialContentScriptBaseline.js';
 
 const TASK_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
 const SOURCE_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
@@ -73,6 +90,49 @@ async function taskCreatedByOperation(input: {
   return result.items[0] ?? null;
 }
 
+function socialWeeklyPlan(record: StarterRecord): SocialWeeklyPlan | null {
+  const value = socialObject(socialJson(record.plan));
+  if (!value || socialText(value.schemaVersion) !== 'social-content-weekly-plan.v1') return null;
+  const taskIds = socialJson(value.taskIds);
+  const status = socialText(record.status) as SocialWeeklyPlan['status'];
+  const weeklyPlanId = socialText(value.weeklyPlanId) || socialText(record.id);
+  if (!weeklyPlanId || !['draft', 'active', 'completed'].includes(status)
+    || !Array.isArray(taskIds) || taskIds.some(item => !socialText(item))) {
+    throw new SocialContentWorkflowError('social_weekly_plan_record_invalid', 503);
+  }
+  return {
+    weeklyPlanId,
+    title: socialText(value.title),
+    objective: socialText(value.objective),
+    productRef: socialText(value.productRef) || null,
+    audience: socialText(value.audience) || null,
+    taskIds: taskIds.map(socialText),
+    status,
+    version: socialText(value.version) || '1',
+    createdAt: socialText(record.created_at),
+    updatedAt: socialText(record.updated_at) || socialText(record.created_at),
+  };
+}
+
+export async function listSocialWeeklyPlans(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+}): Promise<SocialWeeklyPlan[]> {
+  const first = await input.repository.list(STARTER_COLLECTIONS.plans, input.tenantId, {
+    sort: '-created_at', page: 1, perPage: 500,
+  });
+  if (first.totalItems > 10_000) throw new SocialContentWorkflowError('social_weekly_plan_scan_limit_exceeded', 503);
+  const rows = [...first.items];
+  for (let page = 2; page <= first.totalPages; page += 1) {
+    const next = await input.repository.list(STARTER_COLLECTIONS.plans, input.tenantId, {
+      sort: '-created_at', page, perPage: 500,
+    });
+    rows.push(...next.items);
+  }
+  if (rows.length !== first.totalItems) throw new SocialContentWorkflowError('social_weekly_plan_integrity_violation', 503);
+  return rows.map(socialWeeklyPlan).filter((item): item is SocialWeeklyPlan => Boolean(item));
+}
+
 async function sourceCreatedByOperation(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -88,18 +148,19 @@ async function sourceCreatedByOperation(input: {
 }
 
 function defaultBrief(value: CreateSocialContentTaskInput) {
+  const themeDriven = Boolean(value.mode || value.themeId || value.customTopic || value.topic || value.weeklyPlanId);
   return {
     title: value.title,
     objective: value.objective,
     productRef: value.productRef ?? null,
     audience: value.audience ?? null,
-    markets: value.markets ?? [],
-    languages: value.languages ?? [],
-    platforms: value.platforms ?? [],
-    formats: value.formats ?? [],
+    markets: value.markets ?? (themeDriven ? ['全球'] : []),
+    languages: value.languages ?? (themeDriven ? ['中文'] : []),
+    platforms: value.platforms ?? (themeDriven ? ['抖音'] : []),
+    formats: value.formats ?? (themeDriven ? ['短视频'] : []),
     aspectRatio: value.aspectRatio ?? null,
     cadence: value.cadence ?? null,
-    requestedOutputCount: value.requestedOutputCount ?? null,
+    requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
     weeklyBudgetCny: value.weeklyBudgetCny ?? null,
     perItemBudgetCny: value.perItemBudgetCny ?? null,
     retryReserveCny: value.retryReserveCny ?? null,
@@ -111,6 +172,19 @@ function defaultBrief(value: CreateSocialContentTaskInput) {
     restrictions: value.restrictions ?? [],
     callToAction: value.callToAction ?? null,
   };
+}
+
+async function optionalFormulaForTheme(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  themeId: NonNullable<ReturnType<typeof resolveSocialThemeSelection>>['themeId'] & string;
+}) {
+  try {
+    return await resolveSocialContentFormula(input);
+  } catch (error) {
+    if (error instanceof SocialContentWorkflowError && error.code === 'social_content_formula_unavailable') return null;
+    throw error;
+  }
 }
 
 export async function createSocialContentTask(input: {
@@ -151,9 +225,28 @@ export async function createSocialContentTask(input: {
       await assertSocialTaskCapacity(input);
       const timestamp = (input.now ?? new Date()).toISOString();
       const taskId = socialPublicId('socialtask');
+      const theme = resolveSocialThemeSelection(input.value);
+      const brief = defaultBrief(input.value);
+      const selectedFormula = theme?.themeId
+        ? await optionalFormulaForTheme({ repository: input.repository, tenantId: input.tenantId, themeId: theme.themeId })
+        : null;
+      const material = theme?.themeId && selectedFormula
+        ? initialMaterialRequirements(theme.themeId, timestamp, selectedFormula, 'advisory')
+        : { formulaReference: null, requirements: [] };
+      const scriptBaseline = theme?.classificationStatus === 'confirmed' && theme.themeId
+        ? freezeSocialScriptBaseline({ brief, theme, formula: selectedFormula, lockedAt: timestamp })
+        : null;
       await input.repository.create(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, {
         task_id: taskId,
-        brief: defaultBrief(input.value),
+        brief,
+        workflow_version: theme ? 'theme-v1' : 'legacy-v1',
+        task_mode: input.value.mode ?? 'weekly',
+        weekly_plan_id: input.value.weeklyPlanId ?? '',
+        theme_selection: theme ?? '',
+        formula_reference: material.formulaReference ?? '',
+        script_baseline: scriptBaseline ?? '',
+        material_requirements: material.requirements,
+        legacy_creation_route: input.value.legacyCreationRoute ?? '',
         package_selection: packageSelection,
         status: 'draft',
         version: '1',
@@ -210,20 +303,97 @@ export async function updateSocialContentTask(input: {
       }
       const currentSummary = socialTaskSummary(record);
       const current = currentSummary.brief;
-      const brief = { ...current, ...input.value.changes };
+      const {
+        mode,
+        weeklyPlanId,
+        themeId,
+        customTopic,
+        topic,
+        legacyCreationRoute,
+        ...briefChanges
+      } = input.value.changes;
+      const nextMode = mode ?? currentSummary.mode ?? 'weekly';
+      const hasThemeInput = ['themeId', 'customTopic', 'topic'].some(key => Object.prototype.hasOwnProperty.call(input.value.changes, key));
+      const theme = hasThemeInput
+        ? resolveSocialThemeSelection({ themeId, customTopic, topic })
+        : currentSummary.theme ?? null;
+      const timestamp = (input.now ?? new Date()).toISOString();
+      const currentRequirements = advisoryMaterialRequirements(parseStoredMaterialRequirements(record.material_requirements));
+      const currentBaseline = parseStoredSocialScriptBaseline(record.script_baseline);
+      const formulaThemeChanged = (currentSummary.theme?.themeId ?? null) !== (theme?.themeId ?? null);
+      const selectedFormula = formulaThemeChanged && theme?.themeId
+        ? await optionalFormulaForTheme({ repository: input.repository, tenantId: input.tenantId, themeId: theme.themeId })
+        : null;
+      const material = formulaThemeChanged
+        ? theme?.themeId && selectedFormula
+          ? initialMaterialRequirements(theme.themeId, timestamp, selectedFormula, 'advisory')
+          : { formulaReference: null, requirements: [] }
+        : {
+            formulaReference: record.formula_reference || null,
+            requirements: currentRequirements,
+          };
+      const brief = {
+        ...current,
+        ...briefChanges,
+        requestedOutputCount: nextMode === 'instant'
+          ? 1
+          : briefChanges.requestedOutputCount ?? current.requestedOutputCount,
+      };
+      const scriptFieldsChanged = [
+        'title', 'objective', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
+      ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
+      const storedFormulaReference = socialObject(socialJson(record.formula_reference));
+      const frozenFormulaId = currentBaseline?.formulaReference?.formulaId || socialText(storedFormulaReference?.formulaId);
+      const frozenFormulaVersion = currentBaseline?.formulaReference?.version || socialText(storedFormulaReference?.version);
+      let scriptBaseline = currentBaseline;
+      if (!theme || theme.classificationStatus !== 'confirmed' || !theme.themeId) {
+        scriptBaseline = null;
+      } else if (formulaThemeChanged || hasThemeInput || scriptFieldsChanged || !currentBaseline) {
+        const frozenFormula = selectedFormula
+          ?? (frozenFormulaId && frozenFormulaVersion
+            ? await resolveSocialContentFormulaReference({
+                repository: input.repository,
+                formulaId: frozenFormulaId,
+                version: frozenFormulaVersion,
+              })
+            : await optionalFormulaForTheme({
+                repository: input.repository,
+                tenantId: input.tenantId,
+                themeId: theme.themeId,
+              }));
+        scriptBaseline = freezeSocialScriptBaseline({
+          brief,
+          theme,
+          formula: frozenFormula,
+          lockedAt: timestamp,
+          previous: currentBaseline,
+        });
+      }
       const readiness = socialTaskReadiness(brief, {
         total: currentSummary.sourceCount,
         knowledge: currentSummary.knowledgeSourceCount,
         material: currentSummary.materialSourceCount,
+      }, {
+        theme,
+        materialReadiness: materialReadiness(material.requirements),
       });
       const status = readiness.complete ? 'plan_review' : socialText(record.status) === 'needs_input' ? 'needs_input' : 'draft';
       await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
         brief,
+        task_mode: nextMode,
+        weekly_plan_id: weeklyPlanId === undefined ? socialText(record.weekly_plan_id) : weeklyPlanId ?? '',
+        theme_selection: theme ?? '',
+        formula_reference: material.formulaReference ?? '',
+        script_baseline: scriptBaseline ?? '',
+        material_requirements: material.requirements,
+        legacy_creation_route: legacyCreationRoute === undefined
+          ? socialText(record.legacy_creation_route)
+          : legacyCreationRoute ?? '',
         status,
         version: nextVersion(record),
         last_operation_id: operationId,
         updated_by: input.userId,
-        updated_at: (input.now ?? new Date()).toISOString(),
+        updated_at: timestamp,
       });
       return { task: (await readSocialTaskDetail(input))! };
     },
@@ -447,17 +617,34 @@ export async function startSocialContentTask(input: {
     now: input.now,
     replay: async () => ({ task: (await readSocialTaskDetail(input))! }),
     action: async operationId => {
-      const record = await requireSocialTask(input);
+      let record = await requireSocialTask(input);
       if (socialText(record.last_operation_id) === operationId) return { task: (await readSocialTaskDetail(input))! };
-      assertVersion(record, input.expectedVersion);
+      const projectionOperationId = `${operationId}:prestart`;
+      if (socialText(record.last_operation_id) !== projectionOperationId) {
+        assertVersion(record, input.expectedVersion);
+      }
       if (!['draft', 'needs_input', 'plan_review', 'paused', 'attention'].includes(socialText(record.status))) {
         throw new SocialContentWorkflowError('social_content_task_not_startable', 409);
       }
+      // Refresh counters and advisory material suggestions before deciding
+      // whether the task can start. This also migrates older theme tasks whose
+      // shot lists were incorrectly stored as hard requirements.
+      record = await reconcileSocialContentTask({
+        ...input,
+        operationId: projectionOperationId,
+      });
       const summary = socialTaskSummary(record);
       const coverage = await readSocialContentSourceCoverage(input);
-      const readiness = socialTaskReadiness(summary.brief, coverage);
+      const readiness = socialTaskReadiness(summary.brief, coverage, summary.theme ? {
+        theme: summary.theme,
+        materialReadiness: summary.materialReadiness ?? materialReadiness([]),
+      } : undefined);
       if (!readiness.complete) {
-        await reconcileSocialContentTask({ ...input, operationId, enforceReadiness: true });
+        await reconcileSocialContentTask({
+          ...input,
+          operationId: `${operationId}:incomplete`,
+          enforceReadiness: true,
+        });
         throw new SocialContentWorkflowError('social_content_task_inputs_incomplete', 409);
       }
       await resolveSelectedPackages({ repository: input.repository, selections: summary.packageSelection, now: input.now });
@@ -500,7 +687,7 @@ export async function startSocialContentTask(input: {
         }
         return { task: (await readSocialTaskDetail(input))! };
       }
-      await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
+      await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, scheduled.id, {
         status: queued.disposition === 'awaiting_initial_confirmation'
           ? 'plan_review'
           : queued.disposition === 'requires_manual_production'
@@ -508,7 +695,7 @@ export async function startSocialContentTask(input: {
             : 'producing',
         run_id: queued.runId ?? '',
         orchestrator_item_id: queued.queueItemId,
-        version: nextVersion(record),
+        version: nextVersion(scheduled),
         last_operation_id: operationId,
         updated_by: input.userId,
         updated_at: (input.now ?? new Date()).toISOString(),
@@ -517,6 +704,93 @@ export async function startSocialContentTask(input: {
     },
   });
   return mutation.value.task;
+}
+
+/**
+ * Creates a planning parent first, then idempotently creates its ContentTask
+ * children. A retry resumes missing children and never duplicates a task.
+ */
+export async function createSocialWeeklyPlan(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  userId: string;
+  idempotencyKey: string;
+  value: CreateSocialWeeklyPlanInput;
+  now?: Date;
+}): Promise<{ weeklyPlan: SocialWeeklyPlan; tasks: SocialContentTaskDetail[] }> {
+  const existingPlans = await input.repository.list(STARTER_COLLECTIONS.plans, input.tenantId, {
+    sort: '-created_at', page: 1, perPage: 500,
+  });
+  let planRecord = existingPlans.items.find(record => {
+    const plan = socialObject(socialJson(record.plan));
+    return socialText(plan?.schemaVersion) === 'social-content-weekly-plan.v1'
+      && socialText(plan?.createIdempotencyKey) === input.idempotencyKey;
+  });
+  const timestamp = (input.now ?? new Date()).toISOString();
+  if (!planRecord) {
+    const weeklyPlanId = socialPublicId('socialweek');
+    planRecord = await input.repository.create(STARTER_COLLECTIONS.plans, input.tenantId, {
+      id: weeklyPlanId,
+      goal_id: `social-content:${weeklyPlanId}`,
+      status: 'draft',
+      plan: {
+        schemaVersion: 'social-content-weekly-plan.v1',
+        weeklyPlanId,
+        createIdempotencyKey: input.idempotencyKey,
+        title: input.value.title,
+        objective: input.value.objective,
+        productRef: input.value.productRef ?? null,
+        audience: input.value.audience ?? null,
+        taskIds: [],
+        version: '1',
+      },
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+  }
+  const currentPlan = socialWeeklyPlan(planRecord);
+  if (!currentPlan) throw new SocialContentWorkflowError('social_weekly_plan_record_invalid', 503);
+  const tasks: SocialContentTaskDetail[] = [];
+  for (const [index, item] of input.value.items.entries()) {
+    tasks.push(await createSocialContentTask({
+      repository: input.repository,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      idempotencyKey: `${input.idempotencyKey}:content-task:${index + 1}`,
+      value: {
+        title: item.title,
+        objective: item.objective,
+        productRef: input.value.productRef ?? null,
+        audience: input.value.audience ?? null,
+        mode: 'weekly',
+        weeklyPlanId: currentPlan.weeklyPlanId,
+        themeId: item.themeId ?? null,
+        customTopic: item.customTopic ?? null,
+        topic: item.topic ?? null,
+        requestedOutputCount: 1,
+      },
+      now: input.now,
+    }));
+  }
+  const storedPlan = socialObject(socialJson(planRecord.plan));
+  if (!storedPlan) throw new SocialContentWorkflowError('social_weekly_plan_record_invalid', 503);
+  const taskIds = tasks.map(task => task.taskId);
+  const storedTaskIds = socialJson(storedPlan.taskIds);
+  const alreadyCurrent = socialText(planRecord.status) === 'active'
+    && Array.isArray(storedTaskIds)
+    && storedTaskIds.map(socialText).join('|') === taskIds.join('|');
+  if (!alreadyCurrent) {
+    const nextPlanVersion = String(Math.max(1, Number(storedPlan.version) || 1) + 1);
+    await input.repository.update(STARTER_COLLECTIONS.plans, input.tenantId, planRecord.id, {
+      status: 'active',
+      plan: { ...storedPlan, taskIds, version: nextPlanVersion },
+      updated_at: timestamp,
+    });
+  }
+  const updated = await input.repository.get(STARTER_COLLECTIONS.plans, input.tenantId, planRecord.id);
+  const weeklyPlan = updated && socialWeeklyPlan(updated);
+  if (!weeklyPlan) throw new SocialContentWorkflowError('social_weekly_plan_record_invalid', 503);
+  return { weeklyPlan, tasks };
 }
 
 export async function listSocialContentTasks(input: {
@@ -540,9 +814,10 @@ export async function readSocialContentWorkspace(input: {
   tenantId: string;
   now?: Date;
 }): Promise<SocialContentWorkspace> {
-  const [catalog, list] = await Promise.all([
+  const [catalog, list, weeklyPlans] = await Promise.all([
     listActiveSocialWorkPackageCards(input),
     listSocialContentTasks({ ...input, page: 1, perPage: 50 }),
+    listSocialWeeklyPlans(input),
   ]);
   const current = list.items.find(item => !['reviewed'].includes(item.status)) ?? list.items[0] ?? null;
   return {
@@ -555,5 +830,7 @@ export async function readSocialContentWorkspace(input: {
       totalPages: list.totalPages,
     },
     currentTask: current ? await readSocialTaskDetail({ ...input, taskId: current.taskId }) : null,
+    weeklyPlans,
+    themes: [...SOCIAL_THEME_CATALOG],
   };
 }

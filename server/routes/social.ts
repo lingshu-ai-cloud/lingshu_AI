@@ -30,6 +30,7 @@ import { publishVideoToAccount } from '../publishing/platformPublisher.js';
 import { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
+import { sealedSocialCredentialPatch, socialAccessToken } from '../lib/accountCredentials.js';
 
 const COL = 'social_accounts';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -229,7 +230,7 @@ async function upsertSocialAccount(data: Omit<SocialAccountRecord, 'id' | 'conne
   });
   const now = new Date().toISOString();
   const payload = {
-    ...data,
+    ...data, ...sealedSocialCredentialPatch({ accessToken: data.accessToken, refreshToken: data.refreshToken }),
     connectedAt: existing.items[0]?.connectedAt || now,
     lastSyncAt: now,
     status: 'connected' as const,
@@ -756,8 +757,8 @@ socialRouter.get('/accounts/:id/insights', async (req, res) => {
   }
   try {
     const points = account.platform === 'facebook'
-      ? await getFacebookPageInsights(account.providerAccountId, account.accessToken, graphVersion(), range)
-      : await getInstagramAccountInsights(account.providerAccountId, account.accessToken, graphVersion(), range);
+      ? await getFacebookPageInsights(account.providerAccountId, socialAccessToken(account as unknown as Record<string, unknown>), graphVersion(), range)
+      : await getInstagramAccountInsights(account.providerAccountId, socialAccessToken(account as unknown as Record<string, unknown>), graphVersion(), range);
     const metricKeys: Record<string, 'views' | 'reach' | 'likes' | 'comments' | 'shares' | 'saves' | 'followers' | 'profileViews' | 'watchTimeMinutes'> = {
       page_impressions_unique: 'reach',
       page_video_views: 'views',
@@ -813,10 +814,10 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
   }
   const maxResults = Number(req.query.maxResults ?? 25);
   try {
-    let videos: unknown[] = [];
-    if (account.platform === 'tiktok') videos = await getTikTokVideos(account.accessToken, maxResults);
-    if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
+    let videos: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
+    if (account.platform === 'tiktok') videos = await getTikTokVideos(accessToken, maxResults);
+    if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), maxResults);
+    if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), maxResults);
     await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
       const metrics: Record<string, number> = {
         likes: Number(video.likeCount || 0),
@@ -851,13 +852,13 @@ socialRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
   }
   const maxResults = Number(req.query.maxResults ?? 50);
   try {
-    let comments: unknown[] = [];
+    let comments: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
     if (account.platform === 'tiktok') {
       res.status(501).json({ error: 'TikTok 评论读取需要额外 API 权限，当前暂未开放' });
       return;
     }
-    if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, account.accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, account.accessToken, graphVersion(), maxResults);
+    if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, accessToken, graphVersion(), maxResults);
+    if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, accessToken, graphVersion(), maxResults);
     res.json({ comments, total: comments.length });
   } catch (error: any) {
     console.error(`${account.platform} comments error:`, error?.response?.data ?? error?.message ?? error);

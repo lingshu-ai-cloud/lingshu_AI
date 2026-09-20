@@ -7,6 +7,7 @@ export const SOCIAL_TASK_CONTEXT_PAGES = [
   'smartAssets',
   'scriptLibrary',
   'traffic',
+  'socialMonitoring',
   'accountManagement',
   'enterprise',
 ] as const;
@@ -103,7 +104,9 @@ function pagePresentation(page: SocialTaskContextPage, view?: SocialTaskView): P
     case 'smartAssets':
       return { pageStage: view === 'publish' ? '内容发布' : '内容创作', ownerName: '灵小图', ownerRole: 'content' };
     case 'traffic':
-      return { pageStage: '投流与发布', ownerName: '灵小量', ownerRole: 'traffic' };
+      return { pageStage: '发布与渠道', ownerName: '灵小量', ownerRole: 'traffic' };
+    case 'socialMonitoring':
+      return { pageStage: '内容监控', ownerName: '灵小量', ownerRole: 'traffic' };
     case 'accountManagement':
       return { pageStage: '账号管理', ownerName: '灵小量', ownerRole: 'traffic' };
   }

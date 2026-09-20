@@ -2,7 +2,7 @@ import { publishingMutationBlocked, assertNoUnresolvedPublishing } from '../publ
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { callLLM } from '../agents/llm.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -231,6 +231,39 @@ publishingRouter.get('/local-videos/:filename', async (req, res) => {
 });
 
 publishingRouter.use(requireAuth);
+
+publishingRouter.post('/local-videos/manifest', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const requestedPath = text(req.body?.videoPath);
+  const filePath = localPublishingVideo(tenantId, requestedPath);
+  if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    res.status(404).json({ error: 'video_not_found', message: '视频文件不存在或不属于当前租户' });
+    return;
+  }
+  const hash = createHash('sha256');
+  try {
+    for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk as Buffer);
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const mediaType = ext === '.mov' ? 'video/quicktime'
+      : ext === '.webm' ? 'video/webm'
+        : ext === '.mkv' ? 'video/x-matroska'
+          : ext === '.avi' ? 'video/x-msvideo'
+            : 'video/mp4';
+    res.json({
+      asset: {
+        kind: 'video',
+        fileName: path.basename(filePath),
+        downloadUrl: publishingPreviewUrl(tenantId, filePath),
+        contentHash: hash.digest('hex'),
+        mediaType,
+        byteSize: stat.size,
+      },
+    });
+  } catch {
+    res.status(503).json({ error: 'video_manifest_unavailable', message: '暂时无法生成发布包文件校验值' });
+  }
+});
 
 publishingRouter.post('/local-videos', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;

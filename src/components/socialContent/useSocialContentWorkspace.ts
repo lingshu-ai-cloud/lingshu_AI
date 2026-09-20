@@ -10,7 +10,7 @@ import type {
   SocialWorkPackageKind,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
-import { socialContentApi } from '../../lib/socialContentApi';
+import { socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
 import { readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
 import type { SocialContentDraft } from '../../lib/socialContentModel';
 import { mergeSocialContentTaskSummaries, restoreSavedSocialContentTask } from '../../lib/socialContentTaskPagination';
@@ -33,7 +33,9 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
     formats: draft.formats,
     aspectRatio: draft.aspectRatio || null,
     cadence: draft.cadence.trim() || null,
-    requestedOutputCount: Number.isInteger(draft.quantity) && draft.quantity > 0 ? draft.quantity : null,
+    requestedOutputCount: draft.mode === 'instant'
+      ? 1
+      : Number.isInteger(draft.quantity) && draft.quantity > 0 ? draft.quantity : null,
     weeklyBudgetCny: draft.weeklyBudgetCny,
     perItemBudgetCny: draft.perItemBudgetCny,
     retryReserveCny: draft.retryReserveCny,
@@ -44,6 +46,10 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
     brandNotes: draft.keyFacts.trim() || null,
     restrictions: splitLines(draft.prohibitedClaims),
     callToAction: draft.callToAction.trim() || null,
+    mode: draft.mode,
+    themeId: draft.themeId || null,
+    customTopic: draft.customTopic.trim() || null,
+    topic: draft.topic.trim() || null,
   };
 }
 
@@ -68,7 +74,7 @@ function operationSuffix(value: string): string {
 
 export function useSocialContentWorkspace() {
   const mounted = useRef(true);
-  const uploadedFiles = useRef(new WeakMap<File, { taskId: string; usage: SocialContentFile['usage']; file: SocialContentFile }>());
+  const uploadedFiles = useRef(new WeakMap<File, { taskId: string; usage: SocialContentFile['usage']; upload: SocialContentUploadResult }>());
   const fileOperationIds = useRef(new WeakMap<File, string>());
   const readGeneration = useRef(0);
   const busyOperations = useRef(0);
@@ -262,6 +268,26 @@ export function useSocialContentWorkspace() {
           expectedVersion: target.expectedVersion,
           changes: requestInput(draft),
         }, `${target.attemptId}:brief:${target.expectedVersion}`);
+      } else if (draft.mode === 'weekly') {
+        const planned = await socialContentApi.createWeeklyPlan({
+          title: draft.title.trim(),
+          objective: draft.primaryGoal.trim(),
+          productRef: draft.productName.trim() || null,
+          audience: draft.audience.trim() || null,
+          items: [{
+            title: draft.title.trim(),
+            objective: draft.primaryGoal.trim(),
+            themeId: draft.themeId || null,
+            customTopic: draft.customTopic.trim() || null,
+            topic: draft.topic.trim() || null,
+          }],
+        }, `${target.attemptId}:weekly-plan`);
+        task = planned.tasks[0];
+        if (!task) throw new Error('周计划未生成内容任务，请重试');
+        task = await socialContentApi.updateTask(task.taskId, {
+          expectedVersion: task.version,
+          changes: requestInput(draft),
+        }, `${target.attemptId}:brief:${task.version}`);
       } else {
         task = await socialContentApi.createTask(requestInput(draft), `${target.attemptId}:create`);
       }
@@ -316,19 +342,21 @@ export function useSocialContentWorkspace() {
       for (const file of files) {
         const fileKey = fileOperationKey(file);
         const cached = uploadedFiles.current.get(file);
-        const stored = cached?.taskId === task.taskId && cached.usage === 'source'
-          ? cached.file
+        const upload = cached?.taskId === task.taskId && cached.usage === 'source'
+          ? cached.upload
           : await socialContentApi.uploadFile(task.taskId, file, 'source', `${target.attemptId}:file:${fileKey}`);
-        uploadedFiles.current.set(file, { taskId: task.taskId, usage: 'source', file: stored });
-        if (existingRefs.has(`material:${stored.fileRef}`)) continue;
+        uploadedFiles.current.set(file, { taskId: task.taskId, usage: 'source', upload });
+        const sourceRef = upload.material?.sourceRef || upload.file.fileRef;
+        const sourceVersion = upload.material?.sourceVersion || upload.file.sha256;
+        if (existingRefs.has(`material:${sourceRef}`)) continue;
         const result = await socialContentApi.addSource(task.taskId, {
           kind: 'material',
-          sourceRef: stored.fileRef,
-          sourceVersion: stored.sha256,
+          sourceRef,
+          sourceVersion,
           label: file.name,
           purpose: '本次内容任务',
         }, `${target.attemptId}:source:file:${fileKey}`);
-        existingRefs.add(`material:${stored.fileRef}`);
+        existingRefs.add(`material:${sourceRef}`);
         applyProgress(result.task);
       }
 
@@ -361,7 +389,7 @@ export function useSocialContentWorkspace() {
     }
   }, start
     ? (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? '制作记录已保存；当前需要进入内容创作工作台继续制作'
+      ? '任务已建立，已有脚本、素材和生成结果均已保存；机器人正在自动重试'
       : '内容生产任务已进入执行队列'
     : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
 
@@ -373,7 +401,7 @@ export function useSocialContentWorkspace() {
       applyTask(next);
       return next;
     }, (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? '制作记录已保存；当前需要进入内容创作工作台继续制作'
+      ? '任务已建立，已有脚本、素材和生成结果均已保存；机器人正在自动重试'
       : '内容生产任务已进入执行队列');
   }, [workspace?.currentTask, run, applyTask]);
 
@@ -458,11 +486,11 @@ export function useSocialContentWorkspace() {
       for (const file of files) {
         const fileKey = fileOperationKey(file);
         const cached = uploadedFiles.current.get(file);
-        const stored = cached?.taskId === task.taskId && cached.usage === 'metric_evidence'
-          ? cached.file
+        const upload = cached?.taskId === task.taskId && cached.usage === 'metric_evidence'
+          ? cached.upload
           : await socialContentApi.uploadFile(task.taskId, file, 'metric_evidence', `social:metric-file:${fileKey}`);
-        uploadedFiles.current.set(file, { taskId: task.taskId, usage: 'metric_evidence', file: stored });
-        evidenceRefs.push(stored.fileRef);
+        uploadedFiles.current.set(file, { taskId: task.taskId, usage: 'metric_evidence', upload });
+        evidenceRefs.push(upload.file.fileRef);
       }
       const submission = {
         ...input,

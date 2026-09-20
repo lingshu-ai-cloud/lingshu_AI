@@ -56,7 +56,8 @@ assert.equal(normalized.products.certifications, 'CE、ISO、UKCA');
 assert.equal(normalized.products.items?.[0]?.category, '机械设备');
 assert.equal(normalized.products.items?.[0]?.certifications, 'CE、ISO');
 
-assert.equal(sectionCompletion(normalized).products, false, '只有产品名、没有产品图时不能标记完成');
+assert.equal(sectionCompletion(normalized).products, true, '产品事实完整时即可标记完成，不得再强制要求产品图或视频');
+assert.equal(sectionCompletion(normalized).materials, true, '创作素材已迁移到“我的素材”，不得阻塞企业知识完成度');
 const withImage = {
   ...normalized,
   products: {
@@ -64,7 +65,15 @@ const withImage = {
     items: [{ ...normalized.products.items![0], images: [{ name: 'servo.jpg', type: 'image/jpeg', size: 1, updatedAt: new Date(0).toISOString() }] }],
   },
 };
-assert.equal(sectionCompletion(withImage).products, true);
+assert.equal(sectionCompletion(withImage).products, true, '历史媒体记录不得改变产品事实完成状态');
+const placeholderWithMedia = {
+  ...normalized,
+  products: {
+    ...normalized.products,
+    items: [{ name: '产品1', images: [{ name: 'placeholder.jpg', type: 'image/jpeg', size: 1, updatedAt: new Date(0).toISOString() }] }],
+  },
+};
+assert.equal(sectionCompletion(placeholderWithMedia).products, false, '占位产品名不能靠历史媒体记录反向补全产品事实');
 
 const baseSocial = profileSnapshot(profile({
   socialStrategy: { enabledRoutes: [], routeStrategies: {}, manuallyEditedFields: [] },

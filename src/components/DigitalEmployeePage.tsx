@@ -155,7 +155,7 @@ const workflowOptions: Array<{
     id: "content_publish",
     label: "内容发布",
     detail: "审批后进入发布日历",
-    dependency: "依赖至少一种内容生成方式",
+    dependency: "依赖主题内容制作",
   },
   {
     id: "customer_segmentation",
@@ -179,6 +179,17 @@ const contentCreationWorkflows: DigitalEmployeeWorkflow[] = [
   "material_content",
 ];
 
+function synchronizeThemeContentWorkflows(
+  workflows: DigitalEmployeeWorkflow[],
+): DigitalEmployeeWorkflow[] {
+  if (!workflows.some((item) => contentCreationWorkflows.includes(item)))
+    return workflows;
+  return [
+    ...workflows.filter((item) => !contentCreationWorkflows.includes(item)),
+    ...contentCreationWorkflows,
+  ];
+}
+
 const agentRoleGroups: Array<{
   id: "business" | "industry" | "content" | "customer";
   label: string;
@@ -187,8 +198,8 @@ const agentRoleGroups: Array<{
   workflows: DigitalEmployeeWorkflow[];
 }> = [
   { id: "business", label: "经营 Agent", responsibility: "拆解经营目标、协调其他 Agent、汇总业务结果并完成周复盘", outputs: "周目标、执行计划、风险提醒、复盘报告", workflows: [] },
-  { id: "industry", label: "编导 Agent", responsibility: "统筹热点采集、内容矩阵、周计划、创作路径、脚本和表达质量", outputs: "采集依据、候选选题、脚本分镜意图、制作单与审片意见", workflows: ["scheduled_social"] },
-  { id: "content", label: "内容 Agent", responsibility: "根据脚本与分镜调用素材、生成、剪辑和渲染能力，完成平台适配与发布交付", outputs: "执行级分镜、素材匹配、成片、平台版本和发布回执", workflows: ["viral_clone", "product_content", "material_content", "content_publish"] },
+  { id: "industry", label: "编导 Agent", responsibility: "统筹热点采集、内容矩阵、周计划、创作主题、脚本和表达质量", outputs: "采集依据、候选主题、脚本分镜意图、制作单与审片意见", workflows: ["scheduled_social"] },
+  { id: "content", label: "内容 Agent", responsibility: "根据创作主题和已有素材匹配内容结构，完成生成、剪辑、平台适配与发布交付", outputs: "主题制作单、待拍素材、素材匹配、成片、平台版本和发布回执", workflows: ["viral_clone", "product_content", "material_content", "content_publish"] },
   { id: "customer", label: "客服 Agent", responsibility: "承接真实询盘、完成客户分层，并按客户上下文生成跟进草稿", outputs: "客户标签、回复草稿、跟进批次、转人工提醒", workflows: ["customer_segmentation", "batch_followup"] },
 ];
 
@@ -227,7 +238,7 @@ const capabilityLabel: Record<string, string> = {
   "workflow.plan": "拆解并锁定周计划",
   "scheduler.social_collection": "建立社媒采集调度",
   "inspiration.exact_analysis": "筛选有完整证据的爆款",
-  "studio.mode_routing": "选择内容生产路径",
+  "studio.mode_routing": "确认创作主题与待拍素材",
   "studio.production": "执行脚本、素材与成片生产",
   "studio.quality_gate": "校验内容质量与事实",
   "publishing.delivery": "等待平台真实发布回执",
@@ -238,7 +249,7 @@ const capabilityLabel: Record<string, string> = {
   "planning.goal_decomposition": "拆解周目标",
   "social.collection": "采集社媒内容",
   "social.viral_analysis": "分析爆款证据",
-  "content.routing": "选择内容生成方式",
+  "content.routing": "匹配主题与待拍素材",
   "content.production": "生成内容作品",
   "content.quality_gate": "内容质检",
   "publishing.approval": "发布审批",
@@ -692,7 +703,7 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
       contentCreationWorkflows.includes(item),
     )
   )
-    errors.enabledWorkflows = "内容发布前至少启用一种内容生成方式";
+    errors.enabledWorkflows = "内容发布前请先启用主题内容制作";
   if (
     form.enabledWorkflows.some((item) =>
       ["scheduled_social", "content_publish"].includes(item),
@@ -772,6 +783,15 @@ function OnboardingPanel({
   const [recommendedProducts, setRecommendedProducts] = useState<string[]>([]);
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
+  const themeContentEnabled = form.enabledWorkflows.some((item) =>
+    contentCreationWorkflows.includes(item),
+  );
+  const contentPublishingEnabled =
+    form.enabledWorkflows.includes("content_publish");
+  const visibleEnabledWorkflowCount =
+    form.enabledWorkflows.filter(
+      (item) => !contentCreationWorkflows.includes(item),
+    ).length + (themeContentEnabled ? 1 : 0);
   const displayedReadiness = useMemo(() => {
     const override = (item: BusinessReadinessItem): BusinessReadinessItem => {
       if (item.key === "enterprise" && profileConfirmed) {
@@ -955,20 +975,49 @@ function OnboardingPanel({
       !current.includes("customer_segmentation")
     )
       additions.unshift("customer_segmentation");
-    if (
-      workflow === "content_publish" &&
-      !current.some((item) => contentCreationWorkflows.includes(item))
-    )
-      additions.unshift("product_content");
+    if (workflow === "content_publish")
+      additions.unshift(
+        ...contentCreationWorkflows.filter((item) => !current.includes(item)),
+      );
     set("enabledWorkflows", [...new Set([...current, ...additions])]);
     setDependencyNotice(
-      additions.length > 1
+      workflow === "content_publish" && additions.length > 1
+        ? "已同时启用前置能力：主题内容制作。"
+        : additions.length > 1
         ? `已同时启用前置工作流：${additions
             .slice(0, -1)
             .map((item) => workflowLabel[item])
             .join("、")}。`
         : "",
     );
+  };
+  const toggleThemeContentCreation = () => {
+    const current = form.enabledWorkflows;
+    if (themeContentEnabled) {
+      const closesPublishing = current.includes("content_publish");
+      set(
+        "enabledWorkflows",
+        current.filter(
+          (item) =>
+            !contentCreationWorkflows.includes(item) &&
+            item !== "content_publish",
+        ),
+      );
+      setDependencyNotice(
+        closesPublishing
+          ? "已同步关闭内容发布，因为它依赖主题内容制作。"
+          : "",
+      );
+      return;
+    }
+    set(
+      "enabledWorkflows",
+      synchronizeThemeContentWorkflows([
+        ...current,
+        ...contentCreationWorkflows,
+      ]),
+    );
+    setDependencyNotice("已启用主题内容制作，原有执行能力会在后台保持兼容。");
   };
   const setAgentApproval = (role: keyof DigitalEmployeeConfig["agentApprovalPolicies"], key: string, value: boolean) => {
     setForm((current) => {
@@ -1122,9 +1171,13 @@ function OnboardingPanel({
   const submit = () => {
     setSubmitted(true);
     if (Object.keys(errors).length) return;
+    const enabledWorkflows = synchronizeThemeContentWorkflows(
+      form.enabledWorkflows,
+    );
     const completed = {
       ...form,
-      team: ["planner", "knowledge", "risk", "review", ...(form.enabledWorkflows.some((item) => contentCreationWorkflows.includes(item)) ? ["content"] : []), ...(form.enabledWorkflows.some((item) => ["customer_segmentation", "batch_followup"].includes(item)) ? ["customer"] : [])],
+      enabledWorkflows,
+      team: ["planner", "knowledge", "risk", "review", ...(enabledWorkflows.some((item) => contentCreationWorkflows.includes(item)) ? ["content"] : []), ...(enabledWorkflows.some((item) => ["customer_segmentation", "batch_followup"].includes(item)) ? ["customer"] : [])],
       socialCadence: [collectionPlatforms, collectionSources, collectionKeywords, collectionLookback, collectionLimit, collectionTime, publishCount].every((value, index) => value === [restoredRules.collectionPlatforms, restoredRules.collectionSources, restoredRules.collectionKeywords, restoredRules.collectionLookback, restoredRules.collectionLimit, restoredRules.collectionTime, restoredRules.publishCount][index]) && JSON.stringify(form.publishingTargets) === JSON.stringify(initial.publishingTargets) ? initial.socialCadence : `${collectionPlatforms}；${collectionSources}；关键词：${collectionKeywords || form.focusProducts || form.primaryBusiness}；近 ${collectionLookback} 天；${collectionTime}；每次最多 ${collectionLimit} 条；按链接与标题去重 30 天；每周生成 ${publishCount} 条发布草稿；账号范围：${form.publishingTargets.map(target => `${target.platform}/${target.accountLabel}`).join("、") || "未确认"}；发布前人工审批`,
       followupCadence: [followupGenerateAt, followupApproveBy, followupWindow, followupFrequency].every((value, index) => value === [restoredRules.followupGenerateAt, restoredRules.followupApproveBy, restoredRules.followupWindow, restoredRules.followupFrequency][index]) ? initial.followupCadence : `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
       reviewSchedule: reviewTimezone === restoredRules.reviewTimezone && reviewCutoff === restoredRules.reviewCutoff ? initial.reviewSchedule : `周五 17:30（${reviewTimezone}）；数据截止 ${reviewCutoff}；通知审批负责人；仅生成复盘和下周任务草稿`,
@@ -1239,7 +1292,17 @@ function OnboardingPanel({
         </Field>
         </>}
         {activeRuleAgent === "industry" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">行业采集规则</p><p className="mt-1 text-xs text-slate-500">只采集公开内容，不包含广告投流。</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="AI 推荐关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="点击上方填入基础关键词" /></Field><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="每次最多采集（条）"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">采集近 {collectionLookback} 天公开内容，每次最多 {collectionLimit} 条，按链接与标题去重 30 天。</p></div>}
-        {activeRuleAgent === "content" && <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-3"><Field label="默认创作方式"><select className={inputClass} value={form.videoDefaults?.route || 'product'} onChange={e => set('videoDefaults', { ...form.videoDefaults, route: e.target.value as 'product' | 'material' | 'clone' })}><option value="clone">爆款裂变</option><option value="material">从素材生成</option><option value="product">从产品生成</option></select></Field><Field label="主语言"><select className={inputClass} value={form.videoDefaults?.language || 'en'} onChange={e => { const language=e.target.value; set('videoDefaults', { ...form.videoDefaults, language }); set('videoLanguages', [language, ...(form.videoLanguages || []).filter(item=>item!==language)]); }}><option value="en">英语</option><option value="zh">中文</option><option value="es">西班牙语</option><option value="fr">法语</option><option value="de">德语</option></select></Field><Field label="默认出镜方式"><select className={inputClass} value={form.videoDefaults?.presenter || 'material'} onChange={e => set('videoDefaults', { ...form.videoDefaults, presenter: e.target.value as 'material' | 'heygen' })}><option value="material">素材视频</option><option value="heygen">HeyGen 数字人口播</option></select></Field><div className="md:col-span-3"><p className="text-xs font-bold text-slate-700">自动交付语言</p><div className="mt-2 flex flex-wrap gap-2">{[{code:'en',label:'英语'},{code:'zh',label:'中文'},{code:'es',label:'西班牙语'},{code:'fr',label:'法语'},{code:'de',label:'德语'}].map(item=>{const selected=(form.videoLanguages || [form.videoDefaults?.language || 'en']).includes(item.code);const primary=(form.videoDefaults?.language || 'en')===item.code;return <label key={item.code} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${selected?'border-blue-300 bg-blue-50':'border-slate-200 bg-white'}`}><input type="checkbox" checked={selected} disabled={primary} onChange={()=>set('videoLanguages',selected?(form.videoLanguages || []).filter(code=>code!==item.code):[...(form.videoLanguages || [form.videoDefaults?.language || 'en']),item.code])}/>{item.label}{primary?' · 主语言':''}</label>})}</div></div><p className="text-xs text-slate-500 md:col-span-3">内容 Agent 先按主语言生成并审核逐镜脚本，再按相同 sceneId 翻译、配音、加字幕和配乐，自动交付每种语言的独立成片；数字人仍需选择 HeyGen 人物并确认使用权。</p></div>}
+        {activeRuleAgent === "content" && <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
+          <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-black text-blue-950">默认创作流程 · 主题创作</p><p className="mt-1 text-xs text-blue-700">用户只需确定内容主题、补齐系统提示的素材并验收成片。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">统一入口</span></div>
+            <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700">选主题 → 补素材 → 系统匹配结构 → 制作验收</p>
+            <p className="mt-2 text-[10px] leading-relaxed text-blue-700">系统会根据主题自动匹配已配置的内容结构，并整理已有素材与待拍清单；旧创作字段仅在后台保留用于兼容现有任务。</p>
+          </div>
+          <Field label="主语言"><select className={inputClass} value={form.videoDefaults?.language || 'en'} onChange={e => { const language=e.target.value; set('videoDefaults', { ...form.videoDefaults, language }); set('videoLanguages', [language, ...(form.videoLanguages || []).filter(item=>item!==language)]); }}><option value="en">英语</option><option value="zh">中文</option><option value="es">西班牙语</option><option value="fr">法语</option><option value="de">德语</option></select></Field>
+          <Field label="默认出镜方式"><select className={inputClass} value={form.videoDefaults?.presenter || 'material'} onChange={e => set('videoDefaults', { ...form.videoDefaults, presenter: e.target.value as 'material' | 'heygen' })}><option value="material">素材视频</option><option value="heygen">HeyGen 数字人口播</option></select></Field>
+          <div className="md:col-span-2"><p className="text-xs font-bold text-slate-700">自动交付语言</p><div className="mt-2 flex flex-wrap gap-2">{[{code:'en',label:'英语'},{code:'zh',label:'中文'},{code:'es',label:'西班牙语'},{code:'fr',label:'法语'},{code:'de',label:'德语'}].map(item=>{const selected=(form.videoLanguages || [form.videoDefaults?.language || 'en']).includes(item.code);const primary=(form.videoDefaults?.language || 'en')===item.code;return <label key={item.code} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${selected?'border-blue-300 bg-blue-50':'border-slate-200 bg-white'}`}><input type="checkbox" checked={selected} disabled={primary} onChange={()=>set('videoLanguages',selected?(form.videoLanguages || []).filter(code=>code!==item.code):[...(form.videoLanguages || [form.videoDefaults?.language || 'en']),item.code])}/>{item.label}{primary?' · 主语言':''}</label>})}</div></div>
+          <p className="text-xs text-slate-500 md:col-span-2">内容 Agent 先按主语言生成并审核逐镜脚本，再按相同 sceneId 翻译、配音、加字幕和配乐，自动交付每种语言的独立成片；数字人仍需选择 HeyGen 人物并确认使用权。</p>
+        </div>}
         {activeRuleAgent === "content" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-bold text-slate-900">内容生产与发布</p><p className="mt-1 text-xs text-slate-500">只生成自然内容，不包含广告投流；发布账号可在执行到发布任务时补齐。</p></div><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布授权"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="每周生成草稿（条）"><input className={inputClass} type="number" min={0} value={publishCount} onChange={e=>setPublishCount(Number(e.target.value))} /></Field><div><p className="text-xs font-bold text-slate-700">发布平台与具体账号 <span className="text-red-500">*</span></p><div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2">{publishingAccountsLoading?<p className="px-2 py-3 text-xs text-slate-400">正在读取已连接账号…</p>:connectedPublishingAccounts.length?connectedPublishingAccounts.map(account=>{const checked=form.publishingTargets.some(target=>target.platform===account.platform&&target.accountId===account.accountId);return <label key={`${account.platform}:${account.accountId}`} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${checked?"border-blue-300 bg-blue-50":"border-slate-200 bg-white"}`}><input type="checkbox" checked={checked} onChange={()=>set("publishingTargets",checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/><span className="text-xs font-bold text-slate-800">{contentPlatformLabel[account.platform]} · {account.accountLabel}</span></label>}):<div className="px-2 py-3"><p className="text-xs text-amber-700">尚无可用账号。连接平台后可启用自动或人工待发布链路；系统不会生成虚假账号。</p>{form.enabledWorkflows.includes("content_publish")&&<button type="button" onClick={()=>toggleWorkflow("content_publish")} className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">本周暂不发布，仅生成内容</button>}</div>}</div>{publishingAccountsError&&<p className="mt-1 text-[10px] text-red-600">{publishingAccountsError}</p>}{submitted&&errors.publishingTargets&&<p className="mt-1 text-[10px] font-semibold text-red-600">{errors.publishingTargets}</p>}</div></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowGeneratedVisuals} onChange={e=>set("allowGeneratedVisuals",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">素材不足时允许生成 AI 画面</span><span className="mt-0.5 block text-[10px] text-slate-500">默认关闭。只有知识库存在产品外观锚点时才可补充产品镜头；没有外观依据时仅可生成抽象说明或流程图，禁止虚构产品外观、参数与效果。</span></span></label><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={e=>set("allowRealPublishing",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] text-slate-500">开启：当前版本获批后自动写入日历并由发布 Worker 执行；关闭：审批后停在人工待发布，绝不调用平台接口。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">每周生成 {publishCount} 条内容草稿；无论是否允许真实发布，每条内容都必须先展示账号、文案、成片与时间并获得审批。</p></div>}
         {activeRuleAgent === "customer" && <div className="md:col-span-2">
           <p className="mb-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">企业和产品资料录入一次，全系统共用。这里直接复用已录入资料，只需补充接待规则和通知方式；确认后写入同一份企业知识库。</p>
@@ -1273,7 +1336,7 @@ function OnboardingPanel({
         </>}
       </div>
       {activeRuleAgent !== "business" && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-        <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-slate-800">启用能力</p><span className="text-[10px] font-semibold text-emerald-700">已启用 {form.enabledWorkflows.length} 项</span></div>
+        <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-slate-800">启用能力</p><span className="text-[10px] font-semibold text-emerald-700">已启用 {visibleEnabledWorkflowCount} 项</span></div>
         {dependencyNotice && (
           <p
             role="status"
@@ -1283,7 +1346,10 @@ function OnboardingPanel({
           </p>
         )}
         <div className="mt-2 flex flex-wrap gap-2">
-          {agentRoleGroups.filter((agent) => agent.id === activeRuleAgent).map((agent) => {
+          {activeRuleAgent === "content" ? <>
+            <button type="button" aria-pressed={themeContentEnabled} onClick={toggleThemeContentCreation} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${themeContentEnabled?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${themeContentEnabled?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{themeContentEnabled&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">主题内容制作</span><span className="block truncate text-[9px] text-slate-400">选主题、补素材，系统自动匹配内容结构并进入制作</span></span><span className={`text-[9px] font-bold ${themeContentEnabled?"text-emerald-700":"text-slate-400"}`}>{themeContentEnabled?"已启用":"未启用"}</span></button>
+            <button type="button" aria-pressed={contentPublishingEnabled} onClick={()=>toggleWorkflow("content_publish")} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${contentPublishingEnabled?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${contentPublishingEnabled?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{contentPublishingEnabled&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">内容发布</span><span className="block truncate text-[9px] text-slate-400">审批后进入发布日历</span></span><span className={`text-[9px] font-bold ${contentPublishingEnabled?"text-emerald-700":"text-slate-400"}`}>{contentPublishingEnabled?"已启用":"未启用"}</span></button>
+          </> : agentRoleGroups.filter((agent) => agent.id === activeRuleAgent).map((agent) => {
             return agent.workflows.map(id=>{const option=workflowOptions.find(item=>item.id===id)!;const checked=form.enabledWorkflows.includes(id);return <button key={id} type="button" aria-pressed={checked} onClick={()=>toggleWorkflow(id)} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${checked?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{checked&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">{option.label}</span><span className="block truncate text-[9px] text-slate-400">{option.detail}</span></span><span className={`text-[9px] font-bold ${checked?"text-emerald-700":"text-slate-400"}`}>{checked?"已启用":"未启用"}</span></button>});
           })}
         </div>
@@ -1446,7 +1512,7 @@ function GoalPanel({
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         {businessLine !== "customer_conversion" && <div className="md:col-span-2 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">确认本期制作平台</p><p className="mt-1 text-xs text-slate-500">仅制作时也需要确认平台；发布时使用已绑定账号。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{!config.enabledWorkflows.includes("content_publish")?"仅制作内容，不发布":config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);return <button key={platform} type="button" aria-pressed={selected} onClick={()=>set("contentPlatforms",selected?form.contentPlatforms.filter(item=>item!==platform):[...form.contentPlatforms,platform])} className={`rounded-xl border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-black">{contentPlatformLabel[platform]}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")}</span></button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
-        {businessLine !== 'customer_conversion' && <div className="md:col-span-2"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} onChange={plans => set('videoPlans', plans)} /></div>}
+        {businessLine !== 'customer_conversion' && <div className="md:col-span-2"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} themeWorkflow onChange={plans => set('videoPlans', plans)} /></div>}
         <Field
           label="目标名称"
           required
@@ -1956,9 +2022,9 @@ const businessLoopStages: Array<{
   },
   {
     title: "内容生产",
-    caption: "复用现有内容栈",
+    caption: "从主题和素材出发",
     page: "socialInspiration",
-    steps: ["使用爆款", "爆款裂变", "产品生成"],
+    steps: ["确定主题", "补齐待拍素材", "匹配内容结构"],
     tone: "border-blue-200 bg-blue-50 text-blue-800",
   },
   {
@@ -3604,7 +3670,7 @@ export default function DigitalEmployeePage({
     activeTask ||
     visibleTasks.find((task) => task.status === "succeeded") ||
     visibleTasks[0];
-  const selectedPlanTask = data?.plan?.tasks.find(
+  const selectedPlanTask = data?.plan?.tasks?.find(
     (task) => task.key === selectedTask?.task_key,
   );
   const agentCards = useMemo(() => data?.agents || [], [data?.agents]);
@@ -3676,7 +3742,7 @@ export default function DigitalEmployeePage({
   };
 
   const openBusiness: OpenBusinessLink = (page, view, businessRef = {}) => {
-    const planTask = data?.plan?.tasks.find(
+    const planTask = data?.plan?.tasks?.find(
       (item) =>
         item.destination === page && (!view || item.destinationView === view),
     );
@@ -4117,7 +4183,7 @@ export default function DigitalEmployeePage({
               <p className="mt-3 font-semibold">{goal?.title}</p>
               <p className="mt-2 text-sm text-slate-600">{goal?.objective}</p>
               <p className="mt-2 text-sm text-slate-600">{data.plan.strategy}</p>
-              <ul className="mt-3 list-inside list-disc space-y-1 text-sm text-slate-600">{data.plan.successCriteria.map(item => <li key={item}>{item}</li>)}</ul>
+              <ul className="mt-3 list-inside list-disc space-y-1 text-sm text-slate-600">{(data.plan.successCriteria || []).map(item => <li key={item}>{item}</li>)}</ul>
             </section>}
             {!data.run && !data.plan && (
               <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-blue-200 bg-blue-50/50 px-5 py-4">

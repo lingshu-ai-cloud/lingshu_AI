@@ -3,6 +3,7 @@ import type {
   CreateSocialArtifactInput,
   CreateSocialContentTaskInput,
   CreateSocialDeliveryPackageInput,
+  CreateSocialWeeklyPlanInput,
   DecideSocialArtifactInput,
   DecideSocialArtifactBatchInput,
   RegisterSocialPublicationInput,
@@ -18,6 +19,7 @@ import type {
   SocialMetricSubmission,
   SocialPublicationRecord,
   SocialTaskSource,
+  SocialWeeklyPlan,
   SubmitSocialMetricsInput,
   UpdateSocialContentTaskInput,
 } from '../../shared/contracts/socialContentWorkflow';
@@ -30,6 +32,7 @@ import {
   socialTaskEnvelope,
   socialTaskPage,
   socialWorkspaceResponse,
+  socialWeeklyPlanEnvelope,
 } from './socialContentResponse';
 import { safeArtifactHref } from './starterWorkspace';
 import {
@@ -44,6 +47,15 @@ const MEDIA_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
 const READ_RETRY_ATTEMPTS = 3;
 const READ_RETRY_STATUSES = new Set([429, 503, 504]);
 
+export interface SocialContentUploadResult {
+  file: SocialContentFile;
+  material: null | {
+    id: string;
+    sourceRef: string;
+    sourceVersion: string;
+  };
+}
+
 function idempotencyKey(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -55,7 +67,7 @@ function friendlyFailure(status: number, code = ''): string {
   if (code.includes('not_startable') || code.includes('not_editable')) return '当前阶段无法进行这项操作，请刷新任务状态';
   if (code.includes('orchestrator_not_configured') || code.includes('queue_unavailable')) return '内容制作服务正在准备中，请稍后重试';
   if (code.includes('package') && (code.includes('inactive') || code.includes('unavailable'))) return '所选作业方案已更新，请重新选择';
-  if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请先补全本次任务所需内容';
+  if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请确认已关联企业资料和至少一份真实素材';
   if (code.includes('file_limit') || code.includes('file_capacity')) return '当前任务的文件数量或容量已达上限';
   if (code.includes('artifact_media_required')) return '请先生成并保存完整成品';
   if (code.includes('artifact_media') || code.includes('delivery_media')) return '成品文件校验失败，请重新生成后提交';
@@ -260,7 +272,7 @@ async function requestJson<T>(path: string, options?: RequestInit, operationKey?
   return result;
 }
 
-async function uploadContentFile(taskId: string, file: Blob, name: string, usage: SocialContentFile['usage'], operationKey?: string): Promise<SocialContentFile> {
+async function uploadContentFile(taskId: string, file: Blob, name: string, usage: SocialContentFile['usage'], operationKey?: string): Promise<SocialContentUploadResult> {
   const query = new URLSearchParams({ usage, name });
   const init: RequestInit = {
     method: 'POST',
@@ -280,12 +292,25 @@ async function uploadContentFile(taskId: string, file: Blob, name: string, usage
     throw readableTransportError(error, 'upload');
   }
   if (!response.ok) throw new SocialContentRequestError(response.status, await errorCode(response));
-  const result = await responseJson<{ file: SocialContentFile }>(response, 'upload');
+  const result = await responseJson<{ file: SocialContentFile; material?: unknown }>(response, 'upload');
   if (!isRecord(result.file) || typeof result.file.fileRef !== 'string' || typeof result.file.sha256 !== 'string') {
     throw new Error('文件上传结果异常，请重试');
   }
+  const rawMaterial = isRecord(result.material) ? result.material : null;
+  const material = rawMaterial
+    && typeof rawMaterial.id === 'string'
+    && typeof rawMaterial.sourceRef === 'string'
+    && /^socialmaterial:[a-zA-Z0-9_-]+$/.test(rawMaterial.sourceRef)
+    && typeof rawMaterial.sourceVersion === 'string'
+    && rawMaterial.sourceVersion.length > 0
+    ? {
+      id: rawMaterial.id,
+      sourceRef: rawMaterial.sourceRef,
+      sourceVersion: rawMaterial.sourceVersion,
+    }
+    : null;
   notifySocialContentTaskChanged(taskId);
-  return result.file;
+  return { file: result.file, material };
 }
 
 const PREVIEW_MEDIA_TYPES = new Set([
@@ -382,6 +407,9 @@ export const socialContentApi = {
   },
   getTask: async (taskId: string, signal?: AbortSignal): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}`, { signal })),
   createTask: async (input: CreateSocialContentTaskInput, operationKey?: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>('/tasks', { method: 'POST', body: JSON.stringify(input) }, operationKey)),
+  createWeeklyPlan: async (input: CreateSocialWeeklyPlanInput, operationKey?: string): Promise<{ weeklyPlan: SocialWeeklyPlan; tasks: SocialContentTaskDetail[] }> => (
+    socialWeeklyPlanEnvelope(await requestJson<unknown>('/weekly-plans', { method: 'POST', body: JSON.stringify(input) }, operationKey))
+  ),
   updateTask: async (taskId: string, input: UpdateSocialContentTaskInput, operationKey?: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', body: JSON.stringify(input) }, operationKey)),
   addSource: async (taskId: string, input: AddSocialTaskSourceInput, operationKey?: string): Promise<{ source: SocialTaskSource; task: SocialContentTaskDetail }> => (
     socialMutationEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/sources`, { method: 'POST', body: JSON.stringify(input) }, operationKey), 'source') as unknown as { source: SocialTaskSource; task: SocialContentTaskDetail }
@@ -392,8 +420,8 @@ export const socialContentApi = {
   uploadFile: (taskId: string, file: File, usage: Extract<SocialContentFile['usage'], 'source' | 'metric_evidence'>, operationKey?: string) => (
     uploadContentFile(taskId, file, file.name, usage, operationKey)
   ),
-  uploadArtifactMedia: (taskId: string, file: Blob, name: string, operationKey?: string) => (
-    uploadContentFile(taskId, file, name, 'artifact_media', operationKey)
+  uploadArtifactMedia: async (taskId: string, file: Blob, name: string, operationKey?: string) => (
+    (await uploadContentFile(taskId, file, name, 'artifact_media', operationKey)).file
   ),
   fetchArtifactMedia,
   selectPackages: async (taskId: string, input: SelectSocialWorkPackagesInput, operationKey?: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/package-selection`, { method: 'PUT', body: JSON.stringify(input) }, operationKey)),

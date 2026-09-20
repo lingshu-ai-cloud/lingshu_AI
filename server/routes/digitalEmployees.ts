@@ -47,6 +47,7 @@ import {
 } from '../digitalEmployees/configuration.js';
 import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, getTenantFollowupDispatchStatus, onFollowupWorkerEvent, preflightFollowupBatchDispatch } from '../digitalEmployees/followupDispatchWorker.js';
 import { bindPublishingTargets, listConnectedPublishingAccounts, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
+import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type PublishingApprovalPackage } from '../digitalEmployees/publishingExecution.js';
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
@@ -727,11 +728,12 @@ export function runReviewSummary(run: RunRecord, tasks: TaskRecord[], businessSn
 async function buildOverview(tenantId: string, requestedGoalId = '', requestedRange?: { startsAt: string; endsAt: string }) {
   const [configRecord, goalResult] = await Promise.all([
     configForTenant(tenantId),
-    store.list<GoalRecord>(COLLECTION.goals, { where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 20 }),
+    store.list<GoalRecord>(COLLECTION.goals, { where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500 }),
   ]);
+  const operatingGoals = digitalEmployeeOperatingGoals(goalResult.items);
   const goal = requestedGoalId
-    ? goalResult.items.find(item => item.id === requestedGoalId) ?? null
-    : goalResult.items.find(item => ['active', 'paused'].includes(item.status)) ?? goalResult.items[0] ?? null;
+    ? operatingGoals.find(item => item.id === requestedGoalId) ?? null
+    : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
     const businessSnapshot = await buildBusinessSnapshot(tenantId, requestedRange);
@@ -769,7 +771,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   return {
     config: resolvedConfiguration?.config || null,
     configuration: publicConfigurationMetadata(resolvedConfiguration),
-    goals: goalResult.items.map(publicGoal),
+    goals: operatingGoals.map(publicGoal),
     goal: publicGoal(goal),
     plan: plan ? { id: plan.id, status: plan.status, ...jsonObject<Record<string, unknown>>(plan.plan, {}), businessPackage: jsonObject<Record<string, unknown>>(plan.plan, {}).businessPackage || (resolvedConfiguration ? { ...recommendPackage(goalInput(goal), configSnapshotForPlan(plan, resolvedConfiguration.config), goal.owner_id), revision: 0 } : undefined) } : null,
     run,
@@ -2022,7 +2024,7 @@ digitalEmployeesRouter.get('/overview', async (req, res) => {
   const goalId = String(req.query.goalId || '').trim();
   if (goalId) {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
-    if (!goal) { res.status(404).json({ error: 'goal_not_found' }); return; }
+    if (!goal || !isDigitalEmployeeOperatingGoal(goal)) { res.status(404).json({ error: 'goal_not_found' }); return; }
   }
   const startsAt = String(req.query.startsAt || '').trim();
   const endsAt = String(req.query.endsAt || '').trim();

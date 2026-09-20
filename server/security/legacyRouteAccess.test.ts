@@ -229,8 +229,8 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: '{"untrusted":"payload"}',
   });
-  assert.equal(wecomPost.status, 501, 'incomplete WeCom ingestion must stay fail-closed outside production too');
-  assert.doesNotMatch(wecomPost.body, /untrusted/, 'disabled webhook responses must not echo untrusted payloads');
+  assert.equal(wecomPost.status, 400, 'WeCom callback ingestion must reject unsupported JSON envelopes');
+  assert.doesNotMatch(wecomPost.body, /untrusted/, 'rejected webhook responses must not echo untrusted payloads');
   process.env.NODE_ENV = 'production';
   try {
     const productionWecomPost = await request('/webhooks/wecom/any-tenant', {
@@ -238,7 +238,7 @@ try {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
-    assert.equal(productionWecomPost.status, 503, 'incomplete WeCom ingestion must be unavailable in production');
+    assert.equal(productionWecomPost.status, 400, 'production must also reject unsupported WeCom callback envelopes');
   } finally {
     process.env.NODE_ENV = 'test';
   }

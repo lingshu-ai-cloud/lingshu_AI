@@ -5,6 +5,7 @@ import { getFacebookComments, getFacebookVideos, getInstagramComments, getInstag
 import { getMyVideoComments, replyToYouTubeComment, type YouTubeConfig } from '../integrations/youtube.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 
 export const socialEngagementRouter = Router();
 socialEngagementRouter.use(requireAuth);
@@ -94,7 +95,7 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
   accounts.push(...ytAccounts.map((account: any) => ({ id: account.id, platform: 'youtube' as const, title: account.channelTitle || 'YouTube', handle: account.customUrl, status: account.status })));
   for (const account of ytAccounts.filter((item: any) => item.status === 'connected')) {
     try {
-      const config: YouTubeConfig = { clientId: account.clientId, clientSecret: account.clientSecret, refreshToken: account.refreshToken, accessToken: account.accessToken };
+      const config: YouTubeConfig = youtubeCredentials(account as Record<string, unknown>);
       const comments = await getMyVideoComments(config, 100, account.channelId);
       for (const comment of comments) {
         const stateKey = key('youtube', account.id, comment.id); const state = savedByKey.get(stateKey);
@@ -108,13 +109,14 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
   for (const account of socialAccounts.filter((item: any) => item.status === 'connected')) {
     if (account.platform === 'tiktok') { unavailable.push({ platform: 'tiktok', reason: 'TikTok 评论 API 权限尚未开放' }); continue; }
     try {
+      const accessToken = socialAccessToken(account as Record<string, unknown>);
       const content = account.platform === 'facebook'
-        ? await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), 12)
-        : await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), 12);
+        ? await getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), 12)
+        : await getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), 12);
       for (const post of content) {
         const comments = account.platform === 'facebook'
-          ? await getFacebookComments(post.id, account.accessToken, graphVersion(), 30)
-          : await getInstagramComments(post.id, account.accessToken, graphVersion(), 30);
+          ? await getFacebookComments(post.id, accessToken, graphVersion(), 30)
+          : await getInstagramComments(post.id, accessToken, graphVersion(), 30);
         for (const comment of comments) {
           const stateKey = key(account.platform, account.id, comment.id); const state = savedByKey.get(stateKey);
           const translation = stateTranslation(state);
@@ -205,13 +207,14 @@ socialEngagementRouter.post('/comments/reply', async (req, res) => {
     if (platform === 'youtube') {
     const account = await store.getById<any>('youtube_accounts', accountId);
     if (!account || account.tenantId !== tenantId) { res.status(404).json({ error: 'account_not_found' }); return; }
-    result = await replyToYouTubeComment({ clientId: account.clientId, clientSecret: account.clientSecret, refreshToken: account.refreshToken, accessToken: account.accessToken }, commentId, message);
+    result = await replyToYouTubeComment(youtubeCredentials(account as Record<string, unknown>), commentId, message);
     } else if (platform === 'facebook' || platform === 'instagram') {
     const account = await store.getById<any>('social_accounts', accountId);
     if (!account || account.tenantId !== tenantId || account.platform !== platform) { res.status(404).json({ error: 'account_not_found' }); return; }
+    const accessToken = socialAccessToken(account as Record<string, unknown>);
     result = platform === 'facebook'
-      ? await replyToFacebookComment(commentId, account.accessToken, graphVersion(), message)
-      : await replyToInstagramComment(commentId, account.accessToken, graphVersion(), message);
+      ? await replyToFacebookComment(commentId, accessToken, graphVersion(), message)
+      : await replyToInstagramComment(commentId, accessToken, graphVersion(), message);
     } else { res.status(501).json({ error: 'platform_reply_unavailable', message: 'TikTok 评论回复需额外平台权限。' }); return; }
     const stateKey = key(platform, accountId, commentId);
     await saveState(tenantId, stateKey, { status: 'replied', repliedAt: new Date().toISOString(), replyId: result.id });

@@ -1,4 +1,9 @@
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
+import {
+  SocialContentAccessError,
+  socialContentAccessResolver,
+  type SocialContentAccessResolver,
+} from './socialContentAccess.js';
 import { SocialContentWorkflowError } from './socialContentValidation.js';
 
 export const SOCIAL_CONTENT_HARD_LIMITS = {
@@ -46,6 +51,8 @@ export async function assertSocialTaskChildCapacity(input: {
   taskId: string;
   kind: 'source' | 'artifact' | 'delivery_package' | 'publication' | 'metric_submission';
   publicationId?: string;
+  accessResolver?: SocialContentAccessResolver;
+  now?: Date;
 }): Promise<void> {
   const limits = SOCIAL_CONTENT_HARD_LIMITS;
   const configured = {
@@ -57,13 +64,29 @@ export async function assertSocialTaskChildCapacity(input: {
   } as const;
   const target = configured[input.kind];
   let maximum: number = target.maximum;
-  if (input.kind === 'artifact') {
-    const access = await input.repository.access(input.tenantId);
-    maximum = Math.min(maximum, Math.max(1, Math.floor(access.resourceLimits.contentArtifactCountPerCycle)));
-  }
-  if (input.kind === 'delivery_package') {
-    const access = await input.repository.access(input.tenantId);
-    maximum = Math.min(maximum, Math.max(1, Math.floor(access.resourceLimits.publicationPackageCountPerContent)));
+  if (input.kind === 'artifact' || input.kind === 'delivery_package') {
+    let resolved;
+    try {
+      resolved = await (input.accessResolver ?? socialContentAccessResolver).resolve({
+        repository: input.repository,
+        tenantId: input.tenantId,
+        requiredCapabilities: ['orchestrator.command.submit'],
+        now: input.now,
+      });
+    } catch (error) {
+      if (error instanceof SocialContentAccessError) {
+        throw new SocialContentWorkflowError(error.code, error.status);
+      }
+      throw error;
+    }
+    // Non-starter subscriptions intentionally receive only the conservative
+    // workflow hard limits. Starter tenants retain their plan-specific caps.
+    if (resolved.kind === 'starter_198') {
+      const planMaximum = input.kind === 'artifact'
+        ? resolved.access.resourceLimits.contentArtifactCountPerCycle
+        : resolved.access.resourceLimits.publicationPackageCountPerContent;
+      maximum = Math.min(maximum, Math.max(1, Math.floor(planMaximum)));
+    }
   }
   if (await count({ ...input, collection: target.collection, where: { task_id: input.taskId } }) >= maximum) {
     throw new SocialContentWorkflowError(`social_content_${input.kind}_limit_reached`, 409);

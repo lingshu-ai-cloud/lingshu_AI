@@ -29,6 +29,8 @@ import {
 } from './runtimePorts.js';
 import { STARTER_CONTENT_RELEASE_APPROVAL_TASK_KEY } from '../../shared/contracts/starter198.js';
 import { scheduleSocialContentWork } from './socialContentScheduler.js';
+import type { SocialContentAccessResolver } from './socialContentAccess.js';
+import { enqueueSocialContentAutoProduction } from './socialContentAutoProduction.js';
 
 type JsonObject = Record<string, unknown>;
 type Row = Record_ & JsonObject;
@@ -647,6 +649,8 @@ async function createInbox(input: {
 export function createStarter198OrchestratorQueue(dependencies: {
   repository?: Starter198Repository;
   dataStore?: DataStore;
+  socialContentAccessResolver?: SocialContentAccessResolver;
+  socialContentProductionRunner?: typeof enqueueSocialContentAutoProduction;
   now?: () => Date;
 } = {}): Starter198OrchestratorQueuePort {
   const repository = dependencies.repository ?? starter198Repository;
@@ -659,7 +663,14 @@ export function createStarter198OrchestratorQueue(dependencies: {
         throw new Starter198RuntimePortError('starter_198_orchestrator_input_invalid', 400);
       }
       if (input.workflowScope === 'social_content') {
-        return scheduleSocialContentWork({ repository, queue: input, now });
+        return scheduleSocialContentWork({
+          repository,
+          queue: input,
+          now,
+          accessResolver: dependencies.socialContentAccessResolver,
+          productionRunner: dependencies.socialContentProductionRunner
+            ?? (dataStore === store ? enqueueSocialContentAutoProduction : undefined),
+        });
       }
       const access = await repository.access(input.tenantId);
       try { assertStarter198AccessCycleOpen({ access, now }); }

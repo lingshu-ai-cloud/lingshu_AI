@@ -2864,6 +2864,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [productInfo, setProductInfo] = useState('');
   const [productOptions, setProductOptions] = useState<ProductOption[]>([]);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [socialTaskProductReference, setSocialTaskProductReference] = useState('');
   const [productSelectMode, setProductSelectMode] = useState<'single' | 'multi'>('multi');
   const [productSearch, setProductSearch] = useState('');
   const [productCategoryFilter, setProductCategoryFilter] = useState('');
@@ -2914,7 +2915,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const videoThemePayload = {
     id: activeVideoTheme.id,
     title: activeVideoTheme.title,
-    painPoint: audience.trim() || activeVideoTheme.painPoint,
+    painPoint: themePainPoint.trim() || activeVideoTheme.painPoint,
     contentGoal: effectiveContentGoal,
     conversionGoal: effectivePrimaryCta || (effectiveContentGoal === 'reach' ? '' : DEFAULT_VIDEO_CONVERSION_GOAL),
     primaryCta: effectivePrimaryCta || (effectiveContentGoal === 'reach' ? '' : DEFAULT_VIDEO_CONVERSION_GOAL),
@@ -3267,7 +3268,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           const seen = new Set(preserved.map(item => item.id));
           return [...preserved, ...options.filter(item => !seen.has(item.id))];
         });
-        if (options[0]) setSelectedProductIds(current => current.length ? current : [options[0]!.id]);
+        if (options[0] && !socialContentTaskId) setSelectedProductIds(current => current.length ? current : [options[0]!.id]);
         const configuredVoiceLanguages = enterpriseLanguageCodes(
           profile.brand?.preferredLanguages || profile.company?.primaryLanguages || '',
         );
@@ -3280,7 +3281,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
           setActiveVoiceLang(current => configuredVoiceLanguages.includes(current) ? current : defaultVoiceLanguage);
         }
-        setProductInfo(prev => prev || options[0]?.info || [
+        if (!socialContentTaskId) setProductInfo(prev => prev || options[0]?.info || [
           profile.strategy?.focusProducts || profile.products?.categories,
           profile.products?.priceRange,
           profile.products?.moq,
@@ -3302,7 +3303,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       })
       .catch(() => {});
     return () => { alive = false; };
-  }, []);
+  }, [socialContentTaskId]);
+
+  useEffect(() => {
+    if (!socialContentTaskId || !socialTaskProductReference || productOptions.length === 0 || selectedProductIds.length > 0) return;
+    const requested = compactComparable(socialTaskProductReference);
+    const matched = productOptions.find(option => {
+      const label = compactComparable(option.label);
+      return label === requested || (requested.length >= 4 && (label.includes(requested) || requested.includes(label)));
+    });
+    if (!matched) {
+      setModeNotice(`任务中的产品“${socialTaskProductReference}”尚未匹配企业知识库产品；请先返回任务核对产品信息。`);
+      return;
+    }
+    setSelectedProductIds([matched.id]);
+  }, [productOptions, selectedProductIds.length, socialContentTaskId, socialTaskProductReference]);
 
   useEffect(() => {
     if (productOptions.length === 0 || selectedProductIds.length === 0) return;
@@ -3346,6 +3361,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   // 草稿 / 作品
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [socialTaskProjectLookupDone, setSocialTaskProjectLookupDone] = useState(() => !socialContentTaskId);
   const currentProjectRef = useRef(projectId); currentProjectRef.current = projectId;
   const managedProductionProjectRef = useRef(false);
   const agentProduction = useAgentProductionAction('studio');
@@ -3355,15 +3371,24 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
   useStudioSocialTaskHydration({
-    taskId: socialContentTaskId,
+    taskId: socialTaskProjectLookupDone ? socialContentTaskId : null,
     canApply: () => !projectId && !autoGen.current && !studioSettingsEditedRef.current,
     onHydrate: seed => {
       studioSettingsEditedRef.current = true;
       autoGen.current = true;
+      setSocialTaskProductReference(seed.productReference);
       setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
       setPlatform(seed.platform); setRatio(seed.aspectRatio); setLang(seed.languageCodes[0]!);
       setVoiceLangs(seed.languageCodes); setActiveVoiceLang(seed.languageCodes[0]!);
       setAudience(seed.audience); setPrimaryCta(seed.primaryCta);
+      if (seed.contentTheme) {
+        const hydratedTheme = VIDEO_THEMES.find(item => item.id === seed.contentTheme);
+        if (hydratedTheme) {
+          setVideoThemeId(hydratedTheme.id);
+          setThemePainPoint(seed.themeTopic || hydratedTheme.painPoint);
+          setThemeConversionGoal(DEFAULT_VIDEO_CONVERSION_GOAL);
+        }
+      }
       if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
       const hydrationNotices = [
         seed.factVerificationNotice,
@@ -7690,6 +7715,29 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   };
 
   useEffect(() => {
+    const taskId = socialContentTaskId?.trim();
+    if (!taskId) {
+      setSocialTaskProjectLookupDone(true);
+      return;
+    }
+    let disposed = false;
+    setSocialTaskProjectLookupDone(false);
+    void studioApi.listProjects().then(list => {
+      if (disposed) return;
+      setProjects(list);
+      const project = list.find(item => item.status !== 'template');
+      if (!project) return;
+      loadProject(project);
+      setModeNotice(`已恢复任务“${project.title}”的上次制作进度。`);
+    }).catch(() => {
+      if (!disposed) setModeNotice('上次制作进度读取失败，已重新载入任务资料。');
+    }).finally(() => {
+      if (!disposed) setSocialTaskProjectLookupDone(true);
+    });
+    return () => { disposed = true; };
+  }, [socialContentTaskId]);
+
+  useEffect(() => {
     if (!agentProduction.active) return;
     let disposed = false;
     const refresh = async () => {
@@ -7849,6 +7897,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             <input ref={fileInputRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => { void handleUpload(event.target.files); event.target.value = ''; }} />
             <div className="mb-4">
               <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容类型</p>
+              {socialContentTaskId ? (
+                <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-text-primary">
+                  {contentMode === 'video' ? '视频内容' : '图文内容'} · 已从任务带入
+                </div>
+              ) : (
               <div className="grid grid-cols-2 rounded-lg bg-surface-2 p-1">
                 {([
                   ['video', '视频模式'],
@@ -7877,8 +7930,20 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   </button>
                 ))}
               </div>
+              )}
             </div>
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">创作方式</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">制作设置</p>
+            {socialContentTaskId ? (
+              <div className="mb-5 mt-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-3">
+                <div className="flex items-start gap-2.5">
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white"><Check size={14} /></span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-emerald-950">任务资料已带入统一制作工作台</p>
+                    <p className="mt-1 text-[10px] leading-4 text-emerald-800">主题、产品和素材沿用已确认任务；这里直接继续脚本、素材匹配和成片制作，不再选择旧制作路线。</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className="mb-5 mt-2 divide-y divide-border/70 border-y border-border/70">
               {visibleModes.map(m => {
                 const on = mode === m.id;
@@ -7913,9 +7978,17 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                 );
               })}
             </div>
+            )}
             <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容信息</p>
             <div className="space-y-4">
               <div className="flex flex-wrap items-end gap-3">
+                {socialContentTaskId ? (
+                  <div className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">任务产品</p>
+                    <p className="mt-1 text-xs font-black text-text-primary">{selectedProductOptions.map(option => option.label).join('、') || socialTaskProductReference || '等待匹配企业知识库产品'}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-text-muted">产品事实来自企业知识库；创作素材统一从“我的素材”按产品关联读取。</p>
+                  </div>
+                ) : (
                 <div className="min-w-0 flex-1">
                   <span className="mb-1.5 block text-xs font-semibold text-text-secondary">产品信息（多选）</span>
                   <div ref={productSelectorRef} className="relative">
@@ -8021,6 +8094,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     )}
                   </div>
                 </div>
+                )}
               </div>
               {contentMode === 'video' && (
                 <section className="border-t border-border pt-4">

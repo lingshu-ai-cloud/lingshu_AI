@@ -1,6 +1,7 @@
 import type {
   SocialContentTaskDetail,
   SocialContentTaskSummary,
+  SocialContentThemeId,
   SocialWorkPackageCard,
   SocialWorkPackageKind,
 } from '../../../shared/contracts/socialContentWorkflow';
@@ -9,6 +10,19 @@ import {
   type SocialContentDraft,
 } from '../../lib/socialContentModel';
 
+export const SOCIAL_THEME_OPTIONS: ReadonlyArray<{
+  id: SocialContentThemeId;
+  title: string;
+  description: string;
+  shots: string[];
+}> = [
+  { id: 'product_value', title: '产品与卖点', description: '讲清产品、关键能力和可验证差异', shots: ['产品全貌', '关键细节', '使用演示', '证据'] },
+  { id: 'scenario_solution', title: '场景与解决方案', description: '从真实问题出发展示解决过程', shots: ['场景', '问题', '解决动作', '结果与边界'] },
+  { id: 'supplier_capability', title: '企业与供应保障', description: '展示团队、流程、质检和交付能力', shots: ['场所或团队', '流程', '质检', '仓储或交付'] },
+  { id: 'customization_process', title: '定制与合作流程', description: '说明需求、打样、确认到交付', shots: ['需求', '方案', '样品', '确认', '生产交付'] },
+  { id: 'customer_case', title: '客户案例与合作成果', description: '用已授权、可核验的证据讲成果', shots: ['授权背景', '问题', '方案', '结果', '授权证明'] },
+];
+
 export const PACKAGE_META: Record<SocialWorkPackageKind, { title: string; caption: string }> = {
   industry_launch: { title: '行业起航包', caption: '市场、受众与内容方向' },
   content_rocket: { title: '内容火箭包', caption: '选题、脚本与成品制作' },
@@ -16,6 +30,7 @@ export const PACKAGE_META: Record<SocialWorkPackageKind, { title: string; captio
 };
 
 export const PLATFORM_OPTIONS = [
+  ['douyin_cn', '抖音'],
   ['tiktok', 'TikTok'],
   ['instagram', 'Instagram'],
   ['youtube', 'YouTube'],
@@ -102,9 +117,19 @@ export function packageSelectionForCatalog(catalog: SocialWorkPackageCard[]): So
 export function taskToDraft(task: SocialContentTaskDetail | SocialContentTaskSummary | null, catalog: SocialWorkPackageCard[]): SocialContentDraft {
   const packageSelection = packageSelectionForCatalog(catalog);
   task?.packageSelection.forEach(item => { packageSelection[item.kind] = item.packageKey; });
-  if (!task) return { ...EMPTY_SOCIAL_CONTENT_DRAFT, packageSelection };
+  if (!task) return {
+    ...EMPTY_SOCIAL_CONTENT_DRAFT,
+    market: '全球',
+    platforms: ['douyin_cn'],
+    formats: ['short_video'],
+    packageSelection,
+  };
   return {
     ...EMPTY_SOCIAL_CONTENT_DRAFT,
+    mode: task.mode ?? 'weekly',
+    themeId: task.theme?.themeId ?? '',
+    customTopic: task.theme?.inputKind === 'custom' ? task.theme.topic : '',
+    topic: task.theme?.inputKind === 'preset' ? task.theme.topic : '',
     title: task.brief.title,
     productName: task.brief.productRef || '',
     primaryGoal: task.brief.objective,

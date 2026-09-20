@@ -45,6 +45,7 @@ function materialOption(item: MaterialRecord): SocialContentSourceOption | null 
   const sourceVersion = socialText(item.sourceRevision)
     || socialText(item.analysisSourceRevision)
     || socialText(item.sha256)
+    || socialText(item.contentSha256)
     || socialRequestHash({ id, updatedAt: item.updatedAt ?? item.updated });
   return {
     optionId: `material:${encodedId}`,

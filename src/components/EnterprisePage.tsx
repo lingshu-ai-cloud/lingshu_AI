@@ -1,7 +1,7 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { motion } from 'motion/react';
-import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, Video, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { completeDemoStep } from '../lib/demoProgress';
 import {
@@ -24,6 +24,8 @@ interface ProductAsset {
 }
 
 interface ProductItem {
+  id?: string;
+  productId?: string;
   sku?: string;
   name: string;
   category?: string;
@@ -396,30 +398,35 @@ export function profileSnapshot(profile: Profile): string {
   return JSON.stringify(stable);
 }
 
-function productImageCount(product: ProductItem): number {
-  const images = product.images ?? [];
-  const legacyImageCount = product.imageUrl && !images.some(image => image.url === product.imageUrl) ? 1 : 0;
-  return images.length + legacyImageCount;
+function productCreativeMaterialCount(product: ProductItem): number {
+  const assets = [
+    ...(product.images ?? []),
+    ...(product.videos ?? []),
+    ...(product.factoryImages ?? []),
+    ...(product.packagingImages ?? []),
+    ...(product.sceneImages ?? []),
+    ...(product.brandAssets ?? []),
+  ];
+  const signatures = new Set(assets.map(asset => asset.url || `${asset.name}:${asset.size}:${asset.updatedAt}`));
+  if (product.imageUrl) signatures.add(product.imageUrl);
+  return signatures.size;
 }
 
 function productAssetStats(items: ProductItem[]) {
   return items.reduce((acc, product) => {
-    const imageCount = productImageCount(product);
-    acc.images += imageCount;
-    acc.videos += product.videos?.length ?? 0;
+    acc.creative += productCreativeMaterialCount(product);
     acc.documents += product.documents?.length ?? 0;
-    if (imageCount > 0) acc.withImage += 1;
     return acc;
-  }, { images: 0, videos: 0, documents: 0, withImage: 0 });
+  }, { creative: 0, documents: 0 });
 }
 
 export function sectionCompletion(profile: Profile): Record<SectionKey, boolean> {
   const items = normalizeProductItems(profile.products);
-  const stats = productAssetStats(items);
   const namedProducts = items.filter((item, index) => Boolean(item.name.trim() && item.name.trim() !== `产品${index + 1}`));
   return {
-    products: namedProducts.length > 0 && namedProducts.some(item => productImageCount(item) > 0),
-    materials: stats.videos >= 1 || stats.images + stats.videos + stats.documents >= 5,
+    products: namedProducts.length > 0,
+    // 创作素材在“我的素材”独立维护，不再作为企业事实资料的完成门槛。
+    materials: true,
     bizRules: Boolean(profile.bizRules?.quoteMode && profile.bizRules?.samplePolicy?.trim() && profile.bizRules?.paymentTerms?.trim()),
     faq: (profile.faq ?? []).length >= 5,
     market: Boolean(profile.company.mainMarkets.trim() && profile.company.primaryLanguages?.trim()),
@@ -596,17 +603,14 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 const inputCls = 'w-full px-3 py-2 text-sm bg-white border border-border rounded-lg outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-all placeholder:text-text-muted text-text-primary';
 const textareaCls = `${inputCls} resize-none`;
 
-const MAX_PRODUCT_ASSETS = {
-  images: 5,
-  videos: 2,
-  documents: 3,
-  factoryImages: 6,
-  packagingImages: 6,
-  certificateImages: 6,
-  sceneImages: 6,
-  brandAssets: 6,
-} as const;
-type ProductAssetKey = keyof typeof MAX_PRODUCT_ASSETS;
+const MAX_PRODUCT_DOCUMENTS = 3;
+
+export function productMaterialLibraryParams(product: Pick<ProductItem, 'id' | 'productId' | 'sku' | 'name'>): { productId: string; productRef: string } {
+  return {
+    productId: String(product.id || product.productId || product.sku || '').trim(),
+    productRef: String(product.name || '').trim(),
+  };
+}
 
 function emptyProduct(index: number): ProductItem {
   return {
@@ -658,7 +662,7 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-async function uploadEnterpriseAsset(file: File): Promise<ProductAsset> {
+async function uploadProductEvidence(file: File): Promise<ProductAsset> {
   const dataUrl = await fileToDataUrl(file);
   const response = await fetch('/api/overseas/enterprise/assets', {
     method: 'POST',
@@ -914,8 +918,6 @@ export default function EnterprisePage() {
   const assetStats = productAssetStats(products);
   const completions = sectionCompletion(profile);
   const notificationCompleted = Boolean((profile.notifications?.receivers ?? []).length >= 1 && profile.notifications?.lastTestAt);
-  const missingImageRatio = products.length ? (products.length - assetStats.withImage) / products.length : 0;
-  const missingImageCount = Math.max(0, products.length - assetStats.withImage);
   const approvedFaqCount = (profile.faq ?? []).filter(item => item.approvedForAuto && item.question.trim() && item.answer.trim()).length;
   const customerServiceEnabled = profile.customerService?.enabled === true;
   const customerServiceEnabledAt = Date.parse(profile.customerService?.enabledAt || '');
@@ -1437,9 +1439,9 @@ export default function EnterprisePage() {
     });
   };
 
-  const addProductAssets = async (index: number, key: ProductAssetKey, files: FileList | null) => {
+  const addProductDocuments = async (index: number, files: FileList | null) => {
     if (!files?.length) return;
-    const picked = await Promise.all(Array.from(files).map(file => uploadEnterpriseAsset(file).catch(() => ({
+    const picked = await Promise.all(Array.from(files).map(file => uploadProductEvidence(file).catch(() => ({
       name: file.name,
       type: file.type || 'application/octet-stream',
       size: file.size,
@@ -1447,18 +1449,29 @@ export default function EnterprisePage() {
     }))));
     setProfile(prev => {
       const items = normalizeProductItems(prev.products);
-      const current = items[index]?.[key] ?? [];
-      items[index] = { ...items[index], [key]: [...current, ...picked].slice(0, MAX_PRODUCT_ASSETS[key]) };
+      const current = items[index]?.documents ?? [];
+      items[index] = { ...items[index], documents: [...current, ...picked].slice(0, MAX_PRODUCT_DOCUMENTS) };
       return { ...prev, products: { ...prev.products, items } };
     });
   };
 
-  const removeProductAsset = (index: number, key: ProductAssetKey, assetIndex: number) => {
+  const removeProductDocument = (index: number, assetIndex: number) => {
     setProfile(prev => {
       const items = normalizeProductItems(prev.products);
-      items[index] = { ...items[index], [key]: (items[index]?.[key] ?? []).filter((_, i) => i !== assetIndex) };
+      items[index] = { ...items[index], documents: (items[index]?.documents ?? []).filter((_, i) => i !== assetIndex) };
       return { ...prev, products: { ...prev.products, items } };
     });
+  };
+
+  const openProductMaterials = (product: ProductItem) => {
+    const params = productMaterialLibraryParams(product);
+    const detail = { page: 'socialInspiration', view: 'library', ...params };
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'library');
+    url.searchParams.set('productId', params.productId);
+    url.searchParams.set('productRef', params.productRef);
+    window.history.replaceState({ ...window.history.state, productionDetail: detail }, '', url);
   };
 
   const aiAutonomySection = (
@@ -1868,11 +1881,12 @@ export default function EnterprisePage() {
             title="产品资料"
             purpose="AI 推荐产品、整理询价条件和生成内容的原料"
             completed={completions.products}
-            stat={`${products.length} 个产品 · ${assetStats.images} 张图 · ${assetStats.videos} 个视频 · ${assetStats.documents} 份文书`}
+            stat={`${products.length} 个产品 · ${assetStats.documents} 份资质凭证 · ${assetStats.creative} 项历史素材记录`}
           >
-            {missingImageRatio > 0.5 && (
-              <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{missingImageCount} 个产品还缺产品图，补齐后才能用于视频生成</p>
-            )}
+            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+              <p className="text-sm font-black text-emerald-950">产品素材统一在“我的素材”管理</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-800">企业知识库只维护产品事实和资质凭证。图片、视频和音频只需上传一次；从内容任务上传的素材也会归入同一个素材库。</p>
+            </div>
             <div className="mb-4 grid grid-cols-2 gap-4">
               <Field label="主营品类">
                 <OptionSelector value={profile.products.categories} options={CATEGORY_OPTIONS} onChange={value => set('products')('categories', value)} placeholder="选择主营品类" />
@@ -1923,7 +1937,7 @@ export default function EnterprisePage() {
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 pr-9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">
                     <div className="min-w-0">
                       <p className="truncate text-xs font-black text-text-primary">{product.name.trim() || `产品 ${index + 1}`}</p>
-                      <p className="mt-1 text-[10px] text-text-muted">产品图 {productImageCount(product)} · 视频 {product.videos?.length ?? 0} · 文档 {product.documents?.length ?? 0}</p>
+                      <p className="mt-1 text-[10px] text-text-muted">产品事实 · 资质凭证 {product.documents?.length ?? 0} 份 · 现有素材记录 {productCreativeMaterialCount(product)} 项</p>
                     </div>
                     <ChevronDown size={14} className="shrink-0 text-text-muted transition-transform group-open:rotate-180" />
                   </summary>
@@ -1946,34 +1960,35 @@ export default function EnterprisePage() {
                   <Field label="产品卖点">
                     <textarea className={textareaCls} rows={2} value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} placeholder="核心卖点、适用场景、可定制项、交付优势" />
                   </Field>
-                  <div className="mt-3 border-t border-border pt-3">
-                    <p className="mb-2 text-[11px] font-black text-text-secondary">产品素材 <span className="font-normal text-text-muted">· AI 创作时优先调用</span></p>
-                    <div className="grid grid-cols-3 gap-3">
-                      {([
-                        { key: 'images' as const, label: '产品图', limit: MAX_PRODUCT_ASSETS.images, accept: 'image/*', icon: Image, assets: product.images ?? [] },
-                        { key: 'videos' as const, label: '实拍视频', limit: MAX_PRODUCT_ASSETS.videos, accept: 'video/*', icon: Video, assets: product.videos ?? [] },
-                        { key: 'documents' as const, label: '资质文书', limit: MAX_PRODUCT_ASSETS.documents, accept: '.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg', icon: FileText, assets: product.documents ?? [] },
-                      ]).map(({ key, label, limit, accept, icon: Icon, assets }) => (
-                        <div key={key} className="min-w-0 rounded-lg border border-border bg-white p-3">
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-text-secondary"><Icon size={12} />{label}</span>
-                            <span className="text-[10px] text-text-muted">{assets.length}/{limit}</span>
+                  <div className="mt-3 space-y-3 border-t border-border pt-3">
+                    <div className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs font-black text-emerald-950">产品素材统一在“我的素材”管理</p>
+                        <p className="mt-1 text-[11px] leading-5 text-emerald-800">当前产品有 {productCreativeMaterialCount(product)} 项历史素材记录。进入素材库后可按产品查看、上传和复用。</p>
+                      </div>
+                      <button type="button" onClick={() => openProductMaterials(product)} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-black text-white hover:bg-emerald-800">
+                        <Image size={13} />去我的素材
+                      </button>
+                    </div>
+                    <div className="rounded-lg border border-border bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-text-secondary"><FileText size={12} />资质凭证</span>
+                        <span className="text-[10px] text-text-muted">{product.documents?.length ?? 0}/{MAX_PRODUCT_DOCUMENTS}</span>
+                      </div>
+                      <p className="mb-2 text-[10px] leading-4 text-text-muted">这里只保存用于证明产品事实的证书、检测报告等资料，不作为视频创作素材。</p>
+                      <label className={`flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed text-[11px] font-bold ${(product.documents?.length ?? 0) >= MAX_PRODUCT_DOCUMENTS ? 'cursor-not-allowed bg-surface-2 text-text-muted' : 'cursor-pointer text-text-secondary hover:border-border-bright hover:text-text-primary'}`}>
+                        <Upload size={12} />上传资质凭证
+                        <input className="hidden" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" disabled={(product.documents?.length ?? 0) >= MAX_PRODUCT_DOCUMENTS} onChange={e => { addProductDocuments(index, e.currentTarget.files); e.currentTarget.value = ''; }} />
+                      </label>
+                      <div className="mt-2 space-y-1">
+                        {(product.documents ?? []).map((asset, assetIndex) => (
+                          <div key={`${asset.name}-${assetIndex}`} className="flex min-w-0 items-center gap-1.5 text-[10px] text-text-secondary">
+                            {asset.url ? <a href={asset.url} target="_blank" rel="noreferrer" className="flex-1 truncate hover:text-text-primary">{asset.name}</a> : <span className="flex-1 truncate">{asset.name}</span>}
+                            <span className="shrink-0 text-text-muted">{formatSize(asset.size)}</span>
+                            <button type="button" onClick={() => removeProductDocument(index, assetIndex)} aria-label={`删除资质凭证 ${asset.name}`} title="删除资质凭证" className="shrink-0 rounded p-0.5 text-text-muted hover:text-red"><X size={10} /></button>
                           </div>
-                          <label className={`flex h-8 items-center justify-center gap-1.5 rounded-md border border-dashed text-[11px] font-bold ${assets.length >= limit ? 'cursor-not-allowed bg-surface-2 text-text-muted' : 'cursor-pointer text-text-secondary hover:border-border-bright hover:text-text-primary'}`}>
-                            <Upload size={12} />上传
-                            <input className="hidden" type="file" multiple accept={accept} disabled={assets.length >= limit} onChange={e => { addProductAssets(index, key, e.currentTarget.files); e.currentTarget.value = ''; }} />
-                          </label>
-                          <div className="mt-2 space-y-1">
-                            {assets.map((asset, assetIndex) => (
-                              <div key={`${asset.name}-${assetIndex}`} className="flex min-w-0 items-center gap-1.5 text-[10px] text-text-secondary">
-                                {asset.url ? <a href={asset.url} target="_blank" rel="noreferrer" className="flex-1 truncate hover:text-text-primary">{asset.name}</a> : <span className="flex-1 truncate">{asset.name}</span>}
-                                <span className="shrink-0 text-text-muted">{formatSize(asset.size)}</span>
-                                <button type="button" onClick={() => removeProductAsset(index, key, assetIndex)} aria-label={`删除素材 ${asset.name}`} title="删除素材" className="shrink-0 rounded p-0.5 text-text-muted hover:text-red"><X size={10} /></button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   </div>
                   </div>
@@ -2289,484 +2304,6 @@ export default function EnterprisePage() {
               </div>
           </section>
           )}
-
-          <div className="h-4" />
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <Building2 size={13} />
-          </div>
-          <span className="text-sm font-semibold text-text-primary">企业中心</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {saveError && <span className="max-w-72 truncate text-[11px] font-bold text-red-600" title={saveError}>{saveError}</span>}
-          <motion.button
-            whileTap={{ scale: 0.96 }}
-            onClick={handleSave}
-            disabled={saving || !hasUnsavedChanges}
-            title={saveError || (hasUnsavedChanges ? '保存后，灵小枢、客服和社媒创作会使用这些资料' : '资料已保存在企业空间，并授权给 AI 使用')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all disabled:opacity-60"
-            style={{ background: saveError ? '#dc2626' : !hasUnsavedChanges ? '#16a34a' : '#0f172a' }}
-          >
-            {saving ? <Loader2 size={12} className="animate-spin" /> : saveError ? <X size={12} /> : !hasUnsavedChanges ? <CheckCircle2 size={12} /> : <Save size={12} />}
-            {saving ? '保存中' : saveError ? '保存失败' : !hasUnsavedChanges ? '已保存' : '保存'}
-          </motion.button>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
-
-          {/* Injection banner */}
-          <div className="rounded-xl border border-border bg-surface p-4 flex items-start gap-3">
-            <BookOpen size={15} className="text-accent flex-shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-text-primary mb-2">全局知识注入</p>
-              <p className="text-[11px] text-text-muted mb-3">以下信息将自动注入所有 Agent 的上下文，让回答更贴合你的真实业务。</p>
-              <div className="flex flex-wrap gap-2">
-                {AGENTS.map(({ icon: Icon, label, color }) => (
-                  <span key={label} className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium" style={{ background: `${color}12`, color }}>
-                    <Icon size={11} />{label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <EnterpriseProductImportCard
-            importing={productImporting}
-            importMessage={productImportMessage}
-            apiStatus={apiStatus}
-            onImport={importProductSheet}
-          />
-
-          <section className="card p-4">
-            <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-700">
-                <FileText size={16} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-text-primary">订单数据导入</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white">
-                    {orderImporting ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-                    上传订单 CSV
-                    <input type="file" accept=".csv,text/csv" className="hidden" disabled={orderImporting}
-                      onChange={e => {
-                        const file = e.target.files?.[0] || null;
-                        e.currentTarget.value = '';
-                        void importOrderCsv(file);
-                      }} />
-                  </label>
-                  <span className="text-[11px] text-text-muted">必填：客户名称、商品/SKU、GMV；建议填写来源和来源凭证。</span>
-                </div>
-                {orderImportMessage && <p className="mt-2 text-[11px] font-semibold text-green-700">{orderImportMessage}</p>}
-              </div>
-            </div>
-          </section>
-
-          <section id="ai-autonomy" data-lingshu-guide="enterprise-autonomy" className={`card p-5 transition-all ${autonomyHighlight ? 'ring-2 ring-amber-300' : ''}`}>
-            <div className="flex items-start justify-between gap-3">
-              <p className="text-sm font-semibold text-text-primary">AI 参与程度</p>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">
-                当前：{AUTONOMY_OPTIONS.find(item => item.value === (profile.strategy?.aiAutonomy ?? 'draft'))?.title}
-              </span>
-            </div>
-            <div className="mt-4 grid grid-cols-3 gap-3">
-              {AUTONOMY_OPTIONS.map(option => {
-                const active = (profile.strategy?.aiAutonomy ?? 'draft') === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setAutonomy(option.value)}
-                    className={`min-h-[118px] rounded-lg border p-3 text-left transition-all ${active ? 'border-slate-950 bg-slate-950 text-white shadow-sm' : 'border-border bg-white text-text-primary hover:border-slate-300 hover:bg-surface-2'}`}
-                  >
-                    <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-black ${active ? 'border-white bg-white text-slate-950' : 'border-border text-text-muted'}`}>
-                      {active ? '✓' : ''}
-                    </span>
-                    <p className="mt-2 text-xs font-black">{option.title}</p>
-                    <p className={`mt-2 text-[11px] leading-5 ${active ? 'text-white/80' : 'text-text-muted'}`}>{option.desc}</p>
-                    <p className={`text-[11px] leading-5 ${active ? 'text-white/80' : 'text-text-muted'}`}>{option.detail}</p>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[11px] font-semibold leading-relaxed text-red-700">
-              无论选择哪档：报价、折扣、付款条款、交期承诺，AI 永远不会替你决定。
-            </p>
-          </section>
-
-          {/* Company Info */}
-          <section className="card p-5 space-y-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Building2 size={14} className="text-text-secondary" />
-              <h3 className="text-sm font-semibold text-text-primary">公司信息</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="公司名称">
-                <input className={inputCls} placeholder="示例贸易有限公司" value={profile.company.name}
-                  onChange={e => set('company')('name', e.target.value)} />
-              </Field>
-              <Field label="行业类目">
-                <input className={inputCls} placeholder="跨境电商 / 消费品" value={profile.company.industry}
-                  onChange={e => set('company')('industry', e.target.value)} />
-              </Field>
-              <Field label="企业类型">
-                <input className={inputCls} placeholder="工厂 / 工贸一体 / 贸易商 / 品牌商" value={profile.company.companyType ?? ''}
-                  onChange={e => set('company')('companyType', e.target.value)} />
-              </Field>
-              <Field label="主攻市场">
-                <input className={inputCls} placeholder="中东、东南亚、北美" value={profile.company.mainMarkets}
-                  onChange={e => set('company')('mainMarkets', e.target.value)} />
-              </Field>
-              <Field label="主要语言">
-                <input className={inputCls} placeholder="英语、阿拉伯语、西班牙语" value={profile.company.primaryLanguages ?? ''}
-                  onChange={e => set('company')('primaryLanguages', e.target.value)} />
-              </Field>
-              <Field label="海外平台经验">
-                <input className={inputCls} placeholder="做过 / 没做过 / 正在准备" value={profile.company.socialPlatformExperience ?? ''}
-                  onChange={e => set('company')('socialPlatformExperience', e.target.value)} />
-              </Field>
-              <Field label="成立年份">
-                <input className={inputCls} placeholder="2018" value={profile.company.founded}
-                  onChange={e => set('company')('founded', e.target.value)} />
-              </Field>
-            </div>
-            <Field label="公司简介" hint="一段话描述公司背景、优势、定位">
-              <textarea className={textareaCls} rows={3} placeholder="我们是一家专注海外市场的跨境电商品牌，主营美妆个护、家居日用、消费电子，在 TikTok 和 WhatsApp 有稳定私域流量…"
-                value={profile.company.description} onChange={e => set('company')('description', e.target.value)} />
-            </Field>
-          </section>
-
-          {/* Strategy */}
-          <section className="card p-5 space-y-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Compass size={14} className="text-text-secondary" />
-              <h3 className="text-sm font-semibold text-text-primary">经营策略</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="当前阶段目标">
-                <input className={inputCls} placeholder="拿询盘 / 提转化 / 推新品 / 提利润" value={profile.strategy?.currentGoal ?? ''}
-                  onChange={e => set('strategy')('currentGoal', e.target.value)} />
-              </Field>
-              <Field label="本期重点产品">
-                <input className={inputCls} placeholder="精华液套装、LED 吊灯、空气炸锅…" value={profile.strategy?.focusProducts ?? ''}
-                  onChange={e => set('strategy')('focusProducts', e.target.value)} />
-              </Field>
-              <Field label="重点市场">
-                <input className={inputCls} placeholder="美国、沙特、德国" value={profile.strategy?.focusMarkets ?? ''}
-                  onChange={e => set('strategy')('focusMarkets', e.target.value)} />
-              </Field>
-              <Field label="暂不经营市场">
-                <input className={inputCls} placeholder="高退货率或合规风险市场" value={profile.strategy?.excludedMarkets ?? ''}
-                  onChange={e => set('strategy')('excludedMarkets', e.target.value)} />
-              </Field>
-              <Field label="最低利润率">
-                <input className={inputCls} placeholder="建议 >= 28%" value={profile.strategy?.minMargin ?? ''}
-                  onChange={e => set('strategy')('minMargin', e.target.value)} />
-              </Field>
-              <Field label="Agent 权限">
-                <input className={inputCls} placeholder="建议优先，关键动作需确认" value={profile.strategy?.agentAutonomy ?? ''}
-                  onChange={e => set('strategy')('agentAutonomy', e.target.value)} />
-              </Field>
-            </div>
-            <Field label="价格策略" hint="帮助广告、询盘、商品 Agent 判断怎么报价和表达价值">
-              <textarea className={textareaCls} rows={2} placeholder="中高端定位，不走 lowest price；样品单可少量让利，大货保持利润。"
-                value={profile.strategy?.pricingStrategy ?? ''} onChange={e => set('strategy')('pricingStrategy', e.target.value)} />
-            </Field>
-          </section>
-
-          {/* Customers */}
-          <section className="card p-5 space-y-4">
-            <div className="flex items-center gap-2 mb-1">
-              <MessageSquare size={14} className="text-text-secondary" />
-              <h3 className="text-sm font-semibold text-text-primary">客户画像</h3>
-            </div>
-            <Field label="目标客户" hint="客户类型、采购目的、常见国家、预算区间">
-              <textarea className={textareaCls} rows={2} value={profile.customers?.targetProfiles ?? ''}
-                onChange={e => set('customers')('targetProfiles', e.target.value)} placeholder="海外品牌商、批发商、连锁零售采购；关注稳定供货、认证和可定制包装。" />
-            </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="高价值客户信号">
-                <textarea className={textareaCls} rows={2} value={profile.customers?.highValueSignals ?? ''}
-                  onChange={e => set('customers')('highValueSignals', e.target.value)} placeholder="询问认证、配方/规格、包装定制、复购节奏、目标上架渠道。" />
-              </Field>
-              <Field label="低质量询盘特征">
-                <textarea className={textareaCls} rows={2} value={profile.customers?.lowQualitySignals ?? ''}
-                  onChange={e => set('customers')('lowQualitySignals', e.target.value)} placeholder="只问最低价、MOQ 低于底线、无公司信息、要求未认证功效。" />
-              </Field>
-            </div>
-            <Field label="常见问题与跟进偏好">
-              <textarea className={textareaCls} rows={3} value={[profile.customers?.commonQuestions, profile.customers?.followupStyle].filter(Boolean).join('\n')}
-                onChange={e => {
-                  const [commonQuestions = '', ...rest] = e.target.value.split('\n');
-                  setProfile(prev => ({ ...prev, customers: { ...prev.customers, commonQuestions, followupStyle: rest.join('\n') } }));
-                }} placeholder={"常问：样品费、交期、认证文件、包装设计支持\n跟进：报价后第 2 天提醒，强调库存和打样档期"} />
-            </Field>
-          </section>
-
-          {/* Operations */}
-          <section className="card p-5 space-y-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Zap size={14} className="text-text-secondary" />
-              <h3 className="text-sm font-semibold text-text-primary">履约与运营约束</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="交期能力">
-                <input className={inputCls} placeholder="样品 3-7 天，大货 20-35 天" value={profile.operations?.leadTime ?? ''}
-                  onChange={e => set('operations')('leadTime', e.target.value)} />
-              </Field>
-              <Field label="定制能力">
-                <input className={inputCls} placeholder="OEM/ODM、包装、规格、色号" value={profile.operations?.customization ?? ''}
-                  onChange={e => set('operations')('customization', e.target.value)} />
-              </Field>
-              <Field label="物流方式">
-                <input className={inputCls} placeholder="DHL/空运/海运/海外仓" value={profile.operations?.logistics ?? ''}
-                  onChange={e => set('operations')('logistics', e.target.value)} />
-              </Field>
-              <Field label="付款条款">
-                <input className={inputCls} placeholder="T/T 30% 预付，尾款出货前结清" value={profile.operations?.paymentTerms ?? ''}
-                  onChange={e => set('operations')('paymentTerms', e.target.value)} />
-              </Field>
-            </div>
-            <Field label="风险与红线">
-              <textarea className={textareaCls} rows={2} placeholder="不承诺未经确认的到货日期；不使用 before/after 夸大效果；敏感功效需认证支持。"
-                value={profile.operations?.riskNotes ?? ''} onChange={e => set('operations')('riskNotes', e.target.value)} />
-            </Field>
-          </section>
-
-          {/* Products */}
-          <section className="card p-5 space-y-4">
-            <div className="flex items-center justify-between gap-3 mb-1">
-              <div className="flex items-center gap-2">
-                <Package size={14} className="text-text-secondary" />
-                <h3 className="text-sm font-semibold text-text-primary">产品目录</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary hover:bg-surface-2">
-                  {productImporting ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
-                  导入产品表
-                  <input
-                    type="file"
-                    accept=".xlsx,.csv"
-                    className="hidden"
-                    disabled={productImporting}
-                    onChange={e => {
-                      void importProductSheet(e.currentTarget.files?.[0] ?? null);
-                      e.currentTarget.value = '';
-                    }}
-                  />
-                </label>
-                <button type="button" onClick={addProduct}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs font-semibold text-text-secondary hover:text-text-primary hover:bg-surface-2">
-                  <Plus size={12} />添加产品
-                </button>
-              </div>
-            </div>
-            {productImportMessage && <p className="text-[11px] font-semibold text-green-700">{productImportMessage}</p>}
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="主营品类">
-                <input className={inputCls} placeholder="美妆个护、家居日用、消费电子" value={profile.products.categories}
-                  onChange={e => set('products')('categories', e.target.value)} />
-              </Field>
-              <Field label="社媒采集搜索词">
-                <textarea className={textareaCls} rows={3} value={profile.products.searchKeywords ?? ''}
-                  onChange={e => set('products')('searchKeywords', e.target.value)}
-                  placeholder={"每行一个搜索词，也可用逗号分隔，例如：linen shirt\n服装穿搭"} />
-                <p className="mt-1 text-[11px] text-text-muted">经营任务包优先使用这些词搜索参考内容；留空时，系统根据产品名称和品类自动生成。</p>
-              </Field>
-              <Field label="价格区间">
-                <input className={inputCls} placeholder="$5 - $500 USD" value={profile.products.priceRange}
-                  onChange={e => set('products')('priceRange', e.target.value)} />
-              </Field>
-              <Field label="起订量 (MOQ)">
-                <input className={inputCls} placeholder="50件起，支持混批" value={profile.products.moq}
-                  onChange={e => set('products')('moq', e.target.value)} />
-              </Field>
-              <Field label="认证资质">
-                <input className={inputCls} placeholder="CE、FDA、SGS…" value={profile.products.certifications}
-                  onChange={e => set('products')('certifications', e.target.value)} />
-              </Field>
-            </div>
-            <Field label="产品核心优势" hint="工厂直供？独家款式？快速备货？">
-              <textarea className={textareaCls} rows={2} placeholder="工厂直供，7天发货；核心系列支持多规格/多色号定制，支持 OEM/ODM"
-                value={profile.products.highlights} onChange={e => set('products')('highlights', e.target.value)} />
-            </Field>
-            <div className="space-y-3 pt-1">
-              {normalizeProductItems(profile.products).map((product, index) => {
-                const assetGroups: Array<{ key: ProductAssetKey; label: string; hint: string; limit: number; accept: string; icon: LucideIcon; assets: ProductAsset[] }> = [
-                  { key: 'images', label: '产品主图', hint: '白底图/瓶身/套装/矩阵', limit: MAX_PRODUCT_ASSETS.images, accept: 'image/*', icon: Image, assets: product.images ?? [] },
-                  { key: 'factoryImages', label: '工厂实拍', hint: '产线/质检/仓库/团队', limit: MAX_PRODUCT_ASSETS.factoryImages, accept: 'image/*,video/*', icon: Building2, assets: product.factoryImages ?? [] },
-                  { key: 'packagingImages', label: '包装定制', hint: '私标包装/标签/礼盒', limit: MAX_PRODUCT_ASSETS.packagingImages, accept: 'image/*', icon: Package, assets: product.packagingImages ?? [] },
-                  { key: 'certificateImages', label: '证书资质', hint: '认证/检测/资质墙', limit: MAX_PRODUCT_ASSETS.certificateImages, accept: '.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,image/*', icon: FileText, assets: product.certificateImages ?? [] },
-                  { key: 'sceneImages', label: '使用场景', hint: '应用/成分/空间氛围', limit: MAX_PRODUCT_ASSETS.sceneImages, accept: 'image/*,video/*', icon: Video, assets: product.sceneImages ?? [] },
-                  { key: 'brandAssets', label: '品牌视觉', hint: 'Logo/品牌色/参考版式', limit: MAX_PRODUCT_ASSETS.brandAssets, accept: 'image/*,.pdf', icon: Megaphone, assets: product.brandAssets ?? [] },
-                ];
-                return (
-                  <div key={index} className="rounded-lg border border-border bg-surface-2/40 p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-semibold text-text-primary">产品{index + 1}</p>
-                      <button type="button" onClick={() => removeProduct(index)}
-                        className="p-1 rounded-md text-text-muted hover:text-red hover:bg-white" title="删除产品">
-                        <X size={13} />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Field label="产品名称">
-                        <input className={inputCls} placeholder={`产品${index + 1}`} value={product.name}
-                          onChange={e => updateProduct(index, { name: e.target.value })} />
-                      </Field>
-                      <Field label="产品类目">
-                        <input className={inputCls} placeholder="所属品类 / 系列" value={product.category ?? ''}
-                          onChange={e => updateProduct(index, { category: e.target.value })} />
-                      </Field>
-                      <Field label="价格区间">
-                        <input className={inputCls} placeholder="$5 - $500 USD" value={product.priceRange ?? ''}
-                          onChange={e => updateProduct(index, { priceRange: e.target.value })} />
-                      </Field>
-                      <Field label="起订量">
-                        <input className={inputCls} placeholder="50件起，支持混批" value={product.moq ?? ''}
-                          onChange={e => updateProduct(index, { moq: e.target.value })} />
-                      </Field>
-                    </div>
-                    <Field label="认证资质">
-                      <input className={inputCls} placeholder="CE、FDA、SGS、MSDS…" value={product.certifications ?? ''}
-                        onChange={e => updateProduct(index, { certifications: e.target.value })} />
-                    </Field>
-                    <Field label="产品卖点">
-                      <textarea className={textareaCls} rows={2} placeholder="核心卖点、适用场景、可定制项、交付优势"
-                        value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} />
-                    </Field>
-                    <div className="rounded-lg border border-accent/15 bg-accent-glow/40 p-3 text-[11px] leading-relaxed text-text-secondary">
-                      这些图文素材会用于 AI 智能素材的海报生成：产品信息生成/素材库选择会按产品和卖点智能推荐，爆款复刻会先拆解竞品图文后再回填本地素材。
-                    </div>
-                    <div className="grid grid-cols-2 xl:grid-cols-3 gap-3">
-                      {assetGroups.map(({ key, label, limit, accept, icon: Icon, assets }) => (
-                        <div key={key} className="rounded-lg border border-border bg-white p-3 min-w-0">
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-text-secondary">
-                              <Icon size={12} />{label}
-                            </span>
-                            <span className="text-[10px] text-text-muted">{assets.length}/{limit}</span>
-                          </div>
-                          <p className="mb-2 truncate text-[10px] text-text-muted">{assetGroups.find(group => group.key === key)?.hint}</p>
-                          <label className={`flex items-center justify-center gap-1.5 h-8 rounded-md border border-dashed text-[11px] font-semibold transition-colors ${assets.length >= limit ? 'text-text-muted bg-surface-2 cursor-not-allowed' : 'text-text-secondary hover:text-text-primary hover:border-border-bright cursor-pointer'}`}>
-                            <Upload size={12} />上传
-                            <input
-                              className="hidden"
-                              type="file"
-                              multiple
-                              accept={accept}
-                              disabled={assets.length >= limit}
-                              onChange={e => {
-                                addProductAssets(index, key, e.currentTarget.files);
-                                e.currentTarget.value = '';
-                              }}
-                            />
-                          </label>
-                          <div className="mt-2 space-y-1">
-                            {assets.map((asset, assetIndex) => (
-                              <div key={`${asset.name}-${assetIndex}`} className="flex items-center gap-1.5 text-[10px] text-text-secondary min-w-0">
-                                {asset.url ? (
-                                  <a href={asset.url} target="_blank" rel="noreferrer" className="truncate flex-1 hover:text-text-primary">
-                                    {asset.name}
-                                  </a>
-                                ) : (
-                                  <span className="truncate flex-1">{asset.name}</span>
-                                )}
-                                <span className="text-text-muted flex-shrink-0">{formatSize(asset.size)}</span>
-                                <button type="button" onClick={() => removeProductAsset(index, key, assetIndex)}
-                                  className="p-0.5 rounded text-text-muted hover:text-red flex-shrink-0" title="移除附件">
-                                  <X size={10} />
-                                </button>
-                              </div>
-                            ))}
-                            {!assets.length && <p className="text-[10px] text-text-muted">最多{limit}{label === '图片' ? '张' : label === '视频' ? '个' : '份'}</p>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Brand */}
-          <section className="card p-5 space-y-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Megaphone size={14} className="text-text-secondary" />
-              <h3 className="text-sm font-semibold text-text-primary">品牌调性</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="品牌调性关键词">
-                <input className={inputCls} placeholder="专业、可靠、接地气、有温度" value={profile.brand.tone}
-                  onChange={e => set('brand')('tone', e.target.value)} />
-              </Field>
-              <Field label="沟通风格">
-                <select className={inputCls} value={profile.brand.style}
-                  onChange={e => set('brand')('style', e.target.value)}>
-                  <option>专业</option>
-                  <option>轻松</option>
-                  <option>亲切</option>
-                  <option>正式</option>
-                </select>
-              </Field>
-              <Field label="首选语言版本" hint="Agent 生成话术/营销文案时默认使用，超过 2 种会先询问">
-                <input className={inputCls} placeholder="英语、阿拉伯语" value={profile.brand.preferredLanguages ?? ''}
-                  onChange={e => set('brand')('preferredLanguages', e.target.value)} />
-              </Field>
-            </div>
-            <Field label="核心卖点 (USP)" hint="你最想让买家记住的一句话">
-              <input className={inputCls} placeholder="工厂直供，极具价格竞争力，7天极速发货" value={profile.brand.usp}
-                onChange={e => set('brand')('usp', e.target.value)} />
-            </Field>
-            <Field label="禁忌话题" hint="客户跟进和社媒内容不应涉及的内容">
-              <input className={inputCls} placeholder="不提竞品价格对比、不承诺具体到货日期…" value={profile.brand.taboos}
-                onChange={e => set('brand')('taboos', e.target.value)} />
-            </Field>
-          </section>
-
-          {/* Extra knowledge */}
-          <section className="card p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <BookOpen size={14} className="text-text-secondary" />
-              <h3 className="text-sm font-semibold text-text-primary">Agent 学习记录</h3>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <Field label="已验证有效角度">
-                <textarea className={textareaCls} rows={2} value={profile.agentLearning?.provenAngles ?? ''}
-                  onChange={e => set('agentLearning')('provenAngles', e.target.value)} placeholder="天然成分、快速出样、真实工厂质检视频转化较好。" />
-              </Field>
-              <Field label="低效角度/需降权">
-                <textarea className={textareaCls} rows={2} value={profile.agentLearning?.weakAngles ?? ''}
-                  onChange={e => set('agentLearning')('weakAngles', e.target.value)} placeholder="lowest price、过度功效承诺、泛泛 lifestyle 文案。" />
-              </Field>
-              <Field label="待确认推断">
-                <textarea className={textareaCls} rows={2} value={profile.agentLearning?.pendingAssumptions ?? ''}
-                  onChange={e => set('agentLearning')('pendingAssumptions', e.target.value)} placeholder="近 30 天美国小批量定制询盘质量较高，待确认是否设为重点。" />
-              </Field>
-              <Field label="用户纠正偏好">
-                <textarea className={textareaCls} rows={2} value={profile.agentLearning?.userCorrections ?? ''}
-                  onChange={e => set('agentLearning')('userCorrections', e.target.value)} placeholder="避免 cheap，优先使用 cost-effective / reliable supply。" />
-              </Field>
-            </div>
-            <Field label="自由填写" hint="运营经验、特定市场规则、历史爆款案例、常见买家问题等，Agent 会在对话中参考">
-              <textarea className={textareaCls} rows={6}
-                placeholder={"例：\n- 旺季前 2 周提前备货核心爆款，避免断货\n- 东南亚买家对包邮很敏感，建议设 $30 免邮门槛\n- 我们的最畅销款月销 500+，可作为引流主推"}
-                value={profile.knowledge} onChange={e => setProfile(prev => ({ ...prev, knowledge: e.target.value }))} />
-            </Field>
-          </section>
 
           <div className="h-4" />
         </div>

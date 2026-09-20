@@ -5,11 +5,7 @@ import { SOCIAL_CONTENT_TASK_STATUSES, SOCIAL_WORK_PACKAGE_STATUSES } from '../.
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import {
-  buildStarter198CapabilityManifest,
-  starter198CapabilityAllowed,
-  starter198OrgRole,
-} from './profile.js';
+import { starter198OrgRole } from './profile.js';
 import {
   Starter198RepositoryError,
   starter198Repository,
@@ -19,7 +15,9 @@ import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import {
   addSocialTaskSource,
   createSocialContentTask,
+  createSocialWeeklyPlan,
   listSocialContentTasks,
+  listSocialWeeklyPlans,
   readSocialContentWorkspace,
   removeSocialTaskSource,
   selectSocialWorkPackages,
@@ -38,6 +36,7 @@ import {
 import {
   readSocialContentFile,
   registerSocialContentFile,
+  registerSocialTaskCreativeMaterial,
   storeSocialContentFile,
   withSocialContentUploadAdmission,
 } from './socialContentFiles.js';
@@ -48,6 +47,7 @@ import {
   parseArtifactDecision,
   parseArtifactBatchDecision,
   parseCreateSocialTask,
+  parseCreateSocialWeeklyPlan,
   parseDeliveryPackage,
   parseMetrics,
   parsePackageSelection,
@@ -60,6 +60,21 @@ import {
   socialObject,
   socialText,
 } from './socialContentValidation.js';
+import {
+  SOCIAL_THEME_CATALOG,
+  classifySocialCustomTopic,
+  resolveSocialThemeSelection,
+} from './socialContentThemes.js';
+import {
+  createSocialContentFormula,
+  createSocialContentFormulaVersion,
+  disableSocialContentFormula,
+  listSocialContentFormulas,
+  publishSocialContentFormula,
+  resolveSocialContentFormula,
+  SOCIAL_FORMULA_CATALOG_TENANT,
+  trialSocialContentFormula,
+} from './socialContentFormulas.js';
 import {
   changeSocialWorkPackageStatus,
   createSocialWorkPackageVersion,
@@ -79,6 +94,11 @@ import {
   verifySocialDeliveryArchiveMedia,
 } from './socialDeliveryArchiveStream.js';
 import { openSocialArtifactMedia, openSocialArtifactPreviewMedia } from './socialArtifactMedia.js';
+import {
+  SocialContentAccessError,
+  socialContentAccessResolver,
+  type SocialContentAccessResolver,
+} from './socialContentAccess.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -88,6 +108,7 @@ export interface SocialContentRouterDependencies {
   resolveRole?: (request: Request, userId: string) => Promise<unknown>;
   platformAdmin?: (request: Request) => Promise<{ userId: string } | null>;
   sourceOptions?: SocialContentSourceOptionsPort;
+  accessResolver?: SocialContentAccessResolver;
   now?: () => Date;
 }
 
@@ -119,6 +140,14 @@ function integerQuery(value: unknown, fallback: number, maximum: number): number
   return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
 }
 
+function formulaRouteId(value: unknown): string {
+  const parsed = socialText(value);
+  if (!/^[a-z][a-z0-9._-]{1,119}$/i.test(parsed)) {
+    throw new SocialContentWorkflowError('social_content_formula_id_invalid', 400);
+  }
+  return parsed;
+}
+
 export function createSocialContentRouter(dependencies: SocialContentRouterDependencies = {}): Router {
   const router = Router();
   const repository = dependencies.repository ?? starter198Repository;
@@ -127,6 +156,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     ?? ((request: Request, userId: string) => requestOrganizationRoleStrict(request.headers.authorization, userId));
   const platformAdmin = dependencies.platformAdmin ?? (async request => requireAdminUser(request));
   const sourceOptions = dependencies.sourceOptions ?? socialContentSourceOptions;
+  const accessResolver = dependencies.accessResolver ?? socialContentAccessResolver;
 
   router.use(requireAuth);
   router.use((req, res, next) => {
@@ -141,15 +171,18 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     if (level !== 'read' && !['owner', 'admin', 'operator'].includes(role)) {
       throw new SocialContentWorkflowError('social_content_write_forbidden', 403);
     }
-    const access = await repository.access(tenantId);
-    const manifest = buildStarter198CapabilityManifest(access, now());
     const required = level === 'read'
       ? ['workspace.read', 'production_site.read'] as const
       : level === 'start'
         ? ['orchestrator.command.submit', 'workflow.standard.run'] as const
         : ['orchestrator.command.submit'] as const;
-    if (required.some(capability => !starter198CapabilityAllowed(manifest, capability))) {
-      throw new SocialContentWorkflowError('social_content_not_entitled', 403);
+    try {
+      await accessResolver.resolve({ repository, tenantId, requiredCapabilities: required, now: now() });
+    } catch (error) {
+      if (error instanceof SocialContentAccessError) {
+        throw new SocialContentWorkflowError(error.code, error.status);
+      }
+      throw error;
     }
     return { tenantId, userId };
   }
@@ -169,6 +202,105 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   router.get('/internal/work-packages', asyncRoute(async (req, res) => {
     await requirePlatformAdmin(req);
     res.json({ items: await listSocialWorkPackageDetails({ repository, now: now() }) });
+  }));
+
+  router.get('/internal/content-formulas', asyncRoute(async (req, res) => {
+    await requirePlatformAdmin(req);
+    res.json({ items: await listSocialContentFormulas({ repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT }) });
+  }));
+
+  router.post('/internal/content-formulas', asyncRoute(async (req, res) => {
+    const admin = await requirePlatformAdmin(req);
+    bodyWithinLimit(req);
+    const formula = await createSocialContentFormula({
+      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: req.body, now: now(),
+    });
+    res.status(201).json({ formula });
+  }));
+
+  router.patch('/internal/content-formulas/:formulaId/:version', asyncRoute(async (req, res) => {
+    const admin = await requirePlatformAdmin(req);
+    bodyWithinLimit(req);
+    const formula = await createSocialContentFormulaVersion({
+      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
+      formulaId: formulaRouteId(req.params.formulaId),
+      sourceVersion: socialText(req.params.version),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: req.body, now: now(),
+    });
+    res.status(201).json({ formula });
+  }));
+
+  router.post('/internal/content-formulas/:formulaId/:version/trial', asyncRoute(async (req, res) => {
+    const admin = await requirePlatformAdmin(req);
+    bodyWithinLimit(req, 8 * 1_024);
+    const body = socialObject(req.body);
+    if (body && Object.keys(body).some(key => key !== 'note')) {
+      throw new SocialContentWorkflowError('social_content_formula_trial_invalid', 400);
+    }
+    res.json(await trialSocialContentFormula({
+      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
+      formulaId: formulaRouteId(req.params.formulaId),
+      version: socialText(req.params.version),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      note: socialText(body?.note) || undefined, now: now(),
+    }));
+  }));
+
+  router.post('/internal/content-formulas/:formulaId/:version/publish', asyncRoute(async (req, res) => {
+    const admin = await requirePlatformAdmin(req);
+    bodyWithinLimit(req, 16 * 1_024);
+    const formula = await publishSocialContentFormula({
+      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
+      formulaId: formulaRouteId(req.params.formulaId),
+      version: socialText(req.params.version),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: req.body, now: now(),
+    });
+    res.json({ formula });
+  }));
+
+  router.post('/internal/content-formulas/:formulaId/:version/disable', asyncRoute(async (req, res) => {
+    const admin = await requirePlatformAdmin(req);
+    bodyWithinLimit(req, 8 * 1_024);
+    const body = socialObject(req.body);
+    if (body && Object.keys(body).some(key => key !== 'note')) {
+      throw new SocialContentWorkflowError('social_content_formula_disable_invalid', 400);
+    }
+    const formula = await disableSocialContentFormula({
+      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
+      formulaId: formulaRouteId(req.params.formulaId),
+      version: socialText(req.params.version),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      note: socialText(body?.note) || undefined, now: now(),
+    });
+    res.json({ formula });
+  }));
+
+  router.post('/internal/content-formulas/match', asyncRoute(async (req, res) => {
+    await requirePlatformAdmin(req);
+    bodyWithinLimit(req, 8 * 1_024);
+    const body = socialObject(req.body);
+    if (!body || Object.keys(body).some(key => !['themeId', 'customTopic', 'topic', 'targetTenantId'].includes(key))) {
+      throw new SocialContentWorkflowError('social_content_formula_match_invalid', 400);
+    }
+    const selection = resolveSocialThemeSelection({
+      themeId: socialText(body.themeId) as Parameters<typeof resolveSocialThemeSelection>[0]['themeId'],
+      customTopic: socialText(body.customTopic),
+      topic: socialText(body.topic),
+    });
+    if (!selection?.themeId || selection.classificationStatus !== 'confirmed') {
+      throw new SocialContentWorkflowError('social_content_theme_confirmation_required', 409);
+    }
+    const { tenantId } = res.locals as AuthLocals;
+    const targetTenantId = socialText(body.targetTenantId) || tenantId;
+    res.json({
+      theme: selection,
+      formula: await resolveSocialContentFormula({ repository, tenantId: targetTenantId, themeId: selection.themeId }),
+      targetTenantId,
+    });
   }));
 
   router.post('/internal/work-packages', asyncRoute(async (req, res) => {
@@ -228,6 +360,43 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   router.get('/catalog', asyncRoute(async (req, res) => {
     await authorize(req, res, 'read');
     res.json({ items: await listActiveSocialWorkPackageCards({ repository, now: now() }) });
+  }));
+
+  router.get('/themes', asyncRoute(async (req, res) => {
+    await authorize(req, res, 'read');
+    res.json({ items: SOCIAL_THEME_CATALOG });
+  }));
+
+  router.post('/themes/classify', asyncRoute(async (req, res) => {
+    await authorize(req, res, 'read');
+    bodyWithinLimit(req, 8 * 1_024);
+    const body = socialObject(req.body);
+    if (!body || Object.keys(body).some(key => key !== 'customTopic')) {
+      throw new SocialContentWorkflowError('social_content_theme_classification_invalid', 400);
+    }
+    const customTopic = socialText(body.customTopic);
+    if (!customTopic || customTopic.length > 300) {
+      throw new SocialContentWorkflowError('social_content_custom_topic_invalid', 400);
+    }
+    res.json({ theme: classifySocialCustomTopic(customTopic) });
+  }));
+
+  router.get('/weekly-plans', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'read');
+    res.json({ items: await listSocialWeeklyPlans({ repository, tenantId: identity.tenantId }) });
+  }));
+
+  router.post('/weekly-plans', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'write');
+    bodyWithinLimit(req);
+    const result = await createSocialWeeklyPlan({
+      repository,
+      ...identity,
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: parseCreateSocialWeeklyPlan(req.body),
+      now: now(),
+    });
+    res.status(201).json(result);
   }));
 
   router.get('/source-options', asyncRoute(async (req, res) => {
@@ -307,12 +476,13 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     if (lengthHeader && !/^\d+$/.test(lengthHeader)) {
       throw new SocialContentWorkflowError('social_content_file_length_invalid', 400);
     }
-    const file = await withSocialContentUploadAdmission({
+    const result = await withSocialContentUploadAdmission({
       repository,
       tenantId: identity.tenantId,
       taskId,
       action: async () => {
-        await requireSocialTask({ repository, tenantId: identity.tenantId, taskId });
+        const task = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId });
+        if (!task) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
         const capacity = await socialTaskFileCapacity({ repository, tenantId: identity.tenantId, taskId });
         const stored = await storeSocialContentFile({
           stream: req,
@@ -321,8 +491,9 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
           mimeType: socialText(req.headers['content-type']),
           ...(lengthHeader ? { declaredLength: Number(lengthHeader) } : {}),
           maximumBytes: capacity.remainingBytes,
+          materialLibrary: usage === 'source',
         });
-        return registerSocialContentFile({
+        const file = await registerSocialContentFile({
           repository,
           ...identity,
           taskId,
@@ -331,9 +502,33 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
           stored,
           now: now(),
         });
+        const material = usage === 'source'
+          ? await registerSocialTaskCreativeMaterial({
+            tenantId: identity.tenantId,
+            taskId,
+            productRef: task.brief.productRef,
+            file,
+            stored,
+          })
+          : null;
+        return { file, material };
       },
     });
-    res.status(201).json({ file });
+    const material = result.material ? {
+      id: result.material.id,
+      sourceRef: `socialmaterial:${Buffer.from(String(result.material.id), 'utf8').toString('base64url')}`,
+      sourceVersion: String(result.material.sourceRevision || result.material.analysisSourceRevision || result.material.sha256 || result.material.contentSha256 || ''),
+      name: result.material.name,
+      type: result.material.type,
+      sourceType: result.material.sourceType,
+      contentSha256: result.material.contentSha256,
+      productId: result.material.productId || null,
+      productRef: result.material.productRef ?? null,
+      productName: result.material.productName ?? null,
+      sourceTaskIds: result.material.sourceTaskIds,
+      createdAt: result.material.createdAt,
+    } : null;
+    res.status(201).json({ file: result.file, ...(material ? { material } : {}) });
   }));
 
   router.get('/files/:fileId', asyncRoute(async (req, res) => {
@@ -431,7 +626,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     res.status(task.status === 'attention' ? 200 : 202).json({
       task,
       ...(task.status === 'attention'
-        ? { nextAction: { type: 'open_professional_workspace', page: 'smartAssets' } }
+        ? { nextAction: { type: 'continue_production', page: 'smartAssets' } }
         : {}),
     });
   }));
@@ -441,6 +636,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     bodyWithinLimit(req);
     const result = await createSocialContentArtifact({
       repository,
+      accessResolver,
       ...identity,
       taskId: requireSocialId(req.params.taskId),
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
@@ -484,6 +680,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     bodyWithinLimit(req);
     const result = await createSocialDeliveryPackage({
       repository,
+      accessResolver,
       ...identity,
       taskId: requireSocialId(req.params.taskId),
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),

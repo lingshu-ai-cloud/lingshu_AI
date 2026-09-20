@@ -5074,8 +5074,16 @@ studioRouter.delete('/materials/:id', async (req, res) => {
   const m = list.find(x => x.id === req.params.id && x.tenantId === tenantId);
   if (!m) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
   if (m.scope === 'shared') { res.status(403).json({ ok: false, error: 'Shared materials are read-only' }); return; }
-  if (m.objectKey) await r2Delete(m.objectKey).catch(error => console.error('[materials] COS delete failed', error));
-  else try { fs.unlinkSync(path.join(MEDIA_DIR, m.file)); } catch { /* file may be gone */ }
+  // A social-task upload and its material entry intentionally share one
+  // immutable object. Removing it from My Materials must not break the task's
+  // auditable file reference; the task owns the bytes until task retention
+  // handles them separately.
+  const taskBacked = m.sourceType === 'social_task_upload'
+    || (Array.isArray((m as Material & { sourceTaskFileRefs?: unknown[] }).sourceTaskFileRefs)
+      && (m as Material & { sourceTaskFileRefs?: unknown[] }).sourceTaskFileRefs!.length > 0);
+  if (m.objectKey) {
+    if (!taskBacked) await r2Delete(m.objectKey).catch(error => console.error('[materials] COS delete failed', error));
+  } else try { fs.unlinkSync(path.join(MEDIA_DIR, m.file)); } catch { /* file may be gone */ }
   if (m.posterObjectKey && m.posterObjectKey !== m.objectKey) await r2Delete(m.posterObjectKey).catch(error => console.error('[materials] COS poster delete failed', error));
   if (m.poster && m.poster !== m.url) { try { fs.unlinkSync(path.join(MEDIA_DIR, m.poster.replace(/^\/media\//, ''))); } catch { /* ignore */ } }
   for (const segment of m.segments || []) {
@@ -6452,7 +6460,9 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     for (const line of lines) {
       const audio = await generateTtsAudio(line, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }));
       if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };
-      if (!['qwen_tts', 'minimax'].includes(audio.source)) return { ok: false, source: audio.source, error: audio.error || '当前只能使用本地兜底音色，不能作为正式成片配音；请检查语音服务配置' };
+      const trustedProvider = ['qwen_tts', 'minimax'].includes(audio.source)
+        || (process.env.NODE_ENV !== 'production' && audio.source === 'local_say');
+      if (!trustedProvider) return { ok: false, source: audio.source, error: audio.error || '当前只能使用本地兜底音色，不能作为正式成片配音；请检查语音服务配置' };
       providers.add(audio.source);
       const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
       const output = path.join(dir, randomUUID() + '.wav');

@@ -1,11 +1,8 @@
 import { useState } from 'react';
 import {
-  ArrowRight,
   BarChart3,
   CalendarDays,
-  Check,
   CheckCircle2,
-  ChevronDown,
   Circle,
   Clock3,
   Download,
@@ -13,9 +10,8 @@ import {
   FileCheck2,
   FileText,
   Image,
-  Layers3,
-  Loader2,
   PackageCheck,
+  PencilLine,
   Plus,
   Send,
   Sparkles,
@@ -24,21 +20,20 @@ import type { Page } from '../../App';
 import type {
   SocialContentArtifact,
   SocialContentTaskDetail,
+  SocialContentTaskMode,
   SocialContentTaskSummary,
 } from '../../../shared/contracts/socialContentWorkflow';
 import {
-  SOCIAL_CONTENT_STAGES,
   socialContentCanRegisterPublication,
   socialContentCurrentArtifacts,
   socialContentCurrentDelivery,
-  socialContentStageIndex,
   socialContentTaskHeadline,
 } from '../../lib/socialContentModel';
 import SocialArtifactPreviewDialog from './SocialArtifactPreviewDialog';
-import SocialTaskCommandPanel from './SocialTaskCommandPanel';
+import SocialProductionProgressPanel from './SocialProductionProgressPanel';
 import SocialWeeklySummary from './SocialWeeklySummary';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
-import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, dueDateLabel, optionLabel, packageVersionLabel } from './socialContentUi';
+import { PLATFORM_OPTIONS, SOCIAL_THEME_OPTIONS, artifactKindLabel, contentLanguageLabel, dueDateLabel, optionLabel, packageVersionLabel } from './socialContentUi';
 
 const ARTIFACT_STATUS: Record<SocialContentArtifact['status'], string> = {
   draft: '制作中',
@@ -55,6 +50,8 @@ const READINESS_LABEL: Record<string, string> = {
   platform: '发布平台',
   content_format: '内容形式',
   source_material: '本次任务资料',
+  enterprise_knowledge: '已确认的企业资料',
+  theme_confirmation: '自定义主题归类确认',
 };
 
 function artifactPreview(content: Record<string, unknown> | null): string {
@@ -86,45 +83,19 @@ interface SocialTaskOverviewProps {
   onCreateDeliveryPackage: () => void;
   onRefresh: () => void;
   onNavigate: (page: Page) => void;
+  createMode?: SocialContentTaskMode;
 }
 
-function TaskStageBar({ task }: { task: SocialContentTaskDetail }) {
-  const activeIndex = socialContentStageIndex(task.status);
-  return (
-    <ol className="mt-5 grid grid-cols-3 gap-y-4 sm:grid-cols-6" aria-label="任务进度">
-      {SOCIAL_CONTENT_STAGES.map((stage, index) => {
-        const complete = index < activeIndex || task.status === 'reviewed';
-        const active = index === activeIndex && task.status !== 'reviewed';
-        return (
-          <li key={stage.id} className="relative flex min-w-0 flex-col items-center px-1 text-center">
-            {index > 0 && <span className={`absolute right-1/2 top-3 hidden h-px w-full sm:block ${index <= activeIndex ? 'bg-emerald-500' : 'bg-border'}`} />}
-            <span className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 ${complete ? 'border-emerald-600 bg-emerald-600 text-white' : active ? 'border-emerald-600 bg-white text-emerald-700' : 'border-border bg-white text-text-muted'}`}>{complete ? <Check size={12} strokeWidth={3} /> : active ? <Circle size={8} fill="currentColor" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}</span>
-            <span className={`mt-2 text-[10px] font-bold sm:text-[11px] ${active || complete ? 'text-text-primary' : 'text-text-muted'}`}>{stage.label}</span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function TaskHeader(props: SocialTaskOverviewProps & { task: SocialContentTaskDetail }) {
-  const {
-    task,
-    tasks,
-    taskTotalItems,
-    hasMoreTasks,
-    loadingMoreTasks,
-    busy,
-    onSelectTask,
-    onLoadMoreTasks,
-  } = props;
-  const remainingTaskCount = Math.max(0, taskTotalItems - tasks.length);
+function TaskHeader({ task, busy, onCreate, onEdit }: Pick<SocialTaskOverviewProps, 'busy' | 'onCreate' | 'onEdit'> & { task: SocialContentTaskDetail }) {
+  const canEdit = ['draft', 'needs_input', 'plan_review', 'attention', 'paused'].includes(task.status);
   return (
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-800">{socialContentTaskHeadline(task)}</span>
+            {task.mode && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-black text-slate-700">{task.mode === 'instant' ? '立即创作' : '周计划任务'}</span>}
+            {task.theme && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-black text-blue-700">{task.theme.inputKind === 'custom' ? task.theme.topic || '自定义主题' : SOCIAL_THEME_OPTIONS.find(item => item.id === task.theme?.themeId)?.title || '主题待确认'}</span>}
             <span className="text-[11px] font-semibold text-text-muted">更新于 {new Date(task.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
           </div>
           <h2 className="mt-3 truncate text-xl font-black tracking-tight text-text-primary">{task.brief.title}</h2>
@@ -136,11 +107,10 @@ function TaskHeader(props: SocialTaskOverviewProps & { task: SocialContentTaskDe
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {tasks.length > 1 && <label className="relative"><span className="sr-only">切换内容任务</span><select id="social-content-task-selector" value={task.taskId} disabled={busy} onChange={event => onSelectTask(event.target.value)} className="h-10 max-w-52 appearance-none truncate rounded-xl border border-border bg-white pl-3 pr-9 text-xs font-bold text-text-secondary outline-none focus:border-emerald-500 disabled:opacity-50">{tasks.map(item => <option key={item.taskId} value={item.taskId}>{item.brief.title}</option>)}</select><ChevronDown size={14} className="pointer-events-none absolute right-3 top-3 text-text-muted" /></label>}
-          {hasMoreTasks && <button type="button" disabled={busy || loadingMoreTasks} onClick={onLoadMoreTasks} aria-label={`加载更多内容任务，尚有 ${remainingTaskCount} 个`} className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-border px-3 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">{loadingMoreTasks && <Loader2 size={14} className="animate-spin" />}{loadingMoreTasks ? '正在加载' : `更多任务${remainingTaskCount > 0 ? `（${remainingTaskCount}）` : ''}`}</button>}
+          {canEdit && <button type="button" disabled={busy} onClick={onEdit} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-[11px] font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50"><PencilLine size={13} />编辑任务</button>}
+          <button type="button" disabled={busy} onClick={onCreate} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-[11px] font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50"><Plus size={13} />新建任务</button>
         </div>
       </div>
-      <TaskStageBar task={task} />
     </section>
   );
 }
@@ -156,18 +126,20 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-black text-text-primary">{task.readiness.complete ? '资料准备完成' : `还差 ${task.readiness.missing.length} 项`}</h3></div><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${task.readiness.complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{task.readiness.complete ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">{sourceStats.map(item => <div key={item.label} className="rounded-xl bg-surface-2 px-3 py-2.5"><item.icon size={14} className="text-text-muted" /><strong className="mt-2 block text-lg text-text-primary">{item.value}</strong><span className="text-[10px] font-semibold text-text-muted">{item.label}</span></div>)}</div>
-      {!task.readiness.complete && task.readiness.missing.length > 0 && <ul className="mt-4 space-y-1.5">{task.readiness.missing.slice(0, 4).map(item => <li key={item} className="flex items-start gap-2 text-xs text-amber-800"><Circle size={6} fill="currentColor" className="mt-1.5 shrink-0" />请补充{READINESS_LABEL[item] || '任务资料'}</li>)}</ul>}
+      {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-black text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；爆款公式正式配置后再决定内容结构。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-xl border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}
+      {!task.readiness.complete && task.readiness.missing.length > 0 && <ul className="mt-4 space-y-1.5">{task.readiness.missing.filter(item => !item.startsWith('material_requirement:')).slice(0, 4).map(item => <li key={item} className="flex items-start gap-2 text-xs text-amber-800"><Circle size={6} fill="currentColor" className="mt-1.5 shrink-0" />请补充{READINESS_LABEL[item] || '任务资料'}</li>)}</ul>}
     </section>
   );
 }
 
-function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onNavigate }: Pick<SocialTaskOverviewProps, 'busy' | 'onArtifactDecision' | 'onBatchDecision' | 'onNavigate'> & { task: SocialContentTaskDetail }) {
+function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onCreateDeliveryPackage }: Pick<SocialTaskOverviewProps, 'busy' | 'onArtifactDecision' | 'onBatchDecision' | 'onCreateDeliveryPackage'> & { task: SocialContentTaskDetail }) {
   const currentArtifacts = socialContentCurrentArtifacts(task.artifacts);
   const pendingArtifacts = currentArtifacts.filter(artifact => artifact.status === 'review_required' && socialArtifactGenerationDisclosure(artifact).approvalAllowed);
+  const readyToPackage = currentArtifacts.length > 0 && currentArtifacts.every(artifact => artifact.status === 'approved') && task.deliveryPackages.length === 0;
   const [previewArtifact, setPreviewArtifact] = useState<SocialContentArtifact | null>(null);
   return (
     <section id="social-task-artifacts" className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">批次验收</p><h3 className="mt-1 text-base font-black text-text-primary">{currentArtifacts.length > 0 ? `${currentArtifacts.length} 项内容` : '内容制作'}</h3></div><div className="flex flex-wrap items-center gap-2">{pendingArtifacts.length > 0 && <><button type="button" disabled={busy} onClick={() => onBatchDecision('changes_requested')} className="rounded-lg border border-border px-3 py-2 text-[11px] font-bold text-text-secondary disabled:opacity-50">批量退回</button><button type="button" disabled={busy} onClick={() => onBatchDecision('approved')} className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50">确认本批 {pendingArtifacts.length} 项</button></>}<button type="button" onClick={() => onNavigate('smartAssets')} className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:underline">打开内容创作<ArrowRight size={13} /></button></div></div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">批次验收</p><h3 className="mt-1 text-base font-black text-text-primary">{currentArtifacts.length > 0 ? `${currentArtifacts.length} 项内容` : '内容制作'}</h3></div><div className="flex flex-wrap items-center gap-2">{pendingArtifacts.length > 0 && <><button type="button" disabled={busy} onClick={() => onBatchDecision('changes_requested')} className="rounded-lg border border-border px-3 py-2 text-[11px] font-bold text-text-secondary disabled:opacity-50">批量退回</button><button type="button" disabled={busy} onClick={() => onBatchDecision('approved')} className="rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50">确认本批 {pendingArtifacts.length} 项</button></>}{readyToPackage && <button type="button" disabled={busy} onClick={onCreateDeliveryPackage} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-50"><PackageCheck size={13} />整理交付包</button>}</div></div>
       {currentArtifacts.length === 0 ? <div className="mt-5 rounded-xl bg-surface-2 px-4 py-6 text-center"><Sparkles size={18} className="mx-auto text-emerald-600" /><p className="mt-2 text-xs font-semibold text-text-muted">首批内容完成后将在这里出现</p></div> : <div role="list" aria-label={`全部 ${currentArtifacts.length} 项内容成品`} className="mt-4 max-h-[34rem] divide-y divide-border overflow-y-auto overscroll-contain pr-1">{currentArtifacts.map(artifact => {
         const preview = artifactPreview(artifact.content);
         const generation = socialArtifactGenerationDisclosure(artifact);
@@ -200,28 +172,42 @@ function DeliveryPanel({ task, busy, onDownload, onOpenPublication, onOpenMetric
 }
 
 export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
-  const { task, tasks, onCreate, onNavigate } = props;
+  const { task, onCreate, createMode } = props;
   if (!task) {
+    const weekly = createMode === 'weekly';
     return (
-      <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
-        <div className="grid items-center gap-6 px-6 py-8 lg:grid-cols-[1.3fr_.7fr] lg:px-8">
-          <div><span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"><Sparkles size={20} /></span><h2 className="mt-5 text-2xl font-black tracking-tight text-text-primary">安排本周社媒内容</h2><p className="mt-2 max-w-xl text-sm leading-6 text-text-muted">设置本周重点、数量和预算，灵小枢会安排样片、批量生产和交付。</p><button type="button" onClick={onCreate} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-700"><Plus size={16} />安排本周内容</button></div>
-          <div className="grid grid-cols-3 gap-2">{[['周计划', '确定本周重点'], ['代表样片', '一次确认方向'], ['交付包', '批量下载发布']].map(([label, caption]) => <div key={label} className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 text-center"><Layers3 size={16} className="mx-auto text-emerald-700" /><p className="mt-2 text-[11px] font-black text-text-primary">{label}</p><p className="mt-1 text-[10px] text-text-muted">{caption}</p></div>)}</div>
+      <section className="rounded-xl border border-dashed border-border-bright bg-white px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-accent"><Sparkles size={18} /></span>
+            <div><p className="text-sm font-black text-text-primary">{weekly ? '还没有本周内容计划' : '还没有内容任务'}</p><p className="mt-1 text-xs text-text-muted">{weekly ? '先安排本周重点，后续单条内容会进入内容制作页。' : '从上方选择主题，或从空白任务开始。'}</p></div>
+          </div>
+          <button type="button" onClick={onCreate} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-black text-text-secondary transition hover:border-border-bright hover:bg-surface-2"><Plus size={14} />{weekly ? '安排本周内容' : '从空白创建'}</button>
         </div>
-        <div className="grid border-t border-border sm:grid-cols-4">{[['企业资料', 'enterprise'], ['灵感中心', 'socialInspiration'], ['内容创作', 'smartAssets'], ['发布与数据', 'traffic']].map(([label, page]) => <button key={page} type="button" onClick={() => onNavigate(page as Page)} className="flex items-center justify-between border-b border-border px-4 py-3 text-xs font-bold text-text-secondary hover:bg-surface-2 sm:border-b-0 sm:border-r last:border-r-0">{label}<ArrowRight size={13} /></button>)}</div>
       </section>
     );
   }
   return (
-    <div className="space-y-4 pb-24 lg:pb-0">
-      <TaskHeader {...props} task={task} />
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0 space-y-4">
-          <SocialWeeklySummary task={task} onEdit={props.onEdit} />
-          <div className="grid gap-4 xl:grid-cols-2"><ReadinessPanel task={task} /><DeliveryPanel task={task} busy={props.busy} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} /></div>
-          <ArtifactPanel task={task} busy={props.busy} onArtifactDecision={props.onArtifactDecision} onBatchDecision={props.onBatchDecision} onNavigate={props.onNavigate} />
-        </div>
-        <SocialTaskCommandPanel task={task} busy={props.busy} onCreate={props.onCreate} onEdit={props.onEdit} onStart={props.onStart} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} onCreateDeliveryPackage={props.onCreateDeliveryPackage} onRefresh={props.onRefresh} onNavigate={props.onNavigate} />
+    <div className="space-y-4 pb-8">
+      <TaskHeader task={task} busy={props.busy} onCreate={props.onCreate} onEdit={props.onEdit} />
+      <SocialProductionProgressPanel
+        task={task}
+        tasks={props.tasks}
+        taskTotalItems={props.taskTotalItems}
+        hasMoreTasks={props.hasMoreTasks}
+        loadingMoreTasks={props.loadingMoreTasks}
+        busy={props.busy}
+        onRefresh={props.onRefresh}
+        onSelectTask={props.onSelectTask}
+        onLoadMoreTasks={props.onLoadMoreTasks}
+        onStart={props.onStart}
+        onEdit={props.onEdit}
+        onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+      />
+      <div className="min-w-0 space-y-4">
+        {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
+        <div className="grid gap-4 xl:grid-cols-2"><ReadinessPanel task={task} /><DeliveryPanel task={task} busy={props.busy} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} /></div>
+        <ArtifactPanel task={task} busy={props.busy} onArtifactDecision={props.onArtifactDecision} onBatchDecision={props.onBatchDecision} onCreateDeliveryPackage={props.onCreateDeliveryPackage} />
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow.js';
-import { socialTaskToStudioSeed } from './useStudioSocialTaskHydration.js';
+import { socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
 
 const task = {
   taskId: 'socialtask_test', version: '1', status: 'attention',
@@ -19,6 +19,7 @@ const task = {
 
 const seed = socialTaskToStudioSeed(task);
 assert.equal(seed.projectTitle, '秋季新品内容');
+assert.equal(seed.productReference, '户外便携储能电源');
 assert.equal(seed.contentMode, 'video');
 assert.equal(seed.creationMode, 'material');
 assert.deepEqual(seed.languageCodes, ['de', 'fr']);
@@ -35,5 +36,38 @@ assert.equal(poster.creationMode, 'product');
 assert.equal(poster.aspectRatio, '1:1');
 assert.deepEqual(poster.languageCodes, ['zh']);
 assert.deepEqual(poster.unsupportedLanguages, ['未支持语言']);
+
+const themeCases = {
+  product_value: 'product_proof',
+  scenario_solution: 'use_case',
+  supplier_capability: 'supplier_capability',
+  customization_process: 'customization',
+  customer_case: 'customer_case',
+} as const;
+for (const [themeId, expected] of Object.entries(themeCases)) {
+  assert.equal(socialThemeToStudioTheme({
+    theme: { themeId: themeId as keyof typeof themeCases, inputKind: 'preset', topic: '', classificationStatus: 'confirmed' },
+  }), expected);
+}
+assert.equal(socialThemeToStudioTheme({ theme: null }), null);
+
+const customTopic = socialTaskToStudioSeed({
+  ...task,
+  theme: {
+    themeId: 'customization_process',
+    inputKind: 'custom',
+    topic: '展示我们给连锁美容院做小批量面膜定制的过程',
+    classificationStatus: 'confirmed',
+  },
+});
+assert.equal(customTopic.contentTheme, 'customization');
+assert.equal(customTopic.themeTopic, '展示我们给连锁美容院做小批量面膜定制的过程');
+
+const presetTopic = socialTaskToStudioSeed({
+  ...task,
+  theme: { themeId: 'product_value', inputKind: 'preset', topic: '一个镜头看懂卖点', classificationStatus: 'confirmed' },
+});
+assert.equal(presetTopic.contentTheme, 'product_proof');
+assert.equal(presetTopic.themeTopic, '', 'preset topic remains represented by the mapped Studio theme');
 
 console.log('studio social task hydration tests passed');

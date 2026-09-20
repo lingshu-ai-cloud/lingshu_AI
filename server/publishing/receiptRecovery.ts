@@ -3,6 +3,7 @@ import { store } from '../storage/index.js';
 import { getAccessToken, type YouTubeConfig } from '../integrations/youtube.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import type { PostRecord } from './waLink.js';
+import { youtubeCredentials } from '../lib/accountCredentials.js';
 
 export type PublishingReceiptEvidence = { id: string; channelId: string; ownedChannelIds: string[]; description: string; publishedAt: string; privacyStatus: string };
 type Lookup = (tenantId: string, accountId: string, platformPostId: string) => Promise<PublishingReceiptEvidence>;
@@ -11,7 +12,7 @@ const object = (value: unknown): Record<string, any> => value && typeof value ==
 async function lookupYouTube(tenantId: string, accountId: string, platformPostId: string): Promise<PublishingReceiptEvidence> {
   const account = await store.getById<YouTubeConfig & { id: string; tenantId: string }>('youtube_accounts', accountId);
   if (!account || account.tenantId !== tenantId) throw new Error('发布账号不属于当前租户');
-  const token = await getAccessToken(account);
+  const token = await getAccessToken(youtubeCredentials(account as unknown as Record<string, unknown>));
   const config = { headers: { Authorization: `Bearer ${token}` }, timeout: 20_000 };
   const [videoResponse, channelsResponse] = await Promise.all([
     axios.get('https://www.googleapis.com/youtube/v3/videos', { ...config, params: { part: 'snippet,status', id: platformPostId } }),

@@ -2,8 +2,11 @@ import { useEffect, useRef } from 'react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { socialContentApi } from '../../lib/socialContentApi';
 
+export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'customer_case';
+
 export interface StudioSocialTaskSeed {
   projectTitle: string;
+  productReference: string;
   contentMode: 'video' | 'poster';
   creationMode: 'material' | 'product';
   platform: string;
@@ -13,9 +16,25 @@ export interface StudioSocialTaskSeed {
   audience: string;
   primaryCta: string;
   sellingPoints: string;
+  contentTheme: StudioContentTheme | null;
+  /** Free-form customer wording that should guide the generated story, not replace verified product facts. */
+  themeTopic: string;
   factVerificationNotice: string;
   selectedMaterialIds: string[];
   unsupportedLanguages: string[];
+}
+
+const STUDIO_THEME_BY_SOCIAL_THEME = {
+  product_value: 'product_proof',
+  scenario_solution: 'use_case',
+  supplier_capability: 'supplier_capability',
+  customization_process: 'customization',
+  customer_case: 'customer_case',
+} as const satisfies Record<NonNullable<NonNullable<SocialContentTaskDetail['theme']>['themeId']>, StudioContentTheme>;
+
+export function socialThemeToStudioTheme(task: Pick<SocialContentTaskDetail, 'theme'>): StudioContentTheme | null {
+  const themeId = task.theme?.themeId;
+  return themeId ? STUDIO_THEME_BY_SOCIAL_THEME[themeId] : null;
 }
 
 const LANGUAGE_CODES: Record<string, string> = {
@@ -67,6 +86,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
   ].filter(Boolean);
   return {
     projectTitle: clean(brief.title) || '社媒内容任务',
+    productReference: clean(brief.productRef),
     contentMode,
     creationMode: selectedMaterialIds.length ? 'material' : 'product',
     platform: clean(brief.platforms[0]).toLowerCase() || (contentMode === 'poster' ? 'facebook' : 'tiktok'),
@@ -78,6 +98,8 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     audience: [clean(brief.audience), brief.markets.length ? `目标市场：${brief.markets.join('、')}` : ''].filter(Boolean).join('；'),
     primaryCta: clean(brief.callToAction),
     sellingPoints: '',
+    contentTheme: socialThemeToStudioTheme(task),
+    themeTopic: task.theme?.inputKind === 'custom' ? clean(task.theme.topic) : '',
     factVerificationNotice: pendingFacts.length
       ? `${pendingFacts.join('和')}未作为已确认企业事实导入；请在企业中心选择并核对产品资料后再生成。`
       : '',

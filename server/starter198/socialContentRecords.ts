@@ -2,6 +2,8 @@ import {
   SOCIAL_ARTIFACT_STATUSES,
   SOCIAL_CONTENT_TASK_STATUSES,
   SOCIAL_SOURCE_KINDS,
+  SOCIAL_CONTENT_TASK_MODES,
+  SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_WORK_PACKAGE_KINDS,
   type SocialArtifactStatus,
   type SocialContentArtifact,
@@ -9,6 +11,8 @@ import {
   type SocialContentTaskDetail,
   type SocialContentTaskStatus,
   type SocialContentTaskSummary,
+  type SocialContentThemeSelection,
+  type SocialMaterialReadiness,
   type SocialDeliveryPackage,
   type SocialMetricSubmission,
   type SocialPublicationRecord,
@@ -22,6 +26,15 @@ import {
   socialObject,
   socialText,
 } from './socialContentValidation.js';
+import {
+  materialReadiness,
+  parseStoredMaterialRequirements,
+  publicMaterialRequirements,
+} from './socialContentThemes.js';
+import {
+  parseStoredSocialScriptBaseline,
+  publicSocialScriptBaselineSummary,
+} from './socialContentScriptBaseline.js';
 
 const storedCount = (value: unknown): number => {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) {
@@ -123,7 +136,11 @@ export interface SocialSourceCoverage {
   material: number;
 }
 
-export function socialTaskReadiness(brief: SocialContentTaskBrief, coverage: SocialSourceCoverage): { complete: boolean; missing: string[] } {
+export function socialTaskReadiness(
+  brief: SocialContentTaskBrief,
+  coverage: SocialSourceCoverage,
+  themeWorkflow?: { theme: SocialContentThemeSelection | null; materialReadiness: SocialMaterialReadiness },
+): { complete: boolean; missing: string[] } {
   const missing: string[] = [];
   if (!brief.productRef) missing.push('product');
   if (!brief.audience) missing.push('audience');
@@ -133,7 +150,36 @@ export function socialTaskReadiness(brief: SocialContentTaskBrief, coverage: Soc
   if (!brief.formats.length) missing.push('content_format');
   if (coverage.knowledge < 1) missing.push('enterprise_knowledge');
   if (coverage.material < 1) missing.push('source_material');
+  if (themeWorkflow) {
+    if (!themeWorkflow.theme || themeWorkflow.theme.classificationStatus !== 'confirmed' || !themeWorkflow.theme.themeId) {
+      missing.push('theme_confirmation');
+    }
+    // Theme selection is a direction, not a production structure. Formula
+    // requirements remain advisory until the product explicitly applies a
+    // configured formula to the task.
+  }
   return { complete: missing.length === 0, missing };
+}
+
+export function parseSocialTaskThemeSelection(value: unknown): SocialContentThemeSelection | null {
+  const parsed = socialJson(value);
+  if (parsed === undefined || parsed === null || parsed === '') return null;
+  const record = socialObject(parsed);
+  const rawThemeId = socialText(record?.themeId);
+  const themeId = rawThemeId || null;
+  const inputKind = socialText(record?.inputKind);
+  const classificationStatus = socialText(record?.classificationStatus);
+  if (!record || (themeId && !SOCIAL_CONTENT_THEME_IDS.includes(themeId as typeof SOCIAL_CONTENT_THEME_IDS[number]))
+    || !['preset', 'custom'].includes(inputKind)
+    || !['confirmed', 'pending_confirmation'].includes(classificationStatus)) {
+    throw new SocialContentWorkflowError('social_content_theme_record_invalid', 503);
+  }
+  return {
+    themeId: themeId as SocialContentThemeSelection['themeId'],
+    inputKind: inputKind as SocialContentThemeSelection['inputKind'],
+    topic: socialText(record.topic),
+    classificationStatus: classificationStatus as SocialContentThemeSelection['classificationStatus'],
+  };
 }
 
 export function socialTaskSummary(record: StarterRecord): SocialContentTaskSummary {
@@ -146,6 +192,14 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
   const brief = parseSocialTaskBrief(record.brief);
+  const modeValue = socialText(record.task_mode) || 'weekly';
+  if (!SOCIAL_CONTENT_TASK_MODES.includes(modeValue as typeof SOCIAL_CONTENT_TASK_MODES[number])) {
+    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  }
+  const theme = parseSocialTaskThemeSelection(record.theme_selection);
+  const scriptBaseline = publicSocialScriptBaselineSummary(parseStoredSocialScriptBaseline(record.script_baseline));
+  const requirements = publicMaterialRequirements(parseStoredMaterialRequirements(record.material_requirements));
+  const requirementReadiness = materialReadiness(requirements);
   const sourceCount = storedCount(record.source_count);
   const knowledgeSourceCount = storedCount(record.knowledge_source_count);
   const materialSourceCount = storedCount(record.material_source_count);
@@ -166,7 +220,7 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
       total: sourceCount,
       knowledge: knowledgeSourceCount,
       material: materialSourceCount,
-    }),
+    }, theme ? { theme, materialReadiness: requirementReadiness } : undefined),
     runId: nullable(record.run_id),
     sourceCount,
     knowledgeSourceCount,
@@ -178,6 +232,11 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
     metricSubmissionCount: storedCount(record.metric_submission_count),
     createdAt,
     updatedAt,
+    mode: modeValue as typeof SOCIAL_CONTENT_TASK_MODES[number],
+    weeklyPlanId: nullable(record.weekly_plan_id),
+    theme,
+    ...(theme ? { materialReadiness: requirementReadiness } : {}),
+    ...(scriptBaseline ? { scriptBaseline } : {}),
   };
 }
 
@@ -342,7 +401,7 @@ export async function readSocialTaskDetail(input: {
   const actual = {
     sourceCount: activeSources.length,
     knowledgeSourceCount: activeSources.filter(source => source.kind === 'knowledge').length,
-    materialSourceCount: activeSources.filter(source => ['material', 'reference_link'].includes(source.kind)).length,
+    materialSourceCount: activeSources.filter(source => source.kind === 'material').length,
     artifactCount: artifacts.length,
     approvedArtifactCount: artifactViews.filter(artifact => artifact.status === 'approved').length,
     deliveryPackageCount: packages.length,
@@ -359,6 +418,9 @@ export async function readSocialTaskDetail(input: {
     deliveryPackages: packages.map(socialDeliveryPackage),
     publications: publications.map(socialPublication),
     metricSubmissions: metrics.map(socialMetricSubmission),
+    ...(summary.theme
+      ? { materialRequirements: publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) }
+      : {}),
   };
 }
 

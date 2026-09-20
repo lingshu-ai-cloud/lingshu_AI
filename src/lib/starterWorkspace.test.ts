@@ -272,7 +272,16 @@ for (const source of [appSource, layoutSource]) {
   assert.doesNotMatch(source, /subscriptionPlan === 'admin'|subscription\?\.plan === 'admin'|lingshu-admin@local\.test/,
     'email and subscription labels must never unlock platform-admin UI');
 }
-for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与数据', '账号连接', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
+const superAdminRolePages = appSource.match(/super_admin:\s*new Set\(\[([^\]]*)\]\)/)?.[1] || '';
+assert.doesNotMatch(superAdminRolePages, /contentFormulaAdmin/,
+  'an organization super_admin role alone must not unlock the platform formula library');
+assert.match(appSource,
+  /\(page === 'admin' \|\| page === 'adminDelivery' \|\| page === 'contentFormulaAdmin'\) && !isAdminSession\(session\)/,
+  'ordinary tenant administrators must be redirected from the formula library');
+assert.match(appSource,
+  /if \(page === 'contentFormulaAdmin'\) \{[\s\S]{0,240}if \(!isAdminSession\(session\)\) setPage\('digitalEmployees'\);[\s\S]{0,120}return;[\s\S]{0,160}const role = session\.user\.role/,
+  'verified platform administrators must bypass organization-role page filtering for the formula library');
+for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与渠道', '内容监控', '渠道设置', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
   assert.match(pageRegistrySource, new RegExp(navigationLabel), `starter navigation must register the ${navigationLabel} page`);
 }
 assert.match(layoutSource, /PRIMARY_SOCIAL_NAV_PAGES\.map/, 'organic-content navigation must come from the shared page registry');

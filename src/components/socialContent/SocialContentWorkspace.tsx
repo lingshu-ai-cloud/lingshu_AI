@@ -1,7 +1,14 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
-import type { RegisterSocialPublicationInput, SocialContentArtifact, SocialContentTaskDetail, SubmitSocialMetricsInput } from '../../../shared/contracts/socialContentWorkflow';
+import type {
+  RegisterSocialPublicationInput,
+  SocialContentArtifact,
+  SocialContentTaskDetail,
+  SocialContentTaskMode,
+  SocialContentThemeId,
+  SubmitSocialMetricsInput,
+} from '../../../shared/contracts/socialContentWorkflow';
 import { attachSocialContentNavigationState } from '../../lib/socialContentContext';
 import { socialContentCanRegisterPublication } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
@@ -12,6 +19,15 @@ import { useSocialContentWorkspace, type SocialContentSaveTarget } from './useSo
 interface EditorSession {
   task: SocialContentTaskDetail | null;
   target: SocialContentSaveTarget;
+  initialThemeId?: SocialContentThemeId | '';
+  initialMode?: SocialContentTaskMode;
+  lockMode?: boolean;
+}
+
+export interface SocialContentCreateRequest {
+  requestId: number;
+  themeId: SocialContentThemeId | '';
+  mode?: SocialContentTaskMode;
 }
 
 function editorAttemptId(): string {
@@ -20,7 +36,17 @@ function editorAttemptId(): string {
     : `socialedit:${Date.now()}`;
 }
 
-export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export default function SocialContentWorkspace({
+  onNavigate,
+  onNavigateWithTask,
+  defaultCreateMode,
+  createRequest,
+}: {
+  onNavigate: (page: Page) => void;
+  onNavigateWithTask?: (page: Page, taskId: string) => void;
+  defaultCreateMode?: SocialContentTaskMode;
+  createRequest?: SocialContentCreateRequest | null;
+}) {
   const state = useSocialContentWorkspace();
   const [editor, setEditor] = useState<EditorSession | null>(null);
   const [publicationOpen, setPublicationOpen] = useState(false);
@@ -29,10 +55,36 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
   const [batchChangesOpen, setBatchChangesOpen] = useState(false);
   const task = state.workspace?.currentTask || null;
 
-  const navigateWithTask = useCallback((page: Page) => {
+  const openNewTask = useCallback((themeId?: SocialContentThemeId | '') => {
+    setEditor({
+      task: null,
+      target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
+      initialThemeId: themeId,
+      initialMode: defaultCreateMode,
+      lockMode: Boolean(defaultCreateMode),
+    });
+  }, [defaultCreateMode]);
+
+  useEffect(() => {
+    if (!createRequest) return;
+    setEditor({
+      task: null,
+      target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
+      initialThemeId: createRequest.themeId,
+      initialMode: createRequest.mode || defaultCreateMode,
+      lockMode: Boolean(createRequest.mode || defaultCreateMode),
+    });
+  }, [createRequest, defaultCreateMode]);
+
+  const navigateWithTask = useCallback((page: Page, explicitTaskId?: string) => {
+    const taskId = explicitTaskId || task?.taskId;
+    if (taskId && onNavigateWithTask) {
+      onNavigateWithTask(page, taskId);
+      return;
+    }
     onNavigate(page);
-    if (task) attachSocialContentNavigationState(task.taskId, page);
-  }, [onNavigate, task]);
+    if (taskId) attachSocialContentNavigationState(taskId, page);
+  }, [onNavigate, onNavigateWithTask, task]);
 
   if (state.loading && !state.workspace) {
     return (
@@ -59,7 +111,9 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
       });
     });
     setEditor(null);
-    if (start && next.status === 'attention') navigateWithTask('smartAssets');
+    // Keep the user on the task after it starts. Script adaptation, voice-over,
+    // subtitles and editing continue as one automated job; users return only
+    // for task input or result review.
   };
   const submitPublication = async (input: RegisterSocialPublicationInput) => {
     await state.registerPublication(input);
@@ -85,11 +139,10 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
         busy={state.busy}
         onSelectTask={state.selectTask}
         onLoadMoreTasks={() => void state.loadMoreTasks()}
-        onCreate={() => setEditor({ task: null, target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() } })}
-        onEdit={() => task && setEditor({ task, target: { mode: 'edit', taskId: task.taskId, expectedVersion: task.version, attemptId: editorAttemptId() } })}
-        onStart={() => void state.startTask().then(next => {
-          if (next?.status === 'attention') navigateWithTask('smartAssets');
-        }).catch(() => {})}
+        createMode={defaultCreateMode}
+        onCreate={() => openNewTask()}
+        onEdit={() => task && setEditor({ task, target: { mode: 'edit', taskId: task.taskId, expectedVersion: task.version, attemptId: editorAttemptId() }, initialMode: task.mode ?? defaultCreateMode, lockMode: true })}
+        onStart={() => void state.startTask().catch(() => {})}
         onDownload={() => void state.downloadLatest().catch(() => {})}
         onOpenPublication={() => { if (task && socialContentCanRegisterPublication(task)) setPublicationOpen(true); }}
         onOpenMetrics={() => setMetricsOpen(true)}
@@ -110,6 +163,9 @@ export default function SocialContentWorkspace({ onNavigate }: { onNavigate: (pa
         open={Boolean(editor)}
         sessionKey={editor?.target.attemptId || ''}
         task={editor?.task || null}
+        initialThemeId={editor?.initialThemeId}
+        initialMode={editor?.initialMode}
+        lockMode={editor?.lockMode}
         catalog={state.workspace.catalog}
         busy={state.busy}
         onClose={() => { if (!state.busy) setEditor(null); }}

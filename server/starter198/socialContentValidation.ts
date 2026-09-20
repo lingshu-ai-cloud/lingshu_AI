@@ -1,10 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  SOCIAL_CONTENT_TASK_MODES,
+  SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_SOURCE_KINDS,
   SOCIAL_WORK_PACKAGE_KINDS,
   type AddSocialTaskSourceInput,
   type CreateSocialArtifactInput,
   type CreateSocialContentTaskInput,
+  type CreateSocialWeeklyPlanInput,
   type CreateSocialDeliveryPackageInput,
   type DecideSocialArtifactBatchInput,
   type DecideSocialArtifactInput,
@@ -116,7 +119,8 @@ const BRIEF_KEYS = [
   'title', 'objective', 'productRef', 'audience', 'markets', 'languages', 'platforms', 'formats',
   'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny',
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
-  'brandNotes', 'restrictions', 'callToAction',
+  'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
+  'customTopic', 'topic', 'legacyCreationRoute',
 ] as const;
 
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
@@ -142,6 +146,25 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   if (!['fixed', 'auto_adjust'].includes(planningMode)) {
     throw new SocialContentWorkflowError('social_content_planning_mode_invalid', 400);
   }
+  const mode = source.mode === undefined ? undefined : socialText(source.mode);
+  if (mode !== undefined && !SOCIAL_CONTENT_TASK_MODES.includes(mode as CreateSocialContentTaskInput['mode'] & string)) {
+    throw new SocialContentWorkflowError('social_content_mode_invalid', 400);
+  }
+  const themeId = source.themeId === undefined || source.themeId === null || source.themeId === ''
+    ? null : socialText(source.themeId);
+  if (themeId && !SOCIAL_CONTENT_THEME_IDS.includes(themeId as typeof SOCIAL_CONTENT_THEME_IDS[number])) {
+    throw new SocialContentWorkflowError('social_content_theme_invalid', 400);
+  }
+  const customTopic = optionalText(source.customTopic, 'social_content_custom_topic_invalid', 300);
+  const topic = optionalText(source.topic, 'social_content_topic_invalid', 300);
+  if ((mode !== undefined || themeId || customTopic || topic || source.weeklyPlanId) && !themeId && !customTopic) {
+    throw new SocialContentWorkflowError('social_content_theme_required', 400);
+  }
+  const legacyCreationRoute = source.legacyCreationRoute === undefined || source.legacyCreationRoute === null || source.legacyCreationRoute === ''
+    ? null : socialText(source.legacyCreationRoute);
+  if (legacyCreationRoute && !['material', 'clone', 'product'].includes(legacyCreationRoute)) {
+    throw new SocialContentWorkflowError('social_content_legacy_route_invalid', 400);
+  }
   return {
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
@@ -153,7 +176,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     formats: textList(source.formats, 'social_content_formats_invalid', 20, 80),
     aspectRatio: optionalText(source.aspectRatio, 'social_content_aspect_ratio_invalid', 40),
     cadence: optionalText(source.cadence, 'social_content_cadence_invalid', 200),
-    requestedOutputCount,
+    requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
     perItemBudgetCny: optionalNumber(source.perItemBudgetCny, 'social_content_item_budget_invalid', 1_000_000),
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
@@ -164,6 +187,47 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     brandNotes: optionalText(source.brandNotes, 'social_content_brand_notes_invalid', 3_000),
     restrictions: textList(source.restrictions, 'social_content_restrictions_invalid', 30, 240),
     callToAction: optionalText(source.callToAction, 'social_content_call_to_action_invalid', 500),
+    ...(mode ? { mode: mode as CreateSocialContentTaskInput['mode'] } : {}),
+    weeklyPlanId: source.weeklyPlanId === undefined || source.weeklyPlanId === null || source.weeklyPlanId === ''
+      ? null : safeId(source.weeklyPlanId, 'social_content_weekly_plan_id_invalid'),
+    themeId: themeId as CreateSocialContentTaskInput['themeId'],
+    customTopic,
+    topic,
+    legacyCreationRoute: legacyCreationRoute as CreateSocialContentTaskInput['legacyCreationRoute'],
+  };
+}
+
+export function parseCreateSocialWeeklyPlan(value: unknown): CreateSocialWeeklyPlanInput {
+  const source = socialObject(value);
+  if (!source) throw new SocialContentWorkflowError('social_weekly_plan_invalid', 400);
+  assertKeys(source, ['title', 'objective', 'productRef', 'audience', 'items']);
+  if (!Array.isArray(source.items) || source.items.length < 1 || source.items.length > 20) {
+    throw new SocialContentWorkflowError('social_weekly_plan_items_invalid', 400);
+  }
+  const items = source.items.map(item => {
+    const row = socialObject(item);
+    if (!row) throw new SocialContentWorkflowError('social_weekly_plan_item_invalid', 400);
+    assertKeys(row, ['title', 'objective', 'themeId', 'customTopic', 'topic']);
+    const themeId = row.themeId === undefined || row.themeId === null || row.themeId === '' ? null : socialText(row.themeId);
+    if (themeId && !SOCIAL_CONTENT_THEME_IDS.includes(themeId as typeof SOCIAL_CONTENT_THEME_IDS[number])) {
+      throw new SocialContentWorkflowError('social_content_theme_invalid', 400);
+    }
+    const customTopic = optionalText(row.customTopic, 'social_content_custom_topic_invalid', 300);
+    if (!themeId && !customTopic) throw new SocialContentWorkflowError('social_content_theme_required', 400);
+    return {
+      title: requiredText(row.title, 'social_content_title_invalid', 120),
+      objective: requiredText(row.objective, 'social_content_objective_invalid', 1_000),
+      themeId: themeId as CreateSocialContentTaskInput['themeId'],
+      customTopic,
+      topic: optionalText(row.topic, 'social_content_topic_invalid', 300),
+    };
+  });
+  return {
+    title: requiredText(source.title, 'social_weekly_plan_title_invalid', 120),
+    objective: requiredText(source.objective, 'social_weekly_plan_objective_invalid', 1_000),
+    productRef: optionalText(source.productRef, 'social_content_product_ref_invalid', 200),
+    audience: optionalText(source.audience, 'social_content_audience_invalid', 500),
+    items,
   };
 }
 

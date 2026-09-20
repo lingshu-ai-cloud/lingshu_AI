@@ -19,6 +19,7 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [showRegistrationPassword, setShowRegistrationPassword] = useState(false);
   const [registrationFieldsUnlocked, setRegistrationFieldsUnlocked] = useState(false);
+  const [registrationConsent, setRegistrationConsent] = useState(false);
   const [inviteCode, setInviteCode] = useState(initialInviteCode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +62,7 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
     if (!email || !password) { setError('请填写邮箱和密码'); return; }
     if (password.length < 8) { setError('密码至少 8 位'); return; }
     if (mode === 'register' && !inviteCode.trim()) { setError('请输入管理员提供的邀请码'); return; }
+    if (mode === 'register' && !registrationConsent) { setError('请先阅读并同意服务条款和隐私政策'); return; }
     setLoading(true);
     try {
       const r = mode === 'register'
@@ -84,6 +86,7 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
       setRegistrationEmail('');
       setRegistrationPassword('');
       setRegistrationFieldsUnlocked(false);
+      setRegistrationConsent(false);
     }
   };
 
@@ -221,6 +224,23 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                   </span>
                 </label>
               </div>
+              <label className="mt-4 flex items-start gap-2.5 text-xs leading-5 text-text-secondary">
+                <input
+                  type="checkbox"
+                  name="legal-consent"
+                  checked={registrationConsent}
+                  onChange={event => setRegistrationConsent(event.target.checked)}
+                  className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+                  required
+                />
+                <span>
+                  我已阅读并同意
+                  <a href="/terms" target="_blank" rel="noreferrer" className="mx-1 font-semibold text-accent hover:underline">《服务条款》</a>
+                  和
+                  <a href="/privacy" target="_blank" rel="noreferrer" className="mx-1 font-semibold text-accent hover:underline">《隐私政策》</a>
+                  ，并确认我有权代表所属企业创建和使用本账号。
+                </span>
+              </label>
               {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs font-medium text-red">{error}</p>}
               <button type="submit" disabled={loading}
                 className="btn-primary mt-6 flex min-h-12 w-full items-center justify-center gap-2 disabled:opacity-60">
@@ -283,9 +303,13 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
             </form>
           )}
 
-          <div className="mt-7 flex items-center justify-between border-t border-border pt-5 text-[11px] text-text-muted">
+          <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[11px] text-text-muted">
             <span>© 2026 灵枢 AI</span>
-            <a href="/privacy" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
+            <span className="flex flex-wrap items-center gap-3">
+              <a href="/privacy" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
+              <a href="/terms" className="font-semibold transition-colors hover:text-accent">服务条款</a>
+              <a href="/data-deletion" className="font-semibold transition-colors hover:text-accent">数据删除</a>
+            </span>
           </div>
         </motion.div>
       </section>

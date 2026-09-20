@@ -50,6 +50,7 @@ import {
   socialArtifactMediaDescriptor,
   socialArtifactMediaFamily,
 } from './socialArtifactMedia.js';
+import type { SocialContentAccessResolver } from './socialContentAccess.js';
 
 const OUTPUT_EDITABLE_STATES = new Set(['producing', 'asset_review', 'attention']);
 const MAX_SOCIAL_DELIVERY_MANIFEST_BYTES = 2 * 1024 * 1024;
@@ -115,6 +116,7 @@ export async function createSocialContentArtifact(input: {
   idempotencyKey: string;
   value: CreateSocialArtifactInput;
   trustedAgentOrigin?: boolean;
+  accessResolver?: SocialContentAccessResolver;
   now?: Date;
 }): Promise<{ artifact: SocialContentArtifact; task: SocialContentTaskDetail }> {
   await assertStudioSocialArtifactGeneration(input.tenantId, input.value.kind, input.value.content);
@@ -360,6 +362,7 @@ export async function createSocialDeliveryPackage(input: {
   taskId: string;
   idempotencyKey: string;
   value: CreateSocialDeliveryPackageInput;
+  accessResolver?: SocialContentAccessResolver;
   now?: Date;
 }): Promise<{ deliveryPackage: SocialDeliveryPackage; task: SocialContentTaskDetail }> {
   const mutation = await executeSocialContentMutation<{ deliveryPackage: SocialDeliveryPackage; task: SocialContentTaskDetail }>({

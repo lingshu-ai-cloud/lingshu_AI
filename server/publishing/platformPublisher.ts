@@ -28,6 +28,7 @@ import {
   type FrozenPublishSourceClaim,
   type PublishSourceRequestKind,
 } from './publishSourceClaim.js';
+import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -392,7 +393,10 @@ export async function resolvePendingPublishToAccount(input: {
     throw publishError('TikTok account not found', 404);
   }
   if (account.status !== 'connected') throw publishError('TikTok account is not connected', 400);
-  const result = await getTikTokPublishStatus(account.accessToken, input.providerReceiptId);
+  const result = await getTikTokPublishStatus(
+    socialAccessToken(account as unknown as Record<string, unknown>),
+    input.providerReceiptId,
+  );
   return {
     status: result.state,
     providerReceiptId: result.publishId,
@@ -441,12 +445,7 @@ async function publishVideoToAccountWithLease(
     const filePath = validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm', '.mkv', '.avi'], Number(process.env.YOUTUBE_MAX_UPLOAD_MB ?? 2048));
     const tracked = await trackingPost(input);
     const description = appendTrackedWaLink('youtube', input.description || '', tracked.wa_link || '');
-    const config: YouTubeConfig = {
-      clientId: account.clientId,
-      clientSecret: account.clientSecret,
-      refreshToken: account.refreshToken,
-      accessToken: account.accessToken,
-    };
+    const config: YouTubeConfig = youtubeCredentials(account as unknown as Record<string, unknown>);
     let directAttempt: { attemptId: string; startedAt: string } | null = null;
     let providerStarted = false;
     try {
@@ -509,6 +508,7 @@ async function publishVideoToAccountWithLease(
     throw publishError('Instagram 发布需要配置 R2_PUBLIC_URL 或提供公开视频地址', 400);
   }
   const tracked = await trackingPost(input);
+  const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
   const socialInput: SocialUploadInput = {
     filePath,
     videoUrl: input.videoUrl,
@@ -525,13 +525,13 @@ async function publishVideoToAccountWithLease(
       await publishLease.beforeEffect();
       await revalidatePublishSource(input);
       providerStarted = true;
-      video = await uploadTikTokVideo(account.accessToken, socialInput);
+      video = await uploadTikTokVideo(accessToken, socialInput);
     }
     if (account.platform === 'facebook') {
       await publishLease.beforeEffect();
       await revalidatePublishSource(input);
       providerStarted = true;
-      video = await uploadFacebookVideo(account.providerAccountId, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
+      video = await uploadFacebookVideo(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', socialInput);
     }
     if (account.platform === 'instagram') {
       const compatibleFilePath = socialInput.videoUrl ? undefined : await instagramCompatibleVideo(filePath);
@@ -544,7 +544,7 @@ async function publishVideoToAccountWithLease(
       await publishLease.beforeEffect();
       await revalidatePublishSource(input);
       providerStarted = true;
-      video = await publishInstagramReel(account.providerAccountId, account.accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', {
+      video = await publishInstagramReel(account.providerAccountId, accessToken, process.env.META_GRAPH_VERSION?.trim() || 'v25.0', {
         ...socialInput,
         filePath: compatibleFilePath,
         videoUrl: publicVideoUrl,

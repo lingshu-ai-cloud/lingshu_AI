@@ -8,7 +8,7 @@ import {
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
   Lightbulb, Flame, BarChart2, ChevronRight, Film, Download, Plus,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2,
-  SlidersHorizontal, Eye,
+  SlidersHorizontal, Eye, Package,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
@@ -23,6 +23,7 @@ import { canProcessVideo, displayDuration, resultEmptyState, sourceScopeLabel, t
 export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import InspirationEmptyState from './InspirationEmptyState';
+import type { SocialContentThemeId } from '../../shared/contracts/socialContentWorkflow';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -37,6 +38,63 @@ type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'ind
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
+type MaterialThemeFilter = 'all' | SocialContentThemeId;
+
+const MATERIAL_PRODUCT_ALL = '__all_products__';
+const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
+const MATERIAL_PRODUCT_UNSELECTED = '__select_product__';
+const MATERIAL_PRODUCT_LINKED_REF = '__linked_product_ref__';
+const ENTERPRISE_COMMON_MATERIAL_TAG = 'enterprise_common';
+
+export type MaterialLibraryEntryContext = {
+  openLibrary: boolean;
+  productId: string;
+  productRef: string;
+};
+
+export function parseMaterialLibraryEntry(search: string): MaterialLibraryEntryContext {
+  const params = new URLSearchParams(search);
+  return {
+    openLibrary: params.get('view') === 'library',
+    productId: String(params.get('productId') || '').trim(),
+    productRef: String(params.get('productRef') || '').trim(),
+  };
+}
+
+function initialMaterialLibraryEntry(): MaterialLibraryEntryContext {
+  return typeof window === 'undefined'
+    ? { openLibrary: false, productId: '', productRef: '' }
+    : parseMaterialLibraryEntry(window.location.search);
+}
+
+export function isEnterpriseCommonMaterial(material: Pick<Material, 'tags'>): boolean {
+  return String(material.tags || '').split(/[,，]/).map(tag => tag.trim()).includes(ENTERPRISE_COMMON_MATERIAL_TAG);
+}
+
+export function materialOwnershipTags(tags: string | undefined, productId: string): string {
+  const values = String(tags || '').split(/[,，]/).map(tag => tag.trim()).filter(Boolean)
+    .filter(tag => tag !== ENTERPRISE_COMMON_MATERIAL_TAG);
+  if (!productId) values.push(ENTERPRISE_COMMON_MATERIAL_TAG);
+  return Array.from(new Set(values)).join(', ');
+}
+
+export function visibleMaterialTags(tags: string | undefined): string {
+  return String(tags || '').split(/[,，]/).map(tag => tag.trim()).filter(Boolean)
+    .filter(tag => tag !== ENTERPRISE_COMMON_MATERIAL_TAG).join(', ');
+}
+
+export function materialMatchesProductFilter(
+  material: Pick<Material, 'productId' | 'productName' | 'tags'>,
+  filter: { enabled: boolean; productId: string; productRef: string },
+): boolean {
+  if (!filter.enabled) return true;
+  if (filter.productId) {
+    return material.productId === filter.productId
+      || (!material.productId && Boolean(filter.productRef) && material.productName === filter.productRef);
+  }
+  if (filter.productRef) return material.productName === filter.productRef;
+  return !material.productId && isEnterpriseCommonMaterial(material);
+}
 
 const MATERIAL_INDUSTRY_LABELS: Record<string, string> = {
   all: '全部行业', beauty_skincare: '美妆护肤', universal_manufacturing: '通用制造',
@@ -56,6 +114,30 @@ const MATERIAL_SOURCE_LABELS: Record<MaterialSourceFilter, string> = {
   all: '全部来源', local_upload: '本地上传', seedance: 'Seedance 生成',
   gemini: 'Gemini 生成', official_import: '官方爆款导入', licensed_stock: '授权图库',
 };
+
+const MATERIAL_THEME_LABELS: Record<SocialContentThemeId, string> = {
+  product_value: '产品与卖点',
+  scenario_solution: '场景与解决方案',
+  supplier_capability: '企业与供应保障',
+  customization_process: '定制与合作流程',
+  customer_case: '客户案例与成果',
+};
+
+const MATERIAL_THEME_KEYWORDS: Record<SocialContentThemeId, readonly string[]> = {
+  product_value: ['product_demo', 'texture_demo', 'ingredient_visual', 'device_demo', '产品', '成分', '原料', '质地', '性能', '卖点'],
+  scenario_solution: ['application', 'treatment_experience', 'usage_setup', '使用', '涂抹', '护理', '场景', '解决', '效果'],
+  supplier_capability: ['factory_proof', 'factory_exterior', 'equipment_demo', 'worker_operation', 'quality_control', 'warehouse', 'logistics_fulfillment', '工厂', '车间', '质检', '仓储', '物流', '设备'],
+  customization_process: ['production', 'manufacturing_process', 'packaging', '定制', '打样', '样品', '包装', 'oem', 'odm', '生产流程'],
+  customer_case: ['customer_case', 'case', '客户', '案例', '合作成果', '反馈', '复购', '结果'],
+};
+
+function materialThemesOf(material: Material): SocialContentThemeId[] {
+  const segmentText = (material.segments || []).flatMap(segment => segment.recommendedFunctions || []).join(' ');
+  const searchable = [material.name, material.industry, material.shotFunction, material.applicability, material.tags, segmentText]
+    .filter(Boolean).join(' ').toLowerCase();
+  return (Object.keys(MATERIAL_THEME_LABELS) as SocialContentThemeId[])
+    .filter(themeId => MATERIAL_THEME_KEYWORDS[themeId].some(keyword => searchable.includes(keyword.toLowerCase())));
+}
 
 function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'all'> {
   const source = String(material.sourceType || '').toLowerCase();
@@ -2760,7 +2842,8 @@ interface InspirationDashboardProps {
 }
 
 export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow }: InspirationDashboardProps) {
-  const [innerView, setInnerView] = useState<InspirationInnerView>('inspiration');
+  const [materialEntry] = useState(initialMaterialLibraryEntry);
+  const [innerView, setInnerView] = useState<InspirationInnerView>(() => materialEntry.openLibrary ? 'library' : 'inspiration');
   const [platform, setPlatform] = useState<Platform>('all');
   const [search, setSearch] = useState('');
   // 搜索改为服务端执行：此前只在已加载的那一页做前端过滤，翻页之外的记录搜不到。
@@ -2787,8 +2870,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [manageTarget, setManageTarget] = useState<(({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action: 'edit' | 'delete' }) | null>(null);
   const [manageName, setManageName] = useState('');
   const [manageTags, setManageTags] = useState('');
-  const [manageProductId, setManageProductId] = useState('');
+  const [manageProductId, setManageProductId] = useState<string | null>(null);
   const [materialProducts, setMaterialProducts] = useState<Array<{id:string;name:string}>>([]);
+  const [materialProductFilterEnabled, setMaterialProductFilterEnabled] = useState(() => Boolean(materialEntry.productId || materialEntry.productRef));
+  const [materialProductId, setMaterialProductId] = useState(materialEntry.productId);
+  const [materialProductRef, setMaterialProductRef] = useState(materialEntry.productRef);
+  const [uploadProductId, setUploadProductId] = useState<string | null>(() => materialEntry.productId || null);
   const [manageBusy, setManageBusy] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const previewMaterialDialogRef = useModalFocus<HTMLDivElement>({
@@ -2807,6 +2894,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [materialOrientation, setMaterialOrientation] = useState<MaterialOrientationFilter>('all');
   const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>('all');
   const [materialType, setMaterialType] = useState<MaterialTypeFilter>('all');
+  const [materialTheme, setMaterialTheme] = useState<MaterialThemeFilter>('all');
   const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
@@ -2843,6 +2931,24 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   useEffect(() => { void refreshMaterials(); }, []);
+
+  useEffect(() => {
+    let active = true;
+    void studioApi.materialProducts().then(result => {
+      if (!active) return;
+      setMaterialProducts(result.items);
+      if (!materialEntry.productRef) return;
+      const matched = materialEntry.productId
+        ? result.items.find(item => item.id === materialEntry.productId)
+        : result.items.find(item => item.name === materialEntry.productRef);
+      if (!matched) return;
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId(matched.id);
+      setMaterialProductRef(matched.name);
+      setUploadProductId(current => current ?? matched.id);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [materialEntry.productId, materialEntry.productRef]);
 
   const refreshVideos = async (nextPage = 1, append = false, quiet = false) => {
     const requestId = ++videoRequestRef.current;
@@ -3111,20 +3217,33 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     localMaterials.forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
     return [...values].sort((a, b) => (MATERIAL_FUNCTION_LABELS[a] || a).localeCompare(MATERIAL_FUNCTION_LABELS[b] || b, 'zh-CN'));
   }, [localMaterials]);
+  const materialThemeCounts = useMemo(() => Object.fromEntries(
+    (Object.keys(MATERIAL_THEME_LABELS) as SocialContentThemeId[]).map(themeId => [
+      themeId,
+      localMaterials.filter(material => materialThemesOf(material).includes(themeId)).length,
+    ]),
+  ) as Record<SocialContentThemeId, number>, [localMaterials]);
   const filteredMaterials = useMemo(() => {
     const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
       const functions = String(material.shotFunction || '').split(',').map(item => item.trim());
-      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags].filter(Boolean).join(' ').toLowerCase();
+      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName].filter(Boolean).join(' ').toLowerCase();
       const orientationMatches = materialOrientation === 'all'
         || (materialOrientation === 'vertical' && /竖屏|vertical/i.test(String(material.tags || '')))
         || (materialOrientation === 'horizontal' && /横屏|horizontal/i.test(String(material.tags || '')));
+      const productMatches = materialMatchesProductFilter(material, {
+        enabled: materialProductFilterEnabled,
+        productId: materialProductId,
+        productRef: materialProductRef,
+      });
       return (!q || searchable.includes(q))
         && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
         && (materialFunction === 'all' || functions.includes(materialFunction))
         && (materialApplicability === 'all' || material.applicability === materialApplicability)
         && (materialSource === 'all' || materialSource === materialSourceOf(material))
+        && (materialTheme === 'all' || materialThemesOf(material).includes(materialTheme))
+        && productMatches
         && orientationMatches;
     }).sort((a, b) => {
       // User uploads are the primary working set. Seed/demo library records may
@@ -3132,10 +3251,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const sourcePriority = Number(materialSourceOf(b) === 'local_upload') - Number(materialSourceOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource]);
+  }, [localMaterials, materialSearch, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
+    if (uploadProductId === null) {
+      setMaterialMessage('请先选择本次素材属于哪个产品，或明确选择“企业通用素材”');
+      return;
+    }
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
@@ -3150,6 +3273,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           sourceType: 'local-upload',
         });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
+        const linked = await studioApi.updateMaterial(result.material.id, {
+          name: result.material.name || file.name,
+          tags: materialOwnershipTags(result.material.tags, uploadProductId),
+          productId: uploadProductId,
+        });
+        if (!linked.ok) throw new Error(`「${file.name}」已上传，但产品归属保存失败，请在素材卡片中编辑后重试`);
         uploadedIds.push(result.material.id);
         if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }
@@ -3168,6 +3297,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       setUploadingScriptGapId('');
       if (uploadInputRef.current) uploadInputRef.current.value = '';
     }
+  };
+
+  const requestMaterialUpload = (scriptGapId = '') => {
+    setInnerView('library');
+    if (uploadProductId === null) {
+      setUploadingScriptGapId('');
+      setMaterialMessage('请先在“我的素材”顶部选择产品或“企业通用素材”，再上传文件');
+      return;
+    }
+    setUploadingScriptGapId(scriptGapId);
+    window.setTimeout(() => uploadInputRef.current?.click(), 50);
   };
 
   const classifyMaterial = async (material: Material) => {
@@ -3474,14 +3614,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const openManageDialog = (target: ({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action?: 'edit' | 'delete' }) => {
     if (!target.item.canManage) return;
     setManageTarget({ ...target, action: target.action || 'edit' });
-    setManageProductId(target.kind === 'material' ? target.item.productId || '' : '');
+    // 旧素材无法区分“未分类”和“企业通用”，编辑时要求用户重新明确归属。
+    setManageProductId(target.kind === 'material'
+      ? target.item.productId || (isEnterpriseCommonMaterial(target.item) ? '' : null)
+      : null);
     if (target.kind === 'material') void studioApi.materialProducts().then(result => setMaterialProducts(result.items));
     setManageName(target.kind === 'video' ? target.item.title : target.item.name);
-    setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : String(target.item.tags || ''));
+    setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : visibleMaterialTags(target.item.tags));
   };
 
   const saveManagedItem = async () => {
-    if (!manageTarget || !manageName.trim() || manageBusy) return;
+    if (!manageTarget || !manageName.trim() || manageBusy || (manageTarget.kind === 'material' && manageProductId === null)) return;
     setManageBusy(true);
     try {
       if (manageTarget.kind === 'video') {
@@ -3498,7 +3641,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           ? { ...item, title: manageName.trim(), tags: manageTags.split(/[,，]/).map(tag => tag.trim()).filter(Boolean) }
           : item));
       } else {
-        const result = await studioApi.updateMaterial(manageTarget.item.id, { name: manageName.trim(), tags: manageTags.trim(), productId: manageProductId });
+        const result = await studioApi.updateMaterial(manageTarget.item.id, {
+          name: manageName.trim(),
+          tags: materialOwnershipTags(manageTags.trim(), manageProductId ?? ''),
+          productId: manageProductId ?? '',
+        });
         if (!result.ok) throw new Error(result.error || '编辑失败');
         await refreshMaterials();
       }
@@ -3550,6 +3697,51 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setViewMode('grid');
   };
 
+  const setMaterialProductSelection = (value: string) => {
+    const url = new URL(window.location.href);
+    if (value === MATERIAL_PRODUCT_ALL) {
+      setMaterialProductFilterEnabled(false);
+      setMaterialProductId('');
+      setMaterialProductRef('');
+      url.searchParams.delete('productId');
+      url.searchParams.delete('productRef');
+    } else if (value === MATERIAL_PRODUCT_COMMON) {
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId('');
+      setMaterialProductRef('');
+      url.searchParams.set('productId', '');
+      url.searchParams.set('productRef', '');
+    } else if (value === MATERIAL_PRODUCT_LINKED_REF) {
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId('');
+      url.searchParams.set('productId', '');
+      url.searchParams.set('productRef', materialProductRef);
+    } else {
+      const product = materialProducts.find(item => item.id === value);
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId(value);
+      setMaterialProductRef(product?.name || materialProductRef);
+      url.searchParams.set('productId', value);
+      url.searchParams.set('productRef', product?.name || materialProductRef);
+    }
+    const productId = String(url.searchParams.get('productId') || '');
+    const productRef = String(url.searchParams.get('productRef') || '');
+    window.history.replaceState({
+      ...window.history.state,
+      productionDetail: {
+        ...(window.history.state?.productionDetail || {}),
+        page: 'socialInspiration',
+        view: 'library',
+        productId,
+        productRef,
+      },
+    }, '', url);
+  };
+
+  const materialProductFilterValue = !materialProductFilterEnabled
+    ? MATERIAL_PRODUCT_ALL
+    : materialProductId || (materialProductRef ? MATERIAL_PRODUCT_LINKED_REF : MATERIAL_PRODUCT_COMMON);
+
   const clearMaterialFilters = () => {
     setMaterialSearch('');
     setMaterialSource('all');
@@ -3558,6 +3750,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setMaterialFunction('all');
     setMaterialApplicability('all');
     setMaterialOrientation('all');
+    setMaterialTheme('all');
+    setMaterialProductSelection(MATERIAL_PRODUCT_ALL);
   };
 
   const inspirationFilterCount = Number(search.trim().length > 0)
@@ -3572,7 +3766,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     + Number(materialIndustry !== 'all')
     + Number(materialFunction !== 'all')
     + Number(materialApplicability !== 'all')
-    + Number(materialOrientation !== 'all');
+    + Number(materialOrientation !== 'all')
+    + Number(materialTheme !== 'all')
+    + Number(materialProductFilterEnabled);
 
   return (
     <main className="relative min-h-full bg-ink text-text-primary">
@@ -3796,20 +3992,34 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 ref={uploadInputRef}
                 type="file"
                 multiple
-                accept="video/*,image/*"
+                accept="video/*,image/*,audio/*"
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
               <div className="flex flex-col justify-between gap-4 border-y border-border bg-surface py-4 sm:py-5 lg:flex-row lg:items-center">
                 <div>
-                  <h3 className="text-base font-bold text-text-primary">社媒素材库</h3>
-                  <p className="mt-1 text-sm text-text-muted">这里汇总当前账号的素材和可使用的共享素材，分析完成后可用于分镜与成片。</p>
+                  <h3 className="text-base font-bold text-text-primary">我的素材</h3>
+                  <p className="mt-1 text-sm text-text-muted">企业知识库、即时创作和内容任务共用这一套素材。任务中上传的图片、视频和音频也会归入这里，后续可直接复用。</p>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <div className="flex shrink-0 flex-wrap items-end gap-2">
+                  <label className="min-w-[210px] text-[11px] font-black text-text-secondary">本次上传归属（必选）
+                    <select
+                      aria-label="本次上传素材归属"
+                      value={uploadProductId === null ? MATERIAL_PRODUCT_UNSELECTED : uploadProductId || MATERIAL_PRODUCT_COMMON}
+                      onChange={event => setUploadProductId(event.target.value === MATERIAL_PRODUCT_UNSELECTED ? null : event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)}
+                      className="mt-1 block h-10 w-full rounded-md border border-border bg-white px-3 text-sm font-bold text-text-primary outline-none focus:border-accent"
+                    >
+                      <option value={MATERIAL_PRODUCT_UNSELECTED}>请选择产品或企业通用</option>
+                      <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
+                      {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
+                      {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                  </label>
                   <button
                     type="button"
                     onClick={() => uploadInputRef.current?.click()}
-                    disabled={uploadingMaterial}
+                    disabled={uploadingMaterial || uploadProductId === null}
+                    title={uploadProductId === null ? '请先选择产品或企业通用素材' : '上传到我的素材'}
                     className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-2.5 text-sm font-bold text-text-secondary transition hover:border-accent hover:text-accent disabled:opacity-60"
                   >
                     {uploadingMaterial ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
@@ -3827,6 +4037,34 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
               </div>
 
+              {materialProductFilterEnabled && (
+                <div className="flex flex-col gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-black text-emerald-950">正在查看：{materialProductRef || (materialProductId ? '指定产品' : '企业通用素材')}</p>
+                    <p className="mt-1 text-xs text-emerald-800">从企业知识库进入时，系统会自动带上产品筛选；上传前仍需确认本次素材归属。</p>
+                  </div>
+                  <button type="button" onClick={() => setMaterialProductSelection(MATERIAL_PRODUCT_ALL)} className="shrink-0 text-xs font-black text-emerald-700 hover:text-emerald-900">查看全部素材</button>
+                </div>
+              )}
+
+              <section className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+                  <div>
+                    <p className="text-sm font-black text-text-primary">系统已按创作主题整理素材</p>
+                    <p className="mt-1 text-xs leading-5 text-text-muted">分类来自素材分析、镜头功能和标签。选择主题后，只看能匹配该主题拍摄清单的素材；未识别素材会保留，等待确认。</p>
+                  </div>
+                  {materialTheme !== 'all' && <button type="button" onClick={() => setMaterialTheme('all')} className="shrink-0 text-xs font-black text-emerald-700">查看全部素材</button>}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                  {(Object.entries(MATERIAL_THEME_LABELS) as Array<[SocialContentThemeId, string]>).map(([themeId, label]) => (
+                    <button key={themeId} type="button" aria-pressed={materialTheme === themeId} onClick={() => setMaterialTheme(current => current === themeId ? 'all' : themeId)} className={`rounded-lg border px-3 py-2.5 text-left transition ${materialTheme === themeId ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-emerald-100 bg-white text-text-secondary hover:border-emerald-300'}`}>
+                      <span className="block text-xs font-black">{label}</span>
+                      <span className={`mt-1 block text-[10px] ${materialTheme === themeId ? 'text-emerald-50' : 'text-text-muted'}`}>{materialThemeCounts[themeId]} 项可匹配</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
                 <div className="flex flex-col gap-2.5 xl:flex-row">
                   <div className="relative min-w-[220px] flex-1">
@@ -3840,6 +4078,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
                     />
                   </div>
+                  <label className="relative block h-10 min-w-[190px] rounded-md border border-border bg-surface focus-within:border-accent">
+                    <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
+                      className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
+                      <option value={MATERIAL_PRODUCT_ALL}>全部产品素材</option>
+                      <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
+                      {materialProductRef && !materialProductId && <option value={MATERIAL_PRODUCT_LINKED_REF}>{materialProductRef}</option>}
+                      {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
+                      {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </label>
                   <label className="relative block h-10 min-w-[168px] rounded-md border border-border bg-surface focus-within:border-accent">
                     <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <select value={materialSource} onChange={event => setMaterialSource(event.target.value as MaterialSourceFilter)} aria-label="素材来源"
@@ -3966,12 +4216,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
                       <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || (material.duration > 0 ? `${material.duration}s` : '时长未知')}</p>
                       <div className="mt-2 flex flex-wrap gap-1">
+                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${material.productName ? 'bg-emerald-50 text-emerald-700' : isEnterpriseCommonMaterial(material) ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {material.productName ? `产品：${material.productName}` : isEnterpriseCommonMaterial(material) ? '企业通用素材' : '产品归属待确认'}
+                        </span>
                         {[
                           MATERIAL_SOURCE_LABELS[materialSourceOf(material)],
                           material.industry ? MATERIAL_INDUSTRY_LABELS[material.industry] || material.industry : '',
                           material.applicability ? MATERIAL_APPLICABILITY_LABELS[material.applicability] || material.applicability : '',
+                          ...materialThemesOf(material).slice(0, 2).map(themeId => MATERIAL_THEME_LABELS[themeId]),
                           ...String(material.shotFunction || '').split(',').slice(0, 2).map(value => MATERIAL_FUNCTION_LABELS[value] || value),
                         ].filter(Boolean).map(label => <span key={label} className="rounded-md bg-accent-glow px-1.5 py-0.5 text-[10px] font-semibold text-accent">{label}</span>)}
+                        {materialThemesOf(material).length === 0 && <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">主题待确认</span>}
                         {!material.industry && !material.applicability && !material.shotFunction && material.type === 'video' && (
                           <button type="button" disabled={Boolean(classifyingMaterialId)} onClick={() => void classifyMaterial(material)}
                             className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-muted hover:bg-accent-glow hover:text-accent disabled:opacity-60">
@@ -4029,7 +4284,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 {scriptGapTasks.map(task => <article key={task.id} className="rounded-lg border border-amber/25 bg-amber-dim p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div><span className="border-l-2 border-amber px-2 py-0.5 text-[10px] font-bold text-amber">脚本缺口</span><h3 className="mt-2 text-sm font-bold text-text-primary">{task.title}</h3><p className="mt-1 text-xs text-text-secondary">{task.shotBrief}</p><p className="mt-2 text-[11px] text-text-muted">{task.productLabel} · {task.themeTitle} · 建议 {task.suggestedDurationSec} 秒</p></div>
-                    <div className="flex gap-2"><button type="button" onClick={() => { setUploadingScriptGapId(task.id); setInnerView('library'); setTimeout(() => uploadInputRef.current?.click(), 50); }} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:script-gap-refill', { detail: task }))} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">一键回填</button>}</div>
+                    <div className="flex gap-2"><button type="button" onClick={() => requestMaterialUpload(task.id)} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:script-gap-refill', { detail: task }))} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">一键回填</button>}</div>
                   </div>
                 </article>)}
               </div>}
@@ -4072,7 +4327,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <div className="flex flex-shrink-0 gap-2">
                           <button
                             type="button"
-                            onClick={() => { setInnerView('library'); setTimeout(() => uploadInputRef.current?.click(), 50); }}
+                            onClick={() => requestMaterialUpload()}
                             className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
                           >
                             上传已拍素材
@@ -4143,10 +4398,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
               <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
               {manageTarget.kind === 'material' && <label className="mt-3 block text-xs font-bold text-text-secondary">关联产品
-                <select aria-label="素材关联产品" value={manageProductId} onChange={event => setManageProductId(event.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
-                  <option value="">通用素材 / 未关联产品</option>
+                <select aria-label="素材关联产品" value={manageProductId === null ? MATERIAL_PRODUCT_UNSELECTED : manageProductId || MATERIAL_PRODUCT_COMMON} onChange={event => setManageProductId(event.target.value === MATERIAL_PRODUCT_UNSELECTED ? null : event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
+                  <option value={MATERIAL_PRODUCT_UNSELECTED}>请选择产品或企业通用</option>
+                  <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
                   {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select><span className="mt-1 block font-normal text-text-muted">仅将真实属于该产品的素材关联到产品；授权图库画面可作为行业示意。</span>
+                </select><span className="mt-1 block font-normal text-text-muted">必须明确选择一个产品或“企业通用素材”；未确认归属的旧素材不能直接保存。</span>
               </label>}
               <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
             </> : <p className="mt-4 border-l-2 border-red bg-red/5 p-3 text-sm text-red">确认删除“{manageName}”？删除后无法恢复。</p>}
@@ -4154,7 +4410,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <button type="button" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md border border-border px-3 py-2 text-sm font-bold text-text-secondary hover:bg-surface-2">取消</button>
               {manageTarget.action === 'delete'
                 ? <button type="button" onClick={() => void deleteManagedItem()} disabled={manageBusy} className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={15} />{manageBusy ? '删除中...' : '确认删除'}</button>
-                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
+                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim() || (manageTarget.kind === 'material' && manageProductId === null)} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
             </div>
           </div>
         </div>

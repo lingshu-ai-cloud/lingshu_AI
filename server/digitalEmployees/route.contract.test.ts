@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {
+  digitalEmployeeOperatingGoals,
+  isDigitalEmployeeOperatingGoal,
+} from './overviewGoalScope.js';
 
 const source = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
 const approvalApplication = fs.readFileSync('server/digitalEmployees/approvalDecision.ts', 'utf8');
@@ -15,7 +19,13 @@ function routeBlock(start: string): string {
 assert.match(source, /digitalEmployeesRouter\.use\(requireAuth\)/, 'every Digital Employee endpoint must require an authenticated tenant');
 assert.match(source, /buildBusinessSnapshot/, 'overview must aggregate the real content and customer business snapshot');
 assert.match(source, /businessSnapshot/, 'overview must expose businessSnapshot as a top-level field');
+assert.match(source, /digitalEmployeeOperatingGoals\(goalResult\.items\)/, 'overview must exclude non-operating lineage records before selecting the current weekly goal');
+assert.match(source, /isDigitalEmployeeOperatingGoal\(goal\)/, 'direct overview links must reject non-operating lineage records');
 assert.match(source, /updateTenantEnterpriseProfile/, 'onboarding must synchronize missing company basics into the tenant enterprise profile');
+const socialContentBridgeGoal = { id: 'social-bridge', metric: 'approved_social_content_artifacts', scope: { socialTaskId: 'socialtask-1' } };
+const weeklyOperatingGoal = { id: 'weekly-operating', metric: 'qualified_leads', scope: { description: '本周经营范围' } };
+assert.equal(isDigitalEmployeeOperatingGoal(socialContentBridgeGoal), false, 'a social-content execution bridge is not a Digital Employee weekly goal');
+assert.deepEqual(digitalEmployeeOperatingGoals([socialContentBridgeGoal, weeklyOperatingGoal]).map(item => item.id), ['weekly-operating']);
 const createGoal = routeBlock("digitalEmployeesRouter.post('/goals'");
 assert.match(createGoal, /business_line:\s*goal\.businessLine/, 'weekly goals must persist their business line');
 assert.match(createGoal, /content_platforms:\s*goal\.contentPlatforms/, 'content goals must persist their platform scope');

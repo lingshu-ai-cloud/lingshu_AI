@@ -21,6 +21,7 @@ const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.tsx', 'utf8');
+const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
 
 assert.match(pageSource, /自动交付语言/);
 assert.match(pageSource, /相同 sceneId 翻译、配音、加字幕和配乐/);
@@ -51,6 +52,14 @@ for (const period of ['本周', '上周', '本月', '上月']) {
 assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
 assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
+assert.match(pageSource, /默认创作流程 · 主题创作/, 'content Agent settings must explain the unified theme workflow');
+assert.match(pageSource, /选主题 → 补素材 → 系统匹配结构 → 制作验收/, 'the theme workflow must show the four user-facing steps');
+assert.doesNotMatch(pageSource, /<Field label="默认创作方式">/, 'content Agent settings must not expose the legacy route selector');
+assert.match(pageSource, /activeRuleAgent === "content" \? <>[\s\S]{0,1800}主题内容制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind one theme-content switch');
+assert.match(pageSource, /synchronizeThemeContentWorkflows[\s\S]{0,500}contentCreationWorkflows/, 'saving the unified switch must retain the legacy workflow ids');
+assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Employee weekly planning must enable the theme workflow explicitly');
+assert.match(videoPlanEditorSource, /themeWorkflow \? <div[\s\S]{0,500}主题创作[\s\S]{0,500}系统按主题与素材自动匹配制作路径[\s\S]{0,500}: <label[\s\S]{0,200}脚本来源/, 'theme workflow must replace the route selector with a read-only explanation');
+assert.match(videoPlanEditorSource, /themeWorkflow \? '内容参考' : '爆款参考'/, 'legacy clone plans must use a neutral reference label in theme workflow mode');
 assert.match(pageSource, /workspaceView === "overview" && <BusinessLineNav/, 'legacy business filters belong only to production; review has insight categories');
 assert.doesNotMatch(pageSource, /frontend_preview|BUSINESS_PREVIEW|PreviewExecutionPanel|示例数据预览中|查看示例数据/, 'the production cockpit must not contain or expose synthetic operating receipts');
 assert.doesNotMatch(pageSource, /<dt className="inline text-slate-400">(?:目标版本|计划锁定配置)/, 'the operating context strip must not expose technical record metadata');
@@ -62,7 +71,7 @@ assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<Producti
 assert.match(pageSource, /workspaceView === ["']review["'][\s\S]{0,5000}<WeeklyReviewPanel/, 'Weekly Review must have its own render branch');
 assert.match(pageSource, /workspaceView === ["']rules["'][\s\S]{0,8000}(?:OnboardingPanel|approvalPolicy|\u89c4\u5219)/, 'Rules and Permissions must have its own render branch');
 
-for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u4f7f\u7528\u7206\u6b3e', '\u7206\u6b3e\u88c2\u53d8', '\u4ea7\u54c1\u751f\u6210', '\u5185\u5bb9\u53d1\u5e03', '\u5ba2\u6237\u5206\u5c42', '\u6279\u91cf\u8ddf\u8fdb']) {
+for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u786e\u5b9a\u4e3b\u9898', '\u8865\u9f50\u5f85\u62cd\u7d20\u6750', '\u5339\u914d\u5185\u5bb9\u7ed3\u6784', '\u5185\u5bb9\u53d1\u5e03', '\u5ba2\u6237\u5206\u5c42', '\u6279\u91cf\u8ddf\u8fdb']) {
   assert.match(pageSource, new RegExp(capability), `task-flow map must expose ${capability}`);
 }
 assert.match(pageSource, /\u6570\u5b57\u5458\u5de5\u4efb\u52a1\u6d41\u8f6c\u56fe/, 'the business-native task-flow diagram must remain visible');

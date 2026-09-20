@@ -11,8 +11,13 @@ const socialOutputs = readFileSync(new URL('../../server/starter198/socialConten
 
 assert.match(
   app,
-  /readSocialContentNavigationTaskId\(page, window\.history\.state\)[\s\S]*?socialContentTaskId=\{activeSocialContentTaskId\}/,
-  'the active task must come from the exact page navigation handoff',
+  /readSocialContentNavigationTaskId\(initialPage, window\.history\.state\)[\s\S]*?socialContentNavigation\?\.page === page[\s\S]*?socialContentTaskId=\{activeSocialContentTaskId\}/,
+  'the active task must be initialized from the exact page handoff and remain page-scoped',
+);
+assert.match(
+  app,
+  /showSocialContentPlanning = page === 'smartAssets'[\s\S]{0,260}!activeSocialContentTaskId[\s\S]*?<SocialContentPlanningPage[\s\S]*?: \([\s\S]*?<TrafficPage/,
+  'the generic content-production entry must show theme planning before a concrete task opens Studio',
 );
 assert.match(
   traffic,
@@ -40,6 +45,17 @@ assert.match(
 );
 assert.match(studio, /renderSelectedLanguageVersion\(undefined, Boolean\(socialContentTaskId\)\)/,
   'task video recovery must request a server-readable preview without changing the legacy render path');
+assert.match(
+  studio,
+  /任务资料已带入统一制作工作台[\s\S]{0,300}不再选择旧制作路线/,
+  'a bound social-content task must explain that it continues one unified workflow',
+);
+assert.match(studio, /socialContentTaskId \? \([\s\S]{0,500}已从任务带入[\s\S]{0,500}\) : \([\s\S]{0,500}视频模式/,
+  'a bound task must keep the confirmed content type instead of asking the user to choose it again');
+assert.match(studio, /socialContentTaskId \? \([\s\S]{0,500}任务产品[\s\S]{0,500}我的素材/,
+  'a bound task must show its product binding instead of a second product selector');
+assert.match(studio, /socialTaskProjectLookupDone[\s\S]*?studioApi\.listProjects\(\)[\s\S]*?list\.find\(item => item\.status !== 'template'\)[\s\S]*?loadProject\(project\)/,
+  'refreshing a bound task must restore its latest saved production project before hydrating a fresh seed');
 assert.match(studio, /outputUrl:\s*contentMode === 'poster' \? posterImageUrl : workbenchFormalPreviewUrl/,
   'video submission must use the resolved readable preview rather than a local output path');
 assert.match(studio, /generationProvenance:\s*contentMode === 'poster'[\s\S]{0,500}generationRecordId:/,

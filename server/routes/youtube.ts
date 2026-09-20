@@ -27,6 +27,11 @@ import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
 import { publishVideoToAccount } from '../publishing/platformPublisher.js';
 import { readableYouTubeError } from '../publishing/youtubeError.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
+import {
+  openAccountCredential,
+  sealedYouTubeCredentialPatch,
+  youtubeCredentials,
+} from '../lib/accountCredentials.js';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || '';
 const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -71,6 +76,10 @@ interface YouTubeAccountRecord {
   lastSyncAt?: string;
   isMonetized: boolean;
   status: 'connected' | 'error' | 'expired';
+}
+
+function accountYouTubeConfig(record: YouTubeAccountRecord): YouTubeConfig {
+  return youtubeCredentials(record as unknown as Record<string, unknown>);
 }
 
 async function getOAuthClient(tenantId?: string) {
@@ -211,7 +220,8 @@ async function upsertYouTubeAccount(input: {
   });
 
   const existingRecord = existing.items[0];
-  const refreshToken = input.refreshToken || existingRecord?.refreshToken || '';
+  const refreshToken = input.refreshToken
+    || (existingRecord ? openAccountCredential(existingRecord.refreshToken, 'youtube_refresh_token') : '');
   if (!refreshToken) {
     throw new Error('Google 未返回长期授权，请重新连接并确认允许访问 YouTube');
   }
@@ -232,9 +242,11 @@ async function upsertYouTubeAccount(input: {
     channelDescription: channelInfo.description || '',
     customUrl: channelInfo.customUrl || '',
     clientId: input.clientId,
-    clientSecret: input.clientSecret,
-    refreshToken,
-    accessToken: input.accessToken || '',
+    ...sealedYouTubeCredentialPatch({
+      clientSecret: input.clientSecret,
+      refreshToken,
+      accessToken: input.accessToken,
+    }),
     subscriberCount: channelInfo.subscriberCount,
     videoCount: channelInfo.videoCount,
     viewCount: channelInfo.viewCount,
@@ -561,12 +573,7 @@ youtubeRouter.get('/accounts/:id/channel-info', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const info = await getMyChannelInfo(config);
     res.json(info);
@@ -592,12 +599,7 @@ youtubeRouter.get('/accounts/:id/videos', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const videos = await getMyVideos(config, Number(maxResults));
     res.json({ videos });
@@ -739,12 +741,7 @@ youtubeRouter.get('/accounts/:id/comments', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const comments = await getMyVideoComments(config, Number(maxResults), record.channelId);
     res.json({
@@ -774,12 +771,7 @@ youtubeRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const comments = await getVideoComments(config, videoId, Number(maxResults));
     res.json({
@@ -807,12 +799,7 @@ youtubeRouter.get('/accounts/:id/analytics', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const endDate = typeof req.query.endDate === 'string' ? req.query.endDate : new Date().toISOString().slice(0, 10);
     const startDefault = new Date(`${endDate}T00:00:00.000Z`);
@@ -875,12 +862,7 @@ youtubeRouter.get('/accounts/:id/super-chats', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const superChats = await getSuperChats(config, videoId as string);
     res.json({
@@ -1001,12 +983,7 @@ youtubeRouter.post('/accounts/:id/sync', async (req, res) => {
   }
 
   try {
-    const config: YouTubeConfig = {
-      clientId: record.clientId,
-      clientSecret: record.clientSecret,
-      refreshToken: record.refreshToken,
-      accessToken: record.accessToken,
-    };
+    const config = accountYouTubeConfig(record);
 
     const channelInfo = await getMyChannelInfo(config);
     const analytics = await safeChannelAnalytics(config, channelInfo);

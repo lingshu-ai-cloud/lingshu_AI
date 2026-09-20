@@ -26,7 +26,7 @@ type WorkspaceTab = 'today' | 'decisions' | 'results';
 const BUSINESS_AREA_LABEL: Record<StarterAgentRole, string> = {
   orchestrator: '经营统筹',
   content: '内容制作',
-  traffic: '发布与数据',
+  traffic: '发布与渠道',
   sales: '客户跟进',
 };
 
@@ -241,7 +241,13 @@ function ResultsView({ state }: { state: ReturnType<typeof useStarterWorkspace> 
   );
 }
 
-export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export default function StarterWorkspacePage({
+  onNavigate,
+  onNavigateWithTask,
+}: {
+  onNavigate: (page: Page) => void;
+  onNavigateWithTask?: (page: Page, taskId: string) => void;
+}) {
   const state = useStarterWorkspace();
   const [tab, setTab] = useState<WorkspaceTab>('today');
   const [supplement, setSupplement] = useState('');
@@ -293,7 +299,7 @@ export default function StarterWorkspacePage({ onNavigate }: { onNavigate: (page
         )}
 
         <div>
-          <SocialContentWorkspace onNavigate={onNavigate} />
+          <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} defaultCreateMode="weekly" />
         </div>
 
         <div id="starter-workspace-tabs" className="mt-7 scroll-mt-4 flex items-center gap-1 rounded-xl border border-border bg-white p-1" role="tablist" aria-label="智能经营主视图">

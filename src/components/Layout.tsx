@@ -35,7 +35,7 @@ const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactN
   socialInspiration: <Clapperboard size={16} />,
   smartAssets: <WandSparkles size={16} />,
   traffic: <Send size={16} />,
-  accountManagement: <RadioTower size={16} />,
+  socialMonitoring: <BarChart3 size={16} />,
 };
 
 const SOCIAL_NAV: NavSection = {
@@ -55,6 +55,7 @@ const ADS_NAV: NavSection = {
 const CUSTOMER_NAV: NavSection = {
   label: '客户管理',
   items: [
+    navItem('wecomCustomerService', <Bot size={16} />),
     navItem('conversion', <Users size={16} />),
     navItem('orders', <LayoutGrid size={16} />),
   ],
@@ -74,12 +75,14 @@ const ADMIN_NAV: NavSection = {
   items: [
     navItem('admin', <ShieldCheck size={16} />),
     navItem('adminDelivery', <PlugZap size={16} />),
+    navItem('contentFormulaAdmin', <ListTree size={16} />),
   ],
 };
 
 const SYSTEM_NAV: NavSection = {
   label: '系统设置',
   items: [
+    navItem('accountManagement', <RadioTower size={16} />),
     navItem('plugins', <PlugZap size={16} />),
     navItem('organizationPermissions', <UserRoundCog size={16} />),
   ],
@@ -96,10 +99,10 @@ const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
 };
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
-  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
-  customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'orders', 'scheduled']),
+  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions', 'contentFormulaAdmin']),
+  admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
+  social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
+  customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'orders', 'scheduled']),
 };
 
 interface LayoutProps {
@@ -571,6 +574,11 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                   {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
                   <button onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 text-[10px] font-semibold text-text-muted">
+                    <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
+                    <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">服务条款</a>
+                    <a href="/data-deletion" target="_blank" rel="noreferrer" className="hover:text-accent">数据删除</a>
+                  </div>
                 </div>
               </motion.div>
             )}

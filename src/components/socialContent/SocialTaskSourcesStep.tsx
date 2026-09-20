@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Building2,
   Check,
+  CheckCircle2,
+  ChevronDown,
   FilePlus2,
   FileText,
   FolderOpen,
@@ -136,6 +138,8 @@ function SourceLibraryPicker({
 export default function SocialTaskSourcesStep({ draft, update, files, setFiles, onFileError, task }: SocialTaskSourcesStepProps) {
   const existingSources = task?.sources.filter(source => source.status === 'active' && !draft.removedSourceIds.includes(source.sourceId)) || [];
   const removedSources = task?.sources.filter(source => source.status === 'active' && draft.removedSourceIds.includes(source.sourceId)) || [];
+  const hasKnowledge = existingSources.some(source => source.kind === 'knowledge') || draft.selectedSources.some(source => source.kind === 'knowledge');
+  const hasMaterial = existingSources.some(source => source.kind === 'material') || draft.selectedSources.some(source => source.kind === 'material') || files.length > 0;
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
     const next = [...files];
@@ -153,6 +157,12 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
   };
   return (
     <div className="space-y-5">
+      <div className="grid gap-2 sm:grid-cols-2" aria-label="开始制作所需资料">
+        {[
+          { ready: hasKnowledge, label: '企业资料', detail: hasKnowledge ? '已选择可核验资料' : '请选择已确认的企业资料', icon: Building2 },
+          { ready: hasMaterial, label: '真实素材', detail: hasMaterial ? '已选择或上传素材' : '请选择素材或从本地上传', icon: Image },
+        ].map(item => <div key={item.label} className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${item.ready ? 'border-emerald-100 bg-emerald-50/65' : 'border-amber-100 bg-amber-50/65'}`}><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ${item.ready ? 'text-emerald-700' : 'text-amber-700'}`}>{item.ready ? <CheckCircle2 size={17} /> : <item.icon size={17} />}</span><div><p className="text-xs font-black text-text-primary">{item.label}<span className={`ml-2 text-[10px] ${item.ready ? 'text-emerald-700' : 'text-amber-700'}`}>{item.ready ? '已就绪' : '待补充'}</span></p><p className="mt-0.5 text-[10px] text-text-muted">{item.detail}</p></div></div>)}
+      </div>
       {existingSources.length > 0 && <section className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"><p className="text-xs font-bold text-emerald-900">已关联 {existingSources.length} 项资料</p><div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">{existingSources.map(source => <span key={source.sourceId} className="inline-flex max-w-[260px] items-center gap-1 rounded-lg bg-white py-1 pl-2 pr-1 text-[11px] text-text-secondary"><span className="truncate">{source.label}</span><button type="button" aria-label={`移除关联 ${source.label}`} onClick={() => update({ removedSourceIds: [...draft.removedSourceIds, source.sourceId] })} className="shrink-0 rounded p-1 text-text-muted hover:bg-rose-50 hover:text-rose-600"><Trash2 size={11} /></button></span>)}</div></section>}
       {removedSources.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-900"><span className="font-bold">将移除 {removedSources.length} 项关联</span>{removedSources.map(source => <button key={source.sourceId} type="button" onClick={() => update({ removedSourceIds: draft.removedSourceIds.filter(id => id !== source.sourceId) })} className="rounded-lg bg-white px-2 py-1 font-bold shadow-sm">撤销 {source.label}</button>)}</div>}
       <SourceLibraryPicker draft={draft} update={update} task={task} files={files} onFileError={onFileError} />
@@ -160,8 +170,13 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
         <label className="group flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/40 p-5 text-center transition hover:bg-emerald-50"><FilePlus2 size={24} className="text-emerald-700" /><span className="mt-3 text-sm font-bold text-text-primary">上传本次素材</span><span className="mt-1 text-xs text-text-muted">图片、视频、音频、PDF、Word、Excel、CSV 或 TXT，单个不超过 110 MB</span><input type="file" multiple className="sr-only" accept={SOCIAL_CONTENT_FILE_ACCEPT} onChange={event => { addFiles(event.target.files); event.currentTarget.value = ''; }} /></label>
         <div className="rounded-2xl border border-border bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-text-primary">待上传文件</p><p className="mt-0.5 text-[11px] text-text-muted">最多 20 个，合计不超过 512 MB</p></div><span className="rounded-full bg-surface-2 px-2 py-1 text-[11px] font-bold text-text-secondary">{files.length}</span></div>{files.length === 0 ? <div className="mt-5 flex items-center gap-2 text-xs text-text-muted"><FolderOpen size={15} />尚未选择新文件</div> : <ul className="mt-3 max-h-36 space-y-2 overflow-y-auto">{files.map(file => <li key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-2 rounded-lg bg-surface-2 px-2.5 py-2"><span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{file.name}</span><span className="shrink-0 text-[10px] text-text-muted">{file.size >= 1024 * 1024 ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`}</span><button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles(files.filter(item => item !== file))} className="rounded p-1 text-text-muted hover:bg-white hover:text-rose-600"><Trash2 size={13} /></button></li>)}</ul>}</div>
       </div>
-      <label className="block text-xs font-bold text-text-secondary">参考链接<textarea value={draft.referenceLinks.join('\n')} onChange={event => update({ referenceLinks: event.target.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean) })} rows={3} placeholder="每行一个公开链接" className={TEXTAREA_CLASS} /></label>
-      <div className="grid gap-4 md:grid-cols-2"><label className="text-xs font-bold text-text-secondary">待核实任务备注<textarea value={draft.keyFacts} onChange={event => update({ keyFacts: event.target.value })} rows={5} maxLength={3000} placeholder="可填写产品、品牌或客户场景线索；这些内容不会替代企业中心已确认资料" className={TEXTAREA_CLASS} /><span className="mt-1 block text-[10px] font-semibold text-amber-700">备注仅作创作线索，需在企业中心确认后才能作为对外事实。</span></label><div className="space-y-4"><label className="block text-xs font-bold text-text-secondary">不能使用的表达<textarea value={draft.prohibitedClaims} onChange={event => update({ prohibitedClaims: event.target.value })} rows={2} maxLength={2000} placeholder="每行一项" className={TEXTAREA_CLASS} /></label><label className="block text-xs font-bold text-text-secondary">希望客户采取的行动<input value={draft.callToAction} onChange={event => update({ callToAction: event.target.value })} maxLength={500} placeholder="例如：发送产品手册、预约咨询" className={INPUT_CLASS} /></label></div></div>
+      <details className="rounded-lg border border-border bg-surface-2/45 px-3 py-2.5">
+        <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-black text-text-secondary">参考信息与表达限制<span className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted">选填<ChevronDown size={13} /></span></summary>
+        <div className="mt-4 space-y-4 border-t border-border pt-4">
+          <label className="block text-xs font-bold text-text-secondary">参考链接<textarea value={draft.referenceLinks.join('\n')} onChange={event => update({ referenceLinks: event.target.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean) })} rows={3} placeholder="每行一个公开链接" className={TEXTAREA_CLASS} /></label>
+          <div className="grid gap-4 md:grid-cols-2"><label className="text-xs font-bold text-text-secondary">待核实任务备注<textarea value={draft.keyFacts} onChange={event => update({ keyFacts: event.target.value })} rows={5} maxLength={3000} placeholder="可填写产品、品牌或客户场景线索；这些内容不会替代企业中心已确认资料" className={TEXTAREA_CLASS} /><span className="mt-1 block text-[10px] font-semibold text-amber-700">备注仅作创作线索，需在企业中心确认后才能作为对外事实。</span></label><div className="space-y-4"><label className="block text-xs font-bold text-text-secondary">不能使用的表达<textarea value={draft.prohibitedClaims} onChange={event => update({ prohibitedClaims: event.target.value })} rows={2} maxLength={2000} placeholder="每行一项" className={TEXTAREA_CLASS} /></label><label className="block text-xs font-bold text-text-secondary">希望客户采取的行动<input value={draft.callToAction} onChange={event => update({ callToAction: event.target.value })} maxLength={500} placeholder="例如：发送产品手册、预约咨询" className={INPUT_CLASS} /></label></div></div>
+        </div>
+      </details>
     </div>
   );
 }

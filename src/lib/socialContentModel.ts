@@ -2,7 +2,9 @@ import type {
   SocialArtifactStatus,
   SocialContentSourceOption,
   SocialContentTaskDetail,
+  SocialContentTaskMode,
   SocialContentTaskStatus,
+  SocialContentThemeId,
 } from '../../shared/contracts/socialContentWorkflow';
 
 export const SOCIAL_CONTENT_STAGES = [
@@ -17,12 +19,26 @@ export const SOCIAL_CONTENT_STAGES = [
 export type SocialContentStageId = typeof SOCIAL_CONTENT_STAGES[number]['id'];
 export type { SocialContentTaskStatus };
 
+const INSTANT_STAGE_LABELS: Record<SocialContentStageId, string> = {
+  prepare: '准备信息',
+  plan: '确认方案',
+  produce: '生成内容',
+  review: '验收成品',
+  deliver: '交付发布',
+  measure: '效果回收',
+};
+
+export function socialContentStagesForMode(mode?: SocialContentTaskMode | null) {
+  if (mode !== 'instant') return SOCIAL_CONTENT_STAGES;
+  return SOCIAL_CONTENT_STAGES.map(stage => ({ ...stage, label: INSTANT_STAGE_LABELS[stage.id] }));
+}
+
 export type SocialContentPrimaryAction =
   | 'create'
   | 'continue'
   | 'start'
   | 'resume'
-  | 'open_studio'
+  | 'continue_production'
   | 'view_progress'
   | 'review_assets'
   | 'download'
@@ -76,7 +92,7 @@ export function socialContentPrimaryAction(status: SocialContentTaskStatus): Soc
   if (status === 'draft' || status === 'needs_input') return 'continue';
   if (status === 'plan_review') return 'start';
   if (status === 'paused') return 'resume';
-  if (status === 'attention') return 'open_studio';
+  if (status === 'attention') return 'continue_production';
   if (status === 'producing' || status === 'packaging') return 'view_progress';
   if (status === 'asset_review') return 'review_assets';
   if (status === 'delivered') return 'download';
@@ -124,22 +140,113 @@ export function socialContentPrimaryActionForTask(
   return action;
 }
 
-export function socialContentProgress(status: SocialContentTaskStatus): number {
-  const progress: Record<SocialContentTaskStatus, number> = {
-    draft: 8,
-    needs_input: 14,
-    plan_review: 24,
-    producing: 52,
-    asset_review: 68,
-    packaging: 82,
-    delivered: 88,
-    awaiting_publish: 90,
-    awaiting_metrics: 96,
-    reviewed: 100,
-    paused: 52,
-    attention: 52,
+export const SOCIAL_CONTENT_PRODUCTION_STAGES = [
+  { id: 'inputs', label: '输入已确认' },
+  { id: 'production', label: '正在制作' },
+  { id: 'quality', label: '质量检查' },
+  { id: 'review', label: '待验收' },
+] as const;
+
+export type SocialContentProductionStageId = typeof SOCIAL_CONTENT_PRODUCTION_STAGES[number]['id'];
+export type SocialContentProductionStageState = 'complete' | 'current' | 'pending';
+
+type SocialContentProductionTask = Pick<
+  SocialContentTaskDetail,
+  'status' | 'readiness' | 'artifacts' | 'deliveryPackages' | 'publications' | 'metricSubmissions'
+>;
+
+const AFTER_REVIEW_STATUSES = new Set<SocialContentTaskStatus>([
+  'packaging',
+  'delivered',
+  'awaiting_publish',
+  'awaiting_metrics',
+  'reviewed',
+]);
+
+/**
+ * A coarse production view derived only from persisted task and artifact state.
+ * It deliberately exposes no synthetic percentage or unpersisted background step.
+ */
+export function socialContentProductionProgress(task: SocialContentProductionTask): {
+  headline: string;
+  detail: string;
+  currentStageId: SocialContentProductionStageId | null;
+  steps: Array<(typeof SOCIAL_CONTENT_PRODUCTION_STAGES)[number] & { state: SocialContentProductionStageState }>;
+  artifactCount: number;
+  pendingReviewCount: number;
+} {
+  const artifacts = socialContentCurrentArtifacts(task.artifacts);
+  const pendingReviewCount = artifacts.filter(artifact => artifact.status === 'review_required').length;
+  const approvedCount = artifacts.filter(artifact => artifact.status === 'approved').length;
+  const inputsComplete = task.readiness.complete || !['draft', 'needs_input'].includes(task.status);
+  const reviewComplete = AFTER_REVIEW_STATUSES.has(task.status)
+    || (artifacts.length > 0 && approvedCount === artifacts.length);
+  const reviewCurrent = !reviewComplete
+    && (task.status === 'asset_review' || pendingReviewCount > 0);
+  const qualityComplete = reviewCurrent || reviewComplete;
+  // The public task contract has no persisted "quality check is running" state.
+  // Keep this stage pending until a reviewable artifact or later task status proves it completed.
+  const productionComplete = qualityComplete;
+
+  let currentStageId: SocialContentProductionStageId | null = null;
+  if (!inputsComplete) currentStageId = 'inputs';
+  else if (reviewCurrent) currentStageId = 'review';
+  else if (['attention', 'producing', 'paused'].includes(task.status)) currentStageId = 'production';
+
+  const completeStages = new Set<SocialContentProductionStageId>();
+  if (inputsComplete) completeStages.add('inputs');
+  if (productionComplete) completeStages.add('production');
+  if (qualityComplete) completeStages.add('quality');
+  if (reviewComplete) completeStages.add('review');
+
+  let headline = '请先确认制作输入';
+  let detail = task.readiness.missing.length > 0
+    ? `还有 ${task.readiness.missing.length} 项制作信息待补充。`
+    : '确认主题、产品资料和素材后即可开始制作。';
+  if (task.status === 'plan_review') {
+    headline = '制作输入已确认';
+    detail = '任务已经准备好，可以开始制作。';
+  } else if (task.status === 'attention') {
+    headline = '机器人正在自动重试';
+    detail = '已有脚本、素材与生成结果均已保存。';
+  } else if (task.status === 'paused') {
+    headline = '自动生成已暂停';
+    detail = '已有脚本、素材与生成结果均已保存。';
+  } else if (task.status === 'producing') {
+    headline = '内容正在制作';
+    detail = '任务正在执行，成品生成后会进入质量检查。';
+  } else if (task.status === 'asset_review') {
+    headline = pendingReviewCount > 0 ? `${pendingReviewCount} 项成品待验收` : '成品等待验收';
+    detail = artifacts.length > 0 ? `当前共有 ${artifacts.length} 项成品。` : '成品状态已进入验收阶段。';
+  } else if (task.status === 'packaging') {
+    headline = '验收完成，正在整理交付';
+    detail = '已确认的成品正在整理为交付包。';
+  } else if (task.status === 'delivered' || task.status === 'awaiting_publish') {
+    headline = '成品已完成交付';
+    detail = '制作与验收均已完成，可以下载交付包或登记发布结果。';
+  } else if (task.status === 'awaiting_metrics') {
+    headline = '成品已发布';
+    detail = '制作与验收均已完成，等待回传发布数据。';
+  } else if (task.status === 'reviewed') {
+    headline = '本轮制作已完成';
+    detail = '成品、交付和效果回收均已完成。';
+  }
+
+  return {
+    headline,
+    detail,
+    currentStageId,
+    steps: SOCIAL_CONTENT_PRODUCTION_STAGES.map(stage => ({
+      ...stage,
+      state: completeStages.has(stage.id)
+        ? 'complete'
+        : currentStageId === stage.id
+          ? 'current'
+          : 'pending',
+    })),
+    artifactCount: artifacts.length,
+    pendingReviewCount,
   };
-  return progress[status];
 }
 
 export function socialContentAssetReviewAction(artifacts: Array<{ status: SocialArtifactStatus }>): 'review' | 'package' | 'progress' {
@@ -150,6 +257,10 @@ export function socialContentAssetReviewAction(artifacts: Array<{ status: Social
 }
 
 export interface SocialContentDraft {
+  mode: SocialContentTaskMode;
+  themeId: SocialContentThemeId | '';
+  customTopic: string;
+  topic: string;
   title: string;
   productName: string;
   primaryGoal: string;
@@ -178,6 +289,10 @@ export interface SocialContentDraft {
 }
 
 export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
+  mode: 'instant',
+  themeId: 'product_value',
+  customTopic: '',
+  topic: '',
   title: '',
   productName: '',
   primaryGoal: '',
@@ -213,6 +328,9 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   const issues: Record<number, string[]> = {};
   const add = (step: number, message: string) => { issues[step] = [...(issues[step] || []), message]; };
   const list = (value: string) => value.split(/[、,，;；\n]/).map(item => item.trim()).filter(Boolean);
+  if (!draft.themeId && !draft.customTopic.trim()) add(0, '请选择一个内容主题，或填写自定义主题');
+  if (draft.customTopic.length > 300) add(0, '自定义主题不超过 300 字');
+  if (draft.topic.length > 300) add(0, '一句话选题不超过 300 字');
   if (!draft.title.trim()) add(0, '请填写任务名称');
   if (!draft.productName.trim()) add(0, '请填写产品或业务主题');
   if (!draft.primaryGoal.trim()) add(0, '请选择本次主要目标');
@@ -224,7 +342,7 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   if (markets.length > 10 || markets.some(item => item.length > 80)) add(0, '目标市场最多 10 项，每项不超过 80 字');
   if (languages.length > 10 || languages.some(item => item.length > 40)) add(0, '内容语言最多 10 项，每项不超过 40 字');
   if (!draft.selectedSources.some(item => item.kind === 'knowledge')) add(1, '请选择已确认的企业资料；本次任务备注不能替代企业知识');
-  if (!draft.selectedSources.some(item => item.kind === 'material') && draft.referenceLinks.length === 0) add(1, '请选择素材、上传文件或添加参考链接');
+  if (!draft.selectedSources.some(item => item.kind === 'material')) add(1, '请选择素材或上传文件；参考链接不能替代真实素材');
   if (draft.keyFacts.length > 3_000) add(1, '企业与产品关键信息不超过 3000 字');
   const restrictions = draft.prohibitedClaims.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
   if (restrictions.length > 30 || restrictions.some(item => item.length > 240)) add(1, '禁用表达最多 30 项，每项不超过 240 字');
@@ -241,6 +359,7 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   if (draft.platforms.length === 0) add(2, '请至少选择一个发布平台');
   if (draft.formats.length === 0) add(2, '请至少选择一种内容形式');
   if (!Number.isInteger(draft.quantity) || draft.quantity < 1 || draft.quantity > 100) add(2, '内容数量应为 1 至 100');
+  if (draft.mode === 'instant' && draft.quantity !== 1) add(2, '立即创作一次只生成 1 条内容');
   for (const [value, label] of [
     [draft.weeklyBudgetCny, '本周预算'],
     [draft.perItemBudgetCny, '单条预算上限'],

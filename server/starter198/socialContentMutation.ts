@@ -35,6 +35,15 @@ interface HeldMutationScope {
 
 const heldMutationScopes = new AsyncLocalStorage<ReadonlyMap<string, HeldMutationScope>>();
 
+/**
+ * Start deferred work without inheriting a request's subject lease. AsyncLocalStorage
+ * otherwise carries the already-released lease into setImmediate/Promise callbacks,
+ * causing the background worker to mistake it for a live nested mutation.
+ */
+export function runOutsideSocialContentMutationScope<T>(action: () => T): T {
+  return heldMutationScopes.run(new Map<string, HeldMutationScope>(), action);
+}
+
 function mutationScopeKey(tenantId: string, subjectId: string): string {
   return JSON.stringify([tenantId, subjectId]);
 }

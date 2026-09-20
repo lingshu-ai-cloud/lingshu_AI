@@ -8,8 +8,9 @@ import {
   socialContentCurrentArtifacts,
   socialContentPrimaryActionForTask,
   socialContentPrimaryAction,
-  socialContentProgress,
+  socialContentProductionProgress,
   socialContentStage,
+  socialContentStagesForMode,
   socialContentTaskHeadline,
   validateSocialContentDraft,
 } from './socialContentModel.js';
@@ -17,13 +18,14 @@ import {
 assert.equal(socialContentStage('needs_input'), 'prepare');
 assert.equal(socialContentStage('asset_review'), 'review');
 assert.equal(socialContentStage('awaiting_metrics'), 'measure');
+assert.equal(socialContentStagesForMode('instant')[0]?.label, '准备信息');
+assert.equal(socialContentStagesForMode('weekly')[0]?.label, '本周设定');
 assert.equal(socialContentPrimaryAction('plan_review'), 'start');
 assert.equal(socialContentPrimaryAction('paused'), 'resume');
-assert.equal(socialContentPrimaryAction('attention'), 'open_studio');
+assert.equal(socialContentPrimaryAction('attention'), 'continue_production');
 assert.equal(socialContentPrimaryAction('delivered'), 'download');
 assert.equal(socialContentPrimaryAction('awaiting_publish'), 'register_publication');
 assert.equal(socialContentPrimaryAction('awaiting_metrics'), 'submit_metrics');
-assert.equal(socialContentProgress('reviewed'), 100);
 assert.equal(socialContentAssetReviewAction([{ status: 'review_required' }, { status: 'approved' }]), 'review');
 assert.equal(socialContentAssetReviewAction([{ status: 'approved' }, { status: 'superseded' }]), 'package');
 assert.equal(socialContentAssetReviewAction([{ status: 'changes_requested' }, { status: 'approved' }]), 'progress');
@@ -38,6 +40,34 @@ const allCurrentArtifacts = socialContentCurrentArtifacts([
 ]);
 assert.equal(allCurrentArtifacts.length, 7, 'all pending artifacts remain actionable beyond the sixth item');
 assert.equal(allCurrentArtifacts.at(-1)?.artifactId, 'socialartifact_6');
+
+const productionTask = (
+  status: (typeof SOCIAL_CONTENT_TASK_STATUSES)[number],
+  artifacts: Array<{ status: 'draft' | 'review_required' | 'approved' | 'changes_requested' | 'superseded' }> = [],
+  readiness = { complete: true, missing: [] as string[] },
+) => ({ status, artifacts, readiness, deliveryPackages: [], publications: [], metricSubmissions: [] });
+const waitingForInput = socialContentProductionProgress(productionTask(
+  'needs_input',
+  [],
+  { complete: false, missing: ['product', 'source_material'] },
+) as never);
+assert.equal(waitingForInput.currentStageId, 'inputs');
+assert.equal(waitingForInput.steps[0]?.state, 'current');
+assert.match(waitingForInput.detail, /2 项制作信息待补充/);
+const needsContinuation = socialContentProductionProgress(productionTask('attention') as never);
+assert.equal(needsContinuation.currentStageId, 'production');
+assert.equal(needsContinuation.headline, '机器人正在自动重试');
+assert.match(needsContinuation.detail, /脚本、素材与生成结果均已保存/);
+const producingDraft = socialContentProductionProgress(productionTask('producing', [{ status: 'draft' }]) as never);
+assert.equal(producingDraft.currentStageId, 'production');
+assert.equal(producingDraft.steps.find(step => step.id === 'quality')?.state, 'pending',
+  'a draft artifact must not invent a running quality-check state that the task contract does not expose');
+const awaitingReview = socialContentProductionProgress(productionTask('asset_review', [{ status: 'review_required' }]) as never);
+assert.equal(awaitingReview.currentStageId, 'review');
+assert.equal(awaitingReview.steps.find(step => step.id === 'quality')?.state, 'complete');
+assert.equal(awaitingReview.pendingReviewCount, 1);
+const packaged = socialContentProductionProgress(productionTask('packaging', [{ status: 'approved' }]) as never);
+assert.ok(packaged.steps.every(step => step.state === 'complete'));
 
 const taskState = (overrides: Record<string, unknown> = {}) => ({
   status: 'awaiting_publish' as const,
@@ -109,6 +139,11 @@ const validDraft = {
 };
 assert.deepEqual(validateSocialContentDraft(validDraft), {});
 assert.match(validateSocialContentDraft({ ...validDraft, referenceLinks: ['not-a-link'] })[1]?.[0] || '', /参考链接/);
+assert.match(validateSocialContentDraft({
+  ...validDraft,
+  selectedSources: validDraft.selectedSources.filter(source => source.kind === 'knowledge'),
+  referenceLinks: ['https://example.com/reference'],
+})[1]?.join('') || '', /参考链接不能替代真实素材/);
 assert.match(validateSocialContentDraft({ ...validDraft, audience: '' })[0]?.join('') || '', /目标客户/);
 assert.match(validateSocialContentDraft({ ...validDraft, market: Array.from({ length: 11 }, (_, index) => `市场${index}`).join('、') })[0]?.join('') || '', /最多 10 项/);
 assert.match(validateSocialContentDraft({ ...validDraft, keyFacts: '信'.repeat(3_001) })[1]?.join('') || '', /3000/);
