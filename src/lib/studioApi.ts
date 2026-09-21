@@ -706,9 +706,9 @@ export const studioApi = {
     file: File,
     metadata: { folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; sourceType?: string },
   ): Promise<{ ok: boolean; material: Material; error?: string }> => {
-    const maxBytes = 110 * 1024 * 1024;
+    const maxBytes = 100 * 1024 * 1024;
     if (!file.size) return { ok: false, material: null as unknown as Material, error: '素材文件为空' };
-    if (file.size > maxBytes) return { ok: false, material: null as unknown as Material, error: '单个素材不能超过 110 MB' };
+    if (file.size > maxBytes) return { ok: false, material: null as unknown as Material, error: '单个素材不能超过 100 MB' };
     const query = new URLSearchParams({
       name: file.name,
       folder: metadata.folder || 'upload',
@@ -854,7 +854,23 @@ export interface Material {
   usage?: 'editable' | 'reference_only';
   canManage?: boolean;
   sourceType?: string;
+  sourceName?: string;
+  sourceProvider?: string;
+  sourceCreator?: string;
   sourceUrl?: string;
+  licenseEvidence?: string;
+  licenseName?: string;
+  licenseUrl?: string;
+  attributionText?: string;
+  licenseEvidenceCapturedAt?: string;
+  licenseEvidenceTextSha256?: string;
+  importBatchId?: string;
+  manifestSha256?: string;
+  importedAt?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  provenance?: Record<string, unknown>;
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;

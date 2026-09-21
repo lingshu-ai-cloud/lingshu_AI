@@ -29,6 +29,7 @@ export const STARTER_COLLECTIONS = {
   socialTaskSources: 'starter_social_task_sources',
   socialContentFiles: 'starter_social_content_files',
   socialWorkPackageVersions: 'starter_social_work_package_versions',
+  socialDirectorPlanVersions: 'starter_social_director_plan_versions',
   socialContentArtifacts: 'starter_social_content_artifacts',
   socialDeliveryPackages: 'starter_social_delivery_packages',
   socialPublications: 'starter_social_publications',
@@ -130,6 +131,10 @@ export function createStarter198Repository(dataStore: DataStore = store): Starte
       return result;
     } catch (error) {
       if (error instanceof Starter198RepositoryError) throw error;
+      console.error('[starter-198] storage list failed', {
+        collection,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw new Starter198RepositoryError('starter_198_storage_unavailable');
     }
   }
@@ -159,6 +164,10 @@ export function createStarter198Repository(dataStore: DataStore = store): Starte
       return created;
     } catch (error) {
       if (error instanceof Starter198RepositoryError) throw error;
+      console.error('[starter-198] storage create failed', {
+        collection,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw new Starter198RepositoryError('starter_198_storage_unavailable');
     }
   }

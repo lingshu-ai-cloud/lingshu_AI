@@ -10,7 +10,36 @@
  * two functions for an implementation against `r2.ts` — callers only use
  * `attachFile` / `fetchFile`.
  */
+import { openAsBlob } from 'node:fs';
 import { getPbAdminToken, getPbUrl } from './pb.js';
+
+async function patchFileField(
+  collection: string,
+  recordId: string,
+  field: string,
+  file: { name: string; blob: Blob },
+): Promise<string | null> {
+  const token = await getPbAdminToken();
+  if (!token) return null;
+
+  const form = new FormData();
+  form.append(field, file.blob, file.name);
+
+  // NOTE: do not set Content-Type — fetch derives the multipart boundary.
+  const res = await fetch(
+    `${getPbUrl()}/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(recordId)}`,
+    { method: 'PATCH', headers: { Authorization: token }, body: form },
+  );
+  if (!res.ok) {
+    console.error(`[files] attach ${collection}/${recordId}.${field} failed`, res.status, await res.text().catch(() => ''));
+    return null;
+  }
+  const rec = (await res.json()) as Record<string, unknown>;
+  const value = rec[field];
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length) return String(value[0]);
+  return null;
+}
 
 /** Create a short-lived native media URL so browsers can use HTTP Range requests. */
 export async function createFilePlaybackUrl(
@@ -37,26 +66,25 @@ export async function attachFile(
   field: string,
   file: { name: string; buf: Buffer; contentType: string },
 ): Promise<string | null> {
-  const token = await getPbAdminToken();
-  if (!token) return null;
+  return patchFileField(collection, recordId, field, {
+    name: file.name,
+    blob: new Blob([file.buf], { type: file.contentType }),
+  });
+}
 
-  const form = new FormData();
-  form.append(field, new Blob([file.buf], { type: file.contentType }), file.name);
-
-  // NOTE: do not set Content-Type — fetch derives the multipart boundary.
-  const res = await fetch(
-    `${getPbUrl()}/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(recordId)}`,
-    { method: 'PATCH', headers: { Authorization: token }, body: form },
-  );
-  if (!res.ok) {
-    console.error(`[files] attach ${collection}/${recordId}.${field} failed`, res.status, await res.text().catch(() => ''));
-    return null;
-  }
-  const rec = (await res.json()) as Record<string, unknown>;
-  const v = rec[field];
-  if (typeof v === 'string') return v;
-  if (Array.isArray(v) && v.length) return String(v[0]);
-  return null;
+/**
+ * Upload a local render without loading a potentially 100+ MiB video into the
+ * Node heap. The path is only a transient producer input; PocketBase owns the
+ * durable bytes after this call succeeds.
+ */
+export async function attachFileFromPath(
+  collection: string,
+  recordId: string,
+  field: string,
+  file: { name: string; path: string; contentType: string },
+): Promise<string | null> {
+  const blob = await openAsBlob(file.path, { type: file.contentType });
+  return patchFileField(collection, recordId, field, { name: file.name, blob });
 }
 
 /** Download a stored file as a Buffer. Uses a short-lived PB file token. */

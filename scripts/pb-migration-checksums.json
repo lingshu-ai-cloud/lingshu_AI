@@ -75,8 +75,15 @@
     "1790035200_create_platform_ad_schema.js": "a001716f642e20ffe5caf66bf50db2df212319f431ed9c6a8f396c8dc1abc6da",
     "1790121600_backfill_trend_video_content_format.js": "498dcf39fc0456689dfd90acf2a3d10780620eb1468b44f521b604f41e55de31",
     "1790208001_unique_platform_ad_execution_requests.js": "8f3bf4ac9ef51b17d78a4f1cc21db15d08e746e014ded42bc88c092455ea2655",
-    "1790294400_create_social_channel_foundation.js": "40a8193cf40db5c064208873c63d7ac197c26f318b7d72f075a168311897c92f",
+    "1790294400_create_social_channel_foundation.js": "23d3db4432b32291a64c7f279e7058cc7805a20e40fe86be704eca3491de5f71",
     "1790294401_create_wecom_kf_customer_service.js": "dc6cf2c568f0e441cbf0f0ee07ea6da783d9e5394528c822b9bd1c22bf8af995",
-    "1790294402_add_social_publication_evidence_history.js": "35b8c7abdbd9341db87224e1ef87e87f9fb5ccc050e48cb426d64069237e1a61"
+    "1790294402_add_social_publication_evidence_history.js": "84464f1387909c9e7a154d60df5bd22a748e38e4dd5341f6fb22f60590a1e81b",
+    "1790294403_add_material_provenance.js": "a9519ff23b4204afc2d5514e16d93ad523c8f4d0ca4b2bfb72d58638db7df681",
+    "1790380800_add_social_content_backend_file.js": "27e34cb3f23da2c8d35ce36c906d178f4d0473a6d97a70666efff73de30ee22f",
+    "1790380801_ensure_social_content_backend_file.js": "9aca0cf88a1a80c1a927bcfd3cd121e25e56d087606619f6e54d09a08efa3d0b",
+    "1790467200_add_social_content_director_plan.js": "5a114a26ac70a2c4a476a62d05b8c031e544d4562d57ef92e3295c97ce0b9f77",
+    "1790467201_add_social_content_theme_workflow_fields.js": "42bd51c9810152dd40aeaf95642c55492287889c0e794ff965d93dad6f88a437",
+    "1790467202_allow_zero_social_content_counters.js": "fbb268c9855318607e5845ac9ba37c9076562844f4b413242f8cdd91ba1324f2",
+    "1790467203_create_social_director_plan_versions.js": "c779a70fe5ef519154abcd865a59dd8b1f5a210b173b892fe03c64d02fcf613d"
   }
 }

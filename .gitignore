@@ -38,6 +38,10 @@ data/digital-human-worker/
 data/generated/
 data/publishing-uploads/
 data/social-content-sources/
+# Legacy social-content render/upload directories. New code uses OS temp space
+# and backend file fields; keep any pre-migration residue out of source control.
+data/social-content-renders/
+data/social-content-upload-temp/
 data/crawler-ops-queue.json
 data/apify-video-usage.json
 data/video-admin-alerts.json

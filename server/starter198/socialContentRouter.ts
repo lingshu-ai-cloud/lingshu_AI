@@ -34,11 +34,15 @@ import {
   submitSocialMetrics,
 } from './socialContentOutputs.js';
 import {
+  cleanupTransientSocialContentUpload,
+  durableSocialContentFileDescriptor,
   readSocialContentFile,
   registerSocialContentFile,
   registerSocialTaskCreativeMaterial,
   storeSocialContentFile,
   withSocialContentUploadAdmission,
+  type SocialContentBackendFilePort,
+  type SocialTaskMaterialPort,
 } from './socialContentFiles.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
 import { socialTaskFileCapacity } from './socialContentLimits.js';
@@ -109,6 +113,8 @@ export interface SocialContentRouterDependencies {
   platformAdmin?: (request: Request) => Promise<{ userId: string } | null>;
   sourceOptions?: SocialContentSourceOptionsPort;
   accessResolver?: SocialContentAccessResolver;
+  backendFilePort?: SocialContentBackendFilePort;
+  socialTaskMaterialPort?: SocialTaskMaterialPort;
   now?: () => Date;
 }
 
@@ -157,6 +163,8 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const platformAdmin = dependencies.platformAdmin ?? (async request => requireAdminUser(request));
   const sourceOptions = dependencies.sourceOptions ?? socialContentSourceOptions;
   const accessResolver = dependencies.accessResolver ?? socialContentAccessResolver;
+  const backendFilePort = dependencies.backendFilePort;
+  const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
 
   router.use(requireAuth);
   router.use((req, res, next) => {
@@ -484,7 +492,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
         const task = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId });
         if (!task) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
         const capacity = await socialTaskFileCapacity({ repository, tenantId: identity.tenantId, taskId });
-        const stored = await storeSocialContentFile({
+        const upload = await storeSocialContentFile({
           stream: req,
           tenantId: identity.tenantId,
           name: socialText(req.query.name) || socialText(req.headers['x-file-name']),
@@ -493,25 +501,35 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
           maximumBytes: capacity.remainingBytes,
           materialLibrary: usage === 'source',
         });
-        const file = await registerSocialContentFile({
-          repository,
-          ...identity,
-          taskId,
-          usage: usage as 'source' | 'metric_evidence' | 'artifact_media',
-          idempotencyKey,
-          stored,
-          now: now(),
-        });
-        const material = usage === 'source'
-          ? await registerSocialTaskCreativeMaterial({
-            tenantId: identity.tenantId,
+        const transientPath = upload.transientPath;
+        const stored = durableSocialContentFileDescriptor(upload);
+        try {
+          const file = await registerSocialContentFile({
+            repository,
+            ...identity,
             taskId,
-            productRef: task.brief.productRef,
-            file,
+            usage: usage as 'source' | 'metric_evidence' | 'artifact_media',
+            idempotencyKey,
             stored,
-          })
-          : null;
-        return { file, material };
+            ...(transientPath ? { transientPath } : {}),
+            ...(backendFilePort ? { backendFilePort } : {}),
+            now: now(),
+          });
+          const material = usage === 'source'
+            ? await registerSocialTaskCreativeMaterial({
+              tenantId: identity.tenantId,
+              taskId,
+              productRef: task.brief.productRef,
+              file,
+              stored,
+              ...(transientPath ? { transientPath } : {}),
+              ...(socialTaskMaterialPort ? { materialPort: socialTaskMaterialPort } : {}),
+            })
+            : null;
+          return { file, material };
+        } finally {
+          await cleanupTransientSocialContentUpload(upload);
+        }
       },
     });
     const material = result.material ? {
@@ -533,12 +551,18 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
 
   router.get('/files/:fileId', asyncRoute(async (req, res) => {
     const identity = await authorize(req, res, 'read');
-    const file = await readSocialContentFile({ repository, tenantId: identity.tenantId, fileId: requireSocialId(req.params.fileId) });
+    const file = await readSocialContentFile({
+      repository,
+      tenantId: identity.tenantId,
+      fileId: requireSocialId(req.params.fileId),
+      ...(backendFilePort ? { backendFilePort } : {}),
+    });
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', file.view.mimeType);
     res.setHeader('Content-Length', String(file.view.size));
     res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.view.name)}`);
     if (file.localPath) { res.sendFile(file.localPath); return; }
+    if (file.backend) { res.end(file.backend.buf); return; }
     if (!file.object) throw new SocialContentWorkflowError('social_content_file_storage_unavailable', 503);
     Readable.from(file.object.body).pipe(res);
   }));
@@ -550,6 +574,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       tenantId: identity.tenantId,
       taskId: requireSocialId(req.params.taskId),
       artifactId: requireSocialId(req.params.artifactId, 'social_artifact_id_invalid'),
+      ...(backendFilePort ? { backendFilePort } : {}),
     });
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
@@ -652,6 +677,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     bodyWithinLimit(req);
     res.json(await decideSocialContentArtifact({
       repository,
+      orchestratorQueue: dependencies.orchestratorQueue,
       ...identity,
       taskId: requireSocialId(req.params.taskId),
       artifactId: requireSocialId(req.params.artifactId, 'social_artifact_id_invalid'),
@@ -666,6 +692,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
     bodyWithinLimit(req);
     const task = await decideSocialContentArtifactBatch({
       repository,
+      orchestratorQueue: dependencies.orchestratorQueue,
       ...identity,
       taskId: requireSocialId(req.params.taskId),
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
@@ -702,6 +729,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
       tenantId: identity.tenantId,
       taskId: result.view.taskId,
       descriptor,
+      ...(backendFilePort ? { backendFilePort } : {}),
     });
     await verifySocialDeliveryArchiveMedia(result.manifest, loadMedia);
     const contentLength = socialDeliveryArchiveContentLength(result.manifest, loadMedia);

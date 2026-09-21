@@ -1,10 +1,12 @@
 import fs from 'node:fs';
+import { Readable } from 'node:stream';
 import type { CreateSocialArtifactInput, SocialContentFile } from '../../shared/contracts/socialContentWorkflow.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import {
   assertSocialContentFilePersisted,
   readSocialContentFile,
   requireOwnedSocialFileRef,
+  type SocialContentBackendFilePort,
 } from './socialContentFiles.js';
 import { findSocialRecord, socialArtifact } from './socialContentRecords.js';
 import { SocialContentWorkflowError, socialText } from './socialContentValidation.js';
@@ -45,9 +47,14 @@ async function ownedMediaRecord(input: {
   tenantId: string;
   taskId: string;
   fileRef: string;
+  backendFilePort?: SocialContentBackendFilePort;
 }): Promise<{ record: StarterRecord; file: SocialContentFile }> {
   const record = await requireOwnedSocialFileRef({ ...input, usage: 'artifact_media' });
-  const file = await assertSocialContentFilePersisted({ record, tenantId: input.tenantId });
+  const file = await assertSocialContentFilePersisted({
+    record,
+    tenantId: input.tenantId,
+    ...(input.backendFilePort ? { backendFilePort: input.backendFilePort } : {}),
+  });
   assertMimeFamily(file, null);
   return { record, file };
 }
@@ -58,6 +65,7 @@ export async function resolveSocialArtifactMedia(input: {
   tenantId: string;
   taskId: string;
   value: CreateSocialArtifactInput;
+  backendFilePort?: SocialContentBackendFilePort;
 }): Promise<{ record: StarterRecord; file: SocialContentFile } | null> {
   const family = socialArtifactMediaFamily(input.value.kind, input.value.content);
   const fileRef = socialText(input.value.resourceRef);
@@ -94,6 +102,7 @@ export async function openSocialArtifactMedia(input: {
   tenantId: string;
   taskId: string;
   descriptor: SocialArtifactMediaDescriptor;
+  backendFilePort?: SocialContentBackendFilePort;
 }): Promise<AsyncIterable<Uint8Array>> {
   const resolved = await ownedMediaRecord({
     repository: input.repository,
@@ -113,9 +122,11 @@ export async function openSocialArtifactMedia(input: {
     repository: input.repository,
     tenantId: input.tenantId,
     fileId: resolved.file.fileId,
+    ...(input.backendFilePort ? { backendFilePort: input.backendFilePort } : {}),
   });
   if (opened.localPath) return fs.createReadStream(opened.localPath);
   if (opened.object) return opened.object.body;
+  if (opened.backend) return Readable.from(opened.backend.buf);
   throw new SocialContentWorkflowError('social_content_file_storage_unavailable', 503);
 }
 
@@ -125,6 +136,7 @@ export async function openSocialArtifactPreviewMedia(input: {
   tenantId: string;
   taskId: string;
   artifactId: string;
+  backendFilePort?: SocialContentBackendFilePort;
 }): Promise<{ file: SocialContentFile; body: AsyncIterable<Uint8Array> }> {
   const record = await findSocialRecord({
     ...input,
@@ -152,8 +164,10 @@ export async function openSocialArtifactPreviewMedia(input: {
     repository: input.repository,
     tenantId: input.tenantId,
     fileId: resolved.file.fileId,
+    ...(input.backendFilePort ? { backendFilePort: input.backendFilePort } : {}),
   });
   if (opened.localPath) return { file: resolved.file, body: fs.createReadStream(opened.localPath) };
   if (opened.object) return { file: resolved.file, body: opened.object.body };
+  if (opened.backend) return { file: resolved.file, body: Readable.from(opened.backend.buf) };
   throw new SocialContentWorkflowError('social_content_file_storage_unavailable', 503);
 }

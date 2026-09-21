@@ -16,11 +16,11 @@ export const SOCIAL_THEME_OPTIONS: ReadonlyArray<{
   description: string;
   shots: string[];
 }> = [
-  { id: 'product_value', title: '产品与卖点', description: '讲清产品、关键能力和可验证差异', shots: ['产品全貌', '关键细节', '使用演示', '证据'] },
-  { id: 'scenario_solution', title: '场景与解决方案', description: '从真实问题出发展示解决过程', shots: ['场景', '问题', '解决动作', '结果与边界'] },
-  { id: 'supplier_capability', title: '企业与供应保障', description: '展示团队、流程、质检和交付能力', shots: ['场所或团队', '流程', '质检', '仓储或交付'] },
-  { id: 'customization_process', title: '定制与合作流程', description: '说明需求、打样、确认到交付', shots: ['需求', '方案', '样品', '确认', '生产交付'] },
-  { id: 'customer_case', title: '客户案例与合作成果', description: '用已授权、可核验的证据讲成果', shots: ['授权背景', '问题', '方案', '结果', '授权证明'] },
+  { id: 'product_value', title: '介绍产品卖点', description: '展示产品细节、用法和优势，让客户快速看懂', shots: ['产品全貌', '产品细节', '使用演示', '效果证明'] },
+  { id: 'scenario_solution', title: '展示产品怎么用', description: '让客户看到使用场景、解决什么问题', shots: ['使用场景', '客户问题', '使用过程', '使用效果'] },
+  { id: 'supplier_capability', title: '展示工厂实力', description: '展示车间、设备、团队、质检和交付能力', shots: ['工厂车间', '生产设备', '品质检查', '仓储发货'] },
+  { id: 'customization_process', title: '讲清定制流程', description: '让客户看懂沟通、打样、生产到交付怎么走', shots: ['需求沟通', '打样确认', '批量生产', '交付发货'] },
+  { id: 'customer_case', title: '分享客户案例', description: '用真实合作过程和结果，让新客户更放心', shots: ['客户需求', '合作方案', '最终成品', '合作结果'] },
 ];
 
 export const PACKAGE_META: Record<SocialWorkPackageKind, { title: string; caption: string }> = {

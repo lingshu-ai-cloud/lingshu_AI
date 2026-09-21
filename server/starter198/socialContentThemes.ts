@@ -51,15 +51,64 @@ export const SOCIAL_THEME_CATALOG: readonly SocialContentThemeCard[] = [
 
 export interface InternalFormulaNode {
   nodeId: string;
-  shotFunction: string;
-  subject: string;
-  action: string;
-  environment: string | null;
-  orientation: 'portrait' | 'landscape' | 'either';
-  durationSeconds: { minimum: number; maximum: number } | null;
-  required: boolean;
+  shotFunction?: string;
+  subject?: string;
+  action?: string;
+  environment?: string | null;
+  orientation?: 'portrait' | 'landscape' | 'either';
+  durationSeconds?: { minimum: number; maximum: number } | null;
+  required?: boolean;
+  /** Director-owned visual grammar. Drafts may omit it; released formulas may not. */
+  shotType?: 'live_action' | 'product_demo' | 'process' | 'talking_head' | 'graphic';
+  shotSize?: 'extreme_close_up' | 'close_up' | 'medium' | 'wide' | 'detail';
+  cameraMovement?: 'static' | 'pan' | 'tilt' | 'push_in' | 'pull_out' | 'tracking' | 'handheld';
+  composition?: string;
+  transition?: 'cut' | 'match_cut' | 'dissolve' | 'fade' | 'wipe';
   /** Executable script owned by the formula; never returned in customer task payloads. */
-  narrationTemplate: { zh: string; en: string };
+  narrationTemplate?: { zh: string; en: string };
+  /** All three are mandatory before trial/release and are never synthesized by the registry. */
+  scriptTemplate?: { zh: string; en: string };
+  voiceoverTemplate?: { zh: string; en: string };
+  captionTemplate?: { zh: string; en: string };
+}
+
+export interface InternalSocialContentFormulaDirection {
+  pace?: 'fast' | 'balanced' | 'steady';
+  visualStyle?: string;
+  music?: {
+    mood?: string;
+    volume?: number;
+    strategy?: string;
+    sourceType?: 'licensed_library' | 'original' | 'none';
+    licenseVerified?: boolean;
+    licenseReference?: string | null;
+  };
+  voiceover?: {
+    voice?: string;
+    preset?: 'tiktok_excited' | 'authentic_review' | 'professional_b2b' | 'warm_story' | 'urgent_cta';
+    speed?: number;
+    pauseStyle?: 'few' | 'natural' | 'dramatic';
+  };
+  subtitles?: { fontScale?: number; bottomRatio?: number; styleIntent?: string };
+  cover?: {
+    intent?: string;
+    headlineTemplate?: { zh: string; en: string };
+    subject?: string;
+    composition?: string;
+  };
+  materialFallback?: {
+    minimumUsableClips?: number;
+    allowStillFrames?: boolean;
+    allowRepeatedClips?: boolean;
+    maxRepeatCount?: number;
+    insufficientMaterialAction?: 'adapt_with_verified_assets' | 'request_reshoot' | 'block';
+  };
+  risks?: {
+    prohibitedClaims?: string[];
+    prohibitedVisuals?: string[];
+    mandatoryDisclosures?: string[];
+  };
+  acceptanceGates?: Array<{ gateId: string; name: string; rule: string; blocking: boolean }>;
 }
 
 export interface InternalSocialContentFormula {
@@ -71,86 +120,17 @@ export interface InternalSocialContentFormula {
   status: 'draft' | 'internal_trial' | 'gray' | 'active' | 'disabled';
   rollout: { percentage: number; tenantAllowlist: string[] };
   audit: Array<{ event: string; actor: string; at: string; note?: string }>;
+  direction?: InternalSocialContentFormulaDirection;
   nodes: InternalFormulaNode[];
 }
 
-const BUILTIN_FORMULA_GOVERNANCE = {
-  rollout: { percentage: 100, tenantAllowlist: [] as string[] },
-  audit: [{ event: 'builtin_reviewed', actor: 'platform-content-ops', at: '2026-09-19T00:00:00.000Z' }],
-};
-
-const node = (
-  nodeId: string,
-  shotFunction: string,
-  subject: string,
-  action: string,
-  environment: string | null = null,
-  narrationTemplate: { zh: string; en: string } = {
-    zh: '通过真实素材展示{{subject}}，重点说明{{shotFunction}}。',
-    en: 'Using the supplied material, show {{subject}} to support {{shotFunction}}.',
-  },
-): InternalFormulaNode => ({
-  nodeId,
-  shotFunction,
-  subject,
-  action,
-  environment,
-  orientation: 'portrait',
-  durationSeconds: { minimum: 2, maximum: 8 },
-  required: true,
-  narrationTemplate,
-});
-
-/** Internal-only registry. Never embed these names or identifiers in a public task response. */
-export const INTERNAL_SOCIAL_CONTENT_FORMULAS: readonly InternalSocialContentFormula[] = [
-  {
-    formulaId: 'builtin.product-proof', version: '1.0.0', name: '产品证据链', themeId: 'product_value', status: 'active', ...BUILTIN_FORMULA_GOVERNANCE,
-    nodes: [
-      node('overview', '建立产品认知', '产品全貌', '完整展示', null, { zh: '这次围绕{{topic}}，带你了解{{product}}。', en: 'Here is a closer look at {{product}}, focused on {{topic}}.' }),
-      node('detail', '证明关键卖点', '关键结构或原料', '近景展示', null, { zh: '先从真实素材里看{{subject}}，具体信息以已确认资料为准。', en: 'First, examine {{subject}} in the supplied material; specifications remain subject to verified information.' }),
-      node('demo', '展示使用效果', '产品与使用对象', '真实演示', '实际使用场景', { zh: '再看{{product}}在真实场景中的使用过程与可见表现。', en: 'Next, see how {{product}} is used and what is visibly demonstrated in the real setting.' }),
-      node('evidence', '提供可核验证据', '检测、参数或对比证据', '清晰呈现', null, { zh: '最后只呈现可核验的资料与画面。{{callToAction}}', en: 'Finally, we present only verifiable information and visuals. {{callToAction}}' }),
-    ],
-  },
-  {
-    formulaId: 'builtin.scenario-resolution', version: '1.0.0', name: '场景问题解决', themeId: 'scenario_solution', status: 'active', ...BUILTIN_FORMULA_GOVERNANCE,
-    nodes: [
-      node('context', '交代场景', '使用对象与环境', '展示现状', '真实使用场景', { zh: '先看{{topic}}对应的真实使用场景。', en: 'First, look at the real setting behind {{topic}}.' }),
-      node('problem', '呈现具体问题', '问题细节', '指出或复现', null, { zh: '在这个场景里，重点关注素材中真实可见的问题细节。', en: 'In this setting, focus on the problem details that are actually visible in the supplied material.' }),
-      node('action', '展示解决动作', '产品或服务', '执行关键步骤', null, { zh: '接下来展示{{product}}的实际操作过程，不补充未经确认的效果。', en: 'Next, show how {{product}} is actually used without adding unverified outcomes.' }),
-      node('result', '展示结果与边界', '结果或适用边界', '可视化呈现', null, { zh: '最后展示素材中可见的结果和适用边界。{{callToAction}}', en: 'Finally, show the visible result and applicable boundaries. {{callToAction}}' }),
-    ],
-  },
-  {
-    formulaId: 'builtin.supply-assurance', version: '1.0.0', name: '供应保障证据', themeId: 'supplier_capability', status: 'active', ...BUILTIN_FORMULA_GOVERNANCE,
-    nodes: [
-      node('place_team', '建立企业可信度', '场所或团队', '现场展示', null, { zh: '围绕{{topic}}，先看真实的场所与团队。', en: 'For {{topic}}, begin with the actual site and team.' }),
-      node('process', '展示供应流程', '生产或协作流程', '连续记录', null, { zh: '接着通过连续画面了解生产或协作流程。', en: 'Then, follow the production or coordination process through continuous footage.' }),
-      node('quality', '证明质量控制', '质量检查点', '执行检查', null, { zh: '质量能力只通过真实拍摄的检查动作和已确认资料呈现。', en: 'Quality capability is shown only through filmed checks and verified information.' }),
-      node('delivery', '证明交付能力', '仓储、包装或物流', '展示交付准备', null, { zh: '最后看仓储、包装或交付准备。{{callToAction}}', en: 'Finally, review warehousing, packaging, or delivery preparation. {{callToAction}}' }),
-    ],
-  },
-  {
-    formulaId: 'builtin.customization-journey', version: '1.0.0', name: '定制合作路径', themeId: 'customization_process', status: 'active', ...BUILTIN_FORMULA_GOVERNANCE,
-    nodes: [
-      node('need', '呈现客户需求', '需求信息', '清晰列出', null, { zh: '定制合作从明确真实需求开始。', en: 'A customization project begins with a clearly confirmed requirement.' }),
-      node('options', '展示可选方案', '规格、配方或包装选项', '对比展示', null, { zh: '再根据已确认资料展示可选规格、配方或包装方向。', en: 'Next, show available specification, formula, or packaging directions from verified information.' }),
-      node('sample', '展示打样结果', '样品', '细节展示', null, { zh: '样品环节重点展示实物细节，不代替最终确认。', en: 'The sampling stage focuses on physical details and does not replace final confirmation.' }),
-      node('confirmation', '证明确认过程', '确认记录或标准', '核对确认', null, { zh: '确认记录与标准决定后续生产依据。', en: 'Confirmed records and standards form the basis for later production.' }),
-      node('production_delivery', '说明后续交付', '生产或交付节点', '展示进度', null, { zh: '最后进入生产与交付节点。{{callToAction}}', en: 'The process then moves into production and delivery. {{callToAction}}' }),
-    ],
-  },
-  {
-    formulaId: 'builtin.authorized-case', version: '1.0.0', name: '授权案例证据', themeId: 'customer_case', status: 'active', ...BUILTIN_FORMULA_GOVERNANCE,
-    nodes: [
-      node('authorized_context', '交代获授权背景', '已获授权的客户背景', '去敏展示', null, { zh: '这是一个已获授权并完成去敏处理的合作案例。', en: 'This is an authorized collaboration case with sensitive details removed.' }),
-      node('case_problem', '说明客户问题', '客户问题', '客观呈现', null, { zh: '先客观说明客户当时需要解决的问题。', en: 'First, objectively describe the customer problem that needed to be solved.' }),
-      node('case_solution', '展示方案过程', '解决方案', '记录关键过程', null, { zh: '接着通过真实素材展示方案推进的关键过程。', en: 'Next, use real material to show the key steps of the solution.' }),
-      node('verified_result', '展示可核验结果', '结果证据', '呈现数据或实物', null, { zh: '结果部分只使用可核验的数据、实物或记录。', en: 'The result uses only verifiable data, physical evidence, or records.' }),
-      node('authorization', '证明内容授权', '授权凭证', '去敏展示', null, { zh: '案例内容以授权范围为边界。{{callToAction}}', en: 'The case is presented only within the authorized scope. {{callToAction}}' }),
-    ],
-  },
-] as const;
+/**
+ * Intentionally empty. The admin-facing registry and rollout mechanism stay in
+ * place, but no formula is silently bundled into customer production. Until an
+ * administrator authors and releases one, Director Agent falls back to an
+ * analyzed inspiration script and then to the verified-knowledge skeleton.
+ */
+export const INTERNAL_SOCIAL_CONTENT_FORMULAS: readonly InternalSocialContentFormula[] = [];
 
 const CLASSIFICATION_KEYWORDS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '原料', '配方', '材质', '参数', '性能', '成分', '功效', '新品'],
@@ -225,14 +205,14 @@ export function initialMaterialRequirements(
       // Themes only describe what the content is about. Until a formula is
       // explicitly applied to a production task, its shot structure is an
       // advisory checklist and must never block the user from starting.
-      required: mode === 'formula' ? item.required : false,
+      required: mode === 'formula' ? item.required === true : false,
       targetTheme: themeId,
-      shotFunction: item.shotFunction,
-      subject: item.subject,
-      action: item.action,
-      environment: item.environment,
-      orientation: item.orientation,
-      durationSeconds: item.durationSeconds,
+      shotFunction: item.shotFunction!,
+      subject: item.subject!,
+      action: item.action!,
+      environment: item.environment ?? null,
+      orientation: item.orientation!,
+      durationSeconds: item.durationSeconds ?? null,
       status: 'missing',
       matchedSourceIds: [],
       confidence: null,

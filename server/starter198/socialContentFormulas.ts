@@ -8,6 +8,7 @@ import {
   initialMaterialRequirements,
   type InternalFormulaNode,
   type InternalSocialContentFormula,
+  type InternalSocialContentFormulaDirection,
 } from './socialContentThemes.js';
 import {
   SocialContentWorkflowError,
@@ -19,7 +20,8 @@ import {
 
 type FormulaStatus = InternalSocialContentFormula['status'];
 
-const FORMULA_SCHEMA = 'social-content-formula.v1';
+const FORMULA_SCHEMA = 'social-content-formula.v2';
+const READABLE_FORMULA_SCHEMAS = new Set(['social-content-formula.v1', FORMULA_SCHEMA]);
 const FORMULA_STATUSES: readonly FormulaStatus[] = ['draft', 'internal_trial', 'gray', 'active', 'disabled'];
 /** Platform-owned scope; customer tenants can select eligible versions but cannot read this store. */
 export const SOCIAL_FORMULA_CATALOG_TENANT = '__starter_social_formula_catalog__';
@@ -72,16 +74,8 @@ const FORMULA_TEMPLATE_TOKENS = new Set([
   'product', 'topic', 'callToAction', 'shotFunction', 'subject', 'action',
 ]);
 
-function parseNarrationTemplate(
-  value: unknown,
-  fallback: Pick<InternalFormulaNode, 'shotFunction' | 'subject'>,
-): InternalFormulaNode['narrationTemplate'] {
-  if (value === undefined) {
-    return {
-      zh: `通过真实素材展示${fallback.subject}，重点说明${fallback.shotFunction}。`,
-      en: `Using the supplied material, show ${fallback.subject} to support ${fallback.shotFunction}.`,
-    };
-  }
+function parseLocalizedTemplate(value: unknown): { zh: string; en: string } | undefined {
+  if (value === undefined) return undefined;
   const row = socialObject(value);
   if (!row || Object.keys(row).some(key => !['zh', 'en'].includes(key))) {
     throw new SocialContentWorkflowError('social_content_formula_script_template_invalid', 400);
@@ -99,36 +93,222 @@ function parseNarrationTemplate(
   return template;
 }
 
+function parseDirection(value: unknown): InternalSocialContentFormula['direction'] {
+  if (value === undefined) return undefined;
+  const row = socialObject(value);
+  if (!row || Object.keys(row).some(key => ![
+    'pace', 'visualStyle', 'music', 'voiceover', 'subtitles', 'cover', 'materialFallback', 'risks', 'acceptanceGates',
+  ].includes(key))) {
+    throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+  }
+  const parsed: InternalSocialContentFormulaDirection = {};
+  if (row.pace !== undefined) {
+    const pace = socialText(row.pace);
+    if (!['fast', 'balanced', 'steady'].includes(pace)) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    parsed.pace = pace as NonNullable<InternalSocialContentFormulaDirection['pace']>;
+  }
+  if (row.visualStyle !== undefined) parsed.visualStyle = requiredText(row.visualStyle, 'social_content_formula_direction_invalid', 500);
+
+  if (row.music !== undefined) {
+    const music = socialObject(row.music);
+    if (!music || Object.keys(music).some(key => ![
+      'mood', 'volume', 'strategy', 'sourceType', 'licenseVerified', 'licenseReference',
+    ].includes(key))) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    const parsedMusic: NonNullable<InternalSocialContentFormulaDirection['music']> = {};
+    if (music.mood !== undefined) parsedMusic.mood = requiredText(music.mood, 'social_content_formula_direction_invalid', 160);
+    if (music.volume !== undefined) {
+      const volume = Number(music.volume);
+      if (!Number.isFinite(volume) || volume < 0 || volume > 100) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedMusic.volume = volume;
+    }
+    if (music.strategy !== undefined) parsedMusic.strategy = requiredText(music.strategy, 'social_content_formula_direction_invalid', 500);
+    if (music.sourceType !== undefined) {
+      const sourceType = socialText(music.sourceType);
+      if (!['licensed_library', 'original', 'none'].includes(sourceType)) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedMusic.sourceType = sourceType as NonNullable<typeof parsedMusic.sourceType>;
+    }
+    if (music.licenseVerified !== undefined) {
+      if (typeof music.licenseVerified !== 'boolean') throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedMusic.licenseVerified = music.licenseVerified;
+    }
+    if (music.licenseReference !== undefined) {
+      parsedMusic.licenseReference = music.licenseReference === null
+        ? null
+        : requiredText(music.licenseReference, 'social_content_formula_direction_invalid', 500);
+    }
+    parsed.music = parsedMusic;
+  }
+
+  if (row.voiceover !== undefined) {
+    const voiceover = socialObject(row.voiceover);
+    if (!voiceover || Object.keys(voiceover).some(key => !['voice', 'preset', 'speed', 'pauseStyle'].includes(key))) {
+      throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    }
+    const parsedVoiceover: NonNullable<InternalSocialContentFormulaDirection['voiceover']> = {};
+    if (voiceover.voice !== undefined) parsedVoiceover.voice = requiredText(voiceover.voice, 'social_content_formula_direction_invalid', 80);
+    if (voiceover.preset !== undefined) {
+      const preset = socialText(voiceover.preset);
+      if (!['tiktok_excited', 'authentic_review', 'professional_b2b', 'warm_story', 'urgent_cta'].includes(preset)) {
+        throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      }
+      parsedVoiceover.preset = preset as NonNullable<typeof parsedVoiceover.preset>;
+    }
+    if (voiceover.speed !== undefined) {
+      const speed = Number(voiceover.speed);
+      if (!Number.isFinite(speed) || speed < 0.75 || speed > 1.5) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedVoiceover.speed = speed;
+    }
+    if (voiceover.pauseStyle !== undefined) {
+      const pauseStyle = socialText(voiceover.pauseStyle);
+      if (!['few', 'natural', 'dramatic'].includes(pauseStyle)) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedVoiceover.pauseStyle = pauseStyle as NonNullable<typeof parsedVoiceover.pauseStyle>;
+    }
+    parsed.voiceover = parsedVoiceover;
+  }
+
+  if (row.subtitles !== undefined) {
+    const subtitles = socialObject(row.subtitles);
+    if (!subtitles || Object.keys(subtitles).some(key => !['fontScale', 'bottomRatio', 'styleIntent'].includes(key))) {
+      throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    }
+    const parsedSubtitles: NonNullable<InternalSocialContentFormulaDirection['subtitles']> = {};
+    if (subtitles.fontScale !== undefined) {
+      const fontScale = Number(subtitles.fontScale);
+      if (!Number.isFinite(fontScale) || fontScale < 0.75 || fontScale > 1.5) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedSubtitles.fontScale = fontScale;
+    }
+    if (subtitles.bottomRatio !== undefined) {
+      const bottomRatio = Number(subtitles.bottomRatio);
+      if (!Number.isFinite(bottomRatio) || bottomRatio < 0.08 || bottomRatio > 0.35) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      parsedSubtitles.bottomRatio = bottomRatio;
+    }
+    if (subtitles.styleIntent !== undefined) parsedSubtitles.styleIntent = requiredText(subtitles.styleIntent, 'social_content_formula_direction_invalid', 300);
+    parsed.subtitles = parsedSubtitles;
+  }
+
+  if (row.cover !== undefined) {
+    const cover = socialObject(row.cover);
+    if (!cover || Object.keys(cover).some(key => !['intent', 'headlineTemplate', 'subject', 'composition'].includes(key))) {
+      throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    }
+    parsed.cover = {
+      ...(cover.intent !== undefined ? { intent: requiredText(cover.intent, 'social_content_formula_direction_invalid', 500) } : {}),
+      ...(cover.headlineTemplate !== undefined ? { headlineTemplate: parseLocalizedTemplate(cover.headlineTemplate)! } : {}),
+      ...(cover.subject !== undefined ? { subject: requiredText(cover.subject, 'social_content_formula_direction_invalid', 300) } : {}),
+      ...(cover.composition !== undefined ? { composition: requiredText(cover.composition, 'social_content_formula_direction_invalid', 500) } : {}),
+    };
+  }
+
+  if (row.materialFallback !== undefined) {
+    const fallback = socialObject(row.materialFallback);
+    if (!fallback || Object.keys(fallback).some(key => ![
+      'minimumUsableClips', 'allowStillFrames', 'allowRepeatedClips', 'maxRepeatCount', 'insufficientMaterialAction',
+    ].includes(key))) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    const parsedFallback: NonNullable<InternalSocialContentFormulaDirection['materialFallback']> = {};
+    for (const key of ['minimumUsableClips', 'maxRepeatCount'] as const) {
+      if (fallback[key] !== undefined) {
+        const count = Number(fallback[key]);
+        if (!Number.isSafeInteger(count) || count < 0 || count > 12) throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+        parsedFallback[key] = count;
+      }
+    }
+    for (const key of ['allowStillFrames', 'allowRepeatedClips'] as const) {
+      if (fallback[key] !== undefined) {
+        if (typeof fallback[key] !== 'boolean') throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+        parsedFallback[key] = fallback[key];
+      }
+    }
+    if (fallback.insufficientMaterialAction !== undefined) {
+      const action = socialText(fallback.insufficientMaterialAction);
+      if (!['adapt_with_verified_assets', 'request_reshoot', 'block'].includes(action)) {
+        throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      }
+      parsedFallback.insufficientMaterialAction = action as NonNullable<typeof parsedFallback.insufficientMaterialAction>;
+    }
+    parsed.materialFallback = parsedFallback;
+  }
+
+  if (row.risks !== undefined) {
+    const risks = socialObject(row.risks);
+    if (!risks || Object.keys(risks).some(key => !['prohibitedClaims', 'prohibitedVisuals', 'mandatoryDisclosures'].includes(key))) {
+      throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    }
+    parsed.risks = {
+      ...(risks.prohibitedClaims !== undefined ? { prohibitedClaims: stringList(risks.prohibitedClaims, 'social_content_formula_direction_invalid', 50) } : {}),
+      ...(risks.prohibitedVisuals !== undefined ? { prohibitedVisuals: stringList(risks.prohibitedVisuals, 'social_content_formula_direction_invalid', 50) } : {}),
+      ...(risks.mandatoryDisclosures !== undefined ? { mandatoryDisclosures: stringList(risks.mandatoryDisclosures, 'social_content_formula_direction_invalid', 50) } : {}),
+    };
+  }
+
+  if (row.acceptanceGates !== undefined) {
+    if (!Array.isArray(row.acceptanceGates) || row.acceptanceGates.length > 20) {
+      throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    }
+    parsed.acceptanceGates = row.acceptanceGates.map(value => {
+      const gate = socialObject(value);
+      if (!gate || Object.keys(gate).some(key => !['gateId', 'name', 'rule', 'blocking'].includes(key)) || typeof gate.blocking !== 'boolean') {
+        throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+      }
+      return {
+        gateId: formulaKey(gate.gateId, 'social_content_formula_direction_invalid'),
+        name: requiredText(gate.name, 'social_content_formula_direction_invalid', 160),
+        rule: requiredText(gate.rule, 'social_content_formula_direction_invalid', 1_000),
+        blocking: gate.blocking,
+      };
+    });
+    if (new Set(parsed.acceptanceGates.map(gate => gate.gateId)).size !== parsed.acceptanceGates.length) {
+      throw new SocialContentWorkflowError('social_content_formula_direction_invalid', 400);
+    }
+  }
+  return parsed;
+}
+
 function parseNodes(value: unknown): InternalFormulaNode[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 12) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 12) {
     throw new SocialContentWorkflowError('social_content_formula_nodes_invalid', 400);
   }
   const nodes = value.map(item => {
     const row = socialObject(item);
     if (!row || Object.keys(row).some(key => ![
-      'nodeId', 'shotFunction', 'subject', 'action', 'environment', 'orientation', 'durationSeconds', 'required', 'narrationTemplate',
+      'nodeId', 'shotFunction', 'subject', 'action', 'environment', 'orientation', 'durationSeconds', 'required',
+      'narrationTemplate', 'scriptTemplate', 'voiceoverTemplate', 'captionTemplate',
+      'shotType', 'shotSize', 'cameraMovement', 'composition', 'transition',
     ].includes(key))) throw new SocialContentWorkflowError('social_content_formula_nodes_invalid', 400);
-    const orientation = socialText(row.orientation) || 'portrait';
-    const duration = row.durationSeconds === null || row.durationSeconds === undefined
-      ? null : socialObject(row.durationSeconds);
-    const minimum = duration ? Number(duration.minimum) : null;
-    const maximum = duration ? Number(duration.maximum) : null;
-    if (!['portrait', 'landscape', 'either'].includes(orientation)
-      || (duration && (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum! < 0 || maximum! < minimum! || maximum! > 600))) {
+    const orientation = row.orientation === undefined ? undefined : socialText(row.orientation);
+    const duration = row.durationSeconds === undefined || row.durationSeconds === null
+      ? row.durationSeconds : socialObject(row.durationSeconds);
+    const minimum = duration && typeof duration === 'object' ? Number(duration.minimum) : null;
+    const maximum = duration && typeof duration === 'object' ? Number(duration.maximum) : null;
+    if ((orientation !== undefined && !['portrait', 'landscape', 'either'].includes(orientation))
+      || (duration && (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum! < 0 || maximum! < minimum! || maximum! > 600))
+      || (row.required !== undefined && typeof row.required !== 'boolean')) {
       throw new SocialContentWorkflowError('social_content_formula_nodes_invalid', 400);
     }
-    const shotFunction = requiredText(row.shotFunction, 'social_content_formula_nodes_invalid', 200);
-    const subject = requiredText(row.subject, 'social_content_formula_nodes_invalid', 200);
+    const enumField = <T extends string>(field: unknown, allowed: readonly string[]): T | undefined => {
+      if (field === undefined) return undefined;
+      const parsed = socialText(field);
+      if (!allowed.includes(parsed)) throw new SocialContentWorkflowError('social_content_formula_nodes_invalid', 400);
+      return parsed as T;
+    };
     return {
       nodeId: formulaKey(row.nodeId, 'social_content_formula_node_id_invalid'),
-      shotFunction,
-      subject,
-      action: requiredText(row.action, 'social_content_formula_nodes_invalid', 200),
-      environment: socialText(row.environment) || null,
-      orientation: orientation as InternalFormulaNode['orientation'],
-      durationSeconds: duration ? { minimum: minimum!, maximum: maximum! } : null,
-      required: row.required !== false,
-      narrationTemplate: parseNarrationTemplate(row.narrationTemplate, { shotFunction, subject }),
+      ...(row.shotFunction !== undefined ? { shotFunction: requiredText(row.shotFunction, 'social_content_formula_nodes_invalid', 200) } : {}),
+      ...(row.subject !== undefined ? { subject: requiredText(row.subject, 'social_content_formula_nodes_invalid', 200) } : {}),
+      ...(row.action !== undefined ? { action: requiredText(row.action, 'social_content_formula_nodes_invalid', 200) } : {}),
+      ...(row.environment !== undefined ? { environment: row.environment === null ? null : requiredText(row.environment, 'social_content_formula_nodes_invalid', 300) } : {}),
+      ...(orientation !== undefined ? { orientation: orientation as NonNullable<InternalFormulaNode['orientation']> } : {}),
+      ...(row.durationSeconds !== undefined ? { durationSeconds: duration ? { minimum: minimum!, maximum: maximum! } : null } : {}),
+      ...(row.required !== undefined ? { required: row.required } : {}),
+      ...(row.shotType !== undefined ? { shotType: enumField<NonNullable<InternalFormulaNode['shotType']>>(row.shotType, ['live_action', 'product_demo', 'process', 'talking_head', 'graphic']) } : {}),
+      ...(row.shotSize !== undefined ? { shotSize: enumField<NonNullable<InternalFormulaNode['shotSize']>>(row.shotSize, ['extreme_close_up', 'close_up', 'medium', 'wide', 'detail']) } : {}),
+      ...(row.cameraMovement !== undefined ? { cameraMovement: enumField<NonNullable<InternalFormulaNode['cameraMovement']>>(row.cameraMovement, ['static', 'pan', 'tilt', 'push_in', 'pull_out', 'tracking', 'handheld']) } : {}),
+      ...(row.composition !== undefined ? { composition: requiredText(row.composition, 'social_content_formula_nodes_invalid', 500) } : {}),
+      ...(row.transition !== undefined ? { transition: enumField<NonNullable<InternalFormulaNode['transition']>>(row.transition, ['cut', 'match_cut', 'dissolve', 'fade', 'wipe']) } : {}),
+      ...(row.narrationTemplate !== undefined ? { narrationTemplate: parseLocalizedTemplate(row.narrationTemplate)! } : {}),
+      ...(row.scriptTemplate !== undefined ? { scriptTemplate: parseLocalizedTemplate(row.scriptTemplate)! } : {}),
+      ...(row.voiceoverTemplate !== undefined ? { voiceoverTemplate: parseLocalizedTemplate(row.voiceoverTemplate)! } : {}),
+      ...(row.captionTemplate !== undefined ? { captionTemplate: parseLocalizedTemplate(row.captionTemplate)! } : {}),
     };
   });
   if (new Set(nodes.map(item => item.nodeId)).size !== nodes.length) {
@@ -139,7 +319,7 @@ function parseNodes(value: unknown): InternalFormulaNode[] {
 
 function parseStoredFormula(record: StarterRecord): InternalSocialContentFormula | null {
   const plan = socialObject(socialJson(record.plan));
-  if (!plan || socialText(plan.schemaVersion) !== FORMULA_SCHEMA) return null;
+  if (!plan || !READABLE_FORMULA_SCHEMAS.has(socialText(plan.schemaVersion))) return null;
   const formula = socialObject(plan.formula);
   const themeId = socialText(formula?.themeId) as SocialContentThemeId;
   const status = socialText(record.status) as FormulaStatus;
@@ -166,6 +346,7 @@ function parseStoredFormula(record: StarterRecord): InternalSocialContentFormula
     themeId,
     status,
     rollout: parseRollout(formula.rollout),
+    direction: parseDirection(formula.direction),
     audit,
     nodes: parseNodes(formula.nodes),
   };
@@ -180,7 +361,88 @@ async function formulaRows(repository: Starter198Repository, tenantId: string): 
     rows.push(...next.items);
   }
   if (rows.length !== first.totalItems) throw new SocialContentWorkflowError('social_content_formula_registry_integrity_violation', 503);
-  return rows.filter(record => socialText(socialObject(socialJson(record.plan))?.schemaVersion) === FORMULA_SCHEMA);
+  return rows.filter(record => READABLE_FORMULA_SCHEMAS.has(socialText(socialObject(socialJson(record.plan))?.schemaVersion)));
+}
+
+function completeLocalizedTemplate(value: unknown): boolean {
+  const row = socialObject(value);
+  return Boolean(row && socialText(row.zh) && socialText(row.en));
+}
+
+/**
+ * Draft persistence is deliberately permissive so an administrator can save
+ * work in progress. No draft default is treated as authored direction. This
+ * gate is the single server-side boundary for trial, gray and active usage.
+ */
+function assertFormulaReleaseReady(formula: InternalSocialContentFormula): void {
+  const direction = formula.direction;
+  const music = direction?.music;
+  const voiceover = direction?.voiceover;
+  const subtitles = direction?.subtitles;
+  const cover = direction?.cover;
+  const fallback = direction?.materialFallback;
+  const risks = direction?.risks;
+  const gates = direction?.acceptanceGates;
+  const incompleteDirection = !direction
+    || !direction.pace
+    || !socialText(direction.visualStyle)
+    || !music
+    || !socialText(music.mood)
+    || !Number.isFinite(music.volume)
+    || !socialText(music.strategy)
+    || !music.sourceType
+    || typeof music.licenseVerified !== 'boolean'
+    || (music.sourceType !== 'none' && (!music.licenseVerified || !socialText(music.licenseReference)))
+    || !voiceover
+    || !socialText(voiceover.voice)
+    || !voiceover.preset
+    || !Number.isFinite(voiceover.speed)
+    || !voiceover.pauseStyle
+    || !subtitles
+    || !Number.isFinite(subtitles.fontScale)
+    || !Number.isFinite(subtitles.bottomRatio)
+    || !socialText(subtitles.styleIntent)
+    || !cover
+    || !socialText(cover.intent)
+    || !completeLocalizedTemplate(cover.headlineTemplate)
+    || !socialText(cover.subject)
+    || !socialText(cover.composition)
+    || !fallback
+    || !Number.isSafeInteger(fallback.minimumUsableClips)
+    || Number(fallback.minimumUsableClips) < 1
+    || typeof fallback.allowStillFrames !== 'boolean'
+    || typeof fallback.allowRepeatedClips !== 'boolean'
+    || !Number.isSafeInteger(fallback.maxRepeatCount)
+    || !fallback.insufficientMaterialAction
+    || !risks
+    || !Array.isArray(risks.prohibitedClaims)
+    || !Array.isArray(risks.prohibitedVisuals)
+    || !Array.isArray(risks.mandatoryDisclosures)
+    || !Array.isArray(gates)
+    || gates.length < 1
+    || !gates.some(gate => gate.blocking === true);
+  const nodesIncomplete = formula.nodes.length < 1 || formula.nodes.some(node => !socialText(node.shotFunction)
+    || !socialText(node.subject)
+    || !socialText(node.action)
+    || !socialText(node.environment)
+    || !node.orientation
+    || !node.shotType
+    || !node.shotSize
+    || !node.cameraMovement
+    || !socialText(node.composition)
+    || !node.transition
+    || !node.durationSeconds
+    || !Number.isFinite(node.durationSeconds.minimum)
+    || node.durationSeconds.minimum <= 0
+    || !Number.isFinite(node.durationSeconds.maximum)
+    || node.durationSeconds.maximum < node.durationSeconds.minimum
+    || typeof node.required !== 'boolean'
+    || !completeLocalizedTemplate(node.scriptTemplate)
+    || !completeLocalizedTemplate(node.voiceoverTemplate)
+    || !completeLocalizedTemplate(node.captionTemplate));
+  if (incompleteDirection || nodesIncomplete) {
+    throw new SocialContentWorkflowError('social_content_formula_release_incomplete', 422);
+  }
 }
 
 export async function listSocialContentFormulas(input: {
@@ -216,6 +478,7 @@ function storedPlan(formula: InternalSocialContentFormula, idempotencyKey: strin
       name: formula.name,
       themeId: formula.themeId,
       rollout: formula.rollout,
+      ...(formula.direction ? { direction: formula.direction } : {}),
       nodes: formula.nodes,
       audit: formula.audit,
     },
@@ -243,7 +506,7 @@ export async function createSocialContentFormula(input: {
   now?: Date;
 }): Promise<InternalSocialContentFormula> {
   const body = socialObject(input.value);
-  if (!body || Object.keys(body).some(key => !['formulaId', 'version', 'name', 'themeId', 'rollout', 'nodes', 'note'].includes(key))) {
+  if (!body || Object.keys(body).some(key => !['formulaId', 'version', 'name', 'themeId', 'rollout', 'direction', 'nodes', 'note'].includes(key))) {
     throw new SocialContentWorkflowError('social_content_formula_input_invalid', 400);
   }
   const rows = await formulaRows(input.repository, input.tenantId);
@@ -258,6 +521,7 @@ export async function createSocialContentFormula(input: {
     themeId,
     status: 'draft',
     rollout: parseRollout(body.rollout),
+    direction: parseDirection(body.direction),
     nodes: parseNodes(body.nodes),
     audit: [{
       event: 'draft_created', actor: input.userId, at: (input.now ?? new Date()).toISOString(),
@@ -287,7 +551,7 @@ export async function createSocialContentFormulaVersion(input: {
   now?: Date;
 }): Promise<InternalSocialContentFormula> {
   const body = socialObject(input.value);
-  if (!body || Object.keys(body).some(key => !['version', 'name', 'rollout', 'nodes', 'note'].includes(key))) {
+  if (!body || Object.keys(body).some(key => !['version', 'name', 'rollout', 'direction', 'nodes', 'note'].includes(key))) {
     throw new SocialContentWorkflowError('social_content_formula_input_invalid', 400);
   }
   const rows = await formulaRows(input.repository, input.tenantId);
@@ -305,6 +569,7 @@ export async function createSocialContentFormulaVersion(input: {
     version: semanticVersion(body.version),
     name: body.name === undefined ? source.name : requiredText(body.name, 'social_content_formula_name_invalid', 160),
     rollout: parseRollout(body.rollout, source.rollout),
+    direction: body.direction === undefined ? source.direction : parseDirection(body.direction),
     nodes: body.nodes === undefined ? source.nodes : parseNodes(body.nodes),
     status: 'draft',
     audit: [...source.audit, {
@@ -340,6 +605,7 @@ async function transitionFormula(input: {
   const { row, formula } = await findStoredFormula(input);
   const oldPlan = socialObject(socialJson(row.plan));
   if (socialText(oldPlan?.lastIdempotencyKey) === input.idempotencyKey) return formula;
+  if (input.status !== 'disabled') assertFormulaReleaseReady(formula);
   if (formula.status === 'disabled' && input.status !== 'disabled') {
     throw new SocialContentWorkflowError('social_content_formula_transition_invalid', 409);
   }
@@ -433,6 +699,7 @@ export async function resolveSocialContentFormula(input: {
   eligible.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
   const selected = eligible[0];
   if (!selected) throw new SocialContentWorkflowError('social_content_formula_unavailable', 503);
+  assertFormulaReleaseReady(selected);
   return selected;
 }
 
@@ -448,5 +715,7 @@ export async function resolveSocialContentFormulaReference(input: {
   });
   const matches = formulas.filter(formula => formula.formulaId === input.formulaId && formula.version === input.version);
   if (matches.length !== 1) throw new SocialContentWorkflowError('social_content_formula_reference_invalid', 503);
-  return matches[0]!;
+  const selected = matches[0]!;
+  assertFormulaReleaseReady(selected);
+  return selected;
 }

@@ -48,6 +48,11 @@ import {
 import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, getTenantFollowupDispatchStatus, onFollowupWorkerEvent, preflightFollowupBatchDispatch } from '../digitalEmployees/followupDispatchWorker.js';
 import { bindPublishingTargets, listConnectedPublishingAccounts, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
+import {
+  VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
+  visibleDigitalEmployeeAgentRole as visibleAgentRole,
+  type VisibleDigitalEmployeeAgentRole as VisibleAgentRole,
+} from '../digitalEmployees/agentRoles.js';
 import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type PublishingApprovalPackage } from '../digitalEmployees/publishingExecution.js';
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
@@ -392,13 +397,19 @@ function goalInput(record: GoalRecord): WeeklyGoalInput {
   return goal;
 }
 
-const visibleAgentRole = (role: string, taskKey = ''): 'business' | 'industry' | 'content' | 'customer' => {
-  if (['business', 'industry', 'content', 'customer'].includes(role)) return role as 'business' | 'industry' | 'content' | 'customer';
-  if (['knowledge', 'planner', 'review'].includes(role)) return 'business';
-  if (role === 'channel') return ['scheduled_source_collection', 'viral_analysis'].includes(taskKey) ? 'industry' : 'content';
-  if (role === 'risk') return taskKey.startsWith('followup_') ? 'customer' : 'content';
-  return 'business';
-};
+function publicAgentStatuses(tasks: Array<TaskRecord & { agent_role: VisibleAgentRole }>) {
+  return VISIBLE_AGENT_ROLES.map(role => {
+    const agentTasks = tasks.filter(task => task.agent_role === role);
+    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'handed_off'].includes(task.status));
+    return {
+      role,
+      status: active?.status || (agentTasks.length > 0 && agentTasks.every(task => ['succeeded', 'skipped'].includes(task.status)) ? 'completed' : 'idle'),
+      currentTask: active?.title || '',
+      completed: agentTasks.filter(task => task.status === 'succeeded').length,
+      total: agentTasks.length,
+    };
+  });
+}
 
 function stableProductId(product: Record<string, unknown>, index: number): string {
   return productIdentity(product as Parameters<typeof productIdentity>[0], index);
@@ -737,7 +748,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
     const businessSnapshot = await buildBusinessSnapshot(tenantId, requestedRange);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: [], businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -754,17 +765,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   ]) : [null, null, null, null, null] as const;
   const taskItems = tasks?.items || [];
   const normalizedTasks = taskItems.map(task => ({ ...task, agent_role: visibleAgentRole(task.agent_role, task.task_key) }));
-  const agents = (['business', 'industry', 'content', 'customer'] as const).filter(role => normalizedTasks.some(task => task.agent_role === role)).map(role => {
-    const agentTasks = normalizedTasks.filter(task => task.agent_role === role);
-    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'handed_off'].includes(task.status));
-    return {
-      role,
-      status: active?.status || (agentTasks.every(task => ['succeeded', 'skipped'].includes(task.status)) ? 'completed' : 'idle'),
-      currentTask: active?.title || '',
-      completed: agentTasks.filter(task => task.status === 'succeeded').length,
-      total: agentTasks.length,
-    };
-  });
+  const agents = publicAgentStatuses(normalizedTasks);
   const deliveryData = await buildDeliveryResources(tenantId, normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[], goal.title)
     .then(deliveries => ({ deliveries, deliveryNotice: '' }))
     .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' }));
@@ -773,12 +774,38 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     configuration: publicConfigurationMetadata(resolvedConfiguration),
     goals: operatingGoals.map(publicGoal),
     goal: publicGoal(goal),
-    plan: plan ? { id: plan.id, status: plan.status, ...jsonObject<Record<string, unknown>>(plan.plan, {}), businessPackage: jsonObject<Record<string, unknown>>(plan.plan, {}).businessPackage || (resolvedConfiguration ? { ...recommendPackage(goalInput(goal), configSnapshotForPlan(plan, resolvedConfiguration.config), goal.owner_id), revision: 0 } : undefined) } : null,
+    plan: plan ? (() => {
+      const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+      const publicTasks = Array.isArray(body.tasks)
+        ? body.tasks.map(item => {
+          const task = jsonObject<Record<string, unknown>>(item, {});
+          return { ...task, agentRole: visibleAgentRole(String(task.agentRole || ''), String(task.key || '')) };
+        })
+        : [];
+      const configSnapshot = body.configSnapshot && typeof body.configSnapshot === 'object'
+        ? { ...jsonObject<Record<string, unknown>>(body.configSnapshot, {}), team: [...VISIBLE_AGENT_ROLES] }
+        : body.configSnapshot;
+      return {
+        id: plan.id,
+        status: plan.status,
+        ...body,
+        tasks: publicTasks,
+        ...(configSnapshot ? { configSnapshot } : {}),
+        businessPackage: body.businessPackage || (resolvedConfiguration ? { ...recommendPackage(goalInput(goal), configSnapshotForPlan(plan, resolvedConfiguration.config), goal.owner_id), revision: 0 } : undefined),
+      };
+    })() : null,
     run,
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
     events: events?.items.slice().reverse().map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],
-    approvals: approvals?.items.map(approval => ({ ...approval, evidence: jsonObject(approval.evidence, {}) })) || [],
+    approvals: approvals?.items.map(approval => {
+      const approvalTask = taskItems.find(task => task.id === approval.task_id);
+      return {
+        ...approval,
+        requested_by_agent: visibleAgentRole(String(approval.requested_by_agent || ''), approvalTask?.task_key || ''),
+        evidence: jsonObject(approval.evidence, {}),
+      };
+    }) || [],
     handoffs: handoffs?.items.map(handoff => ({ ...handoff, snapshot: jsonObject(handoff.snapshot, {}) })) || [],
     review: review ? { ...review, summary: jsonObject(review.summary, {}) } : null,
     liveReview: run ? runReviewSummary(run, taskItems, businessSnapshot) : null,

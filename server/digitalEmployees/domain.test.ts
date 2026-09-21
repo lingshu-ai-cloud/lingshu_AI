@@ -38,7 +38,7 @@ assert.deepEqual(validateDigitalEmployeeConfig(config), []);
 assert.equal(config.allowGeneratedVisuals, false, 'generated visuals require explicit consent');
 assert.deepEqual(config.videoLanguages, ['en'], 'legacy configuration keeps one autonomous output language');
 assert.deepEqual(normalizeDigitalEmployeeConfig({ ...config, videoLanguages: ['zh', 'en', 'zh', 'invalid'] }).videoLanguages, ['zh', 'en']);
-assert.deepEqual(config.team, ['business', 'industry', 'content', 'customer'], 'only the four business-facing Agents may be exposed');
+assert.deepEqual(config.team, ['orchestrator', 'business', 'director', 'content', 'customer'], 'the public team must expose exactly the five product Agents');
 assert.deepEqual(validateDigitalEmployeeConfig({ ...config, companyName: '', approvalOwner: '' }), ['企业名称', '审批负责人']);
 
 const goal = normalizeWeeklyGoal({
@@ -76,10 +76,15 @@ const expectedTaskKeys = [
 ];
 assert.deepEqual(plan.tasks.map(task => task.key), expectedTaskKeys, 'the approved P0 workflow must remain a 16-node business DAG');
 assert.equal(new Set(plan.tasks.map(task => task.sequence)).size, 16, 'task sequence numbers must be unique');
-assert.deepEqual([...new Set(plan.tasks.map(task => task.agentRole))].sort(), ['business', 'content', 'customer', 'industry']);
+assert.deepEqual([...new Set(plan.tasks.map(task => task.agentRole))].sort(), ['business', 'content', 'customer', 'director', 'orchestrator']);
 assert.equal(plan.tasks.some(task => ['knowledge', 'planner', 'risk', 'channel', 'review'].includes(task.agentRole)), false);
 
 const byKey = new Map(plan.tasks.map(task => [task.key, task]));
+for (const key of ['context_readiness', 'goal_decomposition']) assert.equal(byKey.get(key)?.agentRole, 'orchestrator', `${key} belongs to 灵小枢`);
+for (const key of ['scheduled_source_collection', 'viral_analysis', 'content_mode_routing']) assert.equal(byKey.get(key)?.agentRole, 'director', `${key} belongs to the director Agent`);
+for (const key of ['content_production', 'content_quality_gate']) assert.equal(byKey.get(key)?.agentRole, 'content', `${key} belongs to the content Agent`);
+for (const key of ['content_release_approval', 'publishing_calendar', 'platform_publish', 'weekly_review']) assert.equal(byKey.get(key)?.agentRole, 'business', `${key} belongs to the business Agent`);
+for (const key of ['customer_attribution', 'customer_segmentation', 'followup_batch_draft', 'followup_batch_approval', 'followup_dispatch']) assert.equal(byKey.get(key)?.agentRole, 'customer', `${key} belongs to the customer Agent`);
 assert.equal(byKey.get('content_production')?.executionMode, 'draft_executor');
 for (const task of plan.tasks) {
   assert.ok(task.businessDomain, `${task.key} must identify its business domain`);
@@ -143,6 +148,7 @@ const publishOnly = assertValidPlanGraph(['content_publish'], [
   'context_readiness', 'goal_decomposition', 'content_release_approval', 'publishing_calendar', 'platform_publish', 'weekly_review',
 ]);
 assert.deepEqual(publishOnly.get('content_release_approval')?.dependsOn, ['goal_decomposition']);
+for (const key of ['content_release_approval', 'publishing_calendar', 'platform_publish', 'weekly_review']) assert.equal(publishOnly.get(key)?.agentRole, 'business');
 
 assertValidPlanGraph([], ['context_readiness', 'goal_decomposition', 'weekly_review']);
 

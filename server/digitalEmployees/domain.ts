@@ -5,6 +5,8 @@ import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
+/** The five user-facing roles. Legacy persisted `industry` values are mapped at the read boundary. */
+export type DigitalEmployeeAgentRole = 'orchestrator' | 'business' | 'director' | 'content' | 'customer';
 export type PublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
 export interface PublishingTarget {
   platform: PublishingPlatform;
@@ -87,7 +89,7 @@ export interface PlannedTask {
   key: string;
   title: string;
   description: string;
-  agentRole: 'business' | 'industry' | 'content' | 'customer';
+  agentRole: DigitalEmployeeAgentRole;
   backgroundCapability?: 'knowledge' | 'planner' | 'risk' | 'channel' | 'review';
   kind: 'analysis' | 'planning' | 'production' | 'approval' | 'activation' | 'review';
   sequence: number;
@@ -176,7 +178,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     autonomyMode,
     approvalOwner: text(input.approvalOwner, 120),
     constraints,
-    team: ['business', 'industry', 'content', 'customer'],
+    team: ['orchestrator', 'business', 'director', 'content', 'customer'],
     primaryGoal,
     focusProducts: text(input.focusProducts, 500),
     enabledWorkflows: Array.isArray(input.enabledWorkflows)
@@ -271,42 +273,42 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     {
       key: 'context_readiness',
       title: '盘点企业、产品与授权边界',
-      description: `经营 Agent 调用知识能力读取 ${config.companyName} 的企业资料、重点产品、目标市场、社媒账号与客服授权，形成可追溯执行上下文。`,
-      agentRole: 'business', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 1, priority: 'high', requiresApproval: false, dependsOn: [], expectedMinutes: 3,
+      description: `灵小枢调用知识能力读取 ${config.companyName} 的企业资料、重点产品、目标市场、社媒账号与客服授权，形成可追溯执行上下文。`,
+      agentRole: 'orchestrator', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 1, priority: 'high', requiresApproval: false, dependsOn: [], expectedMinutes: 3,
       businessDomain: 'foundation', capabilityKey: 'enterprise.readiness', destination: 'enterprise', statusSource: 'enterprise/profile + platform accounts', executionMode: 'internal', externalEffect: 'none',
     },
     {
       key: 'goal_decomposition',
       title: '拆解本周目标与成功标准',
-      description: `经营 Agent 调用计划能力将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}。`,
-      agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 2, priority: 'high', requiresApproval: false, dependsOn: ['context_readiness'], expectedMinutes: 4,
+      description: `灵小枢调用计划能力将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}。`,
+      agentRole: 'orchestrator', backgroundCapability: 'planner', kind: 'planning', sequence: 2, priority: 'high', requiresApproval: false, dependsOn: ['context_readiness'], expectedMinutes: 4,
       businessDomain: 'foundation', capabilityKey: 'workflow.plan', destination: 'digitalEmployees', statusSource: 'weekly_plans', executionMode: 'internal', externalEffect: 'none',
     },
     {
       key: 'scheduled_source_collection',
       title: '编导采集平台热点与对标',
       description: `编导 Agent 调用采集能力，为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，过程结果同步到灵感中心，节奏为：${config.socialCadence}。`,
-      agentRole: 'industry', backgroundCapability: 'channel', kind: 'activation', sequence: 3, priority: 'high', requiresApproval: false, dependsOn: ['goal_decomposition'], expectedMinutes: 4,
+      agentRole: 'director', backgroundCapability: 'channel', kind: 'activation', sequence: 3, priority: 'high', requiresApproval: false, dependsOn: ['goal_decomposition'], expectedMinutes: 4,
       businessDomain: 'content', capabilityKey: 'scheduler.social_collection', destination: 'scheduled', statusSource: 'scheduled_tasks + crawl_jobs', executionMode: 'observe', externalEffect: 'schedule',
     },
     {
       key: 'viral_analysis',
       title: '编导分析并筛选候选选题',
       description: '编导 Agent 读取灵感与对标分析，记录采用或淘汰依据，只把能够匹配买家问题与真实证据的候选送入脚本。',
-      agentRole: 'industry', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 4, priority: 'high', requiresApproval: false, dependsOn: ['scheduled_source_collection'], expectedMinutes: 8,
+      agentRole: 'director', backgroundCapability: 'knowledge', kind: 'analysis', sequence: 4, priority: 'high', requiresApproval: false, dependsOn: ['scheduled_source_collection'], expectedMinutes: 8,
       businessDomain: 'content', capabilityKey: 'inspiration.exact_analysis', destination: 'socialInspiration', statusSource: 'trend_videos.aiAnalysis', executionMode: 'observe', externalEffect: 'none',
     },
     {
       key: 'content_mode_routing',
       title: '编排矩阵、周计划与脚本',
       description: '编导 Agent 在内容数量、生产预算和交期内，根据参考证据、重点产品与素材完备度确认创作路径、脚本、分镜意图和验收要求。',
-      agentRole: 'industry', backgroundCapability: 'planner', kind: 'planning', sequence: 5, priority: 'high', requiresApproval: false, dependsOn: ['viral_analysis'], expectedMinutes: 3,
+      agentRole: 'director', backgroundCapability: 'planner', kind: 'planning', sequence: 5, priority: 'high', requiresApproval: false, dependsOn: ['viral_analysis'], expectedMinutes: 3,
       businessDomain: 'content', capabilityKey: 'studio.mode_routing', destination: 'scriptLibrary', statusSource: 'content_batch_plans.orders', executionMode: 'internal', externalEffect: 'draft',
     },
     {
       key: 'content_production',
       title: '按确认脚本执行素材与成片生产',
-      description: '内容 Agent 读取内容订单绑定的编导确认脚本版本，完成配音、字幕、素材匹配、分镜质检和渲染；不得自行生成或改写脚本，作品完成状态不等于平台发布。',
+      description: '内容 Agent 读取内容订单绑定的已锁定导演方案和素材映射，完成配音、字幕、剪辑、混音、封面、分镜质检和渲染；不得自行匹配结构、生成或改写脚本，作品完成状态不等于平台发布。',
       agentRole: 'content', kind: 'production', sequence: 6, priority: 'high', requiresApproval: false, dependsOn: ['content_mode_routing'], expectedMinutes: 30,
       businessDomain: 'content', capabilityKey: 'studio.production', destination: 'smartAssets', destinationView: 'create', statusSource: 'studio_projects + render jobs', executionMode: 'draft_executor', externalEffect: 'draft',
     },
@@ -316,18 +318,18 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
       businessDomain: 'content', capabilityKey: 'studio.quality_gate', destination: 'smartAssets', destinationView: 'create', statusSource: 'studio project quality state', executionMode: 'observe', externalEffect: 'none',
     },
     {
-      key: 'content_release_approval', title: '审批发布内容与账号', description: '负责人逐项确认作品、平台文案、发布账号和时间；修改内容后原审批自动失效。',
-      agentRole: 'content', backgroundCapability: 'risk', kind: 'approval', sequence: 8, priority: 'high', requiresApproval: runtimePolicy.agents.content.approvals.contentPublish, dependsOn: ['content_quality_gate'], expectedMinutes: 5,
+      key: 'content_release_approval', title: '审批发布内容与账号', description: '经营 Agent 汇总作品、平台文案、发布账号和时间交负责人逐项确认；修改内容后原审批自动失效。',
+      agentRole: 'business', backgroundCapability: 'risk', kind: 'approval', sequence: 8, priority: 'high', requiresApproval: runtimePolicy.agents.content.approvals.contentPublish, dependsOn: ['content_quality_gate'], expectedMinutes: 5,
       businessDomain: 'publishing', capabilityKey: 'publishing.approval', destination: 'smartAssets', destinationView: 'publish', statusSource: 'approval_requests', executionMode: 'approval', externalEffect: 'publish',
     },
     {
-      key: 'publishing_calendar', title: '写入内容发布日历', description: '内容 Agent 调用渠道能力将批准内容写入发布日历；经营自动化 Scheduler 与真实发布日历保持明确区分。',
-      agentRole: 'content', backgroundCapability: 'channel', kind: 'activation', sequence: 9, priority: 'high', requiresApproval: false, dependsOn: ['content_release_approval'], expectedMinutes: 4,
+      key: 'publishing_calendar', title: '写入内容发布日历', description: '经营 Agent 调用渠道能力将批准内容写入发布日历；经营自动化 Scheduler 与真实发布日历保持明确区分。',
+      agentRole: 'business', backgroundCapability: 'channel', kind: 'activation', sequence: 9, priority: 'high', requiresApproval: false, dependsOn: ['content_release_approval'], expectedMinutes: 4,
       businessDomain: 'publishing', capabilityKey: 'publishing.calendar', destination: 'smartAssets', destinationView: 'publish', statusSource: 'posts.stats.status=scheduled', executionMode: 'observe', externalEffect: 'schedule',
     },
     {
-      key: 'platform_publish', title: '等待平台发布真实回执', description: '内容 Agent 调用渠道能力观察逐账号发布、失败重试和平台回执；只有平台 ID 或 publishResults=published 才算发布完成。',
-      agentRole: 'content', backgroundCapability: 'channel', kind: 'activation', sequence: 10, priority: 'high', requiresApproval: false, dependsOn: ['publishing_calendar'], expectedMinutes: 5,
+      key: 'platform_publish', title: '等待平台发布真实回执', description: '经营 Agent 调用渠道能力观察逐账号发布、失败重试和平台回执；只有平台 ID 或 publishResults=published 才算发布完成。',
+      agentRole: 'business', backgroundCapability: 'channel', kind: 'activation', sequence: 10, priority: 'high', requiresApproval: false, dependsOn: ['publishing_calendar'], expectedMinutes: 5,
       businessDomain: 'publishing', capabilityKey: 'publishing.delivery', destination: 'smartAssets', destinationView: 'publish', statusSource: 'posts.platform_post_id + publishResults', executionMode: 'observe', externalEffect: 'publish',
     },
     {

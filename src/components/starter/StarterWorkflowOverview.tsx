@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   CircleDashed,
   Clock3,
+  Clapperboard,
   Eye,
   FileCheck2,
   Lightbulb,
@@ -21,7 +22,7 @@ import type {
   StarterWorkspace,
 } from '../../lib/starterWorkspace';
 
-type WorkflowNodeId = 'orchestrate' | 'content' | 'human' | 'traffic' | 'sales' | 'summary';
+type WorkflowNodeId = 'orchestrate' | 'director' | 'content' | 'human' | 'traffic' | 'sales' | 'summary';
 type WorkflowNodeState = 'active' | 'waiting_user' | 'completed' | 'blocked' | 'paused' | 'idle' | 'optional' | 'unknown';
 
 interface WorkflowSpotlight {
@@ -135,7 +136,7 @@ export function deriveStarterWorkflowSpotlight(workspace: StarterWorkspace): Wor
   if (runStatus === 'paused') {
     return {
       currentTitle: '本轮工作流已暂停',
-      currentDetail: '三个子 Agent 不会在暂停期间继续推进本轮任务。',
+      currentDetail: '各专业 Agent 不会在暂停期间继续推进本轮任务。',
       nextTitle: '需要时从“运行控制”恢复',
       nextDetail: '恢复后会从已保存的进度继续。',
       currentNodeIds: ['orchestrate'],
@@ -189,7 +190,7 @@ export function deriveStarterWorkflowSpotlight(workspace: StarterWorkspace): Wor
       currentTitle: workspace.run.id ? '本轮尚未进入执行节点' : '还没有运行中的经营任务',
       currentDetail: nextItem?.why || '灵小枢会先确认经营目标和必要资料，再安排后续工作。',
       nextTitle: nextItem?.what || '等待你向灵小枢补充经营目标',
-      nextDetail: nextItem?.next || '目标确认前，三个子 Agent 不会自行开始。',
+      nextDetail: nextItem?.next || '目标确认前，各专业 Agent 不会自行开始。',
       currentNodeIds: ['orchestrate'],
     };
   }
@@ -213,14 +214,20 @@ function workflowNodes(workspace: StarterWorkspace): WorkflowNode[] {
   return [
     {
       id: 'orchestrate', eyebrow: '主 Agent', title: '灵小枢统筹', icon: Bot,
-      description: '理解目标，锁定事实与预算，并把任务分给三个子 Agent。',
+      description: '理解目标，锁定事实与预算，并把任务分给各专业 Agent。',
       state: agentNodeState(workspace, 'orchestrator'), links: [],
     },
     {
-      id: 'content', eyebrow: '内容 Agent', title: '灵小图生产', icon: Lightbulb,
-      description: '在灵感大屏找依据，在内容制作完成脚本、素材与质检。',
+      id: 'director', eyebrow: '编导 Agent', title: '编导方案', icon: Clapperboard,
+      description: '从爆款参考、企业事实和真实素材中锁定脚本、口播、字幕、镜头与节奏。',
       state: agentNodeState(workspace, 'content'),
-      links: [{ label: '灵感大屏', target: 'inspiration' }, { label: '内容制作', target: 'content' }],
+      links: [{ label: '灵感大屏', target: 'inspiration' }],
+    },
+    {
+      id: 'content', eyebrow: '内容 Agent', title: '灵小图生产', icon: Lightbulb,
+      description: '只按锁定导演方案完成素材编排、配音、字幕、配乐、渲染与技术质检。',
+      state: agentNodeState(workspace, 'content'),
+      links: [{ label: '内容制作', target: 'content' }],
     },
     {
       id: 'human', eyebrow: '必要检查点', title: '你只做确认', icon: UserCheck,
@@ -284,8 +291,8 @@ export default function StarterWorkflowOverview({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-4xl">
             <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-accent"><Bot size={14} aria-hidden="true" />一眼看懂 AI 怎么工作</p>
-            <h2 id="starter-workflow-heading" className="mt-1.5 text-lg font-bold text-text-primary">灵小枢统筹，三个子 Agent 在原有功能页面完成生产</h2>
-            <p className="mt-2 text-sm leading-relaxed text-text-secondary">灵小枢先拆解经营目标；灵小图完成灵感研究与内容制作；需要内容放行等关键决定时才请你确认；灵小量准备发布包并核验发布证据；灵小售处理真实询盘与确定性报价；最后由灵小枢汇总结果。</p>
+            <h2 id="starter-workflow-heading" className="mt-1.5 text-lg font-bold text-text-primary">灵小枢统筹，编导与内容 Agent 接力完成视频</h2>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">灵小枢先拆解经营目标；编导 Agent 根据爆款参考、企业事实和真实素材锁定完整导演方案；内容 Agent 只按方案生成视频；需要内容放行等关键决定时才请你确认；发布与销售 Agent 继续承接后续工作，最后由灵小枢汇总结果。</p>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-emerald-800"><Eye size={12} aria-hidden="true" />基础页面保留，可随时查看过程</span>
         </div>

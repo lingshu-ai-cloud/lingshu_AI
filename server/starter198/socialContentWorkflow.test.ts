@@ -19,6 +19,55 @@ process.env.PB_URL = 'http://127.0.0.1:1';
 
 type Row = Record_ & Record<string, unknown>;
 
+function completeFormulaDirection() {
+  return {
+    pace: 'balanced',
+    visualStyle: '真实产品实拍，克制的 B2B 商务质感，不使用无法核验的效果画面',
+    music: {
+      mood: '清晰、专业', volume: 18, strategy: '开头建立节奏，口播期间自动压低，结尾轻收束',
+      sourceType: 'licensed_library', licenseVerified: true, licenseReference: 'music-library:professional-clean-v1',
+    },
+    voiceover: { voice: 'v1', preset: 'professional_b2b', speed: 1.1, pauseStyle: 'natural' },
+    subtitles: { fontScale: 1, bottomRatio: 0.18, styleIntent: '高对比单行字幕，不能遮挡产品主体' },
+    cover: {
+      intent: '第一眼说明产品价值且不夸大功效',
+      headlineTemplate: { zh: '{{product}}真实卖点', en: 'Verified value of {{product}}' },
+      subject: '产品与一项可核验证据', composition: '主体居中偏下，标题位于安全区上方',
+    },
+    materialFallback: {
+      minimumUsableClips: 1, allowStillFrames: true, allowRepeatedClips: false, maxRepeatCount: 0,
+      insufficientMaterialAction: 'adapt_with_verified_assets',
+    },
+    risks: {
+      prohibitedClaims: ['禁止无证据的绝对化功效'],
+      prohibitedVisuals: ['禁止使用未获授权的人脸或品牌标识'],
+      mandatoryDisclosures: [],
+    },
+    acceptanceGates: [
+      { gateId: 'qc_grounding', name: '事实可追溯', rule: '脚本中的产品信息必须来自已核验知识或可见素材', blocking: true },
+      { gateId: 'qc_rights', name: '音乐授权', rule: '配乐必须带有可核验授权引用', blocking: true },
+    ],
+  };
+}
+
+function completeFormulaNode(nodeId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    nodeId,
+    shotFunction: '展示产品与证据', subject: '产品与检测证据', action: '同框展示', environment: '干净的产品展示台',
+    orientation: 'portrait', durationSeconds: { minimum: 3, maximum: 8 }, required: true,
+    shotType: 'product_demo', shotSize: 'close_up', cameraMovement: 'push_in',
+    composition: '产品主体位于中央安全区，证据标签保持清晰', transition: 'cut',
+    narrationTemplate: {
+      zh: '围绕{{topic}}，用真实素材展示{{product}}与可核验证据。{{callToAction}}',
+      en: 'For {{topic}}, use real material to show {{product}} with verifiable evidence. {{callToAction}}',
+    },
+    scriptTemplate: { zh: '脚本：{{shotFunction}}，{{subject}}，{{action}}。', en: 'Script: {{shotFunction}}, {{subject}}, {{action}}.' },
+    voiceoverTemplate: { zh: '口播：用真实素材展示{{product}}。', en: 'Voice: show {{product}} with real material.' },
+    captionTemplate: { zh: '字幕：真实素材展示', en: 'Caption: real material' },
+    ...overrides,
+  };
+}
+
 class MemoryStore implements DataStore {
   readonly rows = new Map<string, Row[]>();
   private sequence = 0;
@@ -158,12 +207,68 @@ const sourceOptionsPort = {
     return item.kind === input.kind && item.sourceRef === input.sourceRef ? item : null;
   },
 };
+const backendPayloads = new Map<string, { buf: Buffer; contentType: string }>();
+const backendFilePort = {
+  async attach(input: { collection: string; recordId: string; name: string; path: string; contentType: string }) {
+    const filename = `${input.recordId}-${path.basename(input.name)}`;
+    backendPayloads.set(`${input.collection}/${input.recordId}/${filename}`, {
+      buf: fs.readFileSync(input.path), contentType: input.contentType,
+    });
+    return filename;
+  },
+  async fetch(input: { collection: string; recordId: string; filename: string }) {
+    return backendPayloads.get(`${input.collection}/${input.recordId}/${input.filename}`) || null;
+  },
+};
+const materialRows = new Map<string, Record<string, any>>();
+const socialTaskMaterialPort = {
+  async upsert(input: Record<string, any>) {
+    const key = `${input.tenantId}:${input.sha256}`;
+    const current = materialRows.get(key);
+    const sourceTaskIds = Array.from(new Set([...(current?.sourceTaskIds || []), input.taskId]));
+    const sourceTaskFileRefs = Array.from(new Set([...(current?.sourceTaskFileRefs || []), input.taskFileRef]));
+    const productRefs = Array.from(new Set([...(current?.productRefs || []), input.productRef].filter(Boolean)));
+    const row = {
+      ...current,
+      id: current?.id || `pb-material-${materialRows.size + 1}`,
+      name: input.title,
+      type: input.type,
+      sourceType: 'social_task_upload',
+      sourceRevision: input.sha256,
+      contentSha256: input.sha256,
+      sha256: input.sha256,
+      productId: '',
+      productRef: input.productRef || '',
+      productName: input.productRef || '',
+      sourceTaskIds,
+      sourceTaskFileRefs,
+      productRefs,
+      createdAt: '2026-09-14T08:00:00.000Z',
+    };
+    materialRows.set(key, row);
+    return row;
+  },
+};
 const productionQueue = createStarter198OrchestratorQueue({ repository, dataStore });
+const productionQueueInputs: Parameters<typeof productionQueue.enqueue>[0][] = [];
+let interruptNextProductionQueue = false;
+const observedProductionQueue = {
+  async enqueue(input: Parameters<typeof productionQueue.enqueue>[0]) {
+    productionQueueInputs.push(structuredClone(input));
+    if (interruptNextProductionQueue) {
+      interruptNextProductionQueue = false;
+      throw new Error('simulated scheduler interruption after pre-start reconciliation');
+    }
+    return productionQueue.enqueue(input);
+  },
+};
 const router = createSocialContentRouter({
   repository,
   resolveRole: async request => String(request.headers['x-test-role'] || 'operator'),
   platformAdmin: async request => request.headers['x-platform-admin'] === 'yes' ? { userId: 'platform-admin' } : null,
   sourceOptions: sourceOptionsPort,
+  backendFilePort,
+  socialTaskMaterialPort,
   orchestratorQueue: {
     async enqueue(input) {
       orchestratorInputs.push(structuredClone(input) as unknown as Record<string, unknown>);
@@ -181,7 +286,9 @@ app.use('/api/default-social-content', createSocialContentRouter({
   resolveRole: async request => String(request.headers['x-test-role'] || 'operator'),
   platformAdmin: async request => request.headers['x-platform-admin'] === 'yes' ? { userId: 'platform-admin' } : null,
   sourceOptions: sourceOptionsPort,
-  orchestratorQueue: productionQueue,
+  backendFilePort,
+  socialTaskMaterialPort,
+  orchestratorQueue: observedProductionQueue,
   now: () => new Date('2026-09-14T08:00:00.000Z'),
 }));
 const server = app.listen(0, '127.0.0.1');
@@ -273,7 +380,7 @@ try {
       idempotencyKey: 'social-failclosed-queue',
       workflowScope: 'social_content',
       subject: {
-        type: 'social_content_task', id: 'socialtask_failclosed', version: '1',
+        type: 'social_content_task', id: 'socialtask_failclosed', admissionVersion: '1', version: '1',
         sourceRefs: [], packageSelection: [], conversionObjective: false,
       },
     }),
@@ -341,6 +448,11 @@ try {
     .filter(row => row.run_id === durableStarted.body.task.runId);
   assert.equal(automaticExecutionTasks.length, 1);
   assert.equal(automaticExecutionTasks[0]?.task_key, 'social_content_auto_production');
+  assert.match(String(automaticExecutionTasks[0]?.title), /编导 Agent.*内容 Agent/);
+  assert.equal((automaticExecutionTasks[0]?.output as any)?.productionPolicy, 'director_plan_then_content_render');
+  assert.deepEqual((automaticExecutionTasks[0]?.output as any)?.workflowStages, [
+    'director_planning', 'content_production', 'rendering', 'quality_check', 'review_ready',
+  ]);
   assert.equal(automaticExecutionTasks[0]?.status, 'running');
   assert.equal(automaticExecutionTasks[0]?.automatic_execution_allowed, true);
   const durableTaskRow = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!
@@ -416,6 +528,86 @@ try {
   assert.equal(scheduleRaceRead.body.task.status, 'producing');
   assert.equal(dataStore.rows.get(STARTER_COLLECTIONS.tasks)!.length, workflowRowsBefore + 2,
     'each automatic social order has one isolated execution checkpoint');
+
+  const durableRevisionArtifact = await request(
+    `/api/default-social-content/tasks/${durableTaskId}/artifacts`,
+    {
+      idempotencyKey: 'social-durable-revision-artifact',
+      body: { kind: 'publish_copy', origin: 'manual', content: { body: '等待真实调度器重制的成果' } },
+    },
+  );
+  assert.equal(durableRevisionArtifact.status, 201, durableRevisionArtifact.raw);
+  const durableRevisionDecision = await request(
+    `/api/default-social-content/tasks/${durableTaskId}/artifacts/${durableRevisionArtifact.body.artifact.artifactId}/decision`,
+    {
+      idempotencyKey: 'social-durable-revision-decision',
+      body: {
+        expectedVersion: durableRevisionArtifact.body.artifact.version,
+        decision: 'changes_requested',
+        note: '开头更直接，口播保持完整自然',
+      },
+    },
+  );
+  assert.equal(durableRevisionDecision.status, 200, durableRevisionDecision.raw);
+  assert.equal(durableRevisionDecision.body.task.status, 'producing',
+    'a rejected artifact must pass the durable receipt check and enter a replacement run');
+  const durableRevisionStart = dataStore.rows.get(STARTER_COLLECTIONS.socialContentOperations)!
+    .find(row => String(row.idempotency_key).startsWith('social-revision-start:'))!;
+  assert.equal(durableRevisionStart.status, 'succeeded');
+  const durableRevisionQueueInput = productionQueueInputs.at(-1)!;
+  assert.notEqual(durableRevisionQueueInput.subject?.admissionVersion, durableRevisionQueueInput.subject?.version,
+    'revision projection advances independently of the version admitted by the start mutation');
+  assert.equal(
+    durableRevisionStart.request_hash,
+    (await import('./socialContentValidation.js')).socialRequestHash({
+      expectedVersion: durableRevisionQueueInput.subject?.admissionVersion,
+    }),
+    'the durable receipt stays bound to the admitted version, not the reconciled execution snapshot',
+  );
+  await assert.rejects(
+    productionQueue.enqueue({
+      ...durableRevisionQueueInput,
+      subject: {
+        ...durableRevisionQueueInput.subject!,
+        admissionVersion: durableRevisionQueueInput.subject!.version,
+      },
+    }),
+    (error: any) => error?.code === 'social_content_schedule_receipt_integrity_violation' && error?.status === 503,
+    'changing the admitted version cannot reuse a valid durable start receipt',
+  );
+
+  const interruptedRevisionArtifact = await request(
+    `/api/default-social-content/tasks/${scheduleRaceTaskId}/artifacts`,
+    {
+      idempotencyKey: 'social-interrupted-revision-artifact',
+      body: { kind: 'publish_copy', origin: 'manual', content: { body: '等待中断恢复的成果' } },
+    },
+  );
+  assert.equal(interruptedRevisionArtifact.status, 201, interruptedRevisionArtifact.raw);
+  const interruptedDecisionInput = {
+    expectedVersion: interruptedRevisionArtifact.body.artifact.version,
+    decision: 'changes_requested',
+    note: '请重新生成完整口播',
+  };
+  interruptNextProductionQueue = true;
+  const interruptedRevision = await request(
+    `/api/default-social-content/tasks/${scheduleRaceTaskId}/artifacts/${interruptedRevisionArtifact.body.artifact.artifactId}/decision`,
+    {
+      idempotencyKey: 'social-interrupted-revision-decision',
+      body: interruptedDecisionInput,
+    },
+  );
+  assert.equal(interruptedRevision.status, 503, interruptedRevision.raw);
+  const recoveredRevision = await request(
+    `/api/default-social-content/tasks/${scheduleRaceTaskId}/artifacts/${interruptedRevisionArtifact.body.artifact.artifactId}/decision`,
+    {
+      idempotencyKey: 'social-interrupted-revision-decision',
+      body: interruptedDecisionInput,
+    },
+  );
+  assert.equal(recoveredRevision.status, 200, recoveredRevision.raw);
+  assert.equal(recoveredRevision.body.task.status, 'producing',
+    'the same outer receipt resumes an interrupted nested start without resetting its admitted version');
 
   const missingIdempotency = await request('/api/overseas/starter-198/social-content/tasks', { body: completeBrief });
   assert.equal(missingIdempotency.status, 400);
@@ -499,16 +691,16 @@ try {
   assert.deepEqual(imageUpload.body.material.sourceTaskIds, [taskId]);
   const bridgedImageRead = await request(`/api/overseas/starter-198/social-content/files/${imageUpload.body.file.fileId}`);
   assert.deepEqual(bridgedImageRead.bytes, productImage, 'task file remains readable after entering My Materials');
-  const materialFile = path.join(temporaryRoot, 'data', 'materials.json');
-  const materialRows = JSON.parse(fs.readFileSync(materialFile, 'utf8')) as Array<Record<string, any>>;
-  assert.equal(materialRows.length, 1);
-  assert.equal(materialRows[0]?.tenantId, tenant);
-  assert.equal(materialRows[0]?.productId, '');
-  assert.equal(materialRows[0]?.productName, completeBrief.productRef);
-  assert.deepEqual(materialRows[0]?.productRefs, [completeBrief.productRef]);
-  assert.equal(materialRows[0]?.contentSha256, imageUpload.body.file.sha256);
-  assert.equal(fs.existsSync(path.join(temporaryRoot, 'data', 'media', materialRows[0]!.file)), true,
-    'local development mirrors immutable media bytes into the tenant-scoped material directory');
+  assert.equal(materialRows.size, 1);
+  const materialRow = materialRows.get(`${tenant}:${imageUpload.body.file.sha256}`);
+  assert.equal(materialRow?.productId, '');
+  assert.equal(materialRow?.productName, completeBrief.productRef);
+  assert.deepEqual(materialRow?.productRefs, [completeBrief.productRef]);
+  assert.equal(materialRow?.contentSha256, imageUpload.body.file.sha256);
+  assert.equal(fs.existsSync(path.join(temporaryRoot, 'data', 'materials.json')), false,
+    'task uploads no longer create an application-server material index');
+  assert.equal(fs.existsSync(path.join(temporaryRoot, 'data', 'media')), false,
+    'task uploads no longer mirror media bytes into the application server');
 
   const duplicateImage = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/files?usage=source&name=chair-copy.png`, {
     idempotencyKey: 'social-file-image2', rawBody: productImage, contentType: 'image/png',
@@ -516,14 +708,14 @@ try {
   assert.equal(duplicateImage.status, 201);
   assert.equal(duplicateImage.body.file.fileId, imageUpload.body.file.fileId);
   assert.equal(duplicateImage.body.material.id, imageUpload.body.material.id);
-  assert.equal((JSON.parse(fs.readFileSync(materialFile, 'utf8')) as unknown[]).length, 1,
+  assert.equal(materialRows.size, 1,
     'same-tenant SHA-256 deduplication keeps one canonical material row');
   const metricScreenshot = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/files?usage=metric_evidence&name=metrics.png`, {
     idempotencyKey: 'social-file-metric1', rawBody: productImage, contentType: 'image/png',
   });
   assert.equal(metricScreenshot.status, 201);
   assert.equal(metricScreenshot.body.material, undefined);
-  assert.equal((JSON.parse(fs.readFileSync(materialFile, 'utf8')) as unknown[]).length, 1,
+  assert.equal(materialRows.size, 1,
     'metric screenshots remain evidence and do not pollute My Materials');
 
   const source = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/sources`, {
@@ -852,6 +1044,65 @@ try {
   assert.equal(batchReplay.status, 200);
   assert.equal(batchReplay.body.task.approvedArtifactCount, 2, 'batch decision replay cannot apply twice');
 
+  const revisionArtifact = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts`, {
+    idempotencyKey: 'social-revision-artifact',
+    body: { kind: 'publish_copy', origin: 'manual', content: { body: '等待用户验收的自动成果' } },
+  });
+  assert.equal(revisionArtifact.status, 201);
+  const queuesBeforeRevision = orchestratorInputs.length;
+  const revisionDecisionInput = {
+    expectedVersion: revisionArtifact.body.artifact.version,
+    decision: 'changes_requested',
+    note: '请缩短口播和字幕，开头更直接一些',
+  };
+  const revisionDecision = await request(
+    `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${revisionArtifact.body.artifact.artifactId}/decision`,
+    { idempotencyKey: 'social-revision-decision', body: revisionDecisionInput },
+  );
+  assert.equal(revisionDecision.status, 200, revisionDecision.raw);
+  assert.equal(revisionDecision.body.artifact.status, 'changes_requested');
+  assert.equal(revisionDecision.body.task.status, 'producing', 'a rejection automatically enters a fresh production run');
+  assert.equal(orchestratorInputs.length, queuesBeforeRevision + 1, 'one rejection admits exactly one revision command');
+
+  const revisionReplay = await request(
+    `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${revisionArtifact.body.artifact.artifactId}/decision`,
+    { idempotencyKey: 'social-revision-decision', body: revisionDecisionInput },
+  );
+  assert.equal(revisionReplay.status, 200);
+  assert.equal(revisionReplay.body.task.status, 'producing');
+  assert.equal(orchestratorInputs.length, queuesBeforeRevision + 1, 'idempotent replay never queues a second revision');
+
+  const duplicateRevision = await request(
+    `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${revisionArtifact.body.artifact.artifactId}/decision`,
+    {
+      idempotencyKey: 'social-revision-decision-duplicate',
+      body: { ...revisionDecisionInput, expectedVersion: revisionDecision.body.artifact.version },
+    },
+  );
+  assert.equal(duplicateRevision.status, 409, 'an already accepted rejection cannot open another revision run');
+  assert.equal(orchestratorInputs.length, queuesBeforeRevision + 1);
+
+  const approvedCannotBeReopened = await request(
+    `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${manualFallbackArtifact.body.artifact.artifactId}/decision`,
+    {
+      idempotencyKey: 'social-approved-revision-forbidden',
+      body: { expectedVersion: '2', decision: 'changes_requested', note: '不得覆盖已审批成品' },
+    },
+  );
+  assert.equal(approvedCannotBeReopened.status, 409, 'approved output is immutable and cannot be replaced by review rejection');
+  assert.equal(orchestratorInputs.length, queuesBeforeRevision + 1);
+
+  const crossTenantRevision = await request(
+    `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${revisionArtifact.body.artifact.artifactId}/decision`,
+    {
+      tenantId: victim,
+      idempotencyKey: 'social-cross-tenant-revision',
+      body: { expectedVersion: revisionDecision.body.artifact.version, decision: 'changes_requested', note: '越权修改' },
+    },
+  );
+  assert.equal(crossTenantRevision.status, 404, 'revision scheduling is tenant isolated');
+  assert.equal(orchestratorInputs.length, queuesBeforeRevision + 1);
+
   const internalDenied = await request('/api/overseas/starter-198/social-content/internal/work-packages');
   assert.equal(internalDenied.status, 403);
   const internalList = await request('/api/overseas/starter-198/social-content/internal/work-packages', { platformAdmin: true });
@@ -992,6 +1243,58 @@ try {
 
   const hiddenFormulaList = await request('/api/overseas/starter-198/social-content/internal/content-formulas');
   assert.equal(hiddenFormulaList.status, 403, 'formula registry is platform-admin only');
+  const initiallyEmptyFormulaList = await request('/api/overseas/starter-198/social-content/internal/content-formulas', { platformAdmin: true });
+  assert.equal(initiallyEmptyFormulaList.status, 200);
+  assert.deepEqual(initiallyEmptyFormulaList.body.items, [],
+    'the formula interface remains available but ships with no preloaded formula');
+  const incompleteFormulaDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
+    platformAdmin: true,
+    idempotencyKey: 'social-formula-incomplete-create',
+    body: {
+      formulaId: 'custom.incomplete-draft', version: '1.0.0', name: '允许保存的未完成草稿', themeId: 'product_value',
+      direction: { pace: 'fast' },
+      nodes: [{ nodeId: 'opening', shotFunction: '开场钩子' }],
+    },
+  });
+  assert.equal(incompleteFormulaDraft.status, 201, incompleteFormulaDraft.raw);
+  assert.deepEqual(incompleteFormulaDraft.body.formula.direction, { pace: 'fast' },
+    'draft persistence keeps authored direction only');
+  assert.deepEqual(incompleteFormulaDraft.body.formula.nodes[0], { nodeId: 'opening', shotFunction: '开场钩子' },
+    'draft persistence must not synthesize script, voiceover, caption or shot grammar');
+  const incompleteFormulaTrial = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.incomplete-draft/1.0.0/trial', {
+    platformAdmin: true, idempotencyKey: 'social-formula-incomplete-trial', body: {},
+  });
+  assert.equal(incompleteFormulaTrial.status, 422, incompleteFormulaTrial.raw);
+  assert.equal(incompleteFormulaTrial.body.error, 'social_content_formula_release_incomplete');
+  const incompleteFormulaPublish = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.incomplete-draft/1.0.0/publish', {
+    platformAdmin: true, idempotencyKey: 'social-formula-incomplete-publish', body: { status: 'active' },
+  });
+  assert.equal(incompleteFormulaPublish.status, 422, incompleteFormulaPublish.raw);
+  assert.equal(incompleteFormulaPublish.body.error, 'social_content_formula_release_incomplete');
+  await repository.create(STARTER_COLLECTIONS.plans, '__starter_social_formula_catalog__', {
+    id: 'socialformula_legacy_draft',
+    goal_id: 'social-content-formula:custom.legacy-draft',
+    status: 'draft',
+    plan: {
+      schemaVersion: 'social-content-formula.v1',
+      lastIdempotencyKey: 'legacy-formula-created-before-director-contract',
+      formula: {
+        formulaId: 'custom.legacy-draft', version: '0.9.0', name: '旧版未完成草稿', themeId: 'product_value',
+        rollout: { percentage: 0, tenantAllowlist: [] }, nodes: [],
+        audit: [{ event: 'draft_created', actor: 'legacy-admin', at: '2026-09-01T00:00:00.000Z' }],
+      },
+    },
+    created_at: '2026-09-01T00:00:00.000Z', updated_at: '2026-09-01T00:00:00.000Z',
+  });
+  const registryWithLegacyDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', { platformAdmin: true });
+  assert.equal(registryWithLegacyDraft.status, 200, registryWithLegacyDraft.raw);
+  assert.equal(registryWithLegacyDraft.body.items.some((item: any) => item.formulaId === 'custom.legacy-draft'), true,
+    'v1 drafts remain readable without receiving synthesized director fields');
+  const legacyTrial = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.legacy-draft/0.9.0/trial', {
+    platformAdmin: true, idempotencyKey: 'social-formula-legacy-trial', body: {},
+  });
+  assert.equal(legacyTrial.status, 422, legacyTrial.raw);
+  assert.equal(legacyTrial.body.error, 'social_content_formula_release_incomplete');
   const formulaDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
     platformAdmin: true,
     idempotencyKey: 'social-formula-create-001',
@@ -1000,18 +1303,21 @@ try {
       version: '1.0.0',
       name: '产品单镜头验证',
       themeId: 'product_value',
-      nodes: [{
-        nodeId: 'hero', shotFunction: '展示产品与证据', subject: '产品与检测证据', action: '同框展示',
-        orientation: 'portrait', durationSeconds: { minimum: 3, maximum: 8 }, required: true,
-        narrationTemplate: {
-          zh: '围绕{{topic}}，用真实素材展示{{product}}与可核验证据。{{callToAction}}',
-          en: 'For {{topic}}, use real material to show {{product}} with verifiable evidence. {{callToAction}}',
-        },
-      }],
+      direction: completeFormulaDirection(),
+      nodes: [completeFormulaNode('hero')],
     },
   });
   assert.equal(formulaDraft.status, 201, formulaDraft.raw);
   assert.equal(formulaDraft.body.formula.status, 'draft');
+  assert.equal(formulaDraft.body.formula.direction.pace, 'balanced');
+  assert.equal(formulaDraft.body.formula.direction.music.licenseVerified, true);
+  assert.equal(formulaDraft.body.formula.direction.cover.intent, '第一眼说明产品价值且不夸大功效');
+  assert.equal(formulaDraft.body.formula.direction.materialFallback.insufficientMaterialAction, 'adapt_with_verified_assets');
+  assert.equal(formulaDraft.body.formula.direction.acceptanceGates[0].blocking, true);
+  assert.equal(formulaDraft.body.formula.nodes[0].cameraMovement, 'push_in');
+  assert.equal(formulaDraft.body.formula.nodes[0].transition, 'cut');
+  assert.equal(formulaDraft.body.formula.nodes[0].voiceoverTemplate.zh, '口播：用真实素材展示{{product}}。');
+  assert.equal(formulaDraft.body.formula.nodes[0].captionTemplate.zh, '字幕：真实素材展示');
   const formulaTrial = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.product-proof/1.0.0/trial', {
     platformAdmin: true, idempotencyKey: 'social-formula-trial-001', body: { note: '内部试跑通过' },
   });
@@ -1047,7 +1353,8 @@ try {
     platformAdmin: true, idempotencyKey: 'social-formula-allowlist-create',
     body: {
       formulaId: 'custom.case-allowlist', version: '1.0.0', name: '案例灰度公式', themeId: 'customer_case',
-      nodes: [{ nodeId: 'case', shotFunction: '展示授权案例', subject: '案例证据', action: '去敏展示', orientation: 'portrait', required: true }],
+      direction: completeFormulaDirection(),
+      nodes: [completeFormulaNode('case', { shotFunction: '展示授权案例', subject: '案例证据', action: '去敏展示' })],
     },
   });
   assert.equal(allowlistDraft.status, 201, allowlistDraft.raw);
@@ -1065,13 +1372,16 @@ try {
   const allowlistedTenantMatch = await request('/api/overseas/starter-198/social-content/internal/content-formulas/match', {
     platformAdmin: true, body: { themeId: 'customer_case', targetTenantId: victim },
   });
-  assert.equal(regularTenantMatch.body.formula.formulaId, 'builtin.authorized-case');
+  assert.equal(regularTenantMatch.status, 503);
+  assert.equal(regularTenantMatch.body.error, 'social_content_formula_unavailable',
+    'formula registry remains empty for tenants that were not explicitly allowlisted');
   assert.equal(allowlistedTenantMatch.body.formula.formulaId, 'custom.case-allowlist');
   const percentageOnlyDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
     platformAdmin: true, idempotencyKey: 'social-formula-percentage-create',
     body: {
       formulaId: 'custom.percentage-only', version: '1.0.0', name: '仅百分比灰度公式', themeId: 'scenario_solution',
-      nodes: [{ nodeId: 'scene', shotFunction: '展示场景', subject: '使用场景', action: '现场展示', orientation: 'portrait', required: true }],
+      direction: completeFormulaDirection(),
+      nodes: [completeFormulaNode('scene', { shotFunction: '展示场景', subject: '使用场景', action: '现场展示' })],
     },
   });
   assert.equal(percentageOnlyDraft.status, 201, percentageOnlyDraft.raw);
@@ -1086,8 +1396,9 @@ try {
   const percentageOnlyMatch = await request('/api/overseas/starter-198/social-content/internal/content-formulas/match', {
     platformAdmin: true, body: { themeId: 'scenario_solution', targetTenantId: tenant },
   });
-  assert.equal(percentageOnlyMatch.body.formula.formulaId, 'builtin.scenario-resolution',
-    'gray percentage is metadata only; an empty allowlist authorizes no tenant');
+  assert.equal(percentageOnlyMatch.status, 503);
+  assert.equal(percentageOnlyMatch.body.error, 'social_content_formula_unavailable',
+    'gray percentage is metadata only; an empty allowlist authorizes no tenant and there is no bundled fallback formula');
 
   const publicThemes = await request('/api/overseas/starter-198/social-content/themes');
   assert.equal(publicThemes.status, 200);
@@ -1107,15 +1418,18 @@ try {
   assert.deepEqual(instantTask.body.task.scriptBaseline, {
     version: '1', source: 'formula', sceneCount: 1, language: 'en',
     lockedAt: instantTask.body.task.createdAt,
+    matchConfidence: 0.78,
+    groundingVersion: 'social-script-grounding.v3',
   }, 'formula script baseline is frozen before any material upload or production request');
   assert.equal(instantTask.body.task.materialRequirements.length, 1);
   assert.equal(instantTask.body.task.materialRequirements.every((item: any) => item.required === false), true,
     'theme suggestions are advisory until a formula is explicitly applied as a production constraint');
   const instantStoredTask = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(row => row.task_id === instantTask.body.task.taskId)!;
   assert.deepEqual(instantStoredTask.formula_reference, { formulaId: 'custom.product-proof', version: '1.0.0' });
-  const instantStoredBaseline = instantStoredTask.script_baseline as { scenes: Array<{ narration: string }> };
-  assert.match(instantStoredBaseline.scenes[0].narration,
-    /For 一个镜头看懂卖点, use real material to show product:chair with verifiable evidence/);
+  const instantStoredBaseline = instantStoredTask.script_baseline as { scenes: Array<{ narration: string }>; match: { userTextUsage: string } };
+  assert.doesNotMatch(instantStoredBaseline.scenes[0].narration, /一个镜头看懂卖点|product:chair/,
+    'task topic and free-form product reference are intent only and never become narration facts');
+  assert.equal(instantStoredBaseline.match.userTextUsage, 'intent_only');
   assert.doesNotMatch(instantTask.raw, /custom\.product-proof|formulaId|formulaReference|formula_reference/,
     'customer task responses never disclose formula identity or version');
   const instantTaskId = instantTask.body.task.taskId as string;

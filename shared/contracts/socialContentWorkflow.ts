@@ -184,10 +184,36 @@ export interface SocialContentTaskBrief {
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
 export interface SocialScriptBaselineSummary {
   version: string;
-  source: 'formula' | 'system_theme_baseline';
+  source: 'formula' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline';
   sceneCount: number;
   language: 'zh' | 'en';
   lockedAt: string;
+  /** Public lineage only; internal formula/script identifiers remain private. */
+  matchConfidence?: number;
+  groundingVersion?: string;
+}
+
+/**
+ * Customer-safe projection of the versioned Director Agent handoff. Formula
+ * identifiers, internal templates and material scoring evidence remain on the
+ * server; the user can still understand exactly what the director prepared for
+ * the Content Agent.
+ */
+export interface SocialDirectorPlanSummary {
+  version: string;
+  status: 'ready' | 'blocked';
+  scriptSource: 'formula' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline';
+  baselineVersion: string;
+  sceneCount: number;
+  language: 'zh' | 'en';
+  createdAt: string;
+  formulaConfigured: boolean;
+  qualityPassed: boolean;
+  reshootSuggestionCount: number;
+  scriptSummary: string;
+  voiceoverSummary: string;
+  subtitleSummary: string;
+  shotRhythmSummary: string;
 }
 
 export interface SocialContentTaskSummary {
@@ -214,6 +240,8 @@ export interface SocialContentTaskSummary {
   theme?: SocialContentThemeSelection | null;
   materialReadiness?: SocialMaterialReadiness;
   scriptBaseline?: SocialScriptBaselineSummary;
+  /** Present after the Director Agent has handed a locked plan to Content Agent. */
+  directorPlan?: SocialDirectorPlanSummary;
 }
 
 export interface SocialTaskSource {
@@ -238,6 +266,8 @@ export interface SocialContentFile {
   size: number;
   sha256: string;
   createdAt: string;
+  /** Authenticated application-backend URL; never an application-server path. */
+  downloadUrl?: string;
 }
 
 export interface SocialContentSourceOption {

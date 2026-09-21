@@ -1,19 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { SocialContentFile } from '../../shared/contracts/socialContentWorkflow.js';
-import { tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
-import { upsertSocialTaskMaterial, type MaterialRecord } from '../lib/materialLibrary.js';
+import { upsertSocialTaskCloudMaterial, type UpsertSocialTaskCloudMaterialInput } from '../lib/cloudMaterials.js';
 import {
   materialAssetObjectKey,
   materialAssetTenantKey,
   materialAssetTypeAllowed,
   tenantPrivateObjectKey,
 } from '../storage/materialAssets.js';
-import { objectStorageEnabled, r2GetObject, r2Head, r2UploadFile } from '../storage/r2.js';
+import { objectStorageEnabled, r2Download, r2GetObject, r2Head, r2UploadFile } from '../storage/r2.js';
+import { attachFileFromPath, fetchFile } from '../storage/files.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -33,9 +34,10 @@ import {
 export const MAX_SOCIAL_CONTENT_FILE_BYTES = 110 * 1024 * 1024;
 export const MAX_CONCURRENT_SOCIAL_CONTENT_UPLOADS = 16;
 const ROOT = path.resolve(process.cwd(), 'data', 'social-content-sources');
-const TEMP = path.resolve(process.cwd(), 'data', 'social-content-upload-temp');
-const MATERIAL_ROOT = path.resolve(process.cwd(), 'data', 'media');
+const TEMP = path.join(os.tmpdir(), 'lingshu-social-content-upload');
 const UPLOAD_POOL_TENANT = 'starter198-social-upload-pool';
+const BACKEND_FILE_FIELD = 'backend_file';
+const SOCIAL_CONTENT_API_ROOT = '/api/overseas/starter-198/social-content';
 
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
@@ -47,12 +49,51 @@ const MIME_EXTENSIONS: Record<string, string> = {
 };
 
 export interface StoredSocialContentFile {
-  storageKind: 'local' | 'object';
+  storageKind: 'local' | 'object' | 'backend_file';
   storageKey: string;
   name: string;
   mimeType: string;
   byteSize: number;
   sha256: string;
+  /** OS-temp producer input. Never write this path into a backend record. */
+  transientPath?: string;
+}
+
+export interface SocialContentBackendFilePort {
+  attach(input: {
+    collection: string;
+    recordId: string;
+    field: string;
+    name: string;
+    path: string;
+    contentType: string;
+  }): Promise<string | null>;
+  fetch(input: {
+    collection: string;
+    recordId: string;
+    filename: string;
+  }): Promise<{ buf: Buffer; contentType: string } | null>;
+}
+
+const defaultBackendFilePort: SocialContentBackendFilePort = {
+  attach: input => attachFileFromPath(input.collection, input.recordId, input.field, {
+    name: input.name,
+    path: input.path,
+    contentType: input.contentType,
+  }),
+  fetch: input => fetchFile(input.collection, input.recordId, input.filename),
+};
+
+export interface SocialTaskMaterialPort {
+  upsert(input: UpsertSocialTaskCloudMaterialInput): Promise<Record<string, any>>;
+}
+
+const defaultSocialTaskMaterialPort: SocialTaskMaterialPort = {
+  upsert: input => upsertSocialTaskCloudMaterial(input),
+};
+
+export function socialContentFileDownloadUrl(fileId: string): string {
+  return `${SOCIAL_CONTENT_API_ROOT}/files/${encodeURIComponent(fileId)}`;
 }
 
 async function acquireUploadLease(input: {
@@ -177,6 +218,7 @@ export async function storeSocialContentFile(input: {
   }
   await fsp.mkdir(TEMP, { recursive: true });
   const temporary = path.join(TEMP, `${socialPublicId('upload')}.part`);
+  let retainTemporary = false;
   let byteSize = 0;
   const hash = createHash('sha256');
   const header: Buffer[] = [];
@@ -219,24 +261,31 @@ export async function storeSocialContentFile(input: {
       }
       return { storageKind: 'object', storageKey, name, mimeType, byteSize, sha256 };
     }
-    if (process.env.NODE_ENV === 'production') {
-      throw new SocialContentWorkflowError('social_content_object_storage_required', 503);
+    // Existing integration tests exercise legacy records without a live
+    // PocketBase. Production and local development never take this branch.
+    if (process.env.NODE_ENV === 'test' && process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES !== 'true') {
+      const tenantDirectory = path.join(ROOT, materialAssetTenantKey(input.tenantId));
+      await fsp.mkdir(tenantDirectory, { recursive: true });
+      const finalPath = path.join(tenantDirectory, storedName);
+      try { await fsp.link(temporary, finalPath); }
+      catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error; }
+      return {
+        storageKind: 'local', storageKey: path.posix.join(materialAssetTenantKey(input.tenantId), storedName),
+        name, mimeType, byteSize, sha256,
+      };
     }
-    const tenantDirectory = path.join(ROOT, materialAssetTenantKey(input.tenantId));
-    await fsp.mkdir(tenantDirectory, { recursive: true });
-    const finalPath = path.join(tenantDirectory, storedName);
-    try {
-      await fsp.link(temporary, finalPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error;
-    }
+    // PocketBase owns the durable bytes when external object storage is not
+    // configured. Keep the streamed request only in the OS temp directory
+    // until registerSocialContentFile attaches it to the backend file field.
+    retainTemporary = true;
     return {
-      storageKind: 'local',
-      storageKey: path.posix.join(materialAssetTenantKey(input.tenantId), storedName),
+      storageKind: 'backend_file',
+      storageKey: storedName,
       name,
       mimeType,
       byteSize,
       sha256,
+      transientPath: temporary,
     };
   } catch (error) {
     if (error instanceof SocialContentWorkflowError) throw error;
@@ -245,8 +294,74 @@ export async function storeSocialContentFile(input: {
     }
     throw new SocialContentWorkflowError('social_content_file_upload_failed', 400);
   } finally {
-    await fsp.rm(temporary, { force: true }).catch(() => undefined);
+    if (!retainTemporary) await fsp.rm(temporary, { force: true }).catch(() => undefined);
   }
+}
+
+export async function cleanupTransientSocialContentUpload(upload: StoredSocialContentFile): Promise<void> {
+  const transientPath = upload.transientPath;
+  if (!transientPath) return;
+  const resolved = path.resolve(transientPath);
+  const root = path.resolve(TEMP);
+  if (!resolved.startsWith(`${root}${path.sep}`)) {
+    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+  }
+  await fsp.rm(resolved, { force: true });
+}
+
+export function durableSocialContentFileDescriptor(upload: StoredSocialContentFile): StoredSocialContentFile {
+  const { transientPath: _transientPath, ...stored } = upload;
+  return stored;
+}
+
+/**
+ * Validate and describe a renderer-owned temporary output without copying it
+ * into an application data directory. registerSocialContentFile consumes this
+ * descriptor and attaches the exact bytes to the backend record's file field.
+ */
+export async function inspectTransientSocialContentFile(input: {
+  filePath: string;
+  name: string;
+  mimeType: string;
+  maximumBytes?: number;
+}): Promise<StoredSocialContentFile> {
+  const name = safeName(input.name);
+  const mimeType = mime(input.mimeType);
+  const maximumBytes = Math.min(
+    MAX_SOCIAL_CONTENT_FILE_BYTES,
+    Math.max(0, Math.floor(input.maximumBytes ?? MAX_SOCIAL_CONTENT_FILE_BYTES)),
+  );
+  let stat: Awaited<ReturnType<typeof fsp.stat>>;
+  try {
+    stat = await fsp.stat(input.filePath);
+  } catch {
+    throw new SocialContentWorkflowError('social_content_file_not_found', 404);
+  }
+  if (!stat.isFile() || stat.size < 1 || stat.size > maximumBytes) {
+    throw new SocialContentWorkflowError(
+      stat.size > maximumBytes ? 'social_content_file_too_large' : 'social_content_file_content_invalid',
+      stat.size > maximumBytes ? 413 : 415,
+    );
+  }
+  const handle = await fsp.open(input.filePath, 'r');
+  try {
+    const header = Buffer.alloc(Math.min(512, stat.size));
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    if (!magicAllowed(mimeType, header.subarray(0, bytesRead))) {
+      throw new SocialContentWorkflowError('social_content_file_content_invalid', 415);
+    }
+  } finally {
+    await handle.close();
+  }
+  const sha256 = await sha256File(input.filePath);
+  return {
+    storageKind: 'backend_file',
+    storageKey: `${sha256}.${MIME_EXTENSIONS[mimeType]}`,
+    name,
+    mimeType,
+    byteSize: stat.size,
+    sha256,
+  };
 }
 
 function creativeMaterialType(mimeType: string): 'video' | 'image' | 'audio' | null {
@@ -256,54 +371,10 @@ function creativeMaterialType(mimeType: string): 'video' | 'image' | 'audio' | n
   return null;
 }
 
-function humanFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
 async function sha256File(file: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of fs.createReadStream(file)) hash.update(chunk as Buffer);
   return hash.digest('hex');
-}
-
-async function ensureLocalMaterialMirror(input: {
-  tenantId: string;
-  stored: StoredSocialContentFile;
-}): Promise<{ file: string; url: string }> {
-  const source = path.resolve(ROOT, input.stored.storageKey);
-  if (!source.startsWith(`${ROOT}${path.sep}`)) {
-    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
-  }
-  const filename = path.basename(input.stored.storageKey);
-  const relative = tenantAssetRelativePath(input.tenantId, filename);
-  const targetDirectory = tenantAssetDir(MATERIAL_ROOT, input.tenantId);
-  const target = path.join(targetDirectory, filename);
-  await fsp.mkdir(targetDirectory, { recursive: true });
-  try {
-    await fsp.link(source, target);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    if (code === 'EXDEV') {
-      try { await fsp.copyFile(source, target, fs.constants.COPYFILE_EXCL); }
-      catch (copyError) {
-        if ((copyError as NodeJS.ErrnoException)?.code !== 'EEXIST') throw copyError;
-      }
-    } else if (code !== 'EEXIST') {
-      throw error;
-    }
-  }
-  try {
-    const stat = await fsp.stat(target);
-    if (!stat.isFile() || stat.size !== input.stored.byteSize
-      || await sha256File(target) !== input.stored.sha256) {
-      throw new Error('material mirror integrity mismatch');
-    }
-  } catch {
-    throw new SocialContentWorkflowError('social_content_material_storage_unavailable', 503);
-  }
-  return { file: relative, url: `/media/${relative}` };
 }
 
 /**
@@ -317,52 +388,45 @@ export async function registerSocialTaskCreativeMaterial(input: {
   productRef?: string | null;
   file: SocialContentFile;
   stored: StoredSocialContentFile;
-}): Promise<MaterialRecord | null> {
+  transientPath?: string;
+  materialPort?: SocialTaskMaterialPort;
+}): Promise<Record<string, any> | null> {
   const type = creativeMaterialType(input.file.mimeType);
   if (!type) return null;
   if (input.file.sha256 !== input.stored.sha256) {
     throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
   }
-  const filename = path.basename(input.stored.storageKey);
-  const local = input.stored.storageKind === 'local'
-    ? await ensureLocalMaterialMirror({ tenantId: input.tenantId, stored: input.stored })
-    : { file: tenantAssetRelativePath(input.tenantId, filename), url: '' };
-  const timestamp = input.file.createdAt || new Date().toISOString();
-  const record: MaterialRecord = {
-    id: `social-${createHash('sha256').update(`${input.tenantId}\0${input.file.sha256}`).digest('hex').slice(0, 32)}`,
-    name: input.file.name,
-    folder: '任务素材',
-    type,
-    duration: 0,
-    size: humanFileSize(input.file.size),
-    file: local.file,
-    url: local.url,
-    ...(type === 'image' && local.url ? { poster: local.url } : {}),
-    ...(input.stored.storageKind === 'object' ? {
-      objectKey: input.stored.storageKey,
-      ...(type === 'image' ? { posterObjectKey: input.stored.storageKey } : {}),
-    } : {}),
-    scope: 'own',
-    tenantId: input.tenantId,
-    usage: 'editable',
-    sourceType: 'social_task_upload',
-    sourceTaskId: input.taskId,
-    sourceFileRef: input.file.fileRef,
-    // Social task briefs currently carry a product name/reference, not the
-    // enterprise product's stable identity. Keep the stable field explicitly
-    // empty so the UI may use an exact productName fallback without pretending
-    // that free text is a product ID.
-    productId: '',
-    createdAt: timestamp,
-  };
-  return upsertSocialTaskMaterial({
-    id: record.id,
+  let media: UpsertSocialTaskCloudMaterialInput['media'];
+  if (input.stored.storageKind === 'backend_file') {
+    if (!input.transientPath) throw new SocialContentWorkflowError('social_content_material_storage_unavailable', 503);
+    media = { name: path.basename(input.stored.storageKey), contentType: input.file.mimeType, path: input.transientPath };
+  } else if (input.stored.storageKind === 'object') {
+    const object = await r2Download(input.stored.storageKey);
+    if (!object?.buf.length || createHash('sha256').update(object.buf).digest('hex') !== input.stored.sha256) {
+      throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+    }
+    media = { name: path.basename(input.stored.storageKey), contentType: input.file.mimeType, buf: object.buf };
+  } else {
+    // Backward-compatible migration path for task files created before the PB
+    // file field became authoritative. New uploads never write this directory.
+    const source = path.resolve(ROOT, input.stored.storageKey);
+    if (!source.startsWith(`${ROOT}${path.sep}`) || await sha256File(source) !== input.stored.sha256) {
+      throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+    }
+    media = { name: path.basename(input.stored.storageKey), contentType: input.file.mimeType, path: source };
+  }
+  return (input.materialPort ?? defaultSocialTaskMaterialPort).upsert({
     tenantId: input.tenantId,
     taskId: input.taskId,
     taskFileRef: input.file.fileRef,
-    contentSha256: input.file.sha256,
+    sha256: input.file.sha256,
     productRef: input.productRef,
-    record,
+    title: input.file.name,
+    type,
+    duration: 0,
+    sizeBytes: input.file.size,
+    productId: '',
+    media,
   });
 }
 
@@ -385,6 +449,7 @@ export function socialContentFileView(record: StarterRecord): SocialContentFile 
     size,
     sha256,
     createdAt: socialText(record.created_at),
+    downloadUrl: socialContentFileDownloadUrl(fileId),
   };
 }
 
@@ -418,6 +483,86 @@ async function fileByContent(input: {
   return result.items[0] ?? null;
 }
 
+function backendFilename(record: StarterRecord): string {
+  const value = record[BACKEND_FILE_FIELD];
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value) && value.length) return socialText(value[0]);
+  return socialText(record.storage_kind) === 'backend_file' ? socialText(record.storage_key) : '';
+}
+
+async function assertBackendPayload(input: {
+  record: StarterRecord;
+  stored: StoredSocialContentFile;
+  filename: string;
+  backendFilePort: SocialContentBackendFilePort;
+}): Promise<void> {
+  const downloaded = await input.backendFilePort.fetch({
+    collection: STARTER_COLLECTIONS.socialContentFiles,
+    recordId: input.record.id,
+    filename: input.filename,
+  });
+  const receivedMime = downloaded?.contentType.toLowerCase().split(';', 1)[0] ?? '';
+  // PocketBase sniffs ISO-BMFF files and may serve an uploaded .mp4 as
+  // video/quicktime even when the original request correctly declared
+  // video/mp4. They share the same validated `ftyp` container family, so this
+  // is not a content-type downgrade.
+  const mimeMatches = receivedMime === input.stored.mimeType
+    || (['video/mp4', 'video/quicktime'].includes(receivedMime)
+      && ['video/mp4', 'video/quicktime'].includes(input.stored.mimeType));
+  if (!downloaded
+    || downloaded.buf.length !== input.stored.byteSize
+    || !mimeMatches
+    || createHash('sha256').update(downloaded.buf).digest('hex') !== input.stored.sha256) {
+    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+  }
+}
+
+export async function persistTransientSocialContentBackendFile(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  record: StarterRecord;
+  stored: StoredSocialContentFile;
+  transientPath: string;
+  backendFilePort: SocialContentBackendFilePort;
+}): Promise<void> {
+  const inspected = await inspectTransientSocialContentFile({
+    filePath: input.transientPath,
+    name: input.stored.name,
+    mimeType: input.stored.mimeType,
+    maximumBytes: input.stored.byteSize,
+  });
+  if (inspected.byteSize !== input.stored.byteSize || inspected.sha256 !== input.stored.sha256) {
+    throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+  }
+
+  let filename = backendFilename(input.record);
+  if (filename) {
+    try {
+      await assertBackendPayload({ ...input, filename });
+    } catch {
+      filename = '';
+    }
+  }
+  if (!filename) {
+    filename = await input.backendFilePort.attach({
+      collection: STARTER_COLLECTIONS.socialContentFiles,
+      recordId: input.record.id,
+      field: BACKEND_FILE_FIELD,
+      name: input.stored.storageKey,
+      path: input.transientPath,
+      contentType: input.stored.mimeType,
+    }) ?? '';
+    if (!filename) {
+      throw new SocialContentWorkflowError('social_content_backend_file_storage_unavailable', 503);
+    }
+    await assertBackendPayload({ ...input, filename });
+  }
+  await input.repository.update(STARTER_COLLECTIONS.socialContentFiles, input.tenantId, input.record.id, {
+    storage_kind: 'backend_file',
+    storage_key: filename,
+  });
+}
+
 export async function registerSocialContentFile(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -426,8 +571,15 @@ export async function registerSocialContentFile(input: {
   usage: SocialContentFile['usage'];
   idempotencyKey: string;
   stored: StoredSocialContentFile;
+  transientPath?: string;
+  backendFilePort?: SocialContentBackendFilePort;
   now?: Date;
 }): Promise<SocialContentFile> {
+  const isBackendFile = input.stored.storageKind === 'backend_file';
+  if (isBackendFile !== Boolean(input.transientPath)) {
+    throw new SocialContentWorkflowError('social_content_backend_file_input_invalid', 500);
+  }
+  const backendFilePort = input.backendFilePort ?? defaultBackendFilePort;
   await requireSocialTask(input);
   const mutation = await executeSocialContentMutation<{ file: SocialContentFile }>({
     repository: input.repository,
@@ -452,9 +604,33 @@ export async function registerSocialContentFile(input: {
       if (existing.totalItems > 1 || existing.items.length > 1) {
         throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
       }
-      if (existing.items[0]) return { file: socialContentFileView(existing.items[0]) };
+      if (existing.items[0]) {
+        if (isBackendFile) {
+          await persistTransientSocialContentBackendFile({
+            repository: input.repository,
+            tenantId: input.tenantId,
+            record: existing.items[0],
+            stored: input.stored,
+            transientPath: input.transientPath!,
+            backendFilePort,
+          });
+        }
+        return { file: socialContentFileView(existing.items[0]) };
+      }
       const duplicate = await fileByContent({ ...input, sha256: input.stored.sha256 });
-      if (duplicate) return { file: socialContentFileView(duplicate) };
+      if (duplicate) {
+        if (isBackendFile) {
+          await persistTransientSocialContentBackendFile({
+            repository: input.repository,
+            tenantId: input.tenantId,
+            record: duplicate,
+            stored: input.stored,
+            transientPath: input.transientPath!,
+            backendFilePort,
+          });
+        }
+        return { file: socialContentFileView(duplicate) };
+      }
       const capacity = await socialTaskFileCapacity(input);
       if (input.stored.byteSize > capacity.remainingBytes) {
         throw new SocialContentWorkflowError('social_content_file_task_bytes_exceeded', 413);
@@ -468,12 +644,22 @@ export async function registerSocialContentFile(input: {
         mime_type: input.stored.mimeType,
         byte_size: input.stored.byteSize,
         content_sha256: input.stored.sha256,
-        storage_kind: input.stored.storageKind,
+        storage_kind: isBackendFile ? 'backend_pending' : input.stored.storageKind,
         storage_key: input.stored.storageKey,
         last_operation_id: operationId,
         created_by: input.userId,
         created_at: timestamp,
       });
+      if (isBackendFile) {
+        await persistTransientSocialContentBackendFile({
+          repository: input.repository,
+          tenantId: input.tenantId,
+          record: created,
+          stored: input.stored,
+          transientPath: input.transientPath!,
+          backendFilePort,
+        });
+      }
       return { file: socialContentFileView(created) };
     },
   });
@@ -500,10 +686,12 @@ export async function readSocialContentFile(input: {
   repository: Starter198Repository;
   tenantId: string;
   fileId: string;
+  backendFilePort?: SocialContentBackendFilePort;
 }): Promise<{
   view: SocialContentFile;
   localPath?: string;
   object?: Awaited<ReturnType<typeof r2GetObject>>;
+  backend?: { buf: Buffer; contentType: string };
 }> {
   const record = await findSocialContentFile(input);
   if (!record) throw new SocialContentWorkflowError('social_content_file_not_found', 404);
@@ -514,6 +702,21 @@ export async function readSocialContentFile(input: {
     const object = await r2GetObject(key);
     if (!object) throw new SocialContentWorkflowError('social_content_file_not_found', 404);
     return { view, object };
+  }
+  if (kind === 'backend_file') {
+    const backend = await (input.backendFilePort ?? defaultBackendFilePort).fetch({
+      collection: STARTER_COLLECTIONS.socialContentFiles,
+      recordId: record.id,
+      filename: key,
+    });
+    if (!backend) throw new SocialContentWorkflowError('social_content_file_not_found', 404);
+    const backendMime = backend.contentType.toLowerCase().split(';', 1)[0];
+    if (backend.buf.length !== view.size
+      || backendMime !== view.mimeType
+      || createHash('sha256').update(backend.buf).digest('hex') !== view.sha256) {
+      throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
+    }
+    return { view, backend };
   }
   if (kind !== 'local' || process.env.NODE_ENV === 'production') {
     throw new SocialContentWorkflowError('social_content_file_storage_unavailable', 503);
@@ -533,16 +736,33 @@ export async function readSocialContentFile(input: {
 export async function assertSocialContentFilePersisted(input: {
   record: StarterRecord;
   tenantId: string;
+  backendFilePort?: SocialContentBackendFilePort;
 }): Promise<SocialContentFile> {
   if (socialText(input.record.tenant_id) !== input.tenantId) {
     throw new SocialContentWorkflowError('social_content_file_not_found', 404);
   }
   const view = socialContentFileView(input.record);
   const key = socialText(input.record.storage_key);
-  if (!path.basename(key).startsWith(`${view.sha256}.`)) {
+  const kind = socialText(input.record.storage_kind);
+  if (kind !== 'backend_file' && !path.basename(key).startsWith(`${view.sha256}.`)) {
     throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
   }
-  const kind = socialText(input.record.storage_kind);
+  if (kind === 'backend_file') {
+    await assertBackendPayload({
+      record: input.record,
+      stored: {
+        storageKind: 'backend_file',
+        storageKey: key,
+        name: view.name,
+        mimeType: view.mimeType,
+        byteSize: view.size,
+        sha256: view.sha256,
+      },
+      filename: key,
+      backendFilePort: input.backendFilePort ?? defaultBackendFilePort,
+    });
+    return view;
+  }
   if (kind === 'object') {
     const head = await r2Head(key);
     if (!head || head.size !== view.size || head.contentType !== view.mimeType) {

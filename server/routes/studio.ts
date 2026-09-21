@@ -24,6 +24,7 @@ import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAva
 import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import os from 'node:os';
 import { fileURLToPath } from 'url';
 import { randomUUID, createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -83,7 +84,7 @@ export {
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
 import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
-import { fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
+import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
   analyzeVideoFramesWithQwen,
@@ -3857,12 +3858,11 @@ studioRouter.post('/render/open-output', async (req, res) => {
 });
 
 /* ── 素材库───────────────────────────────────────────────────────────────
-   配置对象存储时，租户素材写入私有 COS 的 materials/tenants/<tenant>/ 前缀；
-   未配置时保留 data/media 本地回退。索引仍存 data/materials.json。
+   新上传的「我的素材」统一由 PocketBase materials 记录及文件字段持久化；
+   data/media 与 data/materials.json 只保留历史兼容读取，不再接收新上传。
 ─────────────────────────────────────────────────────────────────────────── */
 
 const MEDIA_DIR = path.join(__dirname, '../../data/media');
-const MATERIALS_FILE = path.join(__dirname, '../../data/materials.json');
 const VIDEO_VERSIONS_FILE = path.join(__dirname, '../../data/studio-video-versions.json');
 
 interface VideoGenerationVersion {
@@ -3930,8 +3930,8 @@ interface Material {
   height?: number;
   aspectRatio?: number;
   size: string;
-  file: string;     // data/media 下的文件名
-  url: string;      // /media/<file>
+  file: string;     // PB 文件名；历史记录可能仍是 data/media 相对路径
+  url: string;      // 受保护的 PB 播放路由；历史记录可能仍是 /media/<file>
   poster?: string;  // 封面用的帧画面：视频抽首帧，图片即自身
   objectKey?: string;
   posterObjectKey?: string;
@@ -3939,7 +3939,23 @@ interface Material {
   tenantId?: string;
   usage?: MaterialUsage;   // editable=可剪辑；reference_only=仅供对标分析，禁止进入公共下载库
   sourceType?: string;
+  sourceName?: string;
+  sourceProvider?: string;
+  sourceCreator?: string;
   sourceUrl?: string;
+  licenseEvidence?: string;
+  licenseName?: string;
+  licenseUrl?: string;
+  attributionText?: string;
+  licenseEvidenceCapturedAt?: string;
+  licenseEvidenceTextSha256?: string;
+  importBatchId?: string;
+  manifestSha256?: string;
+  importedAt?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  provenance?: Record<string, unknown>;
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
@@ -4557,26 +4573,22 @@ studioRouter.get('/materials/pb/:id/:kind', async (req, res) => {
   if (!await getCloudMaterialRecord(req.params.id, tenantId)) { res.status(404).end(); return; }
   let upstream = await fetchCloudMaterial(req.params.id, field, req.headers.range, tenantId);
   if (!upstream && field === 'posterFile') {
-    const cacheDir = path.join(MEDIA_DIR, 'cloud-poster-cache');
-    const cachePath = path.join(cacheDir, `${req.params.id}.jpg`);
-    if (!fs.existsSync(cachePath)) {
-      const video = await fetchCloudMaterial(req.params.id, 'videoFile', undefined, tenantId);
-      if (video?.ok) {
-        fs.mkdirSync(cacheDir, { recursive: true });
-        const tempPath = path.join(cacheDir, `${req.params.id}.${Date.now()}.mp4`);
-        try {
-          fs.writeFileSync(tempPath, Buffer.from(await video.arrayBuffer()));
-          await extractPoster(tempPath, cachePath, 1);
-        } finally {
-          fs.rmSync(tempPath, { force: true });
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-poster-'));
+    const mediaPath = path.join(temporary, 'media');
+    const posterPath = path.join(temporary, 'poster.jpg');
+    try {
+      const media = await fetchCloudMaterial(req.params.id, 'videoFile', undefined, tenantId);
+      if (media?.ok) {
+        fs.writeFileSync(mediaPath, Buffer.from(await media.arrayBuffer()), { mode: 0o600 });
+        if (await extractPoster(mediaPath, posterPath, 1)) {
+          res.setHeader('Content-Type', 'image/jpeg');
+          res.setHeader('Cache-Control', 'private, max-age=3600');
+          res.send(fs.readFileSync(posterPath));
+          return;
         }
       }
-    }
-    if (fs.existsSync(cachePath)) {
-      res.setHeader('Content-Type', 'image/jpeg');
-      res.setHeader('Cache-Control', 'private, max-age=86400');
-      res.sendFile(cachePath);
-      return;
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
     }
   }
   if (!upstream || !upstream.body) { res.status(404).end(); return; }
@@ -4596,13 +4608,102 @@ function isMockMaterial(m: Material): boolean {
     || isSyntheticMaterial(m as unknown as Record<string, unknown>);
 }
 
-const MAX_MATERIAL_UPLOAD_BYTES = 110 * 1024 * 1024;
+// PocketBase materials.videoFile is 100 MiB. Reject at the HTTP boundary first
+// so users never finish a larger upload only to have persistence fail later.
+const MAX_MATERIAL_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+function materialUploadFileName(type: Material['type'], mimeType: string): string {
+  const id = randomUUID();
+  const subtype = mimeType.split('/', 2)[1]?.replace('quicktime', 'mov').replace(/[^a-z0-9]/gi, '');
+  const extension = subtype || (type === 'image' ? 'jpg' : type === 'audio' ? 'mp3' : 'mp4');
+  return `${id}.${extension}`;
+}
+
+async function createTransientMaterialPoster(input: {
+  directory: string;
+  mediaPath: string;
+  type: Material['type'];
+  duration: number;
+}): Promise<{ name: string; path: string; contentType: string }> {
+  const jpgPath = path.join(input.directory, 'poster.jpg');
+  if (input.type !== 'audio') {
+    const ok = await extractPoster(input.mediaPath, jpgPath, input.type === 'video' && input.duration > 1 ? 1 : 0);
+    if (ok && fs.statSync(jpgPath).size <= 5 * 1024 * 1024) {
+      return { name: 'poster.jpg', path: jpgPath, contentType: 'image/jpeg' };
+    }
+    fs.rmSync(jpgPath, { force: true });
+  }
+  // PocketBase's historical schema requires posterFile for every material.
+  // Audio and unreadable/unsupported previews get a tiny neutral placeholder;
+  // the original media still remains the sole playback authority.
+  const pngPath = path.join(input.directory, 'poster.png');
+  fs.writeFileSync(pngPath, Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  ));
+  return { name: 'poster.png', path: pngPath, contentType: 'image/png' };
+}
+
+async function saveMaterialUploadToDatabase(input: {
+  tenantId: string;
+  name: string;
+  folder: string;
+  type: Material['type'];
+  duration: number;
+  width: number;
+  height: number;
+  usage: string;
+  sourceType: string;
+  sourceUrl: string;
+  mimeType: string;
+  mediaName: string;
+  mediaPath: string;
+  sizeBytes: number;
+  sha256: string;
+  tempDirectory: string;
+}): Promise<Material> {
+  const requestedUsage: MaterialUsage = input.usage === 'reference_only'
+    || input.sourceType === 'youtube'
+    || /youtube\.com|youtu\.be/i.test(input.sourceUrl)
+    ? 'reference_only'
+    : 'editable';
+  const poster = await createTransientMaterialPoster({
+    directory: input.tempDirectory,
+    mediaPath: input.mediaPath,
+    type: input.type,
+    duration: input.duration,
+  });
+  const record = await createCloudMaterial({
+    tenantId: input.tenantId,
+    title: input.name || input.mediaName,
+    folder: input.folder,
+    type: input.type,
+    duration: Number.isFinite(input.duration) ? Math.max(0, input.duration) : 0,
+    width: input.width > 0 ? Math.round(input.width) : undefined,
+    height: input.height > 0 ? Math.round(input.height) : undefined,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256,
+    scope: 'own',
+    usage: requestedUsage,
+    sourceType: input.sourceType || 'tenant_upload',
+    sourceName: input.name || input.mediaName,
+    sourceProvider: 'tenant',
+    sourceUrl: input.sourceUrl || undefined,
+    provenance: {
+      uploadMethod: 'studio_my_materials',
+      originalName: input.name || input.mediaName,
+      mimeType: input.mimeType,
+      receivedAt: new Date().toISOString(),
+    },
+    media: { name: input.mediaName, path: input.mediaPath, contentType: input.mimeType },
+    poster,
+  });
+  return cloudMaterialView(record) as unknown as Material;
+}
 
 // POST /studio/materials/file
-// Streams a browser-selected file to disk instead of expanding it into a base64
-// string and then duplicating that string again inside JSON.stringify(). A
-// 100 MB video previously needed several hundred MB in the renderer process and
-// could crash Chromium before the request reached the API.
+// Streams a browser-selected file to an OS temp directory, attaches it to the
+// PocketBase materials record, then removes the transient bytes.
 studioRouter.post('/materials/file', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const name = String(req.query.name || '').trim();
@@ -4622,30 +4723,22 @@ studioRouter.post('/materials/file', async (req, res) => {
 
   const declaredLength = Number(req.headers['content-length'] || 0);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_MATERIAL_UPLOAD_BYTES) {
-    res.status(413).json({ ok: false, error: '单个素材不能超过 110 MB' });
+    res.status(413).json({ ok: false, error: '单个素材不能超过 100 MB' });
     return;
   }
 
-  const uploadDir = tenantAssetDir(MEDIA_DIR, tenantId);
-  fs.mkdirSync(uploadDir, { recursive: true });
-  const id = randomUUID();
-  const extFromMime = mimeType.split('/')[1]?.replace('quicktime', 'mov').replace(/[^a-z0-9]/gi, '');
-  const ext = extFromMime || (type === 'image' ? 'jpg' : type === 'audio' ? 'mp3' : 'mp4');
-  const file = `${id}.${ext}`;
-  const relativeFile = tenantAssetRelativePath(tenantId, file);
+  const file = materialUploadFileName(type as Material['type'], mimeType);
   const contentType = materialAssetContentType(file, mimeType);
   if (!materialAssetTypeAllowed(contentType)) {
     res.status(415).json({ ok: false, error: 'unsupported material type' });
     return;
   }
 
-  const useObjectStorage = objectStorageEnabled();
-  const objectKey = useObjectStorage ? materialAssetObjectKey(tenantId, file) : undefined;
-  const tempDir = path.join(MEDIA_DIR, '../material-upload-temp');
-  const storedPath = useObjectStorage ? path.join(tempDir, file) : path.join(MEDIA_DIR, relativeFile);
-  fs.mkdirSync(path.dirname(storedPath), { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-upload-'));
+  const storedPath = path.join(tempDir, file);
 
   let bytes = 0;
+  const digest = createHash('sha256');
   const sizeLimiter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       bytes += chunk.length;
@@ -4654,203 +4747,79 @@ studioRouter.post('/materials/file', async (req, res) => {
         callback(error);
         return;
       }
+      digest.update(chunk);
       callback(null, chunk);
     },
   });
   try {
     await pipeline(req, sizeLimiter, fs.createWriteStream(storedPath, { flags: 'wx' }));
   } catch (error) {
-    fs.rmSync(storedPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
     const tooLarge = (error as NodeJS.ErrnoException)?.code === 'MATERIAL_TOO_LARGE';
     res.status(tooLarge ? 413 : 400).json({
       ok: false,
-      error: tooLarge ? '单个素材不能超过 110 MB' : '素材上传中断，请重试',
+      error: tooLarge ? '单个素材不能超过 100 MB' : '素材上传中断，请重试',
     });
     return;
   }
   if (!bytes) {
-    fs.rmSync(storedPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
     res.status(400).json({ ok: false, error: '素材文件为空' });
     return;
   }
 
-  let poster: string | undefined;
-  let posterObjectKey: string | undefined;
-  let posterBuffer: Buffer | undefined;
-  if (type === 'image') {
-    poster = useObjectStorage ? undefined : `/media/${relativeFile}`;
-    posterObjectKey = objectKey;
-  } else if (type === 'video') {
-    const posterFile = `${id}.poster.jpg`;
-    const relativePoster = tenantAssetRelativePath(tenantId, posterFile);
-    const posterPath = useObjectStorage ? path.join(tempDir, posterFile) : path.join(MEDIA_DIR, relativePoster);
-    const at = duration > 1 ? 1 : 0;
-    const ok = await extractPoster(storedPath, posterPath, at);
-    if (ok) {
-      if (useObjectStorage) {
-        posterObjectKey = materialAssetObjectKey(tenantId, posterFile);
-        posterBuffer = fs.readFileSync(posterPath);
-        fs.rmSync(posterPath, { force: true });
-      } else {
-        poster = `/media/${relativePoster}`;
-      }
-    }
-  }
-
   try {
-    if (objectKey) {
-      // The browser-to-server leg is streamed, which is the renderer OOM fix.
-      // Keep the existing R2 helper compatible by materializing only on the
-      // server when object storage is enabled.
-      await r2Upload({ key: objectKey, body: fs.readFileSync(storedPath), contentType });
+    const material = await saveMaterialUploadToDatabase({
+      tenantId, name, folder, type: type as Material['type'], duration, width, height,
+      usage, sourceType, sourceUrl, mimeType: contentType, mediaName: file,
+      mediaPath: storedPath, sizeBytes: bytes, sha256: digest.digest('hex'), tempDirectory: tempDir,
+    });
+    if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') {
+      void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
     }
-    if (posterObjectKey && posterObjectKey !== objectKey && posterBuffer) {
-      await r2Upload({ key: posterObjectKey, body: posterBuffer, contentType: 'image/jpeg' });
-      if (!await r2Head(posterObjectKey)) throw new Error('material poster upload verification failed');
-    }
+    res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
   } catch (error) {
-    if (posterObjectKey && posterObjectKey !== objectKey) await r2Delete(posterObjectKey).catch(() => undefined);
-    if (objectKey) await r2Delete(objectKey).catch(() => undefined);
-    fs.rmSync(storedPath, { force: true });
-    console.error('[materials] streamed object upload failed', error instanceof Error ? error.message : error);
-    res.status(503).json({ ok: false, error: 'material storage unavailable' });
-    return;
+    console.error('[materials] database upload failed', error instanceof Error ? error.message : error);
+    res.status(503).json({ ok: false, error: '素材数据库暂时不可用，请稍后重试' });
   } finally {
-    if (useObjectStorage) fs.rmSync(storedPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-
-  const requestedUsage: MaterialUsage = usage === 'reference_only' || sourceType === 'youtube' || /youtube\.com|youtu\.be/i.test(sourceUrl)
-    ? 'reference_only'
-    : 'editable';
-  const material: Material = {
-    id,
-    name: name || file,
-    folder,
-    type: type as Material['type'],
-    duration: Number.isFinite(duration) ? Math.max(0, duration) : 0,
-    width: width > 0 ? Math.round(width) : undefined,
-    height: height > 0 ? Math.round(height) : undefined,
-    aspectRatio: width > 0 && height > 0 ? +(width / height).toFixed(4) : undefined,
-    size: humanSize(bytes),
-    file: relativeFile,
-    url: useObjectStorage ? '' : `/media/${relativeFile}`,
-    poster,
-    objectKey,
-    posterObjectKey,
-    scope: 'own',
-    tenantId,
-    usage: requestedUsage,
-    sourceType: sourceType || undefined,
-    sourceUrl: sourceUrl || undefined,
-    createdAt: new Date().toISOString(),
-  };
-  const list = loadMaterials();
-  list.push(material);
-  persistMaterials(list);
-  if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
-  res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
 });
 
 // POST /studio/materials  Body: { name, folder?, type, duration?, dataBase64, mimeType?, scope? } → 上传单个文件
 studioRouter.post('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, scope = 'own', usage, sourceType, sourceUrl } = req.body ?? {};
+  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl } = req.body ?? {};
   if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
   if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }
 
-  const uploadDir = tenantAssetDir(MEDIA_DIR, tenantId);
-  try { fs.mkdirSync(uploadDir, { recursive: true }); } catch { /* ignore */ }
-
-  const id = randomUUID();
-  const extFromMime = (mimeType as string | undefined)?.split('/')[1]?.replace('quicktime', 'mov');
-  const ext = extFromMime || (type === 'image' ? 'jpg' : type === 'audio' ? 'mp3' : 'mp4');
-  const file = `${id}.${ext}`;
+  const file = materialUploadFileName(type, String(mimeType || ''));
   const buf = Buffer.from(String(dataBase64).replace(/^data:[^,]+,/, ''), 'base64');
-  const relativeFile = tenantAssetRelativePath(tenantId, file);
   const contentType = materialAssetContentType(file, String(mimeType || ''));
   if (!materialAssetTypeAllowed(contentType)) { res.status(415).json({ ok: false, error: 'unsupported material type' }); return; }
-  if (!buf.length || buf.length > MAX_MATERIAL_UPLOAD_BYTES) { res.status(413).json({ ok: false, error: 'material must be between 1 byte and 110 MB' }); return; }
-  const useObjectStorage = objectStorageEnabled();
-  const objectKey = useObjectStorage ? materialAssetObjectKey(tenantId, file) : undefined;
-  const tempDir = path.join(MEDIA_DIR, '../material-upload-temp');
+  if (!buf.length || buf.length > MAX_MATERIAL_UPLOAD_BYTES) { res.status(413).json({ ok: false, error: 'material must be between 1 byte and 100 MB' }); return; }
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-upload-'));
   const tempFile = path.join(tempDir, file);
-  if (useObjectStorage) {
-    fs.mkdirSync(tempDir, { recursive: true });
-    fs.writeFileSync(tempFile, buf);
-  } else {
-    fs.writeFileSync(path.join(MEDIA_DIR, relativeFile), buf);
-  }
-
-  // 封面用帧画面：视频抽首帧（≈1s 处，太短则取 0），图片用自身，音频无
-  let poster: string | undefined;
-  let posterObjectKey: string | undefined;
-  let posterBuffer: Buffer | undefined;
-  if (type === 'image') {
-    poster = useObjectStorage ? undefined : `/media/${relativeFile}`;
-    posterObjectKey = objectKey;
-  } else if (type === 'video') {
-    const posterFile = `${id}.poster.jpg`;
-    const relativePoster = tenantAssetRelativePath(tenantId, posterFile);
-    const posterPath = useObjectStorage ? path.join(tempDir, posterFile) : path.join(MEDIA_DIR, relativePoster);
-    const at = (Number(duration) || 0) > 1 ? 1 : 0;
-    const ok = await extractPoster(useObjectStorage ? tempFile : path.join(MEDIA_DIR, relativeFile), posterPath, at);
-    if (ok) {
-      if (useObjectStorage) {
-        posterObjectKey = materialAssetObjectKey(tenantId, posterFile);
-        posterBuffer = fs.readFileSync(posterPath);
-        fs.rmSync(posterPath, { force: true });
-      } else poster = `/media/${relativePoster}`;
-    }
-  }
+  fs.writeFileSync(tempFile, buf, { mode: 0o600 });
 
   try {
-    if (objectKey) await r2Upload({ key: objectKey, body: buf, contentType });
-    if (posterObjectKey && posterObjectKey !== objectKey && posterBuffer) {
-      await r2Upload({ key: posterObjectKey, body: posterBuffer, contentType: 'image/jpeg' });
-      if (!await r2Head(posterObjectKey)) throw new Error('material poster upload verification failed');
+    const material = await saveMaterialUploadToDatabase({
+      tenantId, name: String(name || ''), folder: String(folder || 'upload'), type,
+      duration: Number(duration) || 0, width: Number(width) || 0, height: Number(height) || 0,
+      usage: String(usage || ''), sourceType: String(sourceType || ''), sourceUrl: String(sourceUrl || ''),
+      mimeType: contentType, mediaName: file, mediaPath: tempFile, sizeBytes: buf.length,
+      sha256: createHash('sha256').update(buf).digest('hex'), tempDirectory: tempDir,
+    });
+    if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') {
+      void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
     }
+    res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
   } catch (error) {
-    if (posterObjectKey && posterObjectKey !== objectKey) await r2Delete(posterObjectKey).catch(() => undefined);
-    if (objectKey) await r2Delete(objectKey).catch(() => undefined);
-    fs.rmSync(tempFile, { force: true });
-    console.error('[materials] COS upload failed', error instanceof Error ? error.message : error);
-    res.status(503).json({ ok: false, error: 'material storage unavailable' });
-    return;
+    console.error('[materials] database upload failed', error instanceof Error ? error.message : error);
+    res.status(503).json({ ok: false, error: '素材数据库暂时不可用，请稍后重试' });
   } finally {
-    if (useObjectStorage) fs.rmSync(tempFile, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-
-  const requestedUsage: MaterialUsage = usage === 'reference_only' || sourceType === 'youtube' || /youtube\.com|youtu\.be/i.test(String(sourceUrl || ''))
-    ? 'reference_only'
-    : 'editable';
-  const material: Material = {
-    id,
-    name: name || file,
-    folder,
-    type,
-    duration: Number(duration) || 0,
-    width: Math.max(0, Math.round(Number(width) || 0)) || undefined,
-    height: Math.max(0, Math.round(Number(height) || 0)) || undefined,
-    aspectRatio: Number(width) > 0 && Number(height) > 0 ? +(Number(width) / Number(height)).toFixed(4) : undefined,
-    size: humanSize(buf.length),
-    file: relativeFile,
-    url: useObjectStorage ? '' : `/media/${relativeFile}`,
-    poster,
-    objectKey,
-    posterObjectKey,
-    // Reference material must never be promoted into the shared download library.
-    scope: 'own',
-    tenantId,
-    usage: requestedUsage,
-    sourceType: sourceType ? String(sourceType) : undefined,
-    sourceUrl: sourceUrl ? String(sourceUrl) : undefined,
-    createdAt: new Date().toISOString(),
-  };
-  const list = loadMaterials();
-  list.push(material);
-  persistMaterials(list);
-  if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
-  res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
 });
 
 studioRouter.post('/materials/:id/analysis', async (req, res) => {
@@ -4907,10 +4876,9 @@ async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Pro
   }
 
   await updateCloudMaterial(pbId, { segmentAnalysisStatus: 'analyzing', segmentAnalysisError: '' });
-  const tempDir = path.join(MEDIA_DIR, '../analysis-temp');
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-analysis-'));
   const tempPath = path.join(tempDir, `material-${pbId}.mp4`);
   try {
-    fs.mkdirSync(tempDir, { recursive: true });
     const media = await fetchCloudMaterial(pbId, 'videoFile', undefined, tenantId);
     if (!media?.ok) throw new Error('云端素材文件不可读');
     const buffer = Buffer.from(await media.arrayBuffer());
@@ -4927,10 +4895,10 @@ async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Pro
     let fallbackStart = 0;
     for (let index = 0; index < details.length; index++) {
       const segment = analysisDetailToSegment(material, details[index]!, index, fallbackStart);
-      const posterFile = tenantAssetRelativePath(tenantId, `${material.id}.segment-${index + 1}.jpg`);
-      if (await extractPoster(tempPath, path.join(MEDIA_DIR, posterFile), Math.min(segment.end, segment.start + 0.2))) {
-        segment.poster = `/media/${posterFile}`;
-      }
+      // Segment metadata is durable; derivative frames are intentionally not
+      // mirrored into the application server's data/media directory. The UI
+      // can use the material's database-backed poster until PB gains a
+      // dedicated multi-file field for per-segment thumbnails.
       segments.push(segment);
       fallbackStart = segment.end;
     }
@@ -4943,7 +4911,7 @@ async function analyzeCloudMaterialSegments(pbId: string, tenantId: string): Pro
     await updateCloudMaterial(pbId, { segmentAnalysisStatus: 'failed', segmentAnalysisError: message });
     return { status: 500, body: { ok: false, error: message } };
   } finally {
-    fs.rmSync(tempPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -4960,18 +4928,24 @@ studioRouter.post('/materials/:id/analyze-segments', async (req, res) => {
 
 studioRouter.post('/materials/:id/classify', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const list = loadMaterials();
-  const material = list.find(item => item.id === req.params.id && item.tenantId === tenantId);
+  const inventory = await readMaterialLibrary(tenantId);
+  const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared') as Material | undefined;
   if (!material) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
   if (material.type !== 'video') { res.status(400).json({ ok: false, error: '仅视频素材支持智能分类' }); return; }
-  const tempDir = path.join(MEDIA_DIR, '../analysis-temp');
-  fs.mkdirSync(tempDir, { recursive: true });
-  const mediaPath = material.objectKey ? path.join(tempDir, `classify-${material.id}${path.extname(material.file) || '.mp4'}`) : path.join(MEDIA_DIR, material.file);
+  const cloudId = material.id.startsWith('pb-') ? material.id.slice(3) : '';
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-classify-'));
+  const mediaPath = cloudId || material.objectKey
+    ? path.join(tempDir, `classify${path.extname(material.file) || '.mp4'}`)
+    : path.join(MEDIA_DIR, material.file);
   try {
-    if (material.objectKey) {
+    if (cloudId) {
+      const downloaded = await fetchCloudMaterial(cloudId, 'videoFile', undefined, tenantId);
+      if (!downloaded?.ok) throw new Error('素材数据库中的原片不可读');
+      fs.writeFileSync(mediaPath, Buffer.from(await downloaded.arrayBuffer()), { mode: 0o600 });
+    } else if (material.objectKey) {
       const downloaded = await r2Download(material.objectKey);
       if (!downloaded?.buf.length) throw new Error('COS 素材文件不存在');
-      fs.writeFileSync(mediaPath, downloaded.buf);
+      fs.writeFileSync(mediaPath, downloaded.buf, { mode: 0o600 });
     }
     const frames = await extractQwenAnalysisFrames(mediaPath, 8, material.duration);
     const classified = await classifyMaterialFramesWithQwen({ name: material.name, frames });
@@ -4979,12 +4953,14 @@ studioRouter.post('/materials/:id/classify', async (req, res) => {
     material.applicability = classified.applicability;
     material.shotFunction = classified.shotFunctions.join(',');
     material.tags = classified.tags.join(',');
-    updateLocalMaterial(material.id, tenantId, { industry: material.industry, applicability: material.applicability, shotFunction: material.shotFunction, tags: material.tags });
+    const changes = { industry: material.industry, applicability: material.applicability, shotFunction: material.shotFunction, tags: material.tags };
+    const saved = cloudId ? await updateCloudMaterial(cloudId, changes) : updateLocalMaterial(material.id, tenantId, changes);
+    if (!saved) throw new Error('素材分类写回失败');
     res.json({ ok: true, material: await materialResponse(material, tenantId) });
   } catch (error) {
     res.status(500).json({ ok: false, error: String(error instanceof Error ? error.message : error).slice(0, 500) });
   } finally {
-    if (material.objectKey) fs.rmSync(mediaPath, { force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
@@ -5070,6 +5046,16 @@ studioRouter.patch('/materials/:id', async (req, res) => {
 // DELETE /studio/materials/:id
 studioRouter.delete('/materials/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
+  if (req.params.id.startsWith('pb-')) {
+    try {
+      const result = await deleteOwnedCloudMaterial(req.params.id.slice(3), tenantId);
+      if (result === 'not_found') { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(503).json({ ok: false, error: error instanceof Error ? error.message : '素材数据库删除失败' });
+    }
+    return;
+  }
   const list = loadMaterials();
   const m = list.find(x => x.id === req.params.id && x.tenantId === tenantId);
   if (!m) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }

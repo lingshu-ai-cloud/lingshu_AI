@@ -35,6 +35,10 @@ import {
   parseStoredSocialScriptBaseline,
   publicSocialScriptBaselineSummary,
 } from './socialContentScriptBaseline.js';
+import {
+  parseStoredSocialDirectorPlan,
+  publicSocialDirectorPlanSummary,
+} from './socialContentDirectorPlan.js';
 
 const storedCount = (value: unknown): number => {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) {
@@ -198,6 +202,7 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
   }
   const theme = parseSocialTaskThemeSelection(record.theme_selection);
   const scriptBaseline = publicSocialScriptBaselineSummary(parseStoredSocialScriptBaseline(record.script_baseline));
+  const directorPlan = publicSocialDirectorPlanSummary(parseStoredSocialDirectorPlan(record.director_plan));
   const requirements = publicMaterialRequirements(parseStoredMaterialRequirements(record.material_requirements));
   const requirementReadiness = materialReadiness(requirements);
   const sourceCount = storedCount(record.source_count);
@@ -237,6 +242,7 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
     theme,
     ...(theme ? { materialReadiness: requirementReadiness } : {}),
     ...(scriptBaseline ? { scriptBaseline } : {}),
+    ...(directorPlan ? { directorPlan } : {}),
   };
 }
 

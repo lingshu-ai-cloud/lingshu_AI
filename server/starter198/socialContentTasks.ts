@@ -13,6 +13,7 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow.js';
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
+import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import {
@@ -57,7 +58,10 @@ import { resolveSocialContentFormula, resolveSocialContentFormulaReference } fro
 import {
   freezeSocialScriptBaseline,
   parseStoredSocialScriptBaseline,
+  verifiedSocialScriptContext,
+  type StoredSocialScriptBaseline,
 } from './socialContentScriptBaseline.js';
+import { resolveSocialInspirationScript } from './socialContentScriptSources.js';
 
 const TASK_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
 const SOURCE_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
@@ -187,6 +191,32 @@ async function optionalFormulaForTheme(input: {
   }
 }
 
+async function groundedScriptBaseline(input: {
+  tenantId: string;
+  brief: SocialContentTaskDetail['brief'];
+  theme: NonNullable<SocialContentTaskDetail['theme']>;
+  formula: Awaited<ReturnType<typeof optionalFormulaForTheme>>;
+  lockedAt: string;
+  previous?: StoredSocialScriptBaseline | null;
+}): Promise<StoredSocialScriptBaseline> {
+  const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
+  const verifiedContext = profile
+    ? verifiedSocialScriptContext(profile, input.brief.productRef)
+    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
+  const inspiration = input.theme.themeId
+    ? await resolveSocialInspirationScript({ tenantId: input.tenantId, themeId: input.theme.themeId, verifiedContext })
+    : null;
+  return freezeSocialScriptBaseline({
+    brief: input.brief,
+    theme: input.theme,
+    formula: input.formula,
+    inspiration,
+    verifiedContext,
+    lockedAt: input.lockedAt,
+    previous: input.previous,
+  });
+}
+
 export async function createSocialContentTask(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -234,7 +264,13 @@ export async function createSocialContentTask(input: {
         ? initialMaterialRequirements(theme.themeId, timestamp, selectedFormula, 'advisory')
         : { formulaReference: null, requirements: [] };
       const scriptBaseline = theme?.classificationStatus === 'confirmed' && theme.themeId
-        ? freezeSocialScriptBaseline({ brief, theme, formula: selectedFormula, lockedAt: timestamp })
+        ? await groundedScriptBaseline({
+            tenantId: input.tenantId,
+            brief,
+            theme,
+            formula: selectedFormula,
+            lockedAt: timestamp,
+          })
         : null;
       await input.repository.create(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, {
         task_id: taskId,
@@ -245,6 +281,7 @@ export async function createSocialContentTask(input: {
         theme_selection: theme ?? '',
         formula_reference: material.formulaReference ?? '',
         script_baseline: scriptBaseline ?? '',
+        director_plan: '',
         material_requirements: material.requirements,
         legacy_creation_route: input.value.legacyCreationRoute ?? '',
         package_selection: packageSelection,
@@ -361,7 +398,8 @@ export async function updateSocialContentTask(input: {
                 tenantId: input.tenantId,
                 themeId: theme.themeId,
               }));
-        scriptBaseline = freezeSocialScriptBaseline({
+        scriptBaseline = await groundedScriptBaseline({
+          tenantId: input.tenantId,
           brief,
           theme,
           formula: frozenFormula,
@@ -385,6 +423,7 @@ export async function updateSocialContentTask(input: {
         theme_selection: theme ?? '',
         formula_reference: material.formulaReference ?? '',
         script_baseline: scriptBaseline ?? '',
+        ...((formulaThemeChanged || hasThemeInput || scriptFieldsChanged) ? { director_plan: '' } : {}),
         material_requirements: material.requirements,
         legacy_creation_route: legacyCreationRoute === undefined
           ? socialText(record.legacy_creation_route)
@@ -614,16 +653,19 @@ export async function startSocialContentTask(input: {
     requestHash: socialRequestHash({ expectedVersion: input.expectedVersion }),
     operation: 'start_social_content_task',
     targetId: input.taskId,
+    processingReceipt: { expectedVersion: input.expectedVersion },
     now: input.now,
     replay: async () => ({ task: (await readSocialTaskDetail(input))! }),
     action: async operationId => {
       let record = await requireSocialTask(input);
       if (socialText(record.last_operation_id) === operationId) return { task: (await readSocialTaskDetail(input))! };
       const projectionOperationId = `${operationId}:prestart`;
-      if (socialText(record.last_operation_id) !== projectionOperationId) {
+      const projectionAlreadyApplied = socialText(record.last_operation_id) === projectionOperationId;
+      if (!projectionAlreadyApplied) {
         assertVersion(record, input.expectedVersion);
       }
-      if (!['draft', 'needs_input', 'plan_review', 'paused', 'attention'].includes(socialText(record.status))) {
+      if (!['draft', 'needs_input', 'plan_review', 'paused', 'attention'].includes(socialText(record.status))
+        && !(projectionAlreadyApplied && socialText(record.status) === 'asset_review')) {
         throw new SocialContentWorkflowError('social_content_task_not_startable', 409);
       }
       // Refresh counters and advisory material suggestions before deciding
@@ -660,6 +702,7 @@ export async function startSocialContentTask(input: {
           subject: {
             type: 'social_content_task',
             id: input.taskId,
+            admissionVersion: input.expectedVersion,
             version: summary.version,
             sourceRefs: (await readSocialTaskDetail(input))!.sources.filter(source => source.status === 'active').map(source => ({
               id: source.sourceId,

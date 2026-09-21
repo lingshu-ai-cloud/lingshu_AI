@@ -207,6 +207,8 @@ export async function executeSocialContentMutation<T extends Record<string, unkn
   requestHash: string;
   operation: string;
   targetId: string;
+  /** Minimal immutable data needed to resume a processing operation safely. */
+  processingReceipt?: Record<string, unknown>;
   action: (operationId: string, recovering: boolean) => Promise<T>;
   /** Rebuild a replay response from canonical domain records, never an expanding audit blob. */
   replay: (operationId: string) => Promise<T>;
@@ -238,7 +240,15 @@ export async function executeSocialContentMutation<T extends Record<string, unkn
             operation: input.operation,
             target_id: input.targetId,
             status: 'processing',
-            result: {},
+            // PocketBase treats an empty object as blank for a required JSON
+            // field. Persist a non-empty processing receipt so the first real
+            // mutation can be created instead of failing before domain work.
+            result: {
+              ...(input.processingReceipt ?? {}),
+              schemaVersion: 'social-content.operation-processing.v1',
+              operationId,
+              targetId: input.targetId,
+            },
             error_code: '',
             http_status: 0,
             created_by: input.userId,

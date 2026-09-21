@@ -1,0 +1,91 @@
+{
+  "manifestVersion": 1,
+  "batchId": "beauty-b2b-seed-example-v1",
+  "tenantId": "",
+  "scope": "shared",
+  "usage": "editable",
+  "capacity": {
+    "maxRecords": 50,
+    "maxTotalBytes": 524288000
+  },
+  "normalization": {
+    "maxWidth": 1080,
+    "crf": 23
+  },
+  "assets": [
+    {
+      "id": "commons-stock-lab-footage-example",
+      "enabled": false,
+      "title": "实验室工作示意画面（示例，默认不导入）",
+      "folder": "beauty_factory",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "United States government work; verify the file page before enabling",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Stock_lab_footage.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "Public Domain",
+        "url": "https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia",
+        "evidence": "The official Wikimedia Commons file page marks this file as public domain; re-check that page immediately before enabling this item.",
+        "capturedAt": "2026-09-20T00:00:00.000Z",
+        "attributionText": "Source: Wikimedia Commons — Stock lab footage.webm"
+      },
+      "approval": {
+        "approvedBy": "replace-with-real-reviewer",
+        "approvedAt": "2026-09-20T00:00:00.000Z",
+        "reference": "replace-with-approval-ticket-id",
+        "rationale": "Disabled format example only. A real reviewer must re-check the file page, replace this text and enable it.",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 15
+      },
+      "industry": "美妆制造",
+      "shotFunction": "实验室研发示意",
+      "applicability": "行业示意，不得宣称为客户自有实验室",
+      "tags": [
+        "实验室",
+        "研发",
+        "质检",
+        "示意画面"
+      ],
+      "visualReview": {
+        "reviewedBy": "replace-with-real-visual-reviewer",
+        "reviewedAt": "2026-09-20T00:00:00.000Z",
+        "reference": "replace-with-visual-review-ticket-id",
+        "rationale": "Disabled format example only. A reviewer must watch this exact 15-second clip and replace every observation before enabling it.",
+        "visualObservations": [
+          "示例占位：启用前必须替换为从完整片段中直接看到的事实"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 15,
+          "subject": [
+            "示例主体"
+          ],
+          "action": "示例动作，启用前必须替换",
+          "shot": "示例景别，启用前必须替换",
+          "camera": "示例运镜，启用前必须替换",
+          "environment": "示例环境，启用前必须替换",
+          "observedFacts": [
+            "示例占位：启用前必须替换为可见事实"
+          ],
+          "confidence": 0.8,
+          "needsReview": false
+        }
+      }
+    }
+  ]
+}

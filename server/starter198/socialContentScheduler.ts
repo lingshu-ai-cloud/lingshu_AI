@@ -129,7 +129,8 @@ async function ensureAutomaticExecution(input: {
     }))),
     packageSelection: normalizedPackages(taskSummary.packageSelection),
     executorAvailable: true,
-    productionPolicy: 'formula_baseline_material_adaptation',
+    productionPolicy: 'director_plan_then_content_render',
+    workflowStages: ['director_planning', 'content_production', 'rendering', 'quality_check', 'review_ready'],
     userReviewRequired: true,
   };
   await ensureRecord({
@@ -204,8 +205,8 @@ async function ensureAutomaticExecution(input: {
       plan_id: planId,
       run_id: runId,
       task_key: SOCIAL_WORKFLOW_TASK_KEY,
-      title: '内容 Agent 自动生成社媒成片',
-      description: '基于已锁定爆款公式脚本基线和客户上传素材，自动完成素材适配、口播、字幕、剪辑与质检。',
+      title: '编导 Agent 策划并交接内容 Agent 成片',
+      description: '编导 Agent 先根据公式／灵感脚本、企业知识和真实素材锁定导演方案；内容 Agent 只执行配音、字幕、剪辑与质检，不重新生成脚本。',
       agent_role: 'content',
       kind: 'production',
       status: 'running',
@@ -270,7 +271,7 @@ async function requireStartOperation(input: {
     || socialText(operation.idempotency_key) !== input.queue.idempotencyKey
     || socialText(operation.operation) !== 'start_social_content_task'
     || socialText(operation.target_id) !== subjectId
-    || socialText(operation.request_hash) !== socialRequestHash({ expectedVersion: input.queue.subject?.version })
+    || socialText(operation.request_hash) !== socialRequestHash({ expectedVersion: input.queue.subject?.admissionVersion })
     || socialText(operation.created_by) !== input.queue.userId
     || !['processing', 'succeeded'].includes(socialText(operation.status))) {
     fail('social_content_schedule_receipt_integrity_violation', 503);
@@ -304,7 +305,15 @@ function assertSubjectMatches(input: {
   const task = socialTaskSummary(input.record);
   if (task.taskId !== subject.id) fail('social_content_orchestrator_subject_invalid', 400);
   if (task.version !== subject.version) fail('social_content_task_version_conflict', 409);
-  if (!STARTABLE_STATUSES.has(task.status)) fail('social_content_task_not_startable', 409);
+  // Public admission already rejected a direct start from asset_review. A
+  // rejected-artifact retry may legitimately project back to asset_review
+  // before enqueue because the rejected artifact remains immutable history;
+  // only a receipt whose admitted and reconciled versions differ can carry
+  // that internal retry state.
+  if (!STARTABLE_STATUSES.has(task.status)
+    && !(task.status === 'asset_review' && subject.admissionVersion !== subject.version)) {
+    fail('social_content_task_not_startable', 409);
+  }
   if (input.sources.length !== task.sourceCount) fail('social_content_source_integrity_violation', 503);
   if (input.sources.some(source => !socialText(source.sourceId))
     || subject.sourceRefs.some(source => !source || !socialText(source.id))
@@ -370,6 +379,7 @@ export async function scheduleSocialContentWork(input: {
 }): Promise<Starter198OrchestratorQueueResult> {
   const subject = input.queue.subject;
   if (!subject || subject.type !== 'social_content_task' || !socialText(subject.id)
+    || !socialText(subject.admissionVersion)
     || !socialText(subject.version)
     || !Array.isArray(subject.sourceRefs)
     || !Array.isArray(subject.packageSelection)

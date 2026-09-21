@@ -22,9 +22,10 @@ const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.tsx', 'utf8');
 const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
+const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePresets.ts', 'utf8');
 
 assert.match(pageSource, /自动交付语言/);
-assert.match(pageSource, /相同 sceneId 翻译、配音、加字幕和配乐/);
+assert.match(pageSource, /相同 sceneId 执行配音、字幕、配乐和渲染/);
 assert.match(pageSource, /需要你观看成片并做判断/, 'the quality gate must explain the exact human decision');
 assert.match(pageSource, /查看成片并处理/, 'the quality gate must expose a direct review action');
 assert.match(pageSource, /nodeDeepLink\(selectedPlanTask, selectedTask, data\.run\.id, data\.deliveries\)/, 'the production scene must use the delivery-enriched project deep link');
@@ -53,11 +54,27 @@ assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'produc
 assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
 assert.match(pageSource, /默认创作流程 · 主题创作/, 'content Agent settings must explain the unified theme workflow');
-assert.match(pageSource, /选主题 → 补素材 → 系统匹配结构 → 制作验收/, 'the theme workflow must show the four user-facing steps');
+assert.match(pageSource, /选主题 → 补素材 → 编导 Agent 定方案 → 内容 Agent 成片 → 用户验收/, 'the theme workflow must show the director-to-content handoff');
 assert.doesNotMatch(pageSource, /<Field label="默认创作方式">/, 'content Agent settings must not expose the legacy route selector');
-assert.match(pageSource, /activeRuleAgent === "content" \? <>[\s\S]{0,1800}主题内容制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind one theme-content switch');
+assert.match(pageSource, /activeRuleAgent === "director" \? <>[\s\S]{0,1800}主题内容制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind the director theme-content switch');
+for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {
+  assert.match(pageSource, new RegExp(`id: ["']${role}["']`), `settings must expose the ${role} role card`);
+}
+assert.doesNotMatch(pageSource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
+assert.match(pageSource, /id: "business"[\s\S]{0,400}workflows: \["content_publish"\]/, 'content publishing belongs to the business Agent');
+assert.match(pageSource, /id: "content"[\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
+assert.match(pageSource, /policyRole: "industry"/, 'the director UI must preserve the legacy approval-policy storage key');
+assert.match(pageSource, /agentApprovalPolicies\[group\.policyRole\]/, 'public roles must read legacy approval policies through an explicit compatibility key');
+assert.match(pageSource, /setAgentApproval\(group\.policyRole/, 'public roles must write legacy approval policies through an explicit compatibility key');
+assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2000}内容发布与回执/, 'publishing controls belong to the business Agent panel');
 assert.match(pageSource, /synchronizeThemeContentWorkflows[\s\S]{0,500}contentCreationWorkflows/, 'saving the unified switch must retain the legacy workflow ids');
 assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Employee weekly planning must enable the theme workflow explicitly');
+for (const persona of ['B2B 从零起步', 'B2B 已有基础', '品牌影响', 'DTC 直接销售']) {
+  assert.match(taskPackagePresetSource, new RegExp(persona), `weekly task packages must include ${persona}`);
+}
+assert.match(pageSource, /让灵小枢生成周任务/);
+assert.match(pageSource, /本周最想解决什么/);
+assert.match(pageSource, /查看并调整具体视频计划（可选）/);
 assert.match(videoPlanEditorSource, /themeWorkflow \? <div[\s\S]{0,500}主题创作[\s\S]{0,500}系统按主题与素材自动匹配制作路径[\s\S]{0,500}: <label[\s\S]{0,200}脚本来源/, 'theme workflow must replace the route selector with a read-only explanation');
 assert.match(videoPlanEditorSource, /themeWorkflow \? '内容参考' : '爆款参考'/, 'legacy clone plans must use a neutral reference label in theme workflow mode');
 assert.match(pageSource, /workspaceView === "overview" && <BusinessLineNav/, 'legacy business filters belong only to production; review has insight categories');
@@ -134,7 +151,7 @@ function task(taskKey: string, kind = 'execution'): WorkflowTask {
     task_key: taskKey,
     title: taskKey,
     description: '',
-    agent_role: 'planner',
+    agent_role: 'orchestrator',
     kind,
     status: 'pending',
     sequence: 1,
@@ -156,7 +173,7 @@ assert.deepEqual(
 );
 
 const publishPlan: PlanTask = {
-  key: 'publishing_calendar', title: 'Publishing calendar', description: '', agentRole: 'publishing', kind: 'activation', sequence: 9,
+  key: 'publishing_calendar', title: 'Publishing calendar', description: '', agentRole: 'business', kind: 'activation', sequence: 9,
   priority: 'high', requiresApproval: false, dependsOn: ['content_release_approval'], expectedMinutes: 1,
   businessDomain: 'publishing', capabilityKey: 'publishing.calendar', destination: 'smartAssets', destinationView: 'publish',
   statusSource: 'posts.stats.status', executionMode: 'observe', externalEffect: 'schedule',

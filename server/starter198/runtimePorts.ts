@@ -23,6 +23,9 @@ export interface Starter198OrchestratorQueuePort {
     subject?: {
       type: 'social_content_task';
       id: string;
+      /** Task version presented when the durable start command was admitted. */
+      admissionVersion: string;
+      /** Task version after the pre-start projection has been reconciled. */
       version: string;
       sourceRefs: Array<{ id: string; version?: string }>;
       packageSelection: Array<{ kind: string; packageKey: string; version: string }>;

@@ -222,7 +222,7 @@ function ReviewStep({ draft, files, task }: { draft: SocialContentDraft; files: 
       <dl className="mt-5 space-y-3 text-xs">
         {[['主题', theme], ['具体内容', draft.topic], ['产品', draft.productName], ['客户', draft.audience], ['目标', draft.primaryGoal], ['输出', output], ['资料', `${existingCount} 项已关联 · ${pendingCount} 项待新增`]].map(([label, value]) => <div key={label} className="border-b border-white/10 pb-3 last:border-0 last:pb-0"><dt className="text-[10px] font-bold text-emerald-200/80">{label}</dt><dd className="mt-1 leading-5 text-white/90">{value || '未填写'}</dd></div>)}
       </dl>
-      <div className="mt-5 rounded-lg bg-white/10 px-3 py-3 text-[11px] leading-5 text-white/80">企业资料和至少一份真实素材关联后即可开始制作。拍摄建议仅作参考，不会额外阻塞任务。</div>
+      <div className="mt-5 rounded-lg bg-white/10 px-3 py-3 text-[11px] leading-5 text-white/80">确认后，编导 Agent 会自动准备脚本、口播、字幕与镜头节奏，内容 Agent 再按方案生成视频；你无需逐项填写，只需审核成品。</div>
       {draft.desiredDeliveryAt && <div className="mt-3 flex items-center gap-2 text-[11px] font-bold text-emerald-100"><CalendarDays size={13} />期望 {new Date(`${draft.desiredDeliveryAt}T12:00:00`).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })} 交付</div>}
     </aside>
   );

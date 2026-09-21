@@ -8,6 +8,7 @@ import { authHeader } from "./auth";
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
+export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
 
 export type PrimaryGoal = "awareness" | "leads" | "sales" | "reactivation";
 export type PublishingPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
@@ -98,7 +99,7 @@ export interface PlanTask {
   key: string;
   title: string;
   description: string;
-  agentRole: string;
+  agentRole: DigitalEmployeeAgentRole;
   kind: string;
   sequence: number;
   priority: string;
@@ -139,6 +140,7 @@ export function planConfigForDisplay(snapshot: DigitalEmployeeConfig | undefined
   const source = snapshot || current;
   return {
     ...source,
+    team: ["orchestrator", "business", "director", "content", "customer"],
     publishingTargets: Array.isArray(source.publishingTargets) ? source.publishingTargets : [],
     enabledWorkflows: Array.isArray(source.enabledWorkflows) ? source.enabledWorkflows : [],
     constraints: Array.isArray(source.constraints) ? source.constraints : [],
@@ -192,7 +194,7 @@ export interface WorkflowTask {
   task_key: string;
   title: string;
   description: string;
-  agent_role: string;
+  agent_role: DigitalEmployeeAgentRole;
   kind: string;
   status: string;
   sequence: number;
@@ -403,7 +405,7 @@ export interface HandoffSession {
 }
 
 export interface AgentStatus {
-  role: string;
+  role: DigitalEmployeeAgentRole;
   status: string;
   currentTask: string;
   completed: number;
