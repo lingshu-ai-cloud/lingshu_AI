@@ -1,5 +1,5 @@
 /** HeyGen v3 adapter. Never retries a generation with a different idempotency key. */
-export interface HeyGenInput { avatarId: string; voiceId: string; script: string; ratio: string; transparent: boolean; title: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number } }
+export interface HeyGenInput { avatarId: string; voiceId: string; script: string; ratio: string; transparent: boolean; title: string; audioAssetId?: string; audioRef?: { url: string; start: number; duration: number }; engine?: 'avatar_iv' | 'avatar_v'; motionPrompt?: string; expressiveness?: 'low' | 'medium' | 'high' }
 export class HeyGenClient {
   constructor(private key: string, private transport: typeof fetch = fetch) {}
   private async call(path: string, body?: unknown, requestId?: string) {
@@ -16,10 +16,25 @@ export class HeyGenClient {
   }
   async create(input: HeyGenInput, requestId: string): Promise<string> {
     if (!input.avatarId || !input.voiceId || !input.script.trim()) throw new Error('数字人、声音和台词不能为空');
+    const motionPrompt = input.motionPrompt?.trim().slice(0, 300);
+    const expressiveness = input.expressiveness && ['low', 'medium', 'high'].includes(input.expressiveness) ? input.expressiveness : undefined;
     const data = await this.call('', { type: 'avatar', avatar_id: input.avatarId, ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
-      aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' }, requestId);
+      aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4',
+      ...(input.engine ? { engine: { type: input.engine } } : {}), ...(motionPrompt ? { motion_prompt: motionPrompt } : {}), ...(expressiveness ? { expressiveness } : {}) }, requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');
     return data.video_id;
+  }
+  async reconcile(title: string, createdAt: string): Promise<{ id: string; status: string }[]> {
+    const data = await this.call('?limit=50');
+    if (!Array.isArray(data)) return [];
+    const expected = Date.parse(createdAt) / 1000;
+    return data.flatMap((item: any) => {
+      const id = String(item?.id || item?.video_id || '');
+      const created = Number(item?.created_at);
+      return id && item?.title === title && Number.isFinite(created) && Math.abs(created - expected) <= 600
+        ? [{ id, status: String(item.status || 'pending') }]
+        : [];
+    });
   }
   async uploadAudio(bytes: Uint8Array, requestId: string): Promise<string> {
     if (!this.key || !bytes.length || bytes.length > 32 * 1024 * 1024) throw new Error('音频不可用或超过32MB');

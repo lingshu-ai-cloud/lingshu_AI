@@ -56,6 +56,7 @@ export function nodeDeepLink(planned: PlanTask | undefined, runtime: WorkflowTas
 export function nodeState(task?: WorkflowTask) {
   const neutral = 'bg-surface-2 text-text-secondary';
   if (!task) return { label: '未启动', tone: neutral };
+  if (task.status === 'failed' && task.blocked_reason) return { label: '待人工处理', tone: 'bg-amber-dim text-amber' };
   if (task.status === 'failed') return { label: '执行失败', tone: 'bg-surface-2 text-red' };
   if (task.output?.dataStatus === 'no_data') return { label: '暂无数据', tone: neutral };
   if (task.output?.dataStatus === 'not_required') return { label: '本轮无需执行', tone: neutral };

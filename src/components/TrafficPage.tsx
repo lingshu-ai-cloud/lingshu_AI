@@ -66,6 +66,7 @@ import { DouyinPublicationPackagePanel } from './publishing/DouyinPublicationPac
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
 const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
 const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
+const PersonSwapPanel = lazy(() => import('./studio/PersonSwapPanel'));
 const AccountActivity = lazy(() => import('./AccountActivity'));
 const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(module => ({ default: module.CalendarPlanner })));
 
@@ -227,6 +228,7 @@ export default function TrafficPage({
     } catch { /* ignore */ }
     return 'materials';
   });
+  const [creationTool, setCreationTool] = useState<'studio' | 'personSwap'>('studio');
   const [studioMounted, setStudioMounted] = useState(() => initialView === 'create');
   const [publishDraft, setPublishDraft] = useState<PublishDraft | null>(null);
   const [workflowContext, setWorkflowContext] = useState<DigitalEmployeeWorkflowContext | null>(consumeDigitalEmployeeWorkflowContext);
@@ -252,12 +254,14 @@ export default function TrafficPage({
     }
   }, [viewMode]);
 
+  useEffect(() => { setCreationTool('studio'); }, [openProjectsSignal, workflowContextSignal, socialContentTaskId]);
+
   useEffect(() => {
     if (initialView) setViewMode(initialView);
   }, [initialView]);
 
   useEffect(() => {
-    if (restore || kickoff) setViewMode(current => resolveSignalViewMode(current, true));
+    if (restore || kickoff) { setViewMode(current => resolveSignalViewMode(current, true)); setCreationTool('studio'); }
   }, [restore?.key, kickoff?.key]);
 
   useEffect(() => {
@@ -267,6 +271,7 @@ export default function TrafficPage({
         setViewMode(current => resolveNavigationEventViewMode(current, detail.view!));
       }
       if (detail?.page === 'smartAssets' && (detail.view === 'create' || detail.view === 'publish')) {
+        setCreationTool('studio');
         const runId = String(detail.workflowRunId || detail.runId || '').trim();
         const taskId = String(detail.workflowTaskId || detail.taskId || '').trim();
         if (runId && taskId) {
@@ -401,9 +406,13 @@ export default function TrafficPage({
         </div>
       </div>}
 
+      {viewMode === 'create' && <nav aria-label="内容制作工具" className="flex shrink-0 gap-2 border-b border-border bg-white px-4 py-2 sm:px-6">
+        {([{ id: 'studio', label: '内容创作' }, { id: 'personSwap', label: '案例视频换人物' }] as const).map(tool => <button key={tool.id} type="button" aria-pressed={creationTool === tool.id} onClick={() => setCreationTool(tool.id)} className={`rounded-lg px-4 py-2 text-sm font-semibold ${creationTool === tool.id ? 'bg-emerald-50 text-emerald-800' : 'text-text-muted hover:bg-surface-2'}`}>{tool.label}</button>)}
+      </nav>}
       <main className="relative min-h-0 flex-1 overflow-hidden">
+        {viewMode === 'create' && creationTool === 'personSwap' && <div className="h-full overflow-y-auto px-4 pb-6 sm:px-6"><PersonSwapPanel /></div>}
         {(studioMounted || viewMode === 'create') && (
-          <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create'}>
+          <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' && creationTool === 'studio' ? 'h-full' : 'hidden'} aria-hidden={viewMode !== 'create' || creationTool !== 'studio'}>
             <AiCreateStudio key={socialContentTaskId || 'general-studio'} onNavigate={navigateWithinSocialTask} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} />
           </div>
         )}

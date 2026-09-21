@@ -2,20 +2,51 @@ export type AppearancePreference = 'auto' | 'avatar' | 'real' | 'none';
 export type ShotSource = 'material' | 'avatar' | 'ai' | 'shoot';
 export type ShotSound = 'voiceover' | 'source' | 'silent';
 export type ShotLayout = 'full' | 'split' | 'pip';
-export interface PresenterAsset { id: string; name: string; avatarId: string; voiceId: string; authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square' }
+export type AvatarProductionMode = 'presenter' | 'cinematic' | 'overlay';
+export type AvatarCameraMovement = 'fixed' | 'push_in' | 'pull_out' | 'pan_left' | 'pan_right' | 'handheld' | 'tracking' | 'orbit' | 'crane';
+export type AvatarPerformancePreset = 'natural' | 'professional' | 'warm' | 'surprise_marketing';
+export const AVATAR_PERFORMANCE_PRESETS: Record<AvatarPerformancePreset, { label: string; description: string; intensity: number }> = {
+  natural: { label: '自然讲解', description: '动作少，稳定说明', intensity: 0.45 },
+  professional: { label: '专业推荐', description: '稳定、自信、有说服力', intensity: 0.6 },
+  warm: { label: '营销种草', description: '微笑并用手势强调卖点', intensity: 0.75 },
+  surprise_marketing: { label: '强惊喜感', description: '明显反应，控制嘴型并保持本人特征', intensity: 0.7 },
+};
+export interface PresenterAsset { id: string; name: string; avatarId: string; voiceId: string; authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square'; imageUrl?: string; videoUrl?: string; creationMode?: 'quick' | 'expert' }
 export interface ProductionDefaults { preference: AppearancePreference; presenters: PresenterAsset[]; defaultPresenterId: string }
 export interface ShotCandidate { id: string; materialId: string; fingerprint: string; createdAt: string; source: ShotSource; jobId?: string }
 export interface ShotProduction {
   source: ShotSource; sound: ShotSound; layout: ShotLayout; presenterId: string;
   productId: string; productMaterialId: string; backgroundMaterialId: string; backgroundMode: 'independent' | 'baked';
   transparent: boolean; narration: string; locked: boolean; factsConfirmed: boolean;
+  avatarMode: AvatarProductionMode; cameraMovement: AvatarCameraMovement;
+  expression: string; gesture: string; gaze: string; sceneDescription: string;
+  performancePreset?: AvatarPerformancePreset; emotionIntensity?: number; motionPrompt?: string;
   candidates: ShotCandidate[]; adoptedId: string; revision: number;
 }
 export const EMPTY_DEFAULTS: ProductionDefaults = { preference: 'auto', presenters: [], defaultPresenterId: '' };
 export const newShotProduction = (narration = '', presenterId = ''): ShotProduction => ({
   source: 'material', sound: 'voiceover', layout: 'full', presenterId, productId: '', productMaterialId: '', backgroundMaterialId: '',
   backgroundMode: 'independent', transparent: false, narration, locked: false, factsConfirmed: false, candidates: [], adoptedId: '', revision: 1,
+  avatarMode: 'presenter', cameraMovement: 'fixed', expression: '自然可信', gesture: '自然讲解', gaze: '看镜头', sceneDescription: '',
+  performancePreset: 'natural', emotionIntensity: 0.5, motionPrompt: '',
 });
+
+export function avatarMotionPrompt(shot: Pick<ShotProduction, 'performancePreset' | 'emotionIntensity' | 'motionPrompt'>, duration?: number): string {
+  if (shot.motionPrompt?.trim()) return shot.motionPrompt.trim().slice(0, 300);
+  const intensity = Math.max(0, Math.min(1, Number(shot.emotionIntensity ?? 0.5)));
+  const degree = intensity >= 0.75 ? 'clearly' : intensity >= 0.45 ? 'noticeably' : 'subtly';
+  const seconds = Math.max(1, Number(duration) || 4);
+  const first = Math.max(0.5, Math.round(seconds * 0.25 * 10) / 10);
+  const second = Math.max(first + 0.5, Math.round(seconds * 0.75 * 10) / 10);
+  const timing = (opening: string, middle: string, ending: string) =>
+    `0-${first}s: ${opening} ${first}-${second}s: ${middle} ${second}-${seconds}s: ${ending} Preserve the person's original mouth and teeth shape; no enlarged, extra, or overly white teeth.`.slice(0, 300);
+  return ({
+    natural: timing(`Begin calmly with ${degree} natural facial movement.`, 'Use steady eye contact and minimal gestures.', 'Finish relaxed.'),
+    professional: timing('Begin composed and confident.', `Nod ${degree} with one controlled gesture.`, 'Finish with confident eye contact.'),
+    warm: timing('Begin with a warm, natural smile.', `Open one hand and emphasize the benefit ${degree}.`, 'Finish with friendly eye contact.'),
+    surprise_marketing: timing('Show controlled surprise; gently raise eyebrows and keep the mouth relaxed.', `Use a natural light smile. Raise one hand ${degree}; never stretch lips or open wide.`, 'Finish confidently with the same facial identity.'),
+  } as const)[shot.performancePreset || 'natural'];
+}
 
 /** Independent layers don't invalidate an expensive presenter generation. */
 export function shotFingerprint(shot: ShotProduction, context: string): string {
@@ -23,6 +54,8 @@ export function shotFingerprint(shot: ShotProduction, context: string): string {
   try { const value = JSON.parse(context); if (shot.source !== 'avatar' || shot.sound !== 'voiceover') { delete value.audioIdentity; delete value.audioDuration; delete value.audioSegments; delete value.alignment; delete value.alignmentSource; } normalizedContext = JSON.stringify(value); } catch { /* opaque legacy context */ }
   return JSON.stringify({ source: shot.source, sound: shot.sound, narration: shot.source === 'avatar' || shot.sound === 'source' ? shot.narration : '',
     presenterId: shot.presenterId, productId: shot.productId, transparent: shot.transparent,
+    avatarMode: shot.avatarMode || 'presenter', cameraMovement: shot.cameraMovement || 'fixed', expression: shot.expression || '', gesture: shot.gesture || '', gaze: shot.gaze || '', sceneDescription: shot.sceneDescription || '',
+    performancePreset: shot.performancePreset || 'natural', emotionIntensity: shot.emotionIntensity ?? 0.5, motionPrompt: avatarMotionPrompt(shot),
     background: shot.backgroundMode === 'baked' ? shot.backgroundMaterialId : '', context: normalizedContext });
 }
 export function patchShot(current: ShotProduction, patch: Partial<ShotProduction>): ShotProduction {
@@ -76,6 +109,9 @@ export function parseShotCommand(text: string): Partial<ShotProduction> | null {
   if (/^(解锁|解锁镜头)$/.test(value)) return { locked: false };
   if (/^(锁定|锁定镜头)$/.test(value)) return { locked: true };
   if (/^(改成|换成|使用|切换到)?(数字人|数字人口播)$/.test(value)) return { source: 'avatar', sound: 'source' };
+  if (/^(改成|换成|使用|切换到)?(精准口播|稳定口播)$/.test(value)) return { source: 'avatar', avatarMode: 'presenter', transparent: false };
+  if (/^(改成|换成|使用|切换到)?(运镜口播|电影感数字人)$/.test(value)) return { source: 'avatar', avatarMode: 'cinematic', transparent: false };
+  if (/^(改成|换成|使用|切换到)?(透明人物|透明人物层)$/.test(value)) return { source: 'avatar', avatarMode: 'overlay', transparent: true };
   if (/^(改成|换成|使用|切换到)?(真人拍摄|安排拍摄|待拍)$/.test(value)) return { source: 'shoot' };
   if (/^(改成|换成|使用|切换到)?(已有素材|选素材)$/.test(value)) return { source: 'material' };
   if (/^(改成|换成|使用|切换到)?(AI画面|AI创意画面)$/i.test(value)) return { source: 'ai' };

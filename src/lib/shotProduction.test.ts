@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { newShotProduction, patchShot, shotFingerprint, shotBlockers, recommendShot } from './shotProduction.js';
+import { avatarMotionPrompt, newShotProduction, patchShot, shotFingerprint, shotBlockers, recommendShot } from './shotProduction.js';
 import { transcriptMatches } from './shootingWorkflow.js';
 import { automaticAvatarRefreshes, avatarCandidateReady, type AvatarJob } from './shotProduction.js';
 test('review failures stop automatic polling and stale or unverified candidates cannot be adopted', () => {
@@ -70,12 +70,23 @@ test('recorded speech requires actual matching transcription, not a script hint'
   assert.equal(transcriptMatches('产能10台', '产能100台'), false);
   assert.equal(transcriptMatches('Hello, WORLD!', 'hello world'), true);
 });
+test('avatar performance presets produce bounded motion prompts and invalidate stale candidates', () => {
+  const natural = newShotProduction('新品到了');
+  const surprise = { ...natural, performancePreset: 'surprise_marketing' as const, emotionIntensity: 0.8 };
+  assert.match(avatarMotionPrompt(surprise, 4), /0-1s:.*raise eyebrows.*1-3s:.*never stretch lips.*3-4s:.*original mouth and teeth shape/i);
+  assert.match(avatarMotionPrompt(natural, 4), /original mouth and teeth shape.*no enlarged, extra, or overly white teeth/i);
+  assert.notEqual(shotFingerprint(natural, 'ctx'), shotFingerprint(surprise, 'ctx'));
+  assert.equal(avatarMotionPrompt({ ...surprise, motionPrompt: 'Point to the product.' }), 'Point to the product.');
+});
 import { parseShotCommand, productionSummary } from './shotProduction';
 
 test('shot commands are scoped, explicit and never execute supplier actions', () => {
   assert.deepEqual(parseShotCommand('改成画中画'), { layout: 'pip' });
   assert.deepEqual(parseShotCommand('台词改为：这是一台设备。'), { narration: '这是一台设备。' });
   assert.deepEqual(parseShotCommand('解锁镜头'), { locked: false });
+  assert.deepEqual(parseShotCommand('改成精准口播'), { source: 'avatar', avatarMode: 'presenter', transparent: false });
+  assert.deepEqual(parseShotCommand('改成运镜口播'), { source: 'avatar', avatarMode: 'cinematic', transparent: false });
+  assert.deepEqual(parseShotCommand('改成透明人物层'), { source: 'avatar', avatarMode: 'overlay', transparent: true });
   assert.equal(parseShotCommand('把所有镜头生成并直接发布'), null);
   assert.equal(productionSummary({}), '');
 });

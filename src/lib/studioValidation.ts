@@ -10,7 +10,13 @@ export function validateStudioTimeline(items: TimelineValidationItem[]): string[
     const sourceDuration = Math.max(0, item.trimEnd - item.trimStart);
     const playableDuration = sourceDuration / Math.max(0.01, item.speed || 1);
     if (sourceDuration <= 0) issues.push(`分镜 ${index + 1} 的素材入点/出点无效。`);
-    if (item.targetDuration > playableDuration + 0.05) issues.push(`分镜 ${index + 1} 需要 ${item.targetDuration.toFixed(1)}s，但实际素材仅可覆盖 ${playableDuration.toFixed(1)}s。`);
+    const shortfall = item.targetDuration - playableDuration;
+    // The desktop renderer pads a short video by holding its final frame. A
+    // small tail hold is preferable to blocking the entire workflow (and does
+    // not alter speech speed or lip sync). Large gaps still indicate that the
+    // selected material cannot credibly cover the shot.
+    const safeTailHold = Math.min(1, item.targetDuration * 0.25);
+    if (shortfall > safeTailHold + 0.05) issues.push(`分镜 ${index + 1} 需要 ${item.targetDuration.toFixed(1)}s，但实际素材仅可覆盖 ${playableDuration.toFixed(1)}s。`);
   });
   return issues;
 }

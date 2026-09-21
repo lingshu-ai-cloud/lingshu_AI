@@ -1,7 +1,6 @@
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
 import WeeklyReviewPanel from "./WeeklyReviewPanel";
-import AgentExecutionStatus from './AgentExecutionStatus';
 import { agentExecutionSummary } from '../lib/agentExecutionSummary';
 import { taskNeedsAttention, taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 import OperatingAssessmentEditor from './OperatingAssessmentEditor';
@@ -20,7 +19,7 @@ import {
   type WeeklyTaskPackagePresetId,
 } from '../lib/weeklyTaskPackagePresets';
 import DeliveryBoard from "./DeliveryBoard";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -2603,9 +2602,6 @@ function ProductionScene({
                 LIVE
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
-              任务步骤、执行依据、中间产物与真实业务去向同步外显
-            </p>
           </div>
         </div>
         {task && <Badge status={task.status} label={task.output.dataStatus === "no_data" ? "暂无数据" : task.output.dataStatus === "not_required" ? "本轮无需执行" : task.status === "waiting_external" && task.output.waitState ? taskWaitLabels[(task.output.waitState as TaskWaitState).kind] : undefined} />}
@@ -2626,11 +2622,23 @@ function ProductionScene({
                 <p className="text-sm font-black text-slate-900">
                   {task.title}
                 </p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  {task.description}
-                </p>
               </div>
             </div>
+            {taskNeedsAttention(task) && !isQualityReview && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-[11px] font-bold text-amber-700">需要人工介入</p>
+                <p className="mt-1 text-xs font-semibold leading-5 text-amber-950">{task.blocked_reason || '当前节点无法自动继续，请进入对应工作台处理。'}</p>
+              </div>
+            )}
+            {link && taskNeedsAttention(task) && !isQualityReview && (
+              <button type="button" onClick={() => onOpenTask(link)} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 py-3 text-xs font-bold text-white hover:bg-slate-800">
+                {taskBusinessAction(link)} <ExternalLink size={12} />
+              </button>
+            )}
+            {task.description && <details className="mt-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+              <summary className="cursor-pointer text-[11px] font-bold text-slate-600">查看任务说明</summary>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">{task.description}</p>
+            </details>}
             <div className="mt-5 grid grid-cols-2 gap-2 text-[11px]">
               <div className="rounded-xl bg-slate-50 p-3">
                 <p className="text-slate-400">执行角色</p>
@@ -2651,7 +2659,9 @@ function ProductionScene({
                 </p>
               </div>
             </div>
-            {!isQualityReview && <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+            {!isQualityReview && <details className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+              <summary className="cursor-pointer text-xs font-bold text-slate-700">查看执行依据与中间产物</summary>
+              <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
               <div className="flex items-center gap-2 text-blue-800">
                 <BrainCircuit size={15} />
                 <p className="text-xs font-black">执行依据</p>
@@ -2675,8 +2685,8 @@ function ProductionScene({
                   该任务尚未返回能力映射或事实来源，不能据此宣称业务动作已完成。
                 </p>
               )}
-            </div>}
-            {!isQualityReview && <div className="mt-5">
+              </div>
+              <div className="mt-4">
               <p className="text-xs font-bold text-slate-700">中间产物</p>
               {Object.keys(task.output || {}).length ? (
                 <div className="mt-2 space-y-2">
@@ -2699,12 +2709,13 @@ function ProductionScene({
                   Agent 产出会在执行过程中持续写入
                 </div>
               )}
-            </div>}
+              </div>
+            </details>}
             {isQualityReview && <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
               <p className="text-xs font-black text-amber-900">需要你观看成片并做判断</p>
               <p className="mt-2 text-xs leading-5 text-amber-800">{task.blocked_reason || '请确认当前成片是否可以进入发布；如果不通过，可直接修改配乐、配音、分镜素材、字幕、封面或导出规格。'}</p>
             </div>}
-            {link && (
+            {link && (!taskNeedsAttention(task) || isQualityReview) && (
               <div className="mt-4">
                 <button
                   type="button"
@@ -2713,13 +2724,12 @@ function ProductionScene({
                 >
                   {taskBusinessAction(link)} <ExternalLink size={12} />
                 </button>
-                <p className="mt-1.5 text-center text-[10px] text-slate-400">
-                  已保留本次运行与任务位置；完成业务操作后返回“数字员工”即可继续。
-                </p>
               </div>
             )}
             {!readOnly &&
               taskNeedsAttention(task) && !isQualityReview && (
+                <details className="mt-3 rounded-xl border border-slate-200 px-3 py-2">
+                  <summary className="cursor-pointer text-[11px] font-bold text-slate-600">其他处理方式</summary>
                 <BlockedTaskActions
                   key={task.id}
                   task={task}
@@ -2728,6 +2738,7 @@ function ProductionScene({
                   onSkip={onSkip}
                   onComplete={onComplete}
                 />
+                </details>
               )}
             {!isQualityReview && (!readOnly ? (
               <CorrectionPanel
@@ -3558,9 +3569,6 @@ export default function DigitalEmployeePage({
   const [viewGoalId, setViewGoalId] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("today");
-  const [headerCollapsed, setHeaderCollapsed] = useState(true);
-  const headerDetailsId = useId();
-  const executionDetailId = useId();
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
   const [navigationNotice, setNavigationNotice] = useState("");
@@ -3936,30 +3944,13 @@ export default function DigitalEmployeePage({
   return (
     <div className="workspace-canvas digital-employee-page">
       <div className="workspace-frame">
-        <header className="workspace-header">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="workspace-kicker flex items-center gap-2">
-                <Activity size={14} /> LingShu Operations
-              </div>
-              <h1 className="workspace-title mt-2">
-                {PAGE_REGISTRY.digitalEmployees.canonicalTitle}
-              </h1>
-              <p className="workspace-subtitle mt-2">
-                从内容生产到客户承接，每个状态都来自服务端任务、业务快照或真实渠道回执。
-              </p>
-            </div>
+        <header className="flex min-h-[86px] items-center justify-between gap-4 border-b border-border bg-white px-1 py-4">
+          <div className="flex items-center gap-3">
+            <Activity size={18} className="text-accent" />
+            <h1 className="text-xl font-bold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
+          </div>
             {data?.config && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-secondary">
-                <span className="border-l border-border pl-3 font-semibold text-text-primary">
-                  {data.config.companyName}
-                </span>
-                <span>
-                  {autonomyLabel[data.config.autonomyMode]}模式
-                </span>
-                <span>
-                  {operatingState} · {cycleLabel}
-                </span>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
                 <button
                   type="button"
                   onClick={() => setWorkspaceView("rules")}
@@ -3977,41 +3968,8 @@ export default function DigitalEmployeePage({
                 >
                   <History size={13} /> 历史记录
                 </button>
-                <button
-                  type="button"
-                  aria-expanded={!headerCollapsed}
-                  aria-controls={data.run && !viewGoalId ? `${headerDetailsId} ${executionDetailId}` : headerDetailsId}
-                  onClick={() => setHeaderCollapsed(value => !value)}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-slate-50 hover:text-slate-900"
-                >
-                  {headerCollapsed ? '展开信息' : '收起信息'}
-                  <ChevronDown size={13} className={`transition-transform ${headerCollapsed ? '' : 'rotate-180'}`}/>
-                </button>
               </div>
             )}
-          </div>
-          {!data?.config && <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-text-primary">1</span>{operatingState}</div>}
-          {data?.config && data.run && !viewGoalId && <AgentExecutionStatus data={data} onOpen={goLive} collapsed={headerCollapsed} detailId={executionDetailId}/>}
-          <div id={headerDetailsId} hidden={headerCollapsed}>
-            {data?.config && workspaceView === "today" && (!newGoal || Boolean(goal)) && <TodayNextAction
-              data={presentedData || data}
-              onCreateGoal={() => {
-                if (activeRun) { setWorkspaceView("live"); return; }
-                setNewGoal(true);
-                scrollTo(goalPanelRef);
-              }}
-              onReviewPlan={() => goLive()}
-              onOpenExecution={goLive}
-              onOpenReview={() => setWorkspaceView("review")}
-            />}
-          {data?.config && (
-            <p className="mt-4 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-400">
-              <span>{autonomyLabel[data.config.autonomyMode]}模式</span>
-              <span aria-hidden="true">·</span>
-              <span>{goal ? `本轮周期 ${cycleLabel}` : cycleLabel}</span>
-            </p>
-          )}
-          </div>
         </header>
 
         {data?.config && <nav

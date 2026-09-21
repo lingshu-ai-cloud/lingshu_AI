@@ -61,6 +61,7 @@ const COLLECTIONS: CollectionSpec[] = [
       'CREATE INDEX `idx_quote_event_customer` ON `quote_skill_events` (`tenant_id`, `customer_id`, `created_at`)',
     ],
   },
+  { name: 'studio_presenter_assets', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true }, { name: 'kind', type: 'select', required: true, values: ['upload', 'creation'], maxSelect: 1 }, { name: 'payload', type: 'json', required: true, maxSize: 2000000 }], indexes: ['CREATE UNIQUE INDEX idx_presenter_request ON studio_presenter_assets (tenant_id, kind, request_id)'] },
   { name: 'studio_production_defaults', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }] },
   { name: 'studio_avatar_jobs', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }, { name: 'input', type: 'json', maxSize: 2000000 }] },
   {

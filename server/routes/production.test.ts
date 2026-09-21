@@ -33,7 +33,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     if (url.endsWith('/assets')) return new Response(JSON.stringify({ data: { asset_id: 'audio1' } }));
     return new Response(JSON.stringify({ data: init.method === 'POST' ? { video_id: 'remote1' } : { status: 'completed', video_url: 'https://files.heygen.ai/video/test.mp4', duration: 3 } }));
   }) as typeof fetch);
-  const context = 'ctx'; const shot = { ...newShotProduction('hello', 'alice'), source: 'avatar' as const, sound: 'source' as const };
+  const context = 'ctx'; const shot = { ...newShotProduction('hello', 'alice'), source: 'avatar' as const, sound: 'source' as const, performancePreset: 'surprise_marketing' as const, emotionIntensity: 0.8 };
   const project = { id: 'draft', tenant_id: 'A', status: 'draft', spec: { ratio: '9:16', shotProductions: { 'video-1:shot1': shot }, shotProductionContext: context, storyboardAssignments: { 'slot-1': 'keep-existing' } } };
   rows.set('studio_projects/draft', project);
   rows.set('studio_production_defaults/defaults', { id: 'defaults', tenant_id: 'A', payload: { preference: 'avatar', defaultPresenterId: 'alice', presenters: [{ id: 'alice', name: 'Alice', avatarId: 'avatar1', voiceId: 'voice1', authorized: true }] } });
@@ -44,12 +44,26 @@ test('production router persists jobs, never resubmits uncertain operations, iso
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (path: string, body?: unknown, tenant = 'A') => fetch(url + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': tenant }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const input = { projectId: 'draft', assemblyId: 'video-1', shotId: 'shot1', fingerprint: shotFingerprint(shot, context), ratio: '9:16', requestId: 'req1', confirmed: true };
+  const previousRate = process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;
+  const previousCap = process.env.HEYGEN_SINGLE_TEST_CAP_CNY;
+  const previousMotion = process.env.HEYGEN_MOTION_PROMPT_ENABLED;
   try {
+    process.env.HEYGEN_MOTION_PROMPT_ENABLED = 'true';
     assert.equal((await request('/jobs', { ...input, confirmed: false })).status, 400); assert.equal(calls.length, 0);
+    const cinematic = { ...shot, avatarMode: 'cinematic' as const };
+    project.spec.shotProductions['video-1:shot1'] = cinematic;
+    const cinematicResponse = await request('/jobs', { ...input, requestId: 'cinematic', fingerprint: shotFingerprint(cinematic, context) });
+    assert.equal(cinematicResponse.status, 400); assert.match((await cinematicResponse.json()).error, /Cinematic \/ Avatar Shots/); assert.equal(calls.length, 0);
+    project.spec.shotProductions['video-1:shot1'] = shot;
     assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0);
     rows.get('studio_production_defaults/defaults').payload.presenters[0].nativeOrientation = 'landscape';
     assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0);
     rows.get('studio_production_defaults/defaults').payload.presenters[0].nativeOrientation = 'portrait';
+    process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND = '0.58'; process.env.HEYGEN_SINGLE_TEST_CAP_CNY = '5';
+    (project.spec as any).shootingSlots = [{ id: 'shot1', duration: 9 }]; rows.set('studio_projects/draft', project);
+    const overCap = await request('/jobs', { ...input, requestId: 'over-cap' });
+    assert.equal(overCap.status, 400); assert.match((await overCap.json()).error, /超过单次测试上限 ¥5\.00/); assert.equal(calls.length, 0);
+    (project.spec as any).shootingSlots = [{ id: 'shot1', duration: 4 }]; rows.set('studio_projects/draft', project);
     budgetDenied = true; assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0); budgetDenied = false;
     assert.equal((await request('/jobs', input, 'B')).status, 400); assert.equal(calls.length, 0);
     failWrites = true; assert.equal((await request('/jobs', input)).status, 400); assert.equal(calls.length, 0); failWrites = false;
@@ -57,6 +71,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const duplicate = await (await request('/jobs', input)).json(); assert.equal(duplicate.id, first.id); assert.equal(calls.length, 1);
     assert.equal((await request('/jobs', { ...input, requestId: 'parallel-new-id' })).status, 400); assert.equal(calls.length, 1);
     assert.equal(calls[0].body.script, 'hello'); assert.equal(calls[0].body.avatar_id, 'avatar1');
+    assert.deepEqual(calls[0].body.engine, { type: 'avatar_iv' }); assert.equal(calls[0].body.expressiveness, 'high'); assert.match(calls[0].body.motion_prompt, /raise eyebrows.*never stretch lips.*original mouth and teeth shape/i);
     assert.deepEqual(await (await request('/jobs?projectId=draft', undefined, 'B')).json(), []);
     assert.equal((await request(`/jobs/${first.id}/refresh`, {}, 'B')).status, 400);
     const rejected = await (await request(`/jobs/${first.id}/refresh`, {})).json();
@@ -71,12 +86,12 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     loseResponse = true;
     const uncertain = await (await request('/jobs', { ...input, requestId: 'req2' })).json(); assert.equal(uncertain.status, 'uncertain');
     const beforeRefresh = calls.length;
-    const recovered = await request(`/jobs/${uncertain.id}/refresh`, {}); assert.equal(recovered.status, 400);
-    assert.match((await recovered.json()).error, /刷新不会再次付费生成/);
-    assert.equal(calls.length, beforeRefresh);
-    assert.equal((await request('/jobs', { ...input, requestId: 'do-not-rebill' })).status, 400);
-    assert.equal(calls.length, beforeRefresh);
+    const recovered = await (await request(`/jobs/${uncertain.id}/refresh`, {})).json(); assert.equal(recovered.status, 'failed');
+    assert.match(recovered.error, /未创建任务，可重新生成/);
+    assert.equal(calls.length, beforeRefresh + 1, 'reconciliation may only read the provider task list');
+    assert.equal((await request('/jobs', { ...input, requestId: 'reconciled-retry' })).status, 200);
     const shared = { ...shot, sound: 'voiceover' }; project.spec.shotProductions['video-1:shot1'] = shared as typeof shot;
+    rows.get('studio_production_defaults/defaults').payload.presenters[0].creationMode = 'expert';
     Object.assign(project.spec, { voiceoverMode: 'upload', voiceoverUrl: '/tts/shared.wav', shootingSlots: [{ id: 'shot1', duration: 3 }] }); rows.set('studio_projects/draft', project);
     const beforeUnaligned = calls.length;
     assert.equal((await request('/jobs', { ...input, requestId: 'unaligned', fingerprint: shotFingerprint(shared as typeof shot, context) })).status, 400);
@@ -84,6 +99,12 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     Object.assign(project.spec, { lang: 'en', voiceoverDur: 3, voiceoverAudios: { en: { alignmentSource: 'manual_confirmed', cues: [{ text: 'hello', start: 0.5, end: 2.5 }] } } });
     await request('/jobs', { ...input, requestId: 'req3', fingerprint: shotFingerprint(shared as typeof shot, context) });
     assert.equal(calls.at(-1)!.body.audio_asset_id, 'audio1'); assert.equal(calls.at(-1)!.body.script, undefined);
+    assert.deepEqual(calls.at(-1)!.body.engine, { type: 'avatar_v' }); assert.equal(calls.at(-1)!.body.expressiveness, undefined);
     assert.equal(audioRefs.at(-1)?.start, 0.5); assert.equal(audioRefs.at(-1)?.duration, 2);
-  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  } finally {
+    if (previousRate === undefined) delete process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND; else process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND = previousRate;
+    if (previousCap === undefined) delete process.env.HEYGEN_SINGLE_TEST_CAP_CNY; else process.env.HEYGEN_SINGLE_TEST_CAP_CNY = previousCap;
+    if (previousMotion === undefined) delete process.env.HEYGEN_MOTION_PROMPT_ENABLED; else process.env.HEYGEN_MOTION_PROMPT_ENABLED = previousMotion;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });

@@ -36,3 +36,20 @@ test('unconfigured budget fails closed without creating a ledger', async () => {
     assert.equal(fs.existsSync(path.join(root, 'ledger.json')), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('avatar training uses its own reservation without changing video pricing or resetting the ledger', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-avatar-budget-'));
+  const config = { limit: 100_000_000, openingUsed: 10_000_000, reserve: { heygen: 4_000_000, qwen_asr: 1_000_000 } };
+  const budget = new StudioPaidBudget(root, () => config);
+  try {
+    assert.equal(budget.status('heygen', '').allowed, false);
+    assert.equal(budget.status('heygen', '30').reservationCny, 30);
+    assert.equal(budget.status('heygen').reservationCny, 4);
+    await budget.reserve('heygen', 'presenter:first', '30');
+    await budget.reserve('heygen', 'presenter:first', '30');
+    assert.equal(budget.status('heygen').remainingCny, 60);
+    await assert.rejects(budget.reserve('heygen', 'presenter:too-large', '61'), /余额不足/);
+    await assert.rejects(budget.reserve('heygen', 'presenter:missing', ''), /预算/);
+    assert.equal(budget.status('heygen').remainingCny, 60);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

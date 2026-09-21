@@ -33,13 +33,13 @@ export default function ProductionTaskScene({ runId, taskId, initialExpanded = t
   }, [runId, taskId]);
   const task = snapshot?.task;
   const production = task?.output?.production;
-  return <section data-testid="production-task-scene" className={expanded ? 'absolute inset-0 z-[70] flex flex-col overflow-hidden bg-[#f7faf7] text-text-primary' : 'shrink-0 border-b border-border bg-surface-2 px-4 py-3 text-sm text-text-primary'}>
+  return <section data-testid="production-task-scene" className={expanded ? 'shrink-0 border-b border-border bg-[#f7faf7] text-text-primary' : 'shrink-0 border-b border-border bg-surface-2 px-4 py-3 text-sm text-text-primary'}>
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3">
-      <div><h2 className="font-bold text-text-primary">智能员工生产现场 · {task?.title || '正在读取任务'}</h2><p className="mt-1 text-xs text-text-secondary">{error ? '状态连接异常' : task ? statuses[task.status] || task.status : '正在连接'}{snapshot?.stage ? ` · ${stages[snapshot.stage] || snapshot.stage}` : ''}</p></div>
-      <div className="flex flex-wrap gap-2 text-xs"><button type="button" className="rounded-md border border-border bg-white px-3 py-2 font-semibold text-text-secondary hover:bg-surface-2" onClick={requestProductionBack}>返回上一页</button><button type="button" className="rounded-md bg-accent px-3 py-2 font-semibold text-white hover:bg-accent-dim" onClick={() => setExpanded(!expanded)}>{expanded ? '查看关联作品编辑器' : '观看员工现场'}</button></div>
+      <div><h2 className="font-bold text-text-primary">智能员工生产现场 · {task?.title || '正在读取任务'}</h2><p className="mt-1 text-xs text-text-secondary">{error ? '状态连接异常' : task ? task.blocker_reason && ['failed', 'waiting_external'].includes(task.status) ? '1 个节点等待处理' : statuses[task.status] || task.status : '正在连接'}{snapshot?.stage ? ` · ${stages[snapshot.stage] || snapshot.stage}` : ''}</p></div>
+      <div className="flex flex-wrap gap-2 text-xs"><button type="button" className="rounded-md border border-border bg-white px-3 py-2 font-semibold text-text-secondary hover:bg-surface-2" onClick={requestProductionBack}>返回任务执行</button><button type="button" className="rounded-md bg-accent px-3 py-2 font-semibold text-white hover:bg-accent-dim" onClick={() => setExpanded(!expanded)}>{expanded ? '收起执行记录' : task?.blocker_reason ? '查看受阻依据' : '查看执行记录'}</button></div>
     </header>
     <DirectorTaskContext page="smartAssets" runtimeContext={{ runId, taskId, ...directorContext, taskKey: task?.task_key || directorContext?.taskKey }} />
-    {expanded && <div className="grid min-h-0 flex-1 gap-4 overflow-auto p-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+    {expanded && <div className="grid max-h-[58vh] min-h-[24rem] gap-4 overflow-y-auto p-4 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div><p className="mb-3 text-xs text-text-muted">生产过程中显示实际浏览器；选路、质检和已结束任务展示各自保存的结果。</p><AgentBrowserViewport runId={runId} taskId={taskId} taskStatus={task?.status || 'pending'} taskKey={task?.task_key} />
         <p className="mt-3 text-sm leading-6 text-text-secondary">{error ? '连接中断，画面与记录可能不是最新状态。' : !task ? '尚未读取到任务状态，暂不能判断员工是否正在执行。' : task.blocker_reason || (task.status === 'running' ? '正在执行；生成或等待服务返回期间，页面可能保持静止。' : task?.status === 'succeeded' ? '任务已完成，以下记录可查看已执行的工作。' : '当前任务没有持续执行；请结合任务状态和执行记录查看原因。')}</p>
         {error && <p role="alert" className="mt-3 border-l-2 border-amber bg-amber-dim px-3 py-2 text-sm text-amber">{error}</p>}

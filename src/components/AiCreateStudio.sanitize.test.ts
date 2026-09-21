@@ -26,6 +26,23 @@ assert.deepEqual(
   [[0, 5.8], [5.8, 12.5]],
 );
 
+const clockTimelineStoryboard = `00:00–00:04｜近景，固定镜头。旁白：“选定制保温杯，先看这两个细节。”文字后期添加：“定制保温杯，先看两点”。
+00:04–00:10｜特写，固定镜头。旁白：“第一，杯盖里的硅胶圈能拆下来，清洗更方便。”文字后期添加：“硅胶圈可拆洗”。
+00:10–00:17｜近景，平视杯身。旁白：“第二，看标志印在杯身上的实际效果，位置、大小都要看清。”文字后期添加：“确认 Logo 位置与大小”。
+00:17–00:24｜中近景，固定镜头。旁白：“想做品牌定制？把标志、数量和期望交期发来，我们聊具体方案。”后期依次显示：“Logo、数量、期望交期”。`;
+const clockTimelineSlots = parseStoryboardSlots(clockTimelineStoryboard, 24);
+assert.deepEqual(
+  clockTimelineSlots.map(slot => [slot.start, slot.end]),
+  [[0, 4], [4, 10], [10, 17], [17, 24]],
+  '时分秒时间轴应拆成独立分镜',
+);
+assert.deepEqual(formatVoiceoverWithTimestamps(clockTimelineStoryboard).split('\n'), [
+  '[0-4s] 选定制保温杯，先看这两个细节。',
+  '[4-10s] 第一，杯盖里的硅胶圈能拆下来，清洗更方便。',
+  '[10-17s] 第二，看标志印在杯身上的实际效果，位置、大小都要看清。',
+  '[17-24s] 想做品牌定制？把标志、数量和期望交期发来，我们聊具体方案。',
+]);
+
 const fiveSilentScenes = Array.from({ length: 5 }, (_, index) => `[${index * 4}-${(index + 1) * 4}s]
 环境：测试环境${index + 1}
 台词：无

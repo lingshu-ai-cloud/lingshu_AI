@@ -4,6 +4,7 @@ import {
   Check,
   ChevronLeft,
   Clock3,
+  FolderOpen,
   Image as ImageIcon,
   LayoutPanelLeft,
   ListTree,
@@ -54,6 +55,7 @@ export type StudioWorkbenchFrameProps = {
   projectTitlePlaceholder?: string;
   saveStatus: StudioSaveStatus;
   onSave?: () => void;
+  onOpenProjects?: () => void;
   steps?: StudioWorkbenchStep[];
   activeStepId: StudioWorkbenchStep['id'];
   onStepChange?: (stepId: StudioWorkbenchStep['id']) => void;
@@ -260,6 +262,7 @@ export function StudioWorkbenchFrame({
   projectTitlePlaceholder = '未命名项目',
   saveStatus,
   onSave,
+  onOpenProjects,
   steps = defaultSteps,
   activeStepId,
   onStepChange,
@@ -288,7 +291,7 @@ export function StudioWorkbenchFrame({
   return (
     <section
       className={joinClassNames(
-        'flex min-h-[calc(100dvh-7rem)] flex-col overflow-hidden bg-surface xl:h-[calc(100dvh-7rem)] xl:min-h-[640px]',
+        'flex h-full min-h-0 flex-col overflow-hidden bg-surface',
         className,
       )}
       aria-label="内容创作工作台"
@@ -312,6 +315,7 @@ export function StudioWorkbenchFrame({
           <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} />
         </div>
         <div className="flex items-center gap-3 justify-self-end">
+          {onOpenProjects && <button type="button" onClick={onOpenProjects} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary transition-colors hover:bg-surface-2"><FolderOpen size={13} />我的创作</button>}
           <SaveStatusView status={saveStatus} compact />
           {onSave && <button type="button" onClick={onSave} disabled={saveStatus.state === 'saving'} className="rounded-md border border-border bg-white px-3 py-1 text-xs font-bold text-text-primary transition-colors hover:bg-surface-2 disabled:opacity-50">保存草稿</button>}
         </div>
@@ -374,7 +378,7 @@ export function StudioWorkbenchFrame({
         </section>
       )}
 
-      <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5 shadow-[0_-2px_8px_rgba(15,23,42,0.025)] sm:px-5">
+      <footer className="sticky bottom-0 z-50 shrink-0 border-t border-border bg-surface px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-[0_-4px_14px_rgba(15,23,42,0.08)] sm:px-5">
         <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
           <div className="flex min-w-0 items-center gap-3">
             {previousAction && (
