@@ -105,6 +105,7 @@ export interface StoredSocialDirectorPlan {
     objectKey: string | null;
     renderUrl: string;
     availability: 'available_at_lock';
+    selectionOrigin?: SocialProductionAsset['selectionOrigin'];
     clips: Array<{
       clipId: string;
       sourceStart: number;
@@ -306,6 +307,7 @@ function materialSnapshots(input: {
       objectKey: socialText(asset.objectKey) || null,
       renderUrl: asset.url,
       availability: 'available_at_lock' as const,
+      ...(asset.selectionOrigin ? { selectionOrigin: asset.selectionOrigin } : {}),
       clips,
     };
   });
@@ -395,10 +397,13 @@ export function buildSocialDirectorPlan(input: {
   const qualityGates: StoredSocialDirectorPlan['qualityGates'] = [
     {
       gateId: 'script_grounding',
-      status: input.baseline.match?.verifiedKnowledgeSource === 'none'
+      status: input.baseline.source !== 'system_theme_baseline'
+        && input.baseline.match?.verifiedKnowledgeSource === 'none'
         && !input.baseline.match?.inspirationReference
         && !input.baseline.formulaReference ? 'blocked' : 'passed',
-      message: input.baseline.match?.verifiedKnowledgeSource === 'none'
+      message: input.baseline.source === 'system_theme_baseline'
+        ? '采用平台安全主题结构，不使用未经核验的企业或产品事实。'
+        : input.baseline.match?.verifiedKnowledgeSource === 'none'
         && !input.baseline.match?.inspirationReference
         && !input.baseline.formulaReference
         ? '没有可追溯的公式、灵感脚本或企业知识来源。'
@@ -407,7 +412,7 @@ export function buildSocialDirectorPlan(input: {
     {
       gateId: 'material_coverage',
       status: scenes.length >= 2 && input.productionPlan.sourceClipSeconds >= 5.5 ? 'passed' : 'blocked',
-      message: `已锁定 ${scenes.length} 个真实素材镜头，约 ${input.productionPlan.sourceClipSeconds.toFixed(1)} 秒有效画面。`,
+      message: `已锁定 ${scenes.length} 个可用视觉镜头，约 ${input.productionPlan.sourceClipSeconds.toFixed(1)} 秒有效画面。`,
     },
     {
       gateId: 'material_confidence',

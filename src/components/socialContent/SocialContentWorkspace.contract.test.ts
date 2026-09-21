@@ -113,7 +113,10 @@ assert.doesNotMatch(productionProgress, /style=\{\{\s*width|\d+%/, 'production p
 assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|请继续完成脚本|进入内容创作|Studio|旧路线/);
 assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
   'production status must not send the user into the old production route');
-for (const action of ['确认并开始自动制作', '重试自动生成', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
+for (const action of ['确认并开始自动制作', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
+assert.match(editor, /使用推荐设置直接生成/);
+assert.match(sources, /以下资料均为选填增强/);
+assert.match(overview, /可以制作 · 系统将自动补齐/);
 assert.match(productionProgress, /内容 Agent 正按编导方案生成配音、字幕并剪辑视频/);
 assert.match(productionProgress, /补充任务资料/);
 assert.doesNotMatch(editor + landing + overview, /配置爆款公式|填写脚本|填写口播|填写字幕/,

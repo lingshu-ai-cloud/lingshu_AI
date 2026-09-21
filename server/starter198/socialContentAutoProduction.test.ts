@@ -32,7 +32,13 @@ try {
       socialDirectorSceneTimingCues,
     },
     { matchSocialInspirationScript },
-    { applySocialReviewRevision, hasExactTaskProductAssociation, socialReviewRevisionDirective },
+    {
+      applySocialReviewRevision,
+      automaticSocialMaterialEligible,
+      hasExactTaskProductAssociation,
+      socialReviewRevisionDirective,
+      systemThemeGraphicAssets,
+    },
     { synthesizeStudioVoiceForAutomation },
     { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg },
   ] = await Promise.all([
@@ -133,9 +139,74 @@ try {
   });
   assert.equal(fallbackBaseline.source, 'knowledge_fallback', 'generic built-ins are safety skeletons, not matched viral formulas');
   assert.doesNotMatch(fallbackBaseline.scenes.map(scene => scene.narration).join(''), new RegExp(forbiddenUserText));
+  assert.doesNotMatch(fallbackBaseline.scenes.map(scene => scene.narration).join(''), /用户明确关联|user-linked material/i,
+    'verified knowledge without a linked material must never invent a user material association');
   const noVisualPlan = buildSocialProductionPlan({ baseline: fallbackBaseline, assets: [] });
   assert.equal(noVisualPlan.ok, false);
   assert.equal(noVisualPlan.reasonCode, 'no_visual_material', 'text cards can never replace the visual body of a deliverable video');
+
+  const systemBaseline = freezeSocialScriptBaseline({
+    brief: {
+      title: forbiddenUserText, objective: forbiddenUserText, productRef: null, audience: null,
+      markets: ['中国'], languages: ['中文'], platforms: ['抖音'], formats: ['短视频'], aspectRatio: '9:16',
+      cadence: null, requestedOutputCount: 1, dueAt: null, brandNotes: null, restrictions: [], callToAction: forbiddenUserText,
+    },
+    theme: { themeId: 'product_value', inputKind: 'preset', topic: forbiddenUserText, classificationStatus: 'confirmed' },
+    verifiedContext: { productName: null, facts: [], source: 'none', confidence: 0 },
+    lockedAt,
+  });
+  assert.equal(systemBaseline.source, 'system_theme_baseline');
+  assert.equal(systemBaseline.match?.strategy, 'system_theme_baseline');
+  assert.doesNotMatch(systemBaseline.scenes.map(scene => scene.narration).join(' '), new RegExp(forbiddenUserText),
+    'the zero-input baseline uses controlled platform copy and never promotes free-form input to a claim');
+  const systemGraphicDirectory = path.join(temporaryRoot, 'system-graphics');
+  fs.mkdirSync(systemGraphicDirectory, { recursive: true });
+  const systemAssets = await systemThemeGraphicAssets({
+    outputDirectory: systemGraphicDirectory,
+    baseline: systemBaseline,
+  });
+  assert.equal(systemAssets.every(asset => asset.localPath && fs.existsSync(asset.localPath)), true,
+    'the no-material fallback creates real renderable image files');
+  const systemPlan = buildSocialProductionPlan({ baseline: systemBaseline, assets: systemAssets });
+  assert.equal(systemPlan.ok, true, systemPlan.message);
+  assert.equal(systemPlan.scenes.length, 4);
+  const systemDirectorPlan = buildSocialDirectorPlan({
+    taskId: 'zero-input-system-theme-test',
+    baseline: systemBaseline,
+    productionPlan: systemPlan,
+    productionAssets: systemAssets,
+    sourceVersions: Object.fromEntries(systemAssets.map(asset => [asset.sourceId, asset.contentHash || 'generated-system-graphic'])),
+    outputSpec: { aspectRatio: '9:16', resolution: '720p', platform: 'douyin' },
+    bgmSelection: {
+      primary: {
+        trackId: 'test-authorized-bgm', name: '测试授权配乐', mood: '专业',
+        authorization: {
+          status: 'authorized', basis: 'tenant_uploaded_warranty',
+          license: '测试授权', evidence: 'test-catalog:test-authorized-bgm',
+        },
+      },
+      fallbacks: [], fallbackPolicy: 'ordered_preapproved_tracks_only', volume: 0,
+    },
+    formula: null,
+    createdAt: lockedAt,
+  });
+  assert.equal(systemDirectorPlan.status, 'ready');
+  assert.equal(systemDirectorPlan.qualityGates.find(gate => gate.gateId === 'script_grounding')?.status, 'passed');
+  assert.equal(systemDirectorPlan.materialSnapshot.every(asset => asset.selectionOrigin === 'system_graphic'), true);
+
+  assert.equal(automaticSocialMaterialEligible({ id: 'owned', type: 'image', tenantId: 'tenant-a' } as never, 'tenant-a'), true);
+  assert.equal(automaticSocialMaterialEligible({ id: 'other', type: 'image', tenantId: 'tenant-b' } as never, 'tenant-a'), false);
+  assert.equal(automaticSocialMaterialEligible({
+    id: 'shared-without-rights', type: 'video', scope: 'shared', commercialUseApproved: true,
+  } as never, 'tenant-a'), false, 'shared inventory fails closed without derivative rights and license evidence');
+  assert.equal(automaticSocialMaterialEligible({
+    id: 'shared-authorized', type: 'video', scope: 'shared', commercialUseApproved: true,
+    derivativesApproved: true, licenseEvidence: 'license-record-1',
+  } as never, 'tenant-a'), true);
+  assert.equal(automaticSocialMaterialEligible({
+    id: 'shared-reference-only', type: 'video', scope: 'shared', usage: 'reference_only', commercialUseApproved: true,
+    derivativesApproved: true, licenseEvidence: 'license-record-2',
+  } as never, 'tenant-a'), false);
 
   const associationBrief = {
     title: forbiddenUserText, objective: forbiddenUserText, productRef: 'product:current', audience: null,

@@ -290,7 +290,19 @@ export async function createSocialContentArtifact(input: {
           throw new SocialContentWorkflowError('social_content_artifact_not_allowed', 409);
         }
         const summary = socialTaskSummary(task);
-        const readiness = socialTaskReadiness(summary.brief, await readSocialContentSourceCoverage(input));
+        const readiness = socialTaskReadiness(
+          summary.brief,
+          await readSocialContentSourceCoverage(input),
+          summary.theme ? {
+            theme: summary.theme,
+            materialReadiness: summary.materialReadiness ?? {
+              complete: true,
+              requiredCount: 0,
+              satisfiedRequiredCount: 0,
+              blockingRequirementIds: [],
+            },
+          } : undefined,
+        );
         if (!readiness.complete) {
           throw new SocialContentWorkflowError('social_content_task_inputs_incomplete', 409);
         }

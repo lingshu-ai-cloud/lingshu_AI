@@ -76,7 +76,7 @@ function automaticStep(task: TaskListItem): string {
   if (task.status === 'producing' && !directorPlanComplete(task)) return '编导 Agent 正在整理脚本、口播、字幕与镜头节奏';
   if (task.status === 'producing') return '内容 Agent 正按编导方案生成配音、字幕并剪辑视频';
   if (task.status === 'attention') return '自动任务正在重试，导演方案、素材和生成结果均已保留';
-  if (task.status === 'paused') return '自动任务已暂停，导演方案、素材和生成结果均已保留';
+  if (task.status === 'paused') return '自动处理暂时中断，现有导演方案、素材和生成结果均已保留';
   if (task.status === 'asset_review') return '视频、口播和字幕已经生成，等待你审核';
   if (task.status === 'packaging') return '正在整理视频、封面、文案和发布包';
   if (task.status === 'delivered' || task.status === 'awaiting_publish') return '成品与发布包已经准备完成';
@@ -97,7 +97,7 @@ function compactHeadline(task: SocialContentTaskDetail): string {
 
 function activeAgentLabel(task: TaskListItem): string {
   if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return '等待开始';
-  if (task.directorPlan?.status === 'blocked') return '编导 Agent 需处理';
+  if (task.directorPlan?.status === 'blocked') return '编导 Agent 自动修复中';
   if (!directorPlanComplete(task)) return '编导 Agent 策划中';
   if (!CONTENT_COMPLETE_STATUSES.has(task.status)) return '内容 Agent 制作中';
   return socialContentStatusLabel(task.status);
@@ -108,14 +108,14 @@ type AgentStepState = 'pending' | 'current' | 'complete' | 'blocked' | 'unavaila
 function agentStepTone(state: AgentStepState): string {
   if (state === 'complete') return 'border-emerald-200 bg-emerald-50/70 text-emerald-800';
   if (state === 'current') return 'border-blue-200 bg-blue-50/70 text-blue-800';
-  if (state === 'blocked') return 'border-rose-200 bg-rose-50/70 text-rose-800';
+  if (state === 'blocked') return 'border-amber-200 bg-amber-50/70 text-amber-800';
   return 'border-slate-200 bg-slate-50 text-slate-500';
 }
 
 function agentStepLabel(state: AgentStepState): string {
   if (state === 'complete') return '已完成';
   if (state === 'current') return '进行中';
-  if (state === 'blocked') return '需处理';
+  if (state === 'blocked') return '自动修复中';
   if (state === 'unavailable') return '未记录';
   return '等待中';
 }
@@ -124,7 +124,7 @@ function directorSourceLabel(source: SocialDirectorPlanSummary['scriptSource']):
   if (source === 'formula') return '管理员配置的导演模板';
   if (source === 'inspiration_script') return '灵感中心参考脚本';
   if (source === 'knowledge_fallback') return '已确认的企业资料与素材';
-  return '主题、企业资料与现有素材';
+  return '平台通用安全结构';
 }
 
 function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
@@ -185,7 +185,7 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
           </div>
         </details>
       )}
-      {plan?.status === 'blocked' && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-700">编导方案暂未通过自动检查，机器人会保留现有资料并继续重试。</p>}
+      {plan?.status === 'blocked' && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">编导方案暂未通过自动检查，机器人会保留现有资料、切换素材来源并继续修复。</p>}
     </div>
   );
 }
@@ -193,7 +193,7 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
 function statusTone(status: SocialContentTaskStatus): string {
   if (status === 'asset_review') return 'bg-amber-50 text-amber-800';
   if (COMPLETE_STATUSES.has(status)) return 'bg-emerald-50 text-emerald-800';
-  if (status === 'attention' || status === 'paused') return 'bg-rose-50 text-rose-700';
+  if (status === 'attention' || status === 'paused') return 'bg-amber-50 text-amber-800';
   return 'bg-blue-50 text-blue-700';
 }
 
@@ -280,7 +280,7 @@ export default function SocialProductionProgressPanel({
       return onStart ? { label: '确认并开始自动制作', icon: <Bot size={14} />, action: onStart } : null;
     }
     if (task.status === 'attention' || task.status === 'paused') {
-      return onStart ? { label: '重试自动生成', icon: <RotateCcw size={14} />, action: onStart } : null;
+      return onStart ? { label: '继续自动处理', icon: <RotateCcw size={14} />, action: onStart } : null;
     }
     if (task.status === 'asset_review') {
       return onReview ? { label: '审核生成结果', icon: <CheckCircle2 size={14} />, action: onReview } : null;

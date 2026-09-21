@@ -5,6 +5,7 @@ import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
 import { authApi, getToken, type AuthSession } from './lib/auth';
+import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
 import AssistLinkPage from './components/AssistLinkPage';
 import LegalPages from './components/LegalPages';
@@ -740,6 +741,7 @@ export default function App() {
               onSessionRefresh={() => void refreshSession()}
               includeMockCustomers={import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === 'quote'}
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
+              enterpriseHomepageDemo={isEnterpriseHomepageDemoAccount(session.user.email)}
             />
           )}
           {page === 'traffic' && (

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Film, Info, Loader2, Play, RefreshCw, Users } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon, socialBrandLabel } from './SocialPlatformIcon';
+import type { EnterpriseHomepageDemoDataset } from '../mocks/enterpriseHomepageDemo';
 
 interface SocialAccount {
   id: string;
@@ -71,7 +72,7 @@ function normalizeVideo(raw: any, platform: string, account: string): RealVideo 
   };
 }
 
-export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: number; onOpenAccounts?: () => void }) {
+export default function TrafficDataBoard({ onOpenAccounts, demo }: { windowDays?: number; onOpenAccounts?: () => void; demo?: EnterpriseHomepageDemoDataset }) {
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
   const [youtubeAccounts, setYoutubeAccounts] = useState<YouTubeAccount[]>([]);
   const [videos, setVideos] = useState<RealVideo[]>([]);
@@ -79,6 +80,10 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    if (demo) {
+      setLoading(false);
+      return;
+    }
     let alive = true;
     setLoading(true);
     (async () => {
@@ -106,19 +111,21 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [refreshKey]);
+  }, [refreshKey, demo]);
+
+  const effectiveVideos: RealVideo[] = demo?.videos ?? videos;
 
   const summary = useMemo(() => {
-    const accountCount = socialAccounts.length + youtubeAccounts.length;
+    const accountCount = demo?.accounts.length ?? (socialAccounts.length + youtubeAccounts.length);
     return {
       accountCount,
-      videoCount: videos.length,
-      views: videos.reduce((sum, item) => sum + item.viewCount, 0),
-      interactions: videos.reduce((sum, item) => sum + item.likeCount + item.commentCount + num(item.shareCount), 0),
+      videoCount: effectiveVideos.length,
+      views: effectiveVideos.reduce((sum, item) => sum + item.viewCount, 0),
+      interactions: effectiveVideos.reduce((sum, item) => sum + item.likeCount + item.commentCount + num(item.shareCount), 0),
     };
-  }, [socialAccounts.length, videos, youtubeAccounts.length]);
+  }, [demo, effectiveVideos, socialAccounts.length, youtubeAccounts.length]);
 
-  const accounts = [
+  const liveAccounts = [
     ...socialAccounts.map(account => ({
       id: account.id,
       platform: account.platform,
@@ -138,6 +145,7 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
       status: account.status || 'connected',
     })),
   ];
+  const accounts = demo?.accounts ?? liveAccounts;
 
   return (
     <div className="secondary-data-board h-full overflow-y-auto px-4 py-6 sm:px-6" data-lingshu-guide="social-performance">
@@ -147,6 +155,8 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
           <RefreshCw size={12} />刷新
         </button>
       </div>
+
+      {demo && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>演示数据：</strong>账号、视频与互动指标均为模拟，产品与市场来自企业中心。</div>}
 
       {loading ? (
         <div className="flex h-48 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />读取真实社媒数据...</div>
@@ -179,7 +189,7 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
             </div>
           </section>
 
-          {videos.length > 0 ? (
+          {effectiveVideos.length > 0 ? (
             <section className="secondary-panel border border-border bg-white">
               <div className="border-b border-border px-4 py-3">
                 <p className="text-sm font-bold text-text-primary">近期内容明细</p>
@@ -192,7 +202,7 @@ export default function TrafficDataBoard({ onOpenAccounts }: { windowDays?: numb
                     </tr>
                   </thead>
                   <tbody>
-                    {videos.map(video => (
+                    {effectiveVideos.map(video => (
                       <tr key={video.id} className="border-t border-border">
                         <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5"><SocialPlatformIcon platform={video.platform} size={15} />{socialBrandLabel(video.platform)}</span></td>
                         <td className="px-3 py-2">{video.account}</td>

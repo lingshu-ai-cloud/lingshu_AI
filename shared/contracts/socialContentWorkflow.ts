@@ -222,7 +222,13 @@ export interface SocialContentTaskSummary {
   status: SocialContentTaskStatus;
   version: string;
   packageSelection: SocialWorkPackageSelection[];
-  readiness: { complete: boolean; missing: string[] };
+  readiness: {
+    complete: boolean;
+    /** Only conditions that genuinely prevent any safe production. */
+    missing: string[];
+    /** Optional inputs that improve personalization but never block production. */
+    personalizationGaps?: string[];
+  };
   runId: string | null;
   sourceCount: number;
   knowledgeSourceCount: number;

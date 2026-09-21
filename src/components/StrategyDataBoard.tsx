@@ -9,6 +9,11 @@ import type { AgentAction, Page } from '../App';
 import { authHeader } from '../lib/auth';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { useCustomers } from '../hooks/useCustomers';
+import {
+  createEnterpriseHomepageDemo,
+  type EnterpriseHomepageDemoDataset,
+  type EnterpriseHomepageProfile,
+} from '../mocks/enterpriseHomepageDemo';
 
 /* 策略页「数据大屏」——全平台经营数据只在策略 agent 看（负责"想"）；
    流量/转化/留存三个 agent 是干活的工作台，不看数据。
@@ -117,6 +122,48 @@ const defaultActionItems = [
   },
 ];
 
+function buildEnterpriseDemoAdvisor(demo: EnterpriseHomepageDemoDataset): AdvisorResult {
+  const now = new Date().toISOString();
+  return {
+    generatedAt: now,
+    periodLabel: '企业资料演示场景',
+    dataQuality: { note: '本页数据为产品演示；产品、市场和语言来自企业中心，其余客户、账号、订单与指标均为模拟。' },
+    marketContext: { summary: '', sources: [], generatedAt: now },
+    recommendations: [
+      {
+        id: 'demo-first-content',
+        title: `先为 ${demo.products[0]} 生成首条内容`,
+        desc: `以 ${demo.markets[0]} 为演示市场，从爆款库与素材库生成脚本、口播、字幕和镜头匹配。`,
+        basis: `演示依据：企业中心已录入产品「${demo.products[0]}」和市场「${demo.markets[0]}」。`,
+        target: '目标：不补资料也能得到一版可继续编辑的内容方案。',
+        confidence: '高',
+        limitation: '演示指标不用于判断真实平台表现。',
+        action: { page: 'traffic', view: 'create' },
+      },
+      {
+        id: 'demo-inquiry-followup',
+        title: '体验从询盘到人工接管的完整链路',
+        desc: '按演示客户的意向阶段查看首响、需求确认、报价边界和人工接管。',
+        basis: `演示依据：目标市场为 ${demo.markets.join('、')}，输出语言沿用 ${demo.language}。`,
+        target: '目标：验证多语言询盘承接与风险兜底。',
+        confidence: '高',
+        limitation: '客户身份、对话和商机金额均为模拟。',
+        action: { page: 'conversion', view: 'leads' },
+      },
+      {
+        id: 'demo-connect-real-data',
+        title: '完成演示后接入真实经营数据',
+        desc: '连接社媒与 WhatsApp 后，首页会切换到真实账号、询盘和订单口径。',
+        basis: '演示模式只帮助理解产品流程，不替代真实数据接入。',
+        target: '目标：完成至少一个真实渠道授权。',
+        confidence: '高',
+        limitation: '接入前不能据此评估真实增长效果。',
+        action: { page: 'channels' },
+      },
+    ],
+  };
+}
+
 const sectionTitle = 'flex items-center gap-2 text-base font-bold text-text-primary';
 const sectionIcon = 'flex h-6 w-6 items-center justify-center rounded-lg bg-green-50 text-green-700';
 const bodyTitle = 'text-sm font-bold text-text-primary';
@@ -130,11 +177,13 @@ export default function StrategyDataBoard({
   onNavigate,
   includeMockCustomers = false,
   mockCustomerScope = 'admin',
+  enterpriseHomepageDemo = false,
 }: {
   onAction?: AgentAction;
   onNavigate?: (page: Page) => void;
   includeMockCustomers?: boolean;
   mockCustomerScope?: string;
+  enterpriseHomepageDemo?: boolean;
 }) {
   const [tab, setTab] = useState<TabId>('traffic');
   useEffect(() => { const scope = consumeBusinessPageContext('home'); if (scope) setTab(scope); }, []);
@@ -144,21 +193,36 @@ export default function StrategyDataBoard({
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const [advisorError, setAdvisorError] = useState('');
   const [expandedActionIds, setExpandedActionIds] = useState<Set<string>>(() => new Set());
+  const [enterpriseDemo, setEnterpriseDemo] = useState<EnterpriseHomepageDemoDataset | null>(null);
   const { customers, loading: customersLoading } = useCustomers(0, includeMockCustomers, mockCustomerScope);
+  const dashboardCustomers = enterpriseDemo?.customers ?? customers;
   const windowDays = 30;
 
   const selectedMetrics = new Set(selectedMetricByTab[tab]);
-  const whatsAppInquiries = useMemo(() => customers.filter(customer => String(customer.source).startsWith('whatsapp')), [customers]);
+  const whatsAppInquiries = useMemo(() => dashboardCustomers.filter(customer => String(customer.source).startsWith('whatsapp')), [dashboardCustomers]);
   const effectiveInquiries = useMemo(() => whatsAppInquiries.filter(customer => customer.intentScore >= 70), [whatsAppInquiries]);
-  const conversationOrders = useMemo<OrderRecord[]>(() => customers.flatMap(customer => customer.orders.map(order => ({
+  const conversationOrders = useMemo<OrderRecord[]>(() => dashboardCustomers.flatMap(customer => customer.orders.map(order => ({
     buyer: customer.name,
     amount: Number(String(order.total || '').replace(/[^0-9.-]/g, '')) || 0,
     status: order.status === 'paid' ? '已付款' : order.status === 'pending' ? '待付款' : '退款',
-  }))), [customers]);
+  }))), [dashboardCustomers]);
   const effectiveOrders = orders.length ? orders : conversationOrders;
   const validOrders = useMemo(() => effectiveOrders.filter(order => order.status !== '待付款' && order.status !== '退款'), [effectiveOrders]);
   const convertedInquiries = useMemo(() => whatsAppInquiries.filter(customer => customer.stage === 'quoted' || customer.stage === 'won' || customer.orders.length > 0), [whatsAppInquiries]);
   const needsFollowup = useMemo(() => whatsAppInquiries.filter(customer => customer.handlingMode !== 'ai_auto' || customer.inboxReason), [whatsAppInquiries]);
+
+  useEffect(() => {
+    if (!enterpriseHomepageDemo) {
+      setEnterpriseDemo(null);
+      return;
+    }
+    let alive = true;
+    readJson<EnterpriseHomepageProfile>('/api/overseas/enterprise/profile', {})
+      .then(profile => {
+        if (alive) setEnterpriseDemo(createEnterpriseHomepageDemo(profile));
+      });
+    return () => { alive = false; };
+  }, [enterpriseHomepageDemo]);
 
   useEffect(() => {
     let alive = true;
@@ -183,21 +247,23 @@ export default function StrategyDataBoard({
       const videoViews = videoResults.reduce((sum, result) => sum + (result.status === 'fulfilled' ? result.value : 0), 0);
       const accountViews = [...socialItems, ...youtubeItems].reduce((sum, account) => sum + num(account.viewCount), 0);
       if (!alive) return;
-      const accountCount = socialItems.length + youtubeItems.length;
-      const useWorkspaceSnapshot = includeMockCustomers && accountCount === 0;
+      const accountCount = enterpriseDemo?.accounts.length ?? (socialItems.length + youtubeItems.length);
+      const useWorkspaceSnapshot = Boolean(enterpriseDemo) || (includeMockCustomers && accountCount === 0);
+      const demoViews = enterpriseDemo?.videos.reduce((sum, video) => sum + video.viewCount, 0) ?? 0;
       setExposure({
         loaded: true,
         ready: accountCount > 0 || useWorkspaceSnapshot,
-        value: useWorkspaceSnapshot ? 286_430 : videoViews || accountViews,
-        accountCount: useWorkspaceSnapshot ? 3 : accountCount,
+        value: enterpriseDemo ? demoViews : useWorkspaceSnapshot ? 286_430 : videoViews || accountViews,
+        accountCount: useWorkspaceSnapshot ? (enterpriseDemo?.accounts.length ?? 3) : accountCount,
         source: useWorkspaceSnapshot ? 'workspace' : accountCount > 0 ? 'account' : 'none',
       });
-      setOrders(Array.isArray(orderData.items) ? orderData.items : []);
+      setOrders(enterpriseDemo ? [] : Array.isArray(orderData.items) ? orderData.items : []);
     })();
     return () => { alive = false; };
-  }, [includeMockCustomers]);
+  }, [enterpriseDemo, includeMockCustomers]);
 
   const acquisitionTrend = useMemo(() => {
+    if (enterpriseDemo) return enterpriseDemo.acquisitionTrend;
     const exposureSeries = [24_680, 31_420, 35_870, 39_260, 46_910, 51_340, 56_950];
     const inquiryWeights = [0.08, 0.12, 0.12, 0.16, 0.16, 0.16, 0.2];
     return exposureSeries.map((dailyExposure, index) => ({
@@ -205,9 +271,14 @@ export default function StrategyDataBoard({
       exposure: dailyExposure,
       inquiries: Math.max(0, Math.round(effectiveInquiries.length * inquiryWeights[index])),
     }));
-  }, [effectiveInquiries.length]);
+  }, [effectiveInquiries.length, enterpriseDemo]);
 
   const loadAdvisor = async (refreshExternal = false) => {
+    if (enterpriseDemo) {
+      setAdvisor(buildEnterpriseDemoAdvisor(enterpriseDemo));
+      setAdvisorError('');
+      return;
+    }
     setAdvisorLoading(true);
     setAdvisorError('');
     try {
@@ -238,8 +309,12 @@ export default function StrategyDataBoard({
 
   useEffect(() => {
     if (!exposure.loaded || customersLoading) return;
+    if (enterpriseDemo) {
+      setAdvisor(buildEnterpriseDemoAdvisor(enterpriseDemo));
+      return;
+    }
     void loadAdvisor(false);
-  }, [exposure.loaded, exposure.ready, exposure.value, exposure.accountCount, customersLoading, effectiveInquiries.length, convertedInquiries.length, validOrders.length, needsFollowup.length]);
+  }, [exposure.loaded, exposure.ready, exposure.value, exposure.accountCount, customersLoading, effectiveInquiries.length, convertedInquiries.length, validOrders.length, needsFollowup.length, enterpriseDemo]);
 
   const chainMetrics = useMemo(() => {
     const inquiryCount = effectiveInquiries.length;
@@ -250,9 +325,9 @@ export default function StrategyDataBoard({
         icon: <Zap size={15} className="text-green-600" />,
         label: '视频曝光',
         value: exposure.ready ? compact(exposure.value) : '/',
-        desc: exposure.source === 'workspace' ? '按近 7 日内容运营记录汇总的视频播放量。' : exposure.ready ? '来自已授权社媒账号返回的视频播放量。' : '尚未接入可读取曝光量的社媒账号。',
-        source: exposure.source === 'workspace' ? '来源：内容运营汇总' : exposure.ready ? '来源：社媒账号接口' : '暂无数据',
-        trend: exposure.source === 'workspace' ? '+18.6%' : '',
+        desc: exposure.source === 'workspace' ? (enterpriseDemo ? '基于企业资料生成的演示播放量。' : '按近 7 日内容运营记录汇总的视频播放量。') : exposure.ready ? '来自已授权社媒账号返回的视频播放量。' : '尚未接入可读取曝光量的社媒账号。',
+        source: exposure.source === 'workspace' ? (enterpriseDemo ? '来源：企业资料演示' : '来源：内容运营汇总') : exposure.ready ? '来源：社媒账号接口' : '暂无数据',
+        trend: exposure.source === 'workspace' ? (enterpriseDemo ? '演示' : '+18.6%') : '',
       },
       {
         id: 'inquiry' as const,
@@ -284,11 +359,11 @@ export default function StrategyDataBoard({
         trend: '',
       },
     ];
-  }, [convertedInquiries.length, effectiveInquiries.length, exposure, needsFollowup.length, validOrders.length]);
+  }, [convertedInquiries.length, effectiveInquiries.length, exposure, needsFollowup.length, validOrders.length, enterpriseDemo]);
 
   const channelData = useMemo(() => {
     const grouped = new Map<string, { channel: string; inquiries: number; converted: number }>();
-    for (const customer of customers) {
+    for (const customer of dashboardCustomers) {
       const channel = customer.source || 'unknown';
       const item = grouped.get(channel) || { channel, inquiries: 0, converted: 0 };
       item.inquiries += 1;
@@ -296,13 +371,13 @@ export default function StrategyDataBoard({
       grouped.set(channel, item);
     }
     return [...grouped.values()];
-  }, [customers]);
+  }, [dashboardCustomers]);
 
   const funnelData = [
-    ['内容曝光', exposure.ready ? compact(exposure.value) : '/', exposure.source === 'workspace' ? '内容运营汇总' : exposure.ready ? '社媒账号接口' : '未接入'],
-    ['有效询盘', String(effectiveInquiries.length), '真实客户'],
-    ['进入报价', String(convertedInquiries.length), '真实客户'],
-    ['有效订单', String(validOrders.length), '真实订单'],
+    ['内容曝光', exposure.ready ? compact(exposure.value) : '/', enterpriseDemo ? '演示曝光' : exposure.source === 'workspace' ? '内容运营汇总' : exposure.ready ? '社媒账号接口' : '未接入'],
+    ['有效询盘', String(effectiveInquiries.length), enterpriseDemo ? '演示客户' : '真实客户'],
+    ['进入报价', String(convertedInquiries.length), enterpriseDemo ? '演示客户' : '真实客户'],
+    ['有效订单', String(validOrders.length), enterpriseDemo ? '演示订单' : '真实订单'],
   ];
 
   const actionItems = advisor?.recommendations ?? [];
@@ -362,6 +437,13 @@ export default function StrategyDataBoard({
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="px-4 py-5 sm:px-6">
           <section className="home-board home-overview-panel mx-auto max-w-[1440px]">
+            {enterpriseDemo && (
+              <div data-testid="enterprise-homepage-demo-notice" className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950">
+                <p className="font-bold">企业资料演示数据 · {enterpriseDemo.companyName}</p>
+                <p className="mt-1 leading-5">{enterpriseDemo.notice}</p>
+                {enterpriseDemo.warnings.map(warning => <p key={warning} className="mt-1 font-semibold leading-5">资料提醒：{warning}</p>)}
+              </div>
+            )}
             <div className="mb-3 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
               <div>
                 <h2 className="text-lg font-semibold tracking-[-.025em] text-text-primary">当前获客经营总览</h2>
@@ -369,7 +451,7 @@ export default function StrategyDataBoard({
                 <p className="mt-1 text-[11px] text-text-muted">从内容曝光到成交推进，先看趋势，再看渠道和待办。</p>
               </div>
               <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-md border border-[#bdd8c7] bg-[#eff7f1] px-3 py-2 text-[11px] font-semibold text-accent transition hover:border-[#9fc8af] hover:bg-[#e6f2e9]" title="前往社媒运营 · 账号管理">
-                已接入账号 {exposure.accountCount} · 查看动态 →
+                {enterpriseDemo ? '演示账号' : '已接入账号'} {exposure.accountCount} · 查看动态 →
               </button>
             </div>
             <div className="metric-strip">
@@ -402,7 +484,7 @@ export default function StrategyDataBoard({
               <section className="pb-6 xl:pr-6">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div><p className={bodyTitle}>获客趋势</p><p className="mt-1 text-[10px] text-text-muted">曝光持续增长时，询盘是否同步增长</p></div>
-                  <span className="text-[11px] font-semibold text-green-700">询盘效率 {exposure.ready && exposure.value > 0 ? `${(effectiveInquiries.length / exposure.value * 10000).toFixed(2)} / 万曝光` : '暂无真实数据'}</span>
+                  <span className="text-[11px] font-semibold text-green-700">询盘效率 {exposure.ready && exposure.value > 0 ? `${(effectiveInquiries.length / exposure.value * 10000).toFixed(2)} / 万曝光${enterpriseDemo ? '（演示）' : ''}` : '暂无真实数据'}</span>
                 </div>
                 {exposure.source === 'workspace' ? (
                   <div className="h-[220px] w-full">
@@ -542,11 +624,11 @@ export default function StrategyDataBoard({
 
         <div className="min-h-[520px] border-t border-border" id={tab === 'traffic' ? 'social-real-data' : undefined}>
           {tab === 'traffic' ? (
-            <TrafficDataBoard windowDays={windowDays} onOpenAccounts={() => openWorkspaceView('accountManagement', 'accounts')} />
+            <TrafficDataBoard windowDays={windowDays} onOpenAccounts={() => openWorkspaceView('accountManagement', 'accounts')} demo={enterpriseDemo ?? undefined} />
           ) : tab === 'inquiry' ? (
-            <InquiryDataBoard windowDays={windowDays} includeMockCustomers={includeMockCustomers} mockCustomerScope={mockCustomerScope} />
+            <InquiryDataBoard windowDays={windowDays} includeMockCustomers={includeMockCustomers} mockCustomerScope={mockCustomerScope} demoCustomers={enterpriseDemo?.customers} />
           ) : (
-            <CrmDataBoard windowDays={windowDays} includeMockCustomers={includeMockCustomers} mockCustomerScope={mockCustomerScope} />
+            <CrmDataBoard windowDays={windowDays} includeMockCustomers={includeMockCustomers} mockCustomerScope={mockCustomerScope} demoCustomers={enterpriseDemo?.customers} />
           )}
         </div>
       </div>

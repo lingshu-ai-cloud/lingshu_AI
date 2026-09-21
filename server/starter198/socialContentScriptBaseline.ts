@@ -56,7 +56,7 @@ export interface StoredSocialScriptBaseline {
   createdBeforeMaterialAdaptation: true;
   groundingVersion?: typeof SOCIAL_SCRIPT_GROUNDING_VERSION;
   match?: {
-    strategy: 'formula_inspiration' | 'formula' | 'inspiration' | 'knowledge_fallback' | 'legacy';
+    strategy: 'formula_inspiration' | 'formula' | 'inspiration' | 'knowledge_fallback' | 'system_theme_baseline' | 'legacy';
     confidence: number;
     inspirationReference: { recordId: string; confidence: number } | null;
     verifiedKnowledgeSource: SocialScriptGroundingSource;
@@ -97,6 +97,67 @@ const SAFE_THEME_LABELS: Record<SocialContentThemeId, { zh: string; en: string }
   supplier_capability: { zh: '生产与供应现场', en: 'the production and supply process' },
   customization_process: { zh: '定制合作过程', en: 'the customization process' },
   customer_case: { zh: '经授权的合作过程', en: 'an authorized collaboration process' },
+};
+
+const SYSTEM_THEME_SCENES: Record<SocialContentThemeId, ReadonlyArray<{
+  nodeId: string;
+  shotFunction: string;
+  subject: string;
+  action: string;
+}>> = {
+  product_value: [
+    { nodeId: 'system-opening', shotFunction: '开场吸引', subject: '通用产品观察', action: '从整体印象开始' },
+    { nodeId: 'system-detail', shotFunction: '细节观察', subject: '可见细节与操作方式', action: '分步骤观察' },
+    { nodeId: 'system-scenario', shotFunction: '场景说明', subject: '适用场景', action: '说明选择思路' },
+    { nodeId: 'system-closing', shotFunction: '信息收束', subject: '正式产品资料', action: '提醒进一步核对' },
+  ],
+  scenario_solution: [
+    { nodeId: 'system-opening', shotFunction: '场景开场', subject: '常见使用场景', action: '提出观察重点' },
+    { nodeId: 'system-process', shotFunction: '过程说明', subject: '通用使用过程', action: '按顺序呈现' },
+    { nodeId: 'system-result', shotFunction: '结果观察', subject: '可见使用结果', action: '保守说明' },
+    { nodeId: 'system-closing', shotFunction: '信息收束', subject: '实际适用条件', action: '提醒以正式资料为准' },
+  ],
+  supplier_capability: [
+    { nodeId: 'system-opening', shotFunction: '供应开场', subject: '通用生产与供应流程', action: '建立流程认知' },
+    { nodeId: 'system-process', shotFunction: '过程展示', subject: '生产协作环节', action: '按流程说明' },
+    { nodeId: 'system-quality', shotFunction: '质量观察', subject: '通用检查节点', action: '说明核对重点' },
+    { nodeId: 'system-closing', shotFunction: '交付收束', subject: '交付信息', action: '提醒核实企业资料' },
+  ],
+  customization_process: [
+    { nodeId: 'system-opening', shotFunction: '需求开场', subject: '通用定制需求', action: '明确合作起点' },
+    { nodeId: 'system-sample', shotFunction: '打样说明', subject: '方案与样品确认', action: '按阶段说明' },
+    { nodeId: 'system-production', shotFunction: '生产说明', subject: '生产与验收节点', action: '呈现通用流程' },
+    { nodeId: 'system-closing', shotFunction: '合作收束', subject: '具体合作条件', action: '提醒进一步确认' },
+  ],
+  customer_case: [
+    { nodeId: 'system-opening', shotFunction: '案例开场', subject: '通用合作场景', action: '说明案例结构' },
+    { nodeId: 'system-problem', shotFunction: '需求说明', subject: '客户常见需求', action: '概括问题类型' },
+    { nodeId: 'system-process', shotFunction: '方案过程', subject: '通用协作步骤', action: '按过程呈现' },
+    { nodeId: 'system-closing', shotFunction: '案例收束', subject: '真实案例证据', action: '提醒以授权资料为准' },
+  ],
+};
+
+const SYSTEM_THEME_NARRATION: Record<SocialContentThemeId, { zh: string[]; en: string[] }> = {
+  product_value: {
+    zh: ['看一款产品，先从真实可见的信息开始。', '关注外观细节、操作方式和使用场景。', '再结合自己的需求判断是否适合。', '具体规格与效果，请以品牌正式资料为准。'],
+    en: ['Start with information that can be seen and verified.', 'Look at visible details, operation, and use scenarios.', 'Then compare them with your actual needs.', 'Check the brand’s official information for specifications and results.'],
+  },
+  scenario_solution: {
+    zh: ['先看真实场景，再判断解决思路。', '把使用过程拆开，逐步观察关键动作。', '结果只说明画面中能够确认的部分。', '具体适用条件，请以正式资料为准。'],
+    en: ['Start with the real scenario before judging the solution.', 'Break the process down and observe each key action.', 'Only visually supported results are described.', 'Check official information for exact use conditions.'],
+  },
+  supplier_capability: {
+    zh: ['了解供应能力，可以先看完整流程。', '生产协作、检查节点和交付环节都值得关注。', '稳定能力需要持续记录和真实证据支持。', '具体产能与交期，请以企业正式资料为准。'],
+    en: ['A supply capability review starts with the full process.', 'Production, inspection, and delivery are all important.', 'Stable capability needs records and real evidence.', 'Check official company information for capacity and lead time.'],
+  },
+  customization_process: {
+    zh: ['定制合作，先从需求确认开始。', '方案、打样和样品确认要逐步推进。', '生产与验收节点需要提前约定。', '具体周期和条件，请以双方正式确认的信息为准。'],
+    en: ['Customization starts with confirming the requirement.', 'Move through proposals, sampling, and sample approval step by step.', 'Production and acceptance checkpoints should be agreed in advance.', 'Use formally confirmed information for timing and terms.'],
+  },
+  customer_case: {
+    zh: ['真实案例应该先说明客户需求。', '再展示方案过程和可核验的合作步骤。', '未经授权的名称和结果不应被推断。', '具体成果，请以获得授权的案例资料为准。'],
+    en: ['A real case should begin with the customer need.', 'Then show the solution process and verifiable collaboration steps.', 'Names and results must not be inferred without permission.', 'Use authorized case material for specific outcomes.'],
+  },
 };
 
 function compactFactValue(value: unknown, maximum = 72): string {
@@ -172,6 +233,7 @@ function groundedNarration(input: {
   shotFunction: string;
   subject: string;
   verifiedFacts: VerifiedSocialScriptContext['facts'];
+  hasUserProductAssociation: boolean;
 }): string {
   const fact = input.verifiedFacts[Math.max(0, Math.min(input.verifiedFacts.length - 1, input.index - 1))];
   if (input.language === 'en') {
@@ -180,23 +242,49 @@ function groundedNarration(input: {
       certifications: 'verified certification', moq: 'minimum order quantity',
       company_industry: 'industry', product_categories: 'product category',
     };
-    if (input.index === 0) return `This video uses material the user explicitly linked to ${input.product}.`;
+    if (input.index === 0) {
+      return input.hasUserProductAssociation
+        ? `This video uses material the user explicitly linked to ${input.product}.`
+        : input.verifiedFacts.length
+          ? `This video uses only verified enterprise information about ${input.product}.`
+          : 'This video uses a controlled general theme structure without product claims.';
+    }
     if (input.index === input.count - 1) {
+      if (input.hasUserProductAssociation) {
+        return input.verifiedFacts.length
+          ? `This concludes the verified information and user-linked material for ${input.product}.`
+          : `This content is limited to material the user explicitly linked to ${input.product}; it adds no unverified product claims.`;
+      }
       return input.verifiedFacts.length
-        ? `This concludes the verified information and user-linked material for ${input.product}.`
-        : `This content is limited to material the user explicitly linked to ${input.product}; it adds no unverified product claims.`;
+        ? `Check the verified enterprise information for specific details about ${input.product}.`
+        : 'Check official information before using specific product claims.';
     }
     if (fact) return `Verified product information lists ${englishFactLabels[fact.key] || 'this detail'} as ${fact.value}.`;
-    return `This scene continues with material the user explicitly linked to ${input.product}; no visual fact is inferred.`;
+    return input.hasUserProductAssociation
+      ? `This scene continues with material the user explicitly linked to ${input.product}; no visual fact is inferred.`
+      : 'This scene does not add any unverified product fact.';
   }
-  if (input.index === 0) return `本片使用用户明确关联到${input.product}的素材。`;
+  if (input.index === 0) {
+    return input.hasUserProductAssociation
+      ? `本片使用用户明确关联到${input.product}的素材。`
+      : input.verifiedFacts.length
+        ? `本片仅使用关于${input.product}的已确认企业资料。`
+        : '本片使用受控的通用主题结构，不添加产品事实。';
+  }
   if (input.index === input.count - 1) {
+    if (input.hasUserProductAssociation) {
+      return input.verifiedFacts.length
+        ? `以上为${input.product}的已确认资料与用户关联素材。`
+        : `以上内容仅基于用户明确关联到${input.product}的素材，不扩展未经确认的产品事实。`;
+    }
     return input.verifiedFacts.length
-      ? `以上为${input.product}的已确认资料与用户关联素材。`
-      : `以上内容仅基于用户明确关联到${input.product}的素材，不扩展未经确认的产品事实。`;
+      ? `关于${input.product}的具体信息，请以已确认企业资料为准。`
+      : '具体产品信息，请以品牌正式资料为准。';
   }
   if (fact) return `企业已确认资料显示，${fact.label}为${fact.value}。`;
-  return `本段继续使用用户明确关联到${input.product}的素材，不推断画面事实。`;
+  return input.hasUserProductAssociation
+    ? `本段继续使用用户明确关联到${input.product}的素材，不推断画面事实。`
+    : '本段不添加未经确认的产品事实。';
 }
 
 /**
@@ -232,14 +320,31 @@ export function freezeSocialScriptBaseline(input: {
   // operator has supplied and released a real viral formula. Only a stored,
   // governed formula version may be labelled as a formula match.
   const matchedFormula = input.formula?.recordId ? input.formula : null;
+  const systemThemeBaseline = !matchedFormula
+    && !input.inspiration
+    && verified.source === 'none'
+    && !userProductAssociation
+    && Boolean(input.theme?.themeId);
+  const themeSafetyStructure = !matchedFormula
+    && !input.inspiration
+    && !userProductAssociation
+    && Boolean(input.theme?.themeId);
   const sourceNodes = matchedFormula?.nodes?.length
     ? matchedFormula.nodes
     : input.inspiration?.nodes?.length
       ? input.inspiration.nodes
       : input.formula?.nodes?.length
         ? input.formula.nodes
-        : DEFAULT_SCENES;
-  const source = matchedFormula ? 'formula' : input.inspiration ? 'inspiration_script' : 'knowledge_fallback';
+        : themeSafetyStructure && input.theme?.themeId
+          ? SYSTEM_THEME_SCENES[input.theme.themeId]
+          : DEFAULT_SCENES;
+  const source = matchedFormula
+    ? 'formula'
+    : input.inspiration
+      ? 'inspiration_script'
+      : systemThemeBaseline
+        ? 'system_theme_baseline'
+        : 'knowledge_fallback';
   const formulaReference = matchedFormula
     ? { formulaId: matchedFormula.formulaId, version: matchedFormula.version }
     : null;
@@ -262,7 +367,10 @@ export function freezeSocialScriptBaseline(input: {
         };
     const narration = template && matchedFormula
       ? interpolate(template, interpolationValues).trim()
-      : groundedNarration({
+      : systemThemeBaseline && input.theme?.themeId
+        ? SYSTEM_THEME_NARRATION[input.theme.themeId][language][index]
+          || SYSTEM_THEME_NARRATION[input.theme.themeId][language].at(-1)!
+        : groundedNarration({
           language,
           index,
           count: sourceNodes.length,
@@ -271,6 +379,7 @@ export function freezeSocialScriptBaseline(input: {
           shotFunction,
           subject,
           verifiedFacts: verified.facts,
+          hasUserProductAssociation: Boolean(userProductAssociation),
         });
     const scriptTemplate = matchedFormula && 'scriptTemplate' in node
       ? localizedTemplate(node.scriptTemplate, language)
@@ -317,10 +426,13 @@ export function freezeSocialScriptBaseline(input: {
           ? 'formula'
           : input.inspiration
             ? 'inspiration'
-            : 'knowledge_fallback',
+            : systemThemeBaseline
+              ? 'system_theme_baseline'
+              : 'knowledge_fallback',
       confidence: Math.max(0, Math.min(1, matchedFormula
         ? input.inspiration ? (0.7 + input.inspiration.confidence * 0.3) : 0.78
         : input.inspiration ? input.inspiration.confidence
+          : systemThemeBaseline ? 0.45
           : Math.min(0.62, 0.35 + (userProductAssociation?.confidence ?? verified.confidence) * 0.35))),
       inspirationReference: input.inspiration
         ? { recordId: input.inspiration.recordId, confidence: input.inspiration.confidence }
@@ -411,7 +523,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     ...(groundingVersion === SOCIAL_SCRIPT_GROUNDING_VERSION ? {
       groundingVersion: SOCIAL_SCRIPT_GROUNDING_VERSION,
       match: {
-        strategy: (['formula_inspiration', 'formula', 'inspiration', 'knowledge_fallback'].includes(socialText(match?.strategy))
+        strategy: (['formula_inspiration', 'formula', 'inspiration', 'knowledge_fallback', 'system_theme_baseline'].includes(socialText(match?.strategy))
           ? socialText(match?.strategy)
           : 'legacy') as NonNullable<StoredSocialScriptBaseline['match']>['strategy'],
         confidence: Math.max(0, Math.min(1, Number(match?.confidence) || 0)),

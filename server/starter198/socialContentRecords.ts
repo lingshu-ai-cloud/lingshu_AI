@@ -144,16 +144,17 @@ export function socialTaskReadiness(
   brief: SocialContentTaskBrief,
   coverage: SocialSourceCoverage,
   themeWorkflow?: { theme: SocialContentThemeSelection | null; materialReadiness: SocialMaterialReadiness },
-): { complete: boolean; missing: string[] } {
+): { complete: boolean; missing: string[]; personalizationGaps: string[] } {
   const missing: string[] = [];
-  if (!brief.productRef) missing.push('product');
-  if (!brief.audience) missing.push('audience');
-  if (!brief.markets.length) missing.push('market');
-  if (!brief.languages.length) missing.push('language');
-  if (!brief.platforms.length) missing.push('platform');
-  if (!brief.formats.length) missing.push('content_format');
-  if (coverage.knowledge < 1) missing.push('enterprise_knowledge');
-  if (coverage.material < 1) missing.push('source_material');
+  const personalizationGaps: string[] = [];
+  if (!brief.productRef) personalizationGaps.push('product');
+  if (!brief.audience) personalizationGaps.push('audience');
+  if (!brief.markets.length) personalizationGaps.push('market');
+  if (!brief.languages.length) personalizationGaps.push('language');
+  if (!brief.platforms.length) personalizationGaps.push('platform');
+  if (!brief.formats.length) personalizationGaps.push('content_format');
+  if (coverage.knowledge < 1) personalizationGaps.push('enterprise_knowledge');
+  if (coverage.material < 1) personalizationGaps.push('source_material');
   if (themeWorkflow) {
     if (!themeWorkflow.theme || themeWorkflow.theme.classificationStatus !== 'confirmed' || !themeWorkflow.theme.themeId) {
       missing.push('theme_confirmation');
@@ -161,8 +162,12 @@ export function socialTaskReadiness(
     // Theme selection is a direction, not a production structure. Formula
     // requirements remain advisory until the product explicitly applies a
     // configured formula to the task.
+  } else {
+    // Preserve the stricter contract for historic non-theme workflows. The
+    // fast-start fallback applies only to the new theme-driven workflow.
+    missing.push(...personalizationGaps);
   }
-  return { complete: missing.length === 0, missing };
+  return { complete: missing.length === 0, missing, personalizationGaps };
 }
 
 export function parseSocialTaskThemeSelection(value: unknown): SocialContentThemeSelection | null {

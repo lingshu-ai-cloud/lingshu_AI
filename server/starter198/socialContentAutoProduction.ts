@@ -3,7 +3,9 @@ import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import sharp from 'sharp';
 import type {
+  SocialContentThemeId,
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
@@ -128,6 +130,66 @@ function normalizedProductReference(value: unknown): string {
   return socialText(value).normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase();
 }
 
+const MATERIAL_THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
+  product_value: ['产品', '细节', '外观', '包装', '使用', 'product', 'detail', 'package', 'use'],
+  scenario_solution: ['场景', '使用', '操作', '过程', '结果', 'scenario', 'use', 'operation', 'result'],
+  supplier_capability: ['工厂', '车间', '生产', '质检', '仓储', '交付', 'factory', 'production', 'quality', 'delivery'],
+  customization_process: ['定制', '打样', '包装', '生产', '交付', 'custom', 'sample', 'package', 'production'],
+  customer_case: ['客户', '合作', '方案', '过程', '成果', 'customer', 'case', 'process', 'result'],
+};
+
+function materialTenantId(record: MaterialRecord): string {
+  return socialText(record.tenantId || record.tenant_id);
+}
+
+/** Shared inventory is an automatic render source only when its commercial
+ * and derivative-use evidence is explicit. Tenant-owned material remains
+ * available under the tenant's own upload warranty. */
+export function automaticSocialMaterialEligible(record: MaterialRecord, tenantId: string): boolean {
+  if (!['video', 'image'].includes(socialText(record.type)) || socialText(record.usage) === 'reference_only') return false;
+  if (socialText(record.scope) === 'shared') {
+    return record.commercialUseApproved === true
+      && record.derivativesApproved === true
+      && Boolean(socialText(record.licenseEvidence || record.licenseName));
+  }
+  return materialTenantId(record) === tenantId;
+}
+
+function materialSearchText(record: MaterialRecord): string {
+  return [
+    record.name, record.title, record.industry, record.shotFunction, record.applicability, record.tags,
+    ...(Array.isArray(record.visualObservations) ? record.visualObservations : []),
+    ...(Array.isArray(record.observations) ? record.observations : []),
+    ...(Array.isArray(record.segments) ? record.segments.flatMap((segment: unknown) => {
+      const row = socialObject(segment);
+      return row ? [row.observedFacts, row.action, row.visual, row.environment, row.subject, row.purpose] : [];
+    }) : []),
+  ].map(socialText).filter(Boolean).join(' ').toLocaleLowerCase();
+}
+
+function automaticMaterialScore(input: {
+  record: MaterialRecord;
+  tenantId: string;
+  productRef: string | null;
+  themeId: SocialContentThemeId | null;
+  linked: boolean;
+}): number {
+  const origin = input.linked ? 400
+    : materialTenantId(input.record) === input.tenantId ? 240
+      : socialText(input.record.scope) === 'shared' ? 120 : 0;
+  const product = normalizedProductReference(input.productRef);
+  const productRefs = [input.record.productRef, input.record.productName, ...(Array.isArray(input.record.productRefs) ? input.record.productRefs : [])]
+    .map(normalizedProductReference).filter(Boolean);
+  const productScore = product && productRefs.includes(product) ? 80 : 0;
+  const searchable = materialSearchText(input.record);
+  const themeScore = input.themeId
+    ? MATERIAL_THEME_TERMS[input.themeId].filter(term => searchable.includes(term.toLocaleLowerCase())).length * 8
+    : 0;
+  const analyzed = (Array.isArray(input.record.segments) && input.record.segments.length > 0)
+    || (Array.isArray(input.record.visualObservations) && input.record.visualObservations.length > 0) ? 30 : 0;
+  return origin + productScore + themeScore + analyzed;
+}
+
 /** Only provenance written when the tenant attached the upload to this exact
  * product may unlock association-only production. Product names, filenames,
  * source labels and purposes are intentionally excluded. */
@@ -180,14 +242,15 @@ async function taskProductionAssets(input: {
   tenantId: string;
   sources: SocialTaskSource[];
   productRef: string | null;
+  themeId: SocialContentThemeId | null;
   outputDirectory: string;
   cloudMaterialPort?: SocialContentCloudMaterialPort;
 }): Promise<ProductionAsset[]> {
   const inventory = await readMaterialLibrary(input.tenantId);
   if (inventory.status === 'unavailable') throw new Error('素材库暂时不可用，请稍后重试');
   const byId = new Map(inventory.items.map(item => [socialText(item.id), item]));
-  const assets: ProductionAsset[] = [];
-  for (const [index, source] of input.sources.filter(item => item.status === 'active' && item.kind === 'material').entries()) {
+  const linkedSources = input.sources.filter(item => item.status === 'active' && item.kind === 'material');
+  const linkedCandidates = linkedSources.flatMap(source => {
     const id = decodeMaterialRef(source.sourceRef);
     // Older tasks may still carry the file reference used before uploads were
     // canonicalized into My Materials. Resolve it to the immutable material
@@ -195,23 +258,52 @@ async function taskProductionAssets(input: {
     const record = byId.get(id) ?? inventory.items.find(item => (
       Array.isArray(item.sourceTaskFileRefs) && item.sourceTaskFileRefs.map(socialText).includes(source.sourceRef)
     ));
-    const type = socialText(record?.type);
-    if (!record || !['video', 'image'].includes(type)) continue;
-    const location = await resolveTaskProductionMaterialLocation({
-      tenantId: input.tenantId,
+    if (!record || !automaticSocialMaterialEligible(record, input.tenantId)) return [];
+    return [{ record, sourceId: source.sourceId, label: source.label, origin: 'task' as const, linked: true }];
+  });
+  const linkedIds = new Set(linkedCandidates.map(item => socialText(item.record.id)));
+  const libraryCandidates = inventory.items
+    .filter(record => !linkedIds.has(socialText(record.id)) && automaticSocialMaterialEligible(record, input.tenantId))
+    .map(record => ({
       record,
-      type: type as ProductionAsset['type'],
-      outputDirectory: input.outputDirectory,
-      index,
-      cloudMaterialPort: input.cloudMaterialPort,
-    });
+      sourceId: `library_material_${socialRequestHash({ id: socialText(record.id) }).slice(0, 24)}`,
+      label: socialText(record.name || record.title) || '素材库素材',
+      origin: materialTenantId(record) === input.tenantId ? 'tenant_library' as const : 'shared_library' as const,
+      linked: false,
+    }));
+  const candidates = [...linkedCandidates, ...libraryCandidates]
+    .sort((left, right) => automaticMaterialScore({
+      record: right.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: right.linked,
+    }) - automaticMaterialScore({
+      record: left.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: left.linked,
+    }))
+    .slice(0, 16);
+  const assets: ProductionAsset[] = [];
+  for (const [index, candidate] of candidates.entries()) {
+    const { record } = candidate;
+    const type = socialText(record.type) as ProductionAsset['type'];
+    let location: Awaited<ReturnType<typeof resolveTaskProductionMaterialLocation>>;
+    try {
+      location = await resolveTaskProductionMaterialLocation({
+        tenantId: input.tenantId,
+        record,
+        type,
+        outputDirectory: input.outputDirectory,
+        index,
+        cloudMaterialPort: input.cloudMaterialPort,
+      });
+    } catch {
+      // One stale library item must not abort the whole first-content run.
+      // Identity and authorization checks still fail closed for that item.
+      continue;
+    }
     if (!location.url) continue;
     const explicitlyAssociated = hasExactTaskProductAssociation(record, input.productRef);
     assets.push({
       id: socialText(record.id),
-      name: socialText(record.name) || source.label || '客户上传素材',
-      type: type as ProductionAsset['type'],
-      sourceId: source.sourceId,
+      name: socialText(record.name) || candidate.label || '内容素材',
+      type,
+      sourceId: candidate.sourceId,
       url: location.url,
       ...(location.localPath ? { localPath: location.localPath } : {}),
       ...(location.cloudRecordId ? { cloudRecordId: location.cloudRecordId } : {}),
@@ -233,9 +325,64 @@ async function taskProductionAssets(input: {
       segments: Array.isArray(record.segments)
         ? record.segments.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
         : [],
+      selectionOrigin: candidate.origin,
     });
   }
   return resolveSourceDurations(assets);
+}
+
+function safeGraphicText(value: unknown, maximum: number): string {
+  return socialText(value).replace(/[<>\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').slice(0, maximum);
+}
+
+function escapeSvg(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+export async function systemThemeGraphicAssets(input: {
+  outputDirectory: string;
+  baseline: StoredSocialScriptBaseline;
+}): Promise<ProductionAsset[]> {
+  const palette = [
+    ['#073b32', '#20a36a', '#d8f7e9'],
+    ['#102a43', '#3977c3', '#dcecff'],
+    ['#3b245c', '#8b5cc7', '#f0e6ff'],
+    ['#4a2b13', '#c87932', '#fff0dc'],
+  ] as const;
+  const assets: ProductionAsset[] = [];
+  for (const [index, scene] of input.baseline.scenes.slice(0, 4).entries()) {
+    const [dark, accent, light] = palette[index % palette.length]!;
+    const title = safeGraphicText(scene.shotFunction, 18) || '内容要点';
+    const subject = safeGraphicText(scene.subject, 28) || '通用主题内容';
+    const filename = `system-theme-${index + 1}.png`;
+    const localPath = path.join(input.outputDirectory, filename);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${dark}"/><stop offset="1" stop-color="${accent}"/></linearGradient></defs>
+      <rect width="720" height="1280" fill="url(#g)"/>
+      <circle cx="620" cy="160" r="210" fill="${light}" opacity=".12"/><circle cx="90" cy="1100" r="260" fill="${light}" opacity=".09"/>
+      <rect x="64" y="390" width="592" height="500" rx="36" fill="#ffffff" opacity=".94"/>
+      <text x="104" y="500" fill="${accent}" font-size="28" font-family="Arial, PingFang SC, sans-serif" font-weight="700">通用安全版 · ${index + 1}/${Math.min(4, input.baseline.scenes.length)}</text>
+      <text x="104" y="610" fill="${dark}" font-size="58" font-family="Arial, PingFang SC, sans-serif" font-weight="800">${escapeSvg(title)}</text>
+      <text x="104" y="700" fill="#324b45" font-size="34" font-family="Arial, PingFang SC, sans-serif">${escapeSvg(subject)}</text>
+      <text x="104" y="805" fill="#60736e" font-size="24" font-family="Arial, PingFang SC, sans-serif">不使用未经核验的企业或产品事实</text>
+    </svg>`;
+    await sharp(Buffer.from(svg)).png().toFile(localPath);
+    const contentHash = createHash('sha256').update(await fsp.readFile(localPath)).digest('hex');
+    assets.push({
+      id: `system-theme-${input.baseline.themeId || 'general'}-${index + 1}`,
+      name: `${title} · 系统安全图形`,
+      type: 'image',
+      sourceId: `system_theme_material_${index + 1}`,
+      url: localPath,
+      localPath,
+      contentHash,
+      duration: 2.8,
+      visualObservations: [`${scene.shotFunction} ${scene.subject} ${scene.action}`, '系统生成的抽象图形与受控主题文字'],
+      segments: [],
+      selectionOrigin: 'system_graphic',
+    });
+  }
+  return assets;
 }
 
 async function analyzeProductionAssets(input: {
@@ -576,16 +723,21 @@ async function failExecution(input: {
   if (completedArtifact && !pendingRevision) return;
   const rawMessage = String(input.error instanceof Error ? input.error.message : input.error || '自动成片失败').slice(0, 800);
   const needsMaterial = rawMessage.startsWith('production_input_required:');
+  const needsUserInput = rawMessage.startsWith('user_input_required:');
   const directorRevisionFailed = rawMessage.startsWith('director_revision_required:');
-  const message = rawMessage.replace(/^(?:production_input_required|director_revision_required):/, '').trim();
+  const message = rawMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();
   await writeExecutionStage({
     ...input,
-    stage: needsMaterial ? 'waiting_for_material' : directorRevisionFailed ? 'director_revision_required' : 'failed',
+    stage: needsUserInput ? 'waiting_for_user_input' : 'automatic_recovery_exhausted',
     status: 'waiting_external',
-    message: needsMaterial ? message : `自动成片暂时中断，可直接重试：${message}`,
+    message: needsUserInput
+      ? message
+      : `系统已保留导演方案和现有结果，稍后可继续自动处理：${message}`,
     extra: {
-      reasonCode: needsMaterial
-        ? 'social_content_material_quality_insufficient'
+      reasonCode: needsUserInput
+        ? 'social_content_user_input_required'
+        : needsMaterial
+          ? 'social_content_system_material_fallback_exhausted'
         : directorRevisionFailed
           ? 'social_content_director_revision_retryable'
           : 'social_content_auto_production_failed',
@@ -594,10 +746,9 @@ async function failExecution(input: {
   const record = await requireSocialTask(input).catch(() => null);
   if (record && socialText(record.status) === 'producing') {
     await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
-      // Only a hard material/fact insufficiency needs user attention. Provider
-      // or internal execution failures remain restartable without requesting
-      // the user to change creative input.
-      status: needsMaterial ? 'attention' : 'paused',
+      // Missing personalization data is handled by the library/system fallback.
+      // Only an explicit governed user-input requirement may surface attention.
+      status: needsUserInput ? 'attention' : 'paused',
       version: safeNextVersion(record),
       updated_by: input.userId,
       updated_at: new Date().toISOString(),
@@ -640,8 +791,10 @@ export async function runSocialContentAutoProduction(input: {
     revisionNote = socialText(revisionRows.items[0]?.decision_note);
   }
   const reviewDirective = revisionParent ? socialReviewRevisionDirective(revisionNote) : null;
-  const profile = await readTenantEnterpriseProfile(input.tenantId);
-  const verifiedContext = verifiedSocialScriptContext(profile, detail.brief.productRef);
+  const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
+  const verifiedContext = profile
+    ? verifiedSocialScriptContext(profile, detail.brief.productRef)
+    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
   let baseline = parseStoredSocialScriptBaseline(taskRecord.script_baseline);
   let directorFormula: InternalSocialContentFormula | null = null;
   let staleFormulaReference = false;
@@ -660,6 +813,16 @@ export async function runSocialContentAutoProduction(input: {
       baseline = null;
       staleFormulaReference = true;
     }
+  }
+  if (baseline?.source === 'knowledge_fallback'
+    && baseline.match?.verifiedKnowledgeSource === 'none'
+    && !baseline.formulaReference
+    && !baseline.match?.inspirationReference
+    && !baseline.match?.userProductAssociation) {
+    // Older v3 baselines treated an empty tenant as a knowledge fallback and
+    // then blocked on missing evidence. Re-freeze them into the governed
+    // system-theme baseline so first-content tasks gain the new safe fallback.
+    baseline = null;
   }
   if (!baseline || baseline.groundingVersion !== SOCIAL_SCRIPT_GROUNDING_VERSION) {
     // Compatibility path for older tasks: discard any baseline that directly
@@ -717,48 +880,51 @@ export async function runSocialContentAutoProduction(input: {
     tenantId: input.tenantId,
     sources: detail.sources,
     productRef: detail.brief.productRef,
+    themeId: detail.theme?.themeId ?? null,
     outputDirectory: outputDir,
   });
-  if (!rawAssets.length) {
-    throw new Error('production_input_required:没有找到可读取的图片或视频素材。系统不会再用任务文字生成资料卡视频，请至少上传一段清晰实拍视频或两张相关图片。');
-  }
   const analyzed = await analyzeProductionAssets({ tenantId: input.tenantId, assets: rawAssets });
-  const assets = analyzed.assets;
-  if (activeBaseline.source === 'knowledge_fallback'
+  let assets = analyzed.assets;
+  if (['knowledge_fallback', 'system_theme_baseline'].includes(activeBaseline.source)
     && !activeBaseline.formulaReference
     && !activeBaseline.match?.inspirationReference) {
     const associationIdentities = new Set(assets
       .filter(asset => asset.explicitProductAssociation?.exactTaskProductMatch)
       .map(asset => asset.contentHash || asset.localPath || asset.objectKey || asset.url || asset.id));
     const requiresAssociationOnlySafety = activeBaseline.match?.verifiedKnowledgeSource === 'none';
-    if (associationIdentities.size < 2 && requiresAssociationOnlySafety) {
-      throw new Error('production_input_required:系统没有匹配到可用爆款公式、灵感脚本或可核验产品知识。安全骨架至少需要 2 份彼此独立、且由用户明确关联到当前产品的真实素材。');
-    }
     // Exact tenant-authored product linkage is also a safe visual fallback
     // when enterprise product facts exist but no vision provider is available.
     // It authorizes using the files in an edit; it never turns filenames,
     // labels or enterprise facts into claims about what the camera saw.
-    if (associationIdentities.size >= 2) {
-    activeBaseline = freezeSocialScriptBaseline({
-      brief: detail.brief,
-      theme: detail.theme ?? null,
-      formula: null,
-      inspiration: null,
-      verifiedContext,
-      // This is confidence in the exact tenant-authored linkage only. Visual
-      // confidence remains 0 on every association-only production clip.
-      userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
-      lockedAt: new Date().toISOString(),
-      previous: activeBaseline,
-    });
-    await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
-      script_baseline: activeBaseline,
-      formula_reference: '',
-      updated_at: activeBaseline.lockedAt,
-    });
+    if (associationIdentities.size >= 2 && requiresAssociationOnlySafety) {
+      activeBaseline = freezeSocialScriptBaseline({
+        brief: detail.brief,
+        theme: detail.theme ?? null,
+        formula: null,
+        inspiration: null,
+        verifiedContext,
+        // This is confidence in the exact tenant-authored linkage only. Visual
+        // confidence remains 0 on every association-only production clip.
+        userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
+        lockedAt: new Date().toISOString(),
+        previous: activeBaseline,
+      });
+      await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
+        script_baseline: activeBaseline,
+        formula_reference: '',
+        updated_at: activeBaseline.lockedAt,
+      });
     }
   }
   let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets });
+  if (!plan.ok) {
+    const systemAssets = await systemThemeGraphicAssets({ outputDirectory: outputDir, baseline: activeBaseline });
+    assets = [...assets, ...systemAssets];
+    plan = buildSocialProductionPlan({ baseline: activeBaseline, assets });
+    if (plan.ok) {
+      plan.notes.push('现有素材覆盖不足，编导 Agent 已使用平台安全主题图形完成基础版；补充企业素材后可升级为专属版。');
+    }
+  }
   plan.unusedAssets.push(...analyzed.failures.map(item => ({
     assetId: item.assetId,
     assetName: item.assetName,
@@ -771,7 +937,7 @@ export async function runSocialContentAutoProduction(input: {
     throw new Error(`production_input_required:${plan.message}${failureSummary}`);
   }
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
-  const adaptation = productionAdaptation(plan, rawAssets.length);
+  const adaptation = productionAdaptation(plan, assets.length);
   const previousDirectorPlan = parseStoredSocialDirectorPlan(taskRecord.director_plan);
   if (previousDirectorPlan) {
     // One-time compatibility backfill for tasks created before the immutable
@@ -1148,6 +1314,37 @@ export async function runSocialContentAutoProduction(input: {
 
 const activeProductions = new Map<string, { runId: string; promise: Promise<void> }>();
 
+async function runSocialContentAutoProductionWithRetry(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  runId: string;
+}): Promise<void> {
+  let lastError: unknown = new Error('自动成片失败');
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await runSocialContentAutoProduction(input);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 3) break;
+      const raw = String(error instanceof Error ? error.message : error || '自动成片失败');
+      await writeExecutionStage({
+        ...input,
+        stage: 'automatic_recovery',
+        status: 'running',
+        message: raw.startsWith('production_input_required:')
+          ? '现有素材未通过自动检查，正在切换素材库与安全基础方案。'
+          : '本次生成暂未完成，正在自动切换备用方案。',
+        extra: { automaticRetryAttempt: attempt + 1, automaticRetryLimit: 3 },
+      }).catch(() => undefined);
+      await new Promise<void>(resolve => setTimeout(resolve, attempt * 300));
+    }
+  }
+  throw lastError;
+}
+
 /** Fire-and-observe entry point: API admission returns immediately while the worker renders in-process. */
 export function enqueueSocialContentAutoProduction(input: {
   repository: Starter198Repository;
@@ -1163,7 +1360,7 @@ export function enqueueSocialContentAutoProduction(input: {
   pending = runOutsideSocialContentMutationScope(() => (
     (current?.promise.catch(() => undefined) ?? Promise.resolve())
       .then(() => new Promise<void>(resolve => setImmediate(resolve)))
-      .then(() => runSocialContentAutoProduction(input))
+      .then(() => runSocialContentAutoProductionWithRetry(input))
       .catch(error => failExecution({ ...input, error }))
       .finally(() => {
         if (activeProductions.get(key)?.promise === pending) activeProductions.delete(key);

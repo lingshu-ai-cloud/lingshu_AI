@@ -220,13 +220,19 @@ export async function resolveSocialInspirationScript(input: {
   verifiedContext: VerifiedSocialScriptContext;
 }): Promise<SocialInspirationScriptMatch | null> {
   try {
-    const result = await store.list<Record<string, unknown>>('trend_videos', {
-      where: { tenantId: input.tenantId },
+    const sharedTenantId = socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID)
+      || 'demo-shared-video-pool';
+    const tenantIds = [...new Set([input.tenantId, sharedTenantId].filter(Boolean))];
+    const results = await Promise.allSettled(tenantIds.map(tenantId => store.list<Record<string, unknown>>('trend_videos', {
+      where: { tenantId },
       sort: '-crawledAt',
       page: 1,
       perPage: 300,
-    });
-    return matchSocialInspirationScript({ ...input, records: result.items });
+    })));
+    const records = [...new Map(results.flatMap(result => result.status === 'fulfilled' ? result.value.items : [])
+      .map(record => [socialText(record.id), record] as const)
+      .filter(([id]) => Boolean(id))).values()];
+    return matchSocialInspirationScript({ ...input, records });
   } catch {
     // The inspiration catalog is an optional enhancement. A catalog outage
     // must not turn into copying task text; callers continue with a formula or

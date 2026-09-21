@@ -25,13 +25,14 @@ function isWhatsAppInquiry(customer: CustomerProfile) {
   return String(customer.source).startsWith('whatsapp');
 }
 
-export default function InquiryDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin' }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string }) {
+export default function InquiryDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin', demoCustomers }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string; demoCustomers?: CustomerProfile[] }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const { customers, loading } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
+  const effectiveCustomers = demoCustomers ?? customers;
 
-  const inquiries = useMemo(() => [...customers]
+  const inquiries = useMemo(() => [...effectiveCustomers]
     .filter(isWhatsAppInquiry)
-    .sort((a, b) => b.priority - a.priority || b.intentScore - a.intentScore), [customers]);
+    .sort((a, b) => b.priority - a.priority || b.intentScore - a.intentScore), [effectiveCustomers]);
 
   const summary = useMemo(() => {
     const highIntent = inquiries.filter(item => item.intentScore >= 80).length;
@@ -53,7 +54,9 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
         </button>
       </div>
 
-      {loading ? (
+      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>演示数据：</strong>客户、消息、阶段与商机估值均为模拟，不代表真实询盘。</div>}
+
+      {loading && !demoCustomers ? (
         <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>
       ) : inquiries.length === 0 ? (
         <EmptyState text="暂无 WhatsApp 客户会话。" />

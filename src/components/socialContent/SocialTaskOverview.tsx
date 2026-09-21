@@ -85,6 +85,13 @@ interface SocialTaskOverviewProps {
 
 function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   const sources = task.sources.filter(item => item.status === 'active');
+  const hasKnowledge = sources.some(item => item.kind === 'knowledge');
+  const hasMaterial = sources.some(item => item.kind === 'material');
+  const readinessTitle = hasKnowledge && hasMaterial
+    ? '专属资料已就绪'
+    : task.readiness.complete
+      ? '可以制作 · 系统将自动补齐'
+      : `还差 ${task.readiness.missing.length} 项`;
   const sourceStats = [
     { label: '素材', value: sources.filter(item => item.kind === 'material').length, icon: Image },
     { label: '企业资料', value: sources.filter(item => item.kind === 'knowledge').length, icon: FileText },
@@ -92,7 +99,7 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   ];
   return (
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-black text-text-primary">{task.readiness.complete ? '资料准备完成' : `还差 ${task.readiness.missing.length} 项`}</h3></div><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${task.readiness.complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{task.readiness.complete ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-black text-text-primary">{readinessTitle}</h3>{task.readiness.complete && !(hasKnowledge && hasMaterial) && <p className="mt-1 text-[10px] text-text-muted">可继续补充资料，让内容更贴近你的业务。</p>}</div><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${task.readiness.complete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{task.readiness.complete ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">{sourceStats.map(item => <div key={item.label} className="rounded-xl bg-surface-2 px-3 py-2.5"><item.icon size={14} className="text-text-muted" /><strong className="mt-2 block text-lg text-text-primary">{item.value}</strong><span className="text-[10px] font-semibold text-text-muted">{item.label}</span></div>)}</div>
       {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-black text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；编导 Agent 会结合现有素材安排导演方案。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-xl border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}
       {!task.readiness.complete && task.readiness.missing.length > 0 && <ul className="mt-4 space-y-1.5">{task.readiness.missing.filter(item => !item.startsWith('material_requirement:')).slice(0, 4).map(item => <li key={item} className="flex items-start gap-2 text-xs text-amber-800"><Circle size={6} fill="currentColor" className="mt-1.5 shrink-0" />请补充{READINESS_LABEL[item] || '任务资料'}</li>)}</ul>}

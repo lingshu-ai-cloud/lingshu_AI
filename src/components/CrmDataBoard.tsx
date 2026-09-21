@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, DollarSign, Loader2, PackageCheck, RefreshCw, ShoppingBag, Users } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { useCustomers } from '../hooks/useCustomers';
+import type { CustomerProfile } from '../types/customer';
 
 type OrderStatus = '待付款' | '已付款' | '生产中' | '已发货' | '已完成' | '退款';
 
@@ -88,13 +89,19 @@ function aggregateCustomers(orders: OrderRecord[]): CustomerFromOrders[] {
   return [...map.values()].sort((a, b) => b.amount - a.amount || b.latestDate.localeCompare(a.latestDate));
 }
 
-export default function CrmDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin' }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string }) {
+export default function CrmDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin', demoCustomers }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string; demoCustomers?: CustomerProfile[] }) {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const { customers: conversationCustomers, loading: customersLoading } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
+  const effectiveConversationCustomers = demoCustomers ?? conversationCustomers;
 
   useEffect(() => {
+    if (demoCustomers) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     setLoading(true);
     readJson<{ items?: OrderRecord[] }>('/api/overseas/enterprise/orders', { items: [] })
@@ -106,9 +113,9 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
         if (alive) setLoading(false);
       });
     return () => { alive = false; };
-  }, [refreshKey]);
+  }, [refreshKey, demoCustomers]);
 
-  const conversationOrders = useMemo<OrderRecord[]>(() => conversationCustomers.flatMap(customer => customer.orders.map((order, index) => {
+  const conversationOrders = useMemo<OrderRecord[]>(() => effectiveConversationCustomers.flatMap(customer => customer.orders.map((order, index) => {
     const amount = Number(String(order.total || '').replace(/[^0-9.-]/g, '')) || 0;
     const status: OrderStatus = order.status === 'paid' ? '已付款' : order.status === 'pending' ? '待付款' : '退款';
     return {
@@ -127,7 +134,7 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
       source: 'conversation',
       sourceRef: `${customer.id}:${index}`,
     };
-  })), [conversationCustomers]);
+  })), [effectiveConversationCustomers]);
   const effectiveOrders = orders.length ? orders : conversationOrders;
   const customers = useMemo(() => aggregateCustomers(effectiveOrders), [effectiveOrders]);
   const validOrders = useMemo(() => effectiveOrders.filter(isValidOrder), [effectiveOrders]);
@@ -157,7 +164,9 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
         </button>
       </div>
 
-      {loading || customersLoading ? (
+      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>演示数据：</strong>订单客户、金额、状态与毛利均为模拟，不代表真实成交。</div>}
+
+      {(loading || customersLoading) && !demoCustomers ? (
         <div className="flex h-48 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />读取我的订单数据...</div>
       ) : effectiveOrders.length === 0 ? (
         <EmptyState text="当前会话客户暂无订单记录，成交后会自动汇总到这里。" />

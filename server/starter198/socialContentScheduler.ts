@@ -325,7 +325,15 @@ function assertSubjectMatches(input: {
     total: input.sources.length,
     knowledge: input.sources.filter(source => source.kind === 'knowledge').length,
     material: input.sources.filter(source => ['material', 'reference_link'].includes(source.kind)).length,
-  });
+  }, task.theme ? {
+    theme: task.theme,
+    materialReadiness: task.materialReadiness ?? {
+      complete: true,
+      requiredCount: 0,
+      satisfiedRequiredCount: 0,
+      blockingRequirementIds: [],
+    },
+  } : undefined);
   if (!readiness.complete) fail('social_content_task_inputs_incomplete', 409);
 
   const expectedSources = normalizedSources(input.sources.map(source => ({

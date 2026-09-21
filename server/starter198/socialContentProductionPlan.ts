@@ -27,6 +27,8 @@ export type SocialProductionAsset = {
     exactTaskProductMatch: true;
   };
   segments: Array<Record<string, unknown>>;
+  /** Auditable retrieval origin. It does not change the visual evidence score. */
+  selectionOrigin?: 'task' | 'tenant_library' | 'shared_library' | 'system_graphic';
 };
 
 export type ProductionClip = {

@@ -1408,6 +1408,28 @@ try {
   assert.equal(pendingTheme.status, 200);
   assert.equal(pendingTheme.body.theme.classificationStatus, 'pending_confirmation');
 
+  const zeroInputTask = await request('/api/overseas/starter-198/social-content/tasks', {
+    idempotencyKey: 'social-zero-input-create-001',
+    body: {
+      title: '第一次直接生成', objective: '先完成第一条安全基础内容',
+      mode: 'instant', themeId: 'customization_process',
+    },
+  });
+  assert.equal(zeroInputTask.status, 201, zeroInputTask.raw);
+  assert.equal(zeroInputTask.body.task.sourceCount, 0);
+  assert.equal(zeroInputTask.body.task.readiness.complete, true, 'a confirmed theme is sufficient to start first content');
+  assert.deepEqual(zeroInputTask.body.task.readiness.missing, []);
+  assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
+  assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('source_material'));
+  assert.equal(zeroInputTask.body.task.scriptBaseline.source, 'system_theme_baseline');
+  const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-zero-input-start-001',
+    body: { expectedVersion: zeroInputTask.body.task.version },
+  });
+  assert.equal(zeroInputStarted.status, 202, zeroInputStarted.raw);
+  assert.equal(zeroInputStarted.body.task.status, 'producing',
+    'missing personalization inputs must not block the Director Agent');
+
   const instantTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-instant-create-001',
     body: { ...completeBrief, title: '即时产品卖点', mode: 'instant', themeId: 'product_value', topic: '一个镜头看懂卖点', requestedOutputCount: 9 },
