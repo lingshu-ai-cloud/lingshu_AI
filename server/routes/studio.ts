@@ -5382,9 +5382,12 @@ const SAY_VOICE_MAP: Record<string, string[]> = {
 
 const SAY_LANGUAGE_VOICE_MAP: Record<string, Record<string, string[]>> = {
   zh: {
-    v1: ['Ting-Ting', 'Mei-Jia', 'Sin-ji'],
-    v2: ['Sin-ji', 'Ting-Ting', 'Mei-Jia'],
-    v3: ['Mei-Jia', 'Ting-Ting', 'Sin-ji'],
+    // macOS exposes these exact identifiers. The former hyphenated spellings
+    // do not exist, which silently skipped Mandarin and fell through to a
+    // Cantonese voice for Chinese social-video copy.
+    v1: ['Tingting', 'Sandy (中文（中国大陆）)', 'Meijia', 'Sinji'],
+    v2: ['Reed (中文（中国大陆）)', 'Tingting', 'Sinji'],
+    v3: ['Sandy (中文（中国大陆）)', 'Tingting', 'Meijia', 'Sinji'],
   },
   en: {
     v1: ['Samantha', 'Karen', 'Moira'],
@@ -6435,14 +6438,44 @@ export async function synthesizeStudioVoiceForAutomation(input: {
   return studioTenantContext.run(input.tenantId, async () => {
     const spoken = String(input.text || '').trim();
     if (!spoken) return { ok: false, error: '口播为空' };
-    // Each sentence is synthesized and measured independently. Boundaries come
-    // from real audio samples, not proportional allocation of the full script.
+    // Short social scripts need one continuous performance. Synthesizing every
+    // sentence separately resets pitch and emotion four times and makes a
+    // natural recommendation sound like stitched system prompts. Keep longer
+    // automation scripts on the measured per-sentence path below.
     const lines = splitStudioNarrationSentences(spoken);
     const dir = tenantAssetDir(TTS_ROOT, input.tenantId); fs.mkdirSync(dir, { recursive: true });
     const files: string[] = [], cues: AlignedCue[] = [];
     const providers = new Set<string>();
     let cursor = 0;
     const speed = Math.max(.8, Math.min(1.2, Number(input.style?.speed) || 1));
+    if (lines.length > 1 && lines.length <= 6 && spoken.length <= 360) {
+      const audio = await generateTtsAudio(spoken, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }));
+      if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };
+      const trustedProvider = ['qwen_tts', 'minimax'].includes(audio.source)
+        || (process.env.NODE_ENV !== 'production' && audio.source === 'local_say');
+      if (!trustedProvider) return { ok: false, source: audio.source, error: audio.error || '当前只能使用本地兜底音色，不能作为正式成片配音；请检查语音服务配置' };
+      const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
+      const joined = path.join(dir, randomUUID() + '.wav');
+      await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + speed + ',apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', joined], 30000);
+      const duration = wavDurationFromBytes(fs.readFileSync(joined));
+      if (!(duration > .15)) return { ok: false, error: '无法测量实际配音时长' };
+      const spokenDuration = Math.max(.15, duration - .15);
+      const weights = lines.map(line => Math.max(1, [...line.replace(/[\s，,。.!！?？；;：:、]/g, '')].length));
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      let cueCursor = 0;
+      const continuousCues = lines.map((line, index) => {
+        const start = cueCursor;
+        const end = index === lines.length - 1
+          ? spokenDuration
+          : Math.min(spokenDuration, start + spokenDuration * weights[index]! / totalWeight);
+        cueCursor = end;
+        return { start, end, text: line };
+      });
+      const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration }, input.tenantId);
+      fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues: continuousCues }));
+      return { ...result, localPath: joined, text: spoken, cues: continuousCues, source: audio.source, alignmentSource: 'synthesized_sentence_audio' };
+    }
+    // Longer scripts retain independently measured sentence boundaries.
     for (const line of lines) {
       const audio = await generateTtsAudio(line, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }));
       if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };

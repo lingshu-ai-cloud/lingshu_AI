@@ -10,6 +10,7 @@ import type {
   SocialWorkPackageKind,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
+import { socialContentMaterialPolicy } from '../../../shared/socialContentMaterialPolicy';
 import { socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
 import { readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
 import type { SocialContentDraft } from '../../lib/socialContentModel';
@@ -46,6 +47,7 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
     brandNotes: draft.keyFacts.trim() || null,
     restrictions: splitLines(draft.prohibitedClaims),
     callToAction: draft.callToAction.trim() || null,
+    productionMode: draft.productionMode,
     mode: draft.mode,
     themeId: draft.themeId || null,
     customTopic: draft.customTopic.trim() || null,
@@ -389,7 +391,7 @@ export function useSocialContentWorkspace() {
     }
   }, start
     ? (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? '任务已建立，已有脚本、素材和生成结果均已保存；机器人正在自动重试'
+      ? `任务已保留，请按提示补充${socialContentMaterialPolicy(result.theme?.themeId ?? null).subjectLabel}后继续`
       : '内容生产任务已进入执行队列'
     : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
 
@@ -401,7 +403,7 @@ export function useSocialContentWorkspace() {
       applyTask(next);
       return next;
     }, (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? '任务已建立，已有脚本、素材和生成结果均已保存；机器人正在自动重试'
+      ? `任务已保留，请按提示补充${socialContentMaterialPolicy(result.theme?.themeId ?? null).subjectLabel}后继续`
       : '内容生产任务已进入执行队列');
   }, [workspace?.currentTask, run, applyTask]);
 

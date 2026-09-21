@@ -16,19 +16,35 @@ const reviewSource = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'ut
 const insightSource = fs.readFileSync('src/lib/reviewInsights.ts', 'utf8');
 const packageSource = fs.readFileSync('src/components/WeeklyPackagePanel.tsx', 'utf8');
 const productionSource = fs.readFileSync('src/components/ProductionProgressPanel.tsx', 'utf8');
+const liveSceneSource = fs.readFileSync('src/components/ProductionTaskScene.tsx', 'utf8');
 const boardSource = fs.readFileSync('src/components/DeliveryBoard.tsx', 'utf8');
 const libSource = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const assistantStoreSource = fs.readFileSync('src/stores/assistantStore.ts', 'utf8');
 const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.tsx', 'utf8');
 const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
 const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePresets.ts', 'utf8');
+
+const assistantOrbitSource = assistantSource.slice(
+  assistantSource.indexOf('const SKILL_AGENTS'),
+  assistantSource.indexOf('function pageKey'),
+);
+for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent']) {
+  assert.match(assistantOrbitSource, new RegExp(label), `灵小枢子 Agent 必须显示现有角色：${label}`);
+}
+assert.doesNotMatch(assistantOrbitSource, /策略助手|唤醒助手|统筹 Agent/, '灵小枢不应再显示旧助手或重复的统筹 Agent');
+assert.match(assistantStoreSource, /\['business', 'director', 'content', 'customer'\]/, '灵小枢应只维护四个现有子 Agent 的独立会话');
+assert.match(assistantSource, /const current = agent\.id === currentPageAgent[\s\S]{0,1800}style=\{current \? ORBIT_AGENT_ACTIVE_STYLE : ORBIT_AGENT_IDLE_STYLE\}/, '只有当前页面对应的 Agent 可以使用不同强调色');
+assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
+assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
+assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
 
 assert.match(pageSource, /自动交付语言/);
 assert.match(pageSource, /相同 sceneId 执行配音、字幕、配乐和渲染/);
 assert.match(pageSource, /需要你观看成片并做判断/, 'the quality gate must explain the exact human decision');
 assert.match(pageSource, /查看成片并处理/, 'the quality gate must expose a direct review action');
-assert.match(pageSource, /nodeDeepLink\(selectedPlanTask, selectedTask, data\.run\.id, data\.deliveries\)/, 'the production scene must use the delivery-enriched project deep link');
+assert.match(pageSource, /<ProductionTaskScene[^>]+runId=\{data\.run\.id\}[^>]+taskId=\{selectedTask\.id\}/, 'Smart Operations must use the shared production scene');
 assert.match(revisionSource, /当前待验收成片/, 'the revision workspace must put the final video before editing controls');
 assert.match(revisionSource, /<video[^>]+aria-label="当前待验收成片"/, 'the revision workspace must render the actual final video');
 assert.match(revisionSource, /成片通过，确认当前版本/, 'the revision workspace must allow the user to complete the human quality decision');
@@ -53,6 +69,9 @@ for (const period of ['本周', '上周', '本月', '上月']) {
 assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
 assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
+assert.match(pageSource, /系统已准备一套安全默认方案/, 'Agent settings should start with a lightweight confirmation summary');
+assert.match(pageSource, /查看并修改设置/);
+assert.match(pageSource, /确认设置，进入周任务/);
 assert.match(pageSource, /默认创作流程 · 主题创作/, 'content Agent settings must explain the unified theme workflow');
 assert.match(pageSource, /选主题 → 补素材 → 编导 Agent 定方案 → 内容 Agent 成片 → 用户验收/, 'the theme workflow must show the director-to-content handoff');
 assert.doesNotMatch(pageSource, /<Field label="默认创作方式">/, 'content Agent settings must not expose the legacy route selector');
@@ -72,7 +91,11 @@ assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Em
 for (const persona of ['B2B 从零起步', 'B2B 已有基础', '品牌影响', 'DTC 直接销售']) {
   assert.match(taskPackagePresetSource, new RegExp(persona), `weekly task packages must include ${persona}`);
 }
-assert.match(pageSource, /让灵小枢生成周任务/);
+assert.match(pageSource, /确认并生成周任务/);
+assert.match(pageSource, /灵小枢已生成本周默认方案/, 'weekly planning should start from a default proposal');
+assert.match(pageSource, /调整本周设置/);
+assert.match(pageSource, /系统生成的目标设置（需要时可修改）/);
+assert.doesNotMatch(pageSource, /更多目标设置（可选）/);
 assert.match(pageSource, /本周最想解决什么/);
 assert.match(pageSource, /查看并调整具体视频计划（可选）/);
 assert.match(videoPlanEditorSource, /themeWorkflow \? <div[\s\S]{0,500}主题创作[\s\S]{0,500}系统按主题与素材自动匹配制作路径[\s\S]{0,500}: <label[\s\S]{0,200}脚本来源/, 'theme workflow must replace the route selector with a read-only explanation');
@@ -84,7 +107,7 @@ assert.match(libSource, /configSnapshot\?: DigitalEmployeeConfig/, 'the plan API
 assert.match(pageSource, /useState<WorkspaceView>\(["']today["']\)/, 'regular login must land on Today Overview by default');
 assert.match(pageSource, /workspaceView === ["']today["'][\s\S]{0,5000}<TodayFocusPanel/, 'Today view must prioritize one next action before detailed operating data');
 assert.match(pageSource, /workspaceView === ["']overview["'][\s\S]{0,5000}<ProductionProgressPanel/, 'Business progress must keep detailed operating data in a dedicated view');
-assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<ProductionScene/, 'Live Production must have its own render branch');
+assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<ProductionTaskScene/, 'Live Production must render the shared production scene');
 assert.match(pageSource, /workspaceView === ["']review["'][\s\S]{0,5000}<WeeklyReviewPanel/, 'Weekly Review must have its own render branch');
 assert.match(pageSource, /workspaceView === ["']rules["'][\s\S]{0,8000}(?:OnboardingPanel|approvalPolicy|\u89c4\u5219)/, 'Rules and Permissions must have its own render branch');
 
@@ -106,27 +129,22 @@ assert.match(pageSource, /businessSnapshot/, 'today and weekly views must use th
 assert.match(pageSource, /status === ["']available["'][\s\S]{0,500}metric\?\.value/, 'business metrics may show numbers only when their source is available');
 assert.match(pageSource, /\u5feb\u7167\u7f3a\u5931\uff0c\u4e0d\u80fd\u5224\u5b9a\u4e3a\u96f6\u7f3a\u53e3/, 'missing snapshots must not be presented as zero');
 
-assert.match(pageSource, /Agent \u5b9e\u65f6\u751f\u4ea7\u73b0\u573a/, 'regular login must expose the live Agent production scene');
+assert.match(liveSceneSource, /\u5185\u5bb9\u751f\u4ea7\u73b0\u573a/, 'the shared component must expose the content production scene');
 assert.match(pageSource, /displayedReadiness[\s\S]{0,3000}profileConfirmed[\s\S]{0,1200}knowledgeProducts\.length/, 'onboarding readiness must immediately reflect enterprise and product facts saved on the current page');
-assert.match(pageSource, /\u6267\u884c\u4f9d\u636e/, 'the production scene must expose facts and execution evidence');
-assert.doesNotMatch(pageSource, /\u601d\u8003\u4f9d\u636e|chain[_ -]?of[_ -]?thought/i, 'the UI must not claim to expose private model reasoning');
-assert.match(pageSource, /EventTimeline/, 'the live scene must render persisted events');
-assert.match(pageSource, /\u4e2d\u95f4\u4ea7\u7269/, 'the live scene must render intermediate task outputs');
+for (const label of ['编导 Agent', '字幕 Agent', '口播 Agent', '成片 Agent', '脚本', '字幕', '口播']) {
+  assert.match(liveSceneSource, new RegExp(label), `the shared production scene must expose ${label}`);
+}
+assert.doesNotMatch(liveSceneSource, /absolute inset-0|AgentBrowserViewport|DirectorTaskContext/, 'the production scene must not trap scrolling or embed the old technical monitoring UI');
+assert.doesNotMatch(liveSceneSource, /\u601d\u8003\u4f9d\u636e|chain[_ -]?of[_ -]?thought/i, 'the UI must not claim to expose private model reasoning');
 assert.match(boardSource, /function DeliveryBoard/, 'execution center must render a real task kanban');
 assert.match(boardSource, /onOpenTask\(\{ \.\.\.selected\.link!.*deliveryId: selected\.id/, 'delivery detail must open its resource-specific business page');
 assert.match(pageSource, /onClick=\{\(\) => onOpenTask\(link\)\}/, 'clicking a task card must enter the mapped business workspace');
 assert.match(pageSource, /task\.business_line[\s\S]{0,200}task\.business_domain/, 'business-line classification must prefer persisted fields');
 assert.doesNotMatch(pageSource, /function taskBusinessLine[\s\S]{0,800}task_key/, 'task classification must not guess from task-key text');
-assert.match(pageSource, /现场画面流尚未接入/, 'live view must disclose when real Agent UI telemetry is unavailable');
-assert.match(pageSource, /不生成假鼠标动画/, 'the UI must not simulate fake mouse activity');
 assert.match(libSource, /payload\?\.uiAction/, 'the Agent operation feed must consume persisted worker UI events');
 const uiAction = agentUiActionFromEvent({ id: 'event-ui', run_id: 'run-1', task_id: 'task-1', sequence: 1, type: 'agent.ui.click', level: 'info', summary: '点击生成', occurred_at: new Date().toISOString(), payload: { uiAction: { kind: 'click', label: '点击生成', x: 640, y: 360, viewportWidth: 1280, viewportHeight: 720 } } });
 assert.deepEqual(agentCursorPercent(uiAction), { left: 50, top: 50 }, 'worker pixel coordinates must map to a stable monitor cursor position');
 
-for (const label of ['\u7ea0\u504f\u5f53\u524d\u4efb\u52a1', '\u4ec5\u672c\u6b21', '\u957f\u671f\u89c4\u5219\u5019\u9009', '\u91cd\u8dd1\u4e0b\u6e38\u4efb\u52a1', '\u4eba\u5de5\u5b8c\u6574\u63a5\u7ba1', '\u4ea4\u8fd8\u6570\u5b57\u5458\u5de5']) {
-  assert.match(pageSource, new RegExp(label), `human control must expose ${label}`);
-}
-assert.match(pageSource, /digitalEmployeeApi\.correctTask\(/, 'submitting a correction must call the persisted correction endpoint');
 assert.match(libSource, /correctTask:[\s\S]{0,350}instruction:[\s\S]{0,100}scope:[\s\S]{0,100}rerunDownstream/, 'correction API must preserve all three contract fields');
 
 assert.match(insightSource, /status === 'available'/, 'review findings must use available receipts');

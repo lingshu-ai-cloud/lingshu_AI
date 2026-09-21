@@ -223,6 +223,8 @@ function directionFor(input: {
 }): StoredSocialDirectorPlan['direction'] {
   const configured = input.formula?.direction;
   const defaultPace: SocialDirectorPace = input.themeId === 'supplier_capability' ? 'steady' : 'balanced';
+  const defaultVoicePreset = input.themeId === 'product_value' ? 'authentic_review' : 'professional_b2b';
+  const defaultVoiceSpeed = input.themeId === 'product_value' ? 1.02 : 1.08;
   const defaultMood = input.themeId === 'supplier_capability'
     ? '稳重、可信、商务'
     : input.themeId === 'customer_case'
@@ -237,8 +239,8 @@ function directionFor(input: {
     },
     voiceover: {
       voice: socialText(configured?.voiceover?.voice) || 'v1',
-      preset: configured?.voiceover?.preset ?? 'professional_b2b',
-      speed: clamp(Number(configured?.voiceover?.speed ?? 1.12), 0.75, 1.5),
+      preset: configured?.voiceover?.preset ?? defaultVoicePreset,
+      speed: clamp(Number(configured?.voiceover?.speed ?? defaultVoiceSpeed), 0.75, 1.5),
       pauseStyle: configured?.voiceover?.pauseStyle ?? 'natural',
     },
     subtitles: {

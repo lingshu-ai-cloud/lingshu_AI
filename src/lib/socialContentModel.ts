@@ -258,6 +258,7 @@ export function socialContentAssetReviewAction(artifacts: Array<{ status: Social
 
 export interface SocialContentDraft {
   mode: SocialContentTaskMode;
+  productionMode: 'social_ready' | 'concept_preview';
   themeId: SocialContentThemeId | '';
   customTopic: string;
   topic: string;
@@ -290,6 +291,7 @@ export interface SocialContentDraft {
 
 export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   mode: 'instant',
+  productionMode: 'social_ready',
   themeId: 'product_value',
   customTopic: '',
   topic: '',

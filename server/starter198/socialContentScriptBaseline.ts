@@ -9,7 +9,7 @@ import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { SocialContentWorkflowError, socialJson, socialObject, socialText } from './socialContentValidation.js';
 
 export const SOCIAL_SCRIPT_BASELINE_SCHEMA = 'social-content-script-baseline.v1';
-export const SOCIAL_SCRIPT_GROUNDING_VERSION = 'social-script-grounding.v3';
+export const SOCIAL_SCRIPT_GROUNDING_VERSION = 'social-script-grounding.v5';
 
 export interface VerifiedSocialScriptContext {
   productName: string | null;
@@ -139,8 +139,8 @@ const SYSTEM_THEME_SCENES: Record<SocialContentThemeId, ReadonlyArray<{
 
 const SYSTEM_THEME_NARRATION: Record<SocialContentThemeId, { zh: string[]; en: string[] }> = {
   product_value: {
-    zh: ['看一款产品，先从真实可见的信息开始。', '关注外观细节、操作方式和使用场景。', '再结合自己的需求判断是否适合。', '具体规格与效果，请以品牌正式资料为准。'],
-    en: ['Start with information that can be seen and verified.', 'Look at visible details, operation, and use scenarios.', 'Then compare them with your actual needs.', 'Check the brand’s official information for specifications and results.'],
+    zh: ['别急着划走，先看它真实上手。', '外观、质地和使用过程，都给你拍清楚。', '不靠夸张词，让细节自己说话。', '正在挑同类产品，这款可以继续了解。'],
+    en: ['Pause for one real look at the product.', 'See the design, texture, and use up close.', 'No inflated claims—let the details speak.', 'Comparing similar products? This one is worth a closer look.'],
   },
   scenario_solution: {
     zh: ['先看真实场景，再判断解决思路。', '把使用过程拆开，逐步观察关键动作。', '结果只说明画面中能够确认的部分。', '具体适用条件，请以正式资料为准。'],
@@ -159,6 +159,64 @@ const SYSTEM_THEME_NARRATION: Record<SocialContentThemeId, { zh: string[]; en: s
     en: ['A real case should begin with the customer need.', 'Then show the solution process and verifiable collaboration steps.', 'Names and results must not be inferred without permission.', 'Use authorized case material for specific outcomes.'],
   },
 };
+
+/**
+ * Product references remain intent-only: they are never copied into speech or
+ * promoted to product claims. A small allowlist may only choose between
+ * governed, claim-free copy profiles so an uploaded beauty reel does not fall
+ * back to compliance language that sounds like an internal audit notice.
+ */
+const PRODUCT_VALUE_NARRATION_BY_HINT = {
+  haircare: {
+    zh: ['洗护别随便选，先看质地。', '从按压到使用，真实可见。', '不堆夸张词，让镜头说话。', '认真护发，可以了解一下。'],
+    en: ['Choose hair care by looking closer.', 'See the texture and use in real footage.', 'No inflated claims—let the camera speak.', 'Looking after your hair? Take a closer look.'],
+  },
+  skincare: {
+    zh: ['护肤品别只看包装，先看真实质地。', '从取用到上手，使用过程拍给你看。', '不夸大功效，只看镜头里的真实呈现。', '想找日常护肤，可以继续了解。'],
+    en: ['Look past the packaging and see the real texture.', 'Watch the product being dispensed and used.', 'No inflated claims—only what the footage shows.', 'Looking for everyday skincare? Take a closer look.'],
+  },
+  makeup: {
+    zh: ['妆效别靠想象，直接看真实上手。', '颜色、质地和使用过程都拍清楚。', '不加夸张滤镜，让细节自己说话。', '喜欢这种呈现，可以继续了解。'],
+    en: ['Do not imagine the finish—see it applied.', 'See the color, texture, and application clearly.', 'No exaggerated filters—let the details speak.', 'Like this look? Take a closer look.'],
+  },
+  home: {
+    zh: ['好不好用，先看一次真实操作。', '外观、细节和使用步骤都拍清楚。', '不堆空泛卖点，让过程自己说明。', '正在挑同类产品，可以继续了解。'],
+    en: ['See one real use before deciding.', 'Look at the design, details, and operation.', 'No vague claims—let the process explain itself.', 'Comparing similar products? Take a closer look.'],
+  },
+  electronics: {
+    zh: ['先不堆参数，直接看真实上手。', '外观、接口和操作过程逐个拍清楚。', '只展示镜头能确认的细节。', '想看更多使用信息，可以继续了解。'],
+    en: ['Skip the spec dump and see it in use.', 'Look at the design, ports, and operation.', 'Only details visible in the footage are shown.', 'Want more usage information? Take a closer look.'],
+  },
+} as const;
+
+function controlledThemeNarration(
+  themeId: SocialContentThemeId,
+  language: 'zh' | 'en',
+  productReference: unknown,
+): readonly string[] {
+  const reference = socialText(productReference).toLocaleLowerCase();
+  if (themeId === 'product_value'
+    && /洗发|护发|洗护|发膜|发质|头发|shampoo|conditioner|hair\s*care|haircare/.test(reference)) {
+    return PRODUCT_VALUE_NARRATION_BY_HINT.haircare[language];
+  }
+  if (themeId === 'product_value'
+    && /护肤|面霜|精华|乳液|面膜|洁面|防晒|skincare|serum|cream|lotion|cleanser/.test(reference)) {
+    return PRODUCT_VALUE_NARRATION_BY_HINT.skincare[language];
+  }
+  if (themeId === 'product_value'
+    && /彩妆|口红|唇釉|粉底|眼影|腮红|睫毛|makeup|lipstick|foundation|mascara/.test(reference)) {
+    return PRODUCT_VALUE_NARRATION_BY_HINT.makeup[language];
+  }
+  if (themeId === 'product_value'
+    && /家居|收纳|清洁|厨具|杯|灯|家具|home|kitchen|storage|cleaning/.test(reference)) {
+    return PRODUCT_VALUE_NARRATION_BY_HINT.home[language];
+  }
+  if (themeId === 'product_value'
+    && /数码|耳机|音箱|键盘|充电|摄像|电子|headphone|speaker|keyboard|charger|electronic/.test(reference)) {
+    return PRODUCT_VALUE_NARRATION_BY_HINT.electronics[language];
+  }
+  return SYSTEM_THEME_NARRATION[themeId][language];
+}
 
 function compactFactValue(value: unknown, maximum = 72): string {
   return socialText(value).replace(/[\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').slice(0, maximum);
@@ -193,6 +251,13 @@ export function verifiedSocialScriptContext(
       source: 'enterprise_product',
       confidence: exact ? 1 : 0.85,
     };
+  }
+  // A product name supplied for this task must match an enterprise product
+  // exactly before company/profile facts can ground product copy. Falling back
+  // to company industry or broad categories here made an unrelated factory
+  // profile look like evidence for the named product.
+  if (reference) {
+    return { productName: null, facts: [], source: 'none', confidence: 0 };
   }
   const profileFacts: Array<{ key: string; label: string; value: string }> = [
     { key: 'company_industry', label: '所属行业', value: compactFactValue(profile.company.industry) },
@@ -302,6 +367,9 @@ export function freezeSocialScriptBaseline(input: {
     basis: 'tenant_task_upload';
     confidence: number;
   } | null;
+  /** High-confidence visual-analysis text only. Free-form filenames and task
+   * copy are never accepted here as material evidence. */
+  materialCategoryHint?: string | null;
   lockedAt: string;
   previous?: StoredSocialScriptBaseline | null;
 }): StoredSocialScriptBaseline {
@@ -312,6 +380,9 @@ export function freezeSocialScriptBaseline(input: {
   const topic = themeLabels?.[language] ?? (language === 'en' ? 'the selected content theme' : '选定内容主题');
   const verified = input.verifiedContext ?? { productName: null, facts: [], source: 'none', confidence: 0 };
   const userProductAssociation = input.userProductAssociation ?? null;
+  const categoryHint = verified.source === 'enterprise_product'
+    ? [input.brief.productRef, ...verified.facts.map(item => item.value)].map(socialText).filter(Boolean).join(' ')
+    : socialText(input.materialCategoryHint);
   const product = verified.productName || (language === 'en' ? 'this product' : '本次产品');
   // CTA is an operator-owned instruction. An absent CTA stays absent: the
   // system must not silently convert a neutral video into a sales solicitation.
@@ -325,9 +396,9 @@ export function freezeSocialScriptBaseline(input: {
     && verified.source === 'none'
     && !userProductAssociation
     && Boolean(input.theme?.themeId);
-  const themeSafetyStructure = !matchedFormula
+  const controlledSafetyStructure = !matchedFormula
     && !input.inspiration
-    && !userProductAssociation
+    && verified.source === 'none'
     && Boolean(input.theme?.themeId);
   const sourceNodes = matchedFormula?.nodes?.length
     ? matchedFormula.nodes
@@ -335,7 +406,7 @@ export function freezeSocialScriptBaseline(input: {
       ? input.inspiration.nodes
       : input.formula?.nodes?.length
         ? input.formula.nodes
-        : themeSafetyStructure && input.theme?.themeId
+        : controlledSafetyStructure && input.theme?.themeId
           ? SYSTEM_THEME_SCENES[input.theme.themeId]
           : DEFAULT_SCENES;
   const source = matchedFormula
@@ -367,9 +438,9 @@ export function freezeSocialScriptBaseline(input: {
         };
     const narration = template && matchedFormula
       ? interpolate(template, interpolationValues).trim()
-      : systemThemeBaseline && input.theme?.themeId
-        ? SYSTEM_THEME_NARRATION[input.theme.themeId][language][index]
-          || SYSTEM_THEME_NARRATION[input.theme.themeId][language].at(-1)!
+      : controlledSafetyStructure && input.theme?.themeId
+        ? controlledThemeNarration(input.theme.themeId, language, categoryHint)[index]
+          || controlledThemeNarration(input.theme.themeId, language, categoryHint).at(-1)!
         : groundedNarration({
           language,
           index,

@@ -1,4 +1,5 @@
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
+import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy';
 import { socialContentCurrentArtifacts } from './socialContentModel';
 
 export interface SocialContentWeeklyPlan {
@@ -19,6 +20,7 @@ function money(value: number): string {
 }
 
 export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): SocialContentWeeklyPlan {
+  const materialPolicy = socialContentMaterialPolicy(task.theme?.themeId ?? null);
   const artifacts = socialContentCurrentArtifacts(task.artifacts);
   const activeSources = task.sources.filter(source => source.status === 'active');
   const materialCount = activeSources.filter(source => source.kind === 'material').length;
@@ -55,8 +57,8 @@ export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): Soc
     shootingGap,
     shootingLabel,
     productionLanes: [
-      { label: '现有素材制作', status: materialCount > 0 ? `已关联 ${materialCount} 项素材` : '等待产品素材' },
-      { label: '产品展示内容', status: task.brief.productRef ? '纳入本周计划' : '等待产品信息' },
+      { label: '现有素材制作', status: materialCount > 0 ? `已关联 ${materialCount} 项素材` : `等待${materialPolicy.subjectLabel}` },
+      { label: materialPolicy.focusLabel, status: task.brief.productRef ? '纳入本周计划' : '本期未指定' },
       { label: '结构变体测试', status: referenceCount > 0 ? `分析 ${referenceCount} 条参考` : '按历史表现安排' },
     ],
   };

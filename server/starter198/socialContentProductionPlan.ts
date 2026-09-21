@@ -1,4 +1,6 @@
 import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
+import type { SocialContentThemeId } from '../../shared/contracts/socialContentWorkflow.js';
+import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { socialText } from './socialContentValidation.js';
 
@@ -96,6 +98,16 @@ function hasExplicitProductAssociation(asset: SocialProductionAsset): boolean {
     && socialText(asset.explicitProductAssociation.productRef));
 }
 
+function hasTaskUploadAssociation(asset: SocialProductionAsset): boolean {
+  return asset.selectionOrigin === 'task' || hasExplicitProductAssociation(asset);
+}
+
+function hasLocalTaskWindows(asset: SocialProductionAsset): boolean {
+  return asset.selectionOrigin === 'task' && asset.segments.some(segment => (
+    socialText(segment.analysisMode) === 'local_distinct_visual_windows'
+  ));
+}
+
 function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
   if (asset.type === 'image') {
     const observations = asset.visualObservations.map(socialText).filter(Boolean);
@@ -145,12 +157,38 @@ function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
   return clips;
 }
 
-/** A product association can authorize a generic edit when vision is
- * unavailable, but it never becomes a visual observation. One upload yields
- * exactly one evidence shot and retains confidence=0 / needsReview=true. */
+/** A task upload or explicit product association can authorize a generic edit
+ * when semantic vision is unavailable, but it never becomes a visual
+ * observation. Locally verified distinct windows may become separate edit
+ * shots; all retain confidence=0 / needsReview=true. */
 function associationOnlyClip(asset: SocialProductionAsset): ProductionClip[] {
-  if (!hasExplicitProductAssociation(asset)) return [];
+  if (!hasTaskUploadAssociation(asset)) return [];
   if (asset.type === 'video' && (!Number.isFinite(asset.duration) || asset.duration < 1.5)) return [];
+  const locallyDistinct = asset.type === 'video'
+    ? asset.segments.flatMap((segment, index) => {
+      if (socialText(segment.analysisMode) !== 'local_distinct_visual_windows') return [];
+      const start = Number(segment.start ?? segment.startTime);
+      const end = Number(segment.end ?? segment.endTime);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0
+        || end > asset.duration + 0.05 || end - start < 1.2) return [];
+      const segmentId = socialText(segment.segmentId || segment.id) || `local-${index + 1}`;
+      return [{
+        clipId: `${asset.id}:${segmentId}`,
+        evidenceShotId: `${asset.id}:${segmentId}`,
+        assetId: asset.id,
+        assetName: asset.name,
+        type: 'video' as const,
+        start,
+        end,
+        sourceDuration: end - start,
+        observations: ['用户为当前任务上传；本地检测确认该区间与其他候选区间画面不同；未经语义视觉模型识别'],
+        confidence: 0,
+        needsReview: true,
+        evidenceBasis: 'user_product_association' as const,
+      }];
+    }).slice(0, 4)
+    : [];
+  if (locallyDistinct.length >= 2) return locallyDistinct;
   const sourceDuration = asset.type === 'image' ? 2.8 : Math.min(3.5, asset.duration);
   return [{
     clipId: `${asset.id}:association-only`,
@@ -226,7 +264,9 @@ function sceneIntent(scene: StoredSocialScriptBaseline['scenes'][number]): strin
 export function buildSocialProductionPlan(input: {
   baseline: StoredSocialScriptBaseline;
   assets: SocialProductionAsset[];
+  themeId?: SocialContentThemeId | null;
 }): SocialProductionPlan {
+  const materialPolicy = socialContentMaterialPolicy(input.themeId ?? input.baseline.themeId ?? null);
   if (!input.assets.length) return {
     ok: false, reasonCode: 'no_visual_material',
     message: '没有可读取的图片或视频素材，请至少补充一段清晰实拍视频或两张相关图片。',
@@ -245,7 +285,9 @@ export function buildSocialProductionPlan(input: {
     seen.add(key);
     uniqueAssets.push(asset);
   }
-  const associationSafe = isAssociationSafeBaseline(input.baseline);
+  const associationSafe = isAssociationSafeBaseline(input.baseline)
+    || (['system_theme_baseline', 'knowledge_fallback'].includes(input.baseline.source)
+      && uniqueAssets.some(hasLocalTaskWindows));
   const clipRows = uniqueAssets.map(asset => {
     const visuallyTrusted = trustedClips(asset);
     return {
@@ -278,14 +320,15 @@ export function buildSocialProductionPlan(input: {
     0,
     ...input.baseline.scenes.map(scene => visualEvidenceScore(sceneIntent(scene), clip.observations)),
   )]));
-  const associatedAssetIds = new Set(uniqueAssets.filter(hasExplicitProductAssociation).map(asset => asset.id));
+  const associatedAssetIds = new Set(uniqueAssets.filter(hasTaskUploadAssociation).map(asset => asset.id));
   const relevantClips = clips.filter(clip => associationSafe
     ? associatedAssetIds.has(clip.assetId)
     : (relevance.get(clip.clipId) ?? 0) > 0);
-  // Association-only production needs two independently uploaded files. A
-  // single file with multiple inferred segments cannot satisfy this gate.
+  // Association-only production needs two independently evidenced visual
+  // windows. They may be separate uploads or locally detected, visually
+  // distinct shots inside one complete user video.
   const relevantEvidenceShots = associationSafe
-    ? [...new Map(relevantClips.map(clip => [clip.assetId, clip])).values()]
+    ? [...new Map(relevantClips.map(clip => [clip.evidenceShotId, clip])).values()]
     : [...new Map(relevantClips.map(clip => [clip.evidenceShotId, clip])).values()];
   for (const row of clipRows.filter(item => item.clips.length
     && item.clips.every(clip => associationSafe
@@ -303,14 +346,14 @@ export function buildSocialProductionPlan(input: {
     ok: false,
     reasonCode: 'insufficient_visual_coverage',
     message: associationSafe
-      ? '至少需要 2 份彼此独立、并由用户明确关联到当前产品的真实素材；系统不会把文件名或通用标签当作产品关联。'
-      : '素材中与本次主题和脚本相符的可信镜头不足 2 个，请补充产品全貌、关键细节或实际使用过程素材。',
+      ? '至少需要 2 个可区分的真实画面区间；可以来自两份素材，也可以来自一支包含多个真实镜头的完整视频。'
+      : `素材中与本次主题和脚本相符的可信镜头不足 2 个，${materialPolicy.insufficientMessage}。`,
     scenes: [], selectedAssetIds: [], unusedAssets, narrationChanged: false,
     maxDuration: 0,
     sourceClipSeconds: relevantEvidenceShots.reduce((sum, clip) => sum + clip.sourceDuration, 0),
     averageConfidence: relevantEvidenceShots.reduce((sum, clip) => sum + clip.confidence, 0) / Math.max(1, relevantEvidenceShots.length),
     notes: associationSafe
-      ? ['产品关联仅证明用户把素材用于当前产品，不代表视觉模型确认了画面内容。', '关联素材的视觉置信度保持为 0，且继续标记待复核。']
+      ? ['任务上传或产品关联只证明用户允许本次使用，不代表视觉模型确认了画面语义。', '本地镜头差异检测只确认画面不同；视觉语义置信度保持为 0，且继续标记待复核。']
       : ['独立镜头按真实分析片段计算；同一片段的切窗不会增加镜头数。', '不相关素材仅从本次剪辑中舍弃，不会从素材库删除。'],
   };
 
@@ -323,18 +366,19 @@ export function buildSocialProductionPlan(input: {
       clip,
       index,
       semanticScore: associationSafe ? 0 : visualEvidenceScore(sceneIntent(scene), clip.observations),
-    })).sort((left, right) => right.semanticScore - left.semanticScore
-      || right.clip.confidence - left.clip.confidence
-      || right.clip.sourceDuration - left.clip.sourceDuration);
+    })).sort((left, right) => associationSafe
+      ? left.clip.start - right.clip.start
+      : right.semanticScore - left.semanticScore
+        || right.clip.confidence - left.clip.confidence
+        || right.clip.sourceDuration - left.clip.sourceDuration);
     const selected = ranked[0];
     if (!selected) return [];
-    // A long analyzed scene may expose several legal trim windows, but they
-    // are editing alternatives—not independent visual evidence. Once one is
-    // selected, all sibling windows leave the assignment pool.
+    // Evidence-shot ids, rather than asset ids, define independence here.
+    // Several trim alternatives from one analyzed shot share an id and are
+    // removed together, while locally detected cuts in one complete upload
+    // retain separate ids and may each supply one scene.
     for (let index = remaining.length - 1; index >= 0; index -= 1) {
-      if (associationSafe
-        ? remaining[index]!.assetId === selected.clip.assetId
-        : remaining[index]!.evidenceShotId === selected.clip.evidenceShotId) remaining.splice(index, 1);
+      if (remaining[index]!.evidenceShotId === selected.clip.evidenceShotId) remaining.splice(index, 1);
     }
     return [{ sceneIndex, scene, clip: selected.clip, semanticScore: selected.semanticScore }];
   });
@@ -351,8 +395,8 @@ export function buildSocialProductionPlan(input: {
       ok: false,
       reasonCode: 'insufficient_visual_coverage',
       message: associationSafe
-        ? `当前只有 ${assignments.length} 份可用的独立关联素材、约 ${sourceClipSeconds.toFixed(1)} 秒可用时长，达不到安全骨架的制作门槛。`
-        : `当前只有 ${assignments.length} 个可信镜头、约 ${sourceClipSeconds.toFixed(1)} 秒有效画面，达不到可交付门槛。请补充产品全貌、关键细节或实际使用过程素材。`,
+        ? `当前只有 ${assignments.length} 个可区分的真实画面区间、约 ${sourceClipSeconds.toFixed(1)} 秒可用时长，达不到制作门槛。`
+        : `当前只有 ${assignments.length} 个可信镜头、约 ${sourceClipSeconds.toFixed(1)} 秒有效画面，达不到可交付门槛。${materialPolicy.insufficientMessage}。`,
       scenes: [], selectedAssetIds: [], unusedAssets,
       narrationChanged: false, maxDuration, sourceClipSeconds, averageConfidence,
       notes: associationSafe
@@ -398,7 +442,7 @@ export function buildSocialProductionPlan(input: {
     averageConfidence,
     notes: [
       associationSafe
-        ? `本次使用 ${selectedAssetIds.length} 份独立关联素材；关联证明不等于视觉识别，未选素材不会删除。`
+        ? `本次使用 ${scenes.length} 个可区分真实画面区间（来自 ${selectedAssetIds.length} 份任务素材）；关联证明不等于视觉识别，未选素材不会删除。`
         : `本次只使用 ${selectedAssetIds.length} 份素材中的 ${scenes.length} 个可信镜头，未选素材不会删除。`,
       narrationChanged ? '执行稿仅做删镜和压缩，未添加新的产品事实。' : '执行稿与锁定脚本一致。',
     ],

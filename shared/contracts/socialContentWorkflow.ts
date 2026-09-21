@@ -34,6 +34,16 @@ export const SOCIAL_CONTENT_TASK_MODES = ['weekly', 'instant'] as const;
 export type SocialContentTaskMode = typeof SOCIAL_CONTENT_TASK_MODES[number];
 
 /**
+ * `social_ready` is the customer default: a task may only start when real,
+ * explicitly linked material is present and automatic production may not
+ * replace it with generic title cards. `concept_preview` is retained for
+ * historic/internal draft workflows where a non-publishable visual sketch is
+ * still useful.
+ */
+export const SOCIAL_CONTENT_PRODUCTION_MODES = ['social_ready', 'concept_preview'] as const;
+export type SocialContentProductionMode = typeof SOCIAL_CONTENT_PRODUCTION_MODES[number];
+
+/**
  * Stable first-level themes. A free-form topic is classified into one of these
  * values (or kept pending confirmation); it never becomes a sixth theme.
  */
@@ -179,6 +189,8 @@ export interface SocialContentTaskBrief {
   brandNotes: string | null;
   restrictions: string[];
   callToAction: string | null;
+  /** Always present on newly created tasks; optional for historic projections. */
+  productionMode?: SocialContentProductionMode;
 }
 
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
@@ -431,6 +443,7 @@ export interface CreateSocialContentTaskInput {
   brandNotes?: string | null;
   restrictions?: string[];
   callToAction?: string | null;
+  productionMode?: SocialContentProductionMode;
   mode?: SocialContentTaskMode;
   weeklyPlanId?: string | null;
   themeId?: SocialContentThemeId | null;

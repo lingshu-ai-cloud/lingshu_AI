@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   SOCIAL_CONTENT_TASK_MODES,
+  SOCIAL_CONTENT_PRODUCTION_MODES,
   SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_SOURCE_KINDS,
   SOCIAL_WORK_PACKAGE_KINDS,
@@ -121,6 +122,7 @@ const BRIEF_KEYS = [
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
   'customTopic', 'topic', 'legacyCreationRoute',
+  'productionMode',
 ] as const;
 
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
@@ -145,6 +147,10 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   const planningMode = source.planningMode === undefined ? 'auto_adjust' : socialText(source.planningMode);
   if (!['fixed', 'auto_adjust'].includes(planningMode)) {
     throw new SocialContentWorkflowError('social_content_planning_mode_invalid', 400);
+  }
+  const productionMode = source.productionMode === undefined ? 'social_ready' : socialText(source.productionMode);
+  if (!SOCIAL_CONTENT_PRODUCTION_MODES.includes(productionMode as CreateSocialContentTaskInput['productionMode'] & string)) {
+    throw new SocialContentWorkflowError('social_content_production_mode_invalid', 400);
   }
   const mode = source.mode === undefined ? undefined : socialText(source.mode);
   if (mode !== undefined && !SOCIAL_CONTENT_TASK_MODES.includes(mode as CreateSocialContentTaskInput['mode'] & string)) {
@@ -187,6 +193,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     brandNotes: optionalText(source.brandNotes, 'social_content_brand_notes_invalid', 3_000),
     restrictions: textList(source.restrictions, 'social_content_restrictions_invalid', 30, 240),
     callToAction: optionalText(source.callToAction, 'social_content_call_to_action_invalid', 500),
+    productionMode: productionMode as CreateSocialContentTaskInput['productionMode'],
     ...(mode ? { mode: mode as CreateSocialContentTaskInput['mode'] } : {}),
     weeklyPlanId: source.weeklyPlanId === undefined || source.weeklyPlanId === null || source.weeklyPlanId === ''
       ? null : safeId(source.weeklyPlanId, 'social_content_weekly_plan_id_invalid'),

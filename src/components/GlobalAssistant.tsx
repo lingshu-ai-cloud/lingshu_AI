@@ -11,14 +11,15 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowLeft,
   ArrowUp,
+  BarChart3,
   Bot,
   CheckCircle2,
+  Clapperboard,
   Compass,
   Loader2,
-  ShoppingCart,
   Users,
+  WandSparkles,
   X,
-  Zap,
 } from 'lucide-react';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader } from '../lib/auth';
@@ -195,22 +196,23 @@ const SKILL_AGENTS: Array<{
   id: OrbitAgentId;
   label: string;
   agentType: AgentType;
-  color: string;
-  bg: string;
   Icon: typeof Compass;
   position: { x: number; y: number };
 }> = [
-  { id: 'strategy', label: '策略助手', agentType: 'strategy', color: '#117F51', bg: '#F1F6F2', Icon: Compass, position: { x: 0, y: -1 } },
-  { id: 'content', label: '内容助手', agentType: 'traffic', color: '#117F51', bg: '#F1F6F2', Icon: Zap, position: { x: -0.5, y: -0.866 } },
-  { id: 'customer', label: '客户助手', agentType: 'conversion', color: '#A45A3B', bg: '#FFF3E7', Icon: Users, position: { x: -0.866, y: -0.5 } },
-  { id: 'retention', label: '唤醒助手', agentType: 'retention', color: '#53695F', bg: '#F1F6F2', Icon: ShoppingCart, position: { x: -1, y: 0 } },
+  { id: 'business', label: '经营 Agent', agentType: 'strategy', Icon: BarChart3, position: { x: 0, y: -1 } },
+  { id: 'director', label: '编导 Agent', agentType: 'traffic', Icon: Clapperboard, position: { x: -0.5, y: -0.866 } },
+  { id: 'content', label: '内容 Agent', agentType: 'traffic', Icon: WandSparkles, position: { x: -0.866, y: -0.5 } },
+  { id: 'customer', label: '客服 Agent', agentType: 'conversion', Icon: Users, position: { x: -1, y: 0 } },
 ];
 
+const ORBIT_AGENT_IDLE_STYLE = { color: '#53695F', borderColor: '#9AAEA4', backgroundColor: '#F1F6F2' };
+const ORBIT_AGENT_ACTIVE_STYLE = { color: '#117F51', borderColor: '#117F51', backgroundColor: '#E7F6EE' };
+
 const AGENT_DISPLAY_NAME: Record<OrbitAgentId, string> = {
-  strategy: '策略助手',
-  content: '内容助手',
-  customer: '客户助手',
-  retention: '唤醒助手',
+  business: '经营 Agent',
+  director: '编导 Agent',
+  content: '内容 Agent',
+  customer: '客服 Agent',
 };
 
 function pageKey(page: Page) {
@@ -275,10 +277,17 @@ function AssistantLauncherMascot({ expression }: { expression: AssistantExpressi
   );
 }
 
-function orbitIdForAgent(agent: AgentType): OrbitAgentId {
-  if (agent === 'traffic') return 'content';
-  if (agent === 'conversion') return 'customer';
-  return agent;
+function orbitIdForPage(page: Page): OrbitAgentId {
+  if (page === 'socialInspiration' || page === 'scriptLibrary' || page === 'contentFormulaAdmin') return 'director';
+  if (page === 'smartAssets') return 'content';
+  if (page === 'conversion' || page === 'wecomCustomerService' || page === 'orders' || page === 'retention') return 'customer';
+  return 'business';
+}
+
+function orbitIdForAgent(agent: AgentType, pageAgent: OrbitAgentId = 'business'): OrbitAgentId {
+  if (agent === 'conversion' || agent === 'retention') return 'customer';
+  if (agent === 'traffic') return pageAgent === 'customer' ? 'content' : pageAgent;
+  return 'business';
 }
 
 function agentForOrbit(id: OrbitAgentId): AgentType {
@@ -286,19 +295,16 @@ function agentForOrbit(id: OrbitAgentId): AgentType {
 }
 
 function contextForOrbit(id: OrbitAgentId, fallback: AssistantContext): AssistantContext {
-  if (id === 'content') return DEFAULT_CONTEXT.traffic;
-  if (id === 'customer') return DEFAULT_CONTEXT.conversion;
-  if (id === 'retention') {
+  if (id === 'director') {
     return {
-      ...DEFAULT_CONTEXT.conversion,
-      agent: 'retention',
-      label: '唤醒助手',
-      summary: '当前在客户唤醒场景，适合整理老客分层、复购触达和再次跟进话术。',
-      suggestions: ['整理老客唤醒名单', '生成复购触达话术', '规划沉默客户跟进节奏'],
+      ...DEFAULT_CONTEXT.socialInspiration,
+      label: '编导工作区',
+      summary: '当前由编导 Agent 负责爆款参考、内容结构、脚本、口播、字幕和导演方案。',
     };
   }
-  if (id === orbitIdForAgent(fallback.agent)) return fallback;
-  return DEFAULT_CONTEXT.strategy;
+  if (id === 'content') return { ...DEFAULT_CONTEXT.smartAssets, label: '内容工作区' };
+  if (id === 'customer') return DEFAULT_CONTEXT.conversion;
+  return { ...fallback, agent: 'strategy' };
 }
 
 function compactText(text: string, maxLength = 900) {
@@ -449,7 +455,7 @@ export default function GlobalAssistant({
   const [mode, setMode] = useState<'breathing' | 'expanded' | 'chat'>('breathing');
   const [launcherRetracted, setLauncherRetracted] = useState(false);
   const [panelView, setPanelView] = useState<'todo' | 'chat'>('chat');
-  const [activeAgent, setActiveAgent] = useState<OrbitAgentId>('strategy');
+  const [activeAgent, setActiveAgent] = useState<OrbitAgentId>('business');
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
   const [liveContext, setLiveContext] = useState<AssistantContext | null>(null);
   const [featureGuide, setFeatureGuide] = useState<(AssistantGuide & { id: string }) | null>(null);
@@ -503,6 +509,7 @@ export default function GlobalAssistant({
   const hydrateThread = useAssistantStore(state => state.hydrateThread);
 
   const pageContext = useMemo(() => liveContext ?? DEFAULT_CONTEXT[pageKey(page)] ?? DEFAULT_CONTEXT.strategy, [liveContext, page]);
+  const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
   const assistantExpression = PAGE_EXPRESSION[page];
   const activeContext = useMemo(() => contextForOrbit(activeAgent, pageContext), [activeAgent, pageContext]);
   const activeThread = threads[activeAgent];
@@ -564,8 +571,8 @@ export default function GlobalAssistant({
   }, [pageContext.agent, pendingCount, persistThread, reduceMotion, setUnreadCount, todoItems.length]);
 
   const openCurrentPageAgent = useCallback(() => {
-    openAgent(orbitIdForAgent(pageContext.agent));
-  }, [openAgent, pageContext.agent]);
+    openAgent(currentPageAgent);
+  }, [currentPageAgent, openAgent]);
 
   const rememberGuide = useCallback((id: string, shownAt: number) => {
     seenGuideIdsRef.current.add(id);
@@ -877,7 +884,7 @@ export default function GlobalAssistant({
         };
         setLiveContext(targetContext);
       }
-      const targetAgent = orbitIdForAgent(targetContext.agent);
+      const targetAgent = orbitIdForAgent(targetContext.agent, currentPageAgent);
       openAgent(targetAgent);
       if (detail?.tool === 'knowledge-intake') setAssistantTool('knowledge-intake');
       const assistantText = detail?.assistantText?.trim();
@@ -890,22 +897,22 @@ export default function GlobalAssistant({
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);
-  }, [openAgent, pageContext, send]);
+  }, [currentPageAgent, openAgent, pageContext, send]);
 
   useEffect(() => {
     if (!kickoff || handledKickoffs.current.has(kickoff.key)) return;
     handledKickoffs.current.add(kickoff.key);
-    void send(kickoff.text, orbitIdForAgent(kickoff.agent));
+    void send(kickoff.text, orbitIdForAgent(kickoff.agent, currentPageAgent));
     onKickoffConsumed?.();
-  }, [kickoff, onKickoffConsumed, send]);
+  }, [currentPageAgent, kickoff, onKickoffConsumed, send]);
 
   useEffect(() => {
     if (!restore || handledRestores.current.has(restore.key)) return;
     handledRestores.current.add(restore.key);
-    const targetAgent = orbitIdForAgent(restore.agent);
+    const targetAgent = orbitIdForAgent(restore.agent, currentPageAgent);
     setMessages(targetAgent, mergeConsecutiveAssistant(restore.messages));
     openAgent(targetAgent);
-  }, [openAgent, restore, setMessages]);
+  }, [currentPageAgent, openAgent, restore, setMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
@@ -1198,7 +1205,7 @@ export default function GlobalAssistant({
             <button
               type="button"
               onClick={() => {
-                const agentId = orbitIdForAgent(featureGuide.agent);
+                const agentId = orbitIdForAgent(featureGuide.agent, currentPageAgent);
                 setFeatureGuide(null);
                 openAgent(agentId);
               }}
@@ -1239,17 +1246,19 @@ export default function GlobalAssistant({
             {SKILL_AGENTS.map((agent, index) => {
               const Icon = agent.Icon;
               const unread = threads[agent.id].unreadCount;
+              const current = agent.id === currentPageAgent;
               const x = (dockOnLeft ? -agent.position.x : agent.position.x) * radius;
               const y = (dockOnTop ? -agent.position.y : agent.position.y) * radius;
               return (
                 <motion.button
                   key={agent.id}
                   type="button"
-                  title={AGENT_DISPLAY_NAME[agent.id]}
+                  title={`${AGENT_DISPLAY_NAME[agent.id]}${current ? ' · 当前页面' : ''}`}
                   aria-label={`打开${AGENT_DISPLAY_NAME[agent.id]}`}
+                  aria-current={current ? 'page' : undefined}
                   onClick={() => openAgent(agent.id)}
                   className={`group pointer-events-auto absolute flex h-12 w-12 items-center justify-center rounded-full border bg-surface shadow-lg outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 ${dockOnLeft ? 'left-2' : 'right-2'} ${dockOnTop ? 'top-2' : 'bottom-2'}`}
-                  style={{ borderColor: agent.color, color: agent.color, backgroundColor: agent.bg }}
+                  style={current ? ORBIT_AGENT_ACTIVE_STYLE : ORBIT_AGENT_IDLE_STYLE}
                   initial={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
                   animate={{ x, y, opacity: 1, scale: 1 }}
                   exit={{ x: 0, y: 0, opacity: 0, scale: 0.72 }}
@@ -1257,7 +1266,7 @@ export default function GlobalAssistant({
                 >
                   <Icon size={20} />
                   <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-text-primary px-2.5 py-1 text-[11px] font-bold text-white opacity-0 shadow-md transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                    {AGENT_DISPLAY_NAME[agent.id]}
+                    {AGENT_DISPLAY_NAME[agent.id]}{current ? ' · 当前页面' : ''}
                   </span>
                   {unread > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-bold text-white">{unread}</span>}
                 </motion.button>
@@ -1472,7 +1481,7 @@ export default function GlobalAssistant({
             type="button"
             draggable
             data-global-assistant="launcher"
-            aria-label={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[orbitIdForAgent(pageContext.agent)]}` : '拖动可移动，点击可展开灵枢助手'}
+            aria-label={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -1486,7 +1495,7 @@ export default function GlobalAssistant({
               ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
               : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
             transition={{ duration: performance ? 1.55 : 2.4, ease: 'easeInOut', repeat: (performance || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
-            title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[orbitIdForAgent(pageContext.agent)]}` : '拖动可移动，点击可展开灵枢助手'}
+            title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
           >
             <AssistantLauncherMascot expression={assistantExpression} />
             {pendingCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-black text-white">{pendingBadge}</span>}

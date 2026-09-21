@@ -3,6 +3,7 @@ import {
   SOCIAL_CONTENT_TASK_STATUSES,
   SOCIAL_SOURCE_KINDS,
   SOCIAL_CONTENT_TASK_MODES,
+  SOCIAL_CONTENT_PRODUCTION_MODES,
   SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_WORK_PACKAGE_KINDS,
   type SocialArtifactStatus,
@@ -87,6 +88,13 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   if (!['fixed', 'auto_adjust'].includes(planningMode)) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
+  // Records written before the publish-quality mode existed keep their
+  // historic preview behavior. Every newly created customer task explicitly
+  // stores `social_ready` through defaultBrief().
+  const productionMode = socialText(record.productionMode) || 'concept_preview';
+  if (!SOCIAL_CONTENT_PRODUCTION_MODES.includes(productionMode as NonNullable<SocialContentTaskBrief['productionMode']>)) {
+    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  }
   return {
     title,
     objective,
@@ -109,6 +117,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     brandNotes: nullable(record.brandNotes),
     restrictions: strings(record.restrictions, 'social_content_task_record_invalid'),
     callToAction: nullable(record.callToAction),
+    productionMode: productionMode as SocialContentTaskBrief['productionMode'],
   };
 }
 
@@ -155,6 +164,7 @@ export function socialTaskReadiness(
   if (!brief.formats.length) personalizationGaps.push('content_format');
   if (coverage.knowledge < 1) personalizationGaps.push('enterprise_knowledge');
   if (coverage.material < 1) personalizationGaps.push('source_material');
+  if (themeWorkflow && brief.productionMode === 'social_ready' && coverage.material < 1) missing.push('publish_ready_material');
   if (themeWorkflow) {
     if (!themeWorkflow.theme || themeWorkflow.theme.classificationStatus !== 'confirmed' || !themeWorkflow.theme.themeId) {
       missing.push('theme_confirmation');

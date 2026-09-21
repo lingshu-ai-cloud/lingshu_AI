@@ -48,6 +48,8 @@ assert.doesNotMatch(hook, /page\.totalItems !== snapshot\.taskList\.totalItems/)
 assert.match(hook, /mergeSocialContentTaskSummaries\(current\.tasks, \[/);
 assert.match(workspace, /mode: 'new', taskId: null, expectedVersion: null, attemptId:/);
 assert.match(workspace, /mode: 'edit', taskId: task\.taskId, expectedVersion: task\.version, attemptId:/);
+assert.match(workspace, /if \(start\)[\s\S]{0,320}setEditor\(null\)/,
+  'starting a task must leave the modal as soon as the task exists so uploads and queueing cannot look frozen');
 assert.doesNotMatch(workspace, /next\?\.status === 'attention'[\s\S]{0,160}navigateWithTask\('smartAssets', next\.taskId\)/,
   'starting a task must keep the prominent progress board visible instead of navigating away immediately');
 assert.match(workspace, /const taskId = explicitTaskId \|\| task\?\.taskId/,
@@ -114,9 +116,15 @@ assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|
 assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
   'production status must not send the user into the old production route');
 for (const action of ['确认并开始自动制作', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
-assert.match(editor, /使用推荐设置直接生成/);
-assert.match(sources, /以下资料均为选填增强/);
-assert.match(overview, /可以制作 · 系统将自动补齐/);
+assert.doesNotMatch(editor, /使用推荐设置直接生成/,
+  'the first step must never bypass the real-material quality gate');
+assert.match(editor, /下一步：准备素材/);
+assert.match(editor, /materialPolicy\.subjectLabel/);
+assert.match(editor, /使用推荐设置生成/);
+assert.match(sources, /materialPolicy\.quickStartTitle/);
+assert.match(sources, /materialPolicy\.uploadTitle/);
+assert.match(sources, /materialPolicy\.recommendedShots/);
+assert.match(overview, /真实素材已就绪，可以制作/);
 assert.match(productionProgress, /内容 Agent 正按编导方案生成配音、字幕并剪辑视频/);
 assert.match(productionProgress, /补充任务资料/);
 assert.doesNotMatch(editor + landing + overview, /配置爆款公式|填写脚本|填写口播|填写字幕/,
@@ -124,6 +132,10 @@ assert.doesNotMatch(editor + landing + overview, /配置爆款公式|填写脚�
 assert.match(formulaAdmin, /暂未配置爆款公式/);
 assert.match(formulaAdmin, /未来由平台管理员录入/);
 assert.match(preview, /fetchArtifactMedia\(artifact\.taskId, artifact\.artifactId/);
+assert.match(preview, /自动质检已通过/);
+for (const check of ['真实任务素材已用于剪辑', '逐镜检查通过', '口播音轨可正常播放', '字幕已按口播时间轴生成']) {
+  assert.match(preview, new RegExp(check));
+}
 assert.doesNotMatch(preview, /(?:href|src)=\{artifact\.resourceRef\}/);
 assert.match(presentation, /return simple \? `第 \$\{simple\[1\]\} 版` : '当前版本'/);
 assert.match(sources, /maxLength=\{SOCIAL_CONTENT_SOURCE_QUERY_MAX_LENGTH\}/);

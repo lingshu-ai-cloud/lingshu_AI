@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, ExternalLink, FileText, Loader2, X } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, FileText, Loader2, X } from 'lucide-react';
 import type { SocialContentArtifact } from '../../../shared/contracts/socialContentWorkflow';
 import { useModalFocus } from '../../hooks/useModalFocus';
 import { socialContentApi } from '../../lib/socialContentApi';
@@ -18,6 +18,24 @@ const CONTENT_FIELDS = ['body', 'caption', 'copy', 'text', 'summary', 'script'] 
 
 function readableText(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : '';
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function automatedQualityChecks(artifact: SocialContentArtifact): string[] {
+  const content = artifact.content || {};
+  if (content.workflowSchema !== 'social-content.auto-production.v3') return [];
+  const render = record(content.render);
+  const narration = record(content.narration);
+  if (!render || render.qualityPassed !== true) return [];
+  const checks = ['成片画面与时长检查通过'];
+  if (Array.isArray(render.materialSourceIds) && render.materialSourceIds.length > 0) checks.push('真实任务素材已用于剪辑');
+  if (Number(render.checkedScenes || 0) > 0) checks.push(`逐镜检查通过（${Number(render.checkedScenes)} 个镜头）`);
+  if (render.audioDecoded === true) checks.push('口播音轨可正常播放');
+  if (Number(narration?.cueCount || 0) > 0) checks.push('字幕已按口播时间轴生成');
+  return checks;
 }
 
 export function socialArtifactReadableCopy(artifact: SocialContentArtifact): { title: string; body: string } {
@@ -43,6 +61,7 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
   const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const copy = useMemo(() => socialArtifactReadableCopy(artifact), [artifact]);
   const generation = useMemo(() => socialArtifactGenerationDisclosure(artifact), [artifact]);
+  const qualityChecks = useMemo(() => automatedQualityChecks(artifact), [artifact]);
 
   useEffect(() => {
     if (!socialArtifactHasArchivedMedia(artifact)) return;
@@ -85,6 +104,7 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
           {!loading && media && (isVideo
             ? <video controls preload="metadata" src={media.url} className="mx-auto max-h-[68vh] w-full rounded-xl bg-black shadow-sm">您的浏览器暂不支持视频预览。</video>
             : <img src={media.url} alt={copy.title} className="mx-auto max-h-[68vh] max-w-full rounded-xl bg-white object-contain shadow-sm" />)}
+          {!loading && qualityChecks.length > 0 && <section className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/75 p-4" aria-label="成片自动质检结果"><div className="flex items-center gap-2 text-xs font-black text-emerald-900"><CheckCircle2 size={15} />自动质检已通过</div><ul className="mt-3 grid gap-2 sm:grid-cols-2">{qualityChecks.map(item => <li key={item} className="flex items-start gap-2 text-[11px] font-semibold leading-5 text-emerald-900"><CheckCircle2 size={13} className="mt-1 shrink-0 text-emerald-700" />{item}</li>)}</ul></section>}
           {!loading && !media && copy.body && <article className="rounded-xl border border-border bg-white p-5"><div className="flex items-center gap-2 text-xs font-bold text-text-muted"><FileText size={14} />内容预览</div><p className="mt-4 whitespace-pre-wrap text-sm leading-7 text-text-primary">{copy.body}</p></article>}
           {!loading && !media && !copy.body && !error && <div className="flex min-h-48 items-center justify-center rounded-xl border border-border bg-white px-6 text-center text-sm font-semibold text-text-muted">此成品暂无可预览内容</div>}
           {error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}

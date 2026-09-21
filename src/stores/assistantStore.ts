@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Message } from '../App';
 
-export type OrbitAgentId = 'strategy' | 'content' | 'customer' | 'retention';
+export type OrbitAgentId = 'business' | 'director' | 'content' | 'customer';
 
 export interface AgentThreadState {
   messages: Message[];
@@ -26,14 +26,14 @@ const emptyThread = (): AgentThreadState => ({
   unreadCount: 0,
 });
 
-export const ORBIT_AGENT_IDS: OrbitAgentId[] = ['strategy', 'content', 'customer', 'retention'];
+export const ORBIT_AGENT_IDS: OrbitAgentId[] = ['business', 'director', 'content', 'customer'];
 
 export const useAssistantStore = create<AssistantStore>((set) => ({
   threads: {
-    strategy: emptyThread(),
+    business: emptyThread(),
+    director: emptyThread(),
     content: emptyThread(),
     customer: emptyThread(),
-    retention: emptyThread(),
   },
   setMessages: (agentId, messages) => set(state => ({
     threads: { ...state.threads, [agentId]: { ...state.threads[agentId], messages } },

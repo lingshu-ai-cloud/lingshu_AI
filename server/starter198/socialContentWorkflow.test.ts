@@ -1417,8 +1417,10 @@ try {
   });
   assert.equal(zeroInputTask.status, 201, zeroInputTask.raw);
   assert.equal(zeroInputTask.body.task.sourceCount, 0);
-  assert.equal(zeroInputTask.body.task.readiness.complete, true, 'a confirmed theme is sufficient to start first content');
-  assert.deepEqual(zeroInputTask.body.task.readiness.missing, []);
+  assert.equal(zeroInputTask.body.task.brief.productionMode, 'social_ready');
+  assert.equal(zeroInputTask.body.task.readiness.complete, false,
+    'the customer default must not claim a publish-ready video can be made without real material');
+  assert.deepEqual(zeroInputTask.body.task.readiness.missing, ['publish_ready_material']);
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('source_material'));
   assert.equal(zeroInputTask.body.task.scriptBaseline.source, 'system_theme_baseline');
@@ -1426,9 +1428,24 @@ try {
     idempotencyKey: 'social-zero-input-start-001',
     body: { expectedVersion: zeroInputTask.body.task.version },
   });
-  assert.equal(zeroInputStarted.status, 202, zeroInputStarted.raw);
-  assert.equal(zeroInputStarted.body.task.status, 'producing',
-    'missing personalization inputs must not block the Director Agent');
+  assert.equal(zeroInputStarted.status, 409, zeroInputStarted.raw);
+  assert.equal(zeroInputStarted.body.error, 'social_content_task_inputs_incomplete');
+
+  const conceptPreviewTask = await request('/api/overseas/starter-198/social-content/tasks', {
+    idempotencyKey: 'social-zero-input-preview-create-001',
+    body: {
+      title: '内部概念预览', objective: '只验证内容结构', mode: 'instant',
+      themeId: 'customization_process', productionMode: 'concept_preview',
+    },
+  });
+  assert.equal(conceptPreviewTask.status, 201, conceptPreviewTask.raw);
+  assert.equal(conceptPreviewTask.body.task.readiness.complete, true,
+    'an explicit non-publishable concept preview may retain the historic graphic fallback');
+  const conceptPreviewStarted = await request(`/api/overseas/starter-198/social-content/tasks/${conceptPreviewTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-zero-input-preview-start-001',
+    body: { expectedVersion: conceptPreviewTask.body.task.version },
+  });
+  assert.equal(conceptPreviewStarted.status, 202, conceptPreviewStarted.raw);
 
   const instantTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-instant-create-001',
@@ -1441,7 +1458,7 @@ try {
     version: '1', source: 'formula', sceneCount: 1, language: 'en',
     lockedAt: instantTask.body.task.createdAt,
     matchConfidence: 0.78,
-    groundingVersion: 'social-script-grounding.v3',
+    groundingVersion: 'social-script-grounding.v5',
   }, 'formula script baseline is frozen before any material upload or production request');
   assert.equal(instantTask.body.task.materialRequirements.length, 1);
   assert.equal(instantTask.body.task.materialRequirements.every((item: any) => item.required === false), true,

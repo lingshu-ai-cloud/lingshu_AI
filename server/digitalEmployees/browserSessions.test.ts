@@ -138,8 +138,9 @@ try {
     await page.getByText('AI 智能创作', { exact: true }).first().waitFor();
     await page.evaluate(({ runId, taskId, projectId }) => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', workflowRunId: runId, workflowTaskId: taskId, businessRef: { taskKey: 'content_production', entityId: projectId } } })), { runId: scope.runId, taskId: scope.taskId, projectId });
     const scene = page.getByTestId('production-task-scene');
+    await scene.getByRole('heading', { name: '内容生产现场' }).waitFor();
+    await scene.getByRole('navigation', { name: 'Agent 制作顺序' }).waitFor();
     await scene.getByText('已生成脚本并保存到项目').waitFor();
-    await scene.getByRole('region', { name: '任务执行结果' }).waitFor();
     assert.equal(await scene.getByRole('img', { name: 'Agent 实际操作的任务浏览器直播画面' }).count(), 0);
     assert.equal(executions, 4, 'opening a scene must not execute a task');
     const beforeLiveClick = clicks.length;
@@ -147,11 +148,11 @@ try {
     assert.equal(clicks.length, beforeLiveClick + 1);
     assert.equal(executions, 5);
     await page.reload();
-    await scene.getByText('已生成脚本并保存到项目').waitFor();
+    await scene.getByRole('heading', { name: '内容生产现场' }).waitFor();
     assert.equal(await page.getByText(/已恢复历史创作草稿/).count(), 0);
     await page.screenshot({ path: '/tmp/lingshu-production-scene-verified.png' });
-    await scene.getByRole('button', { name: '查看关联作品编辑器' }).click();
-    await scene.getByRole('button', { name: '观看员工现场' }).waitFor();
+    await scene.getByRole('button', { name: /字幕 Agent/ }).click();
+    assert.equal(await scene.getByRole('button', { name: /字幕 Agent/ }).getAttribute('aria-pressed'), 'true');
   } finally { await viewer.close(); viewerIdentity.revoke(); }
   // Exercise the real App history with the normal UI, including the focused window.
   const navigationPage = customerSession.page;

@@ -200,11 +200,14 @@ docker compose --env-file .env.production logs -f app
 docker compose --env-file .env.production logs -f pocketbase
 ```
 
-更新代码并重启（必须提供备份公钥；脚本会先做加密快照，并在 migration/bootstrap 期间停止应用流量，失败时保持失败而不是带病接流量）：
+更新代码并重启只需要下面两条命令。Docker 构建缓存会保留，通常只重新构建发生变化的层：
 
 ```bash
-AGE_RECIPIENT=age1... bash deploy/update.sh
+git pull --ff-only
+bash deploy/update.sh
 ```
+
+快速更新不会自动创建部署前备份。如果本次包含高风险数据迁移，先单独运行下方的加密备份命令，再执行更新。
 
 手动备份（同样必须加密）：
 

@@ -175,6 +175,7 @@ function defaultBrief(value: CreateSocialContentTaskInput) {
     brandNotes: value.brandNotes ?? null,
     restrictions: value.restrictions ?? [],
     callToAction: value.callToAction ?? null,
+    productionMode: value.productionMode ?? 'social_ready',
   };
 }
 

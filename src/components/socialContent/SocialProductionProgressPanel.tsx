@@ -20,6 +20,7 @@ import type {
   SocialContentTaskSummary,
   SocialDirectorPlanSummary,
 } from '../../../shared/contracts/socialContentWorkflow';
+import { socialContentMaterialPolicy } from '../../../shared/socialContentMaterialPolicy';
 import {
   socialContentCurrentArtifacts,
   socialContentStatusLabel,
@@ -75,7 +76,7 @@ function automaticStep(task: TaskListItem): string {
   if (task.status === 'plan_review') return '确认任务后，编导 Agent 会先完成导演方案';
   if (task.status === 'producing' && !directorPlanComplete(task)) return '编导 Agent 正在整理脚本、口播、字幕与镜头节奏';
   if (task.status === 'producing') return '内容 Agent 正按编导方案生成配音、字幕并剪辑视频';
-  if (task.status === 'attention') return '自动任务正在重试，导演方案、素材和生成结果均已保留';
+  if (task.status === 'attention') return `现有素材未达到可发布标准；已保留任务，${socialContentMaterialPolicy(task.theme?.themeId ?? null).insufficientMessage}后继续`;
   if (task.status === 'paused') return '自动处理暂时中断，现有导演方案、素材和生成结果均已保留';
   if (task.status === 'asset_review') return '视频、口播和字幕已经生成，等待你审核';
   if (task.status === 'packaging') return '正在整理视频、封面、文案和发布包';
@@ -279,7 +280,10 @@ export default function SocialProductionProgressPanel({
     if (task.status === 'plan_review') {
       return onStart ? { label: '确认并开始自动制作', icon: <Bot size={14} />, action: onStart } : null;
     }
-    if (task.status === 'attention' || task.status === 'paused') {
+    if (task.status === 'attention') {
+      return onEdit ? { label: `补充${socialContentMaterialPolicy(task.theme?.themeId ?? null).subjectLabel}`, icon: <ChevronRight size={14} />, action: onEdit } : null;
+    }
+    if (task.status === 'paused') {
       return onStart ? { label: '继续自动处理', icon: <RotateCcw size={14} />, action: onStart } : null;
     }
     if (task.status === 'asset_review') {

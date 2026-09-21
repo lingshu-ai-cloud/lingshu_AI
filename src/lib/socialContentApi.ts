@@ -67,7 +67,8 @@ function friendlyFailure(status: number, code = ''): string {
   if (code.includes('not_startable') || code.includes('not_editable')) return '当前阶段无法进行这项操作，请刷新任务状态';
   if (code.includes('orchestrator_not_configured') || code.includes('queue_unavailable')) return '内容制作服务正在准备中，请稍后重试';
   if (code.includes('package') && (code.includes('inactive') || code.includes('unavailable'))) return '所选作业方案已更新，请重新选择';
-  if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请确认已选择内容主题';
+  if (code.includes('social_content_task_inputs_incomplete')) return '要生成可直接发布的内容，请先准备与所选主题对应的真实视频，或至少 2 份不同的真实图片/短片';
+  if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请确认已选择内容主题并准备与主题对应的真实素材';
   if (code.includes('file_limit') || code.includes('file_capacity')) return '当前任务的文件数量或容量已达上限';
   if (code.includes('artifact_media_required')) return '请先生成并保存完整成品';
   if (code.includes('artifact_media') || code.includes('delivery_media')) return '成品文件校验失败，请重新生成后提交';

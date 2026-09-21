@@ -97,7 +97,7 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
       <section className="auth-visual flex flex-col p-7 text-white sm:p-10 lg:p-12" aria-label="灵枢品牌介绍">
         <div className="flex items-center gap-3 self-start rounded-2xl border border-white/45 bg-white/85 px-3 py-2 text-text-primary shadow-[0_12px_32px_rgba(23,61,49,.08)] backdrop-blur-sm">
           <span className="brand-logo-frame h-9 w-9 border-white/60 bg-white/90">
-            <img src="/brand-logo.png" alt="" className="h-7 w-7 object-contain" />
+            <img src="/brand-logo.png?v=20260921" alt="" className="h-7 w-7 object-contain" />
           </span>
           <span className="pr-1 text-[15px] font-bold tracking-[-.02em]">灵枢 AI</span>
         </div>

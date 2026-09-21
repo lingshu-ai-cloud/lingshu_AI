@@ -324,7 +324,10 @@ function assertSubjectMatches(input: {
   const readiness = socialTaskReadiness(task.brief, {
     total: input.sources.length,
     knowledge: input.sources.filter(source => source.kind === 'knowledge').length,
-    material: input.sources.filter(source => ['material', 'reference_link'].includes(source.kind)).length,
+    // A web link may inspire the script, but it is not renderable, owned
+    // product footage. Publish-ready tasks require an explicitly linked
+    // material record.
+    material: input.sources.filter(source => source.kind === 'material').length,
   }, task.theme ? {
     theme: task.theme,
     materialReadiness: task.materialReadiness ?? {

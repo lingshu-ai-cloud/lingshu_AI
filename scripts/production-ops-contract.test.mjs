@@ -85,9 +85,11 @@ assert.ok(
   'live restore may delete the old copy and report success only after restored readiness passes',
 );
 
-assert.match(update, /backup-production-data\.sh/);
-assert.match(update, /git pull --ff-only/);
-assert.match(update, /git status --porcelain --untracked-files=normal/);
+assert.doesNotMatch(update, /backup-production-data\.sh/, 'fast updates must not require a backup round trip');
+assert.doesNotMatch(update, /git pull --ff-only/, 'source updates are an explicit, separate operator command');
+assert.doesNotMatch(update, /builder prune|image prune/, 'fast updates must preserve Docker build caches');
+assert.match(update, /docker compose/);
+assert.match(update, /ensure-pb-volume\.sh" --require-existing/, 'fast updates must reuse the owned PocketBase volume');
 assert.match(update, /api\/overseas\/ready/);
 assert.doesNotMatch(update, /setup:pb|demo:sync-accounts/, 'updates must rely on versioned migrations and never inject demo accounts');
 assert.match(productionEnv, /ENABLE_LOCAL_DEV_FALLBACK=false/);

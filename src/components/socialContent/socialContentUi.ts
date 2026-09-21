@@ -127,6 +127,7 @@ export function taskToDraft(task: SocialContentTaskDetail | SocialContentTaskSum
   return {
     ...EMPTY_SOCIAL_CONTENT_DRAFT,
     mode: task.mode ?? 'weekly',
+    productionMode: task.brief.productionMode ?? 'social_ready',
     themeId: task.theme?.themeId ?? '',
     customTopic: task.theme?.inputKind === 'custom' ? task.theme.topic : '',
     topic: task.theme?.inputKind === 'preset' ? task.theme.topic : '',

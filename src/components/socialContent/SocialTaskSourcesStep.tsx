@@ -14,8 +14,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { SocialContentSourceOption, SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
+import { socialContentMaterialPolicy } from '../../../shared/socialContentMaterialPolicy';
 import { socialContentApi } from '../../lib/socialContentApi';
-import { SOCIAL_CONTENT_FILE_ACCEPT, SOCIAL_CONTENT_MAX_TASK_FILE_BYTES, validateSocialContentFile } from '../../lib/socialContentFiles';
+import { SOCIAL_CONTENT_MAX_TASK_FILE_BYTES, validateSocialContentFile } from '../../lib/socialContentFiles';
 import type { SocialContentDraft } from '../../lib/socialContentModel';
 import {
   SOCIAL_CONTENT_SOURCE_QUERY_MAX_LENGTH,
@@ -136,10 +137,20 @@ function SourceLibraryPicker({
 }
 
 export default function SocialTaskSourcesStep({ draft, update, files, setFiles, onFileError, task }: SocialTaskSourcesStepProps) {
+  const materialPolicy = socialContentMaterialPolicy(draft.themeId || null);
   const existingSources = task?.sources.filter(source => source.status === 'active' && !draft.removedSourceIds.includes(source.sourceId)) || [];
   const removedSources = task?.sources.filter(source => source.status === 'active' && draft.removedSourceIds.includes(source.sourceId)) || [];
   const hasKnowledge = existingSources.some(source => source.kind === 'knowledge') || draft.selectedSources.some(source => source.kind === 'knowledge');
-  const hasMaterial = existingSources.some(source => source.kind === 'material') || draft.selectedSources.some(source => source.kind === 'material') || files.length > 0;
+  const imagePattern = /\.(?:jpe?g|png|webp|gif)$/i;
+  const videoPattern = /\.(?:mp4|mov|webm)$/i;
+  const selectedMaterials = draft.selectedSources.filter(source => source.kind === 'material');
+  const hasVideo = existingSources.some(source => source.kind === 'material' && videoPattern.test(source.label))
+    || selectedMaterials.some(source => /video/i.test(source.type) || videoPattern.test(source.label))
+    || files.some(file => /^video\//i.test(file.type) || videoPattern.test(file.name));
+  const imageCount = existingSources.filter(source => source.kind === 'material' && imagePattern.test(source.label)).length
+    + selectedMaterials.filter(source => /image/i.test(source.type) || imagePattern.test(source.label)).length
+    + files.filter(file => /^image\//i.test(file.type) || imagePattern.test(file.name)).length;
+  const hasMaterial = hasVideo || imageCount >= 2;
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
     const next = [...files];
@@ -157,20 +168,20 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
   };
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-xs leading-5 text-emerald-900"><span className="font-black">以下资料均为选填增强。</span> 不上传也可以继续；系统会优先使用已授权素材库，没有合适素材时再生成不含事实宣称的安全画面。</div>
-      <div className="grid gap-2 sm:grid-cols-2" aria-label="用于提升内容精准度的可选资料">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-xs leading-5 text-emerald-950"><span className="font-black">最省事的方式：{materialPolicy.quickStartTitle}。</span> 不需要先剪辑，也不用写脚本；系统会自动挑选不同镜头、生成自然口播和字幕。{materialPolicy.quickStartDetail}</div>
+      <div className="grid gap-2 sm:grid-cols-2" aria-label="可发布质量准备情况">
         {[
-          { ready: hasKnowledge, label: '企业资料', detail: hasKnowledge ? '已选择可核验资料' : '未选择，将使用无事实宣称的安全表达', icon: Building2 },
-          { ready: hasMaterial, label: '真实素材', detail: hasMaterial ? '已选择或上传素材' : '未选择，将由授权素材库自动补齐', icon: Image },
-        ].map(item => <div key={item.label} className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${item.ready ? 'border-emerald-100 bg-emerald-50/65' : 'border-slate-200 bg-slate-50/70'}`}><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ${item.ready ? 'text-emerald-700' : 'text-slate-600'}`}>{item.ready ? <CheckCircle2 size={17} /> : <item.icon size={17} />}</span><div><p className="text-xs font-black text-text-primary">{item.label}<span className={`ml-2 text-[10px] ${item.ready ? 'text-emerald-700' : 'text-slate-500'}`}>{item.ready ? '已就绪' : '可选增强'}</span></p><p className="mt-0.5 text-[10px] text-text-muted">{item.detail}</p></div></div>)}
+          { ready: hasMaterial, label: materialPolicy.subjectLabel, detail: hasMaterial ? '已就绪，可以生成可发布成片' : '必需：上传视频，或至少 2 份不同图片/短片', icon: Image, required: true },
+          { ready: hasKnowledge, label: '企业资料', detail: hasKnowledge ? '已选择可核验资料' : '选填：不提供时不会编造参数或功效', icon: Building2, required: false },
+        ].map(item => <div key={item.label} className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${item.ready ? 'border-emerald-100 bg-emerald-50/65' : item.required ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-slate-50/70'}`}><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ${item.ready ? 'text-emerald-700' : item.required ? 'text-amber-700' : 'text-slate-600'}`}>{item.ready ? <CheckCircle2 size={17} /> : <item.icon size={17} />}</span><div><p className="text-xs font-black text-text-primary">{item.label}<span className={`ml-2 text-[10px] ${item.ready ? 'text-emerald-700' : item.required ? 'text-amber-700' : 'text-slate-500'}`}>{item.ready ? '已就绪' : item.required ? '生成前必需' : '选填增强'}</span></p><p className="mt-0.5 text-[10px] text-text-muted">{item.detail}</p></div></div>)}
       </div>
       {existingSources.length > 0 && <section className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"><p className="text-xs font-bold text-emerald-900">已关联 {existingSources.length} 项资料</p><div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">{existingSources.map(source => <span key={source.sourceId} className="inline-flex max-w-[260px] items-center gap-1 rounded-lg bg-white py-1 pl-2 pr-1 text-[11px] text-text-secondary"><span className="truncate">{source.label}</span><button type="button" aria-label={`移除关联 ${source.label}`} onClick={() => update({ removedSourceIds: [...draft.removedSourceIds, source.sourceId] })} className="shrink-0 rounded p-1 text-text-muted hover:bg-rose-50 hover:text-rose-600"><Trash2 size={11} /></button></span>)}</div></section>}
       {removedSources.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-900"><span className="font-bold">将移除 {removedSources.length} 项关联</span>{removedSources.map(source => <button key={source.sourceId} type="button" onClick={() => update({ removedSourceIds: draft.removedSourceIds.filter(id => id !== source.sourceId) })} className="rounded-lg bg-white px-2 py-1 font-bold shadow-sm">撤销 {source.label}</button>)}</div>}
-      <SourceLibraryPicker draft={draft} update={update} task={task} files={files} onFileError={onFileError} />
       <div className="grid gap-4 lg:grid-cols-[1fr_1.25fr]">
-        <label className="group flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/40 p-5 text-center transition hover:bg-emerald-50"><FilePlus2 size={24} className="text-emerald-700" /><span className="mt-3 text-sm font-bold text-text-primary">上传本次素材</span><span className="mt-1 text-xs text-text-muted">图片、视频、音频、PDF、Word、Excel、CSV 或 TXT，单个不超过 110 MB</span><input type="file" multiple className="sr-only" accept={SOCIAL_CONTENT_FILE_ACCEPT} onChange={event => { addFiles(event.target.files); event.currentTarget.value = ''; }} /></label>
+        <label className="group flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-emerald-400 bg-emerald-50/55 p-5 text-center transition hover:bg-emerald-50"><FilePlus2 size={24} className="text-emerald-700" /><span className="mt-3 text-sm font-black text-text-primary">{materialPolicy.uploadTitle}</span><span className="mt-1 text-xs text-text-muted">也支持 JPG、PNG、WebP 图片；视频无需提前剪辑，单个不超过 110 MB</span><span className="mt-2 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-emerald-800 shadow-sm">推荐 9:16 · 画面清晰 · {materialPolicy.recommendedShots}</span><input type="file" multiple className="sr-only" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" onChange={event => { addFiles(event.target.files); event.currentTarget.value = ''; }} /></label>
         <div className="rounded-2xl border border-border bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-text-primary">待上传文件</p><p className="mt-0.5 text-[11px] text-text-muted">最多 20 个，合计不超过 512 MB</p></div><span className="rounded-full bg-surface-2 px-2 py-1 text-[11px] font-bold text-text-secondary">{files.length}</span></div>{files.length === 0 ? <div className="mt-5 flex items-center gap-2 text-xs text-text-muted"><FolderOpen size={15} />尚未选择新文件</div> : <ul className="mt-3 max-h-36 space-y-2 overflow-y-auto">{files.map(file => <li key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-2 rounded-lg bg-surface-2 px-2.5 py-2"><span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{file.name}</span><span className="shrink-0 text-[10px] text-text-muted">{file.size >= 1024 * 1024 ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`}</span><button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles(files.filter(item => item !== file))} className="rounded p-1 text-text-muted hover:bg-white hover:text-rose-600"><Trash2 size={13} /></button></li>)}</ul>}</div>
       </div>
+      <SourceLibraryPicker draft={draft} update={update} task={task} files={files} onFileError={onFileError} />
       <details className="rounded-lg border border-border bg-surface-2/45 px-3 py-2.5">
         <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-black text-text-secondary">参考信息与表达限制<span className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted">选填<ChevronDown size={13} /></span></summary>
         <div className="mt-4 space-y-4 border-t border-border pt-4">

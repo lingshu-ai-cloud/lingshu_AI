@@ -382,7 +382,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         <div className={`relative h-14 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4 gap-2.5'}`}>
           {!sidebarCollapsed && (starterMode
             ? <span aria-hidden="true" className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">{initial}</span>
-            : <img src="/brand-logo.png" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />)}
+            : <img src="/brand-logo.png?v=20260921" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />)}
           {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary font-display">{starterMode ? tenantName : '灵枢 AI'}</span>}
           <button
             type="button"

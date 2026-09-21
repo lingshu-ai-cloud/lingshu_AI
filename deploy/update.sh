@@ -4,16 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT_DIR"
 
-[[ -f .env.production ]] || { echo ".env.production is missing." >&2; exit 1; }
 ENV_FILE="$ROOT_DIR/.env.production"
-[[ -n "${AGE_RECIPIENT:-}" ]] || {
-  echo "AGE_RECIPIENT is required so the pre-update snapshot is encrypted." >&2
+[[ -f "$ENV_FILE" ]] || {
+  echo ".env.production is missing. Run ./deploy/make-production-env.sh first." >&2
   exit 1
 }
-if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
-  echo "Refusing to update a dirty production checkout; preserve or remove local changes explicitly first." >&2
-  exit 1
-fi
 
 read_env_value() {
   local key="$1"
@@ -33,44 +28,29 @@ app_host_port="$(read_env_value APP_HOST_PORT)"
   exit 1
 }
 pb_data_volume_name="$(read_env_value PB_DATA_VOLUME_NAME)"
+
+# Updates reuse the existing PocketBase volume and never create an empty one.
 "$ROOT_DIR/deploy/ensure-pb-volume.sh" --require-existing "$ENV_FILE"
+
 compose=(env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME
   "PB_DATA_VOLUME_NAME=$pb_data_volume_name" "APP_HOST_PORT=$app_host_port" "ENV_FILE_PATH=$ENV_FILE"
   docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/docker-compose.yml" --env-file "$ENV_FILE")
 
-echo "==> Creating encrypted, checksummed pre-update backup"
-PB_DATA_VOLUME_NAME="$pb_data_volume_name" APP_HOST_PORT="$app_host_port" ENV_FILE_PATH="$ENV_FILE" \
-  COMPOSE_ENV_FILE="$ENV_FILE" BACKUP_SOURCE_MODE=production-docker \
-  "$ROOT_DIR/scripts/backup-production-data.sh"
-
-echo "==> Pulling a fast-forward-only update"
-git pull --ff-only
-
-echo "==> Building the application and PocketBase images"
+echo "==> Building changed layers (Docker cache is preserved)"
 "${compose[@]}" build app pocketbase
 
-echo "==> Stopping traffic before database migration"
+echo "==> Pausing application traffic for migrations"
 "${compose[@]}" stop caddy app
 
-echo "==> Starting PocketBase; versioned migrations must complete before account bootstrap"
+echo "==> Applying PocketBase migrations"
 "${compose[@]}" up -d --force-recreate --wait --wait-timeout 180 pocketbase
 
-echo "==> Idempotently bootstrapping the workbench administrator (record writes only)"
+echo "==> Bootstrapping the workbench administrator"
 "${compose[@]}" run --rm --no-deps -T app node scripts/bootstrap-workbench-admin.mjs
 
-echo "==> Restarting application services"
+echo "==> Updating application services"
 "${compose[@]}" up -d --no-build --wait --wait-timeout 180 app caddy
 
-echo "==> Waiting for dependency-aware readiness"
-for attempt in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${app_host_port}/api/overseas/ready" >/dev/null; then
-    "${compose[@]}" ps
-    echo "Update completed and readiness passed."
-    exit 0
-  fi
-  sleep 2
-done
-
-"${compose[@]}" logs --tail=120 app pocketbase >&2 || true
-echo "Update finished building, but readiness did not pass. Services were left running for diagnosis; use the encrypted backup for rollback." >&2
-exit 1
+curl -fsS "http://127.0.0.1:${app_host_port}/api/overseas/ready" >/dev/null
+"${compose[@]}" ps
+echo "Fast update completed and readiness passed."

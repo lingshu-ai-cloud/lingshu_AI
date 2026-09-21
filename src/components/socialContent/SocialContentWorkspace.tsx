@@ -104,7 +104,18 @@ export default function SocialContentWorkspace({
 
   const submitTask = async (draft: Parameters<typeof state.saveDraft>[0], files: File[], start: boolean) => {
     if (!editor) return;
-    const next = await state.saveDraft(draft, files, start, editor.target, nextTask => {
+    let progressBoardOpened = false;
+    await state.saveDraft(draft, files, start, editor.target, nextTask => {
+      if (start) {
+        // The task exists from this point onward. Move to its progress board
+        // while sources upload and queueing continue so a slow network request
+        // never leaves the confirmation dialog looking frozen.
+        if (!progressBoardOpened) {
+          progressBoardOpened = true;
+          setEditor(null);
+        }
+        return;
+      }
       setEditor({
         task: nextTask,
         target: { mode: 'edit', taskId: nextTask.taskId, expectedVersion: nextTask.version, attemptId: editor.target.attemptId },

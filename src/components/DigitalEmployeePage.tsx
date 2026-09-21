@@ -20,6 +20,7 @@ import {
   type WeeklyTaskPackagePresetId,
 } from '../lib/weeklyTaskPackagePresets';
 import DeliveryBoard from "./DeliveryBoard";
+import ProductionTaskScene from "./ProductionTaskScene";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
@@ -91,7 +92,6 @@ import {
   type WeeklyGoal,
   type WorkflowTask,
 } from "../lib/digitalEmployees";
-import { PAGE_REGISTRY } from '../pageRegistry';
 
 const EMPTY_CONFIG: DigitalEmployeeConfig = {
   companyName: "",
@@ -211,7 +211,7 @@ const agentRoleGroups: Array<{
 ];
 
 const agentApprovalOptions = [
-  { role: "orchestrator", policyRole: "business", label: "灵小枢 · 统筹 Agent", tone: "violet", items: [
+  { role: "orchestrator", policyRole: "business", label: "总体计划审批", tone: "violet", items: [
     { key: "activatePlan", label: "启动或调整经营计划", detail: "目标、指标、周期发生变化时必须审批" },
     { key: "changeGoalScope", label: "扩大经营范围", detail: "新增市场、产品或客户范围时必须审批" },
   ] },
@@ -676,6 +676,7 @@ function completeConfig(initial: DigitalEmployeeConfig): DigitalEmployeeConfig {
   return {
     ...EMPTY_CONFIG,
     ...initial,
+    approvalOwner: initial.approvalOwner?.trim() || "企业管理员",
     team: ["orchestrator", "business", "director", "content", "customer"],
     enabledWorkflows: initial.enabledWorkflows?.length
       ? initial.enabledWorkflows
@@ -700,7 +701,6 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
   for (const [key, label] of [
     ["companyName", "企业名称"],
     ["industry", "行业"],
-    ["primaryBusiness", "主要业务"],
     ["targetMarkets", "目标市场"],
     ["customerProfile", "核心客户"],
     ["approvalOwner", "审批负责人"],
@@ -762,6 +762,7 @@ function OnboardingPanel({
   const [form, setForm] = useState(() => completeConfig(initial));
   const [dependencyNotice, setDependencyNotice] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [settingsEditorOpen, setSettingsEditorOpen] = useState(false);
   const [collectionPlatforms, setCollectionPlatforms] = useState(restoredRules.collectionPlatforms);
   const [collectionSources, setCollectionSources] = useState(restoredRules.collectionSources);
   const [collectionKeywords, setCollectionKeywords] = useState(restoredRules.collectionKeywords);
@@ -786,8 +787,7 @@ function OnboardingPanel({
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
   const [productStepSaved, setProductStepSaved] = useState(false);
-  const [activeRuleAgent, setActiveRuleAgent] = useState<"orchestrator" | "business" | "director" | "content" | "customer">("orchestrator");
-  const activeAgentDefinition = agentRoleGroups.find((agent) => agent.id === activeRuleAgent)!;
+  const [activeRuleAgent, setActiveRuleAgent] = useState<"orchestrator" | "business" | "director" | "content" | "customer">("business");
   const [productSaving, setProductSaving] = useState(false);
   const [productError, setProductError] = useState("");
   const [quickProductOpen, setQuickProductOpen] = useState(false);
@@ -942,7 +942,7 @@ function OnboardingPanel({
       window.setTimeout(() => document.getElementById("onboarding-focus-products")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       return;
     }
-    const targetAgent = ["contentPublish", "publishingTargets"].includes(firstKey) ? "business" : ["batchFollowup", "followupCadence"].includes(firstKey) ? "customer" : firstKey === "socialCadence" ? "director" : "orchestrator";
+    const targetAgent = ["contentPublish", "publishingTargets", "approvalOwner"].includes(firstKey) ? "business" : ["batchFollowup", "followupCadence"].includes(firstKey) ? "customer" : firstKey === "socialCadence" ? "director" : "business";
     setActiveRuleAgent(targetAgent);
     window.setTimeout(() => {
       const selector = firstKey === "approvalOwner" ? 'input[placeholder="姓名或岗位"]' : `[aria-invalid="true"]`;
@@ -1056,7 +1056,6 @@ function OnboardingPanel({
   const profileMissingFields = [
     ["企业名称", form.companyName],
     ["行业", form.industry],
-    ["主要业务", form.primaryBusiness],
     ["目标市场", form.targetMarkets],
     ["核心客户", form.customerProfile],
   ] as const;
@@ -1192,24 +1191,30 @@ function OnboardingPanel({
       followupCadence: [followupGenerateAt, followupApproveBy, followupWindow, followupFrequency].every((value, index) => value === [restoredRules.followupGenerateAt, restoredRules.followupApproveBy, restoredRules.followupWindow, restoredRules.followupFrequency][index]) ? initial.followupCadence : `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
       reviewSchedule: reviewTimezone === restoredRules.reviewTimezone && reviewCutoff === restoredRules.reviewCutoff ? initial.reviewSchedule : `周五 17:30（${reviewTimezone}）；数据截止 ${reviewCutoff}；通知审批负责人；仅生成复盘和下周任务草稿`,
     };
+    setSettingsEditorOpen(false);
     onSave(completed);
+  };
+  const confirmRecommendedSettings = () => {
+    if (Object.keys(errors).length) {
+      setSubmitted(true);
+      setSettingsEditorOpen(true);
+      return;
+    }
+    submit();
   };
   if (mode === "first" && !profileConfirmed) return (
     <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3"><div className="shrink-0 rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">第一步 · 建立企业档案</p><h2 className="mt-1 text-xl font-bold text-slate-950">告诉数字员工，你是谁、卖什么、卖给谁</h2><p className="mt-1 text-sm text-slate-500">这里只建档一次。保存后同步到企业知识库，后续统一在企业知识库维护，智能经营直接读取。</p></div></div>
-        <span className="shrink-0 self-start rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-bold text-slate-500">企业知识库 · 唯一数据源</span>
+        <div className="flex min-w-0 items-start gap-3"><div className="shrink-0 rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">第一步 · 建立企业档案</p><h2 className="mt-1 text-xl font-bold text-slate-950">告诉数字员工，你是谁、卖什么、卖给谁</h2><p className="mt-1 text-sm text-slate-500">输入后保存至企业知识库</p></div></div>
       </div>
       {profileLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
-        <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs leading-relaxed text-blue-800">如果企业知识库已有资料，系统会自动带入；你在这里修改并保存后，两处会保持一致，不需要重复填写。</div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
-          <Field label="所属行业" required><input className={inputClass} value={form.industry} onChange={e=>set("industry",e.target.value)} placeholder="例如：智能制造" /></Field>
-          <Field label="主要业务" required wide><textarea className={`${inputClass} min-h-24 resize-y`} value={form.primaryBusiness} onChange={e=>set("primaryBusiness",e.target.value)} placeholder="主要产品、服务和核心能力；不需要在这里填写详细产品参数" /></Field>
-          <Field label="目标市场" required><input className={inputClass} value={form.targetMarkets} onChange={e=>set("targetMarkets",e.target.value)} placeholder="国家或地区，例如：美国、德国" /></Field>
-          <Field label="核心客户" required><input className={inputClass} value={form.customerProfile} onChange={e=>set("customerProfile",e.target.value)} placeholder="客户类型、决策角色和主要需求" /></Field>
+          <Field label="所属行业" required><input list="digital-employee-industry-options" className={inputClass} value={form.industry} onChange={e=>set("industry",e.target.value)} placeholder="选择或输入行业" /><datalist id="digital-employee-industry-options"><option value="美妆个护"/><option value="服装纺织"/><option value="家居用品"/><option value="消费电子"/><option value="机械制造"/><option value="食品饮料"/><option value="跨境电商"/><option value="专业服务"/></datalist></Field>
+          <Field label="主要业务（选填）" wide><textarea className={`${inputClass} min-h-20 resize-y`} value={form.primaryBusiness} onChange={e=>set("primaryBusiness",e.target.value)} placeholder="可简单介绍主要产品或服务" /></Field>
+          <Field label="目标市场" required><input list="digital-employee-market-options" className={inputClass} value={form.targetMarkets} onChange={e=>set("targetMarkets",e.target.value)} placeholder="选择或输入国家、地区" /><datalist id="digital-employee-market-options"><option value="北美"/><option value="欧洲"/><option value="东南亚"/><option value="中东"/><option value="拉丁美洲"/><option value="日韩"/><option value="全球市场"/></datalist></Field>
+          <Field label="核心客户" required><input list="digital-employee-customer-options" className={inputClass} value={form.customerProfile} onChange={e=>set("customerProfile",e.target.value)} placeholder="选择或输入客户类型" /><datalist id="digital-employee-customer-options"><option value="品牌方"/><option value="经销商与代理商"/><option value="批发商"/><option value="零售商"/><option value="采购负责人"/><option value="终端消费者"/></datalist></Field>
         </div>
-        <div className="mt-5 rounded-2xl border border-slate-200 p-4"><p className="text-xs font-bold text-slate-800">保存后写入企业知识库</p><div className="mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3"><span>企业档案：名称、行业、业务介绍</span><span>市场档案：目标国家与地区</span><span>客户档案：核心客户画像</span></div></div>
         {profileError && <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-amber-700">{missingProfileFields.length ? `还需填写：${missingProfileFields.join("、")}` : "企业基础资料已完整，可以保存。"}</p><button type="button" disabled={Boolean(missingProfileFields.length) || profileSaving} onClick={()=>void saveEnterpriseProfile()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{profileSaving ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}保存企业档案</button></div>
       </>}
@@ -1230,7 +1235,37 @@ function OnboardingPanel({
     </section>
   );
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+    <>
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div>
+            <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">{mode === "first" ? "第三步 · 确认 Agent 设置" : "Agent 设置"}</p><h2 className="mt-1 text-xl font-bold text-slate-950">系统已准备一套安全默认方案</h2><p className="mt-1 text-sm text-slate-500">无需逐项填写。确认后即可使用；以后随时可以打开修改。</p></div>
+          </div>
+          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-700">推荐设置已就绪</span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {agentRoleGroups.filter(agent => agent.id !== "orchestrator").map(agent => {
+            const Icon = agent.id === "business" ? BarChart3 : agent.id === "director" ? Search : agent.id === "content" ? Sparkles : MessageSquare;
+            const detail = agent.id === "business" ? "统筹发布、数据与复盘" : agent.id === "director" ? "采集灵感并完成编导方案" : agent.id === "content" ? "按方案制作并检查成片" : "整理客户并生成跟进草稿";
+            return <div key={agent.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm"><Icon size={17} /></span><p className="mt-3 text-sm font-black text-slate-900">{agent.label}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{detail}</p></div>;
+          })}
+        </div>
+        <div className="mt-4 grid gap-2 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4 text-xs text-emerald-950 sm:grid-cols-2 lg:grid-cols-4">
+          <p><strong className="block">运行方式</strong><span className="mt-1 block text-emerald-800">托管模式，边界内自动推进</span></p>
+          <p><strong className="block">内容发布</strong><span className="mt-1 block text-emerald-800">每条成片发布前确认</span></p>
+          <p><strong className="block">客户触达</strong><span className="mt-1 block text-emerald-800">批量跟进发送前确认</span></p>
+          <p><strong className="block">商业承诺</strong><span className="mt-1 block text-emerald-800">价格、交期与效果必须确认</span></p>
+        </div>
+        {activeRun && <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800">当前运行继续沿用已批准计划；本次保存从下一轮生效。</p>}
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" onClick={() => setSettingsEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">查看并修改设置</button>
+          <button type="button" disabled={busy} onClick={confirmRecommendedSettings} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}{mode === "first" ? "确认设置，进入周任务" : "确认并保存设置"}</button>
+        </div>
+      </section>
+      {settingsEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setSettingsEditorOpen(false); }}>
+    <section role="dialog" aria-modal="true" aria-label="Agent 设置" className="relative max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+      <button type="button" aria-label="关闭 Agent 设置" disabled={busy} onClick={() => setSettingsEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
       <div className="flex items-start gap-3">
         <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
           <Settings2 size={22} />
@@ -1251,15 +1286,15 @@ function OnboardingPanel({
           </p>
         </div>
       </div>
-      <><div className="mt-4 grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 sm:grid-cols-5">{agentRoleGroups.map((agent)=>{const active=activeRuleAgent===agent.id;const Icon=agent.id==="orchestrator"?Bot:agent.id==="business"?BarChart3:agent.id==="director"?Search:agent.id==="content"?Sparkles:MessageSquare;const subtitle=agent.id==="orchestrator"?"目标与统筹":agent.id==="business"?"发布与复盘":agent.id==="director"?"采集与导演":agent.id==="content"?"成片与质检":"客户与跟进";return <button key={agent.id} type="button" aria-pressed={active} onClick={()=>setActiveRuleAgent(agent.id)} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left transition ${active?"bg-slate-950 text-white shadow-sm":"bg-white text-slate-600 hover:bg-slate-100"}`}><Icon size={15}/><span><span className="block text-xs font-black">{agent.label}</span><span className={`block text-[9px] ${active?"text-slate-300":"text-slate-400"}`}>{subtitle}</span></span></button>})}</div><div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3"><div><p className="text-sm font-black text-slate-900">{activeAgentDefinition.label}</p><p className="mt-0.5 text-[11px] text-slate-500">{activeAgentDefinition.responsibility}</p></div><p className="text-[10px] text-slate-400">主要产出：{activeAgentDefinition.outputs}</p></div></>
+      <div className="mt-4 grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 sm:grid-cols-4">{agentRoleGroups.filter(agent => agent.id !== "orchestrator").map((agent)=>{const active=activeRuleAgent===agent.id;const Icon=agent.id==="business"?BarChart3:agent.id==="director"?Search:agent.id==="content"?Sparkles:MessageSquare;return <button key={agent.id} type="button" aria-pressed={active} onClick={()=>setActiveRuleAgent(agent.id)} className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-center transition ${active?"bg-slate-950 text-white shadow-sm":"bg-white text-slate-600 hover:bg-slate-100"}`}><Icon size={15}/><span className="text-xs font-black">{agent.label}</span></button>})}</div>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <div className={`${activeRuleAgent !== "director" ? "hidden " : ""}md:col-span-2 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4`}>
           <div><p className="text-sm font-bold text-emerald-950">AI 推荐执行范围</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成采集关键词与客户画像；推荐值仍需人工确认。</p></div>
           <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
         </div>
-        {mode === "first" && activeRuleAgent === "orchestrator" && <div className="md:col-span-2 grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-xs md:grid-cols-3"><div><p className="font-bold text-blue-950">经营目标</p><p className="mt-1 text-blue-700">{form.primaryGoal === "awareness" ? "品牌曝光" : form.primaryGoal === "sales" ? "推进成交" : form.primaryGoal === "reactivation" ? "老客唤醒" : "获取询盘"}</p></div><div><div className="flex items-center justify-between gap-2"><p className="font-bold text-blue-950">重点产品</p><button type="button" onClick={()=>setProductStepSaved(false)} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-50">重新选择</button></div><p className="mt-1 text-blue-700">{form.focusProducts || "本期暂未指定；相关内容分支等待产品资料"}</p></div><div><p className="font-bold text-blue-950">目标市场与客户</p><p className="mt-1 text-blue-700">{form.targetMarkets} · {form.customerProfile}</p></div></div>}
-        {mode === "first" && activeRuleAgent === "orchestrator" && <Field label="接入目标"><select className={inputClass} value={form.primaryGoal} onChange={event=>set("primaryGoal",event.target.value as DigitalEmployeeConfig["primaryGoal"])}><option value="awareness">品牌曝光</option><option value="leads">获取询盘</option><option value="sales">推进成交</option><option value="reactivation">老客唤醒</option></select></Field>}
-        {activeRuleAgent === "orchestrator" && <>
+        {mode === "first" && <div className="md:col-span-2 grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-xs md:grid-cols-3"><div><p className="font-bold text-blue-950">经营目标</p><p className="mt-1 text-blue-700">{form.primaryGoal === "awareness" ? "品牌曝光" : form.primaryGoal === "sales" ? "推进成交" : form.primaryGoal === "reactivation" ? "老客唤醒" : "获取询盘"}</p></div><div><div className="flex items-center justify-between gap-2"><p className="font-bold text-blue-950">重点产品</p><button type="button" onClick={()=>setProductStepSaved(false)} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-50">重新选择</button></div><p className="mt-1 text-blue-700">{form.focusProducts || "本期暂未指定；相关内容分支等待产品资料"}</p></div><div><p className="font-bold text-blue-950">目标市场与客户</p><p className="mt-1 text-blue-700">{form.targetMarkets} · {form.customerProfile}</p></div></div>}
+        {mode === "first" && <Field label="接入目标"><select className={inputClass} value={form.primaryGoal} onChange={event=>set("primaryGoal",event.target.value as DigitalEmployeeConfig["primaryGoal"])}><option value="awareness">品牌曝光</option><option value="leads">获取询盘</option><option value="sales">推进成交</option><option value="reactivation">老客唤醒</option></select></Field>}
+        {true && <>
         <Field label="运营阶段"><select className={inputClass} value={form.operatingMaturity || "growing"} onChange={e => set("operatingMaturity", e.target.value as DigitalEmployeeConfig["operatingMaturity"])}>{Object.entries(maturityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
         {mode === "first" && <div className="md:col-span-2 rounded-xl bg-slate-50 p-4 text-sm">
           <p>{maturityProfiles[form.operatingMaturity || 'growing'].features}</p>
@@ -1376,7 +1411,7 @@ function OnboardingPanel({
           <div><p className="text-sm font-black">分 Agent 审批红线</p><p className="mt-0.5 text-[10px] text-amber-700">每个 Agent 只受自己职责范围内的红线约束；标记“强制”的高风险规则不能关闭。</p></div>
         </div>
         <div className="mt-2 grid gap-2 lg:grid-cols-2">
-          {agentApprovalOptions.filter((group) => group.role === activeRuleAgent).map((group) => <section key={group.role} className="rounded-xl border border-amber-100 bg-white p-3"><div className="flex items-center justify-between"><p className="text-xs font-black text-slate-900">{group.label}</p><span className="text-[9px] font-bold text-slate-400">独立审批策略</span></div><div className="mt-2 space-y-1.5">{group.items.map((item) => {const checked=Boolean((form.agentApprovalPolicies[group.policyRole] as Record<string, boolean>)[item.key]);return <label key={item.key} className={`flex items-start gap-2 rounded-lg border p-2.5 ${checked?"border-amber-200 bg-amber-50/50":"border-slate-200 bg-slate-50"}`}><input type="checkbox" className="mt-0.5 accent-amber-600" checked={checked} disabled={"locked" in item&&item.locked} onChange={event=>setAgentApproval(group.policyRole,item.key,event.target.checked)} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-xs font-bold text-slate-800">{item.label}{"locked" in item&&item.locked&&<span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] text-red-600">强制</span>}</span><span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">{item.detail}</span></span></label>})}</div></section>)}
+          {agentApprovalOptions.filter((group) => group.role === activeRuleAgent || group.role === "orchestrator").map((group) => <section key={group.role} className="rounded-xl border border-amber-100 bg-white p-3"><div className="flex items-center justify-between"><p className="text-xs font-black text-slate-900">{group.label}</p><span className="text-[9px] font-bold text-slate-400">独立审批策略</span></div><div className="mt-2 space-y-1.5">{group.items.map((item) => {const checked=Boolean((form.agentApprovalPolicies[group.policyRole] as Record<string, boolean>)[item.key]);return <label key={item.key} className={`flex items-start gap-2 rounded-lg border p-2.5 ${checked?"border-amber-200 bg-amber-50/50":"border-slate-200 bg-slate-50"}`}><input type="checkbox" className="mt-0.5 accent-amber-600" checked={checked} disabled={"locked" in item&&item.locked} onChange={event=>setAgentApproval(group.policyRole,item.key,event.target.checked)} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-xs font-bold text-slate-800">{item.label}{"locked" in item&&item.locked&&<span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] text-red-600">强制</span>}</span><span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">{item.detail}</span></span></label>})}</div></section>)}
         </div>
         {submitted && (errors.contentPublish || errors.batchFollowup) && (
           <p className="mt-2 text-[10px] font-semibold text-red-600">
@@ -1384,7 +1419,7 @@ function OnboardingPanel({
           </p>
         )}
       </div>
-      <div className={`${activeRuleAgent !== "orchestrator" ? "hidden " : ""}mt-4`}>
+      <div className="mt-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-bold text-slate-700">业务资产就绪度</p>
           <span className="text-[10px] text-slate-400">本页保存状态 + 最近业务快照</span>
@@ -1451,6 +1486,8 @@ function OnboardingPanel({
         </button>
       </div>
     </section>
+      </div>}
+    </>
   );
 }
 
@@ -1487,6 +1524,7 @@ function GoalPanel({
   const initialProduct = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
   const [selectedPresetId, setSelectedPresetId] = useState<WeeklyTaskPackagePresetId>(initialPresetId);
   const [weeklyFocus, setWeeklyFocus] = useState('');
+  const [goalEditorOpen, setGoalEditorOpen] = useState(false);
   const [form, setForm] = useState<GoalDraft>(() => ({
     ...EMPTY_GOAL,
     businessLine,
@@ -1514,7 +1552,12 @@ function GoalPanel({
   const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoPlanErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
   const submit = () => {
     setSubmitted(true);
-    if (!hasErrors) onSave(form);
+    if (hasErrors) {
+      setGoalEditorOpen(true);
+      return;
+    }
+    setGoalEditorOpen(false);
+    onSave(form);
   };
   const choosePreset = (presetId: WeeklyTaskPackagePresetId) => {
     const preset = weeklyTaskPackagePreset(presetId);
@@ -1541,7 +1584,22 @@ function GoalPanel({
     }));
   };
   return (
-    <section className="rounded-xl border border-border bg-white p-4 shadow-sm sm:p-5">
+    <>
+      <section className="rounded-2xl border border-border bg-white p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">本周任务确认</p><h2 className="mt-1 text-lg font-black text-slate-950">灵小枢已生成本周默认方案</h2><p className="mt-1 text-xs leading-5 text-slate-500">方案、目标、平台和执行分工都已填好；确认即可生成任务。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-700">可直接确认</span></div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">任务方案</p><p className="mt-1 text-sm font-black text-slate-900">{businessLine === 'customer_conversion' ? '客户转化任务' : weeklyTaskPackagePreset(selectedPresetId).label}</p></div>
+          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周产出</p><p className="mt-1 text-sm font-black text-slate-900">{form.target} {form.unit}</p></div>
+          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">执行平台</p><p className="mt-1 text-sm font-black text-slate-900">{form.contentPlatforms.map(platform => contentPlatformLabel[platform]).join('、') || '待确认'}</p></div>
+          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">业务范围</p><p className="mt-1 truncate text-sm font-black text-slate-900">{form.scope || '按企业默认市场'}</p></div>
+        </div>
+        <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/55 px-4 py-3"><p className="text-xs font-black text-emerald-950">本周重点结果</p><p className="mt-1 text-xs leading-5 text-emerald-800">{form.objective}</p></div>
+        {submitted && hasErrors && <p role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-bold text-amber-800">默认方案还缺少少量基础信息，已为你打开调整窗口。</p>}
+        <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</button><button type="button" disabled={busy} onClick={submit} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认并生成周任务</button></div>
+      </section>
+      {goalEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setGoalEditorOpen(false); }}>
+    <section role="dialog" aria-modal="true" aria-label="调整本周设置" className="relative max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border bg-white p-4 shadow-2xl sm:p-5">
+      <button type="button" aria-label="关闭本周设置" disabled={busy} onClick={() => setGoalEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
       <div className="flex items-start gap-3">
         <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
           <Target size={22} />
@@ -1555,10 +1613,10 @@ function GoalPanel({
           </p>
         </div>
       </div>
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
         {businessLine !== 'customer_conversion' && <>
-          <fieldset className="md:col-span-2">
-            <legend className="text-xs font-black text-slate-700">选择适合当前阶段的任务包</legend>
+          <details className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+            <summary className="cursor-pointer text-xs font-black text-slate-700">更换周任务方案（当前：{weeklyTaskPackagePreset(selectedPresetId).label}）</summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {WEEKLY_TASK_PACKAGE_PRESETS.map(preset => {
                 const selected = selectedPresetId === preset.id;
@@ -1569,25 +1627,27 @@ function GoalPanel({
                 </button>;
               })}
             </div>
-          </fieldset>
+          </details>
           <label className="md:col-span-2 text-xs font-black text-slate-700">本周最想解决什么？
             <input className={`${inputClass} mt-2`} value={weeklyFocus} onChange={event => updateWeeklyFocus(event.target.value)} placeholder="例如：验证东南亚采购商最关心的选型问题" />
           </label>
           {submitted && errors.product && <p role="alert" className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{errors.product}</p>}
-          <div className="md:col-span-2 grid gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-xs sm:grid-cols-3">
+          <details className="md:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs">
+            <summary className="cursor-pointer font-black text-emerald-950">查看执行安排</summary>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
             <div><p className="font-black text-emerald-950">发布节奏</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).frequency}</p></div>
             <div><p className="font-black text-emerald-950">账号安排</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).accountRoles}</p></div>
-            <div><p className="font-black text-emerald-950">Agent 分工</p><p className="mt-1 leading-5 text-emerald-800">灵小枢统筹，编导 Agent 定方案，内容 Agent 生成视频，经营 Agent 承接发布与复盘。</p></div>
-          </div>
+            <div><p className="font-black text-emerald-950">由谁完成</p><p className="mt-1 leading-5 text-emerald-800">灵小枢安排各数字员工完成，并在需要你决定时提醒。</p></div>
+            </div>
+          </details>
         </>}
         {businessLine !== "customer_conversion" && <div className="md:col-span-2 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">确认本期制作平台</p><p className="mt-1 text-xs text-slate-500">仅制作时也需要确认平台；发布时使用已绑定账号。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{!config.enabledWorkflows.includes("content_publish")?"仅制作内容，不发布":config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);return <button key={platform} type="button" aria-pressed={selected} onClick={()=>set("contentPlatforms",selected?form.contentPlatforms.filter(item=>item!==platform):[...form.contentPlatforms,platform])} className={`rounded-xl border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-black">{contentPlatformLabel[platform]}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")}</span></button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
         {businessLine !== 'customer_conversion' && <details className="md:col-span-2 rounded-xl border border-slate-200 bg-white px-4 py-3"><summary className="cursor-pointer text-xs font-black text-slate-700">查看并调整具体视频计划（可选）</summary><div className="mt-4"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} themeWorkflow onChange={plans => set('videoPlans', plans)} /></div></details>}
         <details className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-          <summary className="cursor-pointer text-xs font-black text-slate-700">更多目标设置（可选）</summary>
+          <summary className="cursor-pointer text-xs font-black text-slate-700">系统生成的目标设置（需要时可修改）</summary>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
         <Field
           label="目标名称"
-          required
           error={submitted ? errors.title : ""}
           wide
         >
@@ -1599,7 +1659,6 @@ function GoalPanel({
         </Field>
         <Field
           label="本周重点结果"
-          required
           error={submitted ? errors.objective : ""}
           wide
         >
@@ -1609,7 +1668,7 @@ function GoalPanel({
             onChange={(event) => set("objective", event.target.value)}
           />
         </Field>
-        <Field label="衡量指标" required>
+        <Field label="衡量指标">
           <select
             className={inputClass}
             value={form.metric}
@@ -1665,7 +1724,6 @@ function GoalPanel({
         </Field>
         <Field
           label="业务范围"
-          required
           error={submitted ? errors.scope : ""}
           wide
         >
@@ -1705,10 +1763,12 @@ function GoalPanel({
           ) : (
             <Check size={16} />
           )}{" "}
-          让灵小枢生成周任务
+          保存设置并生成周任务
         </button>
       </div>
     </section>
+      </div>}
+    </>
   );
 }
 
@@ -3744,10 +3804,6 @@ export default function DigitalEmployeePage({
     activeTask ||
     visibleTasks.find((task) => task.status === "succeeded") ||
     visibleTasks[0];
-  const selectedPlanTask = data?.plan?.tasks?.find(
-    (task) => task.key === selectedTask?.task_key,
-  );
-  const agentCards = useMemo(() => data?.agents || [], [data?.agents]);
   const terminal = Boolean(
     data?.run && ["succeeded", "failed", "cancelled"].includes(data.run.status),
   );
@@ -3939,14 +3995,11 @@ export default function DigitalEmployeePage({
         <header className="workspace-header">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <div className="workspace-kicker flex items-center gap-2">
-                <Activity size={14} /> LingShu Operations
-              </div>
               <h1 className="workspace-title mt-2">
-                {PAGE_REGISTRY.digitalEmployees.canonicalTitle}
+                数字员工正在等待调遣
               </h1>
               <p className="workspace-subtitle mt-2">
-                从内容生产到客户承接，每个状态都来自服务端任务、业务快照或真实渠道回执。
+                先看今天要做什么；需要你决定时，按提示操作即可。
               </p>
             </div>
             {data?.config && (
@@ -4235,7 +4288,7 @@ export default function DigitalEmployeePage({
         {data?.config && workspaceView === "live" && (
           <div className="mt-5 space-y-5">
             {viewGoalId && <p className="rounded-2xl bg-violet-50 p-4 text-xs text-violet-800">正在只读查看历史计划与执行情况。</p>}
-            {data.plan?.businessPackage && <WeeklyPackagePanel
+            {data.plan?.businessPackage && !data.run && <WeeklyPackagePanel
               data={data} readOnly={Boolean(viewGoalId)} busy={Boolean(busy)} onOpen={openBusiness}
               onOpenNode={link => {
                 if (link.page !== "digitalEmployees") { dispatchDigitalEmployeeDeepLink(link); return; }
@@ -4270,104 +4323,19 @@ export default function DigitalEmployeePage({
             )}
             {data.plan && data.run && (
               <>
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.75fr)]">
+              <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-3 px-1"><div><h2 className="text-sm font-bold text-slate-950">本轮 Agent</h2><p className="mt-1 text-[11px] text-slate-500">按执行顺序排列，点击查看对应生产进度</p></div><button onClick={() => void load()} title="刷新生产现场" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500"><RefreshCcw size={15} /></button></div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {[...visibleTasks].sort((left, right) => left.sequence - right.sequence).map((item, index) => <button key={item.id} type="button" aria-pressed={selectedTask?.id === item.id} onClick={() => setSelectedTaskId(item.id)} className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-left ${selectedTask?.id === item.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-slate-500">{index + 1}</span><span><span className="block text-xs font-bold text-slate-800">{agentLabel[item.agent_role] || "业务 Agent"}</span><span className="block max-w-44 truncate text-[10px] text-slate-400">{item.title}</span></span><Badge status={item.status} /></button>)}
+                </div>
+              </section>
+              <div className="grid gap-5">
                 <div className="space-y-5">
                   <div id="task-production-scene" className="relative scroll-mt-6">
-                    <button
-                      onClick={() => void load()}
-                      title="刷新生产现场"
-                      className="absolute right-5 top-5 z-10 rounded-lg border border-slate-200 bg-white p-2 text-slate-500 shadow-sm"
-                    >
-                      <RefreshCcw size={15} />
-                    </button>
-                    <ProductionScene
-                      task={selectedTask}
-                      planTask={selectedPlanTask}
-                      runId={data.run.id}
-                      events={data.events}
-                      readOnly={Boolean(viewGoalId)}
-                      correcting={busy === `correct-${selectedTask?.id}`}
-                      controlling={Boolean(
-                        selectedTask &&
-                          [
-                            `retry-${selectedTask.id}`,
-                            `skip-${selectedTask.id}`,
-                            `complete-${selectedTask.id}`,
-                          ].includes(busy),
-                      )}
-                      onOpenTask={dispatchDigitalEmployeeDeepLink}
-                      deepLink={selectedTask ? nodeDeepLink(selectedPlanTask, selectedTask, data.run.id, data.deliveries) : undefined}
-                      onCorrect={async (input) =>
-                        Boolean(
-                          selectedTask &&
-                            (await act(`correct-${selectedTask.id}`, () =>
-                              digitalEmployeeApi.correctTask(
-                                selectedTask.id,
-                                input,
-                              ),
-                            )),
-                        )
-                      }
-                      onRetry={async () =>
-                        Boolean(
-                          selectedTask &&
-                            (await act(`retry-${selectedTask.id}`, () =>
-                              digitalEmployeeApi.retryTask(selectedTask.id),
-                            )),
-                        )
-                      }
-                      onSkip={async (note) =>
-                        Boolean(
-                          selectedTask &&
-                            (await act(`skip-${selectedTask.id}`, () =>
-                              digitalEmployeeApi.skipTask(
-                                selectedTask.id,
-                                note,
-                              ),
-                            )),
-                        )
-                      }
-                      onComplete={async (note) =>
-                        Boolean(
-                          selectedTask &&
-                            (await act(`complete-${selectedTask.id}`, () =>
-                              digitalEmployeeApi.completeTask(
-                                selectedTask.id,
-                                note,
-                              ),
-                            )),
-                        )
-                      }
-                    />
+                    {selectedTask ? <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded /> : <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
                   </div>
                 </div>
                 <aside className="space-y-5">
-                  <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div className="flex items-center gap-2">
-                      <Users size={19} className="text-blue-600" />
-                      <h2 className="font-bold text-slate-950">数字员工团队</h2>
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      {agentCards.map((agent) => (
-                        <div
-                          key={agent.role}
-                          className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-3"
-                        >
-                          <Bot size={17} />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-bold text-slate-800">
-                              {agentLabel[agent.role] || "业务 Agent"}
-                            </p>
-                            <p className="truncate text-[10px] text-slate-400">
-                              {agent.currentTask ||
-                                `${agent.completed}/${agent.total} 个任务完成`}
-                            </p>
-                          </div>
-                          <Badge status={agent.status} />
-                        </div>
-                      ))}
-                    </div>
-                  </section>
                   {!viewGoalId && pendingApproval && approvalTask && (
                     <section id="delivery-approval" className="scroll-mt-6 rounded-3xl border border-amber-200 bg-amber-50 p-5">
                       <div className="flex items-center gap-2 text-amber-800">

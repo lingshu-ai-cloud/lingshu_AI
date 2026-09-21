@@ -5,9 +5,11 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import sharp from 'sharp';
 import type {
+  SocialContentTaskBrief,
   SocialContentThemeId,
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
+import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
@@ -190,6 +192,137 @@ function automaticMaterialScore(input: {
   return origin + productScore + themeScore + analyzed;
 }
 
+const LOCAL_SHOT_WIDTH = 72;
+const LOCAL_SHOT_HEIGHT = 96;
+const LOCAL_SHOT_BYTES = LOCAL_SHOT_WIDTH * LOCAL_SHOT_HEIGHT;
+
+function localShotDifference(left: Buffer, right: Buffer): number {
+  let total = 0;
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    total += Math.abs((left[index] || 0) - (right[index] || 0));
+  }
+  return total / Math.max(1, length);
+}
+
+/**
+ * A task upload can be a fully edited source video containing several real
+ * shots. When the optional semantic vision provider is unavailable, detect
+ * visually distinct time windows locally instead of discarding the source and
+ * replacing it with synthetic title cards. These windows prove only visual
+ * difference; they deliberately carry no semantic/product claims.
+ */
+export async function detectDistinctTaskVideoSegments(asset: ProductionAsset): Promise<Array<Record<string, unknown>>> {
+  const source = asset.localPath && existsSync(asset.localPath) ? asset.localPath : '';
+  const duration = Number(asset.duration || 0);
+  if (asset.type !== 'video' || !source || !Number.isFinite(duration) || duration < 4) return [];
+  const sampleCount = Math.max(5, Math.min(14, Math.floor(duration / 1.2)));
+  const sampleInterval = duration / sampleCount;
+  const decoded = await runVisualFfmpeg([
+    '-i', source,
+    '-map', '0:v:0',
+    '-vf', `fps=${(sampleCount / duration).toFixed(6)},scale=${LOCAL_SHOT_WIDTH}:${LOCAL_SHOT_HEIGHT}:force_original_aspect_ratio=decrease,pad=${LOCAL_SHOT_WIDTH}:${LOCAL_SHOT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,format=gray`,
+    '-frames:v', String(sampleCount),
+    '-f', 'rawvideo', '-pix_fmt', 'gray', 'pipe:1',
+  ], true, { timeoutMs: 45_000 });
+  if (!decoded.ok) return [];
+  const frames: Buffer[] = [];
+  for (let offset = 0; offset + LOCAL_SHOT_BYTES <= decoded.stdout.length && frames.length < sampleCount; offset += LOCAL_SHOT_BYTES) {
+    frames.push(decoded.stdout.subarray(offset, offset + LOCAL_SHOT_BYTES));
+  }
+  if (frames.length < 3) return [];
+  const selected: number[] = [0];
+  // Collect spare candidates so the local quality pass can replace a blurry
+  // or duplicated interval instead of failing the whole otherwise usable reel.
+  const desiredCount = Math.min(7, Math.max(4, Math.floor(duration / 2.3)));
+  // Sample the full running time instead of accepting the first four changes.
+  // User-edited product reels often contain many quick cuts; a front-loaded
+  // selection loses the demonstration/result/hero shots in the second half.
+  while (selected.length < desiredCount) {
+    const candidates = frames.map((frame, index) => ({
+      index,
+      temporalDistance: Math.min(...selected.map(previous => Math.abs(index - previous) * sampleInterval)),
+      visualDistance: Math.min(...selected.map(previous => localShotDifference(frames[previous]!, frame))),
+      localChange: Math.max(
+        index > 0 ? localShotDifference(frames[index - 1]!, frame) : 0,
+        index + 1 < frames.length ? localShotDifference(frame, frames[index + 1]!) : 0,
+      ),
+    })).filter(candidate => {
+      const enoughTime = candidate.temporalDistance >= 1.45;
+      // The renderer treats 0.75 mean-luma movement as real motion. Reuse that
+      // conservative floor here; the later per-scene quality gate still
+      // rejects genuinely duplicated output scenes.
+      const visuallyDistinct = candidate.visualDistance >= 0.75 || candidate.localChange >= 0.75;
+      return enoughTime && visuallyDistinct;
+    }).sort((left, right) => right.temporalDistance - left.temporalDistance
+      || right.visualDistance - left.visualDistance
+      || right.localChange - left.localChange);
+    const selectedCandidate = candidates[0];
+    if (!selectedCandidate) break;
+    selected.push(selectedCandidate.index);
+  }
+  selected.sort((left, right) => left - right);
+  if (selected.length < 2) return [];
+  const segments: Array<Record<string, unknown>> = [];
+  for (const [order, frameIndex] of selected.entries()) {
+    const center = Math.min(duration - 0.1, (frameIndex + 0.5) * sampleInterval);
+    // Give each selected part enough edit budget for a natural sentence. The
+    // previous 1.5–1.8 second windows forced the Director Agent to cut safe
+    // copy into fragments even when the uploaded reel had ample running time.
+    const targetDuration = Math.max(1.8, Math.min(2.8, sampleInterval * 2.05));
+    const start = Math.min(
+      Math.max(0, duration - targetDuration),
+      Math.max(0, center - targetDuration / 2),
+    );
+    const end = Math.min(duration, start + targetDuration);
+    if (end - start < 1.45) continue;
+    segments.push({
+      segmentId: `local-distinct:${asset.id}:${order + 1}`,
+      start: Number(start.toFixed(3)),
+      end: Number(end.toFixed(3)),
+      confidence: 0,
+      needsReview: true,
+      analysisMode: 'local_distinct_visual_windows',
+      evidenceBasis: 'tenant_task_upload_visual_difference_only',
+    });
+  }
+  if (segments.length < 2) return [];
+  const visualQuality = await inspectRenderedScenes({
+    outputPath: source,
+    scenes: segments.map(segment => ({ start: Number(segment.start), end: Number(segment.end) })),
+    requireDistinct: true,
+  });
+  const rejected = new Set(visualQuality.issues.map(issue => issue.sceneIndex));
+  const usable = segments.filter((_, index) => !rejected.has(index));
+  if (usable.length < 2) return [];
+  const withoutOverlap = (items: Array<Record<string, unknown>>) => {
+    let previousEnd = 0;
+    return items.sort((left, right) => Number(left.start) - Number(right.start)).flatMap(segment => {
+      const start = Math.max(previousEnd, Number(segment.start));
+      const end = Number(segment.end);
+      if (end - start < 1.45) return [];
+      previousEnd = end;
+      return [{ ...segment, start: Number(start.toFixed(3)) }];
+    });
+  };
+  if (usable.length <= 4) return withoutOverlap(usable);
+  // Keep the final edit representative of the full upload after rejecting bad
+  // candidates: opening, closing, then the most temporally distant interiors.
+  const chosen = [0, usable.length - 1];
+  while (chosen.length < 4) {
+    const next = usable.map((segment, index) => ({
+      index,
+      distance: Math.min(...chosen.map(chosenIndex => Math.abs(
+        Number(segment.start) - Number(usable[chosenIndex]!.start),
+      ))),
+    })).filter(item => !chosen.includes(item.index))
+      .sort((left, right) => right.distance - left.distance)[0];
+    if (!next) break;
+    chosen.push(next.index);
+  }
+  return withoutOverlap(chosen.sort((left, right) => left - right).map(index => usable[index]!));
+}
+
 /** Only provenance written when the tenant attached the upload to this exact
  * product may unlock association-only production. Product names, filenames,
  * source labels and purposes are intentionally excluded. */
@@ -243,6 +376,7 @@ async function taskProductionAssets(input: {
   sources: SocialTaskSource[];
   productRef: string | null;
   themeId: SocialContentThemeId | null;
+  productionMode: NonNullable<SocialContentTaskBrief['productionMode']>;
   outputDirectory: string;
   cloudMaterialPort?: SocialContentCloudMaterialPort;
 }): Promise<ProductionAsset[]> {
@@ -271,7 +405,13 @@ async function taskProductionAssets(input: {
       origin: materialTenantId(record) === input.tenantId ? 'tenant_library' as const : 'shared_library' as const,
       linked: false,
     }));
-  const candidates = [...linkedCandidates, ...libraryCandidates]
+  // Publish-ready production is grounded only in material the user explicitly
+  // linked to this task. Ambient tenant-library footage must never leak into a
+  // product video simply because it scores well on generic theme keywords.
+  const candidates = [
+    ...linkedCandidates,
+    ...(input.productionMode === 'concept_preview' ? libraryCandidates : []),
+  ]
     .sort((left, right) => automaticMaterialScore({
       record: right.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: right.linked,
     }) - automaticMaterialScore({
@@ -414,13 +554,23 @@ async function analyzeProductionAssets(input: {
     } catch (error) {
       const rawReason = String(error instanceof Error ? error.message : error || '素材分析失败');
       const providerUnavailable = /(?:DASHSCOPE|GEMINI|GOOGLE|OPENAI)_API_KEY is not set|analysis provider.+unavailable/i.test(rawReason);
+      const directTaskUpload = asset.selectionOrigin === 'task';
+      const locallyDistinctSegments = directTaskUpload && asset.type === 'video'
+        ? await detectDistinctTaskVideoSegments(asset)
+        : [];
+      if ((providerUnavailable || rawReason.startsWith('production_input_required:'))
+        && directTaskUpload && locallyDistinctSegments.length >= 2) {
+        // Keep the user's real footage in the edit. Local detection establishes
+        // only that the time windows are visually different; confidence stays
+        // at zero and narration remains on the governed, fact-safe baseline.
+        assets.push({
+          ...asset,
+          visualObservations: [],
+          segments: locallyDistinctSegments,
+        });
+        continue;
+      }
       if (providerUnavailable && asset.explicitProductAssociation?.exactTaskProductMatch) {
-        // A missing optional vision provider must not make owned customer
-        // footage unusable. Fall back to one conservative evidence shot per
-        // independently uploaded file, using only the tenant's explicit
-        // exact current-product association. This never creates visual facts, never
-        // splits one file into multiple evidence shots, and remains a warning
-        // through confidence=0 and needsReview=true.
         assets.push({
           ...asset,
           visualObservations: [],
@@ -876,11 +1026,13 @@ export async function runSocialContentAutoProduction(input: {
 
   await withSocialContentRenderWorkspace(async outputDir => {
   let activeBaseline = initialBaseline;
+  const productionMode = detail.brief.productionMode ?? 'concept_preview';
   const rawAssets = await taskProductionAssets({
     tenantId: input.tenantId,
     sources: detail.sources,
     productRef: detail.brief.productRef,
     themeId: detail.theme?.themeId ?? null,
+    productionMode,
     outputDirectory: outputDir,
   });
   const analyzed = await analyzeProductionAssets({ tenantId: input.tenantId, assets: rawAssets });
@@ -892,11 +1044,12 @@ export async function runSocialContentAutoProduction(input: {
       .filter(asset => asset.explicitProductAssociation?.exactTaskProductMatch)
       .map(asset => asset.contentHash || asset.localPath || asset.objectKey || asset.url || asset.id));
     const requiresAssociationOnlySafety = activeBaseline.match?.verifiedKnowledgeSource === 'none';
+    const materialCategoryHint = assets.flatMap(asset => asset.visualObservations).map(socialText).filter(Boolean).join(' ');
     // Exact tenant-authored product linkage is also a safe visual fallback
     // when enterprise product facts exist but no vision provider is available.
     // It authorizes using the files in an edit; it never turns filenames,
     // labels or enterprise facts into claims about what the camera saw.
-    if (associationIdentities.size >= 2 && requiresAssociationOnlySafety) {
+    if (associationIdentities.size >= 1 && requiresAssociationOnlySafety) {
       activeBaseline = freezeSocialScriptBaseline({
         brief: detail.brief,
         theme: detail.theme ?? null,
@@ -906,6 +1059,7 @@ export async function runSocialContentAutoProduction(input: {
         // This is confidence in the exact tenant-authored linkage only. Visual
         // confidence remains 0 on every association-only production clip.
         userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
+        materialCategoryHint,
         lockedAt: new Date().toISOString(),
         previous: activeBaseline,
       });
@@ -916,11 +1070,11 @@ export async function runSocialContentAutoProduction(input: {
       });
     }
   }
-  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets });
-  if (!plan.ok) {
+  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
+  if (!plan.ok && productionMode === 'concept_preview') {
     const systemAssets = await systemThemeGraphicAssets({ outputDirectory: outputDir, baseline: activeBaseline });
     assets = [...assets, ...systemAssets];
-    plan = buildSocialProductionPlan({ baseline: activeBaseline, assets });
+    plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
     if (plan.ok) {
       plan.notes.push('现有素材覆盖不足，编导 Agent 已使用平台安全主题图形完成基础版；补充企业素材后可升级为专属版。');
     }
@@ -934,7 +1088,9 @@ export async function runSocialContentAutoProduction(input: {
     const failureSummary = analyzed.failures.length
       ? ` 未通过分析：${analyzed.failures.map(item => `${item.assetName}（${item.reason}）`).join('；')}`
       : '';
-    throw new Error(`production_input_required:${plan.message}${failureSummary}`);
+    const materialPolicy = socialContentMaterialPolicy(detail.theme?.themeId ?? null);
+    const guidance = `要生成可直接发布的视频，${materialPolicy.missingMessage}。`;
+    throw new Error(`${productionMode === 'social_ready' ? 'user_input_required' : 'production_input_required'}:${guidance}${failureSummary}`);
   }
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);

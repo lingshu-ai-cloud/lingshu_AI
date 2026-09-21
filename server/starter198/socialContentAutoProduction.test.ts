@@ -21,7 +21,7 @@ delete process.env.MINIMAX_API_TOKEN;
 try {
   const [
     { INTERNAL_SOCIAL_CONTENT_FORMULAS },
-    { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline },
+    { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline, verifiedSocialScriptContext },
     {
       buildSocialProductionPlan,
     },
@@ -35,6 +35,7 @@ try {
     {
       applySocialReviewRevision,
       automaticSocialMaterialEligible,
+      detectDistinctTaskVideoSegments,
       hasExactTaskProductAssociation,
       socialReviewRevisionDirective,
       systemThemeGraphicAssets,
@@ -144,6 +145,15 @@ try {
   const noVisualPlan = buildSocialProductionPlan({ baseline: fallbackBaseline, assets: [] });
   assert.equal(noVisualPlan.ok, false);
   assert.equal(noVisualPlan.reasonCode, 'no_visual_material', 'text cards can never replace the visual body of a deliverable video');
+  const unmatchedProductContext = verifiedSocialScriptContext({
+    company: { industry: '美妆代工' },
+    products: {
+      categories: '护肤与洗护',
+      items: [{ name: '企业知识中的另一款产品', sku: 'KNOWN-001', category: '护肤' }],
+    },
+  } as never, '用户上传视频里的新产品');
+  assert.equal(unmatchedProductContext.source, 'none',
+    'company profile facts must not be promoted to facts about an unmatched task product');
 
   const systemBaseline = freezeSocialScriptBaseline({
     brief: {
@@ -159,6 +169,8 @@ try {
   assert.equal(systemBaseline.match?.strategy, 'system_theme_baseline');
   assert.doesNotMatch(systemBaseline.scenes.map(scene => scene.narration).join(' '), new RegExp(forbiddenUserText),
     'the zero-input baseline uses controlled platform copy and never promotes free-form input to a claim');
+  assert.match(systemBaseline.scenes.map(scene => scene.narration).join(' '), /别急着划走|细节自己说话/,
+    'the safe product fallback should still read like social product promotion');
   const systemGraphicDirectory = path.join(temporaryRoot, 'system-graphics');
   fs.mkdirSync(systemGraphicDirectory, { recursive: true });
   const systemAssets = await systemThemeGraphicAssets({
@@ -209,7 +221,7 @@ try {
   } as never, 'tenant-a'), false);
 
   const associationBrief = {
-    title: forbiddenUserText, objective: forbiddenUserText, productRef: 'product:current', audience: null,
+    title: forbiddenUserText, objective: forbiddenUserText, productRef: 'Meno Moso 损伤发质洗护', audience: null,
     markets: ['中国'], languages: ['中文'], platforms: ['抖音'], formats: ['短视频'], aspectRatio: '9:16',
     cadence: null, requestedOutputCount: 1, dueAt: null, brandNotes: null, restrictions: [], callToAction: null,
   };
@@ -218,17 +230,53 @@ try {
     theme: { themeId: 'product_value', inputKind: 'custom', topic: forbiddenUserText, classificationStatus: 'confirmed' },
     verifiedContext: { productName: null, facts: [], source: 'none', confidence: 0 },
     userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
+    materialCategoryHint: 'damaged hair shampoo and hair treatment mask',
     lockedAt,
   });
   const associationNarration = associationBaseline.scenes.map(scene => scene.narration).join(' ');
   const parsedAssociationBaseline = parseStoredSocialScriptBaseline(JSON.stringify(associationBaseline));
   assert.equal(String(parsedAssociationBaseline?.match?.verifiedKnowledgeSource), 'user_product_association');
   assert.equal(parsedAssociationBaseline?.match?.userProductAssociation?.basis, 'tenant_task_upload');
-  assert.match(associationNarration, /用户明确关联/);
+  assert.match(associationNarration, /洗护别随便选|认真护发/,
+    'a hair-care product association should select governed promotional copy without copying the product reference');
+  assert.doesNotMatch(associationNarration, /Meno Moso|损伤发质洗护/,
+    'the product reference only selects an allowlisted copy profile and is never copied into speech');
   assert.doesNotMatch(associationNarration, /联系我们|Contact us/i,
     'an absent CTA must remain absent instead of inventing a contact-us instruction');
   assert.doesNotMatch(associationNarration, /素材中实际可见|画面中清晰可见|视觉模型确认/,
     'an upload association must not be described as a visual observation');
+
+  const unverifiedCategoryBaseline = freezeSocialScriptBaseline({
+    brief: { ...associationBrief, productRef: '日常护肤精华' },
+    theme: { themeId: 'product_value', inputKind: 'preset', topic: '产品卖点', classificationStatus: 'confirmed' },
+    verifiedContext: { productName: null, facts: [], source: 'none', confidence: 0 },
+    userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
+    lockedAt,
+  });
+  const unverifiedCategoryNarration = unverifiedCategoryBaseline.scenes.map(scene => scene.narration).join(' ');
+  assert.match(unverifiedCategoryNarration, /真实上手|同类产品/);
+  assert.doesNotMatch(unverifiedCategoryNarration, /护肤品|日常护肤/,
+    'a novice product label cannot override the visual category when no material analysis supports it');
+
+  const skincareBaseline = freezeSocialScriptBaseline({
+    brief: { ...associationBrief, productRef: '日常护肤精华' },
+    theme: { themeId: 'product_value', inputKind: 'preset', topic: '产品卖点', classificationStatus: 'confirmed' },
+    verifiedContext: { productName: null, facts: [], source: 'none', confidence: 0 },
+    userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
+    materialCategoryHint: 'skincare serum and cream texture',
+    lockedAt,
+  });
+  assert.match(skincareBaseline.scenes.map(scene => scene.narration).join(' '), /真实质地|日常护肤/,
+    'a novice skincare task receives governed social-selling copy instead of a generic audit script');
+  const makeupBaseline = freezeSocialScriptBaseline({
+    brief: { ...associationBrief, productRef: '雾面口红彩妆' },
+    theme: { themeId: 'product_value', inputKind: 'preset', topic: '产品卖点', classificationStatus: 'confirmed' },
+    verifiedContext: { productName: null, facts: [], source: 'none', confidence: 0 },
+    userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
+    materialCategoryHint: 'makeup lipstick application',
+    lockedAt,
+  });
+  assert.match(makeupBaseline.scenes.map(scene => scene.narration).join(' '), /真实上手|细节自己说话/);
 
   const configuredCtaBaseline = freezeSocialScriptBaseline({
     brief: { ...associationBrief, callToAction: '查看企业资料页' },
@@ -260,7 +308,7 @@ try {
     visualObservations: [],
     segments: [],
     explicitProductAssociation: {
-      productRef: 'product:current', basis: 'tenant_task_upload' as const, exactTaskProductMatch: true as const,
+      productRef: 'Meno Moso 损伤发质洗护', basis: 'tenant_task_upload' as const, exactTaskProductMatch: true as const,
     },
   }));
   const associationPlan = buildSocialProductionPlan({ baseline: associationBaseline, assets: associatedAssets });
@@ -366,6 +414,43 @@ try {
   ]);
   assert.equal(generated.ok, true, generated.stderr || 'failed to create the single source video');
   assert.equal(fs.existsSync(sourcePath), true);
+
+  const locallyDetectedSegments = await detectDistinctTaskVideoSegments({
+    id: 'task-upload-with-multiple-shots', name: '用户上传完整视频', type: 'video',
+    sourceId: 'task-source', url: sourcePath, localPath: sourcePath, duration: 12,
+    contentHash: 'task-upload-content', visualObservations: [], segments: [], selectionOrigin: 'task',
+  });
+  assert.ok(locallyDetectedSegments.length >= 2,
+    'one complete task video with visibly distinct frames must yield multiple local edit windows');
+  const localFallbackPlan = buildSocialProductionPlan({
+    baseline: systemBaseline,
+    assets: [{
+      id: 'task-upload-with-multiple-shots', name: '用户上传完整视频', type: 'video',
+      sourceId: 'task-source', url: sourcePath, localPath: sourcePath, duration: 12,
+      contentHash: 'task-upload-content', visualObservations: [], segments: locallyDetectedSegments,
+      selectionOrigin: 'task',
+    }],
+  });
+  assert.equal(localFallbackPlan.ok, true, localFallbackPlan.message);
+  assert.equal(localFallbackPlan.selectedAssetIds.length, 1);
+  assert.equal(localFallbackPlan.selectedAssetIds[0], 'task-upload-with-multiple-shots');
+  assert.ok(localFallbackPlan.scenes.length >= 2);
+  assert.equal(localFallbackPlan.scenes.every(scene => scene.clip.confidence === 0
+    && scene.clip.needsReview
+    && scene.clip.evidenceBasis === 'user_product_association'), true,
+  'local visual difference is usable for editing but must not manufacture semantic confidence');
+  const localKnowledgePlan = buildSocialProductionPlan({
+    baseline: fallbackBaseline,
+    assets: [{
+      id: 'knowledge-backed-task-upload', name: '有知识脚本的任务上传视频', type: 'video',
+      sourceId: 'knowledge-task-source', url: sourcePath, localPath: sourcePath, duration: 12,
+      contentHash: 'knowledge-task-content', visualObservations: [], segments: locallyDetectedSegments,
+      selectionOrigin: 'task',
+    }],
+  });
+  assert.equal(localKnowledgePlan.ok, true, localKnowledgePlan.message);
+  assert.deepEqual(localKnowledgePlan.selectedAssetIds, ['knowledge-backed-task-upload'],
+    'a safe knowledge baseline must still edit the directly uploaded multi-shot video');
 
   const asset = {
     id: 'uploaded-video-1', name: '用户上传的唯一视频', type: 'video' as const,

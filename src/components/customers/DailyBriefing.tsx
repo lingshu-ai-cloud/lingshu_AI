@@ -107,7 +107,7 @@ export function DailyBriefing({ customers, onSelectCustomer, onClose }: Props) {
       <div className="w-full max-w-[480px] rounded-2xl border border-border bg-white shadow-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="flex items-center gap-3">
-            <img src="/brand-logo.png" alt="灵小枢" className="h-8 w-8 object-contain" />
+            <img src="/brand-logo.png?v=20260921" alt="灵小枢" className="h-8 w-8 object-contain" />
             <div>
               <p className="text-sm font-black text-text-primary">{greeting()}，今天有 {pending.length} 件事需要你</p>
             </div>
