@@ -10,6 +10,7 @@ const ast = ts.createSourceFile('studio.tsx', source, ts.ScriptTarget.Latest, tr
 const names = new Set([
   'parseCueRange', 'normalizeTimeLabel', 'looksLikeProductionInstruction',
   'hasStoryboardFieldLabels', 'looksLikeOnScreenOnlyText', 'cleanVoiceoverLine',
+  'cleanTimestampNumber', 'normalizeClockTimelineSyntax',
   'mergeTimestampedVoiceoverSegments', 'parseTimestampedVoiceover',
   'formatVoiceoverWithTimestamps', 'voiceoverTimelineSignature',
   'voiceoverDraftCoversSource', 'compactComparable', 'isNonSpeechSfx',
