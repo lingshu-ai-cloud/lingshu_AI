@@ -26,7 +26,16 @@ export async function resolveSourceDurations<T extends TimedSourceAsset>(assets:
       ], true, { timeoutMs: 15_000 });
       const times = [...probe.stderr.matchAll(/pts_time:([\d.e+-]+)\s+duration:\s*\d+\s+duration_time:([\d.e+-]+)/gi)]
         .map(match => Number(match[1]) + Number(match[2])).filter(Number.isFinite);
-      duration = probe.ok && /progress=end/.test(probe.stdout.toString()) ? Math.max(0, ...times) : 0;
+      const progress = probe.stdout.toString();
+      const progressTimes = [...progress.matchAll(/^out_time=(\d+):(\d+):([\d.]+)$/gm)]
+        .map(match => Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]))
+        .filter(Number.isFinite);
+      const progressMicros = [...progress.matchAll(/^out_time_(?:us|ms)=(\d+)$/gm)]
+        .map(match => Number(match[1]) / 1_000_000)
+        .filter(Number.isFinite);
+      duration = probe.ok && /progress=end/.test(progress)
+        ? Math.max(0, ...times, ...progressTimes, ...progressMicros)
+        : 0;
       if (duration > 0) {
         if (durationCache.size >= 256) durationCache.clear();
         durationCache.set(key, duration);
