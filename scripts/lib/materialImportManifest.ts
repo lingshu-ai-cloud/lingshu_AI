@@ -47,6 +47,7 @@ export interface MaterialImportReviewedSegment {
 }
 
 export interface MaterialImportVisualReview {
+  reviewMethod: 'human' | 'assisted';
   reviewedBy: string;
   reviewedAt: string;
   reference: string;
@@ -142,7 +143,7 @@ export interface MaterialImportVisualMetadata {
   segments: Array<MaterialImportReviewedSegment & {
     id: string;
     duration: number;
-    manualConfirmed: true;
+    manualConfirmed: boolean;
     shotFunction: string;
     recommendedFunctions: string[];
     visual: string;
@@ -398,6 +399,12 @@ function normalizeAsset(value: unknown, index: number, issues: string[]): Materi
   const reviewedAt = validIsoDate(visualReview.reviewedAt, `${prefix}.visualReview.reviewedAt`, issues);
   const reviewReference = requiredText(visualReview.reference, `${prefix}.visualReview.reference`, issues, 6);
   const reviewRationale = requiredText(visualReview.rationale, `${prefix}.visualReview.rationale`, issues, 20);
+  const reviewMethod = visualReview.reviewMethod === 'human'
+    ? 'human'
+    : visualReview.reviewMethod === 'assisted'
+      ? 'assisted'
+      : null;
+  if (!reviewMethod) issues.push(`${prefix}.visualReview.reviewMethod 必须是 human 或 assisted`);
   const capturedAt = validIsoDate(license.capturedAt, `${prefix}.license.capturedAt`, issues);
   if (enabled && [approvedBy, approvalReference, approvalRationale, reviewedBy, reviewReference, reviewRationale].some(isPlaceholderReview)) {
     issues.push(`${prefix} 的启用项不能使用 placeholder/TODO/示例审批信息`);
@@ -456,6 +463,7 @@ function normalizeAsset(value: unknown, index: number, issues: string[]): Materi
     applicability: text(raw.applicability),
     tags: [...new Set(rawTags)],
     visualReview: {
+      reviewMethod: reviewMethod || 'assisted',
       reviewedBy,
       reviewedAt,
       reference: reviewReference,
@@ -591,12 +599,14 @@ export function buildMaterialImportVisualMetadata(input: {
       id: `${input.asset.id}-segment-1`,
       end: input.duration,
       duration: input.duration,
-      manualConfirmed: true,
+      manualConfirmed: input.asset.visualReview.reviewMethod === 'human',
       shotFunction: input.asset.shotFunction,
       recommendedFunctions: [input.asset.shotFunction],
       visual: observedFacts.join('；'),
       quality: Math.round(reviewed.confidence * 100),
-      authenticity: '人工逐片复核',
+      authenticity: input.asset.visualReview.reviewMethod === 'human'
+        ? '人工逐片复核'
+        : '许可证核验、关键帧辅助复核并经产品负责人授权入库',
     }],
   };
 }

@@ -27,8 +27,10 @@ const text = (value: unknown): string => String(value ?? '').trim();
 
 export async function listConnectedPublishingAccounts(tenantId: string): Promise<ConnectedPublishingAccount[]> {
   const [social, youtube] = await Promise.all([
-    store.list<SocialAccountRecord>('social_accounts', { where: { tenantId }, perPage: 200 }),
-    store.list<YouTubeAccountRecord>('youtube_accounts', { where: { tenantId }, perPage: 200 }),
+    store.list<SocialAccountRecord>('social_accounts', { where: { tenantId }, perPage: 200 })
+      .catch(() => ({ items: [] as SocialAccountRecord[] })),
+    store.list<YouTubeAccountRecord>('youtube_accounts', { where: { tenantId }, perPage: 200 })
+      .catch(() => ({ items: [] as YouTubeAccountRecord[] })),
   ]);
   return [
     ...social.items

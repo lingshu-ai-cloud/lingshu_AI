@@ -52,6 +52,7 @@ function validManifest(): Record<string, unknown> {
       clip: { startSeconds: 1, durationSeconds: 12 }, industry: '美妆制造', shotFunction: '实验室研发',
       applicability: '行业示意', tags: ['实验室', '研发'],
       visualReview: {
+        reviewMethod: 'human',
         reviewedBy: 'visual-reviewer', reviewedAt: '2026-09-20T01:30:00.000Z', reference: 'VISUAL-2026-001',
         rationale: 'Reviewer watched the exact hash-bound clip and recorded only facts that are directly visible.',
         visualObservations: ['白色实验台上可见透明容器与戴手套的双手'],
@@ -162,6 +163,17 @@ test('builds a trusted whole-clip visual index without another vision model call
   assert.throws(() => buildMaterialImportVisualMetadata({
     asset: manifest.assets[0], duration: 10, normalizedSha256: 'b'.repeat(64),
   }), /不一致/);
+});
+
+test('keeps assisted visual evidence usable without claiming manual confirmation', () => {
+  const input = validManifest();
+  (input.assets as any[])[0].visualReview.reviewMethod = 'assisted';
+  const manifest = validateMaterialImportManifest(input);
+  const metadata = buildMaterialImportVisualMetadata({
+    asset: manifest.assets[0], duration: 12, normalizedSha256: 'b'.repeat(64),
+  });
+  assert.equal(metadata.segments[0].manualConfirmed, false);
+  assert.match(metadata.segments[0].authenticity, /关键帧辅助复核/);
 });
 
 test('example manifest is disabled and dry-run performs no network request', async () => {

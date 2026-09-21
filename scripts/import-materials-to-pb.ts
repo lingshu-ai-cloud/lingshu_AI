@@ -39,6 +39,7 @@ import {
 const COLLECTION = 'materials';
 const MAX_SOURCE_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+const MATERIAL_IMPORT_USER_AGENT = 'LingshuLicensedMaterialImporter/1.0 (https://lingshu.site; admin@lingshu.site)';
 const PB_IMPORT_TIMEOUT_MS = Math.min(15 * 60 * 1000, Math.max(60_000, Number(process.env.PB_IMPORT_TIMEOUT_MS || 5 * 60 * 1000)));
 const REQUIRED_COLLECTION_FIELDS = [
   'tenantId', 'title', 'folder', 'type', 'duration', 'width', 'height', 'sizeBytes', 'sha256',
@@ -179,7 +180,7 @@ function pinnedHttpsRequest(url: URL, target: ApprovedAddress): Promise<Incoming
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
       headers: {
         Host: url.host,
-        'User-Agent': 'LingshuLicensedMaterialImporter/1.0',
+        'User-Agent': MATERIAL_IMPORT_USER_AGENT,
         Accept: 'video/*,application/octet-stream;q=0.8',
       },
     }, resolve);
@@ -196,7 +197,7 @@ async function approvedResponse(url: URL, addresses: ApprovedAddress[]): Promise
       redirect: 'manual',
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
       headers: {
-        'User-Agent': 'LingshuLicensedMaterialImporter/1.0',
+        'User-Agent': MATERIAL_IMPORT_USER_AGENT,
         Accept: 'video/*,application/octet-stream;q=0.8',
       },
     });
@@ -222,6 +223,7 @@ async function approvedResponse(url: URL, addresses: ApprovedAddress[]): Promise
 
 async function openApprovedDownload(startUrl: string, approvedHosts: string[]): Promise<{ response: ApprovedDownloadResponse; finalUrl: URL }> {
   let current = new URL(startUrl);
+  let throttledRetries = 0;
   for (let redirect = 0; redirect <= 5; redirect += 1) {
     assertApprovedMaterialDownloadUrl(current, approvedHosts);
     const addresses = await publicDnsAddresses(current.hostname);
@@ -230,6 +232,15 @@ async function openApprovedDownload(startUrl: string, approvedHosts: string[]): 
     // manually handled hop and applies the same host allowlist.
     const response = await approvedResponse(current, addresses);
     const status = response.status;
+    if (status === 429 && throttledRetries < 3) {
+      const retryAfterSeconds = Number(response.header('retry-after') || 0);
+      await response.discard();
+      throttledRetries += 1;
+      const waitMs = Math.min(30_000, Math.max(5_000 * throttledRetries, Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1_000 : 0));
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      redirect -= 1;
+      continue;
+    }
     if ([301, 302, 303, 307, 308].includes(status)) {
       const location = response.header('location');
       await response.discard();
@@ -254,7 +265,7 @@ async function downloadApprovedSource(asset: MaterialImportAsset, destination: s
     throw new Error(`源视频超过临时下载上限 ${MAX_SOURCE_DOWNLOAD_BYTES} bytes`);
   }
   const contentType = response.header('content-type').split(';', 1)[0].trim().toLowerCase();
-  if (contentType && !contentType.startsWith('video/') && contentType !== 'application/octet-stream') {
+  if (contentType && !contentType.startsWith('video/') && !['application/octet-stream', 'application/ogg'].includes(contentType)) {
     await response.discard();
     throw new Error(`下载内容不是视频：${contentType}`);
   }
