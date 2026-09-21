@@ -2726,6 +2726,11 @@ function ProductionScene({
                 </button>
               </div>
             )}
+            {link && (
+              <p className="mt-2 text-center text-[10px] leading-4 text-slate-400">
+                完成业务操作后返回“数字员工”即可继续
+              </p>
+            )}
             {!readOnly &&
               taskNeedsAttention(task) && !isQualityReview && (
                 <details className="mt-3 rounded-xl border border-slate-200 px-3 py-2">
