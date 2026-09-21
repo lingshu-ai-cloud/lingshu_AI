@@ -90,6 +90,16 @@ export function updateLocalMaterial(id: string, tenantId: string, patch: Record<
   records[index] = { ...records[index], ...patch, id: records[index].id, tenantId, updatedAt: new Date().toISOString() };
   saveLocalMaterials(records); return true;
 }
+/** Platform-owned shared records are read-only to tenants, but the server-side
+ * analysis worker may persist derived metadata so an interrupted job can be
+ * resumed after a restart. */
+export function updateSharedLocalMaterial(id: string, patch: Record<string, unknown>): boolean {
+  const records = readLocalMaterials();
+  const index = records.findIndex(item => item.id === id && item.scope === 'shared');
+  if (index < 0) return false;
+  records[index] = { ...records[index], ...patch, id: records[index].id, scope: 'shared', updatedAt: new Date().toISOString() };
+  saveLocalMaterials(records); return true;
+}
 export function accessibleMaterial(item: MaterialRecord, tenantId: string): boolean {
   return !isSyntheticMaterial(item) && (item.scope === 'shared' || String(item.tenantId || item.tenant_id || '') === tenantId);
 }

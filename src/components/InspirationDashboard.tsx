@@ -23,7 +23,7 @@ import { canProcessVideo, displayDuration, resultEmptyState, sourceScopeLabel, t
 export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import InspirationEmptyState from './InspirationEmptyState';
-import type { SocialContentThemeId } from '../../shared/contracts/socialContentWorkflow';
+import { materialIndustryKey, materialThemeBucket, type MaterialThemeBucket } from '../lib/materialClassification';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -33,12 +33,12 @@ type SortMode = 'heat' | 'crawlTime';
 type InspirationInnerView = 'inspiration' | 'library' | 'shooting';
 type ContentFormat = 'video' | 'image';
 type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
-type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
+type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking' | 'other' | 'unclassified';
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
-type MaterialThemeFilter = 'all' | SocialContentThemeId;
+type MaterialThemeFilter = 'all' | MaterialThemeBucket;
 
 const MATERIAL_PRODUCT_ALL = '__all_products__';
 const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
@@ -98,7 +98,7 @@ export function materialMatchesProductFilter(
 
 const MATERIAL_INDUSTRY_LABELS: Record<string, string> = {
   all: '全部行业', beauty_skincare: '美妆护肤', universal_manufacturing: '通用制造',
-  apparel_textile: '服装纺织', metalworking: '金属加工',
+  apparel_textile: '服装纺织', metalworking: '金属加工', other: '其他行业', unclassified: '行业待确认',
 };
 const MATERIAL_FUNCTION_LABELS: Record<string, string> = {
   all: '全部镜头功能', application: '使用/涂抹', texture_demo: '质地展示', product_demo: '产品展示',
@@ -115,29 +115,14 @@ const MATERIAL_SOURCE_LABELS: Record<MaterialSourceFilter, string> = {
   gemini: 'Gemini 生成', official_import: '官方爆款导入', licensed_stock: '授权图库',
 };
 
-const MATERIAL_THEME_LABELS: Record<SocialContentThemeId, string> = {
-  product_value: '产品与卖点',
-  scenario_solution: '场景与解决方案',
-  supplier_capability: '企业与供应保障',
-  customization_process: '定制与合作流程',
+const MATERIAL_THEME_LABELS: Record<MaterialThemeBucket, string> = {
+  product_value: '产品实拍与细节',
+  scenario_solution: '使用场景与效果',
+  supplier_capability: '工厂、设备与实力',
+  customization_process: '生产、定制与交付',
   customer_case: '客户案例与成果',
+  unclassified: '主题待确认',
 };
-
-const MATERIAL_THEME_KEYWORDS: Record<SocialContentThemeId, readonly string[]> = {
-  product_value: ['product_demo', 'texture_demo', 'ingredient_visual', 'device_demo', '产品', '成分', '原料', '质地', '性能', '卖点'],
-  scenario_solution: ['application', 'treatment_experience', 'usage_setup', '使用', '涂抹', '护理', '场景', '解决', '效果'],
-  supplier_capability: ['factory_proof', 'factory_exterior', 'equipment_demo', 'worker_operation', 'quality_control', 'warehouse', 'logistics_fulfillment', '工厂', '车间', '质检', '仓储', '物流', '设备'],
-  customization_process: ['production', 'manufacturing_process', 'packaging', '定制', '打样', '样品', '包装', 'oem', 'odm', '生产流程'],
-  customer_case: ['customer_case', 'case', '客户', '案例', '合作成果', '反馈', '复购', '结果'],
-};
-
-function materialThemesOf(material: Material): SocialContentThemeId[] {
-  const segmentText = (material.segments || []).flatMap(segment => segment.recommendedFunctions || []).join(' ');
-  const searchable = [material.name, material.industry, material.shotFunction, material.applicability, material.tags, segmentText]
-    .filter(Boolean).join(' ').toLowerCase();
-  return (Object.keys(MATERIAL_THEME_LABELS) as SocialContentThemeId[])
-    .filter(themeId => MATERIAL_THEME_KEYWORDS[themeId].some(keyword => searchable.includes(keyword.toLowerCase())));
-}
 
 function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'all'> {
   const source = String(material.sourceType || '').toLowerCase();
@@ -3218,11 +3203,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     return [...values].sort((a, b) => (MATERIAL_FUNCTION_LABELS[a] || a).localeCompare(MATERIAL_FUNCTION_LABELS[b] || b, 'zh-CN'));
   }, [localMaterials]);
   const materialThemeCounts = useMemo(() => Object.fromEntries(
-    (Object.keys(MATERIAL_THEME_LABELS) as SocialContentThemeId[]).map(themeId => [
+    (Object.keys(MATERIAL_THEME_LABELS) as MaterialThemeBucket[]).map(themeId => [
       themeId,
-      localMaterials.filter(material => materialThemesOf(material).includes(themeId)).length,
+      localMaterials.filter(material => materialThemeBucket(material) === themeId).length,
     ]),
-  ) as Record<SocialContentThemeId, number>, [localMaterials]);
+  ) as Record<MaterialThemeBucket, number>, [localMaterials]);
+  const materialIndustryCounts = useMemo(() => Object.fromEntries(
+    Object.keys(MATERIAL_INDUSTRY_LABELS).filter(key => key !== 'all').map(industry => [
+      industry,
+      localMaterials.filter(material => materialIndustryKey(material) === industry).length,
+    ]),
+  ) as Record<string, number>, [localMaterials]);
   const filteredMaterials = useMemo(() => {
     const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
@@ -3238,11 +3229,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       });
       return (!q || searchable.includes(q))
         && (materialType === 'all' || material.type === materialType)
-        && (materialIndustry === 'all' || material.industry === materialIndustry)
+        && (materialIndustry === 'all' || materialIndustryKey(material) === materialIndustry)
         && (materialFunction === 'all' || functions.includes(materialFunction))
         && (materialApplicability === 'all' || material.applicability === materialApplicability)
         && (materialSource === 'all' || materialSource === materialSourceOf(material))
-        && (materialTheme === 'all' || materialThemesOf(material).includes(materialTheme))
+        && (materialTheme === 'all' || materialThemeBucket(material) === materialTheme)
         && productMatches
         && orientationMatches;
     }).sort((a, b) => {
@@ -4002,7 +3993,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   <p className="mt-1 text-sm text-text-muted">企业知识库、即时创作和内容任务共用这一套素材。任务中上传的图片、视频和音频也会归入这里，后续可直接复用。</p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-end gap-2">
-                  <label className="min-w-[210px] text-[11px] font-black text-text-secondary">本次上传归属（必选）
+                  <label className="min-w-[250px] text-[11px] font-black text-text-secondary">本次上传归属（必选）
                     <select
                       aria-label="本次上传素材归属"
                       value={uploadProductId === null ? MATERIAL_PRODUCT_UNSELECTED : uploadProductId || MATERIAL_PRODUCT_COMMON}
@@ -4014,6 +4005,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
                       {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                     </select>
+                    <span className="mt-1 block text-[9px] font-medium text-text-muted">仅用于关联知识库产品，不作为画面分类</span>
                   </label>
                   <button
                     type="button"
@@ -4047,21 +4039,29 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
               )}
 
-              <section className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
-                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
-                  <div>
-                    <p className="text-sm font-black text-text-primary">系统已按创作主题整理素材</p>
-                    <p className="mt-1 text-xs leading-5 text-text-muted">分类来自素材分析、镜头功能和标签。选择主题后，只看能匹配该主题拍摄清单的素材；未识别素材会保留，等待确认。</p>
+              <section className="rounded-xl border border-border bg-white p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="max-w-xl">
+                    <p className="text-sm font-black text-text-primary">按行业或画面主题找素材</p>
+                    <p className="mt-1 text-xs leading-5 text-text-muted">每条素材只归入一个主要画面主题。“产品实拍”只展示能看清产品、包装或质地的镜头，不再混入工厂产线。</p>
                   </div>
-                  {materialTheme !== 'all' && <button type="button" onClick={() => setMaterialTheme('all')} className="shrink-0 text-xs font-black text-emerald-700">查看全部素材</button>}
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                  {(Object.entries(MATERIAL_THEME_LABELS) as Array<[SocialContentThemeId, string]>).map(([themeId, label]) => (
-                    <button key={themeId} type="button" aria-pressed={materialTheme === themeId} onClick={() => setMaterialTheme(current => current === themeId ? 'all' : themeId)} className={`rounded-lg border px-3 py-2.5 text-left transition ${materialTheme === themeId ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-emerald-100 bg-white text-text-secondary hover:border-emerald-300'}`}>
-                      <span className="block text-xs font-black">{label}</span>
-                      <span className={`mt-1 block text-[10px] ${materialTheme === themeId ? 'text-emerald-50' : 'text-text-muted'}`}>{materialThemeCounts[themeId]} 项可匹配</span>
-                    </button>
-                  ))}
+                  <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[560px]">
+                    <label className="relative block">
+                      <span className="mb-1 block text-[10px] font-bold text-text-muted">行业</span>
+                      <select value={materialIndustry} onChange={event => setMaterialIndustry(event.target.value as MaterialIndustryFilter)} aria-label="按行业分类素材" className="h-10 w-full appearance-none rounded-lg border border-border bg-surface px-3 pr-9 text-sm font-bold text-text-primary outline-none focus:border-accent">
+                        {Object.entries(MATERIAL_INDUSTRY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}{value === 'all' ? '' : `（${materialIndustryCounts[value] || 0}）`}</option>)}
+                      </select>
+                      <ChevronDown size={15} className="pointer-events-none absolute bottom-3 right-3 text-text-muted" />
+                    </label>
+                    <label className="relative block">
+                      <span className="mb-1 block text-[10px] font-bold text-text-muted">画面主题</span>
+                      <select value={materialTheme} onChange={event => setMaterialTheme(event.target.value as MaterialThemeFilter)} aria-label="按画面主题分类素材" className="h-10 w-full appearance-none rounded-lg border border-border bg-surface px-3 pr-9 text-sm font-bold text-text-primary outline-none focus:border-accent">
+                        <option value="all">全部画面主题</option>
+                        {Object.entries(MATERIAL_THEME_LABELS).map(([value, label]) => <option key={value} value={value}>{label}（{materialThemeCounts[value as MaterialThemeBucket] || 0}）</option>)}
+                      </select>
+                      <ChevronDown size={15} className="pointer-events-none absolute bottom-3 right-3 text-text-muted" />
+                    </label>
+                  </div>
                 </div>
               </section>
 
@@ -4078,18 +4078,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
                     />
                   </div>
-                  <label className="relative block h-10 min-w-[190px] rounded-md border border-border bg-surface focus-within:border-accent">
-                    <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
-                      className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
-                      <option value={MATERIAL_PRODUCT_ALL}>全部产品素材</option>
-                      <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
-                      {materialProductRef && !materialProductId && <option value={MATERIAL_PRODUCT_LINKED_REF}>{materialProductRef}</option>}
-                      {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
-                      {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                    </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
                   <label className="relative block h-10 min-w-[168px] rounded-md border border-border bg-surface focus-within:border-accent">
                     <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <select value={materialSource} onChange={event => setMaterialSource(event.target.value as MaterialSourceFilter)} aria-label="素材来源"
@@ -4118,9 +4106,20 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
                 <AnimatePresence initial={false}>
                   {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-5">
+                      <label className="relative block h-14 rounded-xl border border-border bg-surface-2 transition-colors focus-within:border-accent">
+                        <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                        <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">关联产品（不是画面分类）</span>
+                        <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按关联产品筛选素材" className="h-full w-full cursor-pointer appearance-none rounded-xl bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                          <option value={MATERIAL_PRODUCT_ALL}>全部关联状态</option>
+                          <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
+                          {materialProductRef && !materialProductId && <option value={MATERIAL_PRODUCT_LINKED_REF}>{materialProductRef}</option>}
+                          {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
+                          {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                        <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                      </label>
                       {[
-                        { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
                         { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
                         { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
                         { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
@@ -4223,10 +4222,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           MATERIAL_SOURCE_LABELS[materialSourceOf(material)],
                           material.industry ? MATERIAL_INDUSTRY_LABELS[material.industry] || material.industry : '',
                           material.applicability ? MATERIAL_APPLICABILITY_LABELS[material.applicability] || material.applicability : '',
-                          ...materialThemesOf(material).slice(0, 2).map(themeId => MATERIAL_THEME_LABELS[themeId]),
+                          MATERIAL_THEME_LABELS[materialThemeBucket(material)],
                           ...String(material.shotFunction || '').split(',').slice(0, 2).map(value => MATERIAL_FUNCTION_LABELS[value] || value),
                         ].filter(Boolean).map(label => <span key={label} className="rounded-md bg-accent-glow px-1.5 py-0.5 text-[10px] font-semibold text-accent">{label}</span>)}
-                        {materialThemesOf(material).length === 0 && <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">主题待确认</span>}
                         {!material.industry && !material.applicability && !material.shotFunction && material.type === 'video' && (
                           <button type="button" disabled={Boolean(classifyingMaterialId)} onClick={() => void classifyMaterial(material)}
                             className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-muted hover:bg-accent-glow hover:text-accent disabled:opacity-60">

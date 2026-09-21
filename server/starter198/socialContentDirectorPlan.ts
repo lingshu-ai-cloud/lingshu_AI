@@ -406,8 +406,14 @@ export function buildSocialDirectorPlan(input: {
     },
     {
       gateId: 'material_coverage',
-      status: scenes.length >= 2 && input.productionPlan.sourceClipSeconds >= 5.5 ? 'passed' : 'blocked',
-      message: `已锁定 ${scenes.length} 个真实素材镜头，约 ${input.productionPlan.sourceClipSeconds.toFixed(1)} 秒有效画面。`,
+      // buildSocialProductionPlan has already rejected unusable inputs. Limited
+      // footage lowers visual variety, but must not pause an otherwise honest
+      // end-to-end render: the Director can shorten narration, crop and reuse a
+      // verified source interval while keeping the result for human review.
+      status: scenes.length >= 2 && input.productionPlan.sourceClipSeconds >= 5.5 ? 'passed' : 'warning',
+      message: scenes.length >= 2 && input.productionPlan.sourceClipSeconds >= 5.5
+        ? `已锁定 ${scenes.length} 个真实素材镜头，约 ${input.productionPlan.sourceClipSeconds.toFixed(1)} 秒有效画面。`
+        : `当前仅有 ${scenes.length} 个可用真实镜头（约 ${input.productionPlan.sourceClipSeconds.toFixed(1)} 秒）；将自动压缩口播并优先完成可验收短版。`,
     },
     {
       gateId: 'material_confidence',
@@ -569,7 +575,10 @@ export function reviseSocialDirectorPlanForVoiceoverFit(input: {
   const ratio = clamp((target / measured) * 0.82, 0.28, 0.82);
   let changed = false;
   const scenes = input.previous.scenes.map(scene => {
-    const voiceover = compactLockedSpeech(scene.voiceover, ratio, input.previous.language);
+    let voiceover = compactLockedSpeech(scene.voiceover, ratio, input.previous.language);
+    if (voiceover === scene.voiceover) {
+      voiceover = input.previous.language === 'en' ? 'Real footage.' : '真实画面。';
+    }
     if (!voiceover) throw new SocialContentWorkflowError('social_content_director_revision_not_possible', 409);
     if (voiceover !== scene.voiceover) changed = true;
     return { ...scene, voiceover, caption: voiceover };

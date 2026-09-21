@@ -4561,12 +4561,25 @@ studioRouter.get('/materials', async (req, res) => {
   if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
   else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m));
   const sorted = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
-  const response = await Promise.all(sorted.map(async m => ({
-    ...(await materialResponse(m, tenantId)),
-    usage: materialUsage(m),
-    ...(['pending','analyzing'].includes(m.segmentAnalysisStatus || '') && !isMaterialAnalysisActive(tenantId,m.id)
-      ? {segmentAnalysisStatus:'failed' as const, segmentAnalysisError:'分析任务已中断，请重试以继续处理原片'} : {}),
-  })));
+  const response = await Promise.all(sorted.map(async m => {
+    const stale = ['pending','analyzing'].includes(m.segmentAnalysisStatus || '') && !isMaterialAnalysisActive(tenantId,m.id);
+    const hasReviewedSegments = Array.isArray(m.segments) && m.segments.length > 0;
+    if (stale && !hasReviewedSegments && ['video','image'].includes(m.type) && m.usage !== 'reference_only') {
+      // Analysis jobs are process-local but their state is durable. A deploy or
+      // restart must resume the queue instead of turning every queued material
+      // into an unrecoverable red error. Shared records use one global queue key.
+      void requestMaterialAnalysis(tenantId, m.id, true).catch(() => {});
+    }
+    return {
+      ...(await materialResponse(m, tenantId)),
+      usage: materialUsage(m),
+      ...(stale && hasReviewedSegments
+        ? { segmentAnalysisStatus: 'completed' as const, segmentAnalysisError: '' }
+        : stale
+          ? { segmentAnalysisStatus: 'pending' as const, segmentAnalysisError: '系统正在恢复素材分析队列，原片不会丢失' }
+          : {}),
+    };
+  }));
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response });
   else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }

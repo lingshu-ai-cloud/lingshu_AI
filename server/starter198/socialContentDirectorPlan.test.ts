@@ -170,6 +170,27 @@ const next = buildPlan(directorPlan);
 assert.equal(next.version, '2', 'each Director Agent handoff is versioned');
 assert.equal(next.directorPlanId, directorPlan.directorPlanId, 'Director plan identity is stable across versions');
 
+const limitedMaterialPlan = buildSocialDirectorPlan({
+  taskId: 'social-task-limited-material-test',
+  baseline,
+  productionPlan: {
+    ...productionPlan,
+    scenes: productionPlan.scenes.slice(0, 1),
+    selectedAssetIds: [productionPlan.scenes[0]!.clip.assetId],
+    sourceClipSeconds: productionPlan.scenes[0]!.clip.end - productionPlan.scenes[0]!.clip.start,
+    maxDuration: productionPlan.scenes[0]!.clip.end - productionPlan.scenes[0]!.clip.start,
+  },
+  productionAssets: [asset],
+  sourceVersions: { 'source-one': 'source-version-7' },
+  outputSpec: { aspectRatio: '9:16', resolution: '720p', platform: 'douyin' },
+  bgmSelection,
+  formula,
+  createdAt,
+});
+assert.equal(limitedMaterialPlan.status, 'ready', 'limited but usable footage must not pause the render pipeline');
+assert.equal(limitedMaterialPlan.qualityGates.find(gate => gate.gateId === 'material_coverage')?.status, 'warning');
+assert.doesNotThrow(() => socialDirectorContentHandoff(limitedMaterialPlan));
+
 const revised = reviseSocialDirectorPlanForVoiceoverFit({
   previous: directorPlan,
   measuredDurationSeconds: directorPlan.outputSpec.maximumDurationSeconds * 1.8,

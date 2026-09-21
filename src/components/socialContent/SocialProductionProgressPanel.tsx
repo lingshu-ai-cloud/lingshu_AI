@@ -90,14 +90,14 @@ function compactHeadline(task: SocialContentTaskDetail): string {
   if (COMPLETE_STATUSES.has(task.status)) return '本轮内容已经制作完成';
   if (task.status === 'draft' || task.status === 'needs_input') return '补充资料后，机器人会自动开始制作';
   if (task.status === 'plan_review') return '确认后，编导 Agent 会先完成导演方案';
-  if (task.directorPlan?.status === 'blocked') return '编导方案正在自动检查与修复';
+  if (task.directorPlan?.status === 'blocked') return '编导方案可继续调整，素材和进度均已保留';
   if (!directorPlanComplete(task)) return '编导 Agent 正在准备导演方案';
   return '内容 Agent 正在按导演方案生成视频';
 }
 
 function activeAgentLabel(task: TaskListItem): string {
   if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return '等待开始';
-  if (task.directorPlan?.status === 'blocked') return '编导 Agent 需处理';
+  if (task.directorPlan?.status === 'blocked') return '编导 Agent 调整中';
   if (!directorPlanComplete(task)) return '编导 Agent 策划中';
   if (!CONTENT_COMPLETE_STATUSES.has(task.status)) return '内容 Agent 制作中';
   return socialContentStatusLabel(task.status);
@@ -135,7 +135,7 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
   const directorState: AgentStepState = !plan && contentComplete
     ? 'unavailable'
     : plan?.status === 'blocked'
-      ? 'blocked'
+      ? 'current'
       : directorComplete
         ? 'complete'
         : beforeStart
@@ -185,7 +185,7 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
           </div>
         </details>
       )}
-      {plan?.status === 'blocked' && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-700">编导方案暂未通过自动检查，机器人会保留现有资料并继续重试。</p>}
+      {plan?.status === 'blocked' && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">这是旧任务留下的检查状态。素材和方案都已保留，点击下方“重试自动生成”后会按新的短版规则继续成片。</p>}
     </div>
   );
 }

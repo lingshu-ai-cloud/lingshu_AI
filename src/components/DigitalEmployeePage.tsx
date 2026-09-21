@@ -1462,12 +1462,14 @@ function GoalPanel({
   config,
   busy,
   onSave,
+  onCancel,
   businessLine,
   contentPlatform,
 }: {
   config: DigitalEmployeeConfig;
   busy: boolean;
   onSave: (goal: GoalDraft) => void;
+  onCancel: () => void;
   businessLine: BusinessLine;
   contentPlatform: ContentPlatform;
 }) {
@@ -1486,6 +1488,7 @@ function GoalPanel({
   const initialProduct = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
   const [selectedPresetId, setSelectedPresetId] = useState<WeeklyTaskPackagePresetId>(initialPresetId);
   const [weeklyFocus, setWeeklyFocus] = useState('');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [form, setForm] = useState<GoalDraft>(() => ({
     ...EMPTY_GOAL,
     businessLine,
@@ -1510,7 +1513,10 @@ function GoalPanel({
     contentPlatforms: businessLine !== "customer_conversion" && !form.contentPlatforms.length ? "请至少选择一个内容制作平台" : "",
     product: businessLine !== 'customer_conversion' && !initialProduct ? '请先在 Agent 设置中选择重点产品' : '',
   };
-  const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoPlanErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
+  const hasErrors = Object.values(errors).some(Boolean) || (
+    businessLine !== 'customer_conversion'
+    && (form.videoPlans || []).some(plan => videoPlanErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform))
+  );
   const submit = () => {
     setSubmitted(true);
     if (!hasErrors) onSave(form);
@@ -1522,7 +1528,7 @@ function GoalPanel({
     setForm(current => ({
       ...current,
       title: `${preset.label}周任务包`,
-      objective: preset.objective,
+      objective: weeklyFocus.trim() ? `${preset.objective}；本周重点：${weeklyFocus.trim()}` : preset.objective,
       metric: preset.metric,
       target: preset.weeklyOutput,
       unit: '条',
@@ -1535,55 +1541,83 @@ function GoalPanel({
     const preset = weeklyTaskPackagePreset(selectedPresetId);
     setForm(current => ({
       ...current,
-      objective: value.trim() ? `${preset.objective}；本周重点：${value.trim()}` : preset.objective,
-      videoPlans: buildPresetVideoPlans({ preset, productName: initialProduct, focus: value, defaults: config.videoDefaults, platforms: current.contentPlatforms }),
+      objective: value.trim()
+        ? `${businessLine === 'customer_conversion' ? '提升高意向客户的报价、跟进与成交转化' : preset.objective}；本周重点：${value.trim()}`
+        : businessLine === 'customer_conversion' ? '提升高意向客户的报价、跟进与成交转化' : preset.objective,
+      videoPlans: businessLine === 'customer_conversion'
+        ? []
+        : buildPresetVideoPlans({ preset, productName: initialProduct, focus: value, defaults: config.videoDefaults, platforms: current.contentPlatforms }),
     }));
   };
+  const focusSuggestions = businessLine === 'customer_conversion'
+    ? ['推进高意向客户报价', '唤醒本周未回复客户', '跟进已有样品客户', '整理重点客户下一步']
+    : ['让客户看懂主推产品', '展示工厂与交付实力', '验证采购商最关心的问题', '获得更多有效询盘'];
+  const nextStep = () => {
+    setSubmitted(true);
+    if (step === 1 && !weeklyFocus.trim()) return;
+    if (step === 2 && (errors.product || errors.contentPlatforms)) return;
+    setSubmitted(false);
+    setStep(current => Math.min(3, current + 1) as 1 | 2 | 3);
+  };
   return (
-    <section className="rounded-xl border border-border bg-white p-4 shadow-sm sm:p-5">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
-          <Target size={22} />
-        </div>
+    <section role="dialog" aria-modal="true" aria-label="创建本周经营目标" className="flex max-h-[min(820px,calc(100vh-48px))] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
         <div>
-          <h2 className="text-lg font-black text-slate-950">
-            选一个周任务包，告诉灵小枢本周重点
-          </h2>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            灵小枢会把内容方向、平台节奏和 Agent 分工整理成可确认计划；你只需补充本周重点。
-          </p>
+          <p className="text-xs font-black text-emerald-700">创建本周经营目标</p>
+          <h2 className="mt-1 text-xl font-black text-slate-950">跟着 3 步完成，灵小枢负责后续安排</h2>
         </div>
+        <button type="button" aria-label="关闭创建目标" onClick={onCancel} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X size={20} /></button>
+      </header>
+      <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50 px-6">
+        {['确定本周重点', '选择执行方式', '确认并生成'].map((label, index) => {
+          const number = index + 1;
+          const active = step === number;
+          const complete = step > number;
+          return <div key={label} className={`flex items-center gap-2 border-b-2 py-3 text-xs font-bold ${active ? 'border-emerald-600 text-emerald-800' : complete ? 'border-transparent text-emerald-600' : 'border-transparent text-slate-400'}`}><span className={`flex h-6 w-6 items-center justify-center rounded-full ${active ? 'bg-emerald-600 text-white' : complete ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>{complete ? <Check size={13} /> : number}</span><span className="hidden sm:inline">{label}</span></div>;
+        })}
       </div>
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        {businessLine !== 'customer_conversion' && <>
-          <fieldset className="md:col-span-2">
-            <legend className="text-xs font-black text-slate-700">选择适合当前阶段的任务包</legend>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        {step === 1 && <div className="mx-auto max-w-2xl">
+          <h3 className="text-lg font-black text-slate-950">本周最想解决什么？</h3>
+          <p className="mt-1 text-sm text-slate-500">只说结果即可，不用写脚本、任务清单或 Agent 分工。</p>
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            {focusSuggestions.map(item => <button key={item} type="button" onClick={() => updateWeeklyFocus(item)} className={`flex items-center justify-between rounded-xl border px-4 py-3 text-left text-sm font-bold transition ${weeklyFocus === item ? 'border-emerald-500 bg-emerald-50 text-emerald-900' : 'border-slate-200 text-slate-700 hover:border-emerald-300'}`}><span>{item}</span>{weeklyFocus === item && <CheckCircle2 size={17} className="text-emerald-600" />}</button>)}
+          </div>
+          <label className="mt-5 block text-xs font-black text-slate-700">也可以自己填写
+            <textarea value={weeklyFocus} onChange={event => updateWeeklyFocus(event.target.value)} className={`${inputClass} mt-2 min-h-24 resize-none`} placeholder="例如：让东南亚采购商看懂我们的面膜代工能力，并获得 3 个有效询盘" />
+          </label>
+          {submitted && !weeklyFocus.trim() && <p role="alert" className="mt-2 text-xs font-bold text-red-600">请先选择或填写一个本周重点</p>}
+        </div>}
+
+        {step === 2 && <div>
+          {businessLine !== 'customer_conversion' ? <>
+            <div><h3 className="text-lg font-black text-slate-950">选择适合当前阶段的任务包</h3><p className="mt-1 text-sm text-slate-500">这里只决定本周的内容数量和节奏，具体脚本与制作由数字员工自动完成。</p></div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
               {WEEKLY_TASK_PACKAGE_PRESETS.map(preset => {
                 const selected = selectedPresetId === preset.id;
-                return <button key={preset.id} type="button" aria-pressed={selected} onClick={() => choosePreset(preset.id)} className={`rounded-xl border p-3 text-left transition ${selected ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                  <span className="flex items-start justify-between gap-2"><strong className="text-sm text-slate-950">{preset.label}</strong>{selected && <CheckCircle2 size={16} className="shrink-0 text-emerald-700" />}</span>
-                  <span className="mt-1.5 block text-[11px] leading-5 text-slate-500">{preset.description}</span>
-                  <span className="mt-3 block text-[10px] font-bold text-emerald-700">主平台：{contentPlatformLabel[preset.primaryPlatform]} · {preset.weeklyOutput} 条/周</span>
+                return <button key={preset.id} type="button" aria-pressed={selected} onClick={() => choosePreset(preset.id)} className={`rounded-xl border p-4 text-left transition ${selected ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                  <span className="flex items-start justify-between gap-2"><strong className="text-sm text-slate-950">{preset.label}</strong>{selected && <CheckCircle2 size={17} className="shrink-0 text-emerald-700" />}</span>
+                  <span className="mt-1.5 block text-xs leading-5 text-slate-500">{preset.description}</span>
+                  <span className="mt-3 block text-[11px] font-bold text-emerald-700">{preset.weeklyOutput} 条/周 · 主平台 {contentPlatformLabel[preset.primaryPlatform]}</span>
                 </button>;
               })}
             </div>
-          </fieldset>
-          <label className="md:col-span-2 text-xs font-black text-slate-700">本周最想解决什么？
-            <input className={`${inputClass} mt-2`} value={weeklyFocus} onChange={event => updateWeeklyFocus(event.target.value)} placeholder="例如：验证东南亚采购商最关心的选型问题" />
-          </label>
-          {submitted && errors.product && <p role="alert" className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{errors.product}</p>}
-          <div className="md:col-span-2 grid gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-xs sm:grid-cols-3">
-            <div><p className="font-black text-emerald-950">发布节奏</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).frequency}</p></div>
-            <div><p className="font-black text-emerald-950">账号安排</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).accountRoles}</p></div>
-            <div><p className="font-black text-emerald-950">Agent 分工</p><p className="mt-1 leading-5 text-emerald-800">灵小枢统筹，编导 Agent 定方案，内容 Agent 生成视频，经营 Agent 承接发布与复盘。</p></div>
-          </div>
-        </>}
-        {businessLine !== "customer_conversion" && <div className="md:col-span-2 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">确认本期制作平台</p><p className="mt-1 text-xs text-slate-500">仅制作时也需要确认平台；发布时使用已绑定账号。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{!config.enabledWorkflows.includes("content_publish")?"仅制作内容，不发布":config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);return <button key={platform} type="button" aria-pressed={selected} onClick={()=>set("contentPlatforms",selected?form.contentPlatforms.filter(item=>item!==platform):[...form.contentPlatforms,platform])} className={`rounded-xl border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-black">{contentPlatformLabel[platform]}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")}</span></button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
-        {businessLine !== 'customer_conversion' && <details className="md:col-span-2 rounded-xl border border-slate-200 bg-white px-4 py-3"><summary className="cursor-pointer text-xs font-black text-slate-700">查看并调整具体视频计划（可选）</summary><div className="mt-4"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} themeWorkflow onChange={plans => set('videoPlans', plans)} /></div></details>}
-        <details className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-          <summary className="cursor-pointer text-xs font-black text-slate-700">更多目标设置（可选）</summary>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="mt-5 rounded-xl border border-slate-200 p-4"><p className="text-sm font-black text-slate-900">选择制作平台</p><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);return <button key={platform} type="button" aria-pressed={selected} onClick={()=>set("contentPlatforms",selected?form.contentPlatforms.filter(item=>item!==platform):[...form.contentPlatforms,platform])} className={`rounded-lg border px-3 py-2 text-xs font-bold ${selected?'border-emerald-500 bg-emerald-50 text-emerald-800':'border-slate-200 text-slate-500'}`}>{contentPlatformLabel[platform]}</button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-xs font-semibold text-red-600">{errors.contentPlatforms}</p>}{submitted&&errors.product&&<p className="mt-2 text-xs font-semibold text-amber-700">{errors.product}</p>}</div>
+          </> : <div className="mx-auto max-w-2xl rounded-2xl border border-emerald-100 bg-emerald-50 p-6"><h3 className="text-lg font-black text-emerald-950">客户转化任务</h3><p className="mt-2 text-sm leading-6 text-emerald-800">灵小枢会整理本周重点客户、跟进节点和需要你审批的报价或承诺，不需要选择内容任务包。</p></div>}
+        </div>}
+
+        {step === 3 && <div className="mx-auto max-w-3xl">
+          <h3 className="text-lg font-black text-slate-950">确认本周安排</h3>
+          <p className="mt-1 text-sm text-slate-500">确认后先生成可审核计划，不会直接发布内容或联系客户。</p>
+          <dl className="mt-5 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white px-5">
+            <div className="grid gap-1 py-4 sm:grid-cols-[120px_1fr]"><dt className="text-xs font-bold text-slate-400">本周重点</dt><dd className="text-sm font-bold text-slate-900">{weeklyFocus}</dd></div>
+            {businessLine !== 'customer_conversion' && <><div className="grid gap-1 py-4 sm:grid-cols-[120px_1fr]"><dt className="text-xs font-bold text-slate-400">执行方式</dt><dd className="text-sm font-bold text-slate-900">{weeklyTaskPackagePreset(selectedPresetId).label} · {form.target} 条/周</dd></div><div className="grid gap-1 py-4 sm:grid-cols-[120px_1fr]"><dt className="text-xs font-bold text-slate-400">制作平台</dt><dd className="text-sm font-bold text-slate-900">{form.contentPlatforms.map(platform => contentPlatformLabel[platform]).join('、')}</dd></div></>}
+            <div className="grid gap-1 py-4 sm:grid-cols-[120px_1fr]"><dt className="text-xs font-bold text-slate-400">系统接下来做</dt><dd className="text-sm leading-6 text-slate-700">灵小枢拆任务 → 编导 Agent 定方案 → 内容/客服 Agent 执行 → 需要审批时再通知你</dd></div>
+          </dl>
+          {businessLine !== 'customer_conversion' && <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"><summary className="cursor-pointer text-xs font-black text-slate-700">查看并调整具体视频计划（可选）</summary><div className="mt-4"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} themeWorkflow onChange={plans => set('videoPlans', plans)} /></div></details>}
+          <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <summary className="cursor-pointer text-xs font-black text-slate-700">更多目标设置（可选）</summary>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
         <Field
           label="目标名称"
           required
@@ -1689,24 +1723,15 @@ function GoalPanel({
             }
           />
         </Field>
-          </div>
-        </details>
+            </div>
+          </details>
+          {submitted && hasErrors && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700">还有必填信息未完成，请展开“更多目标设置”检查。</p>}
+        </div>}
       </div>
-      <div className="mt-6 flex justify-end">
-        <button
-          type="button"
-          disabled={busy || (submitted && hasErrors)}
-          onClick={submit}
-          className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 disabled:opacity-50"
-        >
-          {busy ? (
-            <Loader2 size={16} className="animate-spin" />
-          ) : (
-            <Check size={16} />
-          )}{" "}
-          让灵小枢生成周任务
-        </button>
-      </div>
+      <footer className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4">
+        <button type="button" onClick={() => step === 1 ? onCancel() : setStep(current => Math.max(1, current - 1) as 1 | 2 | 3)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">{step === 1 ? '取消' : '上一步'}</button>
+        {step < 3 ? <button type="button" onClick={nextStep} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">继续 <ArrowRight size={15} /></button> : <button type="button" disabled={busy || (submitted && hasErrors)} onClick={submit} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}让灵小枢生成周任务</button>}
+      </footer>
     </section>
   );
 }
@@ -1835,10 +1860,10 @@ const workspaceViews: Array<{
   label: string;
   caption: string;
 }> = [
-  { id: "today", label: "今天要做", caption: "优先事项与本周进度" },
-  { id: "live", label: "任务执行", caption: "计划确认、进度与审批" },
-  { id: "overview", label: "生产与交付", caption: "作品产出、审核与发布" },
-  { id: "review", label: "复盘", caption: "周期结果与改进" },
+  { id: "today", label: "本周总览", caption: "今天要做" },
+  { id: "live", label: "执行进度", caption: "任务执行" },
+  { id: "overview", label: "成果验收", caption: "生产与交付" },
+  { id: "review", label: "经营复盘", caption: "复盘" },
 ];
 
 function BusinessLineNav({ value, platform, onChange, onPlatformChange }: { value: BusinessLine; platform: ContentPlatform; onChange: (value: BusinessLine) => void; onPlatformChange: (value: ContentPlatform) => void }) {
@@ -3951,11 +3976,12 @@ export default function DigitalEmployeePage({
       <div className="workspace-frame">
         <header className="flex min-h-[86px] items-center justify-between gap-4 border-b border-border bg-white px-1 py-4">
           <div className="flex items-center gap-3">
-            <Activity size={18} className="text-accent" />
-            <h1 className="text-xl font-bold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-accent"><Activity size={18} /></span>
+            <div><h1 className="text-xl font-bold text-text-primary">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1><p className="mt-0.5 text-xs text-text-muted">先看本周状态，只在需要决定时操作</p></div>
           </div>
             {data?.config && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+                {!viewGoalId && !activeRun && (!goal || canCreateNextGoal) && <button type="button" onClick={() => { setWorkspaceView("today"); setNewGoal(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 font-bold text-white hover:bg-emerald-700"><Plus size={14} />创建周目标</button>}
                 <button
                   type="button"
                   onClick={() => setWorkspaceView("rules")}
@@ -3983,20 +4009,14 @@ export default function DigitalEmployeePage({
         >
           {workspaceViews.map((view) => {
             const pendingCount = data.approvals.filter((item) => item.status === "pending").length;
-            const caption = view.id === "live" && pendingCount ? `${pendingCount} 项待处理 · 任务与纠偏` : view.id === "review" && !data.review ? "数据积累中" : view.caption;
             return <button
               key={view.id}
               type="button"
               onClick={() => setWorkspaceView(view.id)}
               aria-current={workspaceView === view.id ? "page" : undefined}
-              className="workspace-tab min-w-[150px] px-1 py-2"
+              className="workspace-tab min-w-[104px] px-3 py-2.5"
             >
-              <span className="block text-xs font-black">{view.label}</span>
-              <span
-                className="mt-0.5 block text-[10px] text-slate-400"
-              >
-                {caption}
-              </span>
+              <span className="inline-flex items-center gap-1.5 text-xs font-black">{view.label}{view.id === 'live' && pendingCount > 0 && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] text-amber-800">{pendingCount}</span>}</span>
             </button>;
           })}
         </nav>}
@@ -4121,12 +4141,13 @@ export default function DigitalEmployeePage({
               </button>
             )}
             {!viewGoalId && newGoal && !activeRun && (
-              <div ref={goalPanelRef} className="scroll-mt-24">
+              <div ref={goalPanelRef} className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[2px]" onMouseDown={event => { if (event.target === event.currentTarget) setNewGoal(false); }}>
                 <GoalPanel
                   config={data.config}
                   busy={Boolean(busy)}
                   businessLine={businessLine}
                   contentPlatform={contentPlatform}
+                  onCancel={() => setNewGoal(false)}
                   onSave={(goalInput) => void saveGoal(goalInput)}
                 />
               </div>

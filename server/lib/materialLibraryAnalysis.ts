@@ -2,12 +2,15 @@ import { KeyedWorkQueue } from './keyedWorkQueue.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { readMaterialLibrary, updateLocalMaterial, type MaterialRecord } from './materialLibrary.js';
+import { readMaterialLibrary, updateLocalMaterial, updateSharedLocalMaterial, type MaterialRecord } from './materialLibrary.js';
 import { getOwnedCloudMaterialRecord, updateCloudMaterial } from './cloudMaterials.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
 const jobs = new KeyedWorkQueue(2);
-export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`);
+function analysisJobKey(tenantId: string, record: MaterialRecord): string {
+  return record.scope === 'shared' ? `shared:${record.id}` : `${tenantId}:${record.id}`;
+}
+export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`) || jobs.has(`shared:${id}`);
 export function libraryCandidate(record: MaterialRecord): AssetCandidate {
   const cloud = record.id.startsWith('pb-');
   const mediaRoot = path.resolve(process.cwd(), 'data/media');
@@ -29,46 +32,53 @@ export function analysisFileRevision(record: MaterialRecord): string {
   const stat = candidate.localPath ? fs.statSync(candidate.localPath) : undefined;
   return crypto.createHash('sha256').update(JSON.stringify([record.id, record.file, record.objectKey, record.sourceRevision || '', stat?.size, stat?.mtimeMs])).digest('hex');
 }
-async function ownedMaterial(tenantId: string, id: string): Promise<MaterialRecord> {
+async function analyzableMaterial(tenantId: string, id: string): Promise<MaterialRecord> {
   const inventory = await readMaterialLibrary(tenantId);
-  const record = inventory.items.find(item => item.id === id && String(item.tenantId || item.tenant_id || '') === tenantId);
-  if (!record || record.scope === 'shared' || record.usage === 'reference_only') throw Error('素材不存在或不属于当前账号可编辑素材');
+  const record = inventory.items.find(item => item.id === id && (
+    item.scope === 'shared' || String(item.tenantId || item.tenant_id || '') === tenantId
+  ));
+  if (!record || record.usage === 'reference_only') throw Error('素材不存在或当前素材不能用于制作');
   if (!['video','image'].includes(record.type)) throw Error('请选择视频或图片素材');
-  if (id.startsWith('pb-') && !await getOwnedCloudMaterialRecord(id.slice(3), tenantId)) throw Error('素材访问权限已变化');
+  if (id.startsWith('pb-') && record.scope !== 'shared' && !await getOwnedCloudMaterialRecord(id.slice(3), tenantId)) throw Error('素材访问权限已变化');
   return record;
 }
-async function patch(tenantId: string, id: string, changes: Record<string, unknown>) {
-  const ok = id.startsWith('pb-') ? await updateCloudMaterial(id.slice(3), changes) : updateLocalMaterial(id, tenantId, changes);
+async function patch(tenantId: string, record: MaterialRecord, changes: Record<string, unknown>) {
+  const ok = record.id.startsWith('pb-')
+    ? await updateCloudMaterial(record.id.slice(3), changes)
+    : record.scope === 'shared'
+      ? updateSharedLocalMaterial(record.id, changes)
+      : updateLocalMaterial(record.id, tenantId, changes);
   if (!ok) throw Error('素材分析结果保存失败，请重试');
 }
 export async function requestMaterialAnalysis(tenantId: string, id: string, retry = false): Promise<{ status: string; reused: boolean }> {
-  const key = `${tenantId}:${id}`;
+  const record = await analyzableMaterial(tenantId, id);
+  const key = analysisJobKey(tenantId, record);
   if (jobs.has(key)) return { status: 'analyzing', reused: true };
-  const record = await ownedMaterial(tenantId, id);
   const revision = analysisFileRevision(record);
   if (!retry && record.segmentAnalysisStatus === 'completed' && record.analysisSourceRevision === revision) return { status: 'completed', reused: true };
   // Check again after the awaited ownership lookup, before reserving this job.
   if (jobs.has(key)) return { status: 'analyzing', reused: true };
   const created = await jobs.enqueue(key,
-    () => patch(tenantId, id, { segmentAnalysisStatus: 'pending', segmentAnalysisError: '' }),
+    () => patch(tenantId, record, { segmentAnalysisStatus: 'pending', segmentAnalysisError: '' }),
     async () => {
     try {
-      await patch(tenantId, id, { segmentAnalysisStatus: 'analyzing', segmentAnalysisError: '' });
+      await patch(tenantId, record, { segmentAnalysisStatus: 'analyzing', segmentAnalysisError: '' });
       const result = await analyzeProductionMaterial(libraryCandidate(record), tenantId, true);
-      const current = await ownedMaterial(tenantId, id);
+      const current = await analyzableMaterial(tenantId, id);
       if (analysisFileRevision(current) !== revision) throw Error('素材文件已变化，请重新分析当前版本');
-      await patch(tenantId, id, { duration: result.duration, segments: result.segments, visualObservations: result.observations,
+      await patch(tenantId, current, { duration: result.duration, segments: result.segments, visualObservations: result.observations,
         segmentAnalysisStatus: 'completed', segmentAnalysisError: '', analysisSourceRevision: revision });
     } catch (error) {
-      await patch(tenantId, id, { segmentAnalysisStatus: 'failed', segmentAnalysisError: materialAnalysisError(error) });
+      await patch(tenantId, record, { segmentAnalysisStatus: 'failed', segmentAnalysisError: materialAnalysisError(error) });
     }
   }, error => console.warn('[material-analysis]', error instanceof Error ? error.message : 'failed'));
   return { status: 'pending', reused: !created };
 }
 export async function waitForMaterialAnalysis(tenantId: string, id: string) {
+  const initial = await analyzableMaterial(tenantId, id);
   await requestMaterialAnalysis(tenantId, id);
-  await jobs.get(`${tenantId}:${id}`);
-  const record = await ownedMaterial(tenantId, id);
+  await jobs.get(analysisJobKey(tenantId, initial));
+  const record = await analyzableMaterial(tenantId, id);
   if (record.segmentAnalysisStatus !== 'completed') throw Error(String(record.segmentAnalysisError || '素材分析未完成'));
   return record;
 }
