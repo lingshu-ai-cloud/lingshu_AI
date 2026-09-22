@@ -223,7 +223,6 @@ function pageKey(page: Page) {
 
 type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
 const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
-  startupHub: 'thinking',
   digitalEmployees: 'excited',
   agentMonitor: 'thinking',
   strategy: 'happy',

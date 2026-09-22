@@ -22,7 +22,6 @@ import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficVi
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
 const PlatformAdsPage = lazy(() => import('./components/PlatformAdsPage'));
-const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 const StrategyPage = lazy(() => import('./components/StrategyPage'));
 const TrafficPage = lazy(() => import('./components/TrafficPage'));
 const SocialMonitoringPage = lazy(() => import('./components/SocialMonitoringPage'));
@@ -74,10 +73,10 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
-  social_operator: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
-  customer_service: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'scheduled']),
+  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
+  customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'scheduled']),
 };
 type StarterAccessState = 'loading' | 'starter_198' | 'legacy' | 'unavailable';
 const isAdminSession = (session: AuthSession | null) => Boolean(
@@ -197,14 +196,6 @@ export default function App() {
   if (publicPath === '/privacy') return <LegalPages kind="privacy" />;
   if (publicPath === '/terms') return <LegalPages kind="terms" />;
   if (publicPath === '/data-deletion') return <LegalPages kind="data-deletion" />;
-  if (import.meta.env.DEV && publicPath === '/startup-hub-preview') {
-    return (
-      <Suspense fallback={<PageLoading />}>
-        <StartupHubPage preview />
-      </Suspense>
-    );
-  }
-
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(loadPage);
@@ -721,9 +712,8 @@ export default function App() {
         </Suspense>
       )}
       <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
-        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'startupHub')}>
+        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>
-          {page === 'startupHub' && <StartupHubPage />}
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />

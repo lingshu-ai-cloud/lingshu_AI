@@ -15,16 +15,15 @@ const services = [
     args: [path.join(repositoryRoot, 'node_modules/tsx/dist/cli.mjs'), 'server/index.ts'],
     env: { PORT: '8790', NODE_USE_ENV_PROXY: '1' },
     // Health monitoring must stay cheap and independent of business data.
-    // The startup-hub snapshot performs authenticated aggregation and can be
-    // temporarily slow while background jobs are busy; treating that as a
-    // process failure caused healthy backends to be killed, leaving a white UI.
+    // Business queries can be temporarily slow while background jobs are busy;
+    // treating that as a process failure can kill a healthy backend and leave a white UI.
     probe: { url: 'http://127.0.0.1:8790/api/overseas/health' },
   },
   {
     name: 'frontend',
     args: [path.join(repositoryRoot, 'node_modules/vite/bin/vite.js'), '--host', '0.0.0.0', '--port', '5177', '--strictPort'],
     env: { DEV_API_TARGET: 'http://127.0.0.1:8790' },
-    probe: { url: 'http://127.0.0.1:5177/startup-hub-preview' },
+    probe: { url: 'http://127.0.0.1:5177/' },
   },
 ];
 

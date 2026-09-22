@@ -1,5 +1,4 @@
 export const PAGE_IDS = [
-  'startupHub',
   'digitalEmployees',
   'agentMonitor',
   'strategy',
@@ -40,7 +39,6 @@ export type PageDefinition = {
 };
 
 export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
-  startupHub: { navLabel: '创业中台', canonicalTitle: '创业中台' },
   digitalEmployees: { navLabel: '智能经营', canonicalTitle: '智能经营' },
   agentMonitor: { navLabel: '运行监控', canonicalTitle: '运行监控' },
   strategy: { navLabel: '首页', canonicalTitle: '首页' },
