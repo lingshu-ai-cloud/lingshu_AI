@@ -274,13 +274,12 @@ for (const source of [appSource, layoutSource]) {
 }
 const superAdminRolePages = appSource.match(/super_admin:\s*new Set\(\[([^\]]*)\]\)/)?.[1] || '';
 assert.doesNotMatch(superAdminRolePages, /contentFormulaAdmin/,
-  'an organization super_admin role alone must not unlock the platform formula library');
+  'the retired formula library must not remain in role navigation');
 assert.match(appSource,
-  /\(page === 'admin' \|\| page === 'adminDelivery' \|\| page === 'contentFormulaAdmin'\) && !isAdminSession\(session\)/,
-  'ordinary tenant administrators must be redirected from the formula library');
-assert.match(appSource,
-  /if \(page === 'contentFormulaAdmin'\) \{[\s\S]{0,240}if \(!isAdminSession\(session\)\) setPage\('digitalEmployees'\);[\s\S]{0,120}return;[\s\S]{0,160}const role = session\.user\.role/,
-  'verified platform administrators must bypass organization-role page filtering for the formula library');
+  /\(page === 'admin' \|\| page === 'adminDelivery'\) && !isAdminSession\(session\)/,
+  'ordinary tenant administrators must be redirected from platform-only pages');
+assert.doesNotMatch(`${appSource}\n${layoutSource}\n${pageRegistrySource}`, /contentFormulaAdmin|爆款公式库/,
+  'the formula product surface must be removed rather than hidden behind an admin role');
 for (const navigationLabel of ['首页', '灵感中心', '内容制作', '发布与渠道', '内容监控', '渠道设置', '智能客服', '我的会话', '订单', '企业知识库', '定时任务', '集成中心', '组织与权限']) {
   assert.match(pageRegistrySource, new RegExp(navigationLabel), `starter navigation must register the ${navigationLabel} page`);
 }

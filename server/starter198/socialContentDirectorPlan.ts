@@ -71,6 +71,11 @@ export interface StoredSocialDirectorPlan {
     baselineVersion: string;
     formulaReference: { formulaId: string; version: string } | null;
     inspirationReference: { recordId: string; confidence: number } | null;
+    referenceSource?: {
+      sourceId: string;
+      sourceRef: string;
+      sourceVersion: string | null;
+    } | null;
     matchConfidence: number;
     verifiedKnowledgeSource: 'enterprise_product' | 'enterprise_profile' | 'user_product_association' | 'none';
   };
@@ -117,6 +122,9 @@ export interface StoredSocialDirectorPlan {
   scenes: Array<{
     sceneId: string;
     order: number;
+    /** Safe timing/camera grammar copied from this task's analyzed reference
+     * video. Original dialogue, brand and identity never enter this object. */
+    referenceStructure?: NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']>;
     script: {
       text: string;
       shotFunction: string;
@@ -376,6 +384,12 @@ export function buildSocialDirectorPlan(input: {
     return {
       sceneId: scene.sceneId,
       order: index + 1,
+      ...(baselineScene.referenceStructure ? {
+        referenceStructure: {
+          ...baselineScene.referenceStructure,
+          sourceTiming: { ...baselineScene.referenceStructure.sourceTiming },
+        },
+      } : {}),
       script,
       voiceover,
       caption,
@@ -477,6 +491,9 @@ export function buildSocialDirectorPlan(input: {
       baselineVersion: input.baseline.version,
       formulaReference: input.baseline.formulaReference,
       inspirationReference: input.baseline.match?.inspirationReference ?? null,
+      referenceSource: input.baseline.match?.referenceSource
+        ? { ...input.baseline.match.referenceSource }
+        : null,
       matchConfidence: input.baseline.match?.confidence ?? 0,
       verifiedKnowledgeSource: input.baseline.match?.verifiedKnowledgeSource ?? 'none',
     },
@@ -721,21 +738,31 @@ export function publicSocialDirectorPlanSummary(plan: StoredSocialDirectorPlan |
     && plan.qualityGates.every(gate => gate.status !== 'blocked');
   const first = plan.scenes[0]!;
   const shotKinds = [...new Set(plan.scenes.map(scene => scene.script.shotFunction))].slice(0, 3).join('、');
+  const publicScriptSource: SocialDirectorPlanSummary['scriptSource'] = plan.scriptSource.kind !== 'formula'
+    ? plan.scriptSource.kind
+    : plan.scriptSource.inspirationReference
+      ? 'inspiration_script'
+      : plan.scriptSource.verifiedKnowledgeSource !== 'none'
+        ? 'knowledge_fallback'
+        : 'system_theme_baseline';
   return {
     version: plan.version,
     status: plan.status,
-    scriptSource: plan.scriptSource.kind,
+    scriptSource: publicScriptSource,
     baselineVersion: plan.scriptSource.baselineVersion,
     sceneCount: plan.scenes.length,
     language: plan.language,
     createdAt: plan.createdAt,
-    formulaConfigured: Boolean(plan.scriptSource.formulaReference),
+    // Compatibility field in the public contract. Formula configuration is no
+    // longer part of the customer workflow, including for historic plans.
+    formulaConfigured: false,
     qualityPassed: passed,
     reshootSuggestionCount: plan.optionalReshootSuggestions.length,
     scriptSummary: oneLine(`${first.script.text}；共 ${plan.scenes.length} 个镜头`, 120),
     voiceoverSummary: oneLine(plan.scenes.map(scene => scene.voiceover).join(plan.language === 'en' ? ' ' : ''), 160),
     subtitleSummary: oneLine(plan.scenes.map(scene => scene.caption).join(' / '), 160),
     shotRhythmSummary: oneLine(`${plan.direction.pace === 'fast' ? '明快' : plan.direction.pace === 'steady' ? '稳健' : '自然'}节奏 · 约 ${Math.round(plan.direction.targetDurationSeconds)} 秒 · ${shotKinds}`, 120),
+    referenceSourceId: plan.scriptSource.referenceSource?.sourceId ?? null,
   };
 }
 

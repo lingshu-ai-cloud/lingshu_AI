@@ -6,7 +6,7 @@ import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   TrendingUp, Clock, Globe, ChevronDown, X, Loader2,
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
-  Lightbulb, Flame, BarChart2, ChevronRight, Film, Download, Plus,
+  Lightbulb, Flame, BarChart2, ChevronRight, Film, Download,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2,
   SlidersHorizontal, Eye, Package,
 } from 'lucide-react';
@@ -39,6 +39,8 @@ type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type MaterialThemeFilter = 'all' | SocialContentThemeId;
+
+const INSPIRATION_PAGE_SIZE = 30;
 
 const MATERIAL_PRODUCT_ALL = '__all_products__';
 const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
@@ -133,7 +135,7 @@ const MATERIAL_THEME_KEYWORDS: Record<SocialContentThemeId, readonly string[]> =
 
 function materialThemesOf(material: Material): SocialContentThemeId[] {
   const segmentText = (material.segments || []).flatMap(segment => segment.recommendedFunctions || []).join(' ');
-  const searchable = [material.name, material.industry, material.shotFunction, material.applicability, material.tags, segmentText]
+  const searchable = [material.name, material.industry, material.shotFunction, material.applicability, material.tags, segmentText, material.scriptAnalysis?.searchableText]
     .filter(Boolean).join(' ').toLowerCase();
   return (Object.keys(MATERIAL_THEME_LABELS) as SocialContentThemeId[])
     .filter(themeId => MATERIAL_THEME_KEYWORDS[themeId].some(keyword => searchable.includes(keyword.toLowerCase())));
@@ -2860,8 +2862,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [crawledVideos, setCrawledVideos] = useState<TrendVideo[]>([]);
   const [videoPage, setVideoPage] = useState(1);
   const [videoTotalPages, setVideoTotalPages] = useState(1);
-  const [tenantVideoTotalItems, setTenantVideoTotalItems] = useState(0);
+  const [tenantVideoTotalItems, setTenantVideoTotalItems] = useState<number | null>(null);
   const [videosLoading, setVideosLoading] = useState(false);
+  const [videosLoaded, setVideosLoaded] = useState(false);
   const [lastCrawlVideoIds, setLastCrawlVideoIds] = useState<string[]>([]);
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
   const [favoritingMaterialIds, setFavoritingMaterialIds] = useState<string[]>([]);
@@ -2905,6 +2908,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [showAccountsModal, setShowAccountsModal] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
+  const inventoryRequestRef = useRef(0);
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
   const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按热度';
   const contentFormatLabel = contentFormat === 'video' ? '视频' : '图文';
@@ -2950,16 +2954,27 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     return () => { active = false; };
   }, [materialEntry.productId, materialEntry.productRef]);
 
-  const refreshVideos = async (nextPage = 1, append = false, quiet = false) => {
+  const refreshInventory = async () => {
+    const requestId = ++inventoryRequestRef.current;
+    try {
+      const response = await fetch(`/api/overseas/videos/inventory-summary?contentFormat=${contentFormat}`, { headers: authHeader() });
+      const data = await response.json().catch(() => ({})) as { totalItems?: number };
+      if (!response.ok) throw new Error('库存统计加载失败');
+      if (requestId === inventoryRequestRef.current) setTenantVideoTotalItems(Math.max(0, Number(data.totalItems || 0)));
+    } catch {
+      // Keep the last successful inventory value. The list response carries
+      // the same authoritative total and can repair this value later.
+    }
+  };
+
+  const refreshVideos = async (nextPage = 1, quiet = false) => {
     const requestId = ++videoRequestRef.current;
     if (!quiet) setVideosLoading(true);
     try {
-      // Keep the first paint small. Media cards are expensive and the previous 100-item
-      // response also forced the admin endpoint to finish a full cross-tenant scan first.
-      const perPage = 20;
       const keyword = searchRef.current.trim();
-      const query = `page=${nextPage}&perPage=${perPage}&contentFormat=${contentFormat}`
+      const query = `page=${nextPage}&perPage=${INSPIRATION_PAGE_SIZE}&contentFormat=${contentFormat}`
         + `&crawlRange=${crawlTimeRange}`
+        + (platform !== 'all' ? `&platform=${platform}` : '')
         + (keyword ? `&search=${encodeURIComponent(keyword)}` : '');
       const r = await fetch(`/api/overseas/videos?${query}`, { headers: authHeader() });
       let data = await r.json().catch(() => ({})) as {
@@ -2983,9 +2998,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         setVideoPage(Number(result.page || nextPage));
         setVideoTotalPages(Math.max(1, Number(result.totalPages || nextPage)));
         setCrawledVideos(prev => {
-          const next = append
-            ? [...prev, ...videos.filter(v => !prev.some(old => old.id === v.id || (!!v.sourceUrl && old.sourceUrl === v.sourceUrl)))]
-            : videos;
+          const next = videos;
           const unchanged = prev.length === next.length && prev.every((item, index) => {
             const candidate = next[index];
             return candidate
@@ -3004,23 +3017,37 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       // with an empty array), producing an impossible "179 total / 0 cards" UI.
       if (data.items) {
         applyResult(data);
+        setVideosLoaded(true);
       } else {
         throw new Error('视频列表加载失败');
       }
     } catch {
-      if (requestId === videoRequestRef.current && !append && !quiet) setCrawledVideos([]);
+      if (requestId === videoRequestRef.current && !quiet) {
+        setCrawledVideos([]);
+        setVideosLoaded(true);
+      }
     } finally {
       if (requestId === videoRequestRef.current && !quiet) setVideosLoading(false);
     }
   };
 
-  useEffect(() => { void refreshVideos(); }, [contentFormat, crawlTimeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setVideosLoaded(false);
+    setVideoPage(1);
+    setTenantVideoTotalItems(null);
+    void refreshInventory();
+    void refreshVideos(1);
+  }, [contentFormat, crawlTimeRange, platform]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 输入过程中不逐字请求，停顿 400ms 后再查。
   const searchDebounceRef = useRef(false);
   useEffect(() => {
     if (!searchDebounceRef.current) { searchDebounceRef.current = true; return; }
-    const timer = window.setTimeout(() => { void refreshVideos(1, false, true); }, 400);
+    const timer = window.setTimeout(() => {
+      setVideosLoaded(false);
+      setVideoPage(1);
+      void refreshVideos(1);
+    }, 400);
     return () => window.clearTimeout(timer);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3037,7 +3064,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     let cancelled = false;
     let timer = 0;
     const poll = async () => {
-      if (document.visibilityState === 'visible') await refreshVideos(1, false, true);
+      if (document.visibilityState === 'visible') await refreshVideos(videoPage, true);
       if (!cancelled) timer = window.setTimeout(() => void poll(), 8000);
     };
     timer = window.setTimeout(() => void poll(), 8000);
@@ -3045,7 +3072,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [hasPendingVideos, contentFormat]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasPendingVideos, contentFormat, videoPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedVideo) return;
@@ -3149,7 +3176,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     });
   };
   const pinnedTitles = new Set(pinnedMaterialVideos.map(video => video.title.trim().toLowerCase()));
-  const allVideos = [...pinnedMaterialVideos, ...crawledVideos.filter(video => !pinnedTitles.has(video.title.trim().toLowerCase()))];
+  const allVideos = [
+    ...(videoPage === 1 ? pinnedMaterialVideos : []),
+    ...crawledVideos.filter(video => !pinnedTitles.has(video.title.trim().toLowerCase())),
+  ];
   const accountRecommendationByVideoId = useMemo(() => {
     const groups = new Map<string, TrendVideo[]>();
     for (const item of crawledVideos) {
@@ -3200,12 +3230,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       });
   }, [visibleVideos, lastCrawlVideoIds, platform, search, sortMode, pinnedMaterialVideos, contentFormat]);
 
-  useEffect(() => {
-    if (innerView !== 'inspiration' || viewMode !== 'grid') return;
-    if (videosLoading || filtered.length === 0 || filtered.length >= 10 || videoPage >= videoTotalPages) return;
-    void refreshVideos(videoPage + 1, true);
-  }, [filtered.length, innerView, videoPage, videoTotalPages, videosLoading, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const recentThreeDayUploads = visibleVideos.filter(v => {
     const t = v.crawledAt ? new Date(v.crawledAt).getTime() : 0;
     return t > 0 && Date.now() - t <= 3 * 24 * 60 * 60 * 1000;
@@ -3227,7 +3251,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
       const functions = String(material.shotFunction || '').split(',').map(item => item.trim());
-      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName].filter(Boolean).join(' ').toLowerCase();
+      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName, material.scriptAnalysis?.searchableText].filter(Boolean).join(' ').toLowerCase();
       const orientationMatches = materialOrientation === 'all'
         || (materialOrientation === 'vertical' && /竖屏|vertical/i.test(String(material.tags || '')))
         || (materialOrientation === 'horizontal' && /横屏|horizontal/i.test(String(material.tags || '')));
@@ -3672,7 +3696,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || '删除失败');
         setCrawledVideos(items => items.filter(item => item.id !== manageTarget.item.id));
-        setTenantVideoTotalItems(value => Math.max(0, value - 1));
+        setTenantVideoTotalItems(value => value === null ? null : Math.max(0, value - 1));
       } else {
         const result = await studioApi.deleteMaterial(manageTarget.item.id);
         if (!result.ok) throw new Error('删除失败');
@@ -3777,7 +3801,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           <div className="mb-4 border-b border-border">
             <nav className="-mb-px flex min-w-0 max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
               {([
-                { id: 'inspiration' as const, label: '爆款灵感', count: tenantVideoTotalItems || visibleVideos.length, icon: <Flame size={16} /> },
+                { id: 'inspiration' as const, label: '爆款灵感', count: tenantVideoTotalItems ?? '…', icon: <Flame size={16} /> },
                 { id: 'library' as const, label: '我的素材', count: localMaterials.length, icon: <Film size={16} /> },
                 { id: 'shooting' as const, label: '拍摄任务', count: shootingNeeds.length + scriptGapTasks.length, icon: <Lightbulb size={16} /> },
               ]).map(item => {
@@ -3923,9 +3947,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           </div>}
 
         {innerView === 'inspiration' && <div role="status" aria-live="polite" className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-border bg-surface-2/60 px-3.5 py-2 text-xs text-text-muted">
-          <span><strong className="text-sm text-text-primary">{tenantVideoTotalItems || visibleVideos.length}</strong> 条{contentFormat === 'image' ? '图文' : '视频'}灵感</span>
+          <span className="inline-flex items-center gap-1.5"><strong className="text-sm text-text-primary">{tenantVideoTotalItems ?? '—'}</strong> 条{contentFormat === 'image' ? '图文' : '视频'}灵感{tenantVideoTotalItems === null && <Loader2 size={12} className="animate-spin text-accent" />}</span>
           <span>当前显示 <strong className="text-text-primary">{filtered.length}</strong> 条</span>
-          <span>近 3 日新入库 <strong className="text-text-primary">{recentThreeDayUploads}</strong> 条</span>
+          <span>本页近 3 日新入库 <strong className="text-text-primary">{recentThreeDayUploads}</strong> 条</span>
           <span>覆盖 <strong className="text-text-primary">{new Set(visibleVideos.map(v => v.platform)).size}</strong> 个平台</span>
           {videosLoading && <span className="ml-auto inline-flex items-center gap-1.5 font-semibold text-accent"><Loader2 size={12} className="animate-spin" />更新中…</span>}
         </div>}
@@ -3933,7 +3957,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         <div>
           {innerView === 'inspiration' && (
             <>
-              {filtered.length === 0 ? (
+              {!videosLoaded && videosLoading ? (
+                <div className="flex min-h-[360px] flex-col items-center justify-center rounded-lg border border-border bg-surface text-center" role="status" aria-live="polite">
+                  <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-accent-glow">
+                    <Loader2 size={28} className="animate-spin text-accent" />
+                    <Flame size={15} className="absolute text-accent" />
+                  </div>
+                  <p className="mt-4 text-sm font-bold text-text-primary">正在读取真实视频库存</p>
+                  <p className="mt-1 text-xs text-text-muted">加载最新 30 条灵感，不会先显示为 0</p>
+                </div>
+              ) : filtered.length === 0 ? (
                 <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
               ) : viewMode === 'grid' ? (
                 <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-start">
@@ -3971,17 +4004,29 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   ))}
                 </div>
               )}
-              {filtered.length > 0 && videoPage < videoTotalPages && (
-                <div className="flex justify-center pt-2 pb-4">
+              {videosLoaded && videoTotalPages > 1 && (
+                <nav className="flex flex-wrap items-center justify-center gap-2 pb-4 pt-4" aria-label="爆款灵感分页">
                   <button
-                    onClick={() => void refreshVideos(videoPage + 1, true)}
-                    disabled={videosLoading}
-                    className="btn-ghost !px-4 !py-2 flex items-center gap-2 disabled:opacity-60"
+                    type="button"
+                    onClick={() => void refreshVideos(Math.max(1, videoPage - 1))}
+                    disabled={videosLoading || videoPage <= 1}
+                    className="btn-ghost !px-3 !py-2 disabled:opacity-40"
                   >
-                    {videosLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                    加载更多
+                    上一页
                   </button>
-                </div>
+                  <span className="min-w-24 text-center text-xs font-bold text-text-secondary">
+                    第 {videoPage} / {videoTotalPages} 页
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void refreshVideos(Math.min(videoTotalPages, videoPage + 1))}
+                    disabled={videosLoading || videoPage >= videoTotalPages}
+                    className="btn-ghost !px-3 !py-2 disabled:opacity-40"
+                  >
+                    下一页
+                  </button>
+                  <span className="w-full text-center text-[11px] text-text-muted">每页按最新入库时间展示 {INSPIRATION_PAGE_SIZE} 条</span>
+                </nav>
               )}
             </>
           )}

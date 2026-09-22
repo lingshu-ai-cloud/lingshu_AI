@@ -67,18 +67,7 @@ import {
 import {
   SOCIAL_THEME_CATALOG,
   classifySocialCustomTopic,
-  resolveSocialThemeSelection,
 } from './socialContentThemes.js';
-import {
-  createSocialContentFormula,
-  createSocialContentFormulaVersion,
-  disableSocialContentFormula,
-  listSocialContentFormulas,
-  publishSocialContentFormula,
-  resolveSocialContentFormula,
-  SOCIAL_FORMULA_CATALOG_TENANT,
-  trialSocialContentFormula,
-} from './socialContentFormulas.js';
 import {
   changeSocialWorkPackageStatus,
   createSocialWorkPackageVersion,
@@ -146,14 +135,6 @@ function integerQuery(value: unknown, fallback: number, maximum: number): number
   return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
 }
 
-function formulaRouteId(value: unknown): string {
-  const parsed = socialText(value);
-  if (!/^[a-z][a-z0-9._-]{1,119}$/i.test(parsed)) {
-    throw new SocialContentWorkflowError('social_content_formula_id_invalid', 400);
-  }
-  return parsed;
-}
-
 export function createSocialContentRouter(dependencies: SocialContentRouterDependencies = {}): Router {
   const router = Router();
   const repository = dependencies.repository ?? starter198Repository;
@@ -210,105 +191,6 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   router.get('/internal/work-packages', asyncRoute(async (req, res) => {
     await requirePlatformAdmin(req);
     res.json({ items: await listSocialWorkPackageDetails({ repository, now: now() }) });
-  }));
-
-  router.get('/internal/content-formulas', asyncRoute(async (req, res) => {
-    await requirePlatformAdmin(req);
-    res.json({ items: await listSocialContentFormulas({ repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT }) });
-  }));
-
-  router.post('/internal/content-formulas', asyncRoute(async (req, res) => {
-    const admin = await requirePlatformAdmin(req);
-    bodyWithinLimit(req);
-    const formula = await createSocialContentFormula({
-      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: req.body, now: now(),
-    });
-    res.status(201).json({ formula });
-  }));
-
-  router.patch('/internal/content-formulas/:formulaId/:version', asyncRoute(async (req, res) => {
-    const admin = await requirePlatformAdmin(req);
-    bodyWithinLimit(req);
-    const formula = await createSocialContentFormulaVersion({
-      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
-      formulaId: formulaRouteId(req.params.formulaId),
-      sourceVersion: socialText(req.params.version),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: req.body, now: now(),
-    });
-    res.status(201).json({ formula });
-  }));
-
-  router.post('/internal/content-formulas/:formulaId/:version/trial', asyncRoute(async (req, res) => {
-    const admin = await requirePlatformAdmin(req);
-    bodyWithinLimit(req, 8 * 1_024);
-    const body = socialObject(req.body);
-    if (body && Object.keys(body).some(key => key !== 'note')) {
-      throw new SocialContentWorkflowError('social_content_formula_trial_invalid', 400);
-    }
-    res.json(await trialSocialContentFormula({
-      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
-      formulaId: formulaRouteId(req.params.formulaId),
-      version: socialText(req.params.version),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      note: socialText(body?.note) || undefined, now: now(),
-    }));
-  }));
-
-  router.post('/internal/content-formulas/:formulaId/:version/publish', asyncRoute(async (req, res) => {
-    const admin = await requirePlatformAdmin(req);
-    bodyWithinLimit(req, 16 * 1_024);
-    const formula = await publishSocialContentFormula({
-      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
-      formulaId: formulaRouteId(req.params.formulaId),
-      version: socialText(req.params.version),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: req.body, now: now(),
-    });
-    res.json({ formula });
-  }));
-
-  router.post('/internal/content-formulas/:formulaId/:version/disable', asyncRoute(async (req, res) => {
-    const admin = await requirePlatformAdmin(req);
-    bodyWithinLimit(req, 8 * 1_024);
-    const body = socialObject(req.body);
-    if (body && Object.keys(body).some(key => key !== 'note')) {
-      throw new SocialContentWorkflowError('social_content_formula_disable_invalid', 400);
-    }
-    const formula = await disableSocialContentFormula({
-      repository, tenantId: SOCIAL_FORMULA_CATALOG_TENANT, userId: admin.userId,
-      formulaId: formulaRouteId(req.params.formulaId),
-      version: socialText(req.params.version),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      note: socialText(body?.note) || undefined, now: now(),
-    });
-    res.json({ formula });
-  }));
-
-  router.post('/internal/content-formulas/match', asyncRoute(async (req, res) => {
-    await requirePlatformAdmin(req);
-    bodyWithinLimit(req, 8 * 1_024);
-    const body = socialObject(req.body);
-    if (!body || Object.keys(body).some(key => !['themeId', 'customTopic', 'topic', 'targetTenantId'].includes(key))) {
-      throw new SocialContentWorkflowError('social_content_formula_match_invalid', 400);
-    }
-    const selection = resolveSocialThemeSelection({
-      themeId: socialText(body.themeId) as Parameters<typeof resolveSocialThemeSelection>[0]['themeId'],
-      customTopic: socialText(body.customTopic),
-      topic: socialText(body.topic),
-    });
-    if (!selection?.themeId || selection.classificationStatus !== 'confirmed') {
-      throw new SocialContentWorkflowError('social_content_theme_confirmation_required', 409);
-    }
-    const { tenantId } = res.locals as AuthLocals;
-    const targetTenantId = socialText(body.targetTenantId) || tenantId;
-    res.json({
-      theme: selection,
-      formula: await resolveSocialContentFormula({ repository, tenantId: targetTenantId, themeId: selection.themeId }),
-      targetTenantId,
-    });
   }));
 
   router.post('/internal/work-packages', asyncRoute(async (req, res) => {

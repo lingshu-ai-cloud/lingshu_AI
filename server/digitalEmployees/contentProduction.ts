@@ -13,6 +13,7 @@ import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
 import { buildPresentationTimeline } from './presenterMix.js';
 import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
+import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { generateNarration, reviewFinalNarration, narrationEvidenceIssues } from './narration.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,6 +61,7 @@ export type AssetCandidate = {
   productName?: string;
   visualObservations: string[];
   segments?: Array<Record<string, unknown>>;
+  scriptAnalysis?: MaterialScriptAnalysis;
   authorization: {
     status: 'owned' | 'licensed' | 'unknown';
     scope: 'tenant' | 'shared';
@@ -265,7 +267,7 @@ export function matchSceneSources(input: {
     const intent = sceneIntent(input.script, scene.start, scene.end);
     const tokens = normalizedTokens(intent);
     const ranked = candidates.filter(asset => sceneHasVisualEvidence(intent, asset)).map(asset => {
-      const haystack = [asset.name, asset.productName, ...asset.visualObservations, ...asset.tags].filter(Boolean).join(' ').toLowerCase();
+      const haystack = [asset.name, asset.productName, ...asset.visualObservations, ...asset.tags, asset.scriptAnalysis?.searchableText].filter(Boolean).join(' ').toLowerCase();
       const hits = tokens.filter(token => haystack.includes(token.toLowerCase()));
       const ownership = input.productId && asset.productId === input.productId ? 60 : input.route === 'material' ? 40 : 0;
       const observation = asset.visualObservations.length ? 20 : 0;
@@ -542,6 +544,7 @@ function localMaterials(tenantId: string, records: Array<Record<string, unknown>
       id: text(record.id, 160), name: text(record.name, 200) || '企业素材', type: String(record.type) as 'video' | 'image',
       ...(localPath && fs.existsSync(localPath) ? { localPath } : {}), ...(objectKey ? { objectKey } : {}), duration: Math.max(0, Number(record.duration || 0)),
       observations: visualObservations, visualObservations, segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
+      ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
       ...(text(record.productId, 160) ? { productId: text(record.productId, 160) } : {}),
       ...(text(record.productName, 200) ? { productName: text(record.productName, 200) } : {}),
       authorization: assetAuthorization(record, source), synthetic: isSyntheticMaterial(record), ...dimensions(record),
@@ -604,6 +607,7 @@ async function collectAssets(tenantId: string, profile: EnterpriseProfile): Prom
     id: text(record.id, 160), name: text(record.name, 200) || '云端素材', type: String(record.type) as 'video' | 'image',
     url: text(record.url, 2_000), cloudRecordId: text(record.id).replace(/^pb-/, ''), duration: Math.max(0, Number(record.duration || 0)),
     observations: observationsForMaterial(record), visualObservations: observationsForMaterial(record), segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
+    ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
     ...(text(record.productId, 160) ? { productId: text(record.productId, 160) } : {}),
     ...(text(record.productName, 200) ? { productName: text(record.productName, 200) } : {}),
     authorization: assetAuthorization(record, String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' : 'tenant_material'),

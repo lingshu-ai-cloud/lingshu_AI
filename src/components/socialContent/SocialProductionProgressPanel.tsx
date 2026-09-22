@@ -20,7 +20,6 @@ import type {
   SocialContentTaskSummary,
   SocialDirectorPlanSummary,
 } from '../../../shared/contracts/socialContentWorkflow';
-import { socialContentMaterialPolicy } from '../../../shared/socialContentMaterialPolicy';
 import {
   socialContentCurrentArtifacts,
   socialContentStatusLabel,
@@ -71,12 +70,18 @@ function directorPlanComplete(task: TaskListItem): boolean {
   return task.directorPlan?.status === 'ready' || CONTENT_COMPLETE_STATUSES.has(task.status);
 }
 
+function canProduceWithoutCustomerShoot(task: TaskListItem): boolean {
+  return task.assetSupplyPlan?.canProduceWithoutCustomerShoot === true
+    || task.brief.assetAvailability === 'none';
+}
+
 function automaticStep(task: TaskListItem): string {
+  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '零素材托管方案已就绪，确认产品事实后即可自动制作';
   if (task.status === 'draft' || task.status === 'needs_input') return '等待必要资料确认';
   if (task.status === 'plan_review') return '确认任务后，编导 Agent 会先完成导演方案';
   if (task.status === 'producing' && !directorPlanComplete(task)) return '编导 Agent 正在整理脚本、口播、字幕与镜头节奏';
   if (task.status === 'producing') return '内容 Agent 正按编导方案生成配音、字幕并剪辑视频';
-  if (task.status === 'attention') return `现有素材未达到可发布标准；已保留任务，${socialContentMaterialPolicy(task.theme?.themeId ?? null).insufficientMessage}后继续`;
+  if (task.status === 'attention') return '系统正在自动切换可用模型或素材来源；如需确认产品事实或版权，会单独列出';
   if (task.status === 'paused') return '自动处理暂时中断，现有导演方案、素材和生成结果均已保留';
   if (task.status === 'asset_review') return '视频、口播和字幕已经生成，等待你审核';
   if (task.status === 'packaging') return '正在整理视频、封面、文案和发布包';
@@ -89,7 +94,8 @@ function compactHeadline(task: SocialContentTaskDetail): string {
   const counts = taskCounts(task);
   if (counts.pendingReview > 0 || task.status === 'asset_review') return '内容已经生成，等待你审核';
   if (COMPLETE_STATUSES.has(task.status)) return '本轮内容已经制作完成';
-  if (task.status === 'draft' || task.status === 'needs_input') return '补充资料后，机器人会自动开始制作';
+  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '零素材托管方案已就绪，可以直接制作';
+  if (task.status === 'draft' || task.status === 'needs_input') return '确认必要信息后，机器人会自动开始制作';
   if (task.status === 'plan_review') return '确认后，编导 Agent 会先完成导演方案';
   if (task.directorPlan?.status === 'blocked') return '编导方案正在自动检查与修复';
   if (!directorPlanComplete(task)) return '编导 Agent 正在准备导演方案';
@@ -122,7 +128,8 @@ function agentStepLabel(state: AgentStepState): string {
 }
 
 function directorSourceLabel(source: SocialDirectorPlanSummary['scriptSource']): string {
-  if (source === 'formula') return '管理员配置的导演模板';
+  if (source === 'reference_analysis') return '参考视频逐镜分析';
+  if (source === 'asset_supply_plan') return '系统托管素材方案';
   if (source === 'inspiration_script') return '灵感中心参考脚本';
   if (source === 'knowledge_fallback') return '已确认的企业资料与素材';
   return '平台通用安全结构';
@@ -170,7 +177,7 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
             <span className="flex items-center gap-2 text-xs font-black"><Bot size={14} />内容 Agent</span>
             <span className="text-[9px] font-black">{agentStepLabel(contentState)}</span>
           </div>
-          <p className="mt-1 text-[10px] leading-4 opacity-80">接收已匹配素材的导演方案，完成配音、配乐、字幕和剪辑</p>
+          <p className="mt-1 text-[10px] leading-4 opacity-80">按导演方案选择真实素材、数字人、合规素材或生成画面，完成配音、字幕和剪辑</p>
         </div>
       </div>
 
@@ -275,13 +282,13 @@ export default function SocialProductionProgressPanel({
 
   const currentAction = (() => {
     if (task.status === 'draft' || task.status === 'needs_input') {
-      return onEdit ? { label: '补充任务资料', icon: <ChevronRight size={14} />, action: onEdit } : null;
+      return onEdit ? { label: canProduceWithoutCustomerShoot(task) ? '确认任务信息' : '补充任务资料', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'plan_review') {
       return onStart ? { label: '确认并开始自动制作', icon: <Bot size={14} />, action: onStart } : null;
     }
     if (task.status === 'attention') {
-      return onEdit ? { label: `补充${socialContentMaterialPolicy(task.theme?.themeId ?? null).subjectLabel}`, icon: <ChevronRight size={14} />, action: onEdit } : null;
+      return onEdit ? { label: '查看需确认事项', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'paused') {
       return onStart ? { label: '继续自动处理', icon: <RotateCcw size={14} />, action: onStart } : null;

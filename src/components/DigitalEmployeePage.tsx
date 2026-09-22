@@ -161,7 +161,7 @@ const workflowOptions: Array<{
     id: "content_publish",
     label: "内容发布",
     detail: "审批后进入发布日历",
-    dependency: "依赖主题内容制作",
+    dependency: "依赖社媒视频制作",
   },
   {
     id: "customer_segmentation",
@@ -205,8 +205,8 @@ const agentRoleGroups: Array<{
 }> = [
   { id: "orchestrator", label: "灵小枢 · 统筹 Agent", responsibility: "读取企业上下文、拆解本周目标，协调四个专业 Agent 并跟踪任务状态", outputs: "执行上下文、周目标、任务编排与异常提醒", workflows: [] },
   { id: "business", label: "经营 Agent", responsibility: "负责发布审批、发布日历、平台回执和周度经营复盘", outputs: "发布计划、真实回执、经营结果与复盘报告", workflows: ["content_publish"] },
-  { id: "director", label: "编导 Agent", responsibility: "采集并分析爆款参考，匹配爆款公式，锁定脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "结构来源、完整导演方案、素材映射、补拍建议与验收规则", workflows: ["scheduled_social", "viral_clone", "product_content", "material_content"] },
-  { id: "content", label: "内容 Agent", responsibility: "只读执行编导 Agent 已锁定的导演方案，完成配音、字幕、剪辑、混音、封面和技术质检", outputs: "可播放成片、字幕与音轨、封面、平台版本和质检报告", workflows: [] },
+  { id: "director", label: "编导 Agent", responsibility: "逐镜分析爆款参考，重点拆解前三秒钩子，锁定可复刻的脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "参考视频分析、逐镜复刻脚本、素材映射、替代方案与验收规则", workflows: ["scheduled_social", "viral_clone", "product_content", "material_content"] },
+  { id: "content", label: "内容 Agent", responsibility: "执行已锁定的导演方案，按镜头选择真实素材、数字人、授权素材和生成模型，完成配音、字幕、剪辑、混音、封面和技术质检", outputs: "可播放成片、字幕与音轨、封面、平台版本和质检报告", workflows: [] },
   { id: "customer", label: "客服 Agent", responsibility: "承接真实询盘、完成客户分层，并按客户上下文生成跟进草稿", outputs: "客户标签、回复草稿、跟进批次、转人工提醒", workflows: ["customer_segmentation", "batch_followup"] },
 ];
 
@@ -715,7 +715,7 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
       contentCreationWorkflows.includes(item),
     )
   )
-    errors.enabledWorkflows = "内容发布前请先启用主题内容制作";
+    errors.enabledWorkflows = "内容发布前请先启用社媒视频制作";
   if (
     form.enabledWorkflows.some((item) =>
       ["scheduled_social", "content_publish"].includes(item),
@@ -992,7 +992,7 @@ function OnboardingPanel({
     set("enabledWorkflows", [...new Set([...current, ...additions])]);
     setDependencyNotice(
       workflow === "content_publish" && additions.length > 1
-        ? "已同时启用前置能力：主题内容制作。"
+        ? "已同时启用前置能力：社媒视频制作。"
         : additions.length > 1
         ? `已同时启用前置工作流：${additions
             .slice(0, -1)
@@ -1015,7 +1015,7 @@ function OnboardingPanel({
       );
       setDependencyNotice(
         closesPublishing
-          ? "已同步关闭内容发布，因为它依赖主题内容制作。"
+          ? "已同步关闭内容发布，因为它依赖社媒视频制作。"
           : "",
       );
       return;
@@ -1027,7 +1027,7 @@ function OnboardingPanel({
         ...contentCreationWorkflows,
       ]),
     );
-    setDependencyNotice("已启用主题内容制作，原有执行能力会在后台保持兼容。");
+    setDependencyNotice("已启用社媒视频制作；素材加工和爆款裂变会共用这套 Agent 工作流。");
   };
   const setAgentApproval = (role: keyof DigitalEmployeeConfig["agentApprovalPolicies"], key: string, value: boolean) => {
     setForm((current) => {
@@ -1339,9 +1339,9 @@ function OnboardingPanel({
         {activeRuleAgent === "director" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">爆款采集与导演规则</p><p className="mt-1 text-xs text-slate-500">只采集公开内容，不包含广告投流；采集结果用于编导方案，不由内容 Agent 自行改写。</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="AI 推荐关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="点击上方填入基础关键词" /></Field><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="每次最多采集（条）"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">采集近 {collectionLookback} 天公开内容，每次最多 {collectionLimit} 条，按链接与标题去重 30 天。</p></div>}
         {activeRuleAgent === "content" && <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
           <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-black text-blue-950">默认创作流程 · 主题创作</p><p className="mt-1 text-xs text-blue-700">用户只需确定内容主题、补齐系统提示的素材并验收成片。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">统一入口</span></div>
-            <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700">选主题 → 补素材 → 编导 Agent 定方案 → 内容 Agent 成片 → 用户验收</p>
-            <p className="mt-2 text-[10px] leading-relaxed text-blue-700">编导 Agent 会按“正式爆款公式、灵感结构、企业知识安全骨架”的顺序生成完整导演方案；当前公式库为空时自动使用后两级，不要求用户填写脚本。</p>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-black text-blue-950">默认创作流程 · 系统托管</p><p className="mt-1 text-xs text-blue-700">用户只需选择“素材加工”或“爆款裂变”，即使没有可拍摄素材，系统也会给出可执行的成片方案。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">双入口</span></div>
+            <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700">选制作方式 → 系统盘点素材 → 编导 Agent 逐镜定方案 → 内容 Agent 成片 → 用户验收</p>
+            <p className="mt-2 text-[10px] leading-relaxed text-blue-700">爆款裂变优先复刻参考视频的前三秒钩子、信息顺序和镜头节奏；内容 Agent 会为每个镜头选择真实素材、数字人、授权素材或生成画面，并通过改写表达与视觉细节降低同质化。</p>
           </div>
           <Field label="主语言"><select className={inputClass} value={form.videoDefaults?.language || 'en'} onChange={e => { const language=e.target.value; set('videoDefaults', { ...form.videoDefaults, language }); set('videoLanguages', [language, ...(form.videoLanguages || []).filter(item=>item!==language)]); }}><option value="en">英语</option><option value="zh">中文</option><option value="es">西班牙语</option><option value="fr">法语</option><option value="de">德语</option></select></Field>
           <Field label="默认出镜方式"><select className={inputClass} value={form.videoDefaults?.presenter || 'material'} onChange={e => set('videoDefaults', { ...form.videoDefaults, presenter: e.target.value as 'material' | 'heygen' })}><option value="material">素材视频</option><option value="heygen">HeyGen 数字人口播</option></select></Field>
@@ -1393,7 +1393,7 @@ function OnboardingPanel({
         )}
         <div className="mt-2 flex flex-wrap gap-2">
           {activeRuleAgent === "director" ? <>
-            <button type="button" aria-pressed={themeContentEnabled} onClick={toggleThemeContentCreation} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${themeContentEnabled?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${themeContentEnabled?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{themeContentEnabled&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">主题内容制作</span><span className="block truncate text-[9px] text-slate-400">选主题、补素材，系统自动匹配内容结构并进入制作</span></span><span className={`text-[9px] font-bold ${themeContentEnabled?"text-emerald-700":"text-slate-400"}`}>{themeContentEnabled?"已启用":"未启用"}</span></button>
+            <button type="button" aria-pressed={themeContentEnabled} onClick={toggleThemeContentCreation} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${themeContentEnabled?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${themeContentEnabled?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{themeContentEnabled&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">社媒视频制作</span><span className="block truncate text-[9px] text-slate-400">素材加工或爆款裂变；没有素材也可由系统托管生成</span></span><span className={`text-[9px] font-bold ${themeContentEnabled?"text-emerald-700":"text-slate-400"}`}>{themeContentEnabled?"已启用":"未启用"}</span></button>
             {agentRoleGroups.find((agent) => agent.id === "director")?.workflows.filter(id => id === "scheduled_social").map(id=>{const option=workflowOptions.find(item=>item.id===id)!;const checked=form.enabledWorkflows.includes(id);return <button key={id} type="button" aria-pressed={checked} onClick={()=>toggleWorkflow(id)} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${checked?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{checked&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">{option.label}</span><span className="block truncate text-[9px] text-slate-400">{option.detail}</span></span><span className={`text-[9px] font-bold ${checked?"text-emerald-700":"text-slate-400"}`}>{checked?"已启用":"未启用"}</span></button>})}
           </> : agentRoleGroups.filter((agent) => agent.id === activeRuleAgent).map((agent) => {
             return agent.workflows.map(id=>{const option=workflowOptions.find(item=>item.id===id)!;const checked=form.enabledWorkflows.includes(id);return <button key={id} type="button" aria-pressed={checked} onClick={()=>toggleWorkflow(id)} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${checked?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{checked&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">{option.label}</span><span className="block truncate text-[9px] text-slate-400">{option.detail}</span></span><span className={`text-[9px] font-bold ${checked?"text-emerald-700":"text-slate-400"}`}>{checked?"已启用":"未启用"}</span></button>});
@@ -2156,9 +2156,9 @@ const businessLoopStages: Array<{
   },
   {
     title: "内容生产",
-    caption: "从主题和素材出发",
+    caption: "双入口，一键托管",
     page: "socialInspiration",
-    steps: ["确定主题", "补齐待拍素材", "匹配内容结构"],
+    steps: ["选择素材加工 / 爆款裂变", "编导逐镜分析", "内容 Agent 自动供给画面"],
     tone: "border-blue-200 bg-blue-50 text-blue-800",
   },
   {

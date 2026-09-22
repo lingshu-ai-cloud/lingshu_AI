@@ -17,7 +17,12 @@ import type { SocialContentSourceOption, SocialContentTaskDetail } from '../../.
 import { socialContentMaterialPolicy } from '../../../shared/socialContentMaterialPolicy';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { SOCIAL_CONTENT_MAX_TASK_FILE_BYTES, validateSocialContentFile } from '../../lib/socialContentFiles';
-import type { SocialContentDraft } from '../../lib/socialContentModel';
+import {
+  SOCIAL_CONTENT_MATERIAL_INPUT_LABEL,
+  socialContentMaterialCanStart,
+  type SocialContentDraft,
+  type SocialContentMaterialInput,
+} from '../../lib/socialContentModel';
 import {
   SOCIAL_CONTENT_SOURCE_QUERY_MAX_LENGTH,
   mergeSocialContentSourceOptions,
@@ -150,7 +155,16 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
   const imageCount = existingSources.filter(source => source.kind === 'material' && imagePattern.test(source.label)).length
     + selectedMaterials.filter(source => /image/i.test(source.type) || imagePattern.test(source.label)).length
     + files.filter(file => /^image\//i.test(file.type) || imagePattern.test(file.name)).length;
-  const hasMaterial = hasVideo || imageCount >= 2;
+  const hasMaterial = socialContentMaterialCanStart(draft.materialInput, {
+    hasVideo,
+    imageCount,
+    referenceLinkCount: draft.referenceLinks.length,
+  });
+  const materialOptions: Array<{ id: SocialContentMaterialInput; detail: string }> = [
+    { id: 'ready', detail: '上传原始视频或多张图片' },
+    { id: 'limited', detail: '一个商品链接或一张图片即可' },
+    { id: 'none', detail: '由系统选择数字人和可生成画面' },
+  ];
   const addFiles = (incoming: FileList | null) => {
     if (!incoming) return;
     const next = [...files];
@@ -168,24 +182,36 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
   };
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-xs leading-5 text-emerald-950"><span className="font-black">最省事的方式：{materialPolicy.quickStartTitle}。</span> 不需要先剪辑，也不用写脚本；系统会自动挑选不同镜头、生成自然口播和字幕。{materialPolicy.quickStartDetail}</div>
+      <section className="rounded-xl border border-border bg-white p-4">
+        <div className="flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-sm font-black text-text-primary">确认你的素材情况</h3><p className="mt-1 text-[11px] text-text-muted">选“完全没素材”后可以直接继续，系统不会要求补拍。</p></div><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-800">一键托管已开启</span></div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {materialOptions.map(option => {
+            const active = draft.materialInput === option.id;
+            return <button key={option.id} type="button" aria-pressed={active} onClick={() => update({ materialInput: option.id })} className={`rounded-lg border px-3 py-3 text-left transition ${active ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border hover:border-border-bright'}`}><span className="flex items-center justify-between gap-2"><strong className="text-xs font-black text-text-primary">{SOCIAL_CONTENT_MATERIAL_INPUT_LABEL[option.id]}</strong>{active && <Check size={13} className="text-accent" strokeWidth={3} />}</span><span className="mt-1 block text-[10px] leading-4 text-text-muted">{option.detail}</span></button>;
+          })}
+        </div>
+      </section>
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-xs leading-5 text-emerald-950">
+        {draft.materialInput === 'none' ? <><span className="font-black">没有素材也能开始。</span> 系统会根据已确认的产品信息选择数字人口播、可商用素材、信息图或生成画面，不会虚构你的产品外观、工厂和使用效果。</> : draft.materialInput === 'limited' ? <><span className="font-black">轻素材启动。</span> 提供商品链接或一张产品图即可，系统会保护真实商品信息并补齐其他画面。</> : <><span className="font-black">最省事的方式：{materialPolicy.quickStartTitle}。</span> 不需要先剪辑，也不用写脚本；系统会自动挑选不同镜头、生成自然口播和字幕。{materialPolicy.quickStartDetail}</>}
+      </div>
       <div className="grid gap-2 sm:grid-cols-2" aria-label="可发布质量准备情况">
         {[
-          { ready: hasMaterial, label: materialPolicy.subjectLabel, detail: hasMaterial ? '已就绪，可以生成可发布成片' : '必需：上传视频，或至少 2 份不同图片/短片', icon: Image, required: true },
+          { ready: hasMaterial, label: draft.materialInput === 'none' ? '系统生成方案' : materialPolicy.subjectLabel, detail: hasMaterial ? draft.materialInput === 'none' ? '已选择零素材托管，无需补拍' : '已就绪，可以生成可发布成片' : draft.materialInput === 'limited' ? '请添加一个商品链接或一张产品图' : '请上传视频，或至少 2 份不同图片/短片', icon: Image, required: draft.materialInput !== 'none' },
           { ready: hasKnowledge, label: '企业资料', detail: hasKnowledge ? '已选择可核验资料' : '选填：不提供时不会编造参数或功效', icon: Building2, required: false },
         ].map(item => <div key={item.label} className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${item.ready ? 'border-emerald-100 bg-emerald-50/65' : item.required ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-slate-50/70'}`}><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ${item.ready ? 'text-emerald-700' : item.required ? 'text-amber-700' : 'text-slate-600'}`}>{item.ready ? <CheckCircle2 size={17} /> : <item.icon size={17} />}</span><div><p className="text-xs font-black text-text-primary">{item.label}<span className={`ml-2 text-[10px] ${item.ready ? 'text-emerald-700' : item.required ? 'text-amber-700' : 'text-slate-500'}`}>{item.ready ? '已就绪' : item.required ? '生成前必需' : '选填增强'}</span></p><p className="mt-0.5 text-[10px] text-text-muted">{item.detail}</p></div></div>)}
       </div>
       {existingSources.length > 0 && <section className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"><p className="text-xs font-bold text-emerald-900">已关联 {existingSources.length} 项资料</p><div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">{existingSources.map(source => <span key={source.sourceId} className="inline-flex max-w-[260px] items-center gap-1 rounded-lg bg-white py-1 pl-2 pr-1 text-[11px] text-text-secondary"><span className="truncate">{source.label}</span><button type="button" aria-label={`移除关联 ${source.label}`} onClick={() => update({ removedSourceIds: [...draft.removedSourceIds, source.sourceId] })} className="shrink-0 rounded p-1 text-text-muted hover:bg-rose-50 hover:text-rose-600"><Trash2 size={11} /></button></span>)}</div></section>}
       {removedSources.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-900"><span className="font-bold">将移除 {removedSources.length} 项关联</span>{removedSources.map(source => <button key={source.sourceId} type="button" onClick={() => update({ removedSourceIds: draft.removedSourceIds.filter(id => id !== source.sourceId) })} className="rounded-lg bg-white px-2 py-1 font-bold shadow-sm">撤销 {source.label}</button>)}</div>}
       <div className="grid gap-4 lg:grid-cols-[1fr_1.25fr]">
-        <label className="group flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-emerald-400 bg-emerald-50/55 p-5 text-center transition hover:bg-emerald-50"><FilePlus2 size={24} className="text-emerald-700" /><span className="mt-3 text-sm font-black text-text-primary">{materialPolicy.uploadTitle}</span><span className="mt-1 text-xs text-text-muted">也支持 JPG、PNG、WebP 图片；视频无需提前剪辑，单个不超过 110 MB</span><span className="mt-2 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-emerald-800 shadow-sm">推荐 9:16 · 画面清晰 · {materialPolicy.recommendedShots}</span><input type="file" multiple className="sr-only" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" onChange={event => { addFiles(event.target.files); event.currentTarget.value = ''; }} /></label>
+        <label className="group flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-emerald-400 bg-emerald-50/55 p-5 text-center transition hover:bg-emerald-50"><FilePlus2 size={24} className="text-emerald-700" /><span className="mt-3 text-sm font-black text-text-primary">{draft.materialInput === 'none' ? '有素材时可以补充（选填）' : materialPolicy.uploadTitle}</span><span className="mt-1 text-xs text-text-muted">也支持 JPG、PNG、WebP 图片；视频无需提前剪辑，单个不超过 110 MB</span><span className="mt-2 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-emerald-800 shadow-sm">推荐 9:16 · 画面清晰 · {materialPolicy.recommendedShots}</span><input type="file" multiple className="sr-only" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/webm" onChange={event => { addFiles(event.target.files); event.currentTarget.value = ''; }} /></label>
         <div className="rounded-2xl border border-border bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-text-primary">待上传文件</p><p className="mt-0.5 text-[11px] text-text-muted">最多 20 个，合计不超过 512 MB</p></div><span className="rounded-full bg-surface-2 px-2 py-1 text-[11px] font-bold text-text-secondary">{files.length}</span></div>{files.length === 0 ? <div className="mt-5 flex items-center gap-2 text-xs text-text-muted"><FolderOpen size={15} />尚未选择新文件</div> : <ul className="mt-3 max-h-36 space-y-2 overflow-y-auto">{files.map(file => <li key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-2 rounded-lg bg-surface-2 px-2.5 py-2"><span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{file.name}</span><span className="shrink-0 text-[10px] text-text-muted">{file.size >= 1024 * 1024 ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(file.size / 1024)} KB`}</span><button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles(files.filter(item => item !== file))} className="rounded p-1 text-text-muted hover:bg-white hover:text-rose-600"><Trash2 size={13} /></button></li>)}</ul>}</div>
       </div>
       <SourceLibraryPicker draft={draft} update={update} task={task} files={files} onFileError={onFileError} />
+      {draft.creationPath === 'viral_replication' && <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4"><label className="block text-xs font-black text-amber-950">爆款参考视频链接<span className="ml-1 font-semibold text-amber-800">建议提供，系统会重点分析前三秒和逐镜结构</span><textarea value={draft.referenceLinks.join('\n')} onChange={event => update({ referenceLinks: event.target.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean) })} rows={3} placeholder="粘贴抖音、TikTok、Instagram 或 YouTube 视频链接，每行一个" className={TEXTAREA_CLASS} /></label></section>}
       <details className="rounded-lg border border-border bg-surface-2/45 px-3 py-2.5">
         <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-black text-text-secondary">参考信息与表达限制<span className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted">选填<ChevronDown size={13} /></span></summary>
         <div className="mt-4 space-y-4 border-t border-border pt-4">
-          <label className="block text-xs font-bold text-text-secondary">参考链接<textarea value={draft.referenceLinks.join('\n')} onChange={event => update({ referenceLinks: event.target.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean) })} rows={3} placeholder="每行一个公开链接" className={TEXTAREA_CLASS} /></label>
+          {draft.creationPath !== 'viral_replication' && <label className="block text-xs font-bold text-text-secondary">参考链接<textarea value={draft.referenceLinks.join('\n')} onChange={event => update({ referenceLinks: event.target.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean) })} rows={3} placeholder="每行一个公开链接" className={TEXTAREA_CLASS} /></label>}
           <div className="grid gap-4 md:grid-cols-2"><label className="text-xs font-bold text-text-secondary">待核实任务备注<textarea value={draft.keyFacts} onChange={event => update({ keyFacts: event.target.value })} rows={5} maxLength={3000} placeholder="可填写产品、品牌或客户场景线索；这些内容不会替代企业中心已确认资料" className={TEXTAREA_CLASS} /><span className="mt-1 block text-[10px] font-semibold text-amber-700">备注仅作创作线索，需在企业中心确认后才能作为对外事实。</span></label><div className="space-y-4"><label className="block text-xs font-bold text-text-secondary">不能使用的表达<textarea value={draft.prohibitedClaims} onChange={event => update({ prohibitedClaims: event.target.value })} rows={2} maxLength={2000} placeholder="每行一项" className={TEXTAREA_CLASS} /></label><label className="block text-xs font-bold text-text-secondary">希望客户采取的行动<input value={draft.callToAction} onChange={event => update({ callToAction: event.target.value })} maxLength={500} placeholder="例如：发送产品手册、预约咨询" className={INPUT_CLASS} /></label></div></div>
         </div>
       </details>

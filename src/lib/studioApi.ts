@@ -1,6 +1,7 @@
 import { formatDemoQuotaError } from './studioQuotaMessage';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
+import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 
 const VERIFIED_AI_GENERATION_PATHS = new Set([
   'script',
@@ -882,6 +883,7 @@ export interface Material {
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
   visualObservations?: string[];
+  scriptAnalysis?: MaterialScriptAnalysis;
   createdAt: string;
 }
 

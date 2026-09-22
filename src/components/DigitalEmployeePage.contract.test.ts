@@ -72,10 +72,10 @@ assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available a
 assert.match(pageSource, /系统已准备一套安全默认方案/, 'Agent settings should start with a lightweight confirmation summary');
 assert.match(pageSource, /查看并修改设置/);
 assert.match(pageSource, /确认设置，进入周任务/);
-assert.match(pageSource, /默认创作流程 · 主题创作/, 'content Agent settings must explain the unified theme workflow');
-assert.match(pageSource, /选主题 → 补素材 → 编导 Agent 定方案 → 内容 Agent 成片 → 用户验收/, 'the theme workflow must show the director-to-content handoff');
+assert.match(pageSource, /默认创作流程 · 系统托管/, 'content Agent settings must explain the managed dual-entry workflow');
+assert.match(pageSource, /选制作方式 → 系统盘点素材 → 编导 Agent 逐镜定方案 → 内容 Agent 成片 → 用户验收/, 'the managed workflow must show the director-to-content handoff');
 assert.doesNotMatch(pageSource, /<Field label="默认创作方式">/, 'content Agent settings must not expose the legacy route selector');
-assert.match(pageSource, /activeRuleAgent === "director" \? <>[\s\S]{0,1800}主题内容制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind the director theme-content switch');
+assert.match(pageSource, /activeRuleAgent === "director" \? <>[\s\S]{0,1800}社媒视频制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind the director social-video switch');
 for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {
   assert.match(pageSource, new RegExp(`id: ["']${role}["']`), `settings must expose the ${role} role card`);
 }
@@ -98,7 +98,7 @@ assert.match(pageSource, /系统生成的目标设置（需要时可修改）/);
 assert.doesNotMatch(pageSource, /更多目标设置（可选）/);
 assert.match(pageSource, /本周最想解决什么/);
 assert.match(pageSource, /查看并调整具体视频计划（可选）/);
-assert.match(videoPlanEditorSource, /themeWorkflow \? <div[\s\S]{0,500}主题创作[\s\S]{0,500}系统按主题与素材自动匹配制作路径[\s\S]{0,500}: <label[\s\S]{0,200}脚本来源/, 'theme workflow must replace the route selector with a read-only explanation');
+assert.match(videoPlanEditorSource, /themeWorkflow \? <div[\s\S]{0,500}社媒视频制作[\s\S]{0,500}素材加工与爆款裂变[\s\S]{0,500}: <label[\s\S]{0,200}脚本来源/, 'social-video workflow must replace the route selector with a read-only dual-entry explanation');
 assert.match(videoPlanEditorSource, /themeWorkflow \? '内容参考' : '爆款参考'/, 'legacy clone plans must use a neutral reference label in theme workflow mode');
 assert.match(pageSource, /workspaceView === "overview" && <BusinessLineNav/, 'legacy business filters belong only to production; review has insight categories');
 assert.doesNotMatch(pageSource, /frontend_preview|BUSINESS_PREVIEW|PreviewExecutionPanel|示例数据预览中|查看示例数据/, 'the production cockpit must not contain or expose synthetic operating receipts');
@@ -111,7 +111,7 @@ assert.match(pageSource, /workspaceView === ["']live["'][\s\S]{0,25000}<Producti
 assert.match(pageSource, /workspaceView === ["']review["'][\s\S]{0,5000}<WeeklyReviewPanel/, 'Weekly Review must have its own render branch');
 assert.match(pageSource, /workspaceView === ["']rules["'][\s\S]{0,8000}(?:OnboardingPanel|approvalPolicy|\u89c4\u5219)/, 'Rules and Permissions must have its own render branch');
 
-for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u786e\u5b9a\u4e3b\u9898', '\u8865\u9f50\u5f85\u62cd\u7d20\u6750', '\u5339\u914d\u5185\u5bb9\u7ed3\u6784', '\u5185\u5bb9\u53d1\u5e03', '\u5ba2\u6237\u5206\u5c42', '\u6279\u91cf\u8ddf\u8fdb']) {
+for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u9009\u62e9\u7d20\u6750\u52a0\u5de5 / \u7206\u6b3e\u88c2\u53d8', '\u7f16\u5bfc\u9010\u955c\u5206\u6790', '\u5185\u5bb9 Agent \u81ea\u52a8\u4f9b\u7ed9\u753b\u9762', '\u5185\u5bb9\u53d1\u5e03', '\u5ba2\u6237\u5206\u5c42', '\u6279\u91cf\u8ddf\u8fdb']) {
   assert.match(pageSource, new RegExp(capability), `task-flow map must expose ${capability}`);
 }
 assert.match(pageSource, /\u6570\u5b57\u5458\u5de5\u4efb\u52a1\u6d41\u8f6c\u56fe/, 'the business-native task-flow diagram must remain visible');

@@ -33,12 +33,24 @@ export type SocialSourceKind = typeof SOCIAL_SOURCE_KINDS[number];
 export const SOCIAL_CONTENT_TASK_MODES = ['weekly', 'instant'] as const;
 export type SocialContentTaskMode = typeof SOCIAL_CONTENT_TASK_MODES[number];
 
+/** The two customer-facing creation entries. Scheduling remains a separate concern. */
+export const SOCIAL_CONTENT_CREATION_MODES = ['material_processing', 'viral_replication'] as const;
+export type SocialContentCreationMode = typeof SOCIAL_CONTENT_CREATION_MODES[number];
+
+/** Readiness of customer-owned visual material; `none` is a supported starting state. */
+export const SOCIAL_ASSET_AVAILABILITIES = ['ready', 'limited', 'none'] as const;
+export type SocialAssetAvailability = typeof SOCIAL_ASSET_AVAILABILITIES[number];
+
+/** One-click managed is the default experience; advanced exposes optional shot controls. */
+export const SOCIAL_CONTENT_MANAGEMENT_MODES = ['one_click_managed', 'advanced'] as const;
+export type SocialContentManagementMode = typeof SOCIAL_CONTENT_MANAGEMENT_MODES[number];
+
 /**
- * `social_ready` is the customer default: a task may only start when real,
- * explicitly linked material is present and automatic production may not
- * replace it with generic title cards. `concept_preview` is retained for
- * historic/internal draft workflows where a non-publishable visual sketch is
- * still useful.
+ * `social_ready` means the task targets delivery-quality social content. It no
+ * longer implies that customer-shot material must already exist: a task with
+ * `limited` or `none` availability may start when it has a truthful,
+ * executable asset-supply plan. `concept_preview` is retained for historic or
+ * internal non-publishable visual sketches.
  */
 export const SOCIAL_CONTENT_PRODUCTION_MODES = ['social_ready', 'concept_preview'] as const;
 export type SocialContentProductionMode = typeof SOCIAL_CONTENT_PRODUCTION_MODES[number];
@@ -106,6 +118,199 @@ export interface SocialMaterialReadiness {
   requiredCount: number;
   satisfiedRequiredCount: number;
   blockingRequirementIds: string[];
+}
+
+export const SOCIAL_ASSET_SUPPLY_ROUTES = [
+  'real_asset_enhancement',
+  'product_anchored_generation',
+  'zero_asset_generation',
+] as const;
+export type SocialAssetSupplyRoute = typeof SOCIAL_ASSET_SUPPLY_ROUTES[number];
+
+export const SOCIAL_SHOT_FUNCTIONS = [
+  'hook',
+  'problem',
+  'value',
+  'demonstration',
+  'proof',
+  'trust',
+  'transition',
+  'call_to_action',
+] as const;
+export type SocialShotFunction = typeof SOCIAL_SHOT_FUNCTIONS[number];
+
+export const SOCIAL_TRUTH_SENSITIVE_SUBJECTS = [
+  'none',
+  'customer_factory',
+  'customer_case',
+  'product_effect',
+] as const;
+export type SocialTruthSensitiveSubject = typeof SOCIAL_TRUTH_SENSITIVE_SUBJECTS[number];
+
+export const SOCIAL_SHOT_SOURCE_STRATEGIES = [
+  'customer_real_asset',
+  'customer_product_image_animation',
+  'authorized_digital_presenter',
+  'licensed_stock_asset',
+  'non_evidentiary_ai_visual',
+  'motion_graphics',
+  'verified_fact_card',
+] as const;
+export type SocialShotSourceStrategy = typeof SOCIAL_SHOT_SOURCE_STRATEGIES[number];
+
+export const SOCIAL_TRUTH_PROHIBITIONS = [
+  'depict_generated_factory_as_customer_factory',
+  'invent_customer_case_or_results',
+  'depict_generated_effect_as_verified_product_result',
+  'alter_locked_product_identity',
+  'present_synthetic_media_as_customer_evidence',
+] as const;
+export type SocialTruthProhibition = typeof SOCIAL_TRUTH_PROHIBITIONS[number];
+
+/** Public truth boundary used by both the Director and Content Agent. */
+export interface SocialShotTruthBoundary {
+  subject: SocialTruthSensitiveSubject;
+  /** Synthetic media may explain the topic, but it may not act as customer evidence. */
+  syntheticVisualAllowed: boolean;
+  customerEvidenceRequired: boolean;
+  customerEvidenceRefs: string[];
+  confirmedFactRefs: string[];
+  mustNotImplyCustomerReality: boolean;
+  prohibitedRepresentations: SocialTruthProhibition[];
+}
+
+/** How an unavailable reference shot keeps its job without inventing evidence. */
+export interface SocialFunctionalEquivalentReplacement {
+  required: boolean;
+  preservesFunction: SocialShotFunction;
+  replacesSubject: SocialTruthSensitiveSubject | null;
+  description: string | null;
+  reason: string | null;
+}
+
+export interface SocialAssetSupplyShotPlan {
+  shotId: string;
+  function: SocialShotFunction;
+  requestedDescription: string | null;
+  sourceStrategy: SocialShotSourceStrategy;
+  sourceRefs: string[];
+  fallbackSourceStrategy: SocialShotSourceStrategy | null;
+  productionInstruction: string;
+  truthBoundary: SocialShotTruthBoundary;
+  functionalEquivalentReplacement: SocialFunctionalEquivalentReplacement;
+  customerShootRequired: false;
+}
+
+/**
+ * A complete, customer-safe source plan. Missing visual assets are solved by
+ * the system; only unconfirmed facts or rights may remain as customer actions.
+ */
+export interface SocialAssetSupplyPlan {
+  planVersion: string;
+  creationMode: SocialContentCreationMode;
+  assetAvailability: SocialAssetAvailability;
+  managementMode: SocialContentManagementMode;
+  productionRoute: SocialAssetSupplyRoute;
+  status: 'ready' | 'requires_fact_confirmation' | 'requires_rights_confirmation';
+  canProduceWithoutCustomerShoot: boolean;
+  customerActions: Array<'confirm_facts' | 'confirm_rights'>;
+  systemActions: string[];
+  optionalEnhancements: string[];
+  shots: SocialAssetSupplyShotPlan[];
+}
+
+export interface SocialReferenceShotTags {
+  sceneTypes: string[];
+  subjects: string[];
+  subjectRelations: string[];
+  cameraLanguage: string[];
+  contentFunctions: SocialShotFunction[];
+  soundTypes: string[];
+  onScreenInformation: string[];
+  truthRequirements: SocialTruthSensitiveSubject[];
+  suggestedProductionMethods: SocialShotSourceStrategy[];
+}
+
+/** A multimodal, shot-level reading of one reference video; never a reusable formula. */
+export interface SocialReferenceShotAnalysis {
+  shotId: string;
+  startSeconds: number;
+  endSeconds: number;
+  visualDescription: string;
+  spokenText: string | null;
+  captionText: string | null;
+  audioDescription: string | null;
+  rhythmDescription: string;
+  purpose: SocialShotFunction;
+  tags: SocialReferenceShotTags;
+  fidelityPoints: string[];
+  mustDifferPoints: string[];
+}
+
+export interface SocialThreeSecondHook {
+  hookId: string;
+  role: 'primary' | 'alternative';
+  firstFrame: string;
+  firstSecondAction: string;
+  spokenLine: string | null;
+  caption: string | null;
+  mechanism: string;
+  audiovisualPlan: string;
+  sourceStrategy: SocialShotSourceStrategy;
+  truthBoundary: SocialShotTruthBoundary;
+  referencePoints: string[];
+  mustDifferPoints: string[];
+  status: 'draft' | 'recommended' | 'confirmed' | 'rejected';
+}
+
+export interface SocialReferenceVideoAnalysis {
+  analysisId: string;
+  referenceSourceId: string;
+  status: 'analyzing' | 'ready' | 'blocked';
+  durationSeconds: number | null;
+  shots: SocialReferenceShotAnalysis[];
+  hookAnalysis: SocialThreeSecondHook | null;
+  rightsNotice: string;
+  createdAt: string;
+}
+
+export interface SocialReplicationScriptShot {
+  shotId: string;
+  referenceShotId: string | null;
+  startSeconds: number;
+  endSeconds: number;
+  purpose: SocialShotFunction;
+  visualInstruction: string;
+  spokenText: string | null;
+  captionText: string | null;
+  audioAndTransition: string | null;
+  fidelityPoints: string[];
+  mustDifferPoints: string[];
+  materialPlan: SocialAssetSupplyShotPlan;
+  lockedRegions: string[];
+  risks: string[];
+}
+
+export interface SocialReplicationScriptVersion {
+  version: string;
+  referenceAnalysisId: string;
+  status: 'draft' | 'review_required' | 'confirmed' | 'superseded';
+  primaryHookId: string;
+  hookOptions: SocialThreeSecondHook[];
+  shots: SocialReplicationScriptShot[];
+  structureFidelitySummary: string;
+  originalityDifferenceSummary: string;
+  createdAt: string;
+}
+
+export interface SocialShotMaterialMapEntry {
+  shotId: string;
+  customerAssetIds: string[];
+  generatedAssetIds: string[];
+  licensedAssetIds: string[];
+  sourceStrategy: SocialShotSourceStrategy;
+  truthBoundary: SocialShotTruthBoundary;
+  functionalEquivalentReplacement: SocialFunctionalEquivalentReplacement;
 }
 
 export const SOCIAL_ARTIFACT_STATUSES = ['draft', 'review_required', 'approved', 'changes_requested', 'superseded'] as const;
@@ -189,6 +394,12 @@ export interface SocialContentTaskBrief {
   brandNotes: string | null;
   restrictions: string[];
   callToAction: string | null;
+  /** New two-entry workflow. Omitted on historic tasks. */
+  creationMode?: SocialContentCreationMode;
+  /** Customer visual readiness is informative and must never be the sole blocker. */
+  assetAvailability?: SocialAssetAvailability;
+  /** Defaults to one-click managed for newly created customer tasks. */
+  managementMode?: SocialContentManagementMode;
   /** Always present on newly created tasks; optional for historic projections. */
   productionMode?: SocialContentProductionMode;
 }
@@ -196,13 +407,15 @@ export interface SocialContentTaskBrief {
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
 export interface SocialScriptBaselineSummary {
   version: string;
-  source: 'formula' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline';
+  source: 'reference_analysis' | 'asset_supply_plan' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline' | 'formula';
   sceneCount: number;
   language: 'zh' | 'en';
   lockedAt: string;
   /** Public lineage only; internal formula/script identifiers remain private. */
   matchConfidence?: number;
   groundingVersion?: string;
+  /** Active task reference source; absent for system recommendations and historic records. */
+  referenceSourceId?: string | null;
 }
 
 /**
@@ -214,11 +427,12 @@ export interface SocialScriptBaselineSummary {
 export interface SocialDirectorPlanSummary {
   version: string;
   status: 'ready' | 'blocked';
-  scriptSource: 'formula' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline';
+  scriptSource: 'reference_analysis' | 'asset_supply_plan' | 'inspiration_script' | 'knowledge_fallback' | 'system_theme_baseline' | 'formula';
   baselineVersion: string;
   sceneCount: number;
   language: 'zh' | 'en';
   createdAt: string;
+  /** @deprecated Kept only while historic formula-backed plans remain readable. */
   formulaConfigured: boolean;
   qualityPassed: boolean;
   reshootSuggestionCount: number;
@@ -226,6 +440,8 @@ export interface SocialDirectorPlanSummary {
   voiceoverSummary: string;
   subtitleSummary: string;
   shotRhythmSummary: string;
+  /** Active task reference source; null for a clearly-labelled system recommendation. */
+  referenceSourceId?: string | null;
 }
 
 export interface SocialContentTaskSummary {
@@ -257,6 +473,7 @@ export interface SocialContentTaskSummary {
   weeklyPlanId?: string | null;
   theme?: SocialContentThemeSelection | null;
   materialReadiness?: SocialMaterialReadiness;
+  assetSupplyPlan?: SocialAssetSupplyPlan;
   scriptBaseline?: SocialScriptBaselineSummary;
   /** Present after the Director Agent has handed a locked plan to Content Agent. */
   directorPlan?: SocialDirectorPlanSummary;
@@ -371,6 +588,9 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   publications: SocialPublicationRecord[];
   metricSubmissions: SocialMetricSubmission[];
   materialRequirements?: SocialMaterialRequirement[];
+  referenceVideoAnalysis?: SocialReferenceVideoAnalysis | null;
+  replicationScript?: SocialReplicationScriptVersion | null;
+  shotMaterialMap?: SocialShotMaterialMapEntry[];
 }
 
 export interface SocialWeeklyPlanItemInput {
@@ -443,6 +663,9 @@ export interface CreateSocialContentTaskInput {
   brandNotes?: string | null;
   restrictions?: string[];
   callToAction?: string | null;
+  creationMode?: SocialContentCreationMode;
+  assetAvailability?: SocialAssetAvailability;
+  managementMode?: SocialContentManagementMode;
   productionMode?: SocialContentProductionMode;
   mode?: SocialContentTaskMode;
   weeklyPlanId?: string | null;

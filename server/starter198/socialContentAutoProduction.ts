@@ -9,7 +9,6 @@ import type {
   SocialContentThemeId,
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
-import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
@@ -26,6 +25,7 @@ import {
   inspectTransientSocialContentFile,
   registerSocialContentFile,
   socialContentFileDownloadUrl,
+  type SocialContentBackendFilePort,
 } from './socialContentFiles.js';
 import {
   materializeSocialContentCloudMaterial,
@@ -57,6 +57,11 @@ import {
   type SocialProductionAsset,
   type SocialProductionPlan,
 } from './socialContentProductionPlan.js';
+import {
+  executeSocialAssetSupplyPlan,
+  type SocialAssetSupplyExecution,
+  type SocialAssetSupplyProviderAdapter,
+} from './socialContentAssetSupplyExecution.js';
 import {
   buildSocialDirectorPlan,
   parseStoredSocialDirectorPlan,
@@ -379,6 +384,7 @@ async function taskProductionAssets(input: {
   productionMode: NonNullable<SocialContentTaskBrief['productionMode']>;
   outputDirectory: string;
   cloudMaterialPort?: SocialContentCloudMaterialPort;
+  allowAuthorizedSharedLibrary?: boolean;
 }): Promise<ProductionAsset[]> {
   const inventory = await readMaterialLibrary(input.tenantId);
   if (inventory.status === 'unavailable') throw new Error('素材库暂时不可用，请稍后重试');
@@ -410,7 +416,11 @@ async function taskProductionAssets(input: {
   // product video simply because it scores well on generic theme keywords.
   const candidates = [
     ...linkedCandidates,
-    ...(input.productionMode === 'concept_preview' ? libraryCandidates : []),
+    ...(input.productionMode === 'concept_preview'
+      ? libraryCandidates
+      : input.allowAuthorizedSharedLibrary
+        ? libraryCandidates.filter(candidate => candidate.origin === 'shared_library')
+        : []),
   ]
     .sort((left, right) => automaticMaterialScore({
       record: right.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: right.linked,
@@ -450,6 +460,9 @@ async function taskProductionAssets(input: {
       ...(socialText(record.objectKey) ? { objectKey: socialText(record.objectKey) } : {}),
       ...(socialText(record.contentSha256 || record.sha256 || location.sha256)
         ? { contentHash: socialText(record.contentSha256 || record.sha256 || location.sha256) }
+        : {}),
+      ...(candidate.origin === 'shared_library'
+        ? { authorizationRef: socialText(record.licenseEvidence || record.licenseName) }
         : {}),
       duration: Math.max(0, Number(record.duration || 0)),
       visualObservations: [record.visualObservations, record.observations]
@@ -523,6 +536,117 @@ export async function systemThemeGraphicAssets(input: {
     });
   }
   return assets;
+}
+
+function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[] {
+  const customerAsset: SocialAssetSupplyProviderAdapter = {
+    adapterId: 'existing_customer_asset.v1',
+    sourceStrategies: ['customer_real_asset', 'customer_product_image_animation'],
+    async execute(context) {
+      const asset = context.availableAssets.find(candidate => (
+        context.shot.sourceRefs.includes(candidate.sourceId) || context.shot.sourceRefs.includes(candidate.id)
+      ));
+      if (!asset) return null;
+      const customerEvidence = context.shot.truthBoundary.customerEvidenceRefs.includes(asset.sourceId)
+        || context.shot.truthBoundary.customerEvidenceRefs.includes(asset.id);
+      return {
+        asset,
+        sourceStrategy: context.shot.sourceStrategy,
+        providerId: this.adapterId,
+        sourceRef: context.shot.sourceRefs.find(ref => ref === asset.sourceId || ref === asset.id) ?? asset.sourceId,
+        synthetic: false,
+        representation: customerEvidence ? 'customer_evidence' : 'non_evidentiary_visual',
+        authorizationRef: 'tenant_task_upload_warranty',
+        disclosure: null,
+      };
+    },
+  };
+  const licensedStock: SocialAssetSupplyProviderAdapter = {
+    adapterId: 'authorized_shared_library.v1',
+    sourceStrategies: ['licensed_stock_asset'],
+    async execute(context) {
+      const asset = context.availableAssets.find(candidate => candidate.selectionOrigin === 'shared_library'
+        && (!context.shot.sourceRefs.length
+          || context.shot.sourceRefs.includes(candidate.sourceId)
+          || context.shot.sourceRefs.includes(candidate.id)));
+      if (!asset) return null;
+      return {
+        asset,
+        sourceStrategy: 'licensed_stock_asset',
+        providerId: this.adapterId,
+        sourceRef: asset.sourceId,
+        synthetic: false,
+        representation: 'non_evidentiary_visual',
+        authorizationRef: asset.authorizationRef || null,
+        disclosure: '授权素材 · 非客户实拍',
+      };
+    },
+  };
+  const safeGraphics: SocialAssetSupplyProviderAdapter = {
+    adapterId: 'system_safe_motion_graphics.v1',
+    sourceStrategies: ['motion_graphics', 'verified_fact_card'],
+    async execute(context) {
+      const index = [...context.baselineScene.sceneId].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 4;
+      const palette = [
+        ['#073b32', '#20a36a', '#d8f7e9'],
+        ['#102a43', '#3977c3', '#dcecff'],
+        ['#3b245c', '#8b5cc7', '#f0e6ff'],
+        ['#4a2b13', '#c87932', '#fff0dc'],
+      ] as const;
+      const [dark, accent, light] = palette[index % palette.length]!;
+      const title = safeGraphicText(context.baselineScene.shotFunction, 18) || '内容要点';
+      const sensitive = context.shot.truthBoundary.subject !== 'none';
+      const replacement = safeGraphicText(
+        context.shot.functionalEquivalentReplacement.description || context.baselineScene.subject,
+        30,
+      ) || '通用主题说明';
+      const disclosure = sensitive ? '示意画面 · 非客户实拍/案例/效果' : '系统生成说明画面';
+      const filename = `asset-supply-${index + 1}-${context.shot.shotId.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`;
+      const localPath = path.join(context.outputDirectory, filename);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
+        <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${dark}"/><stop offset="1" stop-color="${accent}"/></linearGradient></defs>
+        <rect width="720" height="1280" fill="url(#g)"/>
+        <circle cx="620" cy="160" r="210" fill="${light}" opacity=".12"/><circle cx="90" cy="1100" r="260" fill="${light}" opacity=".09"/>
+        <rect x="54" y="350" width="612" height="560" rx="36" fill="#fff" opacity=".95"/>
+        <text x="94" y="450" fill="${accent}" font-size="26" font-family="Arial, PingFang SC, sans-serif" font-weight="700">${escapeSvg(disclosure)}</text>
+        <text x="94" y="570" fill="${dark}" font-size="56" font-family="Arial, PingFang SC, sans-serif" font-weight="800">${escapeSvg(title)}</text>
+        <text x="94" y="680" fill="#324b45" font-size="30" font-family="Arial, PingFang SC, sans-serif">${escapeSvg(replacement)}</text>
+        <text x="94" y="825" fill="#60736e" font-size="23" font-family="Arial, PingFang SC, sans-serif">不作为客户工厂、案例或产品效果证据</text>
+      </svg>`;
+      await sharp(Buffer.from(svg)).png().toFile(localPath);
+      const contentHash = createHash('sha256').update(await fsp.readFile(localPath)).digest('hex');
+      const asset: ProductionAsset = {
+        id: `asset-supply-${context.taskId}-${context.shot.shotId}`,
+        name: `${title} · ${disclosure}`,
+        type: 'image',
+        sourceId: `asset_supply_${context.shot.shotId}`,
+        url: localPath,
+        localPath,
+        contentHash,
+        duration: 2.8,
+        visualObservations: [
+          `${context.baselineScene.shotFunction} ${context.baselineScene.subject} ${context.baselineScene.action}`,
+          disclosure,
+          context.shot.productionInstruction,
+        ],
+        segments: [],
+        selectionOrigin: 'system_graphic',
+      };
+      return {
+        asset,
+        sourceStrategy: context.shot.sourceStrategy,
+        providerId: this.adapterId,
+        sourceRef: context.shot.sourceRefs[0] ?? null,
+        synthetic: true,
+        representation: 'non_evidentiary_visual',
+        authorizationRef: context.shot.sourceStrategy === 'verified_fact_card'
+          ? context.shot.truthBoundary.confirmedFactRefs.join(',') || null
+          : 'lingshu_system_generated',
+        disclosure,
+      };
+    },
+  };
+  return [customerAsset, licensedStock, safeGraphics];
 }
 
 async function analyzeProductionAssets(input: {
@@ -620,6 +744,36 @@ function productionAdaptation(plan: SocialProductionPlan, sourceAssetCount: numb
       };
     }),
   };
+}
+
+function zeroAssetNarration(value: string): string {
+  return value
+    .replace(/别急着划走，先看它真实上手。/g, '别急着划走，先看这组产品信息。')
+    .replace(/外观、质地和使用过程，都给你拍清楚。/g, '外观、要点和使用步骤，依次说明。')
+    .replace(/先看真实场景/g, '先看场景示意')
+    .replace(/结果只说明画面中能够确认的部分/g, '结果只说明已经确认的资料')
+    .replace(/真实上手/g, '使用思路')
+    .replace(/真实操作/g, '操作步骤')
+    .replace(/真实可见/g, '逐项说明')
+    .replace(/镜头里的真实呈现/g, '已经确认的资料')
+    .replace(/(?:都|逐个)?拍清楚/g, '逐项说明')
+    .replace(/拍给你看/g, '依次说明')
+    .replace(/one real look at the product/gi, 'a clear overview of the product topic')
+    .replace(/the real scenario/gi, 'the scenario outline')
+    .replace(/visually supported results/gi, 'confirmed information');
+}
+
+/** A zero-asset route may reuse a governed promotional baseline, but its
+ * spoken output must never say that a generated card is real footage. */
+export function applyZeroAssetTruthSafeNarration(plan: SocialProductionPlan): SocialProductionPlan {
+  const scenes = plan.scenes.map(scene => ({ ...scene, narration: zeroAssetNarration(scene.narration) }));
+  const changed = scenes.some((scene, index) => scene.narration !== plan.scenes[index]?.narration);
+  return changed ? {
+    ...plan,
+    scenes,
+    narrationChanged: true,
+    notes: [...plan.notes, '零素材真实性门禁已移除“真实实拍/真实效果”等无法由当前画面证明的口播表达。'],
+  } : plan;
 }
 
 /** Convert review prose into a small, auditable set of director controls.
@@ -910,12 +1064,29 @@ async function failExecution(input: {
   }).catch(() => undefined);
 }
 
+export interface SocialContentAutoProductionRuntime {
+  selectDirectorBgm?: typeof selectDirectorBgm;
+  synthesizeVoice?: typeof synthesizeStudioVoiceForAutomation;
+  resolveBgm?: typeof resolveLockedBgm;
+  renderComposite?: typeof composite;
+  inspectVisuals?: typeof inspectRenderedVisuals;
+  inspectScenes?: typeof inspectRenderedScenes;
+  runFfmpeg?: typeof runVisualFfmpeg;
+  createCover?: typeof createVideoCover;
+  backendFilePort?: SocialContentBackendFilePort;
+}
+
 export async function runSocialContentAutoProduction(input: {
   repository: Starter198Repository;
   tenantId: string;
   userId: string;
   taskId: string;
   runId: string;
+  /** Optional providers are explicitly registered by the deployment. Missing
+   * digital-human/stock/AI providers remain visible fallback attempts. */
+  assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[];
+  /** Deterministic ports for worker-level tests and alternate local runtimes. */
+  runtime?: SocialContentAutoProductionRuntime;
 }): Promise<void> {
   const detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
@@ -1024,19 +1195,46 @@ export async function runSocialContentAutoProduction(input: {
     },
   });
 
-  await withSocialContentRenderWorkspace(async outputDir => {
-  let activeBaseline = initialBaseline;
-  const productionMode = detail.brief.productionMode ?? 'concept_preview';
-  const rawAssets = await taskProductionAssets({
-    tenantId: input.tenantId,
-    sources: detail.sources,
-    productRef: detail.brief.productRef,
-    themeId: detail.theme?.themeId ?? null,
-    productionMode,
-    outputDirectory: outputDir,
-  });
-  const analyzed = await analyzeProductionAssets({ tenantId: input.tenantId, assets: rawAssets });
-  let assets = analyzed.assets;
+	  await withSocialContentRenderWorkspace(async outputDir => {
+	  let activeBaseline = initialBaseline;
+	  const productionMode = detail.brief.productionMode ?? 'concept_preview';
+	  const zeroAssetRoute = detail.assetSupplyPlan?.productionRoute === 'zero_asset_generation';
+	  const rawAssets = await taskProductionAssets({
+	    tenantId: input.tenantId,
+	    sources: detail.sources,
+	    productRef: detail.brief.productRef,
+	    themeId: detail.theme?.themeId ?? null,
+	    productionMode,
+	    outputDirectory: outputDir,
+	    allowAuthorizedSharedLibrary: zeroAssetRoute,
+	  }).catch(error => {
+	    if (zeroAssetRoute) return [];
+	    throw error;
+	  });
+	  const analyzed = await analyzeProductionAssets({ tenantId: input.tenantId, assets: rawAssets });
+	  let assets = analyzed.assets;
+	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
+	  if (zeroAssetRoute && detail.assetSupplyPlan) {
+	    const supplied = await executeSocialAssetSupplyPlan({
+	      tenantId: input.tenantId,
+	      taskId: input.taskId,
+	      outputDirectory: outputDir,
+	      plan: detail.assetSupplyPlan,
+	      baseline: activeBaseline,
+	      availableAssets: assets,
+	      adapters: [...(input.assetSupplyAdapters ?? []), ...existingAssetSupplyAdapters()],
+	    });
+	    // Only assets selected by the governed per-shot router may enter a
+	    // zero-asset render. Ambient shared inventory cannot bypass its trace.
+	    assets = supplied.assets;
+	    assetSupplyExecution = supplied.execution;
+	    await writeExecutionStage({
+	      ...input,
+	      stage: 'asset_supply_completed',
+	      message: '内容 Agent 已逐镜完成零素材来源路由和真实性边界检查。',
+	      extra: { assetSupplyExecution },
+	    });
+	  }
   if (['knowledge_fallback', 'system_theme_baseline'].includes(activeBaseline.source)
     && !activeBaseline.formulaReference
     && !activeBaseline.match?.inspirationReference) {
@@ -1071,12 +1269,14 @@ export async function runSocialContentAutoProduction(input: {
     }
   }
   let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
-  if (!plan.ok && productionMode === 'concept_preview') {
+  if (!plan.ok) {
     const systemAssets = await systemThemeGraphicAssets({ outputDirectory: outputDir, baseline: activeBaseline });
     assets = [...assets, ...systemAssets];
     plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
     if (plan.ok) {
-      plan.notes.push('现有素材覆盖不足，编导 Agent 已使用平台安全主题图形完成基础版；补充企业素材后可升级为专属版。');
+      plan.notes.push(productionMode === 'social_ready'
+        ? '客户素材不足，编导 Agent 已切换到零素材托管方案，使用可追溯的系统图形、口播和字幕完成正式制作。'
+        : '现有素材覆盖不足，编导 Agent 已使用平台安全主题图形完成预览版。');
     }
   }
   plan.unusedAssets.push(...analyzed.failures.map(item => ({
@@ -1088,10 +1288,9 @@ export async function runSocialContentAutoProduction(input: {
     const failureSummary = analyzed.failures.length
       ? ` 未通过分析：${analyzed.failures.map(item => `${item.assetName}（${item.reason}）`).join('；')}`
       : '';
-    const materialPolicy = socialContentMaterialPolicy(detail.theme?.themeId ?? null);
-    const guidance = `要生成可直接发布的视频，${materialPolicy.missingMessage}。`;
-    throw new Error(`${productionMode === 'social_ready' ? 'user_input_required' : 'production_input_required'}:${guidance}${failureSummary}`);
+    throw new Error(`production_input_required:系统无法建立安全的零素材画面方案，请稍后自动重试。${failureSummary}`);
   }
+  if (assetSupplyExecution) plan = applyZeroAssetTruthSafeNarration(plan);
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);
   const previousDirectorPlan = parseStoredSocialDirectorPlan(taskRecord.director_plan);
@@ -1111,7 +1310,7 @@ export async function runSocialContentAutoProduction(input: {
     : detail.theme?.themeId === 'customer_case'
       ? '温暖、克制、可信'
       : '清晰、轻快、专业';
-  const bgmSelection = await selectDirectorBgm({
+	  const bgmSelection = await (input.runtime?.selectDirectorBgm ?? selectDirectorBgm)({
     tenantId: input.tenantId,
     themeId: detail.theme?.themeId ?? null,
     directorMood: reviewDirective?.musicMood
@@ -1162,6 +1361,7 @@ export async function runSocialContentAutoProduction(input: {
       selectedAssetCount: plan.selectedAssetIds.length,
       unusedAssetCount: plan.unusedAssets.length,
       sourceClipSeconds: plan.sourceClipSeconds,
+	  ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
       ...(revisionParent && reviewDirective ? {
         reviewRevision: {
           parentArtifactId: revisionParent.artifactId,
@@ -1176,7 +1376,7 @@ export async function runSocialContentAutoProduction(input: {
       let voice: Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>> | null = null;
       let duration = 0;
       for (let revisionAttempt = 0; revisionAttempt <= 2; revisionAttempt += 1) {
-        voice = await synthesizeStudioVoiceForAutomation({
+        voice = await (input.runtime?.synthesizeVoice ?? synthesizeStudioVoiceForAutomation)({
           tenantId: input.tenantId,
           text: contentHandoff.narration,
           language: contentHandoff.outputSpec.language,
@@ -1252,7 +1452,7 @@ export async function runSocialContentAutoProduction(input: {
       if (!voice || !voice.localPath || !voice.cues?.length) throw new Error('口播执行状态异常');
   const timeline = socialDirectorRenderTimeline(contentHandoff, duration);
   const adaptedScript = socialDirectorScriptText(contentHandoff, duration);
-  const bgm = await resolveLockedBgm(input.tenantId, contentHandoff);
+  const bgm = await (input.runtime?.resolveBgm ?? resolveLockedBgm)(input.tenantId, contentHandoff);
   const captionCues = socialDirectorSceneTimingCues(contentHandoff, duration);
   await writeExecutionStage({
     ...input,
@@ -1260,7 +1460,7 @@ export async function runSocialContentAutoProduction(input: {
     message: '内容 Agent 正在自动剪辑、混音并烧录字幕。',
     extra: { duration, sceneCount: timeline.length },
   });
-  const result = await composite({
+  const result = await (input.runtime?.renderComposite ?? composite)({
     jobId: `social-${input.taskId}-${createHash('sha256').update(input.runId).digest('hex').slice(0, 12)}`,
     requireVisualAssets: true,
     spec: {
@@ -1292,13 +1492,13 @@ export async function runSocialContentAutoProduction(input: {
     stage: 'quality_check',
     message: '内容 Agent 正在检查成片画面、音轨和字幕。',
   });
-  const quality = await inspectRenderedVisuals({
+  const quality = await (input.runtime?.inspectVisuals ?? inspectRenderedVisuals)({
     outputPath: result.outputPath,
     expectedDuration: duration,
     expectedUniqueScenes: contentHandoff.scenes.length,
   });
   if (!quality.passed) throw new Error(`成片画面质检未通过：${quality.failures.join('；')}`);
-  const sceneQuality = await inspectRenderedScenes({
+  const sceneQuality = await (input.runtime?.inspectScenes ?? inspectRenderedScenes)({
     outputPath: result.outputPath,
     scenes: captionCues,
     requireDistinct: true,
@@ -1306,12 +1506,12 @@ export async function runSocialContentAutoProduction(input: {
   if (!sceneQuality.passed) {
     throw new Error(`成片逐镜质检未通过：${sceneQuality.issues.map(issue => issue.reason).join('；')}`);
   }
-  const audio = await runVisualFfmpeg([
+  const audio = await (input.runtime?.runFfmpeg ?? runVisualFfmpeg)([
     '-i', result.outputPath, '-map', '0:a:0', '-t', String(Math.min(2, duration)), '-f', 'null', '-',
   ]);
   if (!audio.ok) throw new Error('成片音轨无法解码，已停止提交验收');
 
-  const coverPath = await createVideoCover({
+  const coverPath = await (input.runtime?.createCover ?? createVideoCover)({
     videoPath: result.outputPath,
     outputDirectory: outputDir,
     timestamp: socialDirectorCoverTimestamp(contentHandoff, duration),
@@ -1330,6 +1530,7 @@ export async function runSocialContentAutoProduction(input: {
     idempotencyKey: `social-auto-file:${input.taskId}:${stored.sha256}`,
     stored,
     transientPath: result.outputPath,
+	backendFilePort: input.runtime?.backendFilePort,
   });
   const storedCover = await inspectTransientSocialContentFile({
     filePath: coverPath,
@@ -1345,6 +1546,7 @@ export async function runSocialContentAutoProduction(input: {
     idempotencyKey: `social-auto-cover:${input.taskId}:${storedCover.sha256}`,
     stored: storedCover,
     transientPath: coverPath,
+	backendFilePort: input.runtime?.backendFilePort,
   });
   await resolveSocialDirectorArtifactLineage({
     repository: input.repository,
@@ -1359,6 +1561,7 @@ export async function runSocialContentAutoProduction(input: {
     taskId: input.taskId,
     idempotencyKey: `social-auto-artifact:${input.runId}`,
     trustedAgentOrigin: true,
+	backendFilePort: input.runtime?.backendFilePort,
     value: {
       kind: 'short_video',
       platform: contentHandoff.outputSpec.platform,
@@ -1407,6 +1610,7 @@ export async function runSocialContentAutoProduction(input: {
         directorPlanReference: persistedDirectorPlan.reference,
         adaptedScript,
         scriptAdaptation: adaptation,
+	    ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
         narration: {
           changedFromBaseline: adaptation.narrationChanged,
           source: voice.source || 'unknown',

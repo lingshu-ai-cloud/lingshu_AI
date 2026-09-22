@@ -4,6 +4,9 @@ import {
   SOCIAL_SOURCE_KINDS,
   SOCIAL_CONTENT_TASK_MODES,
   SOCIAL_CONTENT_PRODUCTION_MODES,
+  SOCIAL_ASSET_AVAILABILITIES,
+  SOCIAL_CONTENT_CREATION_MODES,
+  SOCIAL_CONTENT_MANAGEMENT_MODES,
   SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_WORK_PACKAGE_KINDS,
   type SocialArtifactStatus,
@@ -40,6 +43,12 @@ import {
   parseStoredSocialDirectorPlan,
   publicSocialDirectorPlanSummary,
 } from './socialContentDirectorPlan.js';
+import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
+import {
+  parseStoredSocialReferenceVideoAnalysis,
+  parseStoredSocialReplicationScript,
+  parseStoredSocialShotMaterialMap,
+} from './socialContentScriptSources.js';
 
 const storedCount = (value: unknown): number => {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) {
@@ -95,6 +104,14 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   if (!SOCIAL_CONTENT_PRODUCTION_MODES.includes(productionMode as NonNullable<SocialContentTaskBrief['productionMode']>)) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
+  const creationMode = socialText(record.creationMode);
+  const assetAvailability = socialText(record.assetAvailability);
+  const managementMode = socialText(record.managementMode);
+  if ((creationMode && !SOCIAL_CONTENT_CREATION_MODES.includes(creationMode as typeof SOCIAL_CONTENT_CREATION_MODES[number]))
+    || (assetAvailability && !SOCIAL_ASSET_AVAILABILITIES.includes(assetAvailability as typeof SOCIAL_ASSET_AVAILABILITIES[number]))
+    || (managementMode && !SOCIAL_CONTENT_MANAGEMENT_MODES.includes(managementMode as typeof SOCIAL_CONTENT_MANAGEMENT_MODES[number]))) {
+    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  }
   return {
     title,
     objective,
@@ -117,6 +134,9 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     brandNotes: nullable(record.brandNotes),
     restrictions: strings(record.restrictions, 'social_content_task_record_invalid'),
     callToAction: nullable(record.callToAction),
+    ...(creationMode ? { creationMode: creationMode as NonNullable<SocialContentTaskBrief['creationMode']> } : {}),
+    ...(assetAvailability ? { assetAvailability: assetAvailability as NonNullable<SocialContentTaskBrief['assetAvailability']> } : {}),
+    ...(managementMode ? { managementMode: managementMode as NonNullable<SocialContentTaskBrief['managementMode']> } : {}),
     productionMode: productionMode as SocialContentTaskBrief['productionMode'],
   };
 }
@@ -164,14 +184,14 @@ export function socialTaskReadiness(
   if (!brief.formats.length) personalizationGaps.push('content_format');
   if (coverage.knowledge < 1) personalizationGaps.push('enterprise_knowledge');
   if (coverage.material < 1) personalizationGaps.push('source_material');
-  if (themeWorkflow && brief.productionMode === 'social_ready' && coverage.material < 1) missing.push('publish_ready_material');
   if (themeWorkflow) {
     if (!themeWorkflow.theme || themeWorkflow.theme.classificationStatus !== 'confirmed' || !themeWorkflow.theme.themeId) {
       missing.push('theme_confirmation');
     }
-    // Theme selection is a direction, not a production structure. Formula
-    // requirements remain advisory until the product explicitly applies a
-    // configured formula to the task.
+    // Missing customer material is a production-routing decision, not an
+    // admission blocker. The content workflow may use licensed/system assets,
+    // generated visuals, a digital presenter, or a non-claiming graphic
+    // substitute. Verified proof shots must be rewritten rather than invented.
   } else {
     // Preserve the stricter contract for historic non-theme workflows. The
     // fast-start fallback applies only to the new theme-driven workflow.
@@ -432,13 +452,40 @@ export async function readSocialTaskDetail(input: {
   if (Object.entries(actual).some(([key, value]) => summary[key as keyof typeof actual] !== value)) {
     throw new SocialContentWorkflowError('social_content_task_projection_out_of_sync', 503);
   }
+  const activeMaterials = activeSources.filter(source => source.kind === 'material');
+  const productImageIds = activeMaterials
+    .filter(source => /\.(?:jpe?g|png|webp|gif)(?:$|\?)/i.test(`${source.label} ${source.sourceRef}`))
+    .map(source => source.sourceId);
+  const customerVideoIds = activeMaterials
+    .filter(source => !productImageIds.includes(source.sourceId))
+    .map(source => source.sourceId);
+  const confirmedFactRefs = [
+    ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
+    ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
+  ];
+  const assetSupplyPlan = createSocialAssetSupplyPlan({
+    creationMode: summary.brief.creationMode ?? 'material_processing',
+    assetAvailability: summary.brief.assetAvailability,
+    managementMode: summary.brief.managementMode,
+    inventory: { customerVideoIds, productImageIds },
+    confirmedFactRefs,
+    rightsConfirmationRequired: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
+      && !activeSources.some(source => source.kind === 'reference_link'),
+  });
+  const referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
+  const replicationScript = parseStoredSocialReplicationScript(task.replication_script);
+  const shotMaterialMap = parseStoredSocialShotMaterialMap(task.shot_material_map);
   return {
     ...summary,
+    assetSupplyPlan,
     sources: sourceViews,
     artifacts: artifactViews,
     deliveryPackages: packages.map(socialDeliveryPackage),
     publications: publications.map(socialPublication),
     metricSubmissions: metrics.map(socialMetricSubmission),
+    ...(referenceVideoAnalysis ? { referenceVideoAnalysis } : {}),
+    ...(replicationScript ? { replicationScript } : {}),
+    ...(shotMaterialMap.length ? { shotMaterialMap } : {}),
     ...(summary.theme
       ? { materialRequirements: publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) }
       : {}),

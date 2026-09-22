@@ -223,6 +223,7 @@ function pageKey(page: Page) {
 
 type AssistantExpression = 'happy' | 'wink' | 'thinking' | 'excited';
 const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
+  startupHub: 'thinking',
   digitalEmployees: 'excited',
   agentMonitor: 'thinking',
   strategy: 'happy',
@@ -239,7 +240,7 @@ const PAGE_EXPRESSION: Record<Page, AssistantExpression> = {
   plugins: 'excited',
   scheduled: 'wink',
   admin: 'thinking',
-  adminDelivery: 'thinking', contentFormulaAdmin: 'thinking',
+  adminDelivery: 'thinking',
   channels: 'excited',
   youtube: 'excited',
   organizationPermissions: 'thinking',
@@ -278,7 +279,7 @@ function AssistantLauncherMascot({ expression }: { expression: AssistantExpressi
 }
 
 function orbitIdForPage(page: Page): OrbitAgentId {
-  if (page === 'socialInspiration' || page === 'scriptLibrary' || page === 'contentFormulaAdmin') return 'director';
+  if (page === 'socialInspiration' || page === 'scriptLibrary') return 'director';
   if (page === 'smartAssets') return 'content';
   if (page === 'conversion' || page === 'wecomCustomerService' || page === 'orders' || page === 'retention') return 'customer';
   return 'business';

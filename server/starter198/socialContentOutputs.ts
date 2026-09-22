@@ -32,7 +32,7 @@ import {
   socialRequestHash,
   socialText,
 } from './socialContentValidation.js';
-import { requireOwnedSocialFileRef } from './socialContentFiles.js';
+import { requireOwnedSocialFileRef, type SocialContentBackendFilePort } from './socialContentFiles.js';
 import { assertSocialTaskChildCapacity } from './socialContentLimits.js';
 import { store } from '../storage/index.js';
 import { verifiedStudioGenerationFromSpec } from '../lib/studioGenerationVerification.js';
@@ -256,6 +256,7 @@ export async function createSocialContentArtifact(input: {
   value: CreateSocialArtifactInput;
   trustedAgentOrigin?: boolean;
   accessResolver?: SocialContentAccessResolver;
+  backendFilePort?: SocialContentBackendFilePort;
   now?: Date;
 }): Promise<{ artifact: SocialContentArtifact; task: SocialContentTaskDetail }> {
   await assertStudioSocialArtifactGeneration(input.tenantId, input.value.kind, input.value.content);

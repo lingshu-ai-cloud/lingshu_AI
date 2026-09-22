@@ -12,12 +12,13 @@ import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } from '../lib/studioMaterialPresentation.js';
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
-import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive } from '../lib/materialLibraryAnalysis.js';
+import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
 import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
+import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
@@ -3966,6 +3967,9 @@ interface Material {
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
+  scriptAnalysis?: MaterialScriptAnalysis;
+  analysisSourceRevision?: string;
+  sourceRevision?: string;
   createdAt: string;
 }
 
@@ -4453,7 +4457,17 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
     poster: segment.posterObjectKey ? privateStudioAssetUrl('materials', tenantId, path.basename(segment.posterObjectKey)) : segment.poster,
     posterObjectKey: undefined,
   })));
-  return { ...material, url: url || material.url, poster, segments, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  const scriptAnalysis = material.scriptAnalysis || (material.segmentAnalysisStatus === 'completed' && material.analysisSourceRevision
+    ? buildMaterialScriptAnalysis({
+      materialId: material.id,
+      name: material.name,
+      sourceRevision: material.analysisSourceRevision,
+      duration: material.duration,
+      segments: material.segments as unknown as Array<Record<string, unknown>>,
+      analyzedAt: material.createdAt,
+    })
+    : undefined);
+  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, canManage: material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
 }
 
 // Video generation history. A groupKey identifies one logical output slot
@@ -4981,11 +4995,8 @@ studioRouter.patch('/materials/:id/segments/:segmentId', async (req, res) => {
     }
     segment.start=start; segment.end=end; segment.duration=end-start;
     if (segment.manualConfirmed === true) { segment.needsReview=false; segment.confidence=Math.max(.65,Math.min(1,Number(segment.confidence)||0)); }
-    const saved = material.id.startsWith('pb-')
-      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3),tenantId)) && await updateCloudMaterial(material.id.slice(3),{segments})
-      : updateLocalMaterial(material.id,tenantId,{segments});
-    if (!saved) throw Error('片段修改保存失败');
-    res.json({ok:true,material:await materialResponse({...material,segments} as Material,tenantId),segment});
+    const scriptAnalysis = await saveMaterialSegmentsWithScriptAnalysis(tenantId, material, segments as unknown as Array<Record<string, unknown>>);
+    res.json({ok:true,material:await materialResponse({...material,segments,scriptAnalysis} as Material,tenantId),segment});
   } catch(error) {res.status(503).json({ok:false,error:error instanceof Error ? error.message : '片段修改失败'});}
 });
 

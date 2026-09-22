@@ -10,8 +10,7 @@ import type {
   SocialWorkPackageKind,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
-import { socialContentMaterialPolicy } from '../../../shared/socialContentMaterialPolicy';
-import { socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
+import { SocialContentRequestError, socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
 import { readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
 import type { SocialContentDraft } from '../../lib/socialContentModel';
 import { mergeSocialContentTaskSummaries, restoreSavedSocialContentTask } from '../../lib/socialContentTaskPagination';
@@ -47,6 +46,9 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
     brandNotes: draft.keyFacts.trim() || null,
     restrictions: splitLines(draft.prohibitedClaims),
     callToAction: draft.callToAction.trim() || null,
+    creationMode: draft.creationPath,
+    assetAvailability: draft.materialInput,
+    managementMode: draft.managedMode,
     productionMode: draft.productionMode,
     mode: draft.mode,
     themeId: draft.themeId || null,
@@ -391,7 +393,7 @@ export function useSocialContentWorkspace() {
     }
   }, start
     ? (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? `任务已保留，请按提示补充${socialContentMaterialPolicy(result.theme?.themeId ?? null).subjectLabel}后继续`
+      ? '任务已保留，系统会继续切换可用素材方案；如需确认事实或版权，会明确列出'
       : '内容生产任务已进入执行队列'
     : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
 
@@ -399,11 +401,22 @@ export function useSocialContentWorkspace() {
     const task = workspace?.currentTask;
     if (!task) return;
     return run(async () => {
-      const next = await socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`);
-      applyTask(next);
-      return next;
+      try {
+        const next = await socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`);
+        applyTask(next);
+        return next;
+      } catch (error) {
+        // Reference analysis may advance the task projection before production
+        // is admitted. Refresh that new version so the beginner does not get
+        // stuck retrying with a stale task while the Director Agent works.
+        if (error instanceof SocialContentRequestError && error.status === 409) {
+          const latest = await socialContentApi.getTask(task.taskId).catch(() => null);
+          if (latest) applyTask(latest);
+        }
+        throw error;
+      }
     }, (result: SocialContentTaskDetail) => result.status === 'attention'
-      ? `任务已保留，请按提示补充${socialContentMaterialPolicy(result.theme?.themeId ?? null).subjectLabel}后继续`
+      ? '任务已保留，系统会继续切换可用素材方案；如需确认事实或版权，会明确列出'
       : '内容生产任务已进入执行队列');
   }, [workspace?.currentTask, run, applyTask]);
 

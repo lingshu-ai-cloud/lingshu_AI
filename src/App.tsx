@@ -22,6 +22,7 @@ import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficVi
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
 const PlatformAdsPage = lazy(() => import('./components/PlatformAdsPage'));
+const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 const StrategyPage = lazy(() => import('./components/StrategyPage'));
 const TrafficPage = lazy(() => import('./components/TrafficPage'));
 const SocialMonitoringPage = lazy(() => import('./components/SocialMonitoringPage'));
@@ -33,7 +34,6 @@ const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
 const ScheduledPage = lazy(() => import('./components/ScheduledPage'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const AdminDeliveryPage = lazy(() => import('./components/AdminDeliveryPage'));
-const ContentFormulaAdminPage = lazy(() => import('./components/ContentFormulaAdminPage'));
 const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
 const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
@@ -74,10 +74,10 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
-  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
-  customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'scheduled']),
+  super_admin: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
+  customer_service: new Set(['startupHub', 'digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'scheduled']),
 };
 type StarterAccessState = 'loading' | 'starter_198' | 'legacy' | 'unavailable';
 const isAdminSession = (session: AuthSession | null) => Boolean(
@@ -197,6 +197,13 @@ export default function App() {
   if (publicPath === '/privacy') return <LegalPages kind="privacy" />;
   if (publicPath === '/terms') return <LegalPages kind="terms" />;
   if (publicPath === '/data-deletion') return <LegalPages kind="data-deletion" />;
+  if (import.meta.env.DEV && publicPath === '/startup-hub-preview') {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <StartupHubPage preview />
+      </Suspense>
+    );
+  }
 
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
@@ -392,18 +399,11 @@ export default function App() {
     } catch { /* ignore */ }
   }, [page]);
   useEffect(() => {
-    if (session && (page === 'admin' || page === 'adminDelivery' || page === 'contentFormulaAdmin') && !isAdminSession(session)) setPage('digitalEmployees');
+    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('digitalEmployees');
   }, [page, session]);
   useEffect(() => {
     if (!session) return;
     if (starterAccess === 'loading' || starterAccess === 'unavailable') return;
-    // Platform formula operations are authorized by the hardened platformAdmin
-    // session bit, independently of the user's organization role. The earlier
-    // guard redirects every non-platform session, including tenant admins.
-    if (page === 'contentFormulaAdmin') {
-      if (!isAdminSession(session)) setPage('digitalEmployees');
-      return;
-    }
     const role = session.user.role || 'customer_service';
     if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('digitalEmployees');
   }, [page, session, starterAccess]);
@@ -721,8 +721,9 @@ export default function App() {
         </Suspense>
       )}
       <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
-        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'strategy')}>
+        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'startupHub')}>
           <Suspense fallback={<PageLoading />}>
+          {page === 'startupHub' && <StartupHubPage />}
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
@@ -852,7 +853,6 @@ export default function App() {
           {page === 'scheduled' && <ScheduledPage onAction={startAgentTask} />}
           {page === 'admin' && <AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} />}
           {page === 'adminDelivery' && <AdminDeliveryPage />}
-          {page === 'contentFormulaAdmin' && <ContentFormulaAdminPage />}
           {(page === 'channels' || page === 'youtube') && <IntegrationsPage />}
           </Suspense>
         </PageErrorBoundary>

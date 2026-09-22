@@ -8,6 +8,10 @@ import {
   socialContentCurrentArtifacts,
   socialContentPrimaryActionForTask,
   socialContentPrimaryAction,
+  socialContentMaterialCanStart,
+  socialShotFunctionLabel,
+  socialShotMaterialCountsLabel,
+  socialShotSourceStrategyLabel,
   socialContentProductionProgress,
   socialContentStage,
   socialContentStagesForMode,
@@ -29,6 +33,18 @@ assert.equal(socialContentPrimaryAction('awaiting_metrics'), 'submit_metrics');
 assert.equal(socialContentAssetReviewAction([{ status: 'review_required' }, { status: 'approved' }]), 'review');
 assert.equal(socialContentAssetReviewAction([{ status: 'approved' }, { status: 'superseded' }]), 'package');
 assert.equal(socialContentAssetReviewAction([{ status: 'changes_requested' }, { status: 'approved' }]), 'progress');
+assert.equal(socialContentMaterialCanStart('none', { hasVideo: false, imageCount: 0, referenceLinkCount: 0 }), true,
+  'zero-asset one-click creation must not require a customer shoot');
+assert.equal(socialContentMaterialCanStart('limited', { hasVideo: false, imageCount: 1, referenceLinkCount: 0 }), true);
+assert.equal(socialContentMaterialCanStart('limited', { hasVideo: false, imageCount: 0, referenceLinkCount: 1 }), true);
+assert.equal(socialContentMaterialCanStart('ready', { hasVideo: false, imageCount: 1, referenceLinkCount: 0 }), false);
+assert.equal(socialShotFunctionLabel('hook'), '前三秒钩子');
+assert.equal(socialShotSourceStrategyLabel('authorized_digital_presenter'), '数字人口播');
+assert.deepEqual(socialShotMaterialCountsLabel({
+  customerAssetIds: ['customer-1'],
+  generatedAssetIds: ['generated-1', 'generated-2'],
+  licensedAssetIds: [],
+}), ['客户素材 1 项', '生成画面 2 项']);
 
 const sevenPendingArtifacts = Array.from({ length: 7 }, (_, index) => ({
   artifactId: `socialartifact_${index}`,

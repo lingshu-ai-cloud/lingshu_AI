@@ -6,6 +6,7 @@ const hook = fs.readFileSync(new URL('./useSocialContentWorkspace.ts', import.me
 const workspace = fs.readFileSync(new URL('./SocialContentWorkspace.tsx', import.meta.url), 'utf8');
 const overview = fs.readFileSync(new URL('./SocialTaskOverview.tsx', import.meta.url), 'utf8');
 const productionProgress = fs.readFileSync(new URL('./SocialProductionProgressPanel.tsx', import.meta.url), 'utf8');
+const replicationAnalysis = fs.readFileSync(new URL('./SocialReplicationAnalysisPanel.tsx', import.meta.url), 'utf8');
 const editor = fs.readFileSync(new URL('./SocialTaskEditorDialog.tsx', import.meta.url), 'utf8');
 const commandPanel = fs.readFileSync(new URL('./SocialTaskCommandPanel.tsx', import.meta.url), 'utf8');
 const sources = fs.readFileSync(new URL('./SocialTaskSourcesStep.tsx', import.meta.url), 'utf8');
@@ -17,7 +18,6 @@ const presentation = fs.readFileSync(new URL('./socialContentUi.ts', import.meta
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 const landing = fs.readFileSync(new URL('./SocialContentLanding.tsx', import.meta.url), 'utf8');
 const themeCards = fs.readFileSync(new URL('./SocialThemeCards.tsx', import.meta.url), 'utf8');
-const formulaAdmin = fs.readFileSync(new URL('../ContentFormulaAdminPage.tsx', import.meta.url), 'utf8');
 
 assert.match(api, /\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/files\?\$\{query\}/);
 assert.match(api, /body: file/);
@@ -33,6 +33,9 @@ assert.match(api, /READ_RETRY_STATUSES = new Set\(\[429/);
 assert.match(hook, /target\.mode === 'edit'/);
 assert.match(hook, /updateTask\(target\.taskId/);
 assert.match(hook, /createTask\(requestInput\(draft\), `\$\{target\.attemptId\}:create`\)/);
+assert.match(hook, /creationMode: draft\.creationPath/);
+assert.match(hook, /assetAvailability: draft\.materialInput/);
+assert.match(hook, /managementMode: draft\.managedMode/);
 assert.doesNotMatch(hook.slice(hook.indexOf('const saveDraft'), hook.indexOf('const startTask')), /workspace\?\.currentTask/);
 assert.match(hook, /const sourceRef = upload\.material\?\.sourceRef \|\| upload\.file\.fileRef/,
   'task upload must prefer the canonical My Materials reference');
@@ -63,7 +66,13 @@ assert.match(editor, /你无需逐项填写，只需审核成品/);
 assert.match(editor, /const STEPS = \['内容目标', '准备素材', '确认生成'\]/);
 assert.match(planning, /defaultCreateMode="instant"/);
 assert.match(starterWorkspace, /defaultCreateMode="weekly"/);
-assert.match(landing, /编导 Agent 会先定导演方案，再由内容 Agent 生成视频/);
+assert.match(landing, /素材加工/);
+assert.match(landing, /爆款裂变/);
+assert.match(landing, /完全没素材/);
+assert.match(landing, /默认使用一键托管/);
+assert.match(landing, /managedMode: 'one_click_managed'/);
+assert.doesNotMatch(landing, /SOCIAL_THEME_OPTIONS|选好视频主题|这条视频想讲什么/,
+  'the content landing must expose two creation paths instead of five topic cards');
 assert.doesNotMatch(landing, /VALUE_POINTS|3 步发起任务|从产品卖点开始/,
   '顶部引导应保持为一句话，不再堆叠卖点和入口');
 assert.match(themeCards, /SOCIAL_THEME_OPTIONS\.map/);
@@ -86,6 +95,18 @@ assert.doesNotMatch(overview, /function TaskHeader|<TaskHeader/,
   '当前任务大卡片不应挤占主要内容空间');
 assert.match(overview, /showDelivery[^]*?\{showDelivery && <DeliveryPanel/,
   '交付区在有交付内容时才显示');
+assert.match(overview, /<SocialReplicationAnalysisPanel task=\{task\}/);
+assert.match(replicationAnalysis, /task\.brief\.creationMode !== 'viral_replication'/);
+for (const detail of ['黄金前三秒', '两个备选钩子', '逐镜复刻清单', '需要保留', '必须改动', '本镜头素材来源']) {
+  assert.match(replicationAnalysis, new RegExp(detail));
+}
+for (const field of ['referenceVideoAnalysis', 'replicationScript', 'shotMaterialMap', 'primaryHookId', 'fidelityPoints', 'mustDifferPoints', 'sourceStrategy']) {
+  assert.match(replicationAnalysis, new RegExp(field));
+}
+assert.match(replicationAnalysis, /编导分析中/);
+assert.match(replicationAnalysis, /analysis\?\.status !== 'ready' \|\| !script/,
+  'missing analysis or script data must stay visibly pending instead of inventing a comparison');
+assert.doesNotMatch(replicationAnalysis, /模拟数据|示例镜头|默认钩子|假设/);
 assert.match(productionProgress, /data-social-production-progress/);
 assert.match(productionProgress, /fixed bottom-24 right-4/,
   '制作进度入口应固定在右下角且不占主布局');
@@ -116,11 +137,14 @@ assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|
 assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
   'production status must not send the user into the old production route');
 for (const action of ['确认并开始自动制作', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
-assert.doesNotMatch(editor, /使用推荐设置直接生成/,
-  'the first step must never bypass the real-material quality gate');
-assert.match(editor, /下一步：准备素材/);
+assert.match(editor, /没有素材时不会要求你补拍/);
+assert.match(editor, /一键托管生成/);
+assert.match(editor, /下一步：确认素材情况/);
+assert.match(editor, /draft\.materialInput === 'none'/,
+  'zero-asset managed creation must remain a first-class non-blocking path');
 assert.match(editor, /materialPolicy\.subjectLabel/);
-assert.match(editor, /使用推荐设置生成/);
+assert.match(sources, /选“完全没素材”后可以直接继续/);
+assert.match(sources, /已选择零素材托管，无需补拍/);
 assert.match(sources, /materialPolicy\.quickStartTitle/);
 assert.match(sources, /materialPolicy\.uploadTitle/);
 assert.match(sources, /materialPolicy\.recommendedShots/);
@@ -129,8 +153,6 @@ assert.match(productionProgress, /内容 Agent 正按编导方案生成配音、
 assert.match(productionProgress, /补充任务资料/);
 assert.doesNotMatch(editor + landing + overview, /配置爆款公式|填写脚本|填写口播|填写字幕/,
   'customers must not be asked to configure formulas or author production components');
-assert.match(formulaAdmin, /暂未配置爆款公式/);
-assert.match(formulaAdmin, /未来由平台管理员录入/);
 assert.match(preview, /fetchArtifactMedia\(artifact\.taskId, artifact\.artifactId/);
 assert.match(preview, /自动质检已通过/);
 for (const check of ['真实任务素材已用于剪辑', '逐镜检查通过', '口播音轨可正常播放', '字幕已按口播时间轴生成']) {

@@ -1,4 +1,5 @@
 export const PAGE_IDS = [
+  'startupHub',
   'digitalEmployees',
   'agentMonitor',
   'strategy',
@@ -21,7 +22,6 @@ export const PAGE_IDS = [
   'scheduled',
   'admin',
   'adminDelivery',
-  'contentFormulaAdmin',
   'channels',
   'youtube',
   'agentMemory',
@@ -40,6 +40,7 @@ export type PageDefinition = {
 };
 
 export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
+  startupHub: { navLabel: '创业中台', canonicalTitle: '创业中台' },
   digitalEmployees: { navLabel: '智能经营', canonicalTitle: '智能经营' },
   agentMonitor: { navLabel: '运行监控', canonicalTitle: '运行监控' },
   strategy: { navLabel: '首页', canonicalTitle: '首页' },
@@ -62,7 +63,6 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   scheduled: { navLabel: '定时任务', canonicalTitle: '定时任务' },
   admin: { navLabel: '账号总控', canonicalTitle: '账号总控' },
   adminDelivery: { navLabel: '客户运维', canonicalTitle: '客户运维' },
-  contentFormulaAdmin: { navLabel: '爆款公式库', canonicalTitle: '管理员爆款公式库' },
   channels: { navLabel: '渠道连接', canonicalTitle: '渠道连接', navParent: 'plugins' },
   youtube: { navLabel: 'YouTube 连接', canonicalTitle: 'YouTube 连接', navParent: 'plugins' },
   agentMemory: { navLabel: '智能体记忆', canonicalTitle: '智能体记忆' },

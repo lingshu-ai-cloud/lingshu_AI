@@ -49,19 +49,23 @@ import {
 import {
   SOCIAL_THEME_CATALOG,
   advisoryMaterialRequirements,
-  initialMaterialRequirements,
   materialReadiness,
   parseStoredMaterialRequirements,
   resolveSocialThemeSelection,
 } from './socialContentThemes.js';
-import { resolveSocialContentFormula, resolveSocialContentFormulaReference } from './socialContentFormulas.js';
 import {
   freezeSocialScriptBaseline,
   parseStoredSocialScriptBaseline,
   verifiedSocialScriptContext,
   type StoredSocialScriptBaseline,
 } from './socialContentScriptBaseline.js';
-import { resolveSocialInspirationScript } from './socialContentScriptSources.js';
+import {
+  pendingSocialTaskReferenceAnalysis,
+  resolveSocialInspirationScript,
+  resolveSocialRecommendedReferenceScript,
+  resolveSocialTaskReferenceScript,
+  type ResolvedSocialTaskReference,
+} from './socialContentScriptSources.js';
 
 const TASK_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
 const SOURCE_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
@@ -175,28 +179,18 @@ function defaultBrief(value: CreateSocialContentTaskInput) {
     brandNotes: value.brandNotes ?? null,
     restrictions: value.restrictions ?? [],
     callToAction: value.callToAction ?? null,
+    creationMode: value.creationMode
+      ?? (value.legacyCreationRoute === 'clone' ? 'viral_replication' : 'material_processing'),
+    assetAvailability: value.assetAvailability ?? 'none',
+    managementMode: value.managementMode ?? 'one_click_managed',
     productionMode: value.productionMode ?? 'social_ready',
   };
-}
-
-async function optionalFormulaForTheme(input: {
-  repository: Starter198Repository;
-  tenantId: string;
-  themeId: NonNullable<ReturnType<typeof resolveSocialThemeSelection>>['themeId'] & string;
-}) {
-  try {
-    return await resolveSocialContentFormula(input);
-  } catch (error) {
-    if (error instanceof SocialContentWorkflowError && error.code === 'social_content_formula_unavailable') return null;
-    throw error;
-  }
 }
 
 async function groundedScriptBaseline(input: {
   tenantId: string;
   brief: SocialContentTaskDetail['brief'];
   theme: NonNullable<SocialContentTaskDetail['theme']>;
-  formula: Awaited<ReturnType<typeof optionalFormulaForTheme>>;
   lockedAt: string;
   previous?: StoredSocialScriptBaseline | null;
 }): Promise<StoredSocialScriptBaseline> {
@@ -210,12 +204,95 @@ async function groundedScriptBaseline(input: {
   return freezeSocialScriptBaseline({
     brief: input.brief,
     theme: input.theme,
-    formula: input.formula,
     inspiration,
     verifiedContext,
     lockedAt: input.lockedAt,
     previous: input.previous,
   });
+}
+
+type SocialTaskReferenceResolver = typeof resolveSocialTaskReferenceScript;
+
+async function refreshSocialTaskReferenceOutputs(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  operationId: string;
+  now?: Date;
+  referenceResolver?: SocialTaskReferenceResolver;
+}): Promise<StarterRecord> {
+  const task = await requireSocialTask(input);
+  if (socialText(task.last_operation_id) === `${input.operationId}:reference-analysis`) return task;
+  const summary = socialTaskSummary(task);
+  if (summary.brief.creationMode !== 'viral_replication' || !summary.theme?.themeId
+    || summary.theme.classificationStatus !== 'confirmed') return task;
+  const detail = await readSocialTaskDetail(input);
+  if (!detail) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
+  const references = detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link');
+  const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
+  const verifiedContext = profile
+    ? verifiedSocialScriptContext(profile, summary.brief.productRef)
+    : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
+  let resolved: ResolvedSocialTaskReference | null = null;
+  if (references.length) {
+    resolved = await (input.referenceResolver ?? resolveSocialTaskReferenceScript)({
+      tenantId: input.tenantId,
+      themeId: summary.theme.themeId,
+      verifiedContext,
+      referenceSources: references,
+    });
+  } else {
+    resolved = await resolveSocialRecommendedReferenceScript({
+      tenantId: input.tenantId,
+      themeId: summary.theme.themeId,
+      verifiedContext,
+      createdAt: (input.now ?? new Date()).toISOString(),
+    });
+  }
+  const storedReplication = socialObject(socialJson(task.replication_script));
+  if (resolved
+    && socialText(storedReplication?.referenceAnalysisId) === resolved.referenceVideoAnalysis.analysisId
+    && socialText(storedReplication?.status) === 'confirmed') {
+    resolved = {
+      ...resolved,
+      replicationScript: { ...resolved.replicationScript, status: 'confirmed' },
+    };
+  }
+  const previous = parseStoredSocialScriptBaseline(task.script_baseline);
+  const baseline = resolved
+    ? freezeSocialScriptBaseline({
+        brief: summary.brief,
+        theme: summary.theme,
+        inspiration: resolved.match,
+        verifiedContext,
+        lockedAt: (input.now ?? new Date()).toISOString(),
+        previous,
+      })
+    : previous;
+  const newestReference = [...references].sort((left, right) => (
+    Date.parse(right.createdAt) - Date.parse(left.createdAt)
+    || right.sourceId.localeCompare(left.sourceId)
+  ))[0] ?? null;
+  const timestamp = (input.now ?? new Date()).toISOString();
+  await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, task.id, {
+    ...(baseline ? { script_baseline: baseline } : {}),
+    formula_reference: '',
+    director_plan: '',
+    reference_video_analysis: resolved?.referenceVideoAnalysis
+      ?? pendingSocialTaskReferenceAnalysis(newestReference ?? {
+        sourceId: 'system-reference:pending',
+        sourceRef: 'system-recommendation-pending',
+        createdAt: timestamp,
+      }),
+    replication_script: resolved?.replicationScript ?? '',
+    shot_material_map: resolved?.shotMaterialMap ?? [],
+    version: nextVersion(task),
+    last_operation_id: `${input.operationId}:reference-analysis`,
+    updated_by: input.userId,
+    updated_at: timestamp,
+  });
+  return requireSocialTask(input);
 }
 
 export async function createSocialContentTask(input: {
@@ -251,6 +328,9 @@ export async function createSocialContentTask(input: {
     action: async operationId => {
       const existing = await taskCreatedByOperation(input);
       if (existing) {
+        if (input.value.creationMode === 'viral_replication') {
+          await refreshSocialTaskReferenceOutputs({ ...input, taskId: socialText(existing.task_id), operationId });
+        }
         return { task: (await readSocialTaskDetail({ ...input, taskId: socialText(existing.task_id) }))! };
       }
       await assertSocialTaskCapacity(input);
@@ -258,21 +338,18 @@ export async function createSocialContentTask(input: {
       const taskId = socialPublicId('socialtask');
       const theme = resolveSocialThemeSelection(input.value);
       const brief = defaultBrief(input.value);
-      const selectedFormula = theme?.themeId
-        ? await optionalFormulaForTheme({ repository: input.repository, tenantId: input.tenantId, themeId: theme.themeId })
-        : null;
-      const material = theme?.themeId && selectedFormula
-        ? initialMaterialRequirements(theme.themeId, timestamp, selectedFormula, 'advisory')
-        : { formulaReference: null, requirements: [] };
       const scriptBaseline = theme?.classificationStatus === 'confirmed' && theme.themeId
         ? await groundedScriptBaseline({
             tenantId: input.tenantId,
             brief,
             theme,
-            formula: selectedFormula,
             lockedAt: timestamp,
           })
         : null;
+      const initialReadiness = socialTaskReadiness(brief, { total: 0, knowledge: 0, material: 0 }, theme ? {
+        theme,
+        materialReadiness: materialReadiness([]),
+      } : undefined);
       await input.repository.create(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, {
         task_id: taskId,
         brief,
@@ -280,13 +357,16 @@ export async function createSocialContentTask(input: {
         task_mode: input.value.mode ?? 'weekly',
         weekly_plan_id: input.value.weeklyPlanId ?? '',
         theme_selection: theme ?? '',
-        formula_reference: material.formulaReference ?? '',
+        // Kept as an empty compatibility column while historic formula-backed
+        // tasks remain readable. New tasks are grounded by per-video
+        // inspiration analysis or the governed knowledge/system fallback.
+        formula_reference: '',
         script_baseline: scriptBaseline ?? '',
         director_plan: '',
-        material_requirements: material.requirements,
+        material_requirements: [],
         legacy_creation_route: input.value.legacyCreationRoute ?? '',
         package_selection: packageSelection,
-        status: 'draft',
+        status: initialReadiness.complete ? 'plan_review' : 'draft',
         version: '1',
         run_id: '',
         source_count: 0,
@@ -305,6 +385,9 @@ export async function createSocialContentTask(input: {
         created_at: timestamp,
         updated_at: timestamp,
       });
+      if (brief.creationMode === 'viral_replication') {
+        await refreshSocialTaskReferenceOutputs({ ...input, taskId, operationId });
+      }
       return { task: (await readSocialTaskDetail({ ...input, taskId }))! };
     },
   });
@@ -358,18 +441,10 @@ export async function updateSocialContentTask(input: {
       const timestamp = (input.now ?? new Date()).toISOString();
       const currentRequirements = advisoryMaterialRequirements(parseStoredMaterialRequirements(record.material_requirements));
       const currentBaseline = parseStoredSocialScriptBaseline(record.script_baseline);
-      const formulaThemeChanged = (currentSummary.theme?.themeId ?? null) !== (theme?.themeId ?? null);
-      const selectedFormula = formulaThemeChanged && theme?.themeId
-        ? await optionalFormulaForTheme({ repository: input.repository, tenantId: input.tenantId, themeId: theme.themeId })
-        : null;
-      const material = formulaThemeChanged
-        ? theme?.themeId && selectedFormula
-          ? initialMaterialRequirements(theme.themeId, timestamp, selectedFormula, 'advisory')
-          : { formulaReference: null, requirements: [] }
-        : {
-            formulaReference: record.formula_reference || null,
-            requirements: currentRequirements,
-          };
+      const themeChanged = (currentSummary.theme?.themeId ?? null) !== (theme?.themeId ?? null);
+      // Existing shot suggestions remain advisory, but changing the theme
+      // clears them so no historic formula structure leaks into the new plan.
+      const materialRequirements = themeChanged ? [] : currentRequirements;
       const brief = {
         ...current,
         ...briefChanges,
@@ -380,30 +455,17 @@ export async function updateSocialContentTask(input: {
       const scriptFieldsChanged = [
         'title', 'objective', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
       ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
-      const storedFormulaReference = socialObject(socialJson(record.formula_reference));
-      const frozenFormulaId = currentBaseline?.formulaReference?.formulaId || socialText(storedFormulaReference?.formulaId);
-      const frozenFormulaVersion = currentBaseline?.formulaReference?.version || socialText(storedFormulaReference?.version);
       let scriptBaseline = currentBaseline;
       if (!theme || theme.classificationStatus !== 'confirmed' || !theme.themeId) {
         scriptBaseline = null;
-      } else if (formulaThemeChanged || hasThemeInput || scriptFieldsChanged || !currentBaseline) {
-        const frozenFormula = selectedFormula
-          ?? (frozenFormulaId && frozenFormulaVersion
-            ? await resolveSocialContentFormulaReference({
-                repository: input.repository,
-                formulaId: frozenFormulaId,
-                version: frozenFormulaVersion,
-              })
-            : await optionalFormulaForTheme({
-                repository: input.repository,
-                tenantId: input.tenantId,
-                themeId: theme.themeId,
-              }));
+      } else if (themeChanged || hasThemeInput || scriptFieldsChanged || !currentBaseline
+        || currentBaseline.source === 'formula' || currentBaseline.formulaReference) {
+        // Editing a historic formula-backed task migrates it to the current
+        // inspiration -> verified knowledge -> system fallback chain.
         scriptBaseline = await groundedScriptBaseline({
           tenantId: input.tenantId,
           brief,
           theme,
-          formula: frozenFormula,
           lockedAt: timestamp,
           previous: currentBaseline,
         });
@@ -414,7 +476,7 @@ export async function updateSocialContentTask(input: {
         material: currentSummary.materialSourceCount,
       }, {
         theme,
-        materialReadiness: materialReadiness(material.requirements),
+        materialReadiness: materialReadiness(materialRequirements),
       });
       const status = readiness.complete ? 'plan_review' : socialText(record.status) === 'needs_input' ? 'needs_input' : 'draft';
       await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
@@ -422,10 +484,10 @@ export async function updateSocialContentTask(input: {
         task_mode: nextMode,
         weekly_plan_id: weeklyPlanId === undefined ? socialText(record.weekly_plan_id) : weeklyPlanId ?? '',
         theme_selection: theme ?? '',
-        formula_reference: material.formulaReference ?? '',
+        formula_reference: '',
         script_baseline: scriptBaseline ?? '',
-        ...((formulaThemeChanged || hasThemeInput || scriptFieldsChanged) ? { director_plan: '' } : {}),
-        material_requirements: material.requirements,
+        ...((themeChanged || hasThemeInput || scriptFieldsChanged || currentBaseline?.source === 'formula') ? { director_plan: '' } : {}),
+        material_requirements: materialRequirements,
         legacy_creation_route: legacyCreationRoute === undefined
           ? socialText(record.legacy_creation_route)
           : legacyCreationRoute ?? '',
@@ -450,6 +512,7 @@ export async function addSocialTaskSource(input: {
   value: AddSocialTaskSourceInput;
   storage?: { kind: 'local' | 'object'; key: string; mimeType: string; byteSize: number; sha256: string };
   sourceOptions?: SocialContentSourceOptionsPort;
+  referenceResolver?: SocialTaskReferenceResolver;
   now?: Date;
 }): Promise<{ source: SocialTaskSource; task: SocialContentTaskDetail }> {
   let value = input.value;
@@ -487,6 +550,9 @@ export async function addSocialTaskSource(input: {
       const existing = await sourceCreatedByOperation({ ...input, operationId });
       if (!existing) throw new SocialContentWorkflowError('social_content_operation_integrity_violation', 503);
       await reconcileSocialContentTask({ ...input, operationId });
+      if (socialText(existing.source_kind) === 'reference_link') {
+        await refreshSocialTaskReferenceOutputs({ ...input, operationId });
+      }
       return { source: socialTaskSource(existing), task: (await readSocialTaskDetail(input))! };
     },
     action: async operationId => {
@@ -494,6 +560,9 @@ export async function addSocialTaskSource(input: {
       const existing = await sourceCreatedByOperation({ ...input, operationId });
       if (existing) {
         await reconcileSocialContentTask({ ...input, operationId });
+        if (socialText(existing.source_kind) === 'reference_link') {
+          await refreshSocialTaskReferenceOutputs({ ...input, operationId });
+        }
         return { source: socialTaskSource(existing), task: (await readSocialTaskDetail(input))! };
       }
       if (!SOURCE_EDITABLE_STATES.has(socialText(task.status))) {
@@ -536,6 +605,9 @@ export async function addSocialTaskSource(input: {
         updated_at: timestamp,
       });
       await reconcileSocialContentTask({ ...input, operationId });
+      if (value.kind === 'reference_link') {
+        await refreshSocialTaskReferenceOutputs({ ...input, operationId });
+      }
       return { source: socialTaskSource(created), task: (await readSocialTaskDetail(input))! };
     },
   });
@@ -550,6 +622,7 @@ export async function removeSocialTaskSource(input: {
   sourceId: string;
   expectedTaskVersion: string;
   idempotencyKey: string;
+  referenceResolver?: SocialTaskReferenceResolver;
   now?: Date;
 }): Promise<{ source: SocialTaskSource; task: SocialContentTaskDetail }> {
   const sourceRecord = async () => findSocialRecord({
@@ -569,7 +642,11 @@ export async function removeSocialTaskSource(input: {
     now: input.now,
     replay: async operationId => {
       await reconcileSocialContentTask({ ...input, operationId, enforceReadiness: true });
-      return { source: socialTaskSource(await sourceRecord()), task: (await readSocialTaskDetail(input))! };
+      const replayedSource = await sourceRecord();
+      if (socialText(replayedSource.source_kind) === 'reference_link') {
+        await refreshSocialTaskReferenceOutputs({ ...input, operationId });
+      }
+      return { source: socialTaskSource(replayedSource), task: (await readSocialTaskDetail(input))! };
     },
     action: async operationId => {
       const task = await requireSocialTask(input);
@@ -589,6 +666,9 @@ export async function removeSocialTaskSource(input: {
         });
       }
       await reconcileSocialContentTask({ ...input, operationId, enforceReadiness: true });
+      if (socialText(source.source_kind) === 'reference_link') {
+        await refreshSocialTaskReferenceOutputs({ ...input, operationId });
+      }
       return { source: socialTaskSource(await sourceRecord()), task: (await readSocialTaskDetail(input))! };
     },
   });
@@ -644,6 +724,7 @@ export async function startSocialContentTask(input: {
   taskId: string;
   expectedVersion: string;
   idempotencyKey: string;
+  referenceResolver?: SocialTaskReferenceResolver;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   const mutation = await executeSocialContentMutation<{ task: SocialContentTaskDetail }>({
@@ -661,7 +742,10 @@ export async function startSocialContentTask(input: {
       let record = await requireSocialTask(input);
       if (socialText(record.last_operation_id) === operationId) return { task: (await readSocialTaskDetail(input))! };
       const projectionOperationId = `${operationId}:prestart`;
-      const projectionAlreadyApplied = socialText(record.last_operation_id) === projectionOperationId;
+      const projectionAlreadyApplied = [
+        projectionOperationId,
+        `${projectionOperationId}:reference-analysis`,
+      ].includes(socialText(record.last_operation_id));
       if (!projectionAlreadyApplied) {
         assertVersion(record, input.expectedVersion);
       }
@@ -676,6 +760,33 @@ export async function startSocialContentTask(input: {
         ...input,
         operationId: projectionOperationId,
       });
+      if (socialTaskSummary(record).brief.creationMode === 'viral_replication') {
+        record = await refreshSocialTaskReferenceOutputs({
+          ...input,
+          operationId: `${operationId}:prestart`,
+          referenceResolver: input.referenceResolver,
+        });
+        const referenceAnalysis = socialObject(socialJson(record.reference_video_analysis));
+        if (!referenceAnalysis || socialText(referenceAnalysis.status) !== 'ready') {
+          throw new SocialContentWorkflowError('social_content_reference_analysis_pending', 409);
+        }
+        const replicationScript = socialObject(socialJson(record.replication_script));
+        if (!replicationScript
+          || socialText(replicationScript.referenceAnalysisId) !== socialText(referenceAnalysis.analysisId)) {
+          throw new SocialContentWorkflowError('social_content_reference_analysis_pending', 409);
+        }
+        if (socialText(replicationScript.status) !== 'confirmed') {
+          const timestamp = (input.now ?? new Date()).toISOString();
+          await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
+            replication_script: { ...replicationScript, status: 'confirmed' },
+            version: nextVersion(record),
+            last_operation_id: `${operationId}:reference-review`,
+            updated_by: input.userId,
+            updated_at: timestamp,
+          });
+          throw new SocialContentWorkflowError('social_content_reference_review_required', 409);
+        }
+      }
       const summary = socialTaskSummary(record);
       const coverage = await readSocialContentSourceCoverage(input);
       const readiness = socialTaskReadiness(summary.brief, coverage, summary.theme ? {
