@@ -18,6 +18,7 @@ const presentation = fs.readFileSync(new URL('./socialContentUi.ts', import.meta
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 const landing = fs.readFileSync(new URL('./SocialContentLanding.tsx', import.meta.url), 'utf8');
 const themeCards = fs.readFileSync(new URL('./SocialThemeCards.tsx', import.meta.url), 'utf8');
+const agentWorkflowPanel = fs.readFileSync(new URL('./SocialAgentWorkflowPanel.tsx', import.meta.url), 'utf8');
 
 assert.match(api, /\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/files\?\$\{query\}/);
 assert.match(api, /body: file/);
@@ -97,7 +98,7 @@ assert.match(overview, /showDelivery[^]*?\{showDelivery && <DeliveryPanel/,
   '交付区在有交付内容时才显示');
 assert.match(overview, /<SocialReplicationAnalysisPanel task=\{task\}/);
 assert.match(replicationAnalysis, /task\.brief\.creationMode !== 'viral_replication'/);
-for (const detail of ['黄金前三秒', '两个备选钩子', '逐镜复刻清单', '需要保留', '必须改动', '本镜头素材来源']) {
+for (const detail of ['黄金前三秒', '两个备选钩子', '逐镜复刻清单', '需要保留', '必须改动', '内容 Agent 推荐路线']) {
   assert.match(replicationAnalysis, new RegExp(detail));
 }
 for (const field of ['referenceVideoAnalysis', 'replicationScript', 'shotMaterialMap', 'primaryHookId', 'fidelityPoints', 'mustDifferPoints', 'sourceStrategy']) {
@@ -137,18 +138,25 @@ assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|
 assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
   'production status must not send the user into the old production route');
 for (const action of ['确认并开始自动制作', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
-assert.match(editor, /没有素材时不会要求你补拍/);
+assert.match(editor, /不会伪造/);
 assert.match(editor, /一键托管生成/);
 assert.match(editor, /下一步：确认素材情况/);
 assert.match(editor, /draft\.materialInput === 'none'/,
   'zero-asset managed creation must remain a first-class non-blocking path');
 assert.match(editor, /materialPolicy\.subjectLabel/);
-assert.match(sources, /选“完全没素材”后可以直接继续/);
-assert.match(sources, /已选择零素材托管，无需补拍/);
+assert.match(sources, /选“完全没素材”后也能继续/);
+assert.match(sources, /已选择零素材托管，待逐镜判断/);
 assert.match(sources, /materialPolicy\.quickStartTitle/);
 assert.match(sources, /materialPolicy\.uploadTitle/);
 assert.match(sources, /materialPolicy\.recommendedShots/);
 assert.match(overview, /真实素材已就绪，可以制作/);
+assert.match(overview, /<SocialAgentWorkflowPanel task=\{task\}/);
+for (const detail of ['经营 Agent', '编导 Agent', '内容 Agent', 'DirectorBrief', 'ContentExecutionPlan', '完整实现', '功能等价', '事实或权利阻断']) {
+  assert.match(agentWorkflowPanel, new RegExp(detail));
+}
+for (const field of ['weeklyPackage', 'adHocBusinessContext', 'directorBrief', 'executionPlan', 'executionPlanReview', 'precisionIntervals', 'overallConfidence']) {
+  assert.match(agentWorkflowPanel, new RegExp(field));
+}
 assert.match(productionProgress, /内容 Agent 正按编导方案生成配音、字幕并剪辑视频/);
 assert.match(productionProgress, /补充任务资料/);
 assert.doesNotMatch(editor + landing + overview, /配置爆款公式|填写脚本|填写口播|填写字幕/,

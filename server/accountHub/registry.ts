@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { assertValidAccountId, resolveAccountHubDataDir } from './paths.js';
+import { containsCredentialLikeText, isStrictSafeLabel } from './safeText.js';
 import type {
   AccountLease,
   AccountProvider,
@@ -10,7 +11,10 @@ import type {
   AccountStatus,
   AccountStatusReason,
   AcquireLeaseInput,
+  ConnectorAccountStateUpdate,
   CreateAccountInput,
+  ProviderIdentityClaim,
+  ReassignAccountOwnerInput,
   ReleaseLeaseInput,
 } from './types.js';
 
@@ -31,6 +35,7 @@ interface RegistryDocument {
   accounts: Record<string, AccountRecord>;
   tasks: Record<string, LegacyTaskSummary>;
   leases: Record<string, AccountLease>;
+  identityClaims: Record<string, ProviderIdentityClaim>;
 }
 
 export interface AccountRegistryOptions {
@@ -67,7 +72,7 @@ const REGISTRY_LOCK_STALE_MS = 30_000;
 const REGISTRY_LOCK_TIMEOUT_MS = 5_000;
 
 function emptyDocument(): RegistryDocument {
-  return { schemaVersion: 1, accounts: {}, tasks: {}, leases: {} };
+  return { schemaVersion: 1, accounts: {}, tasks: {}, leases: {}, identityClaims: {} };
 }
 
 function assertPlainObject(value: unknown, context: string): asserts value is Record<string, unknown> {
@@ -80,6 +85,12 @@ function assertPlainObject(value: unknown, context: string): asserts value is Re
 export function assertNoCredentialMaterial(value: unknown): void {
   const visited = new WeakSet<object>();
   const visit = (current: unknown): void => {
+    if (typeof current === 'string') {
+      if (containsCredentialLikeText(current)) {
+        throw new Error('Credential material is forbidden in account registry string value');
+      }
+      return;
+    }
     if (!current || typeof current !== 'object') return;
     if (visited.has(current)) return;
     visited.add(current);
@@ -91,6 +102,12 @@ export function assertNoCredentialMaterial(value: unknown): void {
     }
   };
   visit(value);
+}
+
+function strictSafeLabel(value: unknown, field: string, maxLength: number): string {
+  const normalized = requiredString(value, field, maxLength).trim();
+  if (!isStrictSafeLabel(normalized)) throw new Error(`Invalid ${field}`);
+  return normalized;
 }
 
 function assertOnlyKeys(value: Record<string, unknown>, allowed: readonly string[], context: string): void {
@@ -112,6 +129,11 @@ function requiredIdentifier(value: unknown, field: string, pattern: RegExp): str
   return identifier;
 }
 
+function requiredNonNegativeInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`Invalid ${field}`);
+  return value as number;
+}
+
 function optionalIsoDate(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw new Error(`Invalid ${field}`);
@@ -131,7 +153,7 @@ function hasOwn(index: object, key: string): boolean {
 function parseAccount(value: unknown): AccountRecord {
   assertPlainObject(value, 'account');
   assertOnlyKeys(value, [
-    'id', 'provider', 'memberId', 'label', 'status', 'createdAt', 'updatedAt',
+    'id', 'provider', 'memberId', 'label', 'status', 'bindingGeneration', 'createdAt', 'updatedAt',
     'email', 'plan', 'lastCheckedAt', 'lastAuthenticatedAt', 'lastUsedAt', 'statusReason',
   ], 'account');
   const provider = value.provider;
@@ -154,10 +176,13 @@ function parseAccount(value: unknown): AccountRecord {
       : requiredIdentifier(value.memberId, 'member id', MEMBER_ID_PATTERN),
     label: requiredString(value.label, 'account label', 100).trim(),
     status: status as AccountStatus,
+    bindingGeneration: value.bindingGeneration === undefined
+      ? 0
+      : requiredNonNegativeInteger(value.bindingGeneration, 'binding generation'),
     createdAt: requiredIsoDate(value.createdAt, 'createdAt'),
     updatedAt: requiredIsoDate(value.updatedAt, 'updatedAt'),
     ...(value.email === undefined ? {} : { email: parseEmail(value.email) }),
-    ...(value.plan === undefined ? {} : { plan: requiredString(value.plan, 'plan', 100).trim() }),
+    ...(value.plan === undefined ? {} : { plan: strictSafeLabel(value.plan, 'plan', 100) }),
     ...(value.lastCheckedAt === undefined ? {} : { lastCheckedAt: optionalIsoDate(value.lastCheckedAt, 'lastCheckedAt') }),
     ...(value.lastAuthenticatedAt === undefined ? {} : { lastAuthenticatedAt: optionalIsoDate(value.lastAuthenticatedAt, 'lastAuthenticatedAt') }),
     ...(value.lastUsedAt === undefined ? {} : { lastUsedAt: optionalIsoDate(value.lastUsedAt, 'lastUsedAt') }),
@@ -191,6 +216,85 @@ function parseEmail(value: unknown): string {
   return email;
 }
 
+function providerIdentityHash(provider: AccountProvider, email: string): string {
+  return createHash('sha256').update(`${provider}\0${email.trim().toLowerCase()}`).digest('hex');
+}
+
+function parseIdentityClaim(value: unknown): ProviderIdentityClaim {
+  assertPlainObject(value, 'provider identity claim');
+  assertOnlyKeys(value, ['identityHash', 'ownerMemberId', 'accountId', 'claimedAt'], 'provider identity claim');
+  const identityHash = requiredString(value.identityHash, 'provider identity hash', 64);
+  if (!/^[a-f0-9]{64}$/.test(identityHash)) throw new Error('Invalid provider identity hash');
+  const accountId = requiredString(value.accountId, 'provider identity account id', 80);
+  assertValidAccountId(accountId);
+  return {
+    identityHash,
+    ownerMemberId: requiredIdentifier(value.ownerMemberId, 'provider identity owner member id', MEMBER_ID_PATTERN),
+    accountId,
+    claimedAt: requiredIsoDate(value.claimedAt, 'provider identity claimedAt'),
+  };
+}
+
+function assertProviderIdentityOwnership(
+  document: RegistryDocument,
+  account: AccountRecord,
+  email: string,
+  claimedAt: string,
+  create: boolean,
+): void {
+  const identityHash = providerIdentityHash(account.provider, email);
+  const claim = document.identityClaims[identityHash];
+  if (claim && claim.ownerMemberId !== account.memberId) throw new Error('provider_account_already_bound');
+  if (!claim && create) {
+    document.identityClaims[identityHash] = {
+      identityHash,
+      ownerMemberId: account.memberId,
+      accountId: account.id,
+      claimedAt,
+    };
+  }
+}
+
+function normalizeMetadataPatch(patch: AccountMetadataPatch): AccountMetadataPatch {
+  assertNoCredentialMaterial(patch);
+  assertPlainObject(patch, 'account metadata patch');
+  assertOnlyKeys(
+    patch,
+    ['email', 'plan', 'lastCheckedAt', 'lastAuthenticatedAt', 'lastUsedAt'],
+    'account metadata patch',
+  );
+  const normalized: AccountMetadataPatch = {};
+  if ('email' in patch) normalized.email = patch.email === null ? null : parseEmail(patch.email);
+  if ('plan' in patch) normalized.plan = patch.plan === null ? null : strictSafeLabel(patch.plan, 'plan', 100);
+  for (const key of ['lastCheckedAt', 'lastAuthenticatedAt', 'lastUsedAt'] as const) {
+    if (key in patch) normalized[key] = patch[key] === null ? null : optionalIsoDate(patch[key], key)!;
+  }
+  return normalized;
+}
+
+function applyMetadataPatch(
+  document: RegistryDocument,
+  account: AccountRecord,
+  normalized: AccountMetadataPatch,
+  claimedAt: string,
+): void {
+  if (normalized.email === null && account.email) throw new Error('provider_identity_changed');
+  if (typeof normalized.email === 'string') {
+    const email = normalized.email.toLowerCase();
+    if (account.email && account.email.toLowerCase() !== email) throw new Error('provider_identity_changed');
+    assertProviderIdentityOwnership(document, account, email, claimedAt, true);
+    if (Object.values(document.accounts).some(candidate => (
+      candidate.id !== account.id
+      && candidate.provider === account.provider
+      && candidate.email?.toLowerCase() === email
+    ))) throw new Error('provider_account_already_bound');
+  }
+  for (const [key, value] of Object.entries(normalized) as [keyof AccountMetadataPatch, string | null][]) {
+    if (value === null) delete account[key];
+    else account[key] = value;
+  }
+}
+
 function parseLegacyTask(value: unknown): LegacyTaskSummary {
   assertPlainObject(value, 'task');
   assertOnlyKeys(value, [
@@ -215,11 +319,12 @@ function parseLegacyTask(value: unknown): LegacyTaskSummary {
 function parseDocument(value: unknown): RegistryDocument {
   assertNoCredentialMaterial(value);
   assertPlainObject(value, 'registry');
-  assertOnlyKeys(value, ['schemaVersion', 'accounts', 'tasks', 'leases'], 'registry');
+  assertOnlyKeys(value, ['schemaVersion', 'accounts', 'tasks', 'leases', 'identityClaims'], 'registry');
   if (value.schemaVersion !== 1) throw new Error('Unsupported account registry schema version');
   assertPlainObject(value.accounts, 'accounts index');
   assertPlainObject(value.tasks, 'tasks index');
   if (value.leases !== undefined) assertPlainObject(value.leases, 'leases index');
+  if (value.identityClaims !== undefined) assertPlainObject(value.identityClaims, 'identity claims index');
   const accounts = Object.fromEntries(Object.entries(value.accounts).map(([key, item]) => {
     const account = parseAccount(item);
     if (key !== account.id) throw new Error('Account index key does not match account id');
@@ -235,7 +340,30 @@ function parseDocument(value: unknown): RegistryDocument {
     if (key !== lease.accountId) throw new Error('Lease index key does not match account id');
     return [key, lease];
   }));
-  return { schemaVersion: 1, accounts, tasks, leases };
+  const identityClaims = Object.fromEntries(Object.entries(value.identityClaims ?? {}).map(([key, item]) => {
+    const claim = parseIdentityClaim(item);
+    if (key !== claim.identityHash) throw new Error('Provider identity claim key does not match hash');
+    return [key, claim];
+  }));
+  // Schema-v1 registries predate tombstones. Seed claims from every still-bound
+  // identity in memory; the next mutation persists them without exposing email.
+  for (const account of Object.values(accounts)) {
+    if (!account.email) continue;
+    const identityHash = providerIdentityHash(account.provider, account.email);
+    const existing = identityClaims[identityHash];
+    if (existing && existing.ownerMemberId !== account.memberId) {
+      throw new Error('Provider identity claim conflicts with current account owner');
+    }
+    if (!existing) {
+      identityClaims[identityHash] = {
+        identityHash,
+        ownerMemberId: account.memberId,
+        accountId: account.id,
+        claimedAt: account.lastAuthenticatedAt ?? account.updatedAt,
+      };
+    }
+  }
+  return { schemaVersion: 1, accounts, tasks, leases, identityClaims };
 }
 
 function isLeaseExpired(lease: AccountLease, now: Date): boolean {
@@ -250,6 +378,38 @@ export class AccountLeaseConflictError extends Error {
   constructor(readonly lease: AccountLease) {
     super('Account is already in use by another device');
     this.name = 'AccountLeaseConflictError';
+  }
+}
+
+export class AccountDisabledError extends Error {
+  constructor(readonly accountId: string) {
+    super('Account is disabled');
+    this.name = 'AccountDisabledError';
+  }
+}
+
+export class AccountNotReadyError extends Error {
+  constructor(readonly accountId: string, readonly status: AccountStatus) {
+    super('Account is not ready for lease acquisition');
+    this.name = 'AccountNotReadyError';
+  }
+}
+
+export class AccountBindingChangedError extends Error {
+  constructor(
+    readonly accountId: string,
+    readonly actualMemberId: string,
+    readonly actualBindingGeneration: number,
+  ) {
+    super('Account owner or binding generation changed');
+    this.name = 'AccountBindingChangedError';
+  }
+}
+
+export class AccountReassignmentStateError extends Error {
+  constructor(readonly accountId: string, readonly status: AccountStatus) {
+    super('Account is not in a logged-out state for reassignment');
+    this.name = 'AccountReassignmentStateError';
   }
 }
 
@@ -394,6 +554,7 @@ export class AccountRegistry {
         memberId,
         label,
         status: 'pending_login',
+        bindingGeneration: 0,
         statusReason: 'login_required',
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -425,6 +586,41 @@ export class AccountRegistry {
     return account ? clone(account) : undefined;
   }
 
+  /** Early rejection keeps a forbidden historical identity out of the snapshot store. */
+  async assertProviderIdentityAvailable(
+    accountId: string,
+    expectedMemberIdValue: string,
+    expectedBindingGenerationValue: number,
+    emailValue: string,
+  ): Promise<void> {
+    assertValidAccountId(accountId);
+    const expectedMemberId = requiredIdentifier(expectedMemberIdValue, 'expected member id', MEMBER_ID_PATTERN);
+    const expectedBindingGeneration = requiredNonNegativeInteger(
+      expectedBindingGenerationValue,
+      'expected binding generation',
+    );
+    const email = parseEmail(emailValue);
+    const document = await this.readDocument();
+    const account = hasOwn(document.accounts, accountId) ? document.accounts[accountId] : undefined;
+    if (!account) throw new Error(`Account not found: ${accountId}`);
+    if (
+      account.memberId !== expectedMemberId
+      || account.bindingGeneration !== expectedBindingGeneration
+    ) {
+      throw new AccountBindingChangedError(account.id, account.memberId, account.bindingGeneration);
+    }
+    if (account.status === 'disabled') throw new AccountDisabledError(account.id);
+    if (account.email && account.email.toLowerCase() !== email.toLowerCase()) {
+      throw new Error('provider_identity_changed');
+    }
+    assertProviderIdentityOwnership(document, account, email, this.now().toISOString(), false);
+    if (Object.values(document.accounts).some(candidate => (
+      candidate.id !== account.id
+      && candidate.provider === account.provider
+      && candidate.email?.toLowerCase() === email.toLowerCase()
+    ))) throw new Error('provider_account_already_bound');
+  }
+
   /** Atomically establishes the immutable Provider identity for an account. */
   async bindProviderIdentity(accountId: string, emailValue: string): Promise<AccountRecord> {
     assertValidAccountId(accountId);
@@ -442,6 +638,7 @@ export class AccountRegistry {
         && candidate.email?.toLowerCase() === normalized
       ));
       if (duplicate) throw new Error('provider_account_already_bound');
+      assertProviderIdentityOwnership(document, account, email, this.now().toISOString(), true);
       if (!account.email) {
         account.email = email;
         account.updatedAt = this.now().toISOString();
@@ -467,8 +664,70 @@ export class AccountRegistry {
       ))) {
         throw new Error(`Member already has a ${account.provider} account`);
       }
+      for (const claim of Object.values(document.identityClaims)) {
+        if (claim.accountId === account.id && claim.ownerMemberId === account.memberId) {
+          claim.ownerMemberId = normalizedMemberId;
+        }
+      }
       account.memberId = normalizedMemberId;
+      account.bindingGeneration += 1;
       account.updatedAt = this.now().toISOString();
+      return clone(account);
+    });
+  }
+
+  /** Reassign only the hub slot. Provider credentials never enter this registry. */
+  async reassignAccountOwner(input: ReassignAccountOwnerInput): Promise<AccountRecord> {
+    assertNoCredentialMaterial(input);
+    assertPlainObject(input, 'account owner reassignment');
+    assertOnlyKeys(
+      input,
+      ['accountId', 'targetMemberId', 'expectedMemberId', 'expectedBindingGeneration'],
+      'account owner reassignment',
+    );
+    assertValidAccountId(input.accountId);
+    const targetMemberId = requiredIdentifier(input.targetMemberId, 'target member id', MEMBER_ID_PATTERN);
+    const expectedMemberId = requiredIdentifier(input.expectedMemberId, 'expected member id', MEMBER_ID_PATTERN);
+    const expectedBindingGeneration = requiredNonNegativeInteger(
+      input.expectedBindingGeneration,
+      'expected binding generation',
+    );
+    return this.enqueueMutation(async document => {
+      const account = hasOwn(document.accounts, input.accountId) ? document.accounts[input.accountId] : undefined;
+      if (!account) throw new Error(`Account not found: ${input.accountId}`);
+      if (
+        account.memberId !== expectedMemberId
+        || account.bindingGeneration !== expectedBindingGeneration
+      ) {
+        throw new AccountBindingChangedError(account.id, account.memberId, account.bindingGeneration);
+      }
+      if (account.status !== 'pending_login') {
+        throw new AccountReassignmentStateError(account.id, account.status);
+      }
+
+      const now = this.now();
+      const lease = hasOwn(document.leases, account.id) ? document.leases[account.id] : undefined;
+      if (lease && !isLeaseExpired(lease, now)) throw new AccountLeaseConflictError(clone(lease));
+      if (lease) delete document.leases[account.id];
+
+      if (Object.values(document.accounts).some(candidate => (
+        candidate.id !== account.id
+        && candidate.provider === account.provider
+        && candidate.memberId === targetMemberId
+      ))) {
+        throw new Error(`Member already has a ${account.provider} account`);
+      }
+
+      account.memberId = targetMemberId;
+      account.bindingGeneration += 1;
+      delete account.email;
+      delete account.plan;
+      delete account.lastAuthenticatedAt;
+      delete account.lastUsedAt;
+      delete account.lastCheckedAt;
+      account.status = 'pending_login';
+      account.statusReason = 'login_required';
+      account.updatedAt = now.toISOString();
       return clone(account);
     });
   }
@@ -481,9 +740,11 @@ export class AccountRegistry {
     assertValidAccountId(accountId);
     if (!ACCOUNT_STATUSES.has(status)) throw new Error('Invalid account status');
     if (statusReason !== undefined && !ACCOUNT_STATUS_REASONS.has(statusReason)) throw new Error('Invalid account status reason');
+    if (status === 'disabled') return this.setAccountEnabled(accountId, false);
     return this.enqueueMutation(async document => {
       const account = hasOwn(document.accounts, accountId) ? document.accounts[accountId] : undefined;
       if (!account) throw new Error(`Account not found: ${accountId}`);
+      if (account.status === 'disabled') throw new AccountDisabledError(accountId);
       account.status = status;
       account.updatedAt = this.now().toISOString();
       if (statusReason === undefined) delete account.statusReason;
@@ -494,37 +755,84 @@ export class AccountRegistry {
 
   async updateAccountMetadata(accountId: string, patch: AccountMetadataPatch): Promise<AccountRecord> {
     assertValidAccountId(accountId);
-    assertNoCredentialMaterial(patch);
-    assertPlainObject(patch, 'account metadata patch');
-    assertOnlyKeys(
-      patch,
-      ['email', 'plan', 'lastCheckedAt', 'lastAuthenticatedAt', 'lastUsedAt'],
-      'account metadata patch',
-    );
-    const normalized: AccountMetadataPatch = {};
-    if ('email' in patch) normalized.email = patch.email === null ? null : parseEmail(patch.email);
-    if ('plan' in patch) normalized.plan = patch.plan === null ? null : requiredString(patch.plan, 'plan', 100).trim();
-    for (const key of ['lastCheckedAt', 'lastAuthenticatedAt', 'lastUsedAt'] as const) {
-      if (key in patch) normalized[key] = patch[key] === null ? null : optionalIsoDate(patch[key], key)!;
-    }
+    const normalized = normalizeMetadataPatch(patch);
     return this.enqueueMutation(async document => {
       const account = hasOwn(document.accounts, accountId) ? document.accounts[accountId] : undefined;
       if (!account) throw new Error(`Account not found: ${accountId}`);
-      if (normalized.email === null && account.email) throw new Error('provider_identity_changed');
-      if (typeof normalized.email === 'string') {
-        const email = normalized.email.toLowerCase();
-        if (account.email && account.email.toLowerCase() !== email) throw new Error('provider_identity_changed');
-        if (Object.values(document.accounts).some(candidate => (
-          candidate.id !== account.id
-          && candidate.provider === account.provider
-          && candidate.email?.toLowerCase() === email
-        ))) throw new Error('provider_account_already_bound');
-      }
-      for (const [key, value] of Object.entries(normalized) as [keyof AccountMetadataPatch, string | null][]) {
-        if (value === null) delete account[key];
-        else account[key] = value;
-      }
+      applyMetadataPatch(document, account, normalized, this.now().toISOString());
       account.updatedAt = this.now().toISOString();
+      return clone(account);
+    });
+  }
+
+  /** Apply one connector heartbeat without allowing it to revive a disabled account. */
+  async applyConnectorState(accountId: string, update: ConnectorAccountStateUpdate): Promise<AccountRecord> {
+    assertValidAccountId(accountId);
+    assertNoCredentialMaterial(update);
+    assertPlainObject(update, 'connector account state update');
+    assertOnlyKeys(
+      update,
+      ['expectedMemberId', 'expectedBindingGeneration', 'status', 'statusReason', 'metadata'],
+      'connector account state update',
+    );
+    const expectedMemberId = requiredIdentifier(update.expectedMemberId, 'expected member id', MEMBER_ID_PATTERN);
+    const expectedBindingGeneration = requiredNonNegativeInteger(
+      update.expectedBindingGeneration,
+      'expected binding generation',
+    );
+    if (!ACCOUNT_STATUSES.has(update.status as AccountStatus) || (update.status as AccountStatus) === 'disabled') {
+      throw new Error('Invalid connector account status');
+    }
+    if (update.statusReason !== undefined && !ACCOUNT_STATUS_REASONS.has(update.statusReason)) {
+      throw new Error('Invalid account status reason');
+    }
+    const normalized = normalizeMetadataPatch(update.metadata);
+    return this.enqueueMutation(async document => {
+      const account = hasOwn(document.accounts, accountId) ? document.accounts[accountId] : undefined;
+      if (!account) throw new Error(`Account not found: ${accountId}`);
+      if (
+        account.memberId !== expectedMemberId
+        || account.bindingGeneration !== expectedBindingGeneration
+      ) {
+        throw new AccountBindingChangedError(accountId, account.memberId, account.bindingGeneration);
+      }
+      if (account.status === 'disabled') throw new AccountDisabledError(accountId);
+      applyMetadataPatch(document, account, normalized, this.now().toISOString());
+      account.status = update.status;
+      if (update.statusReason === undefined) delete account.statusReason;
+      else account.statusReason = update.statusReason;
+      account.updatedAt = this.now().toISOString();
+      return clone(account);
+    });
+  }
+
+  /** Atomically toggle operator state and validate that no live lease exists. */
+  async setAccountEnabled(accountId: string, enabled: boolean): Promise<AccountRecord> {
+    assertValidAccountId(accountId);
+    if (typeof enabled !== 'boolean') throw new Error('Invalid enabled state');
+    return this.enqueueMutation(async document => {
+      const account = hasOwn(document.accounts, accountId) ? document.accounts[accountId] : undefined;
+      if (!account) throw new Error(`Account not found: ${accountId}`);
+      const lease = hasOwn(document.leases, accountId) ? document.leases[accountId] : undefined;
+      const now = this.now();
+      if (lease && isLeaseExpired(lease, now)) delete document.leases[accountId];
+      const activeLease = lease && !isLeaseExpired(lease, now) ? lease : undefined;
+
+      if (!enabled) {
+        if (activeLease) throw new AccountLeaseConflictError(clone(activeLease));
+        if (account.status === 'disabled') return clone(account);
+        account.status = 'disabled';
+        account.statusReason = 'operator_disabled';
+        account.updatedAt = now.toISOString();
+        return clone(account);
+      }
+
+      if (activeLease) throw new AccountLeaseConflictError(clone(activeLease));
+      if (account.status === 'disabled') {
+        account.status = 'pending_login';
+        account.statusReason = 'login_required';
+        account.updatedAt = now.toISOString();
+      }
       return clone(account);
     });
   }
@@ -566,6 +874,10 @@ export class AccountRegistry {
       const account = hasOwn(document.accounts, input.accountId) ? document.accounts[input.accountId] : undefined;
       if (!account) throw new Error(`Account not found: ${input.accountId}`);
       if (account.memberId !== holderMemberId) throw new Error('Only the account owner may acquire its lease');
+      if (account.status === 'disabled') throw new AccountDisabledError(account.id);
+      if (account.status !== 'ready' && account.status !== 'busy') {
+        throw new AccountNotReadyError(account.id, account.status);
+      }
       const now = this.now();
       const timestamp = now.toISOString();
       const existing = hasOwn(document.leases, account.id) ? document.leases[account.id] : undefined;
@@ -607,14 +919,14 @@ export class AccountRegistry {
     assertValidAccountId(input.accountId);
     const holderMemberId = requiredIdentifier(input.holderMemberId, 'lease holder member id', MEMBER_ID_PATTERN);
     const deviceId = requiredIdentifier(input.deviceId, 'lease device id', DEVICE_ID_PATTERN);
-    if (input.leaseId !== undefined) requiredString(input.leaseId, 'lease id', 100);
+    const leaseId = requiredString(input.leaseId, 'lease id', 100);
     return this.enqueueMutation(async document => {
       const lease = hasOwn(document.leases, input.accountId) ? document.leases[input.accountId] : undefined;
       if (!lease) return false;
       if (lease.holderMemberId !== holderMemberId || lease.deviceId !== deviceId) {
         throw new AccountLeaseConflictError(clone(lease));
       }
-      if (input.leaseId !== undefined && input.leaseId !== lease.leaseId) {
+      if (leaseId !== lease.leaseId) {
         throw new AccountLeaseConflictError(clone(lease));
       }
       delete document.leases[input.accountId];

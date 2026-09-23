@@ -58,10 +58,13 @@ assert.doesNotMatch(enterpriseSource, /accept=['"](?:image|video)\/\*/, '企业�
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 assert.match(inspirationSource, /本次上传归属（必选）/, '上传前必须明确素材归属');
 assert.match(inspirationSource, /请选择产品或企业通用/, '上传和编辑都必须提供未选择占位状态');
-assert.match(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '页面必须解释任务上传与我的素材共用同一入口');
+assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
 assert.match(inspirationSource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
 assert.match(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未确认产品归属时必须禁用保存');
 assert.doesNotMatch(inspirationSource, /通用素材 \/ 未关联产品/, '企业通用与未确认归属不得再混成一个选项');
+assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
+assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
+assert.match(inspirationSource, /material\.type === 'audio' \? '音频'/, '音频素材不得继续误标为图片');
 
 console.log('material ownership frontend contracts passed');

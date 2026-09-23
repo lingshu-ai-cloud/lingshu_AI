@@ -26,6 +26,8 @@ export interface AccountRecord {
   memberId: string;
   label: string;
   status: AccountStatus;
+  /** Monotonic CAS generation; incremented whenever the account slot is reassigned/reset. */
+  bindingGeneration: number;
   createdAt: string;
   updatedAt: string;
   email?: string;
@@ -50,6 +52,30 @@ export interface AccountMetadataPatch {
   lastCheckedAt?: string | null;
   lastAuthenticatedAt?: string | null;
   lastUsedAt?: string | null;
+}
+
+/** One atomic, credential-free update produced by a member connector heartbeat. */
+export interface ConnectorAccountStateUpdate {
+  expectedMemberId: string;
+  expectedBindingGeneration: number;
+  status: Exclude<AccountStatus, 'disabled'>;
+  statusReason?: AccountStatusReason;
+  metadata: AccountMetadataPatch;
+}
+
+export interface ReassignAccountOwnerInput {
+  accountId: string;
+  targetMemberId: string;
+  expectedMemberId: string;
+  expectedBindingGeneration: number;
+}
+
+/** Durable, pseudonymous ownership tombstone. It never contains the Provider email or credentials. */
+export interface ProviderIdentityClaim {
+  identityHash: string;
+  ownerMemberId: string;
+  accountId: string;
+  claimedAt: string;
 }
 
 /** A durable exclusive-use claim. It contains identity metadata, never provider credentials. */
@@ -78,8 +104,8 @@ export interface ReleaseLeaseInput {
   accountId: string;
   holderMemberId: string;
   deviceId: string;
-  /** When supplied, protects a newer lease from a delayed local-logout request. */
-  leaseId?: string;
+  /** Required capability; protects a newer lease from delayed release requests. */
+  leaseId: string;
 }
 
 export type MemberAccountConnectionState = 'authenticated' | 'unauthenticated' | 'error' | 'unknown';

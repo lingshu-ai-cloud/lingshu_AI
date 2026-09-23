@@ -5,12 +5,20 @@ import {
   MemberAccountEmailConflictError,
   MemberAccountStateStore,
 } from './memberAccountState.js';
-import { AccountLeaseConflictError, AccountRegistry } from './registry.js';
+import {
+  AccountDisabledError,
+  AccountBindingChangedError,
+  AccountLeaseConflictError,
+  AccountNotReadyError,
+  AccountReassignmentStateError,
+  AccountRegistry,
+} from './registry.js';
 import type {
   AccountLease,
   AccountProvider,
   AccountRecord,
   AccountStatusReason,
+  ConnectorAccountStateUpdate,
   CreateAccountInput,
   MemberAccountStateReport,
   MemberAccountStateSnapshot,
@@ -19,6 +27,12 @@ import type {
 
 type PublicAccountStatus = 'pending' | 'ready' | 'busy' | 'reauthorization_required' | 'unavailable' | 'disabled';
 type PublicLocalState = 'authenticated' | 'unauthenticated' | 'unavailable' | 'unknown';
+export type AccountTransferBlockedReason =
+  | 'account_in_use'
+  | 'legacy_managed_profile_cleanup_required'
+  | 'local_logout_required'
+  | 'fresh_local_logout_required'
+  | 'account_not_pending';
 
 export interface PublicLocalAccountState {
   state: PublicLocalState;
@@ -43,19 +57,18 @@ export interface PublicAccount {
   lastCheckedAt: string | null;
   lastUsedAt: string | null;
   createdAt: string;
-  leaseId: string | null;
   holderMemberId: string | null;
-  deviceId: string | null;
   deviceLabel: string | null;
   acquiredAt: string | null;
   renewedAt: string | null;
   expiresAt: string | null;
   localState: PublicLocalAccountState | null;
   legacyManagedProfilePresent: boolean;
+  transferEligible: boolean;
+  transferBlockedReason: AccountTransferBlockedReason | null;
 }
 
 export interface PublicLeaseResult {
-  account: PublicAccount;
   lease: AccountLease;
 }
 
@@ -108,7 +121,7 @@ function localState(snapshot: MemberAccountStateSnapshot): PublicLocalAccountSta
 }
 
 function registryState(snapshot: MemberAccountStateSnapshot): {
-  status: AccountRecord['status'];
+  status: ConnectorAccountStateUpdate['status'];
   reason?: AccountStatusReason;
 } {
   if (snapshot.state === 'authenticated') return { status: 'ready' };
@@ -191,6 +204,42 @@ export class AccountHubService {
     }
   }
 
+  async reassignAccountOwner(accountId: string, targetMemberId: string): Promise<PublicAccount> {
+    await this.ensureInitialized();
+    const account = await this.requiredAccount(accountId);
+    if (await this.legacyManagedProfilePresent(account)) {
+      throw new AccountHubServiceError('legacy_managed_profile_cleanup_required', 409);
+    }
+    const snapshot = await this.stateStore.get(account.memberId, account.provider);
+    const age = snapshot ? this.now().getTime() - Date.parse(snapshot.reportedAt) : Number.POSITIVE_INFINITY;
+    if (!snapshot || age < 0 || age > LOCAL_STATE_MAX_AGE_MS) {
+      throw new AccountHubServiceError('fresh_local_logout_required', 409);
+    }
+    if (snapshot.state !== 'unauthenticated') {
+      throw new AccountHubServiceError('local_logout_required', 409);
+    }
+
+    try {
+      await this.registry.reassignAccountOwner({
+        accountId: account.id,
+        targetMemberId,
+        expectedMemberId: account.memberId,
+        expectedBindingGeneration: account.bindingGeneration,
+      });
+    } catch (error) {
+      if (error instanceof AccountLeaseConflictError) throw new AccountHubServiceError('account_in_use', 409);
+      if (error instanceof AccountBindingChangedError) throw new AccountHubServiceError('account_assignment_changed', 409);
+      if (error instanceof AccountReassignmentStateError) {
+        throw new AccountHubServiceError('local_logout_required', 409);
+      }
+      if (error instanceof Error && /Member already has a (?:codex|claude) account/.test(error.message)) {
+        throw new AccountHubServiceError('member_provider_account_exists', 409);
+      }
+      throw error;
+    }
+    return this.getAccount(account.id);
+  }
+
   async getAccount(accountId: string): Promise<PublicAccount> {
     await this.ensureInitialized();
     await this.registry.reapExpiredLeases();
@@ -202,19 +251,15 @@ export class AccountHubService {
 
   async setAccountEnabled(accountId: string, enabled: boolean): Promise<PublicAccount> {
     await this.ensureInitialized();
-    await this.registry.reapExpiredLeases();
-    const account = await this.requiredAccount(accountId);
-    if (!enabled) {
-      if ((await this.registry.listLeases()).some(lease => lease.accountId === accountId)) {
-        throw new AccountHubServiceError('account_in_use', 409);
-      }
-      await this.registry.updateAccountStatus(accountId, 'disabled', 'operator_disabled');
-      return this.getAccount(accountId);
+    await this.requiredAccount(accountId);
+    try {
+      await this.registry.setAccountEnabled(accountId, enabled);
+    } catch (error) {
+      if (error instanceof AccountLeaseConflictError) throw new AccountHubServiceError('account_in_use', 409);
+      throw error;
     }
-    if (account.status !== 'disabled') return this.getAccount(accountId);
-    // The server never probes or logs into a member account. A fresh local
-    // connector report is required before the account becomes ready again.
-    await this.registry.updateAccountStatus(accountId, 'pending_login', 'login_required');
+    // Enabling never trusts an old heartbeat: the registry moves the account
+    // to pending_login and a fresh local report is required to make it ready.
     return this.getAccount(accountId);
   }
 
@@ -236,7 +281,7 @@ export class AccountHubService {
     if (!report || typeof report !== 'object' || !['codex', 'claude'].includes(report.provider)) {
       throw new AccountHubServiceError('invalid_provider', 400);
     }
-    let account = await this.registry.getAccountForMember(memberId, report.provider);
+    const account = await this.registry.getAccountForMember(memberId, report.provider);
     if (!account) throw new AccountHubServiceError('account_not_bound', 404);
     if (account.status === 'disabled') throw new AccountHubServiceError('account_disabled', 409);
     if (await this.legacyManagedProfilePresent(account)) {
@@ -247,10 +292,23 @@ export class AccountHubService {
     if (report.state === 'authenticated' && !reportedEmail) {
       throw new AccountHubServiceError('verified_provider_identity_required', 409);
     }
+    if (reportedEmail && account.email && account.email.trim().toLowerCase() !== reportedEmail) {
+      throw new AccountHubServiceError('provider_identity_changed', 409);
+    }
     if (reportedEmail) {
       try {
-        account = await this.registry.bindProviderIdentity(account.id, reportedEmail);
+        await this.registry.assertProviderIdentityAvailable(
+          account.id,
+          account.memberId,
+          account.bindingGeneration,
+          reportedEmail,
+        );
       } catch (error) {
+        if (error instanceof AccountDisabledError) throw new AccountHubServiceError('account_disabled', 409);
+        if (error instanceof AccountBindingChangedError) {
+          if (error.actualMemberId !== memberId) throw new AccountHubServiceError('account_not_bound', 404);
+          throw new AccountHubServiceError('account_assignment_changed', 409);
+        }
         if (error instanceof Error && error.message === 'provider_identity_changed') {
           throw new AccountHubServiceError('provider_identity_changed', 409);
         }
@@ -260,7 +318,6 @@ export class AccountHubService {
         throw error;
       }
     }
-
     let snapshot: MemberAccountStateSnapshot;
     try {
       snapshot = await this.stateStore.report(memberId, report);
@@ -271,15 +328,35 @@ export class AccountHubService {
       throw error;
     }
     const mapped = registryState(snapshot);
-    await this.registry.updateAccountMetadata(account.id, {
-      // Once first verified, identity cannot be cleared by an unauthenticated
-      // heartbeat and silently rebound to a different Provider account.
-      email: snapshot.email ?? account.email ?? null,
-      plan: snapshot.plan ?? account.plan ?? null,
-      lastCheckedAt: snapshot.reportedAt,
-      lastAuthenticatedAt: snapshot.state === 'authenticated' ? snapshot.reportedAt : null,
-    });
-    await this.registry.updateAccountStatus(account.id, mapped.status, mapped.reason);
+    try {
+      await this.registry.applyConnectorState(account.id, {
+        expectedMemberId: account.memberId,
+        expectedBindingGeneration: account.bindingGeneration,
+        status: mapped.status,
+        statusReason: mapped.reason,
+        metadata: {
+          // Once first verified, identity cannot be cleared by an unauthenticated
+          // heartbeat and silently rebound to a different Provider account.
+          email: snapshot.email ?? account.email ?? null,
+          plan: snapshot.plan ?? account.plan ?? null,
+          lastCheckedAt: snapshot.reportedAt,
+          lastAuthenticatedAt: snapshot.state === 'authenticated' ? snapshot.reportedAt : null,
+        },
+      });
+    } catch (error) {
+      if (error instanceof AccountDisabledError) throw new AccountHubServiceError('account_disabled', 409);
+      if (error instanceof AccountBindingChangedError) {
+        if (error.actualMemberId !== memberId) throw new AccountHubServiceError('account_not_bound', 404);
+        throw new AccountHubServiceError('account_assignment_changed', 409);
+      }
+      if (error instanceof Error && error.message === 'provider_identity_changed') {
+        throw new AccountHubServiceError('provider_identity_changed', 409);
+      }
+      if (error instanceof Error && error.message === 'provider_account_already_bound') {
+        throw new AccountHubServiceError('provider_account_already_bound', 409);
+      }
+      throw error;
+    }
     // Never return PublicAccount here: it contains the active lease capability.
     // A copied connector token must not be able to learn another process's leaseId.
     return { accepted: true, localState: localState(snapshot) };
@@ -326,10 +403,14 @@ export class AccountHubService {
       });
     } catch (error) {
       if (error instanceof AccountLeaseConflictError) throw new AccountHubServiceError('account_lease_held', 409);
+      if (error instanceof AccountDisabledError) throw new AccountHubServiceError('account_disabled', 409);
+      if (error instanceof AccountNotReadyError) throw new AccountHubServiceError('reauthorization_required', 409);
       throw error;
     }
     await this.registry.updateAccountMetadata(account.id, { lastUsedAt: this.now().toISOString() });
-    return { account: await this.getAccount(account.id), lease };
+    // The connector needs only its own capability. Returning the whole account
+    // would unnecessarily expose team/member metadata and duplicate leaseId.
+    return { lease };
   }
 
   /** Local release only drops the coordination lease; it never touches provider auth. */
@@ -337,14 +418,11 @@ export class AccountHubService {
     accountId: string;
     memberId: string;
     deviceId: string;
-    leaseId?: string;
+    leaseId: string;
   }): Promise<{ released: boolean }> {
     await this.ensureInitialized();
     const account = await this.requiredAccount(input.accountId);
     if (account.memberId !== input.memberId) throw new AccountHubServiceError('account_member_mismatch', 403);
-    await this.registry.reapExpiredLeases();
-    const activeLease = (await this.registry.listLeases()).find(lease => lease.accountId === account.id);
-    if (activeLease && !input.leaseId) throw new AccountHubServiceError('account_lease_not_owned', 409);
     let released: boolean;
     try {
       released = await this.registry.releaseLease({
@@ -387,6 +465,18 @@ export class AccountHubService {
     snapshot: MemberAccountStateSnapshot | null,
   ): Promise<PublicAccount> {
     const legacyManagedProfilePresent = await this.legacyManagedProfilePresent(account);
+    const snapshotAge = snapshot ? this.now().getTime() - Date.parse(snapshot.reportedAt) : Number.POSITIVE_INFINITY;
+    const transferBlockedReason: AccountTransferBlockedReason | null = legacyManagedProfilePresent
+      ? 'legacy_managed_profile_cleanup_required'
+      : lease
+      ? 'account_in_use'
+      : !snapshot || snapshotAge < 0 || snapshotAge > LOCAL_STATE_MAX_AGE_MS
+      ? 'fresh_local_logout_required'
+      : snapshot.state !== 'unauthenticated'
+      ? 'local_logout_required'
+      : account.status !== 'pending_login'
+      ? 'account_not_pending'
+      : null;
     return {
       id: account.id,
       provider: account.provider,
@@ -403,15 +493,15 @@ export class AccountHubService {
       lastCheckedAt: snapshot?.reportedAt ?? account.lastCheckedAt ?? null,
       lastUsedAt: account.lastUsedAt ?? null,
       createdAt: account.createdAt,
-      leaseId: lease?.leaseId ?? null,
       holderMemberId: lease?.holderMemberId ?? null,
-      deviceId: lease?.deviceId ?? null,
       deviceLabel: lease?.deviceLabel ?? null,
       acquiredAt: lease?.acquiredAt ?? null,
       renewedAt: lease?.renewedAt ?? null,
       expiresAt: lease?.expiresAt ?? null,
       localState: snapshot ? localState(snapshot) : null,
       legacyManagedProfilePresent,
+      transferEligible: transferBlockedReason === null,
+      transferBlockedReason,
     };
   }
 }

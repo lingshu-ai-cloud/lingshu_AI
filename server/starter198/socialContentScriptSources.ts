@@ -55,9 +55,24 @@ export function pendingSocialTaskReferenceAnalysis(
   const recommendation = source.sourceId.startsWith('system-reference:');
   return {
     analysisId: `reference-analysis-${socialRequestHash({ sourceId: source.sourceId, sourceRef: normalizedReferenceIdentity(source.sourceRef) }).slice(0, 20)}`,
+    version: socialRequestHash({ sourceId: source.sourceId, sourceRef: normalizedReferenceIdentity(source.sourceRef), createdAt: source.createdAt }).slice(0, 12),
     referenceSourceId: source.sourceId,
     status: 'analyzing',
     durationSeconds: null,
+    analysisLayers: [
+      { level: 'L0', status: 'partial', scope: '已记录参考来源，等待读取平台元数据与完整时长', confidence: null },
+      { level: 'L1', status: 'pending', scope: '等待 ASR、OCR、抽帧和镜头切分', confidence: null },
+      { level: 'L2', status: 'pending', scope: '等待全片结构与节奏分析', confidence: null },
+      { level: 'L3', status: 'pending', scope: '等待精确分镜与连续性分析', confidence: null },
+      { level: 'L4', status: 'pending', scope: '等待人工修正与真实制作结果回流', confidence: null },
+    ],
+    coverage: {
+      fullDurationSeconds: null,
+      precisionIntervals: [],
+      gaps: [],
+      overallConfidence: null,
+      fullTimelineCovered: false,
+    },
     shots: [],
     hookAnalysis: null,
     rightsNotice: recommendation
@@ -119,6 +134,40 @@ function synthetic(record: Record<string, unknown>, analysis: Record<string, unk
   const marker = [record.source, record.sourceType, analysis.source, analysis.sourceType]
     .map(socialText).join(' ').toLowerCase();
   return /(?:^|[\s_./:-])(fixture|mock|placeholder|demo_seed|sample_data)(?:$|[\s_./:-])/.test(marker);
+}
+
+function referenceCoverage(input: {
+  record: Record<string, unknown>;
+  exact: NonNullable<ReturnType<typeof exactAnalysis>>;
+  shots: SocialReferenceShotAnalysis[];
+}): NonNullable<SocialReferenceVideoAnalysis['coverage']> {
+  const declaredDuration = Number(input.record.duration || recordObject(input.record.videoMeta).duration || 0);
+  const analyzedUntil = Math.max(0, ...input.shots.map(shot => shot.endSeconds));
+  const fullDurationSeconds = declaredDuration > 0 ? declaredDuration : analyzedUntil || null;
+  const gaps: Array<{ startSeconds: number; endSeconds: number; reason: string }> = [];
+  let cursor = 0;
+  for (const shot of input.shots) {
+    if (shot.startSeconds - cursor > 0.15) {
+      gaps.push({ startSeconds: +cursor.toFixed(2), endSeconds: +shot.startSeconds.toFixed(2), reason: '该区间没有通过精确分析校验，保留为空档等待补充分析' });
+    }
+    cursor = Math.max(cursor, shot.endSeconds);
+  }
+  if (fullDurationSeconds !== null && fullDurationSeconds - cursor > 0.15) {
+    gaps.push({ startSeconds: +cursor.toFixed(2), endSeconds: +fullDurationSeconds.toFixed(2), reason: '精确分析尚未覆盖视频尾部，不能用已分析区间代替整片时长' });
+  }
+  const confidenceValues = input.exact.details
+    .map(item => Number(item.detail.confidence))
+    .filter(value => Number.isFinite(value) && value >= 0 && value <= 1);
+  const overallConfidence = confidenceValues.length
+    ? +(confidenceValues.reduce((sum, value) => sum + value, 0) / confidenceValues.length).toFixed(3)
+    : null;
+  return {
+    fullDurationSeconds,
+    precisionIntervals: input.shots.map(shot => ({ startSeconds: shot.startSeconds, endSeconds: shot.endSeconds, level: 'L3' as const })),
+    gaps,
+    overallConfidence,
+    fullTimelineCovered: fullDurationSeconds !== null && gaps.length === 0 && cursor >= fullDurationSeconds - 0.15,
+  };
 }
 
 function combinedText(detail: Record<string, unknown>, fields: string[]): string {
@@ -309,6 +358,15 @@ function publicShot(input: {
   const structure = safeReferenceStructure(input.row);
   const truth = truthBoundaryFor({ purpose, subject });
   const strategy = productionStrategyFor(truth, purpose);
+  const detailText = (fields: string[]) => combinedText(input.row.detail, fields);
+  const shotText = detailText(['shot', 'visual']);
+  const angleText = detailText(['angle', 'camera']);
+  const compositionText = detailText(['composition']);
+  const voiceDetected = Boolean(detailText(['dialogue']));
+  const captionDetected = Boolean(detailText(['onScreenText', 'subtitle']));
+  const ambientDetected = Boolean(detailText(['ambientSound']));
+  const musicDetected = Boolean(detailText(['bgm']));
+  const effectsDetected = Boolean(detailText(['soundEffects']));
   return {
     shotId: `reference-shot-${input.index + 1}`,
     startSeconds: structure.sourceTiming.startSeconds,
@@ -319,6 +377,31 @@ function publicShot(input: {
     audioDescription: '保留声画配合与节奏功能，重新制作配音、配乐和音效。',
     rhythmDescription: `${structure.pace}节奏，${structure.transition}`,
     purpose,
+    action: {
+      startState: `${subject}处于本镜头的可见初始状态`,
+      path: purpose === 'demonstration' ? `主体完成可观察的操作过程` : `主体按${structure.cameraMovement}逐步揭示信息`,
+      endState: `${subject}停留在可与下一镜衔接的结束状态`,
+      spatialRelation: '只记录画面中可确认的主体位置和连续关系；无法确认的左右方向不补写',
+    },
+    shotLanguage: {
+      shotSize: structure.shotScale,
+      cameraAngle: /俯拍|overhead|top.down/i.test(angleText) ? '俯拍' : /仰拍|low.angle/i.test(angleText) ? '仰拍' : /侧面|side/i.test(angleText) ? '侧面机位' : '未确认具体角度',
+      movement: structure.cameraMovement,
+      composition: /对称|symmetr/i.test(compositionText) ? '对称构图' : /三分|third/i.test(compositionText) ? '三分构图' : /中心|center/i.test(compositionText) ? '中心构图' : '未确认具体构图',
+    },
+    audioLayers: {
+      voice: voiceDetected ? '检测到人声层；原话不进入复刻脚本' : null,
+      captions: captionDetected ? '检测到字幕或平台文字叠加层；按后期图层处理' : null,
+      ambient: ambientDetected ? '检测到环境声层' : null,
+      music: musicDetected ? '检测到音乐层；新视频必须重新授权或替换' : null,
+      soundEffects: effectsDetected ? '检测到音效层' : null,
+    },
+    observation: {
+      observableFacts: [subject, structure.shotScale, structure.cameraMovement],
+      inferredIntent: [`推断镜头作用为：${purpose}`],
+      causalGaps: structure.transition === '自然衔接' ? [] : ['转场可能压缩真实过程，不能据此推断未展示的因果关系'],
+      postProductionOverlays: captionDetected ? ['字幕或平台文字属于后期叠加层，不属于物理场景'] : [],
+    },
     tags: {
       sceneTypes: [/生产现场/.test(subject) ? '工厂实拍结构' : purpose === 'demonstration' ? '使用演示结构' : '产品内容结构'],
       subjects: [subject],
@@ -434,6 +517,10 @@ function materialPlanForShot(shot: SocialReferenceShotAnalysis): SocialReplicati
       description: replacementRequired ? '用流程动画或已确认事实卡承担同一信息功能。' : null,
       reason: replacementRequired ? '当前没有可作为客户真实证据的已授权素材。' : null,
     },
+    feasibility: replacementRequired ? 'goal_degraded' : 'functional_equivalent',
+    feasibilityReason: replacementRequired
+      ? '当前缺少承担真实证明作用的客户素材，必须由内容 Agent 重新评估事实强度'
+      : '可用全新画面保持参考镜头的叙事功能，不复用原片素材',
     customerShootRequired: false,
   };
 }
@@ -475,11 +562,21 @@ export function buildSocialTaskReferencePackage(input: {
     || socialText(input.record.updated)
     || socialText(input.record.crawledAt)
     || input.source.createdAt;
+  const coverage = referenceCoverage({ record: input.record, exact, shots });
   const referenceVideoAnalysis: SocialReferenceVideoAnalysis = {
     analysisId,
+    version: socialRequestHash({ recordId, analysis: input.record.aiAnalysis }).slice(0, 12),
     referenceSourceId: input.source.sourceId,
     status: 'ready',
-    durationSeconds: Math.max(...shots.map(shot => shot.endSeconds)),
+    durationSeconds: coverage.fullDurationSeconds,
+    analysisLayers: [
+      { level: 'L0', status: 'complete', scope: '来源、标题、平台元数据与整片时长', confidence: 1 },
+      { level: 'L1', status: 'complete', scope: 'ASR、OCR、抽帧、镜头切分、主体与场景粗标签', confidence: coverage.overallConfidence },
+      { level: 'L2', status: coverage.fullDurationSeconds === null ? 'partial' : 'complete', scope: '钩子、信息顺序、证据位置、节奏、情绪与 CTA 粗结构', confidence: coverage.overallConfidence },
+      { level: 'L3', status: coverage.fullTimelineCovered ? 'complete' : 'partial', scope: '连续时间线、动作起止、空间连续性、镜头语言与音频层', confidence: coverage.overallConfidence },
+      { level: 'L4', status: 'pending', scope: '等待误识别修正、权利风险与实际制作结果回流', confidence: null },
+    ],
+    coverage,
     shots,
     hookAnalysis: primaryHook,
     rightsNotice: '参考链接仅用于分析镜头功能、顺序和节奏，不代表版权已经确认；系统不会复制原视频文件、原文案、人物身份、品牌标识、水印或原声音频。',
@@ -507,7 +604,7 @@ export function buildSocialTaskReferencePackage(input: {
     };
   });
   const replicationScript: SocialReplicationScriptVersion = {
-    version: '1',
+    version: String(Math.max(1, Date.parse(createdAt) || 1)),
     referenceAnalysisId: analysisId,
     status: 'review_required',
     primaryHookId: primaryHook.hookId,

@@ -2081,6 +2081,18 @@ videosRouter.get('/:id/media-url', async (req, res) => {
   const filename = String(record.videoFileId || '');
   if (!filename && !analysis.videoObjectKey) { res.status(404).json({ error: 'Video not stored' }); return; }
   res.setHeader('Cache-Control', 'private, no-store');
+  const normalizedLocalFile = filename.replace(/\\/g, '/').replace(/^\/+/, '');
+  const recordTenantId = String(record.tenantId || '');
+  const expectedPrefix = `tenants/${recordTenantId}/`;
+  const tenantRoot = path.resolve(MEDIA_DIR, 'tenants', recordTenantId);
+  const localPath = path.resolve(MEDIA_DIR, normalizedLocalFile);
+  if (normalizedLocalFile.startsWith(expectedPrefix)
+    && localPath.startsWith(`${tenantRoot}${path.sep}`)
+    && fs.existsSync(localPath)
+    && fs.statSync(localPath).isFile()) {
+    res.json({ url: signAssetUrl(`/media/${normalizedLocalFile}`, tenantId) });
+    return;
+  }
   res.json({ url: signAssetUrl(`/api/overseas/videos/${encodeURIComponent(req.params.id)}/media`, tenantId) });
 });
 

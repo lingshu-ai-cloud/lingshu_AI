@@ -324,3 +324,52 @@ export async function releaseMemberLocalLease(
     leaseId: connectorIdentifier(leaseId, 'lease_id'),
   }, fetchImpl);
 }
+
+export interface MemberLocalLeaseReconciliation {
+  action: 'acquired' | 'renewed' | 'released' | 'idle';
+  leaseId?: string;
+}
+
+export interface MemberLocalLeaseStopResult {
+  action: 'retained' | 'idle';
+  leaseId?: string;
+}
+
+/**
+ * Stopping or restarting the connector is not proof of a Provider logout.
+ * Preserve the in-memory capability without making a network request; the
+ * server lease will expire by TTL after heartbeats stop.
+ */
+export function stopMemberLocalLeaseSession(
+  currentLeaseId?: string,
+): MemberLocalLeaseStopResult {
+  return currentLeaseId
+    ? { action: 'retained', leaseId: currentLeaseId }
+    : { action: 'idle' };
+}
+
+/**
+ * Reconcile only the middle-tier coordination lease with an already reported
+ * local Provider state. This never invokes a Provider login/logout command.
+ * Callers must retain their previous leaseId when this function throws, so a
+ * transient network failure cannot be mistaken for a confirmed release.
+ */
+export async function reconcileMemberLocalLease(
+  config: MemberLocalConnectorConfig,
+  report: Pick<MemberAccountStateReport, 'state'>,
+  currentLeaseId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<MemberLocalLeaseReconciliation> {
+  if (report.state === 'authenticated') {
+    const leaseId = await acquireMemberLocalLease(config, currentLeaseId, fetchImpl);
+    return { action: currentLeaseId ? 'renewed' : 'acquired', leaseId };
+  }
+  if (report.state === 'unauthenticated' && currentLeaseId) {
+    await releaseMemberLocalLease(config, currentLeaseId, fetchImpl);
+    return { action: 'released' };
+  }
+  // An error/unknown probe cannot prove that the member logged out. Keep the
+  // capability fail-closed so another device cannot take over due to a probe
+  // failure. The caller continues heartbeats and retries the read-only probe.
+  return { action: 'idle', ...(currentLeaseId ? { leaseId: currentLeaseId } : {}) };
+}

@@ -1,0 +1,188 @@
+import assert from 'node:assert/strict';
+import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply';
+import type {
+  SocialContentTaskBrief,
+  SocialReferenceVideoAnalysis,
+  SocialReplicationScriptVersion,
+} from '../../shared/contracts/socialContentWorkflow';
+import { buildSocialAgentWorkflow, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
+
+const brief: SocialContentTaskBrief = {
+  title: '面向采购商的产品介绍',
+  objective: '让美国采购商理解产品价值并发起询盘',
+  productRef: 'product:verified-1',
+  audience: '美国采购商',
+  markets: ['US'],
+  languages: ['en'],
+  platforms: ['tiktok', 'youtube'],
+  formats: ['short_video'],
+  aspectRatio: '9:16',
+  cadence: null,
+  requestedOutputCount: 2,
+  weeklyBudgetCny: 100,
+  perItemBudgetCny: 20,
+  retryReserveCny: 10,
+  planningMode: 'auto_adjust',
+  shootingWindowMinutes: 0,
+  specialRequirements: null,
+  dueAt: '2026-10-01T00:00:00.000Z',
+  brandNotes: '保持产品包装与商标不变',
+  restrictions: ['不得虚构认证'],
+  callToAction: '提交询盘',
+  creationMode: 'viral_replication',
+  assetAvailability: 'none',
+  managementMode: 'one_click_managed',
+  productionMode: 'social_ready',
+};
+
+const truthBoundary = {
+  subject: 'none' as const,
+  syntheticVisualAllowed: true,
+  customerEvidenceRequired: false,
+  customerEvidenceRefs: [],
+  confirmedFactRefs: ['knowledge:product-1'],
+  mustNotImplyCustomerReality: true,
+  prohibitedRepresentations: ['alter_locked_product_identity' as const, 'present_synthetic_media_as_customer_evidence' as const],
+};
+
+const referenceAnalysis: SocialReferenceVideoAnalysis = {
+  analysisId: 'analysis-1',
+  version: '7',
+  referenceSourceId: 'source-reference-1',
+  status: 'ready',
+  durationSeconds: 6,
+  coverage: {
+    fullDurationSeconds: 6,
+    precisionIntervals: [{ startSeconds: 0, endSeconds: 3, level: 'L3' }, { startSeconds: 3, endSeconds: 6, level: 'L3' }],
+    gaps: [],
+    overallConfidence: 0.91,
+    fullTimelineCovered: true,
+  },
+  shots: [
+    {
+      shotId: 'reference-hook', startSeconds: 0, endSeconds: 3, visualDescription: '快速呈现主体', spokenText: null, captionText: null,
+      audioDescription: '节奏音效', rhythmDescription: '快速', purpose: 'hook',
+      tags: { sceneTypes: ['产品展示'], subjects: ['产品'], subjectRelations: [], cameraLanguage: ['近景特写', '推进镜头'], contentFunctions: ['hook'], soundTypes: ['音效'], onScreenInformation: ['主字幕'], truthRequirements: ['none'], suggestedProductionMethods: ['motion_graphics'] },
+      fidelityPoints: ['结果先行'], mustDifferPoints: ['替换产品和文案'],
+    },
+    {
+      shotId: 'reference-cta', startSeconds: 3, endSeconds: 6, visualDescription: '行动引导', spokenText: null, captionText: null,
+      audioDescription: '音乐收束', rhythmDescription: '稳定', purpose: 'call_to_action',
+      tags: { sceneTypes: ['图文'], subjects: ['字幕'], subjectRelations: [], cameraLanguage: ['固定镜头'], contentFunctions: ['call_to_action'], soundTypes: ['音乐'], onScreenInformation: ['行动按钮'], truthRequirements: ['none'], suggestedProductionMethods: ['motion_graphics'] },
+      fidelityPoints: ['结尾收束'], mustDifferPoints: ['替换业务行动'],
+    },
+  ],
+  hookAnalysis: null,
+  rightsNotice: '仅分析结构，不复制受保护内容。',
+  createdAt: '2026-09-23T00:00:00.000Z',
+};
+
+const supply = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication',
+  planVersion: '12',
+  confirmedFactRefs: ['knowledge:product-1'],
+  shots: [
+    { shotId: 'scene-hook', function: 'hook', requestedDescription: '三秒内呈现主体' },
+    { shotId: 'scene-cta', function: 'call_to_action', requestedDescription: '给出询盘行动' },
+  ],
+});
+
+const replicationScript: SocialReplicationScriptVersion = {
+  version: '9',
+  referenceAnalysisId: referenceAnalysis.analysisId,
+  status: 'review_required',
+  primaryHookId: 'hook-primary',
+  hookOptions: [],
+  shots: [
+    {
+      shotId: 'scene-hook', referenceShotId: 'reference-hook', startSeconds: 0, endSeconds: 3, purpose: 'hook',
+      visualInstruction: '第一帧直接呈现产品轮廓和核心利益点', spokenText: 'See the key difference.', captionText: 'See the difference', audioAndTransition: '快速起音',
+      fidelityPoints: ['结果先行'], mustDifferPoints: ['使用客户品牌表达'], materialPlan: supply.shots[0]!, lockedRegions: ['产品包装'], risks: [],
+    },
+    {
+      shotId: 'scene-cta', referenceShotId: 'reference-cta', startSeconds: 3, endSeconds: 6, purpose: 'call_to_action',
+      visualInstruction: '以询盘动作完成收束', spokenText: 'Send your inquiry.', captionText: 'Contact us', audioAndTransition: '音乐收束',
+      fidelityPoints: ['行动收束'], mustDifferPoints: ['替换行动文案'], materialPlan: supply.shots[1]!, lockedRegions: ['品牌标识'], risks: [],
+    },
+  ],
+  structureFidelitySummary: '保留信息顺序',
+  originalityDifferenceSummary: '替换品牌内容',
+  createdAt: '2026-09-23T00:00:00.000Z',
+};
+
+const workflow = buildSocialAgentWorkflow({
+  taskId: 'task-1',
+  taskVersion: '12',
+  taskStatus: 'plan_review',
+  mode: 'weekly',
+  weeklyPlanId: 'weekly-1',
+  brief,
+  sources: [],
+  factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: supply,
+  referenceAnalysis,
+  replicationScript,
+});
+
+assert.equal(workflow.weeklyPackage?.originalContentCount, 2);
+assert.equal(workflow.weeklyPackage?.publicationTaskCount, 4);
+assert.equal(workflow.weeklyPackage?.adaptationVersionCount, 2);
+assert.equal(workflow.weeklyPackage?.publicationMatrix.length, 2);
+assert.equal(workflow.directorBrief.version, '12');
+assert.equal(workflow.directorBrief.referenceAnalysis?.version, '7');
+assert.equal(workflow.directorBrief.scenes.length, 2);
+assert.equal(workflow.executionPlan.scenes.length, 2);
+assert.ok(workflow.executionPlan.scenes.every(scene => scene.candidates.length > 0 && scene.candidates.length <= 20));
+assert.ok(workflow.executionPlan.scenes.every(scene => scene.idempotencyKey.startsWith('social_scene_execution_')));
+assert.equal(workflow.executionPlanReview.approved, true);
+assert.equal(workflow.executionPlan.status, 'approved');
+assert.equal(workflow.stage, 'director_ready');
+
+const directorJson = JSON.stringify(workflow.directorBrief);
+assert.doesNotMatch(directorJson, /sourceStrategy|candidateId|provider|model|clipId/);
+assert.doesNotMatch(directorJson, /customerEvidenceRefs":\["/);
+assert.match(JSON.stringify(workflow.executionPlan), /candidateId/);
+assert.ok(workflow.executionPlan.estimatedTotalCostCny > 0);
+assert.ok(workflow.executionPlan.scenes.every(scene => scene.candidates.every(candidate => (
+  candidate.retryPolicy.maxAttempts > 0
+  && candidate.qualityScore >= 0
+  && candidate.durationFitScore >= 0
+  && 'executionRecordId' in candidate.provenance
+))));
+assert.ok(socialContentCapabilityRegistry().every(capability => (
+  capability.canDo.length > 0
+  && capability.cannotDo.length > 0
+  && capability.inputRequirements.length > 0
+  && capability.fallbackStrategies.length > 0
+  && capability.concurrencyLimit > 0
+  && capability.rateLimitPerMinute > 0
+  && capability.availability === 'available'
+  && capability.applicableScenes.length > 0
+)));
+
+const blockedSupply = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication',
+  planVersion: '13',
+  shots: [{ shotId: 'scene-proof', function: 'proof', requestedDescription: '展示真实工厂', truthSensitiveSubject: 'customer_factory' }],
+});
+const blocked = buildSocialAgentWorkflow({
+  taskId: 'task-2', taskVersion: '13', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, requestedOutputCount: 1 }, sources: [], factSourceRefs: [], assetSupplyPlan: blockedSupply,
+  referenceAnalysis, replicationScript: null,
+});
+assert.equal(blocked.adHocBusinessContext?.version, '13');
+assert.equal(blocked.executionPlanReview.approved, false);
+assert.ok(blocked.executionPlanReview.reasonCodes.includes('facts_missing'));
+assert.equal(blocked.stage, 'needs_facts');
+
+const incompleteReference = { ...referenceAnalysis, coverage: { ...referenceAnalysis.coverage!, gaps: [{ startSeconds: 5, endSeconds: 6, reason: '未覆盖' }], fullTimelineCovered: false } };
+const incomplete = buildSocialAgentWorkflow({
+  taskId: 'task-3', taskVersion: '14', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis: incompleteReference, replicationScript,
+});
+assert.equal(incomplete.directorBrief.status, 'blocked');
+assert.equal(incomplete.executionPlanReview.approved, false);
+assert.ok(incomplete.executionPlanReview.failedCriteria.some(item => /参考分析/.test(item)));
+
+console.log('social content agent workflow tests passed');

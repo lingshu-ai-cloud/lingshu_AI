@@ -2,10 +2,13 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { resolveAccountHubDataDir } from './paths.js';
+import { containsCredentialLikeText, isSafeTelemetryIdentifier } from './safeText.js';
 
 const MAX_EVENTS = 100_000;
 const MEMBER_TOKEN_PREFIX = 'cdu_';
 const CONNECTOR_TOKEN_PREFIX = 'cdc_';
+const TEAM_USAGE_LOCK_STALE_MS = 30_000;
+const TEAM_USAGE_LOCK_TIMEOUT_MS = 5_000;
 
 export type UsageRange = '1d' | '7d' | '30d';
 
@@ -86,6 +89,7 @@ function cleanName(value: unknown): string {
   if (typeof value !== 'string') throw new Error('invalid_member_name');
   const normalized = value.trim();
   if (!normalized || normalized.length > 80 || normalized.includes('\0')) throw new Error('invalid_member_name');
+  if (containsCredentialLikeText(normalized)) throw new Error('credential_material_not_accepted');
   return normalized;
 }
 
@@ -142,6 +146,14 @@ function firstText(values: Map<string, unknown>, ...keys: string[]): string | nu
   return null;
 }
 
+function firstSafeDimension(values: Map<string, unknown>, ...keys: string[]): string | null {
+  const value = firstText(values, ...keys);
+  if (value === null) return null;
+  if (containsCredentialLikeText(value)) throw new Error('credential_material_not_accepted');
+  if (!isSafeTelemetryIdentifier(value)) throw new Error('invalid_telemetry_metadata');
+  return value;
+}
+
 function firstToken(values: Map<string, unknown>, ...keys: string[]): number {
   for (const key of keys) {
     const parsed = finiteToken(values.get(key));
@@ -190,10 +202,10 @@ function parseLogRecords(payload: unknown, memberId: string, receivedAt: Date): 
         if (totalTokens === 0 && inputTokens === 0 && outputTokens === 0) continue;
 
         const eventAt = eventTime(record, receivedAt);
-        const conversationId = firstText(values, 'conversation.id', 'conversation_id');
-        const model = firstText(values, 'model', 'gen_ai.request.model');
-        const source = firstText(values, 'session_source', 'originator', 'service.name');
-        const clientVersion = firstText(values, 'app.version', 'service.version');
+        const conversationId = firstSafeDimension(values, 'conversation.id', 'conversation_id');
+        const model = firstSafeDimension(values, 'model', 'gen_ai.request.model');
+        const source = firstSafeDimension(values, 'session_source', 'originator', 'service.name');
+        const clientVersion = firstSafeDimension(values, 'app.version', 'service.version');
         const identity = JSON.stringify({
           memberId, eventAt, conversationId, model, inputTokens, cachedInputTokens,
           cacheWriteInputTokens, outputTokens, reasoningOutputTokens, totalTokens,
@@ -224,6 +236,29 @@ function assertDocument(value: unknown): TeamUsageDocument {
   const source = object(value);
   if (source?.schemaVersion !== 1 || !object(source.members) || !Array.isArray(source.events)) {
     throw new Error('invalid_team_usage_store');
+  }
+  for (const memberValue of Object.values(source.members as UnknownRecord)) {
+    const member = object(memberValue);
+    if (!member || typeof member.name !== 'string' || containsCredentialLikeText(member.name)) {
+      throw new Error('invalid_team_usage_store');
+    }
+  }
+  for (const eventValue of source.events) {
+    const event = object(eventValue);
+    if (!event) throw new Error('invalid_team_usage_store');
+    if (
+      event.conversationHash !== null
+      && (typeof event.conversationHash !== 'string' || !/^[a-f0-9]{16}$/.test(event.conversationHash))
+    ) throw new Error('invalid_team_usage_store');
+    for (const field of ['model', 'source', 'clientVersion'] as const) {
+      const text = event[field];
+      if (text !== null && (
+        typeof text !== 'string'
+        || text.length > 200
+        || containsCredentialLikeText(text)
+        || !isSafeTelemetryIdentifier(text)
+      )) throw new Error('invalid_team_usage_store');
+    }
   }
   return source as unknown as TeamUsageDocument;
 }
@@ -256,22 +291,34 @@ function addEvent<T extends ReturnType<typeof emptyTotals>>(totals: T, event: Te
   return totals;
 }
 
+function delay(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
 export class TeamUsageStore {
   readonly dataDir: string;
   readonly file: string;
+  private readonly lockFile: string;
   private queue: Promise<void> = Promise.resolve();
 
   constructor(options: { dataDir?: string; now?: () => Date } = {}) {
     this.dataDir = resolveAccountHubDataDir(options.dataDir);
     this.file = path.join(this.dataDir, 'team-usage.json');
+    this.lockFile = path.join(this.dataDir, '.team-usage.lock');
     this.now = options.now ?? (() => new Date());
   }
 
   private readonly now: () => Date;
 
-  private async read(): Promise<TeamUsageDocument> {
+  private async ensureDataDir(): Promise<void> {
     await fs.mkdir(this.dataDir, { recursive: true, mode: 0o700 });
+    const stat = await fs.lstat(this.dataDir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('unsafe_team_usage_directory');
     await fs.chmod(this.dataDir, 0o700);
+  }
+
+  private async read(): Promise<TeamUsageDocument> {
+    await this.ensureDataDir();
     try {
       const document = assertDocument(JSON.parse(await fs.readFile(this.file, 'utf8')) as unknown);
       await fs.chmod(this.file, 0o600);
@@ -283,20 +330,79 @@ export class TeamUsageStore {
   }
 
   private async write(document: TeamUsageDocument): Promise<void> {
-    await fs.mkdir(this.dataDir, { recursive: true, mode: 0o700 });
+    await this.ensureDataDir();
     const temporary = path.join(this.dataDir, `.team-usage-${process.pid}-${randomUUID()}.tmp`);
-    await fs.writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    await fs.rename(temporary, this.file);
-    await fs.chmod(this.file, 0o600);
+    let handle: fs.FileHandle | undefined;
+    try {
+      handle = await fs.open(temporary, 'wx', 0o600);
+      await handle.writeFile(`${JSON.stringify(document, null, 2)}\n`, 'utf8');
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      await fs.rename(temporary, this.file);
+      await fs.chmod(this.file, 0o600);
+      const directoryHandle = await fs.open(this.dataDir, 'r');
+      try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
+    } catch (error) {
+      if (handle) await handle.close().catch(() => undefined);
+      await fs.rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async withFileLock<T>(operation: () => Promise<T>): Promise<T> {
+    await this.ensureDataDir();
+    const owner = randomUUID();
+    const startedAt = Date.now();
+    while (true) {
+      try {
+        const handle = await fs.open(this.lockFile, 'wx', 0o600);
+        try {
+          await handle.writeFile(JSON.stringify({ owner, createdAt: new Date().toISOString() }), 'utf8');
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        try {
+          const stat = await fs.lstat(this.lockFile);
+          if (Date.now() - stat.mtimeMs > TEAM_USAGE_LOCK_STALE_MS) {
+            const staleFile = `${this.lockFile}.stale-${randomUUID()}`;
+            await fs.rename(this.lockFile, staleFile);
+            await fs.rm(staleFile, { force: true });
+            continue;
+          }
+        } catch (lockError) {
+          if ((lockError as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw lockError;
+        }
+        if (Date.now() - startedAt >= TEAM_USAGE_LOCK_TIMEOUT_MS) throw new Error('team_usage_store_busy');
+        await delay(10);
+      }
+    }
+    try {
+      return await operation();
+    } finally {
+      try {
+        const lock = JSON.parse(await fs.readFile(this.lockFile, 'utf8')) as { owner?: unknown };
+        if (lock.owner === owner) await fs.unlink(this.lockFile);
+      } catch {
+        // Never remove a missing, malformed, or replaced lock owned by another writer.
+      }
+    }
   }
 
   private mutate<T>(operation: (document: TeamUsageDocument) => T | Promise<T>): Promise<T> {
-    const run = this.queue.then(async () => {
+    const run = this.queue.then(() => this.withFileLock(async () => {
+      // Always re-read after acquiring the process-wide lock. A snapshot read
+      // before the lock could overwrite a concurrent disable or token rotate.
       const document = await this.read();
       const result = await operation(document);
       await this.write(document);
       return result;
-    });
+    }));
     this.queue = run.then(() => undefined, () => undefined);
     return run;
   }

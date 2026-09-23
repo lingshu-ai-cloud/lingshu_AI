@@ -48,6 +48,7 @@
     "restore:production-data": "bash scripts/restore-production-data.sh",
     "demo:sync-accounts": "tsx scripts/sync-demo-accounts.ts",
     "demo:seed-external-customer-service": "tsx scripts/seed-external-customer-service-demo.ts",
+    "demo:seed-beauty-showcase": "tsx scripts/seed-beauty-full-chain-showcase.ts",
     "demo:verify-external-customer-service": "tsx scripts/verify-external-customer-service-demo.ts",
     "import:trend-videos": "tsx scripts/import-trend-videos.ts",
     "import:materials": "tsx scripts/import-materials-to-pb.ts",

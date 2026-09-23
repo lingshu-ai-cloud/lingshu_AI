@@ -1225,9 +1225,26 @@ try {
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('source_material'));
   assert.equal(zeroInputTask.body.task.scriptBaseline.source, 'system_theme_baseline');
+  const zeroInputBlocked = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-zero-input-start-blocked-001',
+    body: { expectedVersion: zeroInputTask.body.task.version },
+  });
+  assert.equal(zeroInputBlocked.status, 409, zeroInputBlocked.raw);
+  assert.equal(zeroInputBlocked.body.error, 'social_content_execution_facts_required',
+    'zero media is supported, but public production stops when even the minimum business facts are unavailable');
+  const zeroInputKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/sources`, {
+    idempotencyKey: 'social-zero-input-knowledge-001',
+    body: {
+      kind: 'knowledge', sourceRef: 'socialknowledge:enterprise-profile',
+      sourceVersion: 'profile-social-content-tenant', label: '企业资料',
+    },
+  });
+  assert.equal(zeroInputKnowledge.status, 201, zeroInputKnowledge.raw);
+  assert.equal(zeroInputKnowledge.body.task.assetSupplyPlan.overallFeasibility, 'functional_equivalent',
+    'zero customer media remains producible after the minimum business facts are available');
   const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
     idempotencyKey: 'social-zero-input-start-001',
-    body: { expectedVersion: zeroInputTask.body.task.version },
+    body: { expectedVersion: zeroInputKnowledge.body.task.version },
   });
   assert.equal(zeroInputStarted.status, 202, zeroInputStarted.raw);
   assert.equal(zeroInputStarted.body.task.status, 'producing');
@@ -1393,6 +1410,13 @@ try {
   assert.equal(resolvedReference.task.referenceVideoAnalysis?.status, 'ready');
   assert.equal(resolvedReference.task.referenceVideoAnalysis?.referenceSourceId, resolvedReference.source.sourceId);
   assert.equal(resolvedReference.task.referenceVideoAnalysis?.shots.length, 3);
+  assert.deepEqual(resolvedReference.task.referenceVideoAnalysis?.analysisLayers?.map(layer => layer.level), ['L0', 'L1', 'L2', 'L3', 'L4']);
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.analysisLayers?.find(layer => layer.level === 'L4')?.status, 'pending');
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.shots.every(shot => (
+    Boolean(shot.action?.startState && shot.action.path && shot.action.endState && shot.action.spatialRelation)
+    && Boolean(shot.shotLanguage?.shotSize && shot.shotLanguage.movement)
+    && Boolean(shot.audioLayers && shot.observation)
+  )), true, 'exact reference analysis separates action, shot language, audio layers and observation certainty');
   assert.equal(resolvedReference.task.replicationScript?.hookOptions.length, 3,
     'the Director exposes one primary three-second hook and at least two alternatives');
   assert.equal(resolvedReference.task.replicationScript?.hookOptions[0]?.role, 'primary');
@@ -1409,6 +1433,14 @@ try {
   for (const forbidden of ['ACME', '张女士', '全网第一', '立刻年轻十岁']) {
     assert.doesNotMatch(safeReferenceOutput, new RegExp(forbidden), `public replication output must remove ${forbidden}`);
   }
+  const referenceKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}/sources`, {
+    idempotencyKey: 'social-viral-reference-knowledge-001',
+    body: {
+      kind: 'knowledge', sourceRef: 'socialknowledge:enterprise-profile',
+      sourceVersion: 'profile-social-content-tenant', label: '企业资料',
+    },
+  });
+  assert.equal(referenceKnowledge.status, 201, referenceKnowledge.raw);
   let referenceQueueCalls = 0;
   const referenceQueue = {
     async enqueue() {
@@ -1422,7 +1454,7 @@ try {
     tenantId: tenant,
     userId: `${tenant}-user`,
     taskId: viralReferenceTask.body.task.taskId,
-    expectedVersion: resolvedReference.task.version,
+    expectedVersion: referenceKnowledge.body.task.version,
     idempotencyKey: 'social-viral-reference-review-001',
     referenceResolver: exactReferenceResolver,
     now: new Date('2026-09-14T08:01:00.000Z'),

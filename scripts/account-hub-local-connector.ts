@@ -1,25 +1,32 @@
 import {
-  acquireMemberLocalLease,
   probeMemberLocalAccount,
   readMemberLocalConnectorConfig,
-  releaseMemberLocalLease,
+  reconcileMemberLocalLease,
+  stopMemberLocalLeaseSession,
   submitMemberLocalAccountState,
 } from '../server/accountHub/memberLocalConnector.js';
 import type { MemberLocalConnectorConfig } from '../server/accountHub/memberLocalConnector.js';
+import type { MemberAccountStateReport } from '../server/accountHub/types.js';
 
 function configPath(argv: readonly string[]): string {
   const index = argv.indexOf('--config');
   const value = index >= 0 ? argv[index + 1] : undefined;
   if (!value || value.startsWith('--')) {
-    throw new Error('用法: pnpm account-hub:connector -- --config /absolute/path/connector.json [--watch]');
+    throw new Error('用法: pnpm account-hub:connector -- --config /absolute/path/connector.json [--watch --hold]');
   }
   return value;
 }
 
-async function reportOnce(config: MemberLocalConnectorConfig): Promise<void> {
+async function reportOnce(config: MemberLocalConnectorConfig): Promise<MemberAccountStateReport> {
   const report = await probeMemberLocalAccount(config);
   await submitMemberLocalAccountState(config, report);
   process.stdout.write(`账号状态已安全上报：${config.provider} / ${report.state}\n`);
+  return report;
+}
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : 'connector_failed';
+  return message.replace(/cd[cu]_[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 
 function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -54,29 +61,36 @@ async function main(): Promise<void> {
   let leaseId: string | undefined;
   try {
     while (!stopped.signal.aborted) {
-      await reportOnce(config);
-      if (hold) {
-        leaseId = await acquireMemberLocalLease(config, leaseId);
-        process.stdout.write('本设备已取得账号协调锁；连接器会持续续租。\n');
+      try {
+        const report = await reportOnce(config);
+        if (hold) {
+          // Assign only after the network operation succeeds. On report,
+          // acquire, or release failure the previous capability is retained
+          // and retried on the next heartbeat.
+          const reconciled = await reconcileMemberLocalLease(config, report, leaseId);
+          leaseId = reconciled.leaseId;
+          if (reconciled.action === 'acquired') {
+            process.stdout.write('本设备已取得账号协调锁；连接器会持续续租。\n');
+          } else if (reconciled.action === 'released') {
+            process.stdout.write('检测到本机账号已明确退出，已仅释放协调锁；Provider 登录状态未被修改。\n');
+          }
+        }
+      } catch (error) {
+        process.stderr.write(`本轮连接器同步失败，将保留当前协调状态并重试：${safeErrorMessage(error)}\n`);
       }
       await sleep(config.intervalSeconds * 1_000, stopped.signal);
     }
   } finally {
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
-    if (hold && leaseId) {
-      try {
-        await releaseMemberLocalLease(config, leaseId);
-        process.stdout.write('已仅释放本设备协调锁；Codex/Claude 登录状态保持不变。\n');
-      } catch {
-        process.stderr.write('协调锁释放未确认，将在租约到期后自动释放；Provider 登录状态未改变。\n');
-      }
+    const stoppedLease = stopMemberLocalLeaseSession(leaseId);
+    if (hold && stoppedLease.action === 'retained') {
+      process.stdout.write('连接器已停止续租；活跃协调锁不会主动释放，将按 TTL 自然到期，避免误交接账号。\n');
     }
   }
 }
 
 void main().catch((error) => {
-  const message = error instanceof Error ? error.message : 'connector_failed';
-  process.stderr.write(`${message.replace(/cd[cu]_[A-Za-z0-9_-]+/g, '[REDACTED]')}\n`);
+  process.stderr.write(`${safeErrorMessage(error)}\n`);
   process.exitCode = 1;
 });

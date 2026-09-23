@@ -1887,20 +1887,15 @@ export default function EnterprisePage() {
               <p className="text-sm font-black text-emerald-950">产品素材统一在“我的素材”管理</p>
               <p className="mt-1 text-xs leading-5 text-emerald-800">企业知识库只维护产品事实和资质凭证。图片、视频和音频只需上传一次；从内容任务上传的素材也会归入同一个素材库。</p>
             </div>
-            <div className="mb-4 grid grid-cols-2 gap-4">
+            <div className="mb-4 grid gap-4 md:grid-cols-2">
               <Field label="主营品类">
                 <OptionSelector value={profile.products.categories} options={CATEGORY_OPTIONS} onChange={value => set('products')('categories', value)} placeholder="选择主营品类" />
-              </Field>
-              <Field label="社媒采集搜索词">
-                <textarea className={textareaCls} rows={3} value={profile.products.searchKeywords ?? ''}
-                  onChange={e => set('products')('searchKeywords', e.target.value)}
-                  placeholder={"每行一个搜索词，也可用逗号分隔，例如：linen shirt\n服装穿搭"} />
-                <p className="mt-1 text-[11px] text-text-muted">经营任务包优先使用这些词搜索参考内容；留空时，系统根据产品名称和品类自动生成。</p>
               </Field>
               <Field label="认证资质">
                 <OptionSelector value={profile.products.certifications} options={CERTIFICATION_OPTIONS} onChange={value => set('products')('certifications', value)} placeholder="选择认证资质" />
               </Field>
             </div>
+            <p className="mb-4 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-[11px] leading-5 text-violet-800">社媒发现范围不在企业中心重复维护。这里保存真实产品资料；产品、市场和沟通对象会在“灵感中心”组合成可追溯的发现范围。</p>
             <Field label="产品核心优势">
               <textarea className={textareaCls} rows={2} value={profile.products.highlights} onChange={e => set('products')('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
             </Field>

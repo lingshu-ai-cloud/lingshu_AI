@@ -25,6 +25,24 @@ const services = [
     env: { DEV_API_TARGET: 'http://127.0.0.1:8790' },
     probe: { url: 'http://127.0.0.1:5177/' },
   },
+  {
+    name: 'account-hub-frontend',
+    args: [
+      path.join(repositoryRoot, 'node_modules/vite/bin/vite.js'),
+      '--config',
+      path.join(repositoryRoot, 'apps/account-hub/vite.config.ts'),
+      '--host',
+      '127.0.0.1',
+      '--port',
+      '5178',
+      '--strictPort',
+    ],
+    env: {
+      DEV_API_TARGET: 'http://127.0.0.1:8790',
+      ACCOUNT_HUB_DEV_PORT: '5178',
+    },
+    probe: { url: 'http://127.0.0.1:5178/' },
+  },
 ];
 
 function log(message) {
@@ -107,18 +125,18 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 process.on('SIGHUP', stop);
 
-const [backend, frontend] = services;
+const [backend, ...frontends] = services;
 start(backend);
 
-async function startFrontendAfterBackend() {
+async function startFrontendsAfterBackend() {
   for (let attempt = 0; attempt < 30 && !shuttingDown.value; attempt += 1) {
     if (await healthy(backend)) break;
     await new Promise(resolve => setTimeout(resolve, 1_000));
   }
-  start(frontend);
+  for (const frontend of frontends) start(frontend);
 }
 
-void startFrontendAfterBackend();
+void startFrontendsAfterBackend();
 setTimeout(() => {
   void monitor();
   setInterval(() => void monitor(), 15_000);

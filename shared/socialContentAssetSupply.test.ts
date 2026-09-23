@@ -17,6 +17,7 @@ assert.equal(zeroAssetPlan.assetAvailability, 'none');
 assert.equal(zeroAssetPlan.productionRoute, 'zero_asset_generation');
 assert.equal(zeroAssetPlan.managementMode, 'one_click_managed');
 assert.equal(zeroAssetPlan.status, 'ready');
+assert.equal(zeroAssetPlan.overallFeasibility, 'functional_equivalent');
 assert.equal(zeroAssetPlan.canProduceWithoutCustomerShoot, true);
 assert.ok(zeroAssetPlan.shots.length >= 4);
 assert.ok(zeroAssetPlan.shots.every(shot => shot.customerShootRequired === false));
@@ -35,6 +36,7 @@ const truthSensitivePlan = createSocialAssetSupplyPlan({
 });
 
 assert.equal(truthSensitivePlan.status, 'ready');
+assert.equal(truthSensitivePlan.overallFeasibility, 'functional_equivalent');
 assert.equal(truthSensitivePlan.canProduceWithoutCustomerShoot, true);
 for (const shot of truthSensitivePlan.shots) {
   assert.equal(shot.functionalEquivalentReplacement.required, true);
@@ -43,6 +45,7 @@ for (const shot of truthSensitivePlan.shots) {
   assert.deepEqual(shot.truthBoundary.customerEvidenceRefs, []);
   assert.notEqual(shot.sourceStrategy, 'customer_real_asset');
   assert.match(shot.functionalEquivalentReplacement.reason ?? '', /缺少.*真实场景或结果/);
+  assert.equal(shot.feasibility, 'functional_equivalent');
 }
 assert.ok(truthSensitivePlan.shots[0]?.truthBoundary.prohibitedRepresentations.includes('depict_generated_factory_as_customer_factory'));
 assert.ok(truthSensitivePlan.shots[1]?.truthBoundary.prohibitedRepresentations.includes('invent_customer_case_or_results'));
@@ -66,6 +69,7 @@ assert.equal(evidenceBackedPlan.shots[0]?.sourceStrategy, 'customer_real_asset')
 assert.deepEqual(evidenceBackedPlan.shots[0]?.sourceRefs, ['factory-video-1']);
 assert.equal(evidenceBackedPlan.shots[0]?.functionalEquivalentReplacement.required, false);
 assert.equal(evidenceBackedPlan.shots[0]?.truthBoundary.customerEvidenceRequired, true);
+assert.equal(evidenceBackedPlan.shots[0]?.feasibility, 'full_fidelity');
 
 const productAnchoredPlan = createSocialAssetSupplyPlan({
   creationMode: 'material_processing',
@@ -74,12 +78,22 @@ const productAnchoredPlan = createSocialAssetSupplyPlan({
 });
 assert.equal(productAnchoredPlan.assetAvailability, 'limited');
 assert.equal(productAnchoredPlan.productionRoute, 'product_anchored_generation');
+assert.equal(productAnchoredPlan.overallFeasibility, 'full_fidelity');
 assert.ok(productAnchoredPlan.shots.every(shot => shot.sourceStrategy === 'customer_product_image_animation'));
 assert.ok(productAnchoredPlan.shots.every(shot => /锁定产品外观、包装、商标和文字/.test(shot.productionInstruction)));
 
 const factsPendingPlan = createSocialAssetSupplyPlan({ creationMode: 'material_processing' });
 assert.equal(factsPendingPlan.status, 'requires_fact_confirmation');
 assert.deepEqual(factsPendingPlan.customerActions, ['confirm_facts']);
-assert.equal(factsPendingPlan.canProduceWithoutCustomerShoot, true);
+assert.equal(factsPendingPlan.overallFeasibility, 'blocked_for_facts_or_rights');
+assert.equal(factsPendingPlan.canProduceWithoutCustomerShoot, false);
+
+const blockedProofPlan = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication',
+  shots: [{ shotId: 'factory-proof', function: 'trust', truthSensitiveSubject: 'customer_factory' }],
+});
+assert.equal(blockedProofPlan.overallFeasibility, 'blocked_for_facts_or_rights');
+assert.equal(blockedProofPlan.shots[0]?.feasibility, 'blocked_for_facts_or_rights');
+assert.equal(blockedProofPlan.canProduceWithoutCustomerShoot, false);
 
 console.log('social content asset supply tests passed');

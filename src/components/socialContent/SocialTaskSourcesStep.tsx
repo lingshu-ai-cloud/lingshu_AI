@@ -183,7 +183,7 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
   return (
     <div className="space-y-5">
       <section className="rounded-xl border border-border bg-white p-4">
-        <div className="flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-sm font-black text-text-primary">确认你的素材情况</h3><p className="mt-1 text-[11px] text-text-muted">选“完全没素材”后可以直接继续，系统不会要求补拍。</p></div><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-800">一键托管已开启</span></div>
+        <div className="flex flex-wrap items-end justify-between gap-2"><div><h3 className="text-sm font-black text-text-primary">确认你的素材情况</h3><p className="mt-1 text-[11px] text-text-muted">选“完全没素材”后也能继续，系统会先逐镜判断能否安全实现。</p></div><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-800">一键托管已开启</span></div>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {materialOptions.map(option => {
             const active = draft.materialInput === option.id;
@@ -196,7 +196,7 @@ export default function SocialTaskSourcesStep({ draft, update, files, setFiles, 
       </div>
       <div className="grid gap-2 sm:grid-cols-2" aria-label="可发布质量准备情况">
         {[
-          { ready: hasMaterial, label: draft.materialInput === 'none' ? '系统生成方案' : materialPolicy.subjectLabel, detail: hasMaterial ? draft.materialInput === 'none' ? '已选择零素材托管，无需补拍' : '已就绪，可以生成可发布成片' : draft.materialInput === 'limited' ? '请添加一个商品链接或一张产品图' : '请上传视频，或至少 2 份不同图片/短片', icon: Image, required: draft.materialInput !== 'none' },
+          { ready: hasMaterial, label: draft.materialInput === 'none' ? '系统生成方案' : materialPolicy.subjectLabel, detail: hasMaterial ? draft.materialInput === 'none' ? '已选择零素材托管，待逐镜判断' : '已就绪，可以生成可发布成片' : draft.materialInput === 'limited' ? '请添加一个商品链接或一张产品图' : '请上传视频，或至少 2 份不同图片/短片', icon: Image, required: draft.materialInput !== 'none' },
           { ready: hasKnowledge, label: '企业资料', detail: hasKnowledge ? '已选择可核验资料' : '选填：不提供时不会编造参数或功效', icon: Building2, required: false },
         ].map(item => <div key={item.label} className={`flex items-center gap-3 rounded-lg border px-3 py-3 ${item.ready ? 'border-emerald-100 bg-emerald-50/65' : item.required ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-slate-50/70'}`}><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white ${item.ready ? 'text-emerald-700' : item.required ? 'text-amber-700' : 'text-slate-600'}`}>{item.ready ? <CheckCircle2 size={17} /> : <item.icon size={17} />}</span><div><p className="text-xs font-black text-text-primary">{item.label}<span className={`ml-2 text-[10px] ${item.ready ? 'text-emerald-700' : item.required ? 'text-amber-700' : 'text-slate-500'}`}>{item.ready ? '已就绪' : item.required ? '生成前必需' : '选填增强'}</span></p><p className="mt-0.5 text-[10px] text-text-muted">{item.detail}</p></div></div>)}
       </div>

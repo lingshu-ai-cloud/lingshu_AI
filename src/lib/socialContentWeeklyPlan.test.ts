@@ -35,7 +35,7 @@ test('weekly plan reports real batch counts without treating references as mater
   assert.equal(plan.managedSupplyActive, false);
 });
 
-test('weekly plan routes missing material to managed system supply without asking the user to shoot', () => {
+test('weekly plan routes missing material to managed supply and exposes scene-level feasibility', () => {
   const plan = buildSocialContentWeeklyPlan({
     ...task,
     status: 'producing',
@@ -44,6 +44,6 @@ test('weekly plan routes missing material to managed system supply without askin
   });
   assert.equal(plan.managedSupplyActive, true);
   assert.equal(plan.needUserAction, '当前无需处理');
-  assert.match(plan.assetSupplyLabel, /无需补拍/);
-  assert.equal(plan.productionLanes[0]?.status, '零素材托管生成，无需补拍');
+  assert.match(plan.assetSupplyLabel, /逐镜判断/);
+  assert.equal(plan.productionLanes[0]?.status, '零素材托管，逐镜判断可行性');
 });

@@ -6,6 +6,7 @@ import {
   parseAccountEnabledBody,
   parseAssignOwnerBody,
   parseCreateAccountBody,
+  parseReassignOwnerBody,
 } from '../accountHub/validation.js';
 import type { MemberAccountStateReport } from '../accountHub/types.js';
 import { requireInternalAdmin } from '../lib/demoAccounts.js';
@@ -77,11 +78,11 @@ function connectorAcquireBody(value: unknown): { deviceId: string; deviceLabel: 
   };
 }
 
-function connectorReleaseBody(value: unknown): { deviceId: string; leaseId?: string } {
+function connectorReleaseBody(value: unknown): { deviceId: string; leaseId: string } {
   const body = connectorObject(value, ['deviceId', 'leaseId']);
   return {
     deviceId: connectorId(body.deviceId, 'device_id'),
-    ...(body.leaseId === undefined ? {} : { leaseId: connectorId(body.leaseId, 'lease_id') }),
+    leaseId: connectorId(body.leaseId, 'lease_id'),
   };
 }
 
@@ -305,6 +306,14 @@ accountHubRouter.post('/accounts/:accountId/assign-owner', async (request, respo
     const { memberId } = parseAssignOwnerBody(request.body);
     await requireMember(memberId, true);
     response.json({ account: await accountHubService().assignLegacyAccountOwner(request.params.accountId, memberId) });
+  } catch (error) { renderError(response, error); }
+});
+
+accountHubRouter.post('/accounts/:accountId/reassign-owner', async (request, response) => {
+  try {
+    const { memberId } = parseReassignOwnerBody(request.body);
+    await requireMember(memberId, true);
+    response.json({ account: await accountHubService().reassignAccountOwner(request.params.accountId, memberId) });
   } catch (error) { renderError(response, error); }
 });
 

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import type {
   SocialContentTaskDetail,
+  SocialContentExecutionScenePlan,
   SocialReplicationScriptShot,
   SocialShotMaterialMapEntry,
   SocialThreeSecondHook,
@@ -75,14 +76,14 @@ function AlternativeHooks({ hooks }: { hooks: SocialThreeSecondHook[] }) {
   );
 }
 
-function MaterialSource({ shot, material }: { shot: SocialReplicationScriptShot; material: SocialShotMaterialMapEntry | undefined }) {
-  const strategy = material?.sourceStrategy ?? shot.materialPlan.sourceStrategy;
+function MaterialSource({ shot, material, execution }: { shot: SocialReplicationScriptShot; material: SocialShotMaterialMapEntry | undefined; execution: SocialContentExecutionScenePlan | undefined }) {
+  const strategy = execution?.selectedSourceStrategy ?? material?.sourceStrategy ?? shot.materialPlan.sourceStrategy;
   const counts = material ? socialShotMaterialCountsLabel(material) : [];
   const replacement = material?.functionalEquivalentReplacement ?? shot.materialPlan.functionalEquivalentReplacement;
   return (
     <div className="rounded-lg border border-blue-100 bg-blue-50/65 px-3 py-2.5">
-      <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black text-blue-950">本镜头素材来源</span><span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-blue-800">{socialShotSourceStrategyLabel(strategy)}</span>{counts.map(item => <span key={item} className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold text-blue-700">{item}</span>)}</div>
-      <p className="mt-1.5 text-[10px] leading-4 text-blue-900">{shot.materialPlan.productionInstruction}</p>
+      <div className="flex flex-wrap items-center gap-2"><span className="text-[10px] font-black text-blue-950">内容 Agent 推荐路线</span><span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-blue-800">{socialShotSourceStrategyLabel(strategy)}</span>{counts.map(item => <span key={item} className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold text-blue-700">{item}</span>)}{execution && <span className="rounded-full bg-white px-2 py-1 text-[9px] font-semibold text-blue-700">候选 {execution.candidates.length} 个</span>}</div>
+      <p className="mt-1.5 text-[10px] leading-4 text-blue-900">{execution?.feasibilityReason || shot.materialPlan.productionInstruction}</p>
       {replacement.required && <p className="mt-1.5 text-[10px] leading-4 text-amber-800"><span className="font-black">等效替换：</span>{replacement.description || replacement.reason || '编导正在确定安全替代画面'}</p>}
     </div>
   );
@@ -110,6 +111,7 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
   }
 
   const materialByShot = new Map((task.shotMaterialMap || []).map(item => [item.shotId, item]));
+  const executionByShot = new Map((task.agentWorkflow?.executionPlan.scenes || []).map(item => [item.sceneId, item]));
   const analysisByShot = new Map(analysis.shots.map(item => [item.shotId, item]));
   const primaryHook = script.hookOptions.find(item => item.hookId === script.primaryHookId)
     ?? analysis.hookAnalysis;
@@ -143,7 +145,7 @@ export default function SocialReplicationAnalysisPanel({ task }: { task: SocialC
               <div className="rounded-lg border border-emerald-100 bg-emerald-50/45 px-3 py-2.5"><p className="text-[9px] font-black text-emerald-800">你的版本怎么拍或生成</p><p className="mt-1 text-xs leading-5 text-text-primary">{shot.visualInstruction}</p>{(shot.spokenText || shot.captionText) && <p className="mt-1 text-[10px] leading-4 text-text-secondary">{shot.spokenText ? `口播：${shot.spokenText}` : ''}{shot.spokenText && shot.captionText ? ' · ' : ''}{shot.captionText ? `字幕：${shot.captionText}` : ''}</p>}</div>
             </div>
             <div className="mt-2 grid gap-2 md:grid-cols-2"><PointList title="需要保留" items={shot.fidelityPoints} tone="keep" /><PointList title="必须改动" items={shot.mustDifferPoints} tone="change" /></div>
-            <div className="mt-2"><MaterialSource shot={shot} material={materialByShot.get(shot.shotId)} /></div>
+            <div className="mt-2"><MaterialSource shot={shot} material={materialByShot.get(shot.shotId)} execution={executionByShot.get(shot.shotId)} /></div>
             {shot.lockedRegions.length > 0 && <p className="mt-2 text-[10px] leading-4 text-text-secondary"><span className="font-black">不可随意改动：</span>{shot.lockedRegions.join('、')}</p>}
             {shot.risks.length > 0 && <p className="mt-1 text-[10px] leading-4 text-amber-800"><span className="font-black">制作注意：</span>{shot.risks.join('、')}</p>}
           </article>

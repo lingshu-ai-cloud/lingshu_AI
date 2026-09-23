@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import type {
   SocialContentTaskBrief,
   SocialContentThemeId,
+  SocialProductionResult,
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
@@ -1100,6 +1101,29 @@ export async function runSocialContentAutoProduction(input: {
     await finishExecution({ ...input, artifactId: existing.artifactId });
     return;
   }
+  const agentWorkflow = detail.agentWorkflow;
+  if (!agentWorkflow?.executionPlanReview.approved) {
+    const required = agentWorkflow?.executionPlanReview.requiredRevision.join('；')
+      || '内容执行方案尚未通过编导逐镜审核';
+    throw new Error(`user_input_required:${required}`);
+  }
+  await writeExecutionStage({
+    ...input,
+    stage: 'execution_plan_approved',
+    message: '内容 Agent 已提交逐镜执行方案，编导 Agent 自动审核通过，开始锁定并执行。',
+    extra: {
+      agentWorkflowSchema: agentWorkflow.schemaVersion,
+      directorBriefId: agentWorkflow.directorBrief.directorBriefId,
+      directorBriefVersion: agentWorkflow.directorBrief.version,
+      executionPlanId: agentWorkflow.executionPlan.executionPlanId,
+      executionPlanVersion: agentWorkflow.executionPlan.version,
+      executionPlanReviewId: agentWorkflow.executionPlanReview.reviewId,
+      reviewRound: agentWorkflow.executionPlan.reviewRound,
+      maxReviewRounds: agentWorkflow.executionPlan.maxReviewRounds,
+      plannedCostCny: agentWorkflow.executionPlan.scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0),
+      plannedSeconds: agentWorkflow.executionPlan.scenes.reduce((sum, scene) => sum + scene.estimatedSeconds, 0),
+    },
+  });
   const taskRecord = await requireSocialTask(input);
   let revisionNote = '';
   if (revisionParent) {
@@ -1554,6 +1578,49 @@ export async function runSocialContentAutoProduction(input: {
     taskId: input.taskId,
     reference: persistedDirectorPlan.reference,
   });
+  const creativeReviewFailures = [
+    ...(agentWorkflow.executionPlanReview.approved ? [] : ['内容执行方案未通过编导审核']),
+    ...(contentHandoff.scenes.length > 0 ? [] : ['成片没有可验收的镜头']),
+    ...(agentWorkflow.directorBrief.scenes.every(scene => scene.acceptanceCriteria.length > 0)
+      ? [] : ['存在没有可观察验收条件的分镜']),
+  ];
+  await writeExecutionStage({
+    ...input,
+    stage: 'creative_review',
+    message: creativeReviewFailures.length
+      ? '编导 Agent 的结构与表达验收未通过，正在停止提交并保留当前结果。'
+      : '技术质检通过，编导 Agent 已按 DirectorBrief 完成结构与表达验收。',
+    extra: {
+      directorBriefId: agentWorkflow.directorBrief.directorBriefId,
+      checkedSceneCount: contentHandoff.scenes.length,
+      failedCriteria: creativeReviewFailures,
+    },
+  });
+  if (creativeReviewFailures.length) {
+    throw new Error(`director_revision_required:${creativeReviewFailures.join('；')}`);
+  }
+  const productionResult: SocialProductionResult = {
+    productionResultId: `production_result_${socialRequestHash({ taskId: input.taskId, runId: input.runId, executionPlanId: agentWorkflow.executionPlan.executionPlanId }).slice(0, 20)}`,
+    version: detail.version,
+    executionPlanId: agentWorkflow.executionPlan.executionPlanId,
+    executionPlanVersion: agentWorkflow.executionPlan.version,
+    executionPlanReviewId: agentWorkflow.executionPlanReview.reviewId,
+    artifactId: null,
+    creativeReviewId: `creative_review_${socialRequestHash({ taskId: input.taskId, runId: input.runId, directorBriefId: agentWorkflow.directorBrief.directorBriefId }).slice(0, 20)}`,
+    publishAssignmentId: null,
+    status: 'asset_review',
+    sceneResults: agentWorkflow.executionPlan.scenes.map(scene => ({
+      sceneId: scene.sceneId,
+      idempotencyKey: scene.idempotencyKey,
+      sourceStrategy: scene.selectedSourceStrategy,
+      feasibility: scene.feasibility,
+      provenanceCandidateIds: scene.recommendedCandidateIds,
+    })),
+    technicalReview: { approved: true, checkedScenes: sceneQuality.checkedScenes, failures: [] },
+    creativeReview: { approved: true, failedCriteria: [], reviewedBy: 'director_agent' },
+    artifactResourceRef: file.fileRef,
+    createdAt: new Date().toISOString(),
+  };
   const artifactResult = await createSocialContentArtifact({
     repository: input.repository,
     tenantId: input.tenantId,
@@ -1608,6 +1675,7 @@ export async function runSocialContentAutoProduction(input: {
         },
         directorPlan: directorSummary,
         directorPlanReference: persistedDirectorPlan.reference,
+        productionResult,
         adaptedScript,
         scriptAdaptation: adaptation,
 	    ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
@@ -1688,8 +1756,9 @@ async function runSocialContentAutoProductionWithRetry(input: {
       return;
     } catch (error) {
       lastError = error;
-      if (attempt >= 3) break;
       const raw = String(error instanceof Error ? error.message : error || '自动成片失败');
+      if (raw.startsWith('user_input_required:')) break;
+      if (attempt >= 3) break;
       await writeExecutionStage({
         ...input,
         stage: 'automatic_recovery',

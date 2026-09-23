@@ -67,16 +67,18 @@ function taskCounts(task: TaskListItem): { generated: number; pendingReview: num
 }
 
 function directorPlanComplete(task: TaskListItem): boolean {
-  return task.directorPlan?.status === 'ready' || CONTENT_COMPLETE_STATUSES.has(task.status);
+  return (isTaskDetail(task) && task.agentWorkflow?.directorBrief.status === 'ready')
+    || task.directorPlan?.status === 'ready'
+    || CONTENT_COMPLETE_STATUSES.has(task.status);
 }
 
 function canProduceWithoutCustomerShoot(task: TaskListItem): boolean {
-  return task.assetSupplyPlan?.canProduceWithoutCustomerShoot === true
-    || task.brief.assetAvailability === 'none';
+  const feasibility = task.assetSupplyPlan?.overallFeasibility;
+  return feasibility === 'full_fidelity' || feasibility === 'functional_equivalent';
 }
 
 function automaticStep(task: TaskListItem): string {
-  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '零素材托管方案已就绪，确认产品事实后即可自动制作';
+  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜方案已确认可完整或等价实现，确认事实后即可自动制作';
   if (task.status === 'draft' || task.status === 'needs_input') return '等待必要资料确认';
   if (task.status === 'plan_review') return '确认任务后，编导 Agent 会先完成导演方案';
   if (task.status === 'producing' && !directorPlanComplete(task)) return '编导 Agent 正在整理脚本、口播、字幕与镜头节奏';
@@ -94,7 +96,7 @@ function compactHeadline(task: SocialContentTaskDetail): string {
   const counts = taskCounts(task);
   if (counts.pendingReview > 0 || task.status === 'asset_review') return '内容已经生成，等待你审核';
   if (COMPLETE_STATUSES.has(task.status)) return '本轮内容已经制作完成';
-  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '零素材托管方案已就绪，可以直接制作';
+  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜托管方案已就绪，可以开始自动制作';
   if (task.status === 'draft' || task.status === 'needs_input') return '确认必要信息后，机器人会自动开始制作';
   if (task.status === 'plan_review') return '确认后，编导 Agent 会先完成导演方案';
   if (task.directorPlan?.status === 'blocked') return '编导方案正在自动检查与修复';
@@ -170,14 +172,14 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
             <span className="flex items-center gap-2 text-xs font-black"><Clapperboard size={14} />编导 Agent</span>
             <span className="text-[9px] font-black">{agentStepLabel(directorState)}</span>
           </div>
-          <p className="mt-1 text-[10px] leading-4 opacity-80">整理脚本、口播、字幕与镜头节奏，形成完整导演方案</p>
+          <p className="mt-1 text-[10px] leading-4 opacity-80">定义钩子、叙事、逐镜视觉目标、事实边界和验收标准，不预选模型或供应商</p>
         </div>
         <div className={`rounded-xl border px-3 py-2.5 ${agentStepTone(contentState)}`}>
           <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-2 text-xs font-black"><Bot size={14} />内容 Agent</span>
             <span className="text-[9px] font-black">{agentStepLabel(contentState)}</span>
           </div>
-          <p className="mt-1 text-[10px] leading-4 opacity-80">按导演方案选择真实素材、数字人、合规素材或生成画面，完成配音、字幕和剪辑</p>
+          <p className="mt-1 text-[10px] leading-4 opacity-80">检索候选素材与能力，比较成本、耗时、成功率和权利风险；编导审核通过后执行</p>
         </div>
       </div>
 

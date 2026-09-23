@@ -27,16 +27,21 @@ export type AccountHubAccount = {
   statusDetail: string | null;
   lastCheckedAt: string | null;
   lastUsedAt: string | null;
-  leaseId: string | null;
   holderMemberId: string | null;
-  deviceId: string | null;
   deviceLabel: string | null;
   acquiredAt: string | null;
   renewedAt: string | null;
   expiresAt: string | null;
   localState: AccountHubLocalState | null;
   legacyManagedProfilePresent: boolean;
+  transferEligible: boolean;
+  transferBlockedReasons: AccountHubTransferBlock[];
   createdAt: string;
+};
+
+export type AccountHubTransferBlock = {
+  code: string;
+  message: string | null;
 };
 
 export const ACCOUNT_HUB_LOCAL_AUTH_STATES = [
@@ -208,6 +213,20 @@ function normalizeAccountHubLocalState(value: unknown): AccountHubLocalState | n
   };
 }
 
+function normalizeTransferBlock(value: unknown): AccountHubTransferBlock | null {
+  if (typeof value === 'string' && value.trim()) return { code: value.trim(), message: null };
+  const source = record(value);
+  const code = nullableText(source.code ?? source.reason);
+  if (!code) return null;
+  return { code, message: nullableText(source.message) };
+}
+
+function normalizeTransferBlocks(source: Record<string, unknown>): AccountHubTransferBlock[] {
+  const raw = source.transferBlockedReasons ?? source.transferBlockedReason ?? source.transferBlocked;
+  const values = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [] : [raw];
+  return values.map(normalizeTransferBlock).filter((value): value is AccountHubTransferBlock => Boolean(value));
+}
+
 export function normalizeAccountHubAccount(value: unknown): AccountHubAccount {
   const source = record(value);
   const enabled = booleanValue(source.enabled, true);
@@ -224,15 +243,15 @@ export function normalizeAccountHubAccount(value: unknown): AccountHubAccount {
     statusDetail: nullableText(source.statusDetail),
     lastCheckedAt: timestamp(source.lastCheckedAt),
     lastUsedAt: timestamp(source.lastUsedAt),
-    leaseId: nullableText(source.leaseId),
     holderMemberId: nullableText(source.holderMemberId),
-    deviceId: nullableText(source.deviceId),
     deviceLabel: nullableText(source.deviceLabel),
     acquiredAt: timestamp(source.acquiredAt),
     renewedAt: timestamp(source.renewedAt),
     expiresAt: timestamp(source.expiresAt),
     localState: normalizeAccountHubLocalState(source.localState),
     legacyManagedProfilePresent: booleanValue(source.legacyManagedProfilePresent, false),
+    transferEligible: booleanValue(source.transferEligible, false),
+    transferBlockedReasons: normalizeTransferBlocks(source),
     createdAt: timestamp(source.createdAt, true) as string,
   };
 }
@@ -319,8 +338,15 @@ function friendlyFailure(status: number, code: string): string {
   if (code === 'account_disabled') return '账号已禁用，请先启用后再操作';
   if (code === 'account_busy' || code === 'account_in_use') return '账号当前有有效占用锁，请先从原设备仅退出本地';
   if (code === 'member_provider_account_exists') return '该成员已经绑定了同一服务商账号';
+  if (code === 'target_provider_account_exists') return '目标成员已经绑定了同一服务商账号';
   if (code === 'provider_account_already_bound') return '这个服务商账号已经绑定给其他成员，不能重复接入';
   if (code === 'account_owner_immutable') return '账号归属绑定后不可更改';
+  if (code === 'account_transfer_blocked' || code === 'account_transfer_not_eligible') return '当前账号暂不满足切换或转交条件，请查看阻止原因';
+  if (code === 'local_logout_required') return '成员本机仍登录旧 Provider 身份，请先退出旧账号并上报“未登录”快照';
+  if (code === 'fresh_local_logout_required') return '本机快照缺失或已过期，请先运行连接器上报最新的“未登录”状态';
+  if (code === 'legacy_managed_profile_cleanup_required') return '服务端仍有遗留托管凭据，请先人工迁移清理';
+  if (code === 'account_not_pending') return '账号尚未进入等待本机登录状态，请刷新后重试';
+  if (code === 'account_assignment_changed') return '账号归属刚刚发生变化，请刷新后重新选择';
   if (code === 'account_hub_local_only') return '账号管理只能在服务所在机器本地访问';
   if (code === 'account_lease_held') return '该账号已被其他设备独占使用，请等待租约释放或到期';
   if (code === 'account_lease_not_owned') return '只能从取得使用权的原设备退出本地';
@@ -443,6 +469,13 @@ export const accountHubApi = {
 
   assignAccountOwner: async (accountId: string, memberId: string): Promise<AccountHubAccount> => (
     accountFromPayload(await requestJson(`/accounts/${encodeURIComponent(accountId)}/assign-owner`, {
+      method: 'POST',
+      body: JSON.stringify({ memberId }),
+    }))
+  ),
+
+  reassignAccountOwner: async (accountId: string, memberId: string): Promise<AccountHubAccount> => (
+    accountFromPayload(await requestJson(`/accounts/${encodeURIComponent(accountId)}/reassign-owner`, {
       method: 'POST',
       body: JSON.stringify({ memberId }),
     }))

@@ -38,7 +38,7 @@ export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): Soc
     ? '待设置'
     : `${money(weeklyBudget)} 上限`;
   const assetSupplyLabel = managedSupplyActive
-    ? '系统将用数字人、合规素材、信息图或生成画面自动补齐，无需补拍'
+    ? '系统将逐镜判断数字人、合规素材、信息图或生成画面能否安全替代；缺少必要事实或权利时会明确暂停'
     : '优先保护并加工客户现有素材';
 
   return {
@@ -52,7 +52,7 @@ export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): Soc
     managedSupplyActive,
     assetSupplyLabel,
     productionLanes: [
-      { label: '画面供给', status: materialCount > 0 ? `已关联 ${materialCount} 项客户素材` : '零素材托管生成，无需补拍' },
+      { label: '画面供给', status: materialCount > 0 ? `已关联 ${materialCount} 项客户素材` : '零素材托管，逐镜判断可行性' },
       { label: '产品与事实', status: task.brief.productRef ? '纳入本周计划' : '只使用通用安全表达' },
       { label: '脚本与结构', status: referenceCount > 0 ? `逐镜分析 ${referenceCount} 条参考` : '由编导 Agent 按主题组织' },
     ],

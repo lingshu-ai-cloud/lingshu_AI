@@ -6,6 +6,7 @@
 
 - 每位成员在每个 Provider 最多绑定一个本人账号；同一 Provider 邮箱不能重复绑定。
 - 成员继续在自己的 Codex/Claude 官方客户端登录。密码、Cookie、验证码、OAuth Token、API Key 和 `auth.json` 不上传到中台。
+- 中台不提供 Provider 凭据导入、下载、导出或恢复接口；即使请求正文伪装成普通元数据，字段白名单和递归凭据检测也会拒绝它。
 - 中台没有授权、状态探测、Provider 注销或网页任务 API；本机连接器只调用官方 CLI 的只读状态/额度方法。
 - “仅退出本地”只释放本设备的协调租约，不调用 Provider 登出，不删除成员电脑的登录态。
 - 协调租约有效期为 15 分钟；持续连接器每次心跳会续租。同一账号的另一台设备在租约释放或过期前不能通过连接器取得锁。
@@ -22,7 +23,7 @@
 3. 成员在自己的电脑使用官方客户端完成正常登录。
 4. 按页面生成的配置模板运行本机连接器。连接器上报脱敏状态与额度，并取得/续租协调锁。
 5. 管理台自动展示认证状态、最后心跳、套餐、可获得的额度窗口和锁占用情况。
-6. 停止连接器时，它会尝试仅释放协调锁；即使网络中断，租约也会自动过期，Provider 登录不受影响。
+6. 停止或重启连接器时，它只停止续租，不主动释放活跃协调锁；租约会在 15 分钟 TTL 后自然到期，避免把进程停止误判成账号退出。Provider 登录不受影响。
 
 额度信息是本机官方 CLI 当前可提供的只读快照。无法读取时必须显示“暂不可获取”，不能推测或伪造。
 
@@ -58,6 +59,26 @@ pnpm account-hub:connector -- --config ~/.config/lingshu-account-hub/connector.j
 - 请求禁止跟随重定向，避免连接器令牌被转发到其他站点。
 
 连接器对 Codex 使用官方 `app-server` 的 `account/read`、`account/rateLimits/read` 和 `account/usage/read`，并明确关闭 refresh；对 Claude 使用 `claude auth status`。两者都使用成员当前默认配置，不覆盖 `CODEX_HOME` 或 `CLAUDE_CONFIG_DIR`，不创建第二套登录态。
+
+Codex 成员机建议在官方用户级 `~/.codex/config.toml` 中启用系统凭据库：
+
+```toml
+cli_auth_credentials_store = "keyring"
+```
+
+`keyring` 要求操作系统提供可用的凭据存储。不要使用 `auto` 作为强制安全策略，因为凭据库不可用时它可能回退到文件。中台不会替成员修改这项配置，也不会搬运现有登录态；如需把已经保存到文件的旧会话迁入钥匙链，应由成员在自己的电脑按官方流程重新登录一次。
+
+### 自动状态更新与退出检测
+
+- `--watch --hold` 每次心跳先只读探测并上报本机官方客户端状态。只有状态为 `authenticated` 时才会获取或续租协调锁。
+- 只有状态明确变成 `unauthenticated` 时，连接器才会使用当前进程持有的精确 `leaseId` 调用 `local-release`，确认成功后清除本地租约能力。这个动作只释放中台协调锁，绝不执行 Codex/Claude logout，也不修改官方登录文件。
+- `error` 或 `unknown` 不能证明成员已经退出。此时连接器采取 fail-closed 策略，保留当前租约能力、不发释放请求并继续探测，避免短暂 CLI 故障导致另一设备接管账号。
+- 没有租约时，未登录或暂不可探测不会让连接器退出；它会继续发送心跳。之后重新登录官方客户端，连接器会自动获取新租约，不复用已经释放的旧 `leaseId`。
+- 状态上报、获取或释放发生网络错误时，连接器不会把错误当成已退出，也不会丢弃当前 `leaseId`；它会继续重试，服务端租约在设备长期不可达时按 TTL 自然过期。
+- 收到 SIGINT 或 SIGTERM 时，连接器只停止心跳，不调用 `local-release`；即使最后一次状态是 `authenticated`、`error` 或 `unknown`，也由 TTL 自然释放。明确的 `unauthenticated` 心跳仍会立即精确释放。
+- 这里的“自动更新”仅指状态快照与协调租约随心跳更新，不包含连接器程序自动升级；代码版本升级仍由管理员按正常发布流程完成。
+
+连接器不会读取、复制或上传 `auth.json`、refresh token、Cookie、密码等 Provider 凭据。它只通过官方 CLI 的只读状态接口获得允许上报的脱敏字段。
 
 ## Token 遥测
 
@@ -96,7 +117,7 @@ Authorization = "Bearer cdu_REPLACE_WITH_MEMBER_TOKEN"
 ## 本地开发与验证
 
 1. 可选设置绝对路径 `ACCOUNT_HUB_DATA_DIR`；它只保存索引、租约、脱敏快照、遥测与审计。
-2. 启动后端，再运行 `pnpm run dev:account-hub`。
+2. 启动后端，再运行 `pnpm run dev:account-hub`。本机长期预览可直接运行 `pnpm run dev:preview:keepalive`，守护进程会同时维护原应用和独立的 Account Hub 前端。
 3. 独立应用默认监听 `http://127.0.0.1:5178`，不注册到灵枢主应用路由或导航。
 4. 生产环境默认关闭，只有显式设置 `ACCOUNT_HUB_ENABLED=true` 才开启。
 5. 运行 `pnpm run test:account-hub` 和 `pnpm run build:account-hub` 完成验证。

@@ -30,6 +30,46 @@ type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 /** Legacy repair definitions, derived from what the route handlers write/read. */
 const COLLECTIONS: CollectionSpec[] = [
   {
+    name: 'social_discovery_scopes',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'keyword_set_id', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true, min: 1, onlyInt: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 2097152 },
+      { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      "CREATE UNIQUE INDEX idx_social_discovery_active_scope ON social_discovery_scopes (tenant_id) WHERE status = 'active'",
+      'CREATE INDEX idx_social_discovery_version ON social_discovery_scopes (tenant_id, keyword_set_id, version)',
+    ],
+  },
+  {
+    name: 'social_tracked_accounts',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true },
+      { name: 'accountId', type: 'text', required: true },
+      { name: 'decision', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true },
+      { name: 'accountRole', type: 'text', required: true },
+      { name: 'reasons', type: 'json', maxSize: 262144 },
+      { name: 'evidenceVideoIds', type: 'json', maxSize: 262144 },
+      { name: 'relatedSceneIds', type: 'json', maxSize: 262144 },
+      { name: 'missingEvidence', type: 'json', maxSize: 262144 },
+      { name: 'nextReviewAt', type: 'text' },
+      { name: 'recommendedCadence', type: 'text' },
+      { name: 'confidence', type: 'number', min: 0, max: 1 },
+      { name: 'updated_by', type: 'text', required: true },
+      { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_tracked_account ON social_tracked_accounts (tenant_id, accountId)',
+      'CREATE INDEX idx_social_tracked_status ON social_tracked_accounts (tenant_id, status, updated_at)',
+    ],
+  },
+  {
     name: 'quote_skill_drafts',
     fields: [
       { name: 'tenant_id', type: 'text', required: true },

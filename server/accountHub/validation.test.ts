@@ -4,6 +4,7 @@ import {
   parseAssignOwnerBody,
   parseCreateAccountBody,
   parseLocalReleaseBody,
+  parseReassignOwnerBody,
 } from './validation.js';
 
 assert.deepEqual(parseCreateAccountBody({
@@ -30,12 +31,19 @@ assert.throws(() => parseAcquireAccountBody({
   memberId: 'member_123', deviceId: 'device_1', deviceLabel: 'Mac', accessToken: 'forbidden',
 }), /credential_material_not_accepted/);
 
-assert.deepEqual(parseLocalReleaseBody({ memberId: 'member_123', deviceId: 'device_1' }), {
-  memberId: 'member_123', deviceId: 'device_1',
-});
+assert.throws(
+  () => parseLocalReleaseBody({ memberId: 'member_123', deviceId: 'device_1' }),
+  /invalid_lease_id/,
+);
 assert.deepEqual(parseLocalReleaseBody({ memberId: 'member_123', deviceId: 'device_1', leaseId: 'lease_1' }), {
   memberId: 'member_123', deviceId: 'device_1', leaseId: 'lease_1',
 });
 assert.throws(() => parseLocalReleaseBody({ memberId: 'member_123' }), /invalid_device_id/);
 assert.deepEqual(parseAssignOwnerBody({ memberId: 'member_123' }), { memberId: 'member_123' });
 assert.throws(() => parseAssignOwnerBody({ memberId: 'member_123', provider: 'codex' }), /unsupported_field/);
+assert.deepEqual(parseReassignOwnerBody({ memberId: 'member_456' }), { memberId: 'member_456' });
+assert.throws(
+  () => parseReassignOwnerBody({ memberId: 'member_456', refreshToken: 'forbidden' }),
+  /credential_material_not_accepted/,
+);
+assert.throws(() => parseReassignOwnerBody({ memberId: '../escape' }), /invalid_member_id/);

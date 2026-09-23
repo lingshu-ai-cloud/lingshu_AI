@@ -801,6 +801,21 @@ export async function startSocialContentTask(input: {
         });
         throw new SocialContentWorkflowError('social_content_task_inputs_incomplete', 409);
       }
+      const executableDetail = await readSocialTaskDetail(input);
+      const workflowReview = executableDetail?.agentWorkflow?.executionPlanReview;
+      if (workflowReview && !workflowReview.approved) {
+        const reasonCodes = workflowReview.reasonCodes;
+        const code = reasonCodes.includes('rights_missing')
+          ? 'social_content_execution_rights_required'
+          : reasonCodes.includes('facts_missing')
+            ? 'social_content_execution_facts_required'
+            : reasonCodes.includes('budget_exceeded')
+              ? 'social_content_execution_budget_required'
+              : executableDetail?.agentWorkflow?.stage === 'goal_degraded'
+                ? 'social_content_execution_goal_degraded'
+                : 'social_content_execution_director_review_required';
+        throw new SocialContentWorkflowError(code, 409);
+      }
       await resolveSelectedPackages({ repository: input.repository, selections: summary.packageSelection, now: input.now });
       let queued;
       try {

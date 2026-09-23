@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readCloudMaterialLibrary, type MaterialSourceStatus } from './cloudMaterials.js';
 import { isSyntheticMaterial } from './materialTruthfulness.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 export type MaterialRecord = Record<string, any> & { id: string };
 
 export interface SocialTaskMaterialRecordInput {
@@ -101,7 +102,9 @@ export async function readMaterialLibrary(tenantId: string, adapters: {
   let localStatus: MaterialSourceStatus = { source: 'server', state: 'ready', message: '服务端素材目录可用' };
   try { local = (adapters.local || readLocalMaterials)(); }
   catch { localStatus = { source: 'server', state: 'unavailable', message: '服务端素材目录读取失败，请重试或联系管理员' }; }
-  const cloud = await (adapters.cloud || readCloudMaterialLibrary)(tenantId);
+  const cloud = currentDataAuthority() === 'local' && !adapters.cloud
+    ? { items: [] as MaterialRecord[], source: { source: 'database', state: 'ready', message: '本地账号使用本地素材库' } as MaterialSourceStatus }
+    : await (adapters.cloud || readCloudMaterialLibrary)(tenantId);
   const sources = [localStatus, cloud.source];
   const items = [...new Map([...local, ...cloud.items].filter(item => accessibleMaterial(item as MaterialRecord, tenantId)).map(item => [String(item.id), item as MaterialRecord])).values()];
   const ready = sources.filter(source => source.state === 'ready').length;

@@ -26,7 +26,9 @@ assert.equal(resultEmptyState(12, '', true), 'no-match');
 
 const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); setPreviewMaterial\(material\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');
-assert.match(componentSource, /z-10 flex items-end[^]*?event\.stopPropagation\(\); enterMaterialSmartGeneration\(material\);[^]*?用此素材生成/, '生成必须使用位于播放按钮下方的独立操作区');
+assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
+assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video'[^]*?用此素材生成/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
+assert.match(componentSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria-label={`删除 \${material\.name}`}/, '每条可管理素材必须固定提供编辑与删除入口');
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 30/, '灵感列表每页必须固定读取最新 30 条');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');
 assert.match(componentSource, /正在读取真实视频库存/, '首次列表请求完成前必须显示加载动画，不能先显示空状态');

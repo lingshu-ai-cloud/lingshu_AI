@@ -87,6 +87,21 @@ test('rejects credential fields and recognizable raw credential values before pe
       store.report('member_one', { ...codexReport, deviceLabel: 'sk-ant-api03_abcdefghijklmnop' }),
       /credential_material_not_accepted/,
     );
+    for (const report of [
+      { ...codexReport, plan: 'cookie=session=abc' },
+      { ...codexReport, authMode: 'refresh_token=opaque-value' },
+      { ...codexReport, deviceLabel: '{"access_token":"short-secret"}' },
+      { ...codexReport, usage: { ...codexReport.usage, reason: 'session=hidden-value' } },
+    ]) {
+      await assert.rejects(
+        store.report('member_one', report),
+        /credential_material_not_accepted/,
+      );
+    }
+    await assert.rejects(
+      store.report('member_one', { ...codexReport, plan: 'Pro<script>' }),
+      /invalid_plan/,
+    );
     assert.equal(fs.existsSync(path.join(dataDir, 'member-account-state.json')), false);
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });

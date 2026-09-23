@@ -20,6 +20,7 @@ import {
   type SocialDeliveryPackage,
   type SocialMetricSubmission,
   type SocialPublicationRecord,
+  type SocialProductionResult,
   type SocialTaskSource,
   type SocialWorkPackageSelection,
 } from '../../shared/contracts/socialContentWorkflow.js';
@@ -49,6 +50,7 @@ import {
   parseStoredSocialReplicationScript,
   parseStoredSocialShotMaterialMap,
 } from './socialContentScriptSources.js';
+import { buildSocialAgentWorkflow } from './socialContentAgentWorkflow.js';
 
 const storedCount = (value: unknown): number => {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) {
@@ -463,18 +465,49 @@ export async function readSocialTaskDetail(input: {
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
   ];
+  const referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
+  const replicationScript = parseStoredSocialReplicationScript(task.replication_script);
+  const shotMaterialMap = parseStoredSocialShotMaterialMap(task.shot_material_map);
   const assetSupplyPlan = createSocialAssetSupplyPlan({
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
     managementMode: summary.brief.managementMode,
+    planVersion: summary.version,
     inventory: { customerVideoIds, productImageIds },
     confirmedFactRefs,
+    shots: replicationScript?.shots.map(shot => ({
+      shotId: shot.shotId,
+      function: shot.purpose,
+      requestedDescription: shot.visualInstruction,
+      truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
+    })),
     rightsConfirmationRequired: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
       && !activeSources.some(source => source.kind === 'reference_link'),
   });
-  const referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
-  const replicationScript = parseStoredSocialReplicationScript(task.replication_script);
-  const shotMaterialMap = parseStoredSocialShotMaterialMap(task.shot_material_map);
+  const agentWorkflow = buildSocialAgentWorkflow({
+    taskId: summary.taskId,
+    taskVersion: summary.version,
+    taskStatus: summary.status,
+    mode: summary.mode ?? 'weekly',
+    weeklyPlanId: summary.weeklyPlanId ?? null,
+    brief: summary.brief,
+    sources: activeSources,
+    factSourceRefs: confirmedFactRefs,
+    assetSupplyPlan,
+    referenceAnalysis: referenceVideoAnalysis,
+    replicationScript,
+  });
+  const productionResult = [...artifactViews].reverse().flatMap(artifact => {
+    const row = socialObject(artifact.content?.productionResult);
+    return row && socialText(row.productionResultId) && socialText(row.executionPlanId)
+      ? [{
+        ...(structuredClone(row) as unknown as SocialProductionResult),
+        artifactId: artifact.artifactId,
+        publishAssignmentId: publications.map(socialPublication).reverse()[0]?.publicationId ?? null,
+      }]
+      : [];
+  })[0] ?? null;
+  agentWorkflow.productionResult = productionResult;
   return {
     ...summary,
     assetSupplyPlan,
@@ -483,6 +516,7 @@ export async function readSocialTaskDetail(input: {
     deliveryPackages: packages.map(socialDeliveryPackage),
     publications: publications.map(socialPublication),
     metricSubmissions: metrics.map(socialMetricSubmission),
+    agentWorkflow,
     ...(referenceVideoAnalysis ? { referenceVideoAnalysis } : {}),
     ...(replicationScript ? { replicationScript } : {}),
     ...(shotMaterialMap.length ? { shotMaterialMap } : {}),

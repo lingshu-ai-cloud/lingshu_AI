@@ -114,6 +114,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     creationMode: input.plan.creationMode,
     assetAvailability: input.plan.assetAvailability,
     managementMode: input.plan.managementMode,
+    planVersion: input.plan.planVersion,
     confirmedFactRefs,
     rightsConfirmationRequired: input.plan.status === 'requires_rights_confirmation',
     shots: input.baseline.scenes.map((scene, index) => ({

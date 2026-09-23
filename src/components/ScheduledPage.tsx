@@ -271,17 +271,17 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: '📸',
     desc: '定时采集 Instagram 关键词视频，并进入素材分析管线',
-    config: { platforms: 'instagram', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'instagram', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   {
     templateId: 'instagram_image_post_crawl', taskType: 'image_post_crawl', name: 'Instagram 图文采集', category: 'daily' as const,
     cronExpr: '0 2 * * *', cronLabel: '每天 02:00（北京时间）', icon: '🖼️', desc: '定时采集 Instagram 关键词图片帖与图文内容',
-    config: { platforms: 'instagram', keywords: 'skincare', limit: '5' },
+    config: { platforms: 'instagram', keywords: '', keywordSource: 'business_profile', limit: '5' },
   },
   {
     templateId: 'facebook_image_post_crawl', taskType: 'image_post_crawl', name: 'Facebook 图文采集', category: 'daily' as const,
     cronExpr: '0 3 * * *', cronLabel: '每天 03:00（北京时间）', icon: '📘', desc: '定时采集 Facebook 关键词图片帖与图文内容',
-    config: { platforms: 'facebook', keywords: 'skincare', limit: '5' },
+    config: { platforms: 'facebook', keywords: '', keywordSource: 'business_profile', limit: '5' },
   },
   ...(['youtube', 'tiktok', 'facebook', 'instagram'] as const).map((platform, index) => ({
     templateId: `${platform}_competitor_account_crawl`,
@@ -303,7 +303,7 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: <SocialPlatformIcon platform="youtube" size={24} />,
     desc: '每天凌晨自动采集 YouTube 热点关键词视频，并排队获取真实视频 / Gemini 分析',
-    config: { platforms: 'youtube', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'youtube', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   {
     templateId: 'tiktok_video_keyword_crawl',
@@ -314,7 +314,7 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: <SocialPlatformIcon platform="tiktok" size={24} />,
     desc: '每天凌晨自动采集 TikTok 热点关键词视频，并排队获取真实视频 / Gemini 分析',
-    config: { platforms: 'tiktok', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'tiktok', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   {
     templateId: 'facebook_video_keyword_crawl',
@@ -325,7 +325,7 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: <SocialPlatformIcon platform="facebook" size={24} />,
     desc: '每天凌晨自动采集 Facebook 热点关键词视频，并排队获取真实视频 / AI 分析',
-    config: { platforms: 'facebook', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'facebook', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   { templateId: 'trend_report', taskType: 'trend_report', name: 'TikTok 爆款日报', category: 'daily' as const, cronExpr: '0 8 * * *', cronLabel: '每天 08:00', icon: <SocialPlatformIcon platform="tiktok" size={24} />, desc: '每日生成 TikTok 跨境电商热门趋势简报' },
   { templateId: 'exchange_rate', taskType: 'exchange_rate', name: '汇率与报价日报', category: 'daily' as const, cronExpr: '0 9 * * *', cronLabel: '每天 09:00', icon: '💱', desc: '按企业主要市场刷新汇率，并结合价格区间、MOQ 和毛利规则给出报价提醒' },
@@ -777,10 +777,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
   async function updateCrawlerConfig(task: ScheduledTask, patch: Record<string, string>) {
     if (task.taskType !== 'video_keyword_crawl') return;
+    const keywordPatchProvided = Object.prototype.hasOwnProperty.call(patch, 'keywords');
     const nextConfig = {
       ...task.config,
       ...patch,
-      keywords: (patch.keywords ?? task.config.keywords ?? task.config.keyword ?? 'skincare').trim() || 'skincare',
+      keywords: (patch.keywords ?? task.config.keywords ?? task.config.keyword ?? '').trim(),
+      keywordSource: keywordPatchProvided
+        ? (String(patch.keywords || '').trim() ? 'explicit' : 'business_profile')
+        : (task.config.keywordSource || 'business_profile'),
       limit: normalizeCrawlerLimit(patch.limit ?? task.config.limit ?? '5'),
     };
     setTasks(prev => prev.map(item => item.id === task.id ? { ...item, config: nextConfig } : item));
@@ -1104,7 +1108,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           title: '视频采集工作台',
           cards: [
             { label: '采集平台', value: task.config.platforms || 'youtube', desc: '按平台拉取关键词视频' },
-            { label: '关键词', value: task.config.keywords || task.config.keyword || 'skincare', desc: '用于社媒内容采集' },
+            { label: '发现范围', value: task.config.keywordEvidence || task.config.keywords || task.config.keyword || '根据企业产品、市场和场景自动生成', desc: '关键词只是发现范围的执行投影' },
             { label: '时间窗口', value: `${task.config.dateWindowDays || '7'} 天`, desc: '只采集近期内容' },
           ],
           actions: ['刷新采集看板', '查看排队状态', '生成脚本方向'],
@@ -1822,13 +1826,13 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         <div className="mt-3">
                           <div className="grid grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
                             <label className="block min-w-0">
-                              <span className="block text-[10px] text-gray-400 mb-1">检索关键词</span>
+                              <span className="block text-[10px] text-gray-400 mb-1">进阶覆盖词（可选）</span>
                               <input
-                                defaultValue={task.config.keywords || task.config.keyword || 'skincare'}
+                                defaultValue={task.config.keywords || task.config.keyword || ''}
                                 onBlur={e => { void updateCrawlerConfig(task, { keywords: e.currentTarget.value }); }}
                                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                 className="h-9 w-full rounded-lg border border-gray-200 px-2.5 text-xs text-gray-700 focus:outline-none focus:border-green-400"
-                                placeholder="skincare"
+                                placeholder="留空则使用当前发现范围"
                               />
                             </label>
                             <label className="block">

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { resolveAccountHubDataDir } from './paths.js';
+import { containsCredentialLikeText, isStrictSafeLabel } from './safeText.js';
 import type {
   AccountProvider,
   MemberAccountConnectionState,
@@ -29,7 +30,6 @@ const CONNECTION_STATES = new Set<MemberAccountConnectionState>([
 ]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$/;
 const FORBIDDEN_CREDENTIAL_KEY = /(password|passwd|passphrase|cookie|token|secret|credential|api[_-]?key|authorization|auth[_-]?json|private[_-]?key|session[_-]?key)/i;
-const SECRET_LIKE_VALUE = /^(?:Bearer\s+\S+|sk-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})$/i;
 const LOCK_STALE_MS = 30_000;
 const LOCK_TIMEOUT_MS = 5_000;
 
@@ -53,7 +53,7 @@ export function assertCredentialFreeAccountState(value: unknown): void {
   const seen = new WeakSet<object>();
   const visit = (current: unknown): void => {
     if (typeof current === 'string') {
-      if (SECRET_LIKE_VALUE.test(current.trim())) throw new Error('credential_material_not_accepted');
+      if (containsCredentialLikeText(current)) throw new Error('credential_material_not_accepted');
       return;
     }
     if (!current || typeof current !== 'object') return;
@@ -76,12 +76,18 @@ function text(value: unknown, field: string, maximum: number): string {
   if (typeof value !== 'string') throw new Error(`invalid_${field}`);
   const normalized = value.trim();
   if (!normalized || normalized.length > maximum || normalized.includes('\0')) throw new Error(`invalid_${field}`);
-  if (SECRET_LIKE_VALUE.test(normalized)) throw new Error('credential_material_not_accepted');
+  if (containsCredentialLikeText(normalized)) throw new Error('credential_material_not_accepted');
   return normalized;
 }
 
 function nullableText(value: unknown, field: string, maximum: number): string | null {
   return value === undefined || value === null ? null : text(value, field, maximum);
+}
+
+function nullableStrictLabel(value: unknown, field: string, maximum: number): string | null {
+  const normalized = nullableText(value, field, maximum);
+  if (normalized !== null && !isStrictSafeLabel(normalized)) throw new Error(`invalid_${field}`);
+  return normalized;
 }
 
 function email(value: unknown): string | null {
@@ -181,8 +187,8 @@ function normalizeReport(
     provider: provider(report.provider),
     state: normalizedState,
     email: normalizedEmail,
-    plan: nullableText(report.plan, 'plan', 100),
-    authMode: nullableText(report.authMode, 'auth_mode', 64),
+    plan: nullableStrictLabel(report.plan, 'plan', 100),
+    authMode: nullableStrictLabel(report.authMode, 'auth_mode', 64),
     usage: usageSnapshot(report.usage),
     deviceId: identifier(report.deviceId, 'device_id'),
     deviceLabel: text(report.deviceLabel, 'device_label', 100),
@@ -206,8 +212,8 @@ function parseLegacySnapshot(value: unknown): MemberAccountStateSnapshot | undef
       provider: snapshotProvider,
       state: stateValue,
       email: parsedEmail,
-      plan: nullableText(source.plan, 'plan', 100),
-      authMode: nullableText(source.authMode, 'auth_mode', 64),
+      plan: nullableStrictLabel(source.plan, 'plan', 100),
+      authMode: nullableStrictLabel(source.authMode, 'auth_mode', 64),
       usage: parsedUsage,
       deviceId: identifier(source.deviceId, 'device_id'),
       deviceLabel: text(source.deviceLabel, 'device_label', 100),

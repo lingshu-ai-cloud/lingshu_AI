@@ -794,6 +794,39 @@
   }
 }
 
+@keyframes agent-live-marquee {
+  from { background-position: 0 0; }
+  to { background-position: 48px 0; }
+}
+
+.agent-live-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-live-card::before,
+.agent-live-dialog-header::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  content: '';
+  background: repeating-linear-gradient(
+    90deg,
+    var(--agent-accent) 0 18px,
+    color-mix(in srgb, var(--agent-accent) 22%, transparent) 18px 30px
+  );
+  opacity: 0;
+}
+
+.agent-live-card--running::before {
+  opacity: 1;
+  animation: agent-live-marquee 1.1s linear infinite;
+}
+
+.agent-live-dialog-header::before {
+  opacity: .9;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     root: appRoot,
+    // The standalone hub and the main app run side-by-side in local preview.
+    // Give them separate dependency caches so concurrent Vite optimization
+    // cannot invalidate the hub's versioned React imports.
+    cacheDir: path.resolve(repositoryRoot, 'node_modules/.vite-account-hub'),
     publicDir: path.resolve(repositoryRoot, 'public'),
     plugins: [react(), tailwindcss()],
     resolve: {

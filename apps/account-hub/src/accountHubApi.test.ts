@@ -32,9 +32,7 @@ const accountFixture = {
   statusDetail: null,
   lastCheckedAt: '2026-09-22T00:00:00.000Z',
   lastUsedAt: null,
-  leaseId: null,
   holderMemberId: null,
-  deviceId: null,
   deviceLabel: null,
   acquiredAt: null,
   renewedAt: null,
@@ -56,12 +54,19 @@ const accountFixture = {
     },
   },
   legacyManagedProfilePresent: false,
+  transferEligible: true,
+  transferBlockedReason: null,
   createdAt: '2026-09-21T00:00:00.000Z',
 };
 
 assert.equal(normalizeAccountHubAccount(accountFixture).plan, 'Plus');
 assert.equal(normalizeAccountHubAccount(accountFixture).memberId, 'member-1');
+assert.equal(normalizeAccountHubAccount(accountFixture).transferEligible, true);
 assert.equal(normalizeAccountHubAccount(accountFixture).localState?.usage?.secondary?.remainingPercent, 44);
+assert.deepEqual(normalizeAccountHubAccount({ ...accountFixture, transferEligible: false, transferBlockedReason: 'fresh_local_logout_required' }).transferBlockedReasons, [
+  { code: 'fresh_local_logout_required', message: null },
+]);
+assert.equal(normalizeAccountHubAccount({ ...accountFixture, transferEligible: undefined, transferBlockedReason: undefined }).transferEligible, false, 'older servers must not expose transfer actions by default');
 assert.throws(
   () => normalizeAccountHubAccount({ ...accountFixture, provider: 'unknown' }),
   /Provider 无效/,
@@ -140,6 +145,12 @@ await accountHubApi.assignAccountOwner('account-1', 'member-1');
 assert.equal(capturedUrl, '/api/overseas/account-hub/accounts/account-1/assign-owner');
 assert.deepEqual(JSON.parse(String(capturedInit?.body)), { memberId: 'member-1' });
 
+await accountHubApi.reassignAccountOwner('account-1', 'member-2');
+assert.equal(capturedUrl, '/api/overseas/account-hub/accounts/account-1/reassign-owner');
+assert.equal(capturedInit?.method, 'POST');
+assert.deepEqual(JSON.parse(String(capturedInit?.body)), { memberId: 'member-2' });
+assert.ok(new Headers(capturedInit?.headers).get('Idempotency-Key'), 'seat transfers must be idempotent mutations');
+
 globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
   capturedUrl = String(input);
   capturedInit = init;
@@ -175,7 +186,7 @@ for (const text of [
 assert.match(pageSource, /accountHubApi\.teamUsage/, 'dashboard must poll aggregated team usage');
 assert.match(pageSource, /log_user_prompt = false/, 'OTel setup must keep prompt logging disabled');
 for (const text of [
-  'Codex 账号',
+  'AI 账号',
   '绑定成员',
   '本机认证，最小化上报',
   '最后心跳',
@@ -199,12 +210,32 @@ for (const text of [
   '一次性状态测试可省略',
   '0600',
   '手动填入',
+  '成员连接器令牌',
+  '不要填遥测令牌',
+  '两种令牌权限分离',
+  '心跳快照 · 页面约 10 秒刷新',
+  '并非 Provider 实时在线证明',
+  '结合“最后心跳”判断新鲜度',
+  '切换自己的账号',
+  '转交账号席位',
+  '不会转移、取消或共享 Pro 订阅',
+  '目标成员必须在自己的电脑登录自己的账号',
+  '原生存储或系统钥匙链保持',
+  'auth.json',
+  '账号占用中',
+  '本机快照缺失或已过期',
+  '遗留服务端托管凭据',
+  '目标成员已有同 Provider 账号槽位',
 ]) {
   assert.match(accountsPageSource, new RegExp(text), `account ownership UI must expose ${text}`);
 }
 assert.match(accountsPageSource, /account\.memberId\.startsWith\('legacy_unassigned:'\)/, 'only legacy accounts may expose one-time owner assignment');
 assert.match(accountsPageSource, /accountId: account\.id/, 'the connector config must bind to the selected account');
 assert.match(accountsPageSource, /connectorToken:/, 'connector config must use a connector-scoped token');
+assert.match(accountsPageSource, /account\.transferEligible &&/, 'transfer controls must only render when the server marks the account eligible');
+assert.match(accountsPageSource, /accountHubApi\.reassignAccountOwner/, 'eligible transfers must call the dedicated owner reassignment endpoint');
+assert.match(accountsPageSource, /await load\(true\)/, 'the page must refresh server state after a transfer');
+assert.doesNotMatch(accountsPageSource, /ingestToken/, 'connector config must never reuse the telemetry ingest token');
 assert.doesNotMatch(accountsPageSource, /type=["']password["']/, 'the account page must never collect an upstream password');
 
 const apiSource = fs.readFileSync(new URL('./accountHubApi.ts', import.meta.url), 'utf8');

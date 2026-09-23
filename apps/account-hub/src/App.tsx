@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { AlertCircle, KeyRound, Loader2, LogOut, ServerCog, ShieldCheck } from 'lucide-react';
+import { AlertCircle, KeyRound, Laptop, Loader2, LogOut, ServerCog, ShieldCheck, UserRoundPlus } from 'lucide-react';
 import AccountHubPage from './AccountHubPage';
 import { authApi, getToken, setToken, type AuthSession } from '../../../src/lib/auth';
 
@@ -51,18 +51,32 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
     <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden px-5 py-12">
       <div aria-hidden="true" className="absolute left-[-7rem] top-[-8rem] h-80 w-80 rounded-full border-[64px] border-emerald-900/[0.035]" />
       <div className="relative grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/70 bg-white/90 shadow-[0_32px_90px_rgba(22,61,49,0.14)] backdrop-blur md:grid-cols-[1.05fr_0.95fr]">
-        <section className="relative hidden min-h-[590px] overflow-hidden bg-[#123e31] p-12 text-white md:flex md:flex-col md:justify-between">
+        <section className="relative hidden min-h-[650px] overflow-hidden bg-[#123e31] p-12 text-white md:flex md:flex-col md:justify-between">
           <div aria-hidden="true" className="absolute -right-20 -top-20 h-72 w-72 rounded-full border-[54px] border-white/[0.045]" />
           <div className="relative">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-bold tracking-wide text-emerald-50">
               <ServerCog size={14} /> 独立运维应用
             </div>
             <h1 className="mt-8 max-w-md text-4xl font-black leading-[1.12] tracking-[-0.04em]">
-              团队 Codex 管理台
+              团队 AI 账号管理台
             </h1>
             <p className="mt-5 max-w-md text-sm leading-7 text-emerald-50/75">
               汇总脱敏 Token 遥测，管理账号归属与设备占用协调，同时保留每位成员的本地开发工作流。
             </p>
+          </div>
+          <div className="relative my-8 space-y-3">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-200/70">账号接入流程</p>
+            {[
+              ['1', '管理员先登录管理台'],
+              ['2', '添加成员并创建账号槽位'],
+              ['3', '成员在自己的电脑登录官方客户端'],
+              ['4', '运行本地连接器，状态自动同步'],
+            ].map(([step, text]) => (
+              <div key={step} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.06] px-3.5 py-3 text-sm text-emerald-50/85">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/15 text-[11px] font-black text-white">{step}</span>
+                {text}
+              </div>
+            ))}
           </div>
           <div className="relative space-y-4 text-sm text-emerald-50/80">
             <div className="flex items-center gap-3"><ShieldCheck size={18} /> 只允许平台管理员访问</div>
@@ -70,18 +84,30 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
           </div>
         </section>
 
-        <section className="flex min-h-[590px] items-center p-7 sm:p-12">
+        <section className="flex min-h-[650px] items-center p-7 sm:p-12">
           <div className="mx-auto w-full max-w-sm">
             <div className="mb-9 flex items-center gap-3 md:hidden">
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#123e31] text-white"><ServerCog size={21} /></span>
               <div>
-                <p className="text-lg font-black text-text-primary">团队 Codex 管理台</p>
+                <p className="text-lg font-black text-text-primary">团队 AI 账号管理台</p>
                 <p className="text-xs text-text-muted">独立运维应用</p>
               </div>
             </div>
             <p className="text-xs font-black uppercase tracking-[0.18em] text-accent">Host operations</p>
-            <h2 className="mt-3 text-2xl font-black tracking-tight text-text-primary">平台管理员登录</h2>
-            <p className="mt-2 text-sm leading-6 text-text-muted">使用灵枢平台管理员账号验证身份。这里不开放注册。</p>
+            <h2 className="mt-3 text-2xl font-black tracking-tight text-text-primary">先登录管理台</h2>
+            <p className="mt-2 text-sm leading-6 text-text-muted">这一步只验证管理台管理员身份，不是登录 Codex 或 Claude。</p>
+
+            <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50/80 p-4">
+              <div className="flex gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-700 text-white"><UserRoundPlus size={17} /></span>
+                <div>
+                  <p className="text-xs font-black text-sky-950">我应该输入哪个账号？</p>
+                  <p className="mt-1 text-[11px] leading-5 text-sky-900/75">
+                    使用本系统部署时配置的管理员邮箱和密码（<code className="font-mono">LOCAL_ADMIN_EMAIL</code> / <code className="font-mono">LOCAL_ADMIN_PASSWORD</code>）。不要在这里填写 ChatGPT、Codex 或 Claude 密码。
+                  </p>
+                </div>
+              </div>
+            </div>
 
             {error && (
               <div role="alert" className="mt-6 flex gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700">
@@ -92,7 +118,7 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
 
             <form onSubmit={submit} className="mt-7 space-y-5">
               <label className="block">
-                <span className="mb-2 block text-xs font-bold text-text-secondary">管理员邮箱</span>
+                <span className="mb-2 block text-xs font-bold text-text-secondary">管理台管理员邮箱</span>
                 <input
                   type="email"
                   autoComplete="username"
@@ -104,7 +130,7 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
                 />
               </label>
               <label className="block">
-                <span className="mb-2 block text-xs font-bold text-text-secondary">密码</span>
+                <span className="mb-2 block text-xs font-bold text-text-secondary">管理台密码</span>
                 <input
                   type="password"
                   autoComplete="current-password"
@@ -121,9 +147,10 @@ function LoginScreen({ initialError = '', onAuthed }: { initialError?: string; o
               </button>
             </form>
 
-            <p className="mt-7 text-xs leading-5 text-text-muted">
-              用量遥测不包含提示词或代码；账号由成员在本机官方客户端登录，中台不收集密码、Token 或浏览器 Cookie。
-            </p>
+            <div className="mt-7 flex gap-2.5 rounded-xl bg-surface-2 px-3.5 py-3 text-xs leading-5 text-text-muted">
+              <Laptop size={16} className="mt-0.5 shrink-0 text-accent" />
+              <p>进入管理台后，到“AI 账号”添加账号槽位；成员再在自己的电脑完成 Codex / Claude 官方登录，页面会通过本地连接器自动更新状态。</p>
+            </div>
           </div>
         </section>
       </div>
@@ -178,7 +205,7 @@ export default function App() {
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#123e31] text-white"><ServerCog size={18} /></span>
             <div className="min-w-0">
-              <p className="truncate text-sm font-black text-text-primary">团队 Codex 管理台</p>
+              <p className="truncate text-sm font-black text-text-primary">团队 AI 账号管理台</p>
               <p className="truncate text-[11px] text-text-muted">独立运维应用</p>
             </div>
           </div>

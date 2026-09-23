@@ -184,7 +184,7 @@ function BriefStep({ draft, update, lockMode }: { draft: SocialContentDraft; upd
       ) : (
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-4 py-3 text-xs leading-5 text-emerald-900">
           <div className="flex flex-wrap items-center justify-between gap-2"><span><span className="font-black">{SOCIAL_CONTENT_CREATION_PATH_LABEL[draft.creationPath]}</span> · {SOCIAL_CONTENT_MATERIAL_INPUT_LABEL[draft.materialInput]}</span><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-emerald-800 shadow-sm">一键托管</span></div>
-          <p className="mt-2">不会写脚本也没关系。编导 Agent 会负责脚本和前三秒，内容 Agent 会根据现有条件选择数字人、合规素材或生成画面；没有素材时不会要求你补拍。</p>
+          <p className="mt-2">不会写脚本也没关系。编导 Agent 负责表达目标和前三秒，内容 Agent 会选择真实素材、数字人、合规素材或生成画面。没有素材时先给出安全替代方案；缺少不可替代的真实证据或权利时会明确说明，不会伪造。</p>
         </div>
       )}
 
@@ -272,7 +272,7 @@ function ReviewStep({ draft, files, task }: { draft: SocialContentDraft; files: 
           ['客户', draft.audience],
           ['目标', draft.primaryGoal],
           ['输出', output],
-          ['资料', draft.materialInput === 'none' ? '系统托管生成，无需补拍' : `${existingCount} 项已关联 · ${pendingCount} 项待新增`],
+          ['资料', draft.materialInput === 'none' ? '系统托管，逐镜判断可行性' : `${existingCount} 项已关联 · ${pendingCount} 项待新增`],
         ].map(([label, value]) => <div key={label} className="border-b border-white/10 pb-3 last:border-0 last:pb-0"><dt className="text-[10px] font-bold text-emerald-200/80">{label}</dt><dd className="mt-1 leading-5 text-white/90">{value || '未填写'}</dd></div>)}
       </dl>
       <div className="mt-5 rounded-lg bg-white/10 px-3 py-3 text-[11px] leading-5 text-white/80">确认后，编导 Agent 会自动准备脚本、口播、字幕与镜头节奏，内容 Agent 再按方案生成视频；你无需逐项填写，只需审核成品。</div>

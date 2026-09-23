@@ -66,17 +66,23 @@ export function parseAcquireAccountBody(value: unknown): AcquireAccountBody {
   };
 }
 
-export function parseLocalReleaseBody(value: unknown): { memberId: string; deviceId: string; leaseId?: string } {
+export function parseLocalReleaseBody(value: unknown): { memberId: string; deviceId: string; leaseId: string } {
   const body = plainObject(value);
   assertAllowedFields(body, ['memberId', 'deviceId', 'leaseId']);
   return {
     memberId: id(body.memberId, 'member_id'),
     deviceId: id(body.deviceId, 'device_id'),
-    ...(body.leaseId === undefined ? {} : { leaseId: id(body.leaseId, 'lease_id') }),
+    leaseId: id(body.leaseId, 'lease_id'),
   };
 }
 
 export function parseAssignOwnerBody(value: unknown): { memberId: string } {
+  const body = plainObject(value);
+  assertAllowedFields(body, ['memberId']);
+  return { memberId: id(body.memberId, 'member_id') };
+}
+
+export function parseReassignOwnerBody(value: unknown): { memberId: string } {
   const body = plainObject(value);
   assertAllowedFields(body, ['memberId']);
   return { memberId: id(body.memberId, 'member_id') };

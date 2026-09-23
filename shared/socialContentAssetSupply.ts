@@ -33,6 +33,8 @@ export interface CreateSocialAssetSupplyPlanInput {
   creationMode: SocialContentCreationMode;
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;
+  /** Task-backed version for new plans. Historic callers may omit it. */
+  planVersion?: string;
   inventory?: SocialAssetInventory;
   confirmedFactRefs?: string[];
   rightsConfirmationRequired?: boolean;
@@ -234,12 +236,15 @@ function planShot(
         description: null,
         reason: null,
       },
+      feasibility: 'full_fidelity',
+      feasibilityReason: '已有可追溯的客户真实证据，可以完整承担该镜头的证明作用',
       customerShootRequired: false,
     };
   }
 
   if (subject !== 'none') {
     const strategy = safeReplacementStrategy(confirmedFactRefs);
+    const hasConfirmedFacts = confirmedFactRefs.length > 0;
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: true,
@@ -265,11 +270,21 @@ function planShot(
         description: replacementDescription(subject),
         reason: '缺少可证明该真实场景或结果的客户素材，自动改成不依赖实拍的等价表达',
       },
+      feasibility: hasConfirmedFacts ? 'functional_equivalent' : 'blocked_for_facts_or_rights',
+      feasibilityReason: hasConfirmedFacts
+        ? '缺少真实证据素材，但已有确认事实，可以用非证据型表达保持镜头功能'
+        : '缺少可核验事实和真实证据，不能安全替代该证明型镜头',
       customerShootRequired: false,
     };
   }
 
   const selected = generalStrategy(shot, inventory, confirmedFactRefs);
+  const hasUsableInput = selected.refs.length > 0 || confirmedFactRefs.length > 0;
+  const feasibility = !hasUsableInput
+    ? 'blocked_for_facts_or_rights'
+    : selected.strategy === 'customer_real_asset' || selected.strategy === 'customer_product_image_animation'
+      ? 'full_fidelity'
+      : 'functional_equivalent';
   return {
     shotId: shot.shotId,
     function: shot.function,
@@ -294,6 +309,12 @@ function planShot(
       description: null,
       reason: null,
     },
+    feasibility,
+    feasibilityReason: feasibility === 'full_fidelity'
+      ? '已有客户素材，可在不改变真实主体的情况下完整实现'
+      : feasibility === 'functional_equivalent'
+        ? '已有确认事实，可通过授权能力或非证据型画面保持镜头功能'
+        : '尚未确认最基本的产品事实，不能安全生成对外内容',
     customerShootRequired: false,
   };
 }
@@ -311,24 +332,36 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
   const requestedShots = input.shots?.length ? input.shots : DEFAULT_SHOTS[input.creationMode];
   const needsFacts = confirmedFactRefs.length === 0;
   const needsRights = input.rightsConfirmationRequired === true;
+  const shots = requestedShots.map(shot => planShot(shot, inventory, confirmedFactRefs));
+  const overallFeasibility = needsRights || shots.some(shot => shot.feasibility === 'blocked_for_facts_or_rights')
+    ? 'blocked_for_facts_or_rights'
+    : shots.some(shot => shot.feasibility === 'goal_degraded')
+      ? 'goal_degraded'
+      : shots.some(shot => shot.feasibility === 'functional_equivalent')
+        ? 'functional_equivalent'
+        : 'full_fidelity';
   const customerActions: SocialAssetSupplyPlan['customerActions'] = [
     ...(needsFacts ? ['confirm_facts' as const] : []),
     ...(needsRights ? ['confirm_rights' as const] : []),
   ];
-  const status: SocialAssetSupplyPlan['status'] = needsFacts
-    ? 'requires_fact_confirmation'
-    : needsRights
-      ? 'requires_rights_confirmation'
-      : 'ready';
+  const status: SocialAssetSupplyPlan['status'] = needsRights
+    ? 'requires_rights_confirmation'
+    : needsFacts
+      ? 'requires_fact_confirmation'
+      : overallFeasibility === 'goal_degraded'
+        ? 'goal_degraded'
+        : 'ready';
 
   return {
-    planVersion: 'asset-supply-v1',
+    planVersion: input.planVersion?.trim() || 'historic-unversioned',
     creationMode: input.creationMode,
     assetAvailability: availability,
     managementMode,
     productionRoute: productionRoute(availability, inventory),
     status,
-    canProduceWithoutCustomerShoot: true,
+    overallFeasibility,
+    canProduceWithoutCustomerShoot: customerActions.length === 0
+      && (overallFeasibility === 'full_fidelity' || overallFeasibility === 'functional_equivalent'),
     customerActions,
     systemActions: [
       ...(input.creationMode === 'viral_replication'
@@ -342,6 +375,6 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
       '用户可自愿补充产品图片或视频以提高品牌一致性',
       '用户可自愿补充真实工厂、案例或效果证据以恢复对应实拍镜头',
     ],
-    shots: requestedShots.map(shot => planShot(shot, inventory, confirmedFactRefs)),
+    shots,
   };
 }

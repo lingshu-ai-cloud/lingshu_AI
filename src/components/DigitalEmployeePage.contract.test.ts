@@ -25,6 +25,7 @@ const assistantStoreSource = fs.readFileSync('src/stores/assistantStore.ts', 'ut
 const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.tsx', 'utf8');
 const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
 const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePresets.ts', 'utf8');
+const executionStatusSource = fs.readFileSync('src/components/AgentExecutionStatus.tsx', 'utf8');
 
 const assistantOrbitSource = assistantSource.slice(
   assistantSource.indexOf('const SKILL_AGENTS'),
@@ -41,7 +42,7 @@ assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return '
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
 
 assert.match(pageSource, /自动交付语言/);
-assert.match(pageSource, /相同 sceneId 执行配音、字幕、配乐和渲染/);
+assert.match(pageSource, /每种语言独立生成成片/);
 assert.match(pageSource, /需要你观看成片并做判断/, 'the quality gate must explain the exact human decision');
 assert.match(pageSource, /查看成片并处理/, 'the quality gate must expose a direct review action');
 assert.match(pageSource, /<ProductionTaskScene[^>]+runId=\{data\.run\.id\}[^>]+taskId=\{selectedTask\.id\}/, 'Smart Operations must use the shared production scene');
@@ -69,10 +70,14 @@ for (const period of ['本周', '上周', '本月', '上月']) {
 assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
 assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
+assert.match(pageSource, /通用设置/, 'Agent settings must expose shared rules once');
+assert.match(pageSource, /这些规则同时作用于四个 Agent，只需在这里设置一次/, 'shared rules must explain that they are not repeated per Agent');
+assert.match(pageSource, /useState<"common" \| "business" \| "director" \| "content" \| "customer">\("common"\)/, 'Agent settings must enter the shared settings view first');
+assert.match(pageSource, /activeRuleAgent === "common" \? group\.role === "orchestrator" : group\.role === activeRuleAgent/, 'shared approvals and individual Agent approvals must be separated');
 assert.match(pageSource, /系统已准备一套安全默认方案/, 'Agent settings should start with a lightweight confirmation summary');
 assert.match(pageSource, /查看并修改设置/);
 assert.match(pageSource, /确认设置，进入周任务/);
-assert.match(pageSource, /默认创作流程 · 系统托管/, 'content Agent settings must explain the managed dual-entry workflow');
+assert.match(pageSource, /默认创作流程[\s\S]{0,500}系统托管/, 'content Agent settings must explain the managed dual-entry workflow');
 assert.match(pageSource, /选制作方式 → 系统盘点素材 → 编导 Agent 逐镜定方案 → 内容 Agent 成片 → 用户验收/, 'the managed workflow must show the director-to-content handoff');
 assert.doesNotMatch(pageSource, /<Field label="默认创作方式">/, 'content Agent settings must not expose the legacy route selector');
 assert.match(pageSource, /activeRuleAgent === "director" \? <>[\s\S]{0,1800}社媒视频制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind the director social-video switch');
@@ -86,6 +91,14 @@ assert.match(pageSource, /policyRole: "industry"/, 'the director UI must preserv
 assert.match(pageSource, /agentApprovalPolicies\[group\.policyRole\]/, 'public roles must read legacy approval policies through an explicit compatibility key');
 assert.match(pageSource, /setAgentApproval\(group\.policyRole/, 'public roles must write legacy approval policies through an explicit compatibility key');
 assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2000}内容发布与回执/, 'publishing controls belong to the business Agent panel');
+for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '当前动作', '查看详情']) {
+  assert.match(executionStatusSource, new RegExp(label), `live Agent status must expose ${label}`);
+}
+for (const color of ['#7c3aed', '#2563eb', '#0f9f82', '#d97706']) {
+  assert.match(executionStatusSource, new RegExp(color), `each Agent must keep its own execution color: ${color}`);
+}
+assert.match(executionStatusSource, /agent-live-card--running/, 'running Agent cards must expose an animation hook');
+assert.match(executionStatusSource, /tasks\.filter\(task => \['succeeded', 'completed'\]\.includes\(task\.status\)\)\.length/, 'Agent progress must come from persisted task completion rather than fabricated percentages');
 assert.match(pageSource, /synchronizeThemeContentWorkflows[\s\S]{0,500}contentCreationWorkflows/, 'saving the unified switch must retain the legacy workflow ids');
 assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Employee weekly planning must enable the theme workflow explicitly');
 for (const persona of ['B2B 从零起步', 'B2B 已有基础', '品牌影响', 'DTC 直接销售']) {

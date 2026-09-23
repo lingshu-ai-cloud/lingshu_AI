@@ -167,6 +167,14 @@ export const SOCIAL_TRUTH_PROHIBITIONS = [
 ] as const;
 export type SocialTruthProhibition = typeof SOCIAL_TRUTH_PROHIBITIONS[number];
 
+export const SOCIAL_PRODUCTION_FEASIBILITIES = [
+  'full_fidelity',
+  'functional_equivalent',
+  'goal_degraded',
+  'blocked_for_facts_or_rights',
+] as const;
+export type SocialProductionFeasibility = typeof SOCIAL_PRODUCTION_FEASIBILITIES[number];
+
 /** Public truth boundary used by both the Director and Content Agent. */
 export interface SocialShotTruthBoundary {
   subject: SocialTruthSensitiveSubject;
@@ -198,6 +206,8 @@ export interface SocialAssetSupplyShotPlan {
   productionInstruction: string;
   truthBoundary: SocialShotTruthBoundary;
   functionalEquivalentReplacement: SocialFunctionalEquivalentReplacement;
+  feasibility: SocialProductionFeasibility;
+  feasibilityReason: string;
   customerShootRequired: false;
 }
 
@@ -211,7 +221,9 @@ export interface SocialAssetSupplyPlan {
   assetAvailability: SocialAssetAvailability;
   managementMode: SocialContentManagementMode;
   productionRoute: SocialAssetSupplyRoute;
-  status: 'ready' | 'requires_fact_confirmation' | 'requires_rights_confirmation';
+  status: 'ready' | 'goal_degraded' | 'requires_fact_confirmation' | 'requires_rights_confirmation';
+  overallFeasibility: SocialProductionFeasibility;
+  /** @deprecated Use `overallFeasibility`; retained for old clients only. */
   canProduceWithoutCustomerShoot: boolean;
   customerActions: Array<'confirm_facts' | 'confirm_rights'>;
   systemActions: string[];
@@ -242,6 +254,21 @@ export interface SocialReferenceShotAnalysis {
   audioDescription: string | null;
   rhythmDescription: string;
   purpose: SocialShotFunction;
+  action?: { startState: string; path: string; endState: string; spatialRelation: string };
+  shotLanguage?: { shotSize: string; cameraAngle: string; movement: string; composition: string };
+  audioLayers?: {
+    voice: string | null;
+    captions: string | null;
+    ambient: string | null;
+    music: string | null;
+    soundEffects: string | null;
+  };
+  observation?: {
+    observableFacts: string[];
+    inferredIntent: string[];
+    causalGaps: string[];
+    postProductionOverlays: string[];
+  };
   tags: SocialReferenceShotTags;
   fidelityPoints: string[];
   mustDifferPoints: string[];
@@ -265,13 +292,213 @@ export interface SocialThreeSecondHook {
 
 export interface SocialReferenceVideoAnalysis {
   analysisId: string;
+  /** Incrementing analysis version. Optional only on historic records. */
+  version?: string;
   referenceSourceId: string;
   status: 'analyzing' | 'ready' | 'blocked';
   durationSeconds: number | null;
+  analysisLayers?: Array<{
+    level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
+    status: 'complete' | 'partial' | 'pending';
+    scope: string;
+    confidence: number | null;
+  }>;
+  coverage?: {
+    fullDurationSeconds: number | null;
+    precisionIntervals: Array<{ startSeconds: number; endSeconds: number; level: 'L1' | 'L2' | 'L3' | 'L4' }>;
+    gaps: Array<{ startSeconds: number; endSeconds: number; reason: string }>;
+    overallConfidence: number | null;
+    fullTimelineCovered: boolean;
+  };
   shots: SocialReferenceShotAnalysis[];
   hookAnalysis: SocialThreeSecondHook | null;
   rightsNotice: string;
   createdAt: string;
+}
+
+/** Multi-sample retrieval memory. It is evidence-backed guidance, never a mandatory formula. */
+export interface SocialCreativePatternMemory {
+  patternMemoryId: string;
+  version: string;
+  status: 'candidate' | 'validated' | 'retired';
+  evidenceAnalysisIds: string[];
+  productionResultIds: string[];
+  hookTypes: string[];
+  revealOrder: SocialShotFunction[];
+  evidencePositions: number[];
+  rhythm: string[];
+  emotionChanges: string[];
+  ctaPositions: number[];
+  applicableIndustries: string[];
+  failureConditions: string[];
+  confidence: number;
+  createdBy: 'system_learning';
+  updatedAt: string;
+}
+
+export type SocialCompanyRole = 'factory' | 'brand' | 'importer' | 'distributor' | 'retailer';
+export type SocialAudienceRole = 'brand_buyer' | 'importer' | 'distributor' | 'retailer' | 'consumer';
+export type SocialSearchIntent = 'learn' | 'compare' | 'buy' | 'use';
+export type SocialKeywordEvidenceSource = 'product' | 'website' | 'inquiry' | 'competitor' | 'user' | 'content' | 'comment';
+export type SocialDiscoveryMode = 'momentum' | 'account' | 'innovation';
+export type SocialDiscoveryPath = 'keyword' | 'account' | 'relation' | 'performance' | 'innovation';
+export type SocialInspirationReadiness = 'discovery_reference' | 'strategy_reference' | 'production_reference';
+export type SocialAccountTrackingStatus = 'candidate' | 'trial' | 'tracked' | 'watching' | 'stopped';
+export type SocialCrawlKeywordCategory = 'discovery_seed' | 'scene_cluster' | 'evidence_query' | 'competitor_account' | 'task_override';
+export type SocialBenchmarkAccountType = 'brand_factory' | 'professional_creator' | 'channel' | 'user_reviewer' | 'industry_media' | 'expression_reference';
+
+export interface SocialKeywordScope {
+  productRef: string;
+  market: string;
+  language: string;
+  companyRole: SocialCompanyRole;
+  audienceRole: SocialAudienceRole;
+  verifiedCompetitors: Array<{ type: 'brand' | 'domain' | 'account'; value: string }>;
+}
+
+export interface SocialDiscoverySeed {
+  seedId: string;
+  label: string;
+  queryVariants: string[];
+  evidence: SocialKeywordEvidenceSource[];
+  enabled: boolean;
+}
+
+export interface SocialSceneCluster {
+  sceneId: string;
+  label: string;
+  productTask: string;
+  demandDimension: 'audience' | 'scene' | 'problem' | 'desired_result' | 'decision_concern' | 'mechanism' | 'proof';
+  queryVariants: string[];
+  evidence: SocialKeywordEvidenceSource[];
+  status: 'suggested' | 'approved' | 'rejected' | 'watching';
+}
+
+export interface SocialContentSearchUnit {
+  unitId: string;
+  groupLabel: string;
+  productEntity: string;
+  buyerQuestion: string;
+  observableEvidence: string;
+  contentPattern?: 'test' | 'process' | 'comparison' | 'tutorial' | 'case' | 'demo';
+  intent: SocialSearchIntent;
+  queryVariants: string[];
+  evidence: SocialKeywordEvidenceSource[];
+  status: 'suggested' | 'approved' | 'rejected';
+}
+
+export interface SocialKeywordRelation {
+  relationId: string;
+  fromId: string;
+  toId: string;
+  evidenceRefs: string[];
+  occurrenceCount: number;
+  confidence: number;
+}
+
+export interface SocialKeywordGraph {
+  discoverySeeds: SocialDiscoverySeed[];
+  sceneClusters: SocialSceneCluster[];
+  evidenceQueries: SocialContentSearchUnit[];
+  edges: SocialKeywordRelation[];
+}
+
+export interface SocialMarketKeywordSet {
+  keywordSetId: string;
+  version: number;
+  name: string;
+  scope: SocialKeywordScope;
+  graph: SocialKeywordGraph;
+  status: 'draft' | 'active' | 'retired';
+  createdBy: 'director_agent' | 'user';
+  createdAt: string;
+}
+
+export interface SocialDiscoveryBrief {
+  discoveryBriefId: string;
+  keywordSetId: string;
+  keywordSetVersion: number;
+  productRef: string;
+  market: string;
+  audience: string;
+  discoverySeedIds: string[];
+  trackedSceneIds: string[];
+  competitorAccounts: string[];
+  discoveryModes: SocialDiscoveryMode[];
+  platforms: string[];
+  lookbackDays: number;
+  resultLimit: number;
+  budgetLimitCny: number | null;
+  productionGap: string | null;
+  createdBy: 'director_agent' | 'user';
+}
+
+export interface SocialCandidateEvidence {
+  inspirationId: string;
+  discoveryPath: SocialDiscoveryPath[];
+  sceneIds: string[];
+  relevance: { level: 'high' | 'medium' | 'low'; reasons: string[] };
+  momentum: { level: 'rising' | 'high_performance' | 'unknown'; reasons: string[]; confidence: number };
+  novelty?: { level: 'high' | 'medium' | 'low'; reasons: string[]; confidence: number };
+  transferability: { level: 'high' | 'medium' | 'low'; mechanisms: string[]; limitations: string[] };
+  evidenceRefs: string[];
+}
+
+export interface SocialInspirationHandoff {
+  inspirationId: string;
+  analysisId: string;
+  analysisVersion: string;
+  readiness: SocialInspirationReadiness;
+  source: { platform: string; sourceUrl: string; author?: string; publishedAt?: string };
+  taskContext: { taskId?: string; productRef?: string; market?: string; audience?: string; userNote?: string };
+  whySelected: string[];
+  referenceRole: 'primary_structure' | 'proof_reference' | 'visual_rhythm' | 'cta_reference';
+  reusableLogic: { hookTypes: string[]; revealOrder: string[]; proofPlacement: string[]; pacing: string; emotionalProgression: string; ctaPosition: string };
+  adaptationBoundary: { reusable: string[]; mustReplace: string[]; prohibited: string[] };
+  productionImplications: { requiredEvidence: string[]; likelyAssetNeeds: string[]; difficulty?: 'low' | 'medium' | 'high'; risks: string[] };
+  evidenceRefs: Array<{ startTime?: number; endTime?: number; description: string; confidence: number; needsReview: boolean }>;
+  rights: { mayAnalyze: boolean; mayUseOriginalMedia: boolean; mayAdapt: boolean; note?: string };
+}
+
+export interface SocialAccountTrackingDecision {
+  accountId: string;
+  decision: 'trial' | 'track' | 'watch' | 'stop';
+  status: SocialAccountTrackingStatus;
+  accountRole: SocialBenchmarkAccountType;
+  reasons: string[];
+  evidenceVideoIds: string[];
+  relatedSceneIds: string[];
+  missingEvidence: string[];
+  nextReviewAt?: string;
+  recommendedCadence?: string;
+  confidence: number;
+}
+
+export interface SocialCrawlStrategy {
+  crawlStrategyId: string;
+  version: string;
+  businessGoal: string;
+  keywordSet: SocialMarketKeywordSet;
+  discoveryBrief: SocialDiscoveryBrief;
+  /** Compiled execution view kept for existing scheduler consumers. */
+  keywords: Array<{ category: SocialCrawlKeywordCategory; values: string[] }>;
+  benchmarkAccounts: Array<{ accountRef: string; type: SocialBenchmarkAccountType; weight: number }>;
+  platformQuotas: Array<{ platform: string; limit: number; weight: number }>;
+  refreshIntervalMinutes: number;
+  stopConditions: string[];
+  market: string | null;
+  language: string | null;
+  cultureTags: string[];
+  seasonTags: string[];
+  regionalPlatformWeights: Record<string, number>;
+  createdBy: 'director_agent' | 'user';
+}
+
+export interface SocialInspirationScores {
+  sourcePriority: number;
+  contentOpportunityScore: number;
+  relativePerformance: number | null;
+  reasons: string[];
 }
 
 export interface SocialReplicationScriptShot {
@@ -311,6 +538,280 @@ export interface SocialShotMaterialMapEntry {
   sourceStrategy: SocialShotSourceStrategy;
   truthBoundary: SocialShotTruthBoundary;
   functionalEquivalentReplacement: SocialFunctionalEquivalentReplacement;
+}
+
+export const SOCIAL_AGENT_WORKFLOW_STAGES = [
+  'planned',
+  'reference_ready',
+  'director_ready',
+  'execution_planning',
+  'director_review',
+  'producing',
+  'technical_review',
+  'creative_review',
+  'asset_review',
+  'ready_to_publish',
+  'needs_facts',
+  'needs_rights',
+  'needs_budget',
+  'goal_degraded',
+  'failed_recoverable',
+] as const;
+export type SocialAgentWorkflowStage = typeof SOCIAL_AGENT_WORKFLOW_STAGES[number];
+
+export interface SocialWeeklyContentPackage {
+  packageId: string;
+  version: string;
+  businessGoal: string;
+  productFocus: string | null;
+  audience: string | null;
+  markets: string[];
+  languages: string[];
+  originalContentCount: number;
+  adaptationVersionCount: number;
+  publicationTaskCount: number;
+  platforms: string[];
+  publicationMatrix: Array<{
+    platform: string;
+    accountRef: string | null;
+    accountPositioning: string | null;
+    publishWindow: string | null;
+  }>;
+  weeklyBudgetCny: number | null;
+  perItemBudgetCny: number | null;
+  dueAt: string | null;
+  availableAssetRefs: string[];
+  customerCanShoot: boolean;
+  availableCapabilities: SocialShotSourceStrategy[];
+  priorities: Array<'must_do' | 'can_delay' | 'experiment'>;
+  successCriteria: string[];
+  metricTargets: string[];
+  createdBy: 'business_agent';
+}
+
+export interface SocialAdHocBusinessContext {
+  contextId: string;
+  version: string;
+  objective: string;
+  productRef: string | null;
+  audience: string | null;
+  platforms: string[];
+  markets: string[];
+  languages: string[];
+  budgetCny: number | null;
+  dueAt: string | null;
+  factSourceRefs: string[];
+  createdBy: 'business_agent';
+}
+
+export interface SocialDirectorBriefScene {
+  sceneId: string;
+  order: number;
+  referenceShotId: string | null;
+  purpose: SocialShotFunction;
+  targetVisual: string;
+  requiredEvidence: string[];
+  action: { startState: string; path: string; endState: string };
+  shotLanguage: { shotSize: string; cameraAngle: string; movement: string; composition: string };
+  spaceAndContinuity: string[];
+  audioLayers: {
+    voiceover: string | null;
+    dialogue: string | null;
+    captionIntent: string | null;
+    ambient: string | null;
+    music: string | null;
+    soundEffects: string | null;
+  };
+  duration: { startSeconds: number; endSeconds: number; targetSeconds: number };
+  truthBoundary: SocialShotTruthBoundary;
+  allowedVariation: string[];
+  acceptanceCriteria: string[];
+  fidelityPoints: string[];
+  mustDifferPoints: string[];
+}
+
+/** Director-owned expression contract. It deliberately contains no asset, clip, model or provider choice. */
+export interface SocialDirectorBrief {
+  directorBriefId: string;
+  version: string;
+  status: 'ready' | 'blocked';
+  source: { weeklyPackageId: string | null; adHocBusinessContextId: string | null };
+  referenceAnalysis: {
+    analysisId: string;
+    version: string;
+    fullDurationSeconds: number | null;
+    precisionIntervals: Array<{ startSeconds: number; endSeconds: number; level: 'L1' | 'L2' | 'L3' | 'L4' }>;
+    gaps: Array<{ startSeconds: number; endSeconds: number; reason: string }>;
+    overallConfidence: number | null;
+  } | null;
+  inspirationHandoffIds?: string[];
+  topic: string;
+  audience: string | null;
+  platforms: string[];
+  accountRefs: string[];
+  creativeIntent: string;
+  narrativeStructure: string[];
+  rhythm: string;
+  primaryHookId: string | null;
+  coreSellingPoints: string[];
+  callToAction: string | null;
+  totalDurationSeconds: number;
+  aspectRatio: string | null;
+  languages: string[];
+  brandRequirements: string[];
+  factSourceRefs: string[];
+  rightsConstraints: string[];
+  referenceEvidence: Array<{
+    analysisId: string;
+    referenceShotId: string | null;
+    transferable: string[];
+    mustReplace: string[];
+  }>;
+  budgetCny: number | null;
+  dueAt: string | null;
+  scenes: SocialDirectorBriefScene[];
+  createdBy: 'director_agent';
+}
+
+export interface SocialExecutionCandidate {
+  candidateId: string;
+  kind: 'asset' | 'capability';
+  label: string;
+  sourceRef: string | null;
+  sourceStrategy: SocialShotSourceStrategy;
+  evidenceStrength: 'strong' | 'supporting' | 'non_evidentiary';
+  rightsStatus: 'confirmed' | 'restricted' | 'requires_confirmation';
+  enterpriseOwnershipScore: number;
+  semanticScore: number;
+  evidenceScore: number;
+  actionAndShotScore: number;
+  qualityScore: number;
+  durationFitScore: number;
+  repetitionPenalty: number;
+  estimatedCostCny: number;
+  estimatedSeconds: number;
+  estimatedSuccessRate: number;
+  dataTransfer: 'local_only' | 'external_processor';
+  providerId: string | null;
+  modelId: string | null;
+  clipId: string | null;
+  timeRange: { startSeconds: number; endSeconds: number } | null;
+  promptRef: string | null;
+  retryPolicy: { maxAttempts: number; fallbackStrategies: SocialShotSourceStrategy[] };
+  provenance: {
+    origin: 'customer' | 'licensed_library' | 'system_capability';
+    inputVersion: string;
+    authorizationRef: string | null;
+    executionRecordId: string | null;
+  };
+}
+
+export interface SocialContentExecutionScenePlan {
+  sceneId: string;
+  feasibility: SocialProductionFeasibility;
+  feasibilityReason: string;
+  candidates: SocialExecutionCandidate[];
+  recommendedCandidateIds: string[];
+  alternativeCandidateGroups: string[][];
+  selectedSourceStrategy: SocialShotSourceStrategy;
+  fallbackSourceStrategy: SocialShotSourceStrategy | null;
+  estimatedCostCny: number;
+  estimatedSeconds: number;
+  estimatedSuccessRate: number;
+  rightsRisks: string[];
+  dataTransferRisks: string[];
+  idempotencyKey: string;
+}
+
+/** Content-Agent-owned implementation plan. */
+export interface SocialContentExecutionPlan {
+  executionPlanId: string;
+  version: string;
+  directorBriefId: string;
+  directorBriefVersion: string;
+  status: 'planning' | 'review_required' | 'approved' | 'blocked';
+  reviewRound: number;
+  maxReviewRounds: number;
+  budgetLimitCny: number | null;
+  deadlineAt: string | null;
+  estimatedTotalCostCny: number;
+  estimatedTotalSeconds: number;
+  scenes: SocialContentExecutionScenePlan[];
+  createdBy: 'content_agent';
+}
+
+export type SocialExecutionPlanReviewReason =
+  | 'material_insufficient'
+  | 'facts_missing'
+  | 'rights_missing'
+  | 'budget_exceeded'
+  | 'capability_mismatch'
+  | 'duration_mismatch'
+  | 'generation_failed'
+  | 'expression_failed';
+
+export interface SocialExecutionPlanSceneReview {
+  sceneId: string;
+  approved: boolean;
+  feasibility: SocialProductionFeasibility;
+  failedCriteria: string[];
+  requiredRevision: string[];
+  goalImpact: 'none' | 'video' | 'weekly_plan';
+  reasonCodes: SocialExecutionPlanReviewReason[];
+}
+
+export interface SocialExecutionPlanReview {
+  reviewId: string;
+  version: string;
+  executionPlanId: string;
+  executionPlanVersion: string;
+  directorBriefId: string;
+  directorBriefVersion: string;
+  approved: boolean;
+  sceneResults: SocialExecutionPlanSceneReview[];
+  failedCriteria: string[];
+  requiredRevision: string[];
+  goalImpact: 'none' | 'video' | 'weekly_plan';
+  reasonCodes: SocialExecutionPlanReviewReason[];
+  createdBy: 'director_agent';
+}
+
+export interface SocialProductionResult {
+  productionResultId: string;
+  version: string;
+  executionPlanId: string;
+  executionPlanVersion: string;
+  executionPlanReviewId: string;
+  artifactId: string | null;
+  creativeReviewId: string;
+  publishAssignmentId: string | null;
+  status: 'technical_review_passed' | 'creative_review_passed' | 'asset_review';
+  sceneResults: Array<{
+    sceneId: string;
+    idempotencyKey: string;
+    sourceStrategy: SocialShotSourceStrategy;
+    feasibility: SocialProductionFeasibility;
+    provenanceCandidateIds: string[];
+  }>;
+  technicalReview: { approved: boolean; checkedScenes: number; failures: string[] };
+  creativeReview: { approved: boolean; failedCriteria: string[]; reviewedBy: 'director_agent' };
+  artifactResourceRef: string;
+  createdAt: string;
+}
+
+export interface SocialContentAgentWorkflow {
+  schemaVersion: 'social-content-agent-workflow.v1';
+  stage: SocialAgentWorkflowStage;
+  contentPlanId: string;
+  videoTaskId: string;
+  weeklyPackage: SocialWeeklyContentPackage | null;
+  adHocBusinessContext: SocialAdHocBusinessContext | null;
+  discoveryBrief: SocialDiscoveryBrief | null;
+  inspirationHandoffs: SocialInspirationHandoff[];
+  directorBrief: SocialDirectorBrief;
+  executionPlan: SocialContentExecutionPlan;
+  executionPlanReview: SocialExecutionPlanReview;
+  productionResult: SocialProductionResult | null;
 }
 
 export const SOCIAL_ARTIFACT_STATUSES = ['draft', 'review_required', 'approved', 'changes_requested', 'superseded'] as const;
@@ -591,6 +1092,8 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   referenceVideoAnalysis?: SocialReferenceVideoAnalysis | null;
   replicationScript?: SocialReplicationScriptVersion | null;
   shotMaterialMap?: SocialShotMaterialMapEntry[];
+  /** Unified Business → Director → Content Agent projection. */
+  agentWorkflow?: SocialContentAgentWorkflow;
 }
 
 export interface SocialWeeklyPlanItemInput {
