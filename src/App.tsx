@@ -112,6 +112,15 @@ const loadPage = (): Page => {
   } catch { return 'digitalEmployees'; }
 };
 
+const loadTrafficEntryView = (): 'publish' | 'accounts' => {
+  try {
+    const query = new URLSearchParams(window.location.search);
+    return query.get('page') === 'accountManagement' || query.get('view') === 'accounts' ? 'accounts' : 'publish';
+  } catch {
+    return 'publish';
+  }
+};
+
 const pagePreferenceScope = (session: AuthSession) =>
   `${session.tenant?.id || session.user.tenantId}:${session.user.id}`;
 
@@ -199,6 +208,7 @@ export default function App() {
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(loadPage);
+  const [trafficEntryView, setTrafficEntryView] = useState<'publish' | 'accounts'>(loadTrafficEntryView);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [socialContentNavigation, setSocialContentNavigation] = useState<{
@@ -220,6 +230,7 @@ export default function App() {
     const restorePage = (event: PopStateEvent) => {
       const previous = resolveNavigationPage(event.state?.productionPage, event.state?.productionDetail?.view);
       if (previous) {
+        if (previous === 'traffic') setTrafficEntryView(event.state?.productionDetail?.view === 'accounts' ? 'accounts' : 'publish');
         setPage(previous);
         const socialTaskId = isSocialTaskContextPage(previous)
           ? readSocialContentNavigationTaskId(previous, event.state)
@@ -455,7 +466,8 @@ export default function App() {
   };
 
   const handleNavigate = useCallback((p: Page) => {
-    const next = p === 'retention' ? 'conversion' : p;
+    const next = p === 'retention' ? 'conversion' : p === 'accountManagement' ? 'traffic' : p;
+    if (next === 'traffic') setTrafficEntryView(p === 'accountManagement' ? 'accounts' : 'publish');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
       ...window.history.state,
@@ -515,6 +527,7 @@ export default function App() {
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
+      if (nextPage === 'traffic') setTrafficEntryView(incomingDetail.view === 'accounts' ? 'accounts' : 'publish');
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
@@ -748,7 +761,7 @@ export default function App() {
               onScriptPanelOpen={() => setScriptPanelOpen(true)}
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               onSessionRefresh={() => void refreshSession()}
-              initialView="publish"
+              initialView={trafficEntryView}
               visibleModes={['publish', 'accounts']}
               pageTitle={PAGE_REGISTRY.traffic.canonicalTitle}
               storageScope={session.tenant?.id || session.user.tenantId}
@@ -797,20 +810,6 @@ export default function App() {
                 />
               )}
             </div>
-          )}
-          {page === 'accountManagement' && (
-            <TrafficPage
-              key="account-management"
-              onEnterConversation={enterConversation}
-              onLeaveConversation={leaveConversation}
-              isInConversation={false}
-              onNavigate={handleNavigate}
-              initialView="accounts"
-              showModeTabs={false}
-              pageTitle={PAGE_REGISTRY.accountManagement.canonicalTitle}
-              storageScope={session.tenant?.id || session.user.tenantId}
-              socialContentTaskId={activeSocialContentTaskId}
-            />
           )}
           {page === 'socialMonitoring' && <SocialMonitoringPage onNavigate={handleNavigate} />}
           {page === 'scriptLibrary' && <ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} />}

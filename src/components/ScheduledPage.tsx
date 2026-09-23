@@ -13,7 +13,6 @@ import {
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
 import { useModalFocus } from '../hooks/useModalFocus';
-import { PAGE_REGISTRY } from '../pageRegistry';
 export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
 export type ScheduledWorkflowHandoff = {
@@ -1449,15 +1448,6 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="scheduled-tasks">
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <Clock size={13} />
-          </div>
-          <h1 className="text-sm font-semibold text-text-primary">{PAGE_REGISTRY.scheduled.canonicalTitle}</h1>
-        </div>
-      </div>
-
       <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       {/* Left sidebar */}
       <div

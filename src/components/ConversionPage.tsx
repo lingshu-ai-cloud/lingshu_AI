@@ -39,7 +39,6 @@ import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
 import { getCustomerServiceStatus, updateCustomerServiceStatus, type CustomerServiceStatus } from '../lib/customerService';
-import { PAGE_REGISTRY } from '../pageRegistry';
 
 const EmojiPicker = lazy(async () => {
   const picker = await import('emoji-picker-react');
@@ -2495,13 +2494,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink" data-lingshu-guide="customer-workbench">
-      <header className="flex min-h-[68px] shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4 sm:px-5">
-        <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-accent">Customer workspace</p>
-          <h1 className="mt-0.5 truncate text-lg font-bold text-text-primary">{PAGE_REGISTRY.conversion.canonicalTitle}</h1>
-        </div>
-        <p className="hidden max-w-md text-right text-xs text-text-muted sm:block">{VIEW_META[view].desc}</p>
-      </header>
       <nav aria-label="客服工作区" className="flex shrink-0 gap-4 border-b border-border bg-surface px-3 lg:hidden" role="tablist">
         {([['list', '客户列表'], ['chat', '会话'], ['profile', '客户资料']] as const).map(([panel, label]) => <button key={panel} type="button" role="tab" aria-selected={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`flex-1 border-b-2 px-2 py-3 text-sm font-bold ${mobilePanel === panel ? 'border-accent text-accent' : 'border-transparent text-text-secondary'}`}>{label}</button>)}
       </nav>

@@ -4,7 +4,7 @@ import {
   Home, Users, LayoutGrid, BarChart3, Megaphone, Bot,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
+  Clapperboard, WandSparkles, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
@@ -81,7 +81,6 @@ const ADMIN_NAV: NavSection = {
 const SYSTEM_NAV: NavSection = {
   label: '系统设置',
   items: [
-    navItem('accountManagement', <RadioTower size={16} />),
     navItem('plugins', <PlugZap size={16} />),
     navItem('organizationPermissions', <UserRoundCog size={16} />),
   ],

@@ -2359,13 +2359,11 @@ interface VideoCardProps {
   onSelect: () => void;
   onCreate: () => void;
   onWatch: () => void;
-  onAnalyzeVideo?: () => void;
   onFavoriteMaterial?: () => void;
-  analyzingVideo?: boolean;
   favoritingMaterial?: boolean;
 }
 
-function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: VideoCardProps) {
+function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const inspirationScores = inspirationScoresForVideo(video);
@@ -2389,7 +2387,7 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAn
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.02, duration: 0.25 }}
-      className={`card overflow-hidden group ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
+      className={`group flex h-full flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-sm transition hover:border-border-bright hover:shadow-md ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
       <div role="button" tabIndex={0} onClick={onWatch}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -2437,8 +2435,8 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAn
           </div>
         )}
       </div>
-      <div className="p-3">
-        <p className="text-xs font-semibold text-text-primary leading-snug line-clamp-2 mb-2">{video.title}</p>
+      <div className="flex flex-1 flex-col p-3">
+        <p className="mb-2 min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{video.title}</p>
         <div className="flex items-center justify-between mb-2">
           <span className={`text-[10px] font-mono font-bold ${trendColor}`}>{trendLabel}</span>
           <span className="flex items-center gap-1 text-[10px] text-text-muted">{isImagePost ? <Images size={9} /> : <Clock size={9} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} views`}</span>
@@ -2447,47 +2445,39 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onAn
           {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
         </div>
         {!video.id.startsWith('material-') && <div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold" title={`来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
-        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3">
-          <button type="button" onClick={onSelect}
-            className="inline-flex min-h-9 items-center justify-center gap-1 rounded-lg border border-border bg-surface text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
-            <Eye size={12} />查看详情
-          </button>
-          <button type="button" onClick={onCreate}
-            className="inline-flex min-h-9 items-center justify-center gap-1 rounded-lg bg-accent px-2 text-[11px] font-bold text-white transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
-            <Sparkles size={12} />用此灵感创作
-          </button>
-        </div>
-        <details className="group/actions mt-1.5">
-          <summary className="flex min-h-7 cursor-pointer list-none items-center justify-center gap-1 rounded-md text-[10px] font-semibold text-text-muted transition hover:bg-surface-2 hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
-            更多操作 <ChevronDown size={11} className="transition-transform group-open/actions:rotate-180" />
-          </summary>
-          <div className="mt-1 grid grid-cols-2 gap-1 rounded-lg bg-surface-2 p-1.5">
-            <button type="button" onClick={onWatch} className="rounded-md px-2 py-1.5 text-[10px] font-semibold text-text-secondary hover:bg-surface">预览内容</button>
-            <button type="button" onClick={() => onAnalyzeVideo?.()} disabled={analyzingVideo}
-              className="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-semibold text-text-secondary hover:bg-surface disabled:opacity-60">
-              {analyzingVideo ? <Loader2 size={10} className="animate-spin" /> : <BarChart2 size={10} />}{isImagePost ? '查看图文拆解' : '分析脚本'}
+        <div className="mt-auto border-t border-border pt-3">
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={onSelect}
+              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-border px-2 text-xs font-bold text-text-secondary transition hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
+              <Eye size={12} />查看详情
             </button>
-            {video.sourceUrl && !isImagePost && <button type="button" onClick={() => onFavoriteMaterial?.()} disabled={favoritingMaterial}
-              className="col-span-2 inline-flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-semibold text-text-secondary hover:bg-surface disabled:opacity-60">
-              {favoritingMaterial ? <Loader2 size={10} className="animate-spin" /> : <Bookmark size={10} />}收藏到素材库
+            <button type="button" onClick={onCreate}
+              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 text-xs font-bold text-white transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
+              <Sparkles size={12} />用于创作
+            </button>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[10px] font-semibold text-text-muted">
+            <button type="button" onClick={onWatch} aria-label={`预览 ${video.title}`} className="inline-flex items-center gap-1 rounded-md px-1 py-1 transition hover:text-accent">
+              {isImagePost ? <Images size={11} /> : <Play size={11} fill="currentColor" />}预览内容
+            </button>
+            {video.sourceUrl && !isImagePost && <button type="button" onClick={() => onFavoriteMaterial?.()} disabled={favoritingMaterial} className="inline-flex items-center gap-1 rounded-md px-1 py-1 transition hover:text-accent disabled:opacity-60">
+              {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />}收藏素材
             </button>}
           </div>
-        </details>
+        </div>
       </div>
     </motion.div>
   );
 }
 
 // ── Video List Item ───────────────────────────────────────────────────────────
-function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: {
+function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial }: {
   video: TrendVideo;
   isSelected: boolean;
   onSelect: () => void;
   onCreate: () => void;
   onWatch: () => void;
-  onAnalyzeVideo?: () => void;
   onFavoriteMaterial?: () => void;
-  analyzingVideo?: boolean;
   favoritingMaterial?: boolean;
 }) {
   const meta = getPlatformMeta(video.platform);
@@ -2527,17 +2517,16 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onAnaly
         <p className="text-[10px] text-text-muted">{video.views}</p>
       </div>
       <div className="ml-auto flex w-full items-center justify-end gap-1.5 sm:ml-0 sm:w-auto">
-        <button type="button" onClick={onSelect}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-text-secondary transition hover:border-accent hover:text-accent">
-          <Eye size={12} />查看详情
-        </button>
         <button type="button" onClick={onCreate}
           className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-95">
           <Sparkles size={12} />用此灵感创作
         </button>
-        <button type="button" onClick={() => onAnalyzeVideo?.()} disabled={analyzingVideo} aria-label={isImagePost ? '查看图文拆解' : '分析脚本'} title={isImagePost ? '查看图文拆解' : '分析脚本'}
-          className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent disabled:opacity-60">
-          {analyzingVideo ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
+        <button type="button" onClick={onWatch} aria-label="预览内容" title="预览内容" className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent">
+          {isImagePost ? <Images size={13} /> : <Play size={13} fill="currentColor" />}
+        </button>
+        <button type="button" onClick={onSelect}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary transition hover:border-accent hover:bg-surface hover:text-accent disabled:opacity-60">
+          <Eye size={13} />查看详情
         </button>
       </div>
       {video.sourceUrl && !isImagePost && (
@@ -2843,6 +2832,168 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
   );
 }
 
+function DirectorVideoDetailPanel({
+  video,
+  onClose,
+  onPreview,
+  onCreate,
+  onRetry,
+  onExactAnalysis,
+  analyzing,
+  notice,
+}: {
+  video: TrendVideo;
+  onClose: () => void;
+  onPreview: () => void;
+  onCreate: () => void;
+  onRetry: () => void;
+  onExactAnalysis: () => void;
+  analyzing: boolean;
+  notice?: string;
+}) {
+  const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
+  const analysis = getAnalysis(video);
+  const exactQuality = exactAnalysisQuality(video);
+  const payload = video.aiAnalysis;
+  const imageEvidence = payload?.imageEvidence;
+  const isImagePost = video.contentFormat === 'image';
+  const imageEvidenceCount = imageEvidence?.observedFacts?.length || imageEvidence?.carouselFlow?.length || 0;
+  const pending = analyzing || payload?.requestedAnalysisMode === 'exact' || video.status === 'pending';
+  const statusLabel = pending
+    ? '编导 Agent 分析中'
+    : isImagePost && imageEvidence
+      ? '图文证据分析已完成'
+      : exactQuality.ready
+      ? '全片精确分析已完成'
+      : analysis
+        ? '策略分析已完成'
+        : payload?.analysisError || video.status === 'failed'
+          ? '分析需要重试'
+          : '等待编导 Agent 分析';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[85] flex justify-end bg-black/25 backdrop-blur-[1px]"
+      onClick={onClose}
+    >
+      <motion.aside
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="director-video-analysis-title"
+        initial={{ x: 40, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        exit={{ x: 40, opacity: 0 }}
+        className="flex h-full w-full max-w-[720px] flex-col border-l border-border bg-[#f8faf7] shadow-2xl"
+        onClick={event => event.stopPropagation()}
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border bg-white px-5 py-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">编导 Agent</span>
+              <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${pending ? 'bg-amber-50 text-amber-700' : exactQuality.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>{statusLabel}</span>
+            </div>
+            <h2 id="director-video-analysis-title" className="mt-2 line-clamp-2 text-base font-bold leading-6 text-text-primary">{video.title}</h2>
+            <p className="mt-1 text-[11px] text-text-muted">
+              {PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}
+            </p>
+          </div>
+          <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭编导分析" className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <section className="grid gap-4 rounded-xl border border-border bg-white p-4 sm:grid-cols-[150px_minmax(0,1fr)]">
+            <button type="button" onClick={onPreview} className="group relative aspect-[9/16] overflow-hidden rounded-lg bg-surface-2 text-left">
+              <VideoThumbnail platform={video.platform} title={video.title} />
+              {video.thumbnail && <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 h-full w-full object-cover" />}
+              <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100"><span className="rounded-full bg-white/95 p-3 text-text-primary shadow"><Play size={16} fill="currentColor" /></span></span>
+            </button>
+            <div className="min-w-0">
+              <p className="text-xs font-black text-text-primary">分析结论</p>
+              <p className="mt-2 text-sm leading-6 text-text-secondary">
+                {analysis?.referenceHighlights[0] || imageEvidence?.copyEvidence.hooks[0]?.text || payload?.analysisError || '编导 Agent 正在读取原视频证据，完成后会在这里给出可追溯的内容判断。'}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">分析层级</span><strong className="mt-1 block text-text-primary">{isImagePost ? (imageEvidence ? '图文证据级' : '未完成') : exactQuality.ready ? '全片精确' : analysis ? '策略级' : '未完成'}</strong></div>
+                <div className="rounded-lg bg-surface-2 px-3 py-2"><span className="block text-text-muted">{isImagePost ? '证据覆盖' : '分镜覆盖'}</span><strong className="mt-1 block text-text-primary">{isImagePost ? `${imageEvidenceCount} 条` : `${exactQuality.actualFrames} / ${exactQuality.requiredFrames} 段`}</strong></div>
+              </div>
+              <p className={`mt-3 rounded-lg px-3 py-2 text-[11px] font-semibold leading-5 ${(isImagePost && imageEvidence) || exactQuality.ready ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{isImagePost ? (imageEvidence ? '已按原图证据完成视觉、文案与轮播节奏拆解。' : '等待编导 Agent 提取图文证据。') : exactQuality.reason}</p>
+            </div>
+          </section>
+
+          {notice && <p role="status" className="mt-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
+
+          {isImagePost && imageEvidence ? (
+            <div className="mt-4 space-y-4">
+              <section className="rounded-xl border border-border bg-white p-4">
+                <h3 className="text-sm font-black text-text-primary">图文证据与轮播节奏</h3>
+                <div className="mt-3 space-y-2">
+                  {imageEvidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex + 1} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
+                </div>
+              </section>
+              <section className="rounded-xl border border-border bg-white p-4">
+                <h3 className="text-sm font-black text-text-primary">可复用模块</h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">{imageEvidence.reusableModules.map(item => <div key={item.module} className="rounded-lg border border-border p-3 text-xs"><strong>{item.module}</strong><p className="mt-1 leading-5 text-text-secondary">保留：{item.preserve}</p><p className="leading-5 text-text-muted">替换：{item.replace}</p></div>)}</div>
+              </section>
+            </div>
+          ) : analysis ? (
+            <div className="mt-4 space-y-4">
+              <section className="rounded-xl border border-border bg-white p-4">
+                <h3 className="text-sm font-black text-text-primary">核心原因 · 前 10 秒</h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {analysis.firstTenSeconds.map(item => <div key={item.dimension} className="rounded-lg bg-surface-2 px-3 py-2"><p className="text-[10px] font-black text-accent">{item.dimension}</p><p className="mt-1 text-xs leading-5 text-text-secondary">{item.detail}</p></div>)}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">{analysis.referenceHighlights.slice(0, 7).map(item => <span key={item} className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{item}</span>)}</div>
+              </section>
+
+              <section className="rounded-xl border border-border bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-black text-text-primary">全片分镜时间线</h3><span className="text-[10px] font-bold text-text-muted">编导 Agent · {analysis.scriptDetails15s.length} 段</span></div>
+                <div className="mt-3 space-y-3">
+                  {analysis.scriptDetails15s.map((detail, index) => <article key={`${detail.time}-${index}`} className="rounded-lg border border-border bg-[#fbfcfa] p-3">
+                    <div className="flex flex-wrap items-center gap-2"><span className="rounded bg-text-primary px-2 py-1 text-[10px] font-black text-white">{detail.time}</span><span className="text-[10px] font-bold text-text-muted">{detail.shot} · {detail.camera}</span>{typeof detail.viralPotential?.score === 'number' && <span className="ml-auto rounded bg-amber-50 px-2 py-1 text-[10px] font-black text-amber-700">爆点 {detail.viralPotential.score}</span>}</div>
+                    <p className="mt-2 text-xs font-semibold leading-5 text-text-primary">{detail.purpose || '镜头作用待编导确认'}</p>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">{detail.visual}</p>
+                    {(detail.dialogue || detail.onScreenText || detail.subtitle) && <p className="mt-2 rounded bg-white px-2.5 py-2 text-[11px] leading-5 text-text-secondary">音画信息：{detail.dialogue || detail.onScreenText || detail.subtitle}</p>}
+                    {detail.viralPotential?.whyEffective && <p className="mt-2 text-[11px] leading-5 text-amber-800">为什么有效：{detail.viralPotential.whyEffective}</p>}
+                    {(detail.needsReview || detail.authenticity) && <p className="mt-2 text-[10px] font-semibold text-text-muted">{detail.needsReview ? '需人工复核 · ' : ''}{detail.authenticity}</p>}
+                  </article>)}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-border bg-white p-4">
+                <h3 className="text-sm font-black text-text-primary">编导改编建议</h3>
+                <p className="mt-2 text-xs leading-6 text-text-secondary">{analysis.adaptTip}</p>
+                {analysis.baseRequirements && <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-[11px] leading-5 text-text-muted">制作约束：{analysis.baseRequirements}</p>}
+              </section>
+            </div>
+          ) : (
+            <section className="mt-4 rounded-xl border border-dashed border-border bg-white px-6 py-12 text-center">
+              {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
+              <p className="mt-3 text-sm font-black text-text-primary">{statusLabel}</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">完成后会展示前 10 秒原因、全片分镜、爆点评分、真实性边界和改编建议。</p>
+            </section>
+          )}
+        </div>
+
+        <footer className="shrink-0 border-t border-border bg-white px-5 py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {!isImagePost && !exactQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={pending} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent disabled:opacity-50">{pending ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}全片精确分析</button>}
+            {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
+            <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
+            <button type="button" onClick={onCreate} disabled={!analysis && !imageEvidence} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />带分析进入内容制作</button>
+          </div>
+        </footer>
+      </motion.aside>
+    </motion.div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 interface InspirationDashboardProps {
   onScriptPanelOpen?: () => void;
@@ -2875,7 +3026,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const searchRef = useRef('');
   searchRef.current = search;
   const [selectedVideo, setSelectedVideo] = useState<TrendVideo | null>(null);
-  const [scriptPanelTab, setScriptPanelTab] = useState<'analysis' | 'generate'>('analysis');
   const [watchVideo, setWatchVideo] = useState<TrendVideo | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
@@ -3426,24 +3576,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setWatchVideo(video);
   };
 
-  const toggleScriptPanel = (video: TrendVideo) => {
-    if (!canProcessVideo(video)) {
-      setMaterialMessage('该视频时长未知，请补全元数据后再分析或生成。');
-      return;
-    }
-    setScriptPanelTab('analysis');
-    setSelectedVideo(current => current?.id === video.id ? null : video);
-  };
-
-  const openScriptAnalysis = (video: TrendVideo) => {
+  const openDirectorAnalysis = (video: TrendVideo) => {
     setMaterialMessage('');
-    if (!canProcessVideo(video)) {
-      setMaterialMessage('该视频时长未知，请补全元数据后再分析或生成。');
-      return;
-    }
-    if (needsVideoEnhancement(video)) void analyzeVideoOnly(video);
-    setScriptPanelTab('analysis');
-    setSelectedVideo(video);
+    setSelectedVideo(current => current?.id === video.id ? null : video);
   };
 
   const analyzeVideoOnly = async (video: TrendVideo, quiet = false) => {
@@ -3494,6 +3629,29 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     } finally {
       setAnalyzingVideoIds(ids => ids.filter(id => id !== video.id));
     }
+  };
+
+  const enterInspirationWorkflow = (video: TrendVideo) => {
+    setMaterialMessage('');
+    if (!canProcessVideo(video)) {
+      setMaterialMessage('该内容缺少可用的时长或媒体信息，请先完成素材分析。');
+      return;
+    }
+    if (needsVideoEnhancement(video)) void analyzeVideoOnly(video, true);
+    const analysis = getAnalysis(video);
+    onEnterWorkflow?.({
+      source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
+      video,
+      scriptType: 'storyboard',
+      language: 'zh',
+      productInfo: '',
+      referenceAnalysis: analysis ? {
+        title: video.title,
+        visualStyle: analysis.scriptSummary15s.visualStyle,
+        coreEmotion: analysis.scriptSummary15s.coreEmotion,
+        details: analysis.scriptDetails15s,
+      } : undefined,
+    });
   };
 
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
@@ -3852,15 +4010,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             )}
             {innerView === 'inspiration' && <DiscoveryScopePanel />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-              <div className="flex flex-col gap-2.5 xl:flex-row">
-                <div className="relative min-w-[220px] flex-1">
+              <div className="space-y-2.5">
+                <div className="relative w-full">
                   <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input type="search" value={search} onChange={e => { setLastCrawlVideoIds([]); setSearch(e.target.value); }}
                     aria-label="搜索爆款灵感"
                     placeholder="搜索标题或标签..."
                     className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent" />
                 </div>
-                <div className="relative h-10 min-w-[164px] rounded-md border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
+                <div className="grid grid-cols-3 gap-2.5">
+                <div className="relative h-10 min-w-0 rounded-md border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
                 {platform === 'all'
                   ? <Globe size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   : <SocialPlatformIcon platform={platform} size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2" />}
@@ -3879,7 +4038,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                 <span className="sr-only">{platformLabel}</span>
               </div>
-              <div className="relative h-10 min-w-[152px] rounded-md border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
+              <div className="relative h-10 min-w-0 rounded-md border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
                 {contentFormat === 'video'
                   ? <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   : <Images size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
@@ -3896,11 +4055,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <span className="sr-only">{contentFormatLabel}</span>
               </div>
               <button type="button" onClick={() => setInspirationFiltersOpen(value => !value)} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters"
-                className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border px-3.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${inspirationFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
+                className={`inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-md border px-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${inspirationFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
                 <SlidersHorizontal size={15} />更多筛选
                 {inspirationFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black text-white">{inspirationFilterCount}</span>}
                 <ChevronDown size={14} className={`transition-transform ${inspirationFiltersOpen ? 'rotate-180' : ''}`} />
               </button>
+              </div>
             </div>
 
             <AnimatePresence initial={false}>
@@ -3993,13 +4153,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-start">
                   {filtered.map((video, i) => (
                     <div key={video.id} className="relative">
-                      <VideoCard video={video} index={i} isSelected={selectedVideo?.id === video.id}
-                        onSelect={() => toggleScriptPanel(video)}
-                        onCreate={() => openScriptAnalysis(video)}
+                      <VideoCard video={video} index={i} isSelected={false}
+                        onSelect={() => openDirectorAnalysis(video)}
+                        onCreate={() => enterInspirationWorkflow(video)}
                         onWatch={() => handleWatch(video)}
-                        onAnalyzeVideo={() => openScriptAnalysis(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
-                        analyzingVideo={analyzingVideoIds.includes(video.id)}
                         favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
               {video.canManage && (
                 <div className="absolute right-2 top-9 z-20 flex gap-1">
@@ -4014,13 +4172,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               ) : (
                 <div className="card overflow-hidden divide-y divide-border">
                   {filtered.map(video => (
-                    <VideoListItem key={video.id} video={video} isSelected={selectedVideo?.id === video.id}
-                      onSelect={() => toggleScriptPanel(video)}
-                      onCreate={() => openScriptAnalysis(video)}
+                    <VideoListItem key={video.id} video={video} isSelected={false}
+                      onSelect={() => openDirectorAnalysis(video)}
+                      onCreate={() => enterInspirationWorkflow(video)}
                       onWatch={() => handleWatch(video)}
-                      onAnalyzeVideo={() => openScriptAnalysis(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
-                      analyzingVideo={analyzingVideoIds.includes(video.id)}
                       favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
                   ))}
                 </div>
@@ -4099,8 +4255,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               )}
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-                <div className="flex flex-col gap-2.5 xl:flex-row">
-                  <div className="relative min-w-[220px] flex-1">
+                <div className="space-y-2.5">
+                  <div className="relative w-full">
                     <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <input
                       type="search"
@@ -4111,7 +4267,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
                     />
                   </div>
-                  <label className="relative block h-10 min-w-[190px] rounded-md border border-border bg-surface focus-within:border-accent">
+                  <div className="grid grid-cols-4 gap-2.5">
+                  <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
                     <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
                       className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
@@ -4123,7 +4280,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </select>
                     <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   </label>
-                  <label className="relative block h-10 min-w-[168px] rounded-md border border-border bg-surface focus-within:border-accent">
+                  <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
                     <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <select value={materialSource} onChange={event => setMaterialSource(event.target.value as MaterialSourceFilter)} aria-label="素材来源"
                       className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
@@ -4131,7 +4288,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </select>
                     <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   </label>
-                  <label className="relative block h-10 min-w-[152px] rounded-md border border-border bg-surface focus-within:border-accent">
+                  <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
                     <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <select value={materialType} onChange={event => setMaterialType(event.target.value as MaterialTypeFilter)} aria-label="素材类型"
                       className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
@@ -4143,11 +4300,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   </label>
                   <button type="button" onClick={() => setMaterialFiltersOpen(value => !value)} aria-expanded={materialFiltersOpen} aria-controls="material-more-filters"
-                    className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border px-3.5 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${materialFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
+                    className={`inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md border px-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${materialFiltersOpen ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary hover:border-accent hover:text-accent'}`}>
                     <SlidersHorizontal size={15} />更多筛选
                     {materialFilterCount > 0 && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-black text-white">{materialFilterCount}</span>}
                     <ChevronDown size={14} className={`transition-transform ${materialFiltersOpen ? 'rotate-180' : ''}`} />
                   </button>
+                  </div>
                 </div>
                 <AnimatePresence initial={false}>
                   {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
@@ -4200,7 +4358,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
                 ) : filteredMaterials.map(material => (
-                  <article key={material.id} className="group overflow-hidden rounded-lg border border-border bg-surface">
+                  <article key={material.id} className="group flex h-full flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-sm transition hover:border-border-bright hover:shadow-md">
                     <div className="relative aspect-[9/16] bg-surface-2">
                       {material.type === 'video' ? (
                         <>
@@ -4228,8 +4386,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       )}
                       <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] font-bold text-white">{material.type === 'video' ? '视频' : material.type === 'audio' ? '音频' : '图片'}</span>
                     </div>
-                    <div className="p-3">
-                      <p className="truncate text-sm font-bold text-text-primary">{material.name}</p>
+                    <div className="flex flex-1 flex-col p-3">
+                      <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
                       <MaterialAnalysisStatus material={material} onRefresh={refreshMaterials} />
                       <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || (material.duration > 0 ? `${material.duration}s` : '时长未知')}</p>
                       {(material.sourceUrl || material.licenseName) && (
@@ -4256,7 +4414,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           </button>
                         )}
                       </div>
-                      <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+                      <div className="mt-auto flex items-center gap-2 border-t border-border pt-3">
                         <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
@@ -4392,19 +4550,19 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
       <AnimatePresence>
         {selectedVideo && (
-          <ScriptPanel
+          <DirectorVideoDetailPanel
             key={selectedVideo.id}
             video={selectedVideo}
-            activePanelTab={scriptPanelTab}
             onClose={() => setSelectedVideo(null)}
+            onPreview={() => handleWatch(selectedVideo)}
+            onCreate={() => {
+              enterInspirationWorkflow(selectedVideo);
+              setSelectedVideo(null);
+            }}
             onRetry={() => void retryVideoPipeline(selectedVideo)}
             onExactAnalysis={() => void requestExactFullAnalysis(selectedVideo)}
-            actionNotice={materialMessage}
-            onFavorite={() => void favoriteMaterial(selectedVideo)}
-            favoriting={favoritingMaterialIds.includes(selectedVideo.id)}
-            specialRecommendation={accountRecommendationByVideoId.get(selectedVideo.id)}
-            onNavigate={onNavigate}
-            onEnterWorkflow={onEnterWorkflow}
+            analyzing={analyzingVideoIds.includes(selectedVideo.id)}
+            notice={materialMessage}
           />
         )}
       </AnimatePresence>

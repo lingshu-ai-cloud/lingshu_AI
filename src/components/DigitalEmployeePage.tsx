@@ -1,7 +1,6 @@
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
 import WeeklyReviewPanel from "./WeeklyReviewPanel";
-import AgentExecutionStatus from './AgentExecutionStatus';
 import { agentExecutionSummary } from '../lib/agentExecutionSummary';
 import { taskNeedsAttention, taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 import OperatingAssessmentEditor from './OperatingAssessmentEditor';
@@ -21,7 +20,7 @@ import {
 } from '../lib/weeklyTaskPackagePresets';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -3620,9 +3619,6 @@ export default function DigitalEmployeePage({
   const [viewGoalId, setViewGoalId] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("today");
-  const [headerCollapsed, setHeaderCollapsed] = useState(true);
-  const headerDetailsId = useId();
-  const executionDetailId = useId();
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
   const [navigationNotice, setNavigationNotice] = useState("");
@@ -3995,30 +3991,21 @@ export default function DigitalEmployeePage({
     <div className="workspace-canvas digital-employee-page">
       <div className="workspace-frame">
         <header className="workspace-header">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="workspace-title mt-2">
-                数字员工正在等待调遣
-              </h1>
-              <p className="workspace-subtitle mt-2">
-                先看今天要做什么；需要你决定时，按提示操作即可。
-              </p>
-            </div>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <h1 className="workspace-title mt-2">
+              数字员工正在等待调遣
+            </h1>
             {data?.config && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-secondary">
-                <span className="border-l border-border pl-3 font-semibold text-text-primary">
-                  {data.config.companyName}
-                </span>
-                <span>
-                  {autonomyLabel[data.config.autonomyMode]}模式
-                </span>
-                <span>
-                  {operatingState} · {cycleLabel}
-                </span>
+              <div className="flex flex-wrap items-stretch gap-2 text-xs text-text-secondary">
+                <div className="min-w-52 rounded-lg border border-accent/25 bg-accent-glow px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-accent">当前工作模式</p>
+                  <p className="mt-1 font-black text-text-primary">{autonomyLabel[data.config.autonomyMode]}模式 · {operatingState}</p>
+                  <p className="mt-0.5 text-[10px] text-text-muted">{cycleLabel}</p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setWorkspaceView("rules")}
-                  className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 font-semibold ${workspaceView === "rules" ? "border-accent bg-surface-2 text-accent" : "border-border bg-white text-text-secondary hover:border-border-bright hover:text-text-primary"}`}
+                  className={`inline-flex min-h-12 items-center gap-1.5 rounded-lg border px-4 py-2 font-bold shadow-sm transition ${workspaceView === "rules" ? "border-accent bg-accent text-white" : "border-accent bg-accent text-white hover:brightness-95"}`}
                 >
                   <Settings2 size={13} /> Agent 设置
                 </button>
@@ -4028,45 +4015,14 @@ export default function DigitalEmployeePage({
                     setWorkspaceView("today");
                     setShowHistory((value) => !value);
                   }}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-3 py-2 font-semibold text-text-secondary hover:border-border-bright hover:text-text-primary"
+                  className="inline-flex min-h-12 items-center gap-1.5 rounded-lg border border-accent/35 bg-white px-4 py-2 font-bold text-accent shadow-sm transition hover:border-accent hover:bg-accent-glow"
                 >
                   <History size={13} /> 历史记录
-                </button>
-                <button
-                  type="button"
-                  aria-expanded={!headerCollapsed}
-                  aria-controls={data.run && !viewGoalId ? `${headerDetailsId} ${executionDetailId}` : headerDetailsId}
-                  onClick={() => setHeaderCollapsed(value => !value)}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-slate-50 hover:text-slate-900"
-                >
-                  {headerCollapsed ? '展开信息' : '收起信息'}
-                  <ChevronDown size={13} className={`transition-transform ${headerCollapsed ? '' : 'rotate-180'}`}/>
                 </button>
               </div>
             )}
           </div>
           {!data?.config && <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-text-primary">1</span>{operatingState}</div>}
-          {data?.config && data.run && !viewGoalId && <AgentExecutionStatus data={data} onOpen={goLive} collapsed={headerCollapsed} detailId={executionDetailId}/>}
-          <div id={headerDetailsId} hidden={headerCollapsed}>
-            {data?.config && workspaceView === "today" && (!newGoal || Boolean(goal)) && <TodayNextAction
-              data={presentedData || data}
-              onCreateGoal={() => {
-                if (activeRun) { setWorkspaceView("live"); return; }
-                setNewGoal(true);
-                scrollTo(goalPanelRef);
-              }}
-              onReviewPlan={() => goLive()}
-              onOpenExecution={goLive}
-              onOpenReview={() => setWorkspaceView("review")}
-            />}
-          {data?.config && (
-            <p className="mt-4 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-400">
-              <span>{autonomyLabel[data.config.autonomyMode]}模式</span>
-              <span aria-hidden="true">·</span>
-              <span>{goal ? `本轮周期 ${cycleLabel}` : cycleLabel}</span>
-            </p>
-          )}
-          </div>
         </header>
 
         {data?.config && <nav

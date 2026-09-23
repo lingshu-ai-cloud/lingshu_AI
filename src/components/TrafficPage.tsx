@@ -14,7 +14,6 @@ import {
   Trash2,
   Upload,
   Wand2,
-  Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { CalendarPost } from './publishing/CalendarPlanner';
@@ -234,8 +233,6 @@ export default function TrafficPage({
   const modeItems = TRAFFIC_MODE_ORDER
     .filter(mode => !visibleModes || visibleModes.includes(mode))
     .map(mode => ({ mode, ...TRAFFIC_MODE_META[mode] }));
-  const currentModeLabel = TRAFFIC_MODE_META[viewMode].label;
-  const showCreateShortcut = initialView === 'materials' && showModeTabs === false && Boolean(onNavigate);
   const navigateWithinSocialTask = useSocialContentNavigation(onNavigate, socialContentTaskId);
 
   useEffect(() => {
@@ -343,32 +340,6 @@ export default function TrafficPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between gap-3 border-b border-border bg-white px-4 py-3 sm:px-6">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center text-accent">
-            <Zap size={13} />
-          </div>
-          <h1 className="truncate text-lg font-semibold text-text-primary">{pageTitle}</h1>
-          {showModeTabs && (
-            <>
-              <ChevronLeft aria-hidden="true" size={13} className="hidden rotate-180 text-text-muted sm:block" />
-              <span className="hidden truncate text-xs font-medium text-text-secondary sm:block">{currentModeLabel}阶段</span>
-            </>
-          )}
-        </div>
-        {showCreateShortcut && (
-          <button
-            type="button"
-            onClick={() => navigateWithinSocialTask('smartAssets')}
-            aria-label="从灵感中心进入内容创作"
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-bold text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
-          >
-            <Wand2 aria-hidden="true" size={14} />
-            开始创作
-          </button>
-        )}
-      </header>
-
       {showModeTabs && <div className="flex-shrink-0 bg-white px-3 sm:px-6">
         <div
           role="tablist"

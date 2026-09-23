@@ -13,7 +13,6 @@ import {
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
-import { PAGE_REGISTRY } from '../pageRegistry';
 
 interface ProductAsset {
   name: string;
@@ -1783,30 +1782,9 @@ export default function EnterprisePage() {
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
-      <header className="flex min-h-[68px] shrink-0 items-center justify-between border-b border-border bg-white px-5 py-3 sm:px-6">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-6 w-6 items-center justify-center text-accent">
-            <Building2 size={13} />
-          </span>
-          <div><h1 className="text-lg font-semibold text-text-primary">{PAGE_REGISTRY.enterprise.canonicalTitle}</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">统一维护企业事实、社媒策略与客户服务边界</p></div>
-        </div>
-        <div className="flex items-center gap-2">
-          {saveError && <span className="max-w-72 truncate text-[11px] font-bold text-red-600" title={saveError}>{saveError}</span>}
-          <motion.button
-            onClick={handleSave}
-            disabled={saving || !hasUnsavedChanges}
-            title={saveError || (hasUnsavedChanges ? '保存后，灵小枢、客服和社媒创作会使用这些资料' : '资料已保存在企业空间，并授权给 AI 使用')}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-all disabled:opacity-60"
-            style={{ background: saveError ? '#b74d43' : 'var(--color-accent)' }}
-          >
-            {saving ? <Loader2 size={12} className="animate-spin" /> : saveError ? <X size={12} /> : !hasUnsavedChanges ? <CheckCircle2 size={12} /> : <Save size={12} />}
-            {saving ? '保存中' : saveError ? '保存失败' : !hasUnsavedChanges ? '已保存' : '保存'}
-          </motion.button>
-        </div>
-      </header>
-
       <div className="shrink-0 bg-white px-4 sm:px-6">
-        <div className="flex w-full gap-7 overflow-x-auto border-b border-border">
+        <div className="flex w-full items-center gap-4 border-b border-border">
+          <div className="flex min-w-0 flex-1 gap-7 overflow-x-auto">
           {([
             { id: 'facts' as EnterpriseArea, label: '企业真实资料', icon: Building2, initialView: 'company' as KnowledgeView },
             { id: 'social' as EnterpriseArea, label: '社媒策略', icon: Megaphone, initialView: 'socialStrategy' as KnowledgeView },
@@ -1830,6 +1808,20 @@ export default function EnterprisePage() {
               </button>
             );
           })}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {saveError && <span className="hidden max-w-48 truncate text-[11px] font-bold text-red-600 sm:block" title={saveError}>{saveError}</span>}
+            <motion.button
+              onClick={handleSave}
+              disabled={saving || !hasUnsavedChanges}
+              title={saveError || (hasUnsavedChanges ? '保存后，灵小枢、客服和社媒创作会使用这些资料' : '资料已保存在企业空间，并授权给 AI 使用')}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-all disabled:opacity-60"
+              style={{ background: saveError ? '#b74d43' : 'var(--color-accent)' }}
+            >
+              {saving ? <Loader2 size={12} className="animate-spin" /> : saveError ? <X size={12} /> : !hasUnsavedChanges ? <CheckCircle2 size={12} /> : <Save size={12} />}
+              {saving ? '保存中' : saveError ? '保存失败' : !hasUnsavedChanges ? '已保存' : '保存'}
+            </motion.button>
+          </div>
         </div>
       </div>
 
