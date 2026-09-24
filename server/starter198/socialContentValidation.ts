@@ -1,5 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  SOCIAL_ASSET_AVAILABILITIES,
+  SOCIAL_CONTENT_CREATION_MODES,
+  SOCIAL_CONTENT_MANAGEMENT_MODES,
   SOCIAL_CONTENT_TASK_MODES,
   SOCIAL_CONTENT_PRODUCTION_MODES,
   SOCIAL_CONTENT_THEME_IDS,
@@ -122,7 +125,7 @@ const BRIEF_KEYS = [
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
   'customTopic', 'topic', 'legacyCreationRoute',
-  'productionMode',
+  'productionMode', 'creationMode', 'assetAvailability', 'managementMode',
 ] as const;
 
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
@@ -156,8 +159,20 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   if (mode !== undefined && !SOCIAL_CONTENT_TASK_MODES.includes(mode as CreateSocialContentTaskInput['mode'] & string)) {
     throw new SocialContentWorkflowError('social_content_mode_invalid', 400);
   }
+  const creationMode = source.creationMode === undefined ? 'material_processing' : socialText(source.creationMode);
+  if (!SOCIAL_CONTENT_CREATION_MODES.includes(creationMode as CreateSocialContentTaskInput['creationMode'] & string)) {
+    throw new SocialContentWorkflowError('social_content_creation_mode_invalid', 400);
+  }
+  const assetAvailability = source.assetAvailability === undefined ? 'none' : socialText(source.assetAvailability);
+  if (!SOCIAL_ASSET_AVAILABILITIES.includes(assetAvailability as CreateSocialContentTaskInput['assetAvailability'] & string)) {
+    throw new SocialContentWorkflowError('social_content_asset_availability_invalid', 400);
+  }
+  const managementMode = source.managementMode === undefined ? 'one_click_managed' : socialText(source.managementMode);
+  if (!SOCIAL_CONTENT_MANAGEMENT_MODES.includes(managementMode as CreateSocialContentTaskInput['managementMode'] & string)) {
+    throw new SocialContentWorkflowError('social_content_management_mode_invalid', 400);
+  }
   const themeId = source.themeId === undefined || source.themeId === null || source.themeId === ''
-    ? null : socialText(source.themeId);
+    ? 'product_value' : socialText(source.themeId);
   if (themeId && !SOCIAL_CONTENT_THEME_IDS.includes(themeId as typeof SOCIAL_CONTENT_THEME_IDS[number])) {
     throw new SocialContentWorkflowError('social_content_theme_invalid', 400);
   }
@@ -193,6 +208,9 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     brandNotes: optionalText(source.brandNotes, 'social_content_brand_notes_invalid', 3_000),
     restrictions: textList(source.restrictions, 'social_content_restrictions_invalid', 30, 240),
     callToAction: optionalText(source.callToAction, 'social_content_call_to_action_invalid', 500),
+    creationMode: creationMode as CreateSocialContentTaskInput['creationMode'],
+    assetAvailability: assetAvailability as CreateSocialContentTaskInput['assetAvailability'],
+    managementMode: managementMode as CreateSocialContentTaskInput['managementMode'],
     productionMode: productionMode as CreateSocialContentTaskInput['productionMode'],
     ...(mode ? { mode: mode as CreateSocialContentTaskInput['mode'] } : {}),
     weeklyPlanId: source.weeklyPlanId === undefined || source.weeklyPlanId === null || source.weeklyPlanId === ''

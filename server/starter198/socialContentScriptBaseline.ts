@@ -24,6 +24,13 @@ export interface SocialInspirationScriptMatch {
   recordId: string;
   title: string;
   confidence: number;
+  /** Present only when the match came from an active reference_link on the
+   * current task. Catalog recommendations intentionally leave it null. */
+  referenceSource?: {
+    sourceId: string;
+    sourceRef: string;
+    sourceVersion: string | null;
+  } | null;
   nodes: Array<{
     nodeId: string;
     shotFunction: string;
@@ -59,6 +66,11 @@ export interface StoredSocialScriptBaseline {
     strategy: 'formula_inspiration' | 'formula' | 'inspiration' | 'knowledge_fallback' | 'system_theme_baseline' | 'legacy';
     confidence: number;
     inspirationReference: { recordId: string; confidence: number } | null;
+    referenceSource?: {
+      sourceId: string;
+      sourceRef: string;
+      sourceVersion: string | null;
+    } | null;
     verifiedKnowledgeSource: SocialScriptGroundingSource;
     verifiedFactKeys: string[];
     userTextUsage: 'intent_only';
@@ -73,6 +85,9 @@ export interface StoredSocialScriptBaseline {
     sceneId: string;
     formulaNodeId: string | null;
     inspirationNodeId?: string | null;
+    /** Safe shot grammar retained from this task's exact reference-video
+     * analysis. It contains no original dialogue, brand, face or overlay. */
+    referenceStructure?: SocialInspirationScriptMatch['nodes'][number]['referenceStructure'] | null;
     shotFunction: string;
     subject: string;
     action: string;
@@ -420,6 +435,9 @@ export function freezeSocialScriptBaseline(input: {
     ? { formulaId: matchedFormula.formulaId, version: matchedFormula.version }
     : null;
   const scenes = sourceNodes.slice(0, 12).map((node, index) => {
+    const referenceStructure = !matchedFormula
+      ? input.inspiration?.nodes[index]?.referenceStructure
+      : undefined;
     const shotFunction = socialText(node.shotFunction) || '主题表达';
     const subject = socialText(node.subject) || '本次内容';
     const action = socialText(node.action) || '展示';
@@ -468,6 +486,12 @@ export function freezeSocialScriptBaseline(input: {
       sceneId: `scene-${index + 1}`,
       formulaNodeId: matchedFormula ? socialText(node.nodeId) || null : null,
       inspirationNodeId: !matchedFormula && input.inspiration ? socialText(node.nodeId) || null : null,
+      ...(referenceStructure ? {
+        referenceStructure: {
+          ...referenceStructure,
+          sourceTiming: { ...referenceStructure.sourceTiming },
+        },
+      } : {}),
       shotFunction,
       subject,
       action,
@@ -508,6 +532,9 @@ export function freezeSocialScriptBaseline(input: {
       inspirationReference: input.inspiration
         ? { recordId: input.inspiration.recordId, confidence: input.inspiration.confidence }
         : null,
+      referenceSource: input.inspiration?.referenceSource
+        ? { ...input.inspiration.referenceSource }
+        : null,
       // Product linkage and enterprise knowledge are independent evidence
       // axes. Preserve the real knowledge source when facts came from the
       // enterprise profile; use the association token only when no knowledge
@@ -536,6 +563,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
   const match = socialObject(row?.match);
   const matchKnowledgeSource = socialText(match?.verifiedKnowledgeSource);
   const matchAssociation = socialObject(match?.userProductAssociation);
+  const matchReferenceSource = socialObject(match?.referenceSource);
   if (!row
     || socialText(row.schemaVersion) !== SOCIAL_SCRIPT_BASELINE_SCHEMA
     || !/^\d+$/.test(socialText(row.version))
@@ -564,10 +592,24 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
   }
   const scenes = scenesValue.map(value => {
     const scene = socialObject(value);
+    const referenceStructure = socialObject(scene?.referenceStructure);
+    const sourceTiming = socialObject(referenceStructure?.sourceTiming);
+    const parsedReferenceStructure: NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']> | null = referenceStructure && sourceTiming ? {
+      sourceTiming: {
+        startSeconds: Number(sourceTiming.startSeconds),
+        endSeconds: Number(sourceTiming.endSeconds),
+        durationSeconds: Number(sourceTiming.durationSeconds),
+      },
+      shotScale: socialText(referenceStructure.shotScale) as NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']>['shotScale'],
+      cameraMovement: socialText(referenceStructure.cameraMovement) as NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']>['cameraMovement'],
+      pace: socialText(referenceStructure.pace) as NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']>['pace'],
+      transition: socialText(referenceStructure.transition) as NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']>['transition'],
+    } : null;
     const parsed = {
       sceneId: socialText(scene?.sceneId),
       formulaNodeId: socialText(scene?.formulaNodeId) || null,
       inspirationNodeId: socialText(scene?.inspirationNodeId) || null,
+      ...(parsedReferenceStructure ? { referenceStructure: parsedReferenceStructure } : {}),
       shotFunction: socialText(scene?.shotFunction),
       subject: socialText(scene?.subject),
       action: socialText(scene?.action),
@@ -578,6 +620,17 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     };
     if (!scene || !parsed.sceneId || !parsed.shotFunction || !parsed.subject || !parsed.action
       || !parsed.script || !parsed.voiceover || !parsed.caption || !parsed.narration) {
+      throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
+    }
+    if (parsedReferenceStructure && (
+      !Object.values(parsedReferenceStructure.sourceTiming).every(Number.isFinite)
+      || parsedReferenceStructure.sourceTiming.startSeconds < 0
+      || parsedReferenceStructure.sourceTiming.endSeconds <= parsedReferenceStructure.sourceTiming.startSeconds
+      || !['极近特写', '近景特写', '中景', '全景', '通用景别'].includes(parsedReferenceStructure.shotScale)
+      || !['固定镜头', '推进镜头', '拉远镜头', '横向摇移', '跟随镜头', '手持镜头', '通用运镜'].includes(parsedReferenceStructure.cameraMovement)
+      || !['快速', '紧凑', '舒缓'].includes(parsedReferenceStructure.pace)
+      || !['快速切换', '柔和过渡', '动作衔接', '自然衔接'].includes(parsedReferenceStructure.transition)
+    )) {
       throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
     }
     return parsed;
@@ -603,6 +656,16 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
           const recordId = socialText(reference?.recordId);
           return recordId ? { recordId, confidence: Math.max(0, Math.min(1, Number(reference?.confidence) || 0)) } : null;
         })(),
+        referenceSource: (() => {
+          const sourceId = socialText(matchReferenceSource?.sourceId);
+          const sourceRef = socialText(matchReferenceSource?.sourceRef);
+          if (!sourceId || !sourceRef) return null;
+          return {
+            sourceId,
+            sourceRef,
+            sourceVersion: socialText(matchReferenceSource?.sourceVersion) || null,
+          };
+        })(),
         verifiedKnowledgeSource: (['enterprise_product', 'enterprise_profile', 'user_product_association', 'none'].includes(matchKnowledgeSource)
           ? matchKnowledgeSource
           : 'none') as SocialScriptGroundingSource,
@@ -627,13 +690,26 @@ export function publicSocialScriptBaselineSummary(
   baseline: StoredSocialScriptBaseline | null,
 ): SocialScriptBaselineSummary | undefined {
   if (!baseline) return undefined;
+  // Historic records may still carry `formula` internally for lineage and
+  // replay compatibility. Formula is no longer a customer-facing production
+  // concept, so expose the nearest current grounding source instead.
+  const publicSource: SocialScriptBaselineSummary['source'] = baseline.source !== 'formula'
+    ? baseline.source
+    : baseline.match?.inspirationReference
+      ? 'inspiration_script'
+      : baseline.match?.verifiedKnowledgeSource && baseline.match.verifiedKnowledgeSource !== 'none'
+        ? 'knowledge_fallback'
+        : 'system_theme_baseline';
   return {
     version: baseline.version,
-    source: baseline.source,
+    source: publicSource,
     sceneCount: baseline.scenes.length,
     language: baseline.language,
     lockedAt: baseline.lockedAt,
     ...(baseline.match ? { matchConfidence: baseline.match.confidence } : {}),
     ...(baseline.groundingVersion ? { groundingVersion: baseline.groundingVersion } : {}),
+    ...(baseline.match?.referenceSource
+      ? { referenceSourceId: baseline.match.referenceSource.sourceId }
+      : {}),
   };
 }

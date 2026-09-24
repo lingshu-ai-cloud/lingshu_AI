@@ -1,7 +1,6 @@
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
 import WeeklyReviewPanel from "./WeeklyReviewPanel";
-import AgentExecutionStatus from './AgentExecutionStatus';
 import { agentExecutionSummary } from '../lib/agentExecutionSummary';
 import { taskNeedsAttention, taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
 import OperatingAssessmentEditor from './OperatingAssessmentEditor';
@@ -21,7 +20,7 @@ import {
 } from '../lib/weeklyTaskPackagePresets';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -161,7 +160,7 @@ const workflowOptions: Array<{
     id: "content_publish",
     label: "内容发布",
     detail: "审批后进入发布日历",
-    dependency: "依赖主题内容制作",
+    dependency: "依赖社媒视频制作",
   },
   {
     id: "customer_segmentation",
@@ -205,8 +204,8 @@ const agentRoleGroups: Array<{
 }> = [
   { id: "orchestrator", label: "灵小枢 · 统筹 Agent", responsibility: "读取企业上下文、拆解本周目标，协调四个专业 Agent 并跟踪任务状态", outputs: "执行上下文、周目标、任务编排与异常提醒", workflows: [] },
   { id: "business", label: "经营 Agent", responsibility: "负责发布审批、发布日历、平台回执和周度经营复盘", outputs: "发布计划、真实回执、经营结果与复盘报告", workflows: ["content_publish"] },
-  { id: "director", label: "编导 Agent", responsibility: "采集并分析爆款参考，匹配爆款公式，锁定脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "结构来源、完整导演方案、素材映射、补拍建议与验收规则", workflows: ["scheduled_social", "viral_clone", "product_content", "material_content"] },
-  { id: "content", label: "内容 Agent", responsibility: "只读执行编导 Agent 已锁定的导演方案，完成配音、字幕、剪辑、混音、封面和技术质检", outputs: "可播放成片、字幕与音轨、封面、平台版本和质检报告", workflows: [] },
+  { id: "director", label: "编导 Agent", responsibility: "逐镜分析爆款参考，重点拆解前三秒钩子，锁定可复刻的脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "参考视频分析、逐镜复刻脚本、素材映射、替代方案与验收规则", workflows: ["scheduled_social", "viral_clone", "product_content", "material_content"] },
+  { id: "content", label: "内容 Agent", responsibility: "执行已锁定的导演方案，按镜头选择真实素材、数字人、授权素材和生成模型，完成配音、字幕、剪辑、混音、封面和技术质检", outputs: "可播放成片、字幕与音轨、封面、平台版本和质检报告", workflows: [] },
   { id: "customer", label: "客服 Agent", responsibility: "承接真实询盘、完成客户分层，并按客户上下文生成跟进草稿", outputs: "客户标签、回复草稿、跟进批次、转人工提醒", workflows: ["customer_segmentation", "batch_followup"] },
 ];
 
@@ -715,7 +714,7 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
       contentCreationWorkflows.includes(item),
     )
   )
-    errors.enabledWorkflows = "内容发布前请先启用主题内容制作";
+    errors.enabledWorkflows = "内容发布前请先启用社媒视频制作";
   if (
     form.enabledWorkflows.some((item) =>
       ["scheduled_social", "content_publish"].includes(item),
@@ -787,7 +786,7 @@ function OnboardingPanel({
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
   const [productStepSaved, setProductStepSaved] = useState(false);
-  const [activeRuleAgent, setActiveRuleAgent] = useState<"orchestrator" | "business" | "director" | "content" | "customer">("business");
+  const [activeRuleAgent, setActiveRuleAgent] = useState<"common" | "business" | "director" | "content" | "customer">("common");
   const [productSaving, setProductSaving] = useState(false);
   const [productError, setProductError] = useState("");
   const [quickProductOpen, setQuickProductOpen] = useState(false);
@@ -942,7 +941,7 @@ function OnboardingPanel({
       window.setTimeout(() => document.getElementById("onboarding-focus-products")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
       return;
     }
-    const targetAgent = ["contentPublish", "publishingTargets", "approvalOwner"].includes(firstKey) ? "business" : ["batchFollowup", "followupCadence"].includes(firstKey) ? "customer" : firstKey === "socialCadence" ? "director" : "business";
+    const targetAgent = firstKey === "approvalOwner" ? "common" : ["contentPublish", "publishingTargets"].includes(firstKey) ? "business" : ["batchFollowup", "followupCadence"].includes(firstKey) ? "customer" : firstKey === "socialCadence" ? "director" : "common";
     setActiveRuleAgent(targetAgent);
     window.setTimeout(() => {
       const selector = firstKey === "approvalOwner" ? 'input[placeholder="姓名或岗位"]' : `[aria-invalid="true"]`;
@@ -992,7 +991,7 @@ function OnboardingPanel({
     set("enabledWorkflows", [...new Set([...current, ...additions])]);
     setDependencyNotice(
       workflow === "content_publish" && additions.length > 1
-        ? "已同时启用前置能力：主题内容制作。"
+        ? "已同时启用前置能力：社媒视频制作。"
         : additions.length > 1
         ? `已同时启用前置工作流：${additions
             .slice(0, -1)
@@ -1015,7 +1014,7 @@ function OnboardingPanel({
       );
       setDependencyNotice(
         closesPublishing
-          ? "已同步关闭内容发布，因为它依赖主题内容制作。"
+          ? "已同步关闭内容发布，因为它依赖社媒视频制作。"
           : "",
       );
       return;
@@ -1027,7 +1026,7 @@ function OnboardingPanel({
         ...contentCreationWorkflows,
       ]),
     );
-    setDependencyNotice("已启用主题内容制作，原有执行能力会在后台保持兼容。");
+    setDependencyNotice("已启用社媒视频制作；素材加工和爆款裂变会共用这套 Agent 工作流。");
   };
   const setAgentApproval = (role: keyof DigitalEmployeeConfig["agentApprovalPolicies"], key: string, value: boolean) => {
     setForm((current) => {
@@ -1264,7 +1263,7 @@ function OnboardingPanel({
         </div>
       </section>
       {settingsEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setSettingsEditorOpen(false); }}>
-    <section role="dialog" aria-modal="true" aria-label="Agent 设置" className="relative max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+    <section role="dialog" aria-modal="true" aria-label="Agent 设置" className="relative max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
       <button type="button" aria-label="关闭 Agent 设置" disabled={busy} onClick={() => setSettingsEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
       <div className="flex items-start gap-3">
         <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
@@ -1274,35 +1273,35 @@ function OnboardingPanel({
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">
             {mode === "first" ? "第三步 · 配置本期经营规则" : "运行规则"}
           </p>
-          <h2 className="mt-1 text-xl font-bold text-slate-950">
-            {mode === "first"
-              ? "决定数字员工怎么运行、哪里必须停下来等人确认"
-              : "维护后续运行的默认规则"}
-          </h2>
+          <h2 className="mt-1 text-xl font-bold text-slate-950">设置数字员工的运行方式</h2>
           <p className="mt-1 text-sm text-slate-500">
             {activeRun
               ? "当前运行继续沿用已批准计划；这里保存的配置从下一轮计划生效，当前任务请在生产现场纠偏。"
-              : mode === "first" ? "企业档案和本期产品状态已经确认；这里只设置执行节奏、工作流和审批红线。" : "确认经营目标、重点产品、工作流节奏和审批红线。数字员工只在已就绪的业务资产上执行。"}
+              : "通用规则只设置一次；每个 Agent 页只保留自己的工作方式和审批红线。"}
           </p>
         </div>
       </div>
-      <div className="mt-4 grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 sm:grid-cols-4">{agentRoleGroups.filter(agent => agent.id !== "orchestrator").map((agent)=>{const active=activeRuleAgent===agent.id;const Icon=agent.id==="business"?BarChart3:agent.id==="director"?Search:agent.id==="content"?Sparkles:MessageSquare;return <button key={agent.id} type="button" aria-pressed={active} onClick={()=>setActiveRuleAgent(agent.id)} className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-center transition ${active?"bg-slate-950 text-white shadow-sm":"bg-white text-slate-600 hover:bg-slate-100"}`}><Icon size={15}/><span className="text-xs font-black">{agent.label}</span></button>})}</div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <div className={`${activeRuleAgent !== "director" ? "hidden " : ""}md:col-span-2 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4`}>
+      <div className="mt-4 grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 sm:grid-cols-5">
+        {([
+          { id: "common" as const, label: "通用设置", icon: Settings2 },
+          { id: "business" as const, label: "经营 Agent", icon: BarChart3 },
+          { id: "director" as const, label: "编导 Agent", icon: Search },
+          { id: "content" as const, label: "内容 Agent", icon: Sparkles },
+          { id: "customer" as const, label: "客服 Agent", icon: MessageSquare },
+        ]).map((agent)=>{const active=activeRuleAgent===agent.id;const Icon=agent.icon;return <button key={agent.id} type="button" aria-pressed={active} onClick={()=>setActiveRuleAgent(agent.id)} className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-center transition ${active?"bg-slate-950 text-white shadow-sm":"bg-white text-slate-600 hover:bg-slate-100"}`}><Icon size={15}/><span className="text-xs font-black">{agent.label}</span></button>})}
+      </div>
+      <div className="mt-4 grid gap-4">
+        {activeRuleAgent === "director" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
           <div><p className="text-sm font-bold text-emerald-950">AI 推荐执行范围</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成采集关键词与客户画像；推荐值仍需人工确认。</p></div>
           <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
-        </div>
-        {mode === "first" && <div className="md:col-span-2 grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-xs md:grid-cols-3"><div><p className="font-bold text-blue-950">经营目标</p><p className="mt-1 text-blue-700">{form.primaryGoal === "awareness" ? "品牌曝光" : form.primaryGoal === "sales" ? "推进成交" : form.primaryGoal === "reactivation" ? "老客唤醒" : "获取询盘"}</p></div><div><div className="flex items-center justify-between gap-2"><p className="font-bold text-blue-950">重点产品</p><button type="button" onClick={()=>setProductStepSaved(false)} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-50">重新选择</button></div><p className="mt-1 text-blue-700">{form.focusProducts || "本期暂未指定；相关内容分支等待产品资料"}</p></div><div><p className="font-bold text-blue-950">目标市场与客户</p><p className="mt-1 text-blue-700">{form.targetMarkets} · {form.customerProfile}</p></div></div>}
-        {mode === "first" && <Field label="接入目标"><select className={inputClass} value={form.primaryGoal} onChange={event=>set("primaryGoal",event.target.value as DigitalEmployeeConfig["primaryGoal"])}><option value="awareness">品牌曝光</option><option value="leads">获取询盘</option><option value="sales">推进成交</option><option value="reactivation">老客唤醒</option></select></Field>}
-        {true && <>
-        <Field label="运营阶段"><select className={inputClass} value={form.operatingMaturity || "growing"} onChange={e => set("operatingMaturity", e.target.value as DigitalEmployeeConfig["operatingMaturity"])}>{Object.entries(maturityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
-        {mode === "first" && <div className="md:col-span-2 rounded-xl bg-slate-50 p-4 text-sm">
-          <p>{maturityProfiles[form.operatingMaturity || 'growing'].features}</p>
-          <p className="mt-2 text-slate-500">验收重点：{maturityProfiles[form.operatingMaturity || 'growing'].criteria}</p>
-          {assessMaturity(form.operatingAssessment).gaps.length > 0 && <p className="mt-2">优先补齐：{assessMaturity(form.operatingAssessment).gaps.map(g => gapLabels[g]).join('、')}</p>}
-          <details className="mt-3 rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">客户识别与短板 · 六个问题辅助判断</summary><div className="mt-4"><OperatingAssessmentEditor value={form.operatingAssessment} maturity={form.operatingMaturity || 'growing'} onChange={value => set('operatingAssessment', value)} onAdopt={value => set('operatingMaturity', value)}/></div></details>
-          <p className="mt-2 text-xs text-slate-500">识别信息随初始配置保存，用于推荐运营阶段和本周任务安排。</p>
         </div>}
+        {activeRuleAgent === "common" && <section className="rounded-2xl border border-slate-200 bg-slate-50/45 p-4 sm:p-5">
+          <div><p className="text-sm font-black text-slate-950">通用运行规则</p><p className="mt-1 text-xs text-slate-500">这些规则同时作用于四个 Agent，只需在这里设置一次。</p></div>
+          {mode === "first" && <div className="mt-4 grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-xs md:grid-cols-3"><div><p className="font-bold text-blue-950">经营目标</p><p className="mt-1 text-blue-700">{form.primaryGoal === "awareness" ? "品牌曝光" : form.primaryGoal === "sales" ? "推进成交" : form.primaryGoal === "reactivation" ? "老客唤醒" : "获取询盘"}</p></div><div><div className="flex items-center justify-between gap-2"><p className="font-bold text-blue-950">重点产品</p><button type="button" onClick={()=>setProductStepSaved(false)} className="rounded-lg border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-50">重新选择</button></div><p className="mt-1 text-blue-700">{form.focusProducts || "本期暂未指定"}</p></div><div><p className="font-bold text-blue-950">目标市场与客户</p><p className="mt-1 text-blue-700">{form.targetMarkets} · {form.customerProfile}</p></div></div>}
+          <div className="mt-4 space-y-4">
+        {mode === "first" && <Field label="接入目标"><select className={inputClass} value={form.primaryGoal} onChange={event=>set("primaryGoal",event.target.value as DigitalEmployeeConfig["primaryGoal"])}><option value="awareness">品牌曝光</option><option value="leads">获取询盘</option><option value="sales">推进成交</option><option value="reactivation">老客唤醒</option></select></Field>}
+        <Field label="运营阶段"><select className={inputClass} value={form.operatingMaturity || "growing"} onChange={e => set("operatingMaturity", e.target.value as DigitalEmployeeConfig["operatingMaturity"])}>{Object.entries(maturityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
+        {mode === "first" && <details className="rounded-xl border border-slate-200 bg-white p-4 text-sm"><summary className="cursor-pointer font-semibold text-slate-800">查看运营阶段判断依据</summary><div className="mt-3 text-slate-600"><p>{maturityProfiles[form.operatingMaturity || 'growing'].features}</p><p className="mt-2 text-slate-500">验收重点：{maturityProfiles[form.operatingMaturity || 'growing'].criteria}</p>{assessMaturity(form.operatingAssessment).gaps.length > 0 && <p className="mt-2">优先补齐：{assessMaturity(form.operatingAssessment).gaps.map(g => gapLabels[g]).join('、')}</p>}<details className="mt-3 rounded-xl bg-slate-50 p-3"><summary className="cursor-pointer text-xs font-semibold">六个问题辅助判断</summary><div className="mt-4"><OperatingAssessmentEditor value={form.operatingAssessment} maturity={form.operatingMaturity || 'growing'} onChange={value => set('operatingAssessment', value)} onAdopt={value => set('operatingMaturity', value)}/></div></details></div></details>}
         <Field label="默认参与方式"><select className={inputClass} value={form.defaultParticipation || "agent"} onChange={e => set("defaultParticipation", e.target.value as DigitalEmployeeConfig["defaultParticipation"])}><option value="agent">Agent 为主，确认计划后自动推进</option><option value="team">团队协作，任务分配到成员或 Agent</option></select></Field>
         <Field label="自主等级">
           <select
@@ -1335,28 +1334,45 @@ function OnboardingPanel({
           />
           <p className="mt-1 text-[10px] text-slate-500">请填写组织与权限中的真实成员；该负责人审批发布、批量跟进和商业承诺。</p>
         </Field>
-        </>}
-        {activeRuleAgent === "director" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">爆款采集与导演规则</p><p className="mt-1 text-xs text-slate-500">只采集公开内容，不包含广告投流；采集结果用于编导方案，不由内容 Agent 自行改写。</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="AI 推荐关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="点击上方填入基础关键词" /></Field><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="每次最多采集（条）"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">采集近 {collectionLookback} 天公开内容，每次最多 {collectionLimit} 条，按链接与标题去重 30 天。</p></div>}
+        <Field label="行动边界（每行一条）" wide>
+          <textarea
+            className={`${inputClass} min-h-24 resize-y`}
+            value={form.constraints.join("\n")}
+            onChange={(event) => set("constraints", event.target.value.split("\n").map((item) => item.trim()).filter(Boolean))}
+          />
+        </Field>
+          </div>
+        </section>}
+        {activeRuleAgent === "director" && <section className="rounded-2xl border border-slate-200 p-4">
+          <p className="text-sm font-bold text-slate-900">爆款采集与导演规则</p>
+          <p className="mt-1 text-xs text-slate-500">先确定找什么，再设置多久跑一次；只采集公开内容。</p>
+          <div className="mt-4 space-y-4">
+            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">1 · 采集范围</p><div className="space-y-3"><Field label="采集平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="来源类型"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="可使用上方 AI 推荐填入" /></Field></div></div>
+            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">2 · 执行节奏</p><div className="grid gap-3 md:grid-cols-3"><Field label="采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div></div>
+          </div>
+          <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">近 {collectionLookback} 天 · 每次最多 {collectionLimit} 条 · 链接与标题去重 30 天</p>
+        </section>}
         {activeRuleAgent === "content" && <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
           <div className="md:col-span-2 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-black text-blue-950">默认创作流程 · 主题创作</p><p className="mt-1 text-xs text-blue-700">用户只需确定内容主题、补齐系统提示的素材并验收成片。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">统一入口</span></div>
-            <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700">选主题 → 补素材 → 编导 Agent 定方案 → 内容 Agent 成片 → 用户验收</p>
-            <p className="mt-2 text-[10px] leading-relaxed text-blue-700">编导 Agent 会按“正式爆款公式、灵感结构、企业知识安全骨架”的顺序生成完整导演方案；当前公式库为空时自动使用后两级，不要求用户填写脚本。</p>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-black text-blue-950">默认创作流程</p><p className="mt-1 text-xs text-blue-700">素材加工和爆款裂变共用同一套托管流程。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">系统托管</span></div>
+            <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-700">选制作方式 → 系统盘点素材 → 编导 Agent 逐镜定方案 → 内容 Agent 成片 → 用户验收</p>
+            <details className="mt-2 text-[10px] leading-relaxed text-blue-700"><summary className="cursor-pointer font-bold">查看复刻与素材选择说明</summary><p className="mt-2">爆款裂变优先复刻前三秒钩子、信息顺序和镜头节奏；内容 Agent 按镜头选择真实素材、数字人、授权素材或生成画面，并保留原创差异。</p></details>
           </div>
           <Field label="主语言"><select className={inputClass} value={form.videoDefaults?.language || 'en'} onChange={e => { const language=e.target.value; set('videoDefaults', { ...form.videoDefaults, language }); set('videoLanguages', [language, ...(form.videoLanguages || []).filter(item=>item!==language)]); }}><option value="en">英语</option><option value="zh">中文</option><option value="es">西班牙语</option><option value="fr">法语</option><option value="de">德语</option></select></Field>
           <Field label="默认出镜方式"><select className={inputClass} value={form.videoDefaults?.presenter || 'material'} onChange={e => set('videoDefaults', { ...form.videoDefaults, presenter: e.target.value as 'material' | 'heygen' })}><option value="material">素材视频</option><option value="heygen">HeyGen 数字人口播</option></select></Field>
           <div className="md:col-span-2"><p className="text-xs font-bold text-slate-700">自动交付语言</p><div className="mt-2 flex flex-wrap gap-2">{[{code:'en',label:'英语'},{code:'zh',label:'中文'},{code:'es',label:'西班牙语'},{code:'fr',label:'法语'},{code:'de',label:'德语'}].map(item=>{const selected=(form.videoLanguages || [form.videoDefaults?.language || 'en']).includes(item.code);const primary=(form.videoDefaults?.language || 'en')===item.code;return <label key={item.code} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${selected?'border-blue-300 bg-blue-50':'border-slate-200 bg-white'}`}><input type="checkbox" checked={selected} disabled={primary} onChange={()=>set('videoLanguages',selected?(form.videoLanguages || []).filter(code=>code!==item.code):[...(form.videoLanguages || [form.videoDefaults?.language || 'en']),item.code])}/>{item.label}{primary?' · 主语言':''}</label>})}</div></div>
-          <p className="text-xs text-slate-500 md:col-span-2">编导 Agent 先锁定每种语言的逐镜脚本、口播和字幕；内容 Agent 再按相同 sceneId 执行配音、字幕、配乐和渲染，自动交付独立成片。数字人仍需选择 HeyGen 人物并确认使用权。</p>
+          <p className="text-xs text-slate-500 md:col-span-2">每种语言独立生成成片；数字人出镜前仍需确认人物和使用权。</p>
           <label className="md:col-span-2 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowGeneratedVisuals} onChange={e=>set("allowGeneratedVisuals",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">素材不足时允许生成 AI 画面</span><span className="mt-0.5 block text-[10px] text-slate-500">默认关闭。只有知识库存在产品外观锚点时才可补充产品镜头；没有外观依据时仅可生成抽象说明或流程图，禁止虚构产品外观、参数与效果。</span></span></label>
         </div>}
-        {activeRuleAgent === "business" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-bold text-slate-900">内容发布与回执</p><p className="mt-1 text-xs text-slate-500">经营 Agent 负责发布审批、日历排期与平台真实回执；成片制作仍由内容 Agent 完成。</p></div><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布授权"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="每周生成草稿（条）"><input className={inputClass} type="number" min={0} value={publishCount} onChange={e=>setPublishCount(Number(e.target.value))} /></Field><div><p className="text-xs font-bold text-slate-700">发布平台与具体账号 <span className="text-red-500">*</span></p><div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2">{publishingAccountsLoading?<p className="px-2 py-3 text-xs text-slate-400">正在读取已连接账号…</p>:connectedPublishingAccounts.length?connectedPublishingAccounts.map(account=>{const checked=form.publishingTargets.some(target=>target.platform===account.platform&&target.accountId===account.accountId);return <label key={`${account.platform}:${account.accountId}`} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${checked?"border-blue-300 bg-blue-50":"border-slate-200 bg-white"}`}><input type="checkbox" checked={checked} onChange={()=>set("publishingTargets",checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/><span className="text-xs font-bold text-slate-800">{contentPlatformLabel[account.platform]} · {account.accountLabel}</span></label>}):<div className="px-2 py-3"><p className="text-xs text-amber-700">尚无可用账号。连接平台后可启用自动或人工待发布链路；系统不会生成虚假账号。</p>{form.enabledWorkflows.includes("content_publish")&&<button type="button" onClick={()=>toggleWorkflow("content_publish")} className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">本周暂不发布，仅生成内容</button>}</div>}</div>{publishingAccountsError&&<p className="mt-1 text-[10px] text-red-600">{publishingAccountsError}</p>}{submitted&&errors.publishingTargets&&<p className="mt-1 text-[10px] font-semibold text-red-600">{errors.publishingTargets}</p>}</div></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={e=>set("allowRealPublishing",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] text-slate-500">开启：当前版本获批后自动写入日历并由发布 Worker 执行；关闭：审批后停在人工待发布，绝不调用平台接口。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">每周生成 {publishCount} 条内容草稿；无论是否允许真实发布，每条内容都必须先展示账号、文案、成片与时间并获得审批。</p></div>}
-        {activeRuleAgent === "customer" && <div className="md:col-span-2">
-          <p className="mb-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">企业和产品资料录入一次，全系统共用。这里直接复用已录入资料，只需补充接待规则和通知方式；确认后写入同一份企业知识库。</p>
-          <KnowledgeIntakePanel />
-        </div>}
+        {activeRuleAgent === "business" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-bold text-slate-900">内容发布与回执</p><p className="mt-1 text-xs text-slate-500">经营 Agent 负责发布审批、日历排期与平台真实回执；成片制作仍由内容 Agent 完成。</p></div><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布授权"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div><div className="mt-3 space-y-3"><Field label="每周生成草稿（条）"><input className={inputClass} type="number" min={0} value={publishCount} onChange={e=>setPublishCount(Number(e.target.value))} /></Field><div><p className="text-xs font-bold text-slate-700">发布平台与具体账号 <span className="text-red-500">*</span></p><div className="mt-2 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2">{publishingAccountsLoading?<p className="px-2 py-3 text-xs text-slate-400">正在读取已连接账号…</p>:connectedPublishingAccounts.length?connectedPublishingAccounts.map(account=>{const checked=form.publishingTargets.some(target=>target.platform===account.platform&&target.accountId===account.accountId);return <label key={`${account.platform}:${account.accountId}`} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 ${checked?"border-blue-300 bg-blue-50":"border-slate-200 bg-white"}`}><input type="checkbox" checked={checked} onChange={()=>set("publishingTargets",checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/><span className="text-xs font-bold text-slate-800">{contentPlatformLabel[account.platform]} · {account.accountLabel}</span></label>}):<div className="px-2 py-3"><p className="text-xs text-amber-700">尚无可用账号。连接平台后可启用自动或人工待发布链路；系统不会生成虚假账号。</p>{form.enabledWorkflows.includes("content_publish")&&<button type="button" onClick={()=>toggleWorkflow("content_publish")} className="mt-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">本周暂不发布，仅生成内容</button>}</div>}</div>{publishingAccountsError&&<p className="mt-1 text-[10px] text-red-600">{publishingAccountsError}</p>}{submitted&&errors.publishingTargets&&<p className="mt-1 text-[10px] font-semibold text-red-600">{errors.publishingTargets}</p>}</div></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={e=>set("allowRealPublishing",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] text-slate-500">开启：当前版本获批后自动写入日历并由发布 Worker 执行；关闭：审批后停在人工待发布，绝不调用平台接口。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">每周生成 {publishCount} 条内容草稿；无论是否允许真实发布，每条内容都必须先展示账号、文案、成片与时间并获得审批。</p></div>}
+        {activeRuleAgent === "customer" && <details className="rounded-2xl border border-emerald-100 bg-emerald-50/45 p-4">
+          <summary className="cursor-pointer text-sm font-bold text-emerald-950">客服知识与接待信息（按需展开）</summary>
+          <p className="mt-2 text-xs text-emerald-800">企业和产品资料全系统共用；这里只补充客服专用的接待规则和通知方式。</p>
+          <div className="mt-4"><KnowledgeIntakePanel /></div>
+        </details>}
         {activeRuleAgent === "customer" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">客户跟进规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="草稿生成时间"><input className={inputClass} value={followupGenerateAt} onChange={e=>setFollowupGenerateAt(e.target.value)} /></Field><Field label="审批截止"><input className={inputClass} value={followupApproveBy} onChange={e=>setFollowupApproveBy(e.target.value)} /></Field><Field label="允许发送时段"><input className={inputClass} value={followupWindow} onChange={e=>setFollowupWindow(e.target.value)} /></Field><Field label="客户触达频控"><input className={inputClass} value={followupFrequency} onChange={e=>setFollowupFrequency(e.target.value)} /></Field></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealCustomerMessages} onChange={e=>set("allowRealCustomerMessages",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发送客服消息</span><span className="mt-0.5 block text-[10px] text-slate-500">未开启时只生成和审批草稿，不调用真实消息渠道；商业承诺仍需逐条人工审批。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">先生成逐客草稿并等待审批，仅在客户当地工作时间发送。</p></div>}
-        {activeRuleAgent === "business" && <><Field label="复盘时区"><input className={inputClass} value={reviewTimezone} onChange={e=>setReviewTimezone(e.target.value)} /></Field><Field label="数据截止时间"><input className={inputClass} value={reviewCutoff} onChange={e=>setReviewCutoff(e.target.value)} /></Field>
-        <div className="md:col-span-2 grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
+        {activeRuleAgent === "business" && <section className="rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">复盘与跨周期规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="复盘时区"><input className={inputClass} value={reviewTimezone} onChange={e=>setReviewTimezone(e.target.value)} /></Field><Field label="数据截止时间"><input className={inputClass} value={reviewCutoff} onChange={e=>setReviewCutoff(e.target.value)} /></Field></div>
+        <div className="mt-3 grid gap-3 rounded-2xl bg-slate-50 p-4 md:grid-cols-2">
           <Field label="本周新增客户"><select className={inputClass} value={normalizeContinuationPolicy(form.continuationPolicy).newCustomers} onChange={e => set('continuationPolicy', { ...normalizeContinuationPolicy(form.continuationPolicy), newCustomers: e.target.value as 'next_cycle' | 'reopen' })}><option value="next_cycle">下周处理</option><option value="reopen">补跑分层和草稿，发送仍审批</option></select></Field>
           <Field label="错过跟进时刻"><select className={inputClass} value={normalizeContinuationPolicy(form.continuationPolicy).missedFollowup} onChange={e => set('continuationPolicy', { ...normalizeContinuationPolicy(form.continuationPolicy), missedFollowup: e.target.value as 'next_slot' | 'catch_up' })}><option value="next_slot">等待下个计划时刻</option><option value="catch_up">本周期补执行一次</option></select></Field>
           <Field label="旧周目标未完成"><select className={inputClass} value={normalizeContinuationPolicy(form.continuationPolicy).overlappingCycles} onChange={e => set('continuationPolicy', { ...normalizeContinuationPolicy(form.continuationPolicy), overlappingCycles: e.target.value as 'block' | 'allow_disjoint' })}><option value="block">先结束旧目标</option><option value="allow_disjoint">允许不重叠周期，保留旧待办</option></select></Field>
@@ -1364,22 +1380,7 @@ function OnboardingPanel({
           {normalizeContinuationPolicy(form.continuationPolicy).publishingTimezone === 'account' && form.publishingTargets.map(target => <Field key={target.accountId} label={`${target.accountLabel} · 发布时区`}><input className={inputClass} placeholder="America/New_York" value={target.timezone || ''} onChange={e => set('publishingTargets', form.publishingTargets.map(item => item.accountId === target.accountId ? { ...item, timezone: e.target.value } : item))} /></Field>)}
           <p className="md:col-span-2 text-xs text-slate-500">保存后用于新经营包。已有包按已确认规则执行；账号时区在下方按账号填写。所有发布和发送仍须审批。</p>
         </div>
-        <Field label="行动边界（每行一条）" wide>
-          <textarea
-            className={`${inputClass} min-h-24 resize-y`}
-            value={form.constraints.join("\n")}
-            onChange={(event) =>
-              set(
-                "constraints",
-                event.target.value
-                  .split("\n")
-                  .map((item) => item.trim())
-                  .filter(Boolean),
-              )
-            }
-          />
-        </Field>
-        </>}
+        </section>}
       </div>
       {(activeRuleAgent === "business" || activeRuleAgent === "director" || activeRuleAgent === "customer") && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
         <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-slate-800">启用能力</p><span className="text-[10px] font-semibold text-emerald-700">已启用 {visibleEnabledWorkflowCount} 项</span></div>
@@ -1393,7 +1394,7 @@ function OnboardingPanel({
         )}
         <div className="mt-2 flex flex-wrap gap-2">
           {activeRuleAgent === "director" ? <>
-            <button type="button" aria-pressed={themeContentEnabled} onClick={toggleThemeContentCreation} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${themeContentEnabled?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${themeContentEnabled?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{themeContentEnabled&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">主题内容制作</span><span className="block truncate text-[9px] text-slate-400">选主题、补素材，系统自动匹配内容结构并进入制作</span></span><span className={`text-[9px] font-bold ${themeContentEnabled?"text-emerald-700":"text-slate-400"}`}>{themeContentEnabled?"已启用":"未启用"}</span></button>
+            <button type="button" aria-pressed={themeContentEnabled} onClick={toggleThemeContentCreation} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${themeContentEnabled?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${themeContentEnabled?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{themeContentEnabled&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">社媒视频制作</span><span className="block truncate text-[9px] text-slate-400">素材加工或爆款裂变；没有素材也可由系统托管生成</span></span><span className={`text-[9px] font-bold ${themeContentEnabled?"text-emerald-700":"text-slate-400"}`}>{themeContentEnabled?"已启用":"未启用"}</span></button>
             {agentRoleGroups.find((agent) => agent.id === "director")?.workflows.filter(id => id === "scheduled_social").map(id=>{const option=workflowOptions.find(item=>item.id===id)!;const checked=form.enabledWorkflows.includes(id);return <button key={id} type="button" aria-pressed={checked} onClick={()=>toggleWorkflow(id)} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${checked?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{checked&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">{option.label}</span><span className="block truncate text-[9px] text-slate-400">{option.detail}</span></span><span className={`text-[9px] font-bold ${checked?"text-emerald-700":"text-slate-400"}`}>{checked?"已启用":"未启用"}</span></button>})}
           </> : agentRoleGroups.filter((agent) => agent.id === activeRuleAgent).map((agent) => {
             return agent.workflows.map(id=>{const option=workflowOptions.find(item=>item.id===id)!;const checked=form.enabledWorkflows.includes(id);return <button key={id} type="button" aria-pressed={checked} onClick={()=>toggleWorkflow(id)} className={`inline-flex min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${checked?"border-emerald-300 bg-white":"border-slate-200 bg-white/70"}`}><span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${checked?"border-emerald-600 bg-emerald-600 text-white":"border-slate-300 bg-white"}`}>{checked&&<Check size={13}/>}</span><span className="min-w-0 flex-1"><span className="block text-xs font-bold text-slate-800">{option.label}</span><span className="block truncate text-[9px] text-slate-400">{option.detail}</span></span><span className={`text-[9px] font-bold ${checked?"text-emerald-700":"text-slate-400"}`}>{checked?"已启用":"未启用"}</span></button>});
@@ -1408,10 +1409,10 @@ function OnboardingPanel({
       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/40 p-3">
         <div className="flex items-center gap-2 text-amber-900">
           <ShieldCheck size={17} />
-          <div><p className="text-sm font-black">分 Agent 审批红线</p><p className="mt-0.5 text-[10px] text-amber-700">每个 Agent 只受自己职责范围内的红线约束；标记“强制”的高风险规则不能关闭。</p></div>
+          <div><p className="text-sm font-black">{activeRuleAgent === "common" ? "总体审批红线" : "本 Agent 审批红线"}</p><p className="mt-0.5 text-[10px] text-amber-700">这里只显示当前页对应的规则；标记“强制”的高风险规则不能关闭。</p></div>
         </div>
-        <div className="mt-2 grid gap-2 lg:grid-cols-2">
-          {agentApprovalOptions.filter((group) => group.role === activeRuleAgent || group.role === "orchestrator").map((group) => <section key={group.role} className="rounded-xl border border-amber-100 bg-white p-3"><div className="flex items-center justify-between"><p className="text-xs font-black text-slate-900">{group.label}</p><span className="text-[9px] font-bold text-slate-400">独立审批策略</span></div><div className="mt-2 space-y-1.5">{group.items.map((item) => {const checked=Boolean((form.agentApprovalPolicies[group.policyRole] as Record<string, boolean>)[item.key]);return <label key={item.key} className={`flex items-start gap-2 rounded-lg border p-2.5 ${checked?"border-amber-200 bg-amber-50/50":"border-slate-200 bg-slate-50"}`}><input type="checkbox" className="mt-0.5 accent-amber-600" checked={checked} disabled={"locked" in item&&item.locked} onChange={event=>setAgentApproval(group.policyRole,item.key,event.target.checked)} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-xs font-bold text-slate-800">{item.label}{"locked" in item&&item.locked&&<span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] text-red-600">强制</span>}</span><span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">{item.detail}</span></span></label>})}</div></section>)}
+        <div className="mt-2 grid gap-2">
+          {agentApprovalOptions.filter((group) => activeRuleAgent === "common" ? group.role === "orchestrator" : group.role === activeRuleAgent).map((group) => <section key={group.role} className="rounded-xl border border-amber-100 bg-white p-3"><div className="flex items-center justify-between"><p className="text-xs font-black text-slate-900">{group.label}</p><span className="text-[9px] font-bold text-slate-400">独立审批策略</span></div><div className="mt-2 space-y-1.5">{group.items.map((item) => {const checked=Boolean((form.agentApprovalPolicies[group.policyRole] as Record<string, boolean>)[item.key]);return <label key={item.key} className={`flex items-start gap-2 rounded-lg border p-2.5 ${checked?"border-amber-200 bg-amber-50/50":"border-slate-200 bg-slate-50"}`}><input type="checkbox" className="mt-0.5 accent-amber-600" checked={checked} disabled={"locked" in item&&item.locked} onChange={event=>setAgentApproval(group.policyRole,item.key,event.target.checked)} /><span className="min-w-0 flex-1"><span className="flex items-center gap-2 text-xs font-bold text-slate-800">{item.label}{"locked" in item&&item.locked&&<span className="rounded-full bg-red-50 px-2 py-0.5 text-[9px] text-red-600">强制</span>}</span><span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">{item.detail}</span></span></label>})}</div></section>)}
         </div>
         {submitted && (errors.contentPublish || errors.batchFollowup) && (
           <p className="mt-2 text-[10px] font-semibold text-red-600">
@@ -1419,7 +1420,7 @@ function OnboardingPanel({
           </p>
         )}
       </div>
-      <div className="mt-4">
+      {activeRuleAgent === "common" && <div className="mt-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-bold text-slate-700">业务资产就绪度</p>
           <span className="text-[10px] text-slate-400">本页保存状态 + 最近业务快照</span>
@@ -1462,7 +1463,7 @@ function OnboardingPanel({
             资产快照尚未返回，保存配置不会把缺失项视为已就绪。
           </div>
         )}
-      </div>
+      </div>}
       <div className="mt-4 flex flex-col items-end gap-2">
         {submitted && Object.keys(errors).length > 0 && (
           <div role="alert" className="flex flex-wrap items-center justify-end gap-2 text-xs font-semibold text-red-600"><span>还需填写：{missingConfigLabels.join("、")}。</span><button type="button" onClick={goToFirstMissingConfig} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700">去补齐</button></div>
@@ -2156,9 +2157,9 @@ const businessLoopStages: Array<{
   },
   {
     title: "内容生产",
-    caption: "从主题和素材出发",
+    caption: "双入口，一键托管",
     page: "socialInspiration",
-    steps: ["确定主题", "补齐待拍素材", "匹配内容结构"],
+    steps: ["选择素材加工 / 爆款裂变", "编导逐镜分析", "内容 Agent 自动供给画面"],
     tone: "border-blue-200 bg-blue-50 text-blue-800",
   },
   {
@@ -3618,9 +3619,6 @@ export default function DigitalEmployeePage({
   const [viewGoalId, setViewGoalId] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("today");
-  const [headerCollapsed, setHeaderCollapsed] = useState(true);
-  const headerDetailsId = useId();
-  const executionDetailId = useId();
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
   const [navigationNotice, setNavigationNotice] = useState("");
@@ -3993,30 +3991,21 @@ export default function DigitalEmployeePage({
     <div className="workspace-canvas digital-employee-page">
       <div className="workspace-frame">
         <header className="workspace-header">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <h1 className="workspace-title mt-2">
-                数字员工正在等待调遣
-              </h1>
-              <p className="workspace-subtitle mt-2">
-                先看今天要做什么；需要你决定时，按提示操作即可。
-              </p>
-            </div>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <h1 className="workspace-title mt-2">
+              数字员工正在等待调遣
+            </h1>
             {data?.config && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-secondary">
-                <span className="border-l border-border pl-3 font-semibold text-text-primary">
-                  {data.config.companyName}
-                </span>
-                <span>
-                  {autonomyLabel[data.config.autonomyMode]}模式
-                </span>
-                <span>
-                  {operatingState} · {cycleLabel}
-                </span>
+              <div className="flex flex-wrap items-stretch gap-2 text-xs text-text-secondary">
+                <div className="min-w-52 rounded-lg border border-accent/25 bg-accent-glow px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-accent">当前工作模式</p>
+                  <p className="mt-1 font-black text-text-primary">{autonomyLabel[data.config.autonomyMode]}模式 · {operatingState}</p>
+                  <p className="mt-0.5 text-[10px] text-text-muted">{cycleLabel}</p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setWorkspaceView("rules")}
-                  className={`inline-flex items-center gap-1 rounded-md border px-3 py-2 font-semibold ${workspaceView === "rules" ? "border-accent bg-surface-2 text-accent" : "border-border bg-white text-text-secondary hover:border-border-bright hover:text-text-primary"}`}
+                  className={`inline-flex min-h-12 items-center gap-1.5 rounded-lg border px-4 py-2 font-bold shadow-sm transition ${workspaceView === "rules" ? "border-accent bg-accent text-white" : "border-accent bg-accent text-white hover:brightness-95"}`}
                 >
                   <Settings2 size={13} /> Agent 设置
                 </button>
@@ -4026,45 +4015,14 @@ export default function DigitalEmployeePage({
                     setWorkspaceView("today");
                     setShowHistory((value) => !value);
                   }}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-3 py-2 font-semibold text-text-secondary hover:border-border-bright hover:text-text-primary"
+                  className="inline-flex min-h-12 items-center gap-1.5 rounded-lg border border-accent/35 bg-white px-4 py-2 font-bold text-accent shadow-sm transition hover:border-accent hover:bg-accent-glow"
                 >
                   <History size={13} /> 历史记录
-                </button>
-                <button
-                  type="button"
-                  aria-expanded={!headerCollapsed}
-                  aria-controls={data.run && !viewGoalId ? `${headerDetailsId} ${executionDetailId}` : headerDetailsId}
-                  onClick={() => setHeaderCollapsed(value => !value)}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 transition hover:bg-slate-50 hover:text-slate-900"
-                >
-                  {headerCollapsed ? '展开信息' : '收起信息'}
-                  <ChevronDown size={13} className={`transition-transform ${headerCollapsed ? '' : 'rotate-180'}`}/>
                 </button>
               </div>
             )}
           </div>
           {!data?.config && <div className="mt-5 inline-flex items-center gap-2 border-l-2 border-accent bg-surface-2 px-3 py-2 text-xs font-semibold text-accent"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-text-primary">1</span>{operatingState}</div>}
-          {data?.config && data.run && !viewGoalId && <AgentExecutionStatus data={data} onOpen={goLive} collapsed={headerCollapsed} detailId={executionDetailId}/>}
-          <div id={headerDetailsId} hidden={headerCollapsed}>
-            {data?.config && workspaceView === "today" && (!newGoal || Boolean(goal)) && <TodayNextAction
-              data={presentedData || data}
-              onCreateGoal={() => {
-                if (activeRun) { setWorkspaceView("live"); return; }
-                setNewGoal(true);
-                scrollTo(goalPanelRef);
-              }}
-              onReviewPlan={() => goLive()}
-              onOpenExecution={goLive}
-              onOpenReview={() => setWorkspaceView("review")}
-            />}
-          {data?.config && (
-            <p className="mt-4 flex flex-wrap gap-x-2 gap-y-1 text-xs text-slate-400">
-              <span>{autonomyLabel[data.config.autonomyMode]}模式</span>
-              <span aria-hidden="true">·</span>
-              <span>{goal ? `本轮周期 ${cycleLabel}` : cycleLabel}</span>
-            </p>
-          )}
-          </div>
         </header>
 
         {data?.config && <nav

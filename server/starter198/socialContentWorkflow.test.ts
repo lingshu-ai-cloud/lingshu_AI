@@ -19,55 +19,6 @@ process.env.PB_URL = 'http://127.0.0.1:1';
 
 type Row = Record_ & Record<string, unknown>;
 
-function completeFormulaDirection() {
-  return {
-    pace: 'balanced',
-    visualStyle: '真实产品实拍，克制的 B2B 商务质感，不使用无法核验的效果画面',
-    music: {
-      mood: '清晰、专业', volume: 18, strategy: '开头建立节奏，口播期间自动压低，结尾轻收束',
-      sourceType: 'licensed_library', licenseVerified: true, licenseReference: 'music-library:professional-clean-v1',
-    },
-    voiceover: { voice: 'v1', preset: 'professional_b2b', speed: 1.1, pauseStyle: 'natural' },
-    subtitles: { fontScale: 1, bottomRatio: 0.18, styleIntent: '高对比单行字幕，不能遮挡产品主体' },
-    cover: {
-      intent: '第一眼说明产品价值且不夸大功效',
-      headlineTemplate: { zh: '{{product}}真实卖点', en: 'Verified value of {{product}}' },
-      subject: '产品与一项可核验证据', composition: '主体居中偏下，标题位于安全区上方',
-    },
-    materialFallback: {
-      minimumUsableClips: 1, allowStillFrames: true, allowRepeatedClips: false, maxRepeatCount: 0,
-      insufficientMaterialAction: 'adapt_with_verified_assets',
-    },
-    risks: {
-      prohibitedClaims: ['禁止无证据的绝对化功效'],
-      prohibitedVisuals: ['禁止使用未获授权的人脸或品牌标识'],
-      mandatoryDisclosures: [],
-    },
-    acceptanceGates: [
-      { gateId: 'qc_grounding', name: '事实可追溯', rule: '脚本中的产品信息必须来自已核验知识或可见素材', blocking: true },
-      { gateId: 'qc_rights', name: '音乐授权', rule: '配乐必须带有可核验授权引用', blocking: true },
-    ],
-  };
-}
-
-function completeFormulaNode(nodeId: string, overrides: Record<string, unknown> = {}) {
-  return {
-    nodeId,
-    shotFunction: '展示产品与证据', subject: '产品与检测证据', action: '同框展示', environment: '干净的产品展示台',
-    orientation: 'portrait', durationSeconds: { minimum: 3, maximum: 8 }, required: true,
-    shotType: 'product_demo', shotSize: 'close_up', cameraMovement: 'push_in',
-    composition: '产品主体位于中央安全区，证据标签保持清晰', transition: 'cut',
-    narrationTemplate: {
-      zh: '围绕{{topic}}，用真实素材展示{{product}}与可核验证据。{{callToAction}}',
-      en: 'For {{topic}}, use real material to show {{product}} with verifiable evidence. {{callToAction}}',
-    },
-    scriptTemplate: { zh: '脚本：{{shotFunction}}，{{subject}}，{{action}}。', en: 'Script: {{shotFunction}}, {{subject}}, {{action}}.' },
-    voiceoverTemplate: { zh: '口播：用真实素材展示{{product}}。', en: 'Voice: show {{product}} with real material.' },
-    captionTemplate: { zh: '字幕：真实素材展示', en: 'Caption: real material' },
-    ...overrides,
-  };
-}
-
 class MemoryStore implements DataStore {
   readonly rows = new Map<string, Row[]>();
   private sequence = 0;
@@ -144,6 +95,9 @@ const [
   { assertSocialContentSubjectLease, runOutsideSocialContentMutationScope, withSocialContentSubjectLease },
   { MAX_SOCIAL_WORK_PACKAGE_VERSIONS, SOCIAL_PACKAGE_CATALOG_TENANT },
   { issueLocalIdentityTokenForTest },
+  { addSocialTaskSource, startSocialContentTask },
+  { buildSocialTaskReferencePackage },
+  { runSocialContentAutoProduction },
 ] = await Promise.all([
   import('./repository.js'),
   import('./socialContentRouter.js'),
@@ -154,6 +108,9 @@ const [
   import('./socialContentMutation.js'),
   import('./socialWorkPackages.js'),
   import('../auth/localIdentity.js'),
+  import('./socialContentTasks.js'),
+  import('./socialContentScriptSources.js'),
+  import('./socialContentAutoProduction.js'),
 ]);
 
 const tenant = 'social-content-tenant';
@@ -417,7 +374,8 @@ try {
     },
   });
   assert.equal(durableKnowledge.status, 201);
-  assert.equal(durableKnowledge.body.task.status, 'draft');
+  assert.equal(durableKnowledge.body.task.status, 'plan_review',
+    'the default customer route stays startable while real material remains optional');
   const durableUpload = await request(`/api/default-social-content/tasks/${durableTaskId}/files?usage=source&name=durable-source.txt`, {
     idempotencyKey: 'social-durable-file', rawBody: Buffer.from('durable production material'), contentType: 'text/plain',
   });
@@ -617,7 +575,7 @@ try {
   });
   assert.equal(created.status, 201);
   const taskId = created.body.task.taskId as string;
-  assert.equal(created.body.task.status, 'draft');
+  assert.equal(created.body.task.status, 'plan_review');
   assert.equal(created.body.task.brief.aspectRatio, '9:16');
   assert.equal(created.body.task.brief.cadence, '每周两次');
   assert.equal(created.body.task.brief.weeklyBudgetCny, 2_000);
@@ -723,8 +681,8 @@ try {
     body: { kind: 'material', sourceRef: uploaded.body.file.fileRef, label: '产品素材' },
   });
   assert.equal(source.status, 201);
-  assert.equal(source.body.task.status, 'draft');
-  assert.deepEqual(source.body.task.readiness.missing, ['enterprise_knowledge']);
+  assert.equal(source.body.task.status, 'plan_review');
+  assert.deepEqual(source.body.task.readiness.missing, []);
   assert.equal(source.body.task.sourceCount, 1);
 
   const knowledgeSource = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/sources`, {
@@ -756,7 +714,8 @@ try {
   });
   assert.equal(removedSource.status, 200);
   assert.equal(removedSource.body.source.status, 'removed');
-  assert.equal(removedSource.body.task.status, 'needs_input');
+  assert.equal(removedSource.body.task.status, 'plan_review',
+    'removing optional enterprise knowledge does not block the managed fallback route');
   assert.equal(removedSource.body.task.sourceCount, 1);
   const removedReplay = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/sources/${knowledgeSource.body.source.sourceId}`, {
     method: 'DELETE', idempotencyKey: 'social-source-remove',
@@ -972,28 +931,18 @@ try {
     body: { kind: 'reference_link', sourceRef: 'https://example.com/reference', label: '单一参考链接' },
   });
   assert.equal(referenceOnly.status, 201);
-  assert.deepEqual(referenceOnly.body.task.readiness.missing, ['enterprise_knowledge', 'source_material']);
+  assert.deepEqual(referenceOnly.body.task.readiness.missing, []);
+  assert.ok(referenceOnly.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
+  assert.ok(referenceOnly.body.task.readiness.personalizationGaps.includes('source_material'));
   const freeTextNote = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/sources`, {
     idempotencyKey: 'social-bypass-free-text-note',
     body: { kind: 'text_note', sourceRef: 'brief:brand-notes', label: '用户填写的企业与产品关键信息' },
   });
   assert.equal(freeTextNote.status, 201);
   assert.equal(freeTextNote.body.task.knowledgeSourceCount, 0);
-  assert.deepEqual(freeTextNote.body.task.readiness.missing, ['enterprise_knowledge', 'source_material'],
-    'request free text must not be promoted to confirmed enterprise knowledge');
-  const bypassStart = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/start`, {
-    idempotencyKey: 'social-bypass-start', body: { expectedVersion: freeTextNote.body.task.version },
-  });
-  assert.equal(bypassStart.status, 409, 'a reference link alone cannot bypass the knowledge requirement');
-  assert.equal(bypassStart.body.error, 'social_content_task_inputs_incomplete');
-  assert.equal(orchestratorInputs.length, 1, 'incomplete source coverage never reaches the orchestrator');
+  assert.deepEqual(freeTextNote.body.task.readiness.missing, [],
+    'request free text stays unverified, while the managed fallback remains startable');
 
-  const incompleteManualArtifact = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts`, {
-    idempotencyKey: 'social-manual-incomplete',
-    body: { kind: 'publish_copy', origin: 'manual', content: { body: '不得绕过资料校验' } },
-  });
-  assert.equal(incompleteManualArtifact.status, 409);
-  assert.equal(incompleteManualArtifact.body.error, 'social_content_artifact_not_allowed');
   const manualKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/sources`, {
     idempotencyKey: 'social-manual-knowledge',
     body: {
@@ -1002,8 +951,8 @@ try {
     },
   });
   assert.equal(manualKnowledge.status, 201);
-  assert.equal(manualKnowledge.body.task.status, 'needs_input');
-  assert.deepEqual(manualKnowledge.body.task.readiness.missing, ['source_material']);
+  assert.equal(manualKnowledge.body.task.status, 'plan_review');
+  assert.deepEqual(manualKnowledge.body.task.readiness.missing, []);
   const manualUpload = await request(`/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/files?usage=source&name=manual-source.txt`, {
     idempotencyKey: 'social-manual-source-file', rawBody: Buffer.from('real production source'), contentType: 'text/plain',
   });
@@ -1241,165 +1190,13 @@ try {
   assert.deepEqual(pagedWorkspace.body.taskList, { page: 1, perPage: 50, totalItems: 55, totalPages: 2 });
   assert.equal(pagedWorkspace.body.tasks.some((item: any) => item.taskId === pagedWorkspace.body.currentTask.taskId), true);
 
-  const hiddenFormulaList = await request('/api/overseas/starter-198/social-content/internal/content-formulas');
-  assert.equal(hiddenFormulaList.status, 403, 'formula registry is platform-admin only');
-  const initiallyEmptyFormulaList = await request('/api/overseas/starter-198/social-content/internal/content-formulas', { platformAdmin: true });
-  assert.equal(initiallyEmptyFormulaList.status, 200);
-  assert.deepEqual(initiallyEmptyFormulaList.body.items, [],
-    'the formula interface remains available but ships with no preloaded formula');
-  const incompleteFormulaDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
-    platformAdmin: true,
-    idempotencyKey: 'social-formula-incomplete-create',
-    body: {
-      formulaId: 'custom.incomplete-draft', version: '1.0.0', name: '允许保存的未完成草稿', themeId: 'product_value',
-      direction: { pace: 'fast' },
-      nodes: [{ nodeId: 'opening', shotFunction: '开场钩子' }],
-    },
+  const removedFormulaList = await request("/api/overseas/starter-198/social-content/internal/content-formulas", { platformAdmin: true });
+  assert.equal(removedFormulaList.status, 404,
+    "the removed formula registry is no longer reachable, including by platform administrators");
+  const removedFormulaMatch = await request("/api/overseas/starter-198/social-content/internal/content-formulas/match", {
+    platformAdmin: true, body: { themeId: "product_value" },
   });
-  assert.equal(incompleteFormulaDraft.status, 201, incompleteFormulaDraft.raw);
-  assert.deepEqual(incompleteFormulaDraft.body.formula.direction, { pace: 'fast' },
-    'draft persistence keeps authored direction only');
-  assert.deepEqual(incompleteFormulaDraft.body.formula.nodes[0], { nodeId: 'opening', shotFunction: '开场钩子' },
-    'draft persistence must not synthesize script, voiceover, caption or shot grammar');
-  const incompleteFormulaTrial = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.incomplete-draft/1.0.0/trial', {
-    platformAdmin: true, idempotencyKey: 'social-formula-incomplete-trial', body: {},
-  });
-  assert.equal(incompleteFormulaTrial.status, 422, incompleteFormulaTrial.raw);
-  assert.equal(incompleteFormulaTrial.body.error, 'social_content_formula_release_incomplete');
-  const incompleteFormulaPublish = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.incomplete-draft/1.0.0/publish', {
-    platformAdmin: true, idempotencyKey: 'social-formula-incomplete-publish', body: { status: 'active' },
-  });
-  assert.equal(incompleteFormulaPublish.status, 422, incompleteFormulaPublish.raw);
-  assert.equal(incompleteFormulaPublish.body.error, 'social_content_formula_release_incomplete');
-  await repository.create(STARTER_COLLECTIONS.plans, '__starter_social_formula_catalog__', {
-    id: 'socialformula_legacy_draft',
-    goal_id: 'social-content-formula:custom.legacy-draft',
-    status: 'draft',
-    plan: {
-      schemaVersion: 'social-content-formula.v1',
-      lastIdempotencyKey: 'legacy-formula-created-before-director-contract',
-      formula: {
-        formulaId: 'custom.legacy-draft', version: '0.9.0', name: '旧版未完成草稿', themeId: 'product_value',
-        rollout: { percentage: 0, tenantAllowlist: [] }, nodes: [],
-        audit: [{ event: 'draft_created', actor: 'legacy-admin', at: '2026-09-01T00:00:00.000Z' }],
-      },
-    },
-    created_at: '2026-09-01T00:00:00.000Z', updated_at: '2026-09-01T00:00:00.000Z',
-  });
-  const registryWithLegacyDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', { platformAdmin: true });
-  assert.equal(registryWithLegacyDraft.status, 200, registryWithLegacyDraft.raw);
-  assert.equal(registryWithLegacyDraft.body.items.some((item: any) => item.formulaId === 'custom.legacy-draft'), true,
-    'v1 drafts remain readable without receiving synthesized director fields');
-  const legacyTrial = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.legacy-draft/0.9.0/trial', {
-    platformAdmin: true, idempotencyKey: 'social-formula-legacy-trial', body: {},
-  });
-  assert.equal(legacyTrial.status, 422, legacyTrial.raw);
-  assert.equal(legacyTrial.body.error, 'social_content_formula_release_incomplete');
-  const formulaDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
-    platformAdmin: true,
-    idempotencyKey: 'social-formula-create-001',
-    body: {
-      formulaId: 'custom.product-proof',
-      version: '1.0.0',
-      name: '产品单镜头验证',
-      themeId: 'product_value',
-      direction: completeFormulaDirection(),
-      nodes: [completeFormulaNode('hero')],
-    },
-  });
-  assert.equal(formulaDraft.status, 201, formulaDraft.raw);
-  assert.equal(formulaDraft.body.formula.status, 'draft');
-  assert.equal(formulaDraft.body.formula.direction.pace, 'balanced');
-  assert.equal(formulaDraft.body.formula.direction.music.licenseVerified, true);
-  assert.equal(formulaDraft.body.formula.direction.cover.intent, '第一眼说明产品价值且不夸大功效');
-  assert.equal(formulaDraft.body.formula.direction.materialFallback.insufficientMaterialAction, 'adapt_with_verified_assets');
-  assert.equal(formulaDraft.body.formula.direction.acceptanceGates[0].blocking, true);
-  assert.equal(formulaDraft.body.formula.nodes[0].cameraMovement, 'push_in');
-  assert.equal(formulaDraft.body.formula.nodes[0].transition, 'cut');
-  assert.equal(formulaDraft.body.formula.nodes[0].voiceoverTemplate.zh, '口播：用真实素材展示{{product}}。');
-  assert.equal(formulaDraft.body.formula.nodes[0].captionTemplate.zh, '字幕：真实素材展示');
-  const formulaTrial = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.product-proof/1.0.0/trial', {
-    platformAdmin: true, idempotencyKey: 'social-formula-trial-001', body: { note: '内部试跑通过' },
-  });
-  assert.equal(formulaTrial.status, 200, formulaTrial.raw);
-  assert.equal(formulaTrial.body.formula.status, 'internal_trial');
-  assert.equal(formulaTrial.body.preview.length, 1);
-  const formulaPublished = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.product-proof/1.0.0/publish', {
-    platformAdmin: true, idempotencyKey: 'social-formula-publish-001', body: { status: 'active', note: '全量启用' },
-  });
-  assert.equal(formulaPublished.status, 200, formulaPublished.raw);
-  assert.equal(formulaPublished.body.formula.rollout.percentage, 100);
-  const formulaFork = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.product-proof/1.0.0', {
-    method: 'PATCH', platformAdmin: true, idempotencyKey: 'social-formula-version-002',
-    body: { version: '1.1.0', name: '产品单镜头验证 B' },
-  });
-  assert.equal(formulaFork.status, 201, formulaFork.raw);
-  assert.equal(formulaFork.body.formula.status, 'draft');
-  const formulaRegistry = await request('/api/overseas/starter-198/social-content/internal/content-formulas', { platformAdmin: true });
-  assert.equal(formulaRegistry.status, 200);
-  assert.equal(formulaRegistry.body.items.some((item: any) => item.formulaId === 'custom.product-proof' && item.version === '1.0.0' && item.status === 'active'), true,
-    'referenced formula version remains immutable while a new draft is created');
-  const formulaDisabled = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.product-proof/1.1.0/disable', {
-    platformAdmin: true, idempotencyKey: 'social-formula-disable-002', body: { note: '未发布版本停用' },
-  });
-  assert.equal(formulaDisabled.status, 200);
-  assert.equal(formulaDisabled.body.formula.audit.at(-1).event, 'disabled');
-  const matchedFormula = await request('/api/overseas/starter-198/social-content/internal/content-formulas/match', {
-    platformAdmin: true, body: { themeId: 'product_value', topic: '展示核心卖点' },
-  });
-  assert.equal(matchedFormula.status, 200, matchedFormula.raw);
-  assert.equal(matchedFormula.body.formula.formulaId, 'custom.product-proof');
-  const allowlistDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
-    platformAdmin: true, idempotencyKey: 'social-formula-allowlist-create',
-    body: {
-      formulaId: 'custom.case-allowlist', version: '1.0.0', name: '案例灰度公式', themeId: 'customer_case',
-      direction: completeFormulaDirection(),
-      nodes: [completeFormulaNode('case', { shotFunction: '展示授权案例', subject: '案例证据', action: '去敏展示' })],
-    },
-  });
-  assert.equal(allowlistDraft.status, 201, allowlistDraft.raw);
-  await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.case-allowlist/1.0.0/trial', {
-    platformAdmin: true, idempotencyKey: 'social-formula-allowlist-trial', body: {},
-  });
-  const allowlistPublish = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.case-allowlist/1.0.0/publish', {
-    platformAdmin: true, idempotencyKey: 'social-formula-allowlist-publish',
-    body: { status: 'gray', rollout: { percentage: 0, tenantAllowlist: [victim] } },
-  });
-  assert.equal(allowlistPublish.status, 200, allowlistPublish.raw);
-  const regularTenantMatch = await request('/api/overseas/starter-198/social-content/internal/content-formulas/match', {
-    platformAdmin: true, body: { themeId: 'customer_case', targetTenantId: tenant },
-  });
-  const allowlistedTenantMatch = await request('/api/overseas/starter-198/social-content/internal/content-formulas/match', {
-    platformAdmin: true, body: { themeId: 'customer_case', targetTenantId: victim },
-  });
-  assert.equal(regularTenantMatch.status, 503);
-  assert.equal(regularTenantMatch.body.error, 'social_content_formula_unavailable',
-    'formula registry remains empty for tenants that were not explicitly allowlisted');
-  assert.equal(allowlistedTenantMatch.body.formula.formulaId, 'custom.case-allowlist');
-  const percentageOnlyDraft = await request('/api/overseas/starter-198/social-content/internal/content-formulas', {
-    platformAdmin: true, idempotencyKey: 'social-formula-percentage-create',
-    body: {
-      formulaId: 'custom.percentage-only', version: '1.0.0', name: '仅百分比灰度公式', themeId: 'scenario_solution',
-      direction: completeFormulaDirection(),
-      nodes: [completeFormulaNode('scene', { shotFunction: '展示场景', subject: '使用场景', action: '现场展示' })],
-    },
-  });
-  assert.equal(percentageOnlyDraft.status, 201, percentageOnlyDraft.raw);
-  await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.percentage-only/1.0.0/trial', {
-    platformAdmin: true, idempotencyKey: 'social-formula-percentage-trial', body: {},
-  });
-  const percentageOnlyPublish = await request('/api/overseas/starter-198/social-content/internal/content-formulas/custom.percentage-only/1.0.0/publish', {
-    platformAdmin: true, idempotencyKey: 'social-formula-percentage-publish',
-    body: { status: 'gray', rollout: { percentage: 100, tenantAllowlist: [] } },
-  });
-  assert.equal(percentageOnlyPublish.status, 200, percentageOnlyPublish.raw);
-  const percentageOnlyMatch = await request('/api/overseas/starter-198/social-content/internal/content-formulas/match', {
-    platformAdmin: true, body: { themeId: 'scenario_solution', targetTenantId: tenant },
-  });
-  assert.equal(percentageOnlyMatch.status, 503);
-  assert.equal(percentageOnlyMatch.body.error, 'social_content_formula_unavailable',
-    'gray percentage is metadata only; an empty allowlist authorizes no tenant and there is no bundled fallback formula');
-
+  assert.equal(removedFormulaMatch.status, 404, "the removed formula matching endpoint stays unavailable");
   const publicThemes = await request('/api/overseas/starter-198/social-content/themes');
   assert.equal(publicThemes.status, 200);
   assert.equal(publicThemes.body.items.length, 5);
@@ -1418,18 +1215,267 @@ try {
   assert.equal(zeroInputTask.status, 201, zeroInputTask.raw);
   assert.equal(zeroInputTask.body.task.sourceCount, 0);
   assert.equal(zeroInputTask.body.task.brief.productionMode, 'social_ready');
-  assert.equal(zeroInputTask.body.task.readiness.complete, false,
-    'the customer default must not claim a publish-ready video can be made without real material');
-  assert.deepEqual(zeroInputTask.body.task.readiness.missing, ['publish_ready_material']);
+  assert.equal(zeroInputTask.body.task.brief.creationMode, 'material_processing');
+  assert.equal(zeroInputTask.body.task.brief.assetAvailability, 'none');
+  assert.equal(zeroInputTask.body.task.brief.managementMode, 'one_click_managed');
+  assert.equal(zeroInputTask.body.task.readiness.complete, true,
+    'missing customer material is routed to safe generation or substitution instead of blocking admission');
+  assert.deepEqual(zeroInputTask.body.task.readiness.missing, []);
+  assert.equal(zeroInputTask.body.task.status, 'plan_review');
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('source_material'));
   assert.equal(zeroInputTask.body.task.scriptBaseline.source, 'system_theme_baseline');
-  const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
-    idempotencyKey: 'social-zero-input-start-001',
+  const zeroInputBlocked = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-zero-input-start-blocked-001',
     body: { expectedVersion: zeroInputTask.body.task.version },
   });
-  assert.equal(zeroInputStarted.status, 409, zeroInputStarted.raw);
-  assert.equal(zeroInputStarted.body.error, 'social_content_task_inputs_incomplete');
+  assert.equal(zeroInputBlocked.status, 409, zeroInputBlocked.raw);
+  assert.equal(zeroInputBlocked.body.error, 'social_content_execution_facts_required',
+    'zero media is supported, but public production stops when even the minimum business facts are unavailable');
+  const zeroInputKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/sources`, {
+    idempotencyKey: 'social-zero-input-knowledge-001',
+    body: {
+      kind: 'knowledge', sourceRef: 'socialknowledge:enterprise-profile',
+      sourceVersion: 'profile-social-content-tenant', label: '企业资料',
+    },
+  });
+  assert.equal(zeroInputKnowledge.status, 201, zeroInputKnowledge.raw);
+  assert.equal(zeroInputKnowledge.body.task.assetSupplyPlan.overallFeasibility, 'functional_equivalent',
+    'zero customer media remains producible after the minimum business facts are available');
+  const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-zero-input-start-001',
+    body: { expectedVersion: zeroInputKnowledge.body.task.version },
+  });
+  assert.equal(zeroInputStarted.status, 202, zeroInputStarted.raw);
+  assert.equal(zeroInputStarted.body.task.status, 'producing');
+
+  const zeroInputTaskId = zeroInputTask.body.task.taskId as string;
+  const fakeVoicePath = path.join(temporaryRoot, 'zero-input-worker-voice.wav');
+  fs.writeFileSync(fakeVoicePath, Buffer.from('RIFF0000WAVEfmt '));
+  await runSocialContentAutoProduction({
+    repository,
+    tenantId: tenant,
+    userId: 'operator-user',
+    taskId: zeroInputTaskId,
+    runId: zeroInputStarted.body.task.runId,
+    assetSupplyAdapters: [{
+      adapterId: 'unsafe-test-digital-presenter',
+      sourceStrategies: ['authorized_digital_presenter'],
+      async execute(context) {
+        return {
+          asset: {
+            id: `unsafe-${context.shot.shotId}`, name: '不应进入成片的伪证据', type: 'image',
+            sourceId: `unsafe-${context.shot.shotId}`, url: 'unsafe-test-only.png', duration: 2.8,
+            visualObservations: ['伪装成客户现场的合成画面'], segments: [], selectionOrigin: 'system_graphic',
+          },
+          sourceStrategy: 'authorized_digital_presenter', providerId: 'unsafe-test-digital-presenter',
+          sourceRef: null, synthetic: true, representation: 'customer_evidence',
+          authorizationRef: null, disclosure: null,
+        };
+      },
+    }],
+    runtime: {
+      selectDirectorBgm: async input => ({
+        primary: {
+          trackId: 'test-authorized-bgm', name: '测试授权配乐', mood: input.directorMood,
+          authorization: {
+            status: 'authorized', basis: 'lingshu_builtin_library',
+            license: '测试内置曲库授权', evidence: 'test:authorized-bgm',
+          },
+        },
+        fallbacks: [], fallbackPolicy: 'ordered_preapproved_tracks_only', volume: input.volume,
+      }),
+      synthesizeVoice: async input => {
+        const duration = Math.min(8, Math.max(2, Number(input.targetDuration) || 8));
+        return {
+          ok: true, source: 'test_voice_provider', localPath: fakeVoicePath,
+          duration, text: input.text, cues: [{ start: 0, end: duration, text: input.text }],
+        };
+      },
+      resolveBgm: async () => ({ id: 'test-authorized-bgm', url: 'test-authorized-bgm.mp3' }),
+      renderComposite: async (_manifest, _onProgress, outputDir) => {
+        assert.ok(outputDir);
+        const outputPath = path.join(outputDir!, 'zero-input-worker.mp4');
+        fs.writeFileSync(outputPath, Buffer.concat([
+          Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(64, 1),
+        ]));
+        return { ok: true, outputPath };
+      },
+      inspectVisuals: async () => ({
+        passed: true,
+        failures: [],
+        metrics: {
+          sampleCount: 4, contentFrameCount: 4, nonBackgroundFrameRatio: 1,
+          meanBrightness: 100, meanLumaDeviation: 20, meanEdgeRatio: 0.1,
+          meanFrameDifference: 20, maxFrameDifference: 30, motionDetected: true,
+          estimatedDistinctFrames: 4, nearDuplicateFrameRatio: 0, sharpFrameRatio: 1,
+        },
+        evidenceFrames: [],
+      }),
+      inspectScenes: async input => ({ passed: true, issues: [], checkedScenes: input.scenes.length }),
+      runFfmpeg: async () => ({ ok: true, stdout: Buffer.alloc(0), stderr: '' }),
+      createCover: async input => {
+        const coverPath = path.join(input.outputDirectory, 'cover.jpg');
+        fs.writeFileSync(coverPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+        return coverPath;
+      },
+      backendFilePort,
+    },
+  });
+  const zeroInputCompleted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTaskId}`);
+  assert.equal(zeroInputCompleted.status, 200, zeroInputCompleted.raw);
+  assert.equal(zeroInputCompleted.body.task.status, 'asset_review',
+    'the zero-material worker produces a reviewable artifact without asking the novice customer to shoot');
+  const zeroArtifact = zeroInputCompleted.body.task.artifacts.find((artifact: any) => artifact.origin === 'agent');
+  assert.ok(zeroArtifact, 'the worker persists a customer-review artifact');
+  const zeroExecution = zeroArtifact.content.assetSupplyExecution;
+  assert.equal(zeroExecution.creationMode, 'material_processing');
+  assert.equal(zeroExecution.productionRoute, 'zero_asset_generation');
+  assert.equal(zeroExecution.shots.length, zeroArtifact.content.scriptBaseline.scenes.length);
+  assert.equal(zeroExecution.shots.every((shot: any) => shot.sourceStrategy && shot.truthBoundary), true,
+    'every rendered shot retains its actual source strategy and truth boundary');
+  assert.equal(zeroExecution.shots.every((shot: any) => shot.provenance.representation === 'non_evidentiary_visual'), true,
+    'zero-material generated visuals are never represented as customer factory, case or effect evidence');
+  assert.equal(zeroExecution.shots.some((shot: any) => shot.attempts.some((attempt: any) => (
+    attempt.sourceStrategy === 'authorized_digital_presenter' && attempt.status === 'rejected_by_truth_boundary'
+  ))), true, 'a provider result that presents synthetic media as customer evidence is rejected before fallback');
+  assert.equal(zeroExecution.shots.some((shot: any) => shot.fallbackApplied
+    && shot.sourceStrategy === 'motion_graphics'), true,
+  'a rejected digital-human result falls back to a traceable, non-evidentiary visual');
+
+  const viralReferenceTask = await request('/api/overseas/starter-198/social-content/tasks', {
+    idempotencyKey: 'social-viral-reference-create-001',
+    body: {
+      title: '指定爆款参考逐镜复刻', objective: '保留结构并重新制作全部表达',
+      mode: 'instant', themeId: 'product_value', creationMode: 'viral_replication',
+    },
+  });
+  assert.equal(viralReferenceTask.status, 201, viralReferenceTask.raw);
+  assert.equal(viralReferenceTask.body.task.referenceVideoAnalysis.status, 'analyzing',
+    'without an exact recommendation, viral replication remains explicitly pending');
+  const pendingViralStart = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-viral-reference-start-pending-001',
+    body: { expectedVersion: viralReferenceTask.body.task.version },
+  });
+  assert.equal(pendingViralStart.status, 409, pendingViralStart.raw);
+  assert.equal(pendingViralStart.body.error, 'social_content_reference_analysis_pending',
+    'viral production waits for exact reference analysis instead of silently using an unrelated trend');
+  const exactReferenceRecord = {
+    id: 'trend-exact-user-reference', tenantId: tenant,
+    title: 'ACME 张女士全网第一原片', sourceUrl: 'https://example.com/exact-user-reference',
+    tags: ['产品', '细节'], crawledAt: '2026-09-14T07:30:00.000Z',
+    aiAnalysis: JSON.stringify({
+      analysisMode: 'exact', analysisQuality: 'video',
+      gemini: {
+        theme: '产品卖点',
+        scriptDetails15s: [
+          {
+            time: '0-2.8', purpose: '前三秒产品钩子', visual: '张女士拿着 ACME 产品说全网第一',
+            shot: '极近特写', camera: '固定镜头', transitionToNext: '硬切',
+            dialogue: 'ACME 全网第一', onScreenText: '立刻年轻十岁', confidence: 0.96,
+          },
+          {
+            time: '2.8-6.5', purpose: '质地细节展示', visual: '手部展示产品质地',
+            shot: '近景', camera: '缓慢推进', transitionToNext: '动作匹配', confidence: 0.93,
+          },
+          {
+            time: '6.5-10', purpose: '检测证据', visual: '检测仪器和记录',
+            shot: '中景', camera: '跟随镜头', transitionToNext: '淡出', confidence: 0.92,
+          },
+        ],
+      },
+    }),
+  };
+  const exactReferenceResolver: Parameters<typeof addSocialTaskSource>[0]['referenceResolver'] = async input => (
+    buildSocialTaskReferencePackage({
+      record: exactReferenceRecord,
+      source: input.referenceSources[0]!,
+      themeId: input.themeId,
+      verifiedContext: input.verifiedContext,
+    })
+  );
+  const resolvedReference = await addSocialTaskSource({
+    repository,
+    tenantId: tenant,
+    userId: `${tenant}-user`,
+    taskId: viralReferenceTask.body.task.taskId,
+    idempotencyKey: 'social-viral-reference-source-001',
+    value: {
+      kind: 'reference_link', sourceRef: exactReferenceRecord.sourceUrl,
+      sourceVersion: 'exact-analysis-v1', label: '用户指定爆款参考',
+    },
+    referenceResolver: exactReferenceResolver,
+    now: new Date('2026-09-14T08:00:00.000Z'),
+  });
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.status, 'ready');
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.referenceSourceId, resolvedReference.source.sourceId);
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.shots.length, 3);
+  assert.deepEqual(resolvedReference.task.referenceVideoAnalysis?.analysisLayers?.map(layer => layer.level), ['L0', 'L1', 'L2', 'L3', 'L4']);
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.analysisLayers?.find(layer => layer.level === 'L4')?.status, 'pending');
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.shots.every(shot => (
+    Boolean(shot.action?.startState && shot.action.path && shot.action.endState && shot.action.spatialRelation)
+    && Boolean(shot.shotLanguage?.shotSize && shot.shotLanguage.movement)
+    && Boolean(shot.audioLayers && shot.observation)
+  )), true, 'exact reference analysis separates action, shot language, audio layers and observation certainty');
+  assert.equal(resolvedReference.task.replicationScript?.hookOptions.length, 3,
+    'the Director exposes one primary three-second hook and at least two alternatives');
+  assert.equal(resolvedReference.task.replicationScript?.hookOptions[0]?.role, 'primary');
+  assert.equal(resolvedReference.task.replicationScript?.shots.every(shot => (
+    shot.fidelityPoints.length >= 4 && shot.mustDifferPoints.length >= 4
+  )), true, 'every shot carries explicit fidelity and originality constraints');
+  assert.equal(resolvedReference.task.scriptBaseline?.referenceSourceId, resolvedReference.source.sourceId,
+    'the selected task reference identity survives into the frozen baseline');
+  assert.match(resolvedReference.task.referenceVideoAnalysis?.rightsNotice ?? '', /不代表版权已经确认/);
+  const safeReferenceOutput = JSON.stringify({
+    analysis: resolvedReference.task.referenceVideoAnalysis,
+    script: resolvedReference.task.replicationScript,
+  });
+  for (const forbidden of ['ACME', '张女士', '全网第一', '立刻年轻十岁']) {
+    assert.doesNotMatch(safeReferenceOutput, new RegExp(forbidden), `public replication output must remove ${forbidden}`);
+  }
+  const referenceKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}/sources`, {
+    idempotencyKey: 'social-viral-reference-knowledge-001',
+    body: {
+      kind: 'knowledge', sourceRef: 'socialknowledge:enterprise-profile',
+      sourceVersion: 'profile-social-content-tenant', label: '企业资料',
+    },
+  });
+  assert.equal(referenceKnowledge.status, 201, referenceKnowledge.raw);
+  let referenceQueueCalls = 0;
+  const referenceQueue = {
+    async enqueue() {
+      referenceQueueCalls += 1;
+      return { queueItemId: 'viral-reference-queue-item', runId: 'viral-reference-run', disposition: 'queued' as const };
+    },
+  };
+  await assert.rejects(() => startSocialContentTask({
+    repository,
+    orchestratorQueue: referenceQueue,
+    tenantId: tenant,
+    userId: `${tenant}-user`,
+    taskId: viralReferenceTask.body.task.taskId,
+    expectedVersion: referenceKnowledge.body.task.version,
+    idempotencyKey: 'social-viral-reference-review-001',
+    referenceResolver: exactReferenceResolver,
+    now: new Date('2026-09-14T08:01:00.000Z'),
+  }), (error: any) => error?.code === 'social_content_reference_review_required');
+  assert.equal(referenceQueueCalls, 0, 'the first start click confirms the visible hook plan without enqueueing production');
+  const reviewedReference = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}`);
+  assert.equal(reviewedReference.status, 200, reviewedReference.raw);
+  assert.equal(reviewedReference.body.task.replicationScript.status, 'confirmed');
+  const startedReference = await startSocialContentTask({
+    repository,
+    orchestratorQueue: referenceQueue,
+    tenantId: tenant,
+    userId: `${tenant}-user`,
+    taskId: viralReferenceTask.body.task.taskId,
+    expectedVersion: reviewedReference.body.task.version,
+    idempotencyKey: 'social-viral-reference-start-002',
+    referenceResolver: exactReferenceResolver,
+    now: new Date('2026-09-14T08:02:00.000Z'),
+  });
+  assert.equal(startedReference.status, 'producing');
+  assert.equal(referenceQueueCalls, 1, 'the second click starts production with the confirmed reference plan');
 
   const conceptPreviewTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-zero-input-preview-create-001',
@@ -1454,18 +1500,19 @@ try {
   assert.equal(instantTask.status, 201, instantTask.raw);
   assert.equal(instantTask.body.task.mode, 'instant');
   assert.equal(instantTask.body.task.brief.requestedOutputCount, 1, 'instant creation always produces one output');
-  assert.deepEqual(instantTask.body.task.scriptBaseline, {
-    version: '1', source: 'formula', sceneCount: 1, language: 'en',
-    lockedAt: instantTask.body.task.createdAt,
-    matchConfidence: 0.78,
-    groundingVersion: 'social-script-grounding.v5',
-  }, 'formula script baseline is frozen before any material upload or production request');
-  assert.equal(instantTask.body.task.materialRequirements.length, 1);
-  assert.equal(instantTask.body.task.materialRequirements.every((item: any) => item.required === false), true,
-    'theme suggestions are advisory until a formula is explicitly applied as a production constraint');
+  assert.notEqual(instantTask.body.task.scriptBaseline.source, 'formula',
+    'new tasks use inspiration analysis or a governed knowledge/system fallback');
+  assert.equal(instantTask.body.task.scriptBaseline.version, '1');
+  assert.equal(instantTask.body.task.materialRequirements.length, 0,
+    'new tasks do not inherit formula-owned shot requirements');
   const instantStoredTask = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(row => row.task_id === instantTask.body.task.taskId)!;
-  assert.deepEqual(instantStoredTask.formula_reference, { formulaId: 'custom.product-proof', version: '1.0.0' });
-  const instantStoredBaseline = instantStoredTask.script_baseline as { scenes: Array<{ narration: string }>; match: { userTextUsage: string } };
+  assert.equal(instantStoredTask.formula_reference, '');
+  const instantStoredBaseline = instantStoredTask.script_baseline as {
+    formulaReference: unknown;
+    scenes: Array<{ narration: string }>;
+    match: { userTextUsage: string };
+  };
+  assert.equal(instantStoredBaseline.formulaReference, null);
   assert.doesNotMatch(instantStoredBaseline.scenes[0].narration, /一个镜头看懂卖点|product:chair/,
     'task topic and free-form product reference are intent only and never become narration facts');
   assert.equal(instantStoredBaseline.match.userTextUsage, 'intent_only');
@@ -1480,11 +1527,11 @@ try {
     idempotencyKey: 'social-instant-material-001',
     body: {
       kind: 'material', sourceRef: instantUpload.body.file.fileRef, sourceVersion: instantUpload.body.file.sha256,
-      label: '产品与证据同框素材', purpose: instantTask.body.task.materialRequirements[0].requirementId,
+      label: '产品与证据同框素材', purpose: '产品真实素材',
     },
   });
   assert.equal(instantMaterial.status, 201, instantMaterial.raw);
-  assert.equal(instantMaterial.body.task.materialRequirements[0].status, 'satisfied');
+  assert.deepEqual(instantMaterial.body.task.materialRequirements, []);
   const instantKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/sources`, {
     idempotencyKey: 'social-instant-knowledge-001',
     body: { kind: 'knowledge', sourceRef: 'socialknowledge:enterprise-profile', label: '企业资料' },
@@ -1500,8 +1547,8 @@ try {
     },
   });
   assert.equal(sameThemeUpdate.status, 200, sameThemeUpdate.raw);
-  assert.equal(sameThemeUpdate.body.task.materialRequirements[0].status, 'satisfied',
-    'submitting an unchanged theme must not reset material suggestions');
+  assert.deepEqual(sameThemeUpdate.body.task.materialRequirements, [],
+    'submitting an unchanged theme must not reintroduce formula-owned material suggestions');
   const instantStarted = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/start`, {
     idempotencyKey: 'social-instant-start-001', body: { expectedVersion: sameThemeUpdate.body.task.version },
   });

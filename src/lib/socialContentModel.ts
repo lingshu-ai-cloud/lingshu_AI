@@ -5,6 +5,11 @@ import type {
   SocialContentTaskMode,
   SocialContentTaskStatus,
   SocialContentThemeId,
+  SocialContentCreationMode,
+  SocialAssetAvailability,
+  SocialContentManagementMode,
+  SocialShotFunction,
+  SocialShotSourceStrategy,
 } from '../../shared/contracts/socialContentWorkflow';
 
 export const SOCIAL_CONTENT_STAGES = [
@@ -256,9 +261,78 @@ export function socialContentAssetReviewAction(artifacts: Array<{ status: Social
   return 'progress';
 }
 
+export type SocialContentCreationPath = SocialContentCreationMode;
+export type SocialContentMaterialInput = SocialAssetAvailability;
+
+export const SOCIAL_CONTENT_CREATION_PATH_LABEL: Record<SocialContentCreationPath, string> = {
+  material_processing: '素材加工',
+  viral_replication: '爆款裂变',
+};
+
+export const SOCIAL_CONTENT_MATERIAL_INPUT_LABEL: Record<SocialContentMaterialInput, string> = {
+  ready: '有视频或图片',
+  limited: '只有商品链接或一张图',
+  none: '完全没素材',
+};
+
+const SOCIAL_SHOT_FUNCTION_LABEL: Record<SocialShotFunction, string> = {
+  hook: '前三秒钩子',
+  problem: '提出问题',
+  value: '说明价值',
+  demonstration: '使用演示',
+  proof: '效果证明',
+  trust: '建立信任',
+  transition: '画面过渡',
+  call_to_action: '行动引导',
+};
+
+const SOCIAL_SHOT_SOURCE_STRATEGY_LABEL: Record<SocialShotSourceStrategy, string> = {
+  customer_real_asset: '客户真实素材',
+  customer_product_image_animation: '商品图动效',
+  authorized_digital_presenter: '数字人口播',
+  licensed_stock_asset: '合规素材库',
+  non_evidentiary_ai_visual: 'AI 辅助画面',
+  motion_graphics: '动态图形',
+  verified_fact_card: '已确认信息卡片',
+};
+
+export function socialShotFunctionLabel(value: SocialShotFunction): string {
+  return SOCIAL_SHOT_FUNCTION_LABEL[value];
+}
+
+export function socialShotSourceStrategyLabel(value: SocialShotSourceStrategy): string {
+  return SOCIAL_SHOT_SOURCE_STRATEGY_LABEL[value];
+}
+
+export function socialShotMaterialCountsLabel(input: {
+  customerAssetIds: string[];
+  generatedAssetIds: string[];
+  licensedAssetIds: string[];
+}): string[] {
+  return [
+    input.customerAssetIds.length > 0 ? `客户素材 ${input.customerAssetIds.length} 项` : null,
+    input.generatedAssetIds.length > 0 ? `生成画面 ${input.generatedAssetIds.length} 项` : null,
+    input.licensedAssetIds.length > 0 ? `合规素材 ${input.licensedAssetIds.length} 项` : null,
+  ].filter((value): value is string => Boolean(value));
+}
+
+export function socialContentMaterialCanStart(
+  materialInput: SocialContentMaterialInput,
+  evidence: { hasVideo: boolean; imageCount: number; referenceLinkCount: number },
+): boolean {
+  if (materialInput === 'none') return true;
+  if (materialInput === 'limited') {
+    return evidence.hasVideo || evidence.imageCount >= 1 || evidence.referenceLinkCount >= 1;
+  }
+  return evidence.hasVideo || evidence.imageCount >= 2;
+}
+
 export interface SocialContentDraft {
   mode: SocialContentTaskMode;
   productionMode: 'social_ready' | 'concept_preview';
+  creationPath: SocialContentCreationPath;
+  materialInput: SocialContentMaterialInput;
+  managedMode: SocialContentManagementMode;
   themeId: SocialContentThemeId | '';
   customTopic: string;
   topic: string;
@@ -292,6 +366,9 @@ export interface SocialContentDraft {
 export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   mode: 'instant',
   productionMode: 'social_ready',
+  creationPath: 'material_processing',
+  materialInput: 'none',
+  managedMode: 'one_click_managed',
   themeId: 'product_value',
   customTopic: '',
   topic: '',

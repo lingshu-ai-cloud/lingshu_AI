@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => {
     watch: {
       // 后端会在 data/ 下写入账号状态、token 用量、任务等运行时数据。
       // 这些文件变化不应触发前端整页 reload，否则新手任务会被反复卸载/挂载。
-      ignored: ['**/data/**'],
+      ignored: ['**/data/**', '**/server/**', '**/dist*/**'],
     },
     proxy: {
       // 8788 被 Cursor 的 lingqi-ai 扩展占用；当前本地 watch 后端稳定监听 8790。

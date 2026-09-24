@@ -212,6 +212,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     pinned: Boolean(item.pinned), segmentAnalysisStatus: item.segmentAnalysisStatus ? String(item.segmentAnalysisStatus) : undefined,
     segmentAnalysisError: item.segmentAnalysisError ? String(item.segmentAnalysisError) : undefined,
     visualObservations: parseSegments(item.visualObservations), segments: parseSegments(item.segments),
+    scriptAnalysis: parseObject(item.scriptAnalysis) || parseObject(provenance?.materialScriptAnalysis),
   };
 }
 

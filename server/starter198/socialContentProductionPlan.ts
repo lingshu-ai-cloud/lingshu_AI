@@ -14,6 +14,9 @@ export type SocialProductionAsset = {
   objectKey?: string;
   cloudRecordId?: string;
   contentHash?: string;
+  /** Concrete commercial/derivative-use evidence for authorized shared
+   * inventory. It is required before stock can enter a zero-asset render. */
+  authorizationRef?: string;
   duration: number;
   visualObservations: string[];
   /** Legacy display labels. They are never sufficient to authorize an

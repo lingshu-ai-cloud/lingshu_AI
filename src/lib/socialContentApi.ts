@@ -66,9 +66,16 @@ function friendlyFailure(status: number, code = ''): string {
   if (code.includes('source_option_version_conflict')) return '资料已更新，请重新选择';
   if (code.includes('not_startable') || code.includes('not_editable')) return '当前阶段无法进行这项操作，请刷新任务状态';
   if (code.includes('orchestrator_not_configured') || code.includes('queue_unavailable')) return '内容制作服务正在准备中，请稍后重试';
+  if (code.includes('social_content_reference_analysis_pending')) return '编导 Agent 正在逐镜分析参考视频，完成后即可确认开头并开始制作';
+  if (code.includes('social_content_reference_review_required')) return '逐镜复刻方案和三个前三秒开头已准备好，请先查看并再次点击开始制作';
+  if (code.includes('social_content_execution_facts_required')) return '缺少最少必要事实。请补充企业资料、产品资料或已确认参数；无需补拍图片和视频';
+  if (code.includes('social_content_execution_rights_required')) return '参考视频或素材的使用权尚未确认，请先补充授权信息';
+  if (code.includes('social_content_execution_budget_required')) return '当前制作方案超过预算，请调整预算或选择更轻量的制作路线';
+  if (code.includes('social_content_execution_goal_degraded')) return '当前素材只能完成降级版本，请先确认是否接受目标调整';
+  if (code.includes('social_content_execution_director_review_required')) return '内容 Agent 的执行方案未通过编导审核，系统正在重新规划';
   if (code.includes('package') && (code.includes('inactive') || code.includes('unavailable'))) return '所选作业方案已更新，请重新选择';
-  if (code.includes('social_content_task_inputs_incomplete')) return '要生成可直接发布的内容，请先准备与所选主题对应的真实视频，或至少 2 份不同的真实图片/短片';
-  if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请确认已选择内容主题并准备与主题对应的真实素材';
+  if (code.includes('social_content_task_inputs_incomplete')) return '请确认任务目标和必要事实；没有图片或视频也可以使用系统托管方案继续制作';
+  if (code.includes('readiness') || code.includes('required') || code.includes('incomplete')) return '请确认内容目标、必要事实或授权信息；没有图片和视频也可以继续托管制作';
   if (code.includes('file_limit') || code.includes('file_capacity')) return '当前任务的文件数量或容量已达上限';
   if (code.includes('artifact_media_required')) return '请先生成并保存完整成品';
   if (code.includes('artifact_media') || code.includes('delivery_media')) return '成品文件校验失败，请重新生成后提交';

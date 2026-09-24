@@ -34,6 +34,7 @@ try {
     { matchSocialInspirationScript },
     {
       applySocialReviewRevision,
+      applyZeroAssetTruthSafeNarration,
       automaticSocialMaterialEligible,
       detectDistinctTaskVideoSegments,
       hasExactTaskProductAssociation,
@@ -182,10 +183,13 @@ try {
   const systemPlan = buildSocialProductionPlan({ baseline: systemBaseline, assets: systemAssets });
   assert.equal(systemPlan.ok, true, systemPlan.message);
   assert.equal(systemPlan.scenes.length, 4);
+  const safeSystemPlan = applyZeroAssetTruthSafeNarration(systemPlan);
+  assert.doesNotMatch(safeSystemPlan.scenes.map(scene => scene.narration).join(' '), /真实上手|真实场景|拍清楚|拍给你看|one real look|real scenario/i,
+    'zero-asset narration must not describe generated cards as real footage or a real scenario');
   const systemDirectorPlan = buildSocialDirectorPlan({
     taskId: 'zero-input-system-theme-test',
     baseline: systemBaseline,
-    productionPlan: systemPlan,
+    productionPlan: safeSystemPlan,
     productionAssets: systemAssets,
     sourceVersions: Object.fromEntries(systemAssets.map(asset => [asset.sourceId, asset.contentHash || 'generated-system-graphic'])),
     outputSpec: { aspectRatio: '9:16', resolution: '720p', platform: 'douyin' },
@@ -406,6 +410,8 @@ try {
   });
   assert.equal(inspirationBaseline.source, 'inspiration_script');
   assert.equal(inspirationBaseline.match?.inspirationReference?.recordId, 'inspiration-1');
+  assert.deepEqual(inspirationBaseline.scenes[0]?.referenceStructure, inspiration?.nodes[0]?.referenceStructure,
+    'the task baseline retains safe per-shot timing and camera grammar from exact reference analysis');
 
   const sourcePath = path.join(temporaryRoot, 'single-upload.mp4');
   const generated = await runVisualFfmpeg([

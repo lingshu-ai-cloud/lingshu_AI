@@ -59,6 +59,11 @@ const baseline = freezeSocialScriptBaseline({
   },
   lockedAt: createdAt,
 });
+baseline.match!.referenceSource = {
+  sourceId: 'socialsrc_exact_reference',
+  sourceRef: 'https://example.com/exact-reference',
+  sourceVersion: 'analysis-v1',
+};
 
 assert.equal(baseline.scenes[0]?.script, '脚本-产品开场');
 assert.equal(baseline.scenes[0]?.voiceover, '口播-产品全貌');
@@ -121,6 +126,7 @@ assert.equal(directorPlan.bgmSelection.fallbacks[0]?.trackId, 'builtin-tech-puls
 assert.equal(directorPlan.bgmSelection.volume, 16, 'formula-owned director volume is locked');
 assert.equal(directorPlan.coverIntent.assetId, 'material-one');
 assert.equal(directorPlan.contentAgentHandoff.scriptLocked, true);
+assert.equal(directorPlan.scriptSource.referenceSource?.sourceId, 'socialsrc_exact_reference');
 assert.deepEqual(directorPlan.contentAgentHandoff.forbiddenActions, [
   'rewrite_script', 'invent_product_facts', 'replace_real_material_with_text_cards',
   'select_unplanned_bgm', 'change_output_spec',
@@ -138,7 +144,10 @@ assert.throws(() => parseStoredSocialDirectorPlan({
 }), /social_content_director_plan_lineage_invalid/,
 'parse must recompute the complete immutable handoff hash');
 const publicSummary = publicSocialDirectorPlanSummary(parsed);
-assert.equal(publicSummary?.formulaConfigured, true);
+assert.equal(publicSummary?.formulaConfigured, false);
+assert.equal(publicSummary?.scriptSource, 'knowledge_fallback',
+  'historic formula lineage is normalized to the current public grounding source');
+assert.equal(publicSummary?.referenceSourceId, 'socialsrc_exact_reference');
 assert.match(publicSummary?.scriptSummary ?? '', /脚本-产品开场/);
 assert.match(publicSummary?.voiceoverSummary ?? '', /口播/);
 assert.match(publicSummary?.subtitleSummary ?? '', /字幕/);

@@ -126,6 +126,9 @@ export function taskToDraft(task: SocialContentTaskDetail | SocialContentTaskSum
   };
   return {
     ...EMPTY_SOCIAL_CONTENT_DRAFT,
+    creationPath: task.brief.creationMode ?? EMPTY_SOCIAL_CONTENT_DRAFT.creationPath,
+    materialInput: task.brief.assetAvailability ?? 'ready',
+    managedMode: task.brief.managementMode ?? EMPTY_SOCIAL_CONTENT_DRAFT.managedMode,
     mode: task.mode ?? 'weekly',
     productionMode: task.brief.productionMode ?? 'social_ready',
     themeId: task.theme?.themeId ?? '',

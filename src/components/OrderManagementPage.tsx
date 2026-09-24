@@ -11,7 +11,6 @@ import {
   Plus,
   Save,
   Search,
-  ShoppingCart,
   Trash2,
   TrendingUp,
 } from 'lucide-react';
@@ -29,7 +28,6 @@ import {
 import { authHeader } from '../lib/auth';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { normalizeSocialBrand, SocialPlatformIcon } from './SocialPlatformIcon';
-import { PAGE_REGISTRY } from '../pageRegistry';
 
 
 
@@ -253,24 +251,15 @@ export default function OrderManagementPage() {
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="orders-workbench">
-      <header className="flex min-h-[68px] flex-shrink-0 items-center justify-between border-b border-border px-5 py-3 sm:px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-6 w-6 items-center justify-center text-accent">
-            <ShoppingCart size={13} />
-          </div>
-          <div><h1 className="text-lg font-semibold text-text-primary">{PAGE_REGISTRY.orders.canonicalTitle}</h1><p className="mt-0.5 hidden text-[11px] text-text-muted sm:block">跟踪成交、履约与收入表现</p></div>
-        </div>
-        <div className="flex items-center gap-3">
-          <span aria-live="polite" className="text-xs font-semibold text-text-muted">{feedback}</span>
-          <button type="button" onClick={exportCsv} className="btn-ghost flex items-center gap-2 !px-3 !py-2">
-          <Download size={14} />
-          导出 CSV
-          </button>
-        </div>
-      </header>
-
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-6 py-5">
+        <div className="mb-4 flex min-h-9 items-center justify-end gap-3">
+          <span aria-live="polite" className="text-xs font-semibold text-text-muted">{feedback}</span>
+          <button type="button" onClick={exportCsv} className="btn-ghost flex items-center gap-2 !px-3 !py-2">
+            <Download size={14} />
+            导出 CSV
+          </button>
+        </div>
         <div className="secondary-stat-strip mb-5">
           {[
             { label: '有效 GMV', value: money(summary.gmv), desc: `${summary.orders} 个有效订单`, icon: <DollarSign size={14} />, color: '#047857', bg: '#D1FAE5' },

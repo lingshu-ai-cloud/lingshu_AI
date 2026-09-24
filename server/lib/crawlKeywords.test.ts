@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { resolveCrawlKeywords } from './crawlKeywords.js';
+import { resolveCrawlKeywords, resolveCrawlStrategy } from './crawlKeywords.js';
 
 const profile = { products: { categories: '服装', items: [{name: '产品1'}] } };
 assert.deepEqual(resolveCrawlKeywords('产品1', profile), {keywords: ['clothing'], source: 'category', evidence: ['服装']});
@@ -9,6 +9,21 @@ assert.deepEqual(resolveCrawlKeywords('产品1', {products:{categories:'服装',
 assert.throws(() => resolveCrawlKeywords('产品1', {}), /缺少可识别/);
 assert.throws(() => resolveCrawlKeywords('', {products:{categories:'11'}}), /缺少可识别/);
 assert.deepEqual(resolveCrawlKeywords('产品1', {products: {...profile.products, searchKeywords: 'linen shirt\n棉质T恤'}}), {keywords:['linen shirt','棉质T恤'],source:'knowledge',evidence:['linen shirt','棉质T恤']});
+const crawlStrategy = resolveCrawlStrategy({
+  explicit: '五轴零件',
+  profile: {
+    company: { companyType: '工厂', mainMarkets: '德国', primaryLanguages: '德语' },
+    products: { categories: '精密制造' },
+    customers: { targetProfiles: '品牌采购', commonQuestions: '能否小批量打样' },
+  },
+  platforms: ['youtube'],
+  now: new Date('2026-09-23T08:00:00.000Z'),
+});
+assert.equal(crawlStrategy.keywordSet.scope.companyRole, 'factory');
+assert.equal(crawlStrategy.keywordSet.scope.market, '德国');
+assert.deepEqual(crawlStrategy.keywords.map(item => item.category), ['discovery_seed', 'scene_cluster', 'evidence_query', 'competitor_account', 'task_override']);
+assert.ok(crawlStrategy.keywords.find(item => item.category === 'discovery_seed')?.values.includes('五轴零件'));
+assert.ok(crawlStrategy.keywords.find(item => item.category === 'scene_cluster')?.values.some(item => item.includes('小批量打样')));
 assert.equal(resolveCrawlKeywords('clothing', {products:{searchKeywords:'summer outfits'}}).source, 'knowledge', 'saved knowledge search terms override an earlier generated query');
 console.log('Evidence-based crawl keyword selection passed');
 

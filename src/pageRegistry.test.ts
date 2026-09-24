@@ -40,12 +40,14 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLab
 ]);
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');
+assert.equal(resolvePage('accountManagement'), 'traffic', 'the removed account settings surface forwards to publishing');
 assert.equal(resolveNavigationPage('traffic', 'materials'), 'socialInspiration');
 assert.equal(resolveNavigationPage('traffic', 'create'), 'smartAssets');
 assert.equal(resolveNavigationPage('traffic', 'publish'), 'traffic');
-assert.equal(resolveNavigationPage('traffic', 'accounts'), 'accountManagement');
+assert.equal(resolveNavigationPage('traffic', 'accounts'), 'traffic');
 assert.equal(resolveNavigationPage('not-a-page', 'create'), null);
 assert.equal(PAGE_REGISTRY.scriptLibrary.navParent, 'smartAssets');
 assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
+assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'traffic');
 
 console.log('Page registry tests passed');

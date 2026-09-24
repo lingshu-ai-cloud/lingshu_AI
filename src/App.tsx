@@ -33,7 +33,6 @@ const IntegrationsPage = lazy(() => import('./components/IntegrationsPage'));
 const ScheduledPage = lazy(() => import('./components/ScheduledPage'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const AdminDeliveryPage = lazy(() => import('./components/AdminDeliveryPage'));
-const ContentFormulaAdminPage = lazy(() => import('./components/ContentFormulaAdminPage'));
 const GlobalAssistant = lazy(() => import('./components/GlobalAssistant'));
 const AgentMemoryPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => import('./components/WorkspaceManagementPages').then(module => ({ default: module.OrganizationPermissionsPage })));
@@ -111,6 +110,15 @@ const loadPage = (): Page => {
     if (savedValue) localStorage.removeItem('ow_page');
     return 'digitalEmployees';
   } catch { return 'digitalEmployees'; }
+};
+
+const loadTrafficEntryView = (): 'publish' | 'accounts' => {
+  try {
+    const query = new URLSearchParams(window.location.search);
+    return query.get('page') === 'accountManagement' || query.get('view') === 'accounts' ? 'accounts' : 'publish';
+  } catch {
+    return 'publish';
+  }
 };
 
 const pagePreferenceScope = (session: AuthSession) =>
@@ -197,10 +205,10 @@ export default function App() {
   if (publicPath === '/privacy') return <LegalPages kind="privacy" />;
   if (publicPath === '/terms') return <LegalPages kind="terms" />;
   if (publicPath === '/data-deletion') return <LegalPages kind="data-deletion" />;
-
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(loadPage);
+  const [trafficEntryView, setTrafficEntryView] = useState<'publish' | 'accounts'>(loadTrafficEntryView);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [socialContentNavigation, setSocialContentNavigation] = useState<{
@@ -222,6 +230,7 @@ export default function App() {
     const restorePage = (event: PopStateEvent) => {
       const previous = resolveNavigationPage(event.state?.productionPage, event.state?.productionDetail?.view);
       if (previous) {
+        if (previous === 'traffic') setTrafficEntryView(event.state?.productionDetail?.view === 'accounts' ? 'accounts' : 'publish');
         setPage(previous);
         const socialTaskId = isSocialTaskContextPage(previous)
           ? readSocialContentNavigationTaskId(previous, event.state)
@@ -392,18 +401,11 @@ export default function App() {
     } catch { /* ignore */ }
   }, [page]);
   useEffect(() => {
-    if (session && (page === 'admin' || page === 'adminDelivery' || page === 'contentFormulaAdmin') && !isAdminSession(session)) setPage('digitalEmployees');
+    if (session && (page === 'admin' || page === 'adminDelivery') && !isAdminSession(session)) setPage('digitalEmployees');
   }, [page, session]);
   useEffect(() => {
     if (!session) return;
     if (starterAccess === 'loading' || starterAccess === 'unavailable') return;
-    // Platform formula operations are authorized by the hardened platformAdmin
-    // session bit, independently of the user's organization role. The earlier
-    // guard redirects every non-platform session, including tenant admins.
-    if (page === 'contentFormulaAdmin') {
-      if (!isAdminSession(session)) setPage('digitalEmployees');
-      return;
-    }
     const role = session.user.role || 'customer_service';
     if (!ROLE_PAGE_ACCESS[role].has(page)) setPage('digitalEmployees');
   }, [page, session, starterAccess]);
@@ -464,7 +466,8 @@ export default function App() {
   };
 
   const handleNavigate = useCallback((p: Page) => {
-    const next = p === 'retention' ? 'conversion' : p;
+    const next = p === 'retention' ? 'conversion' : p === 'accountManagement' ? 'traffic' : p;
+    if (next === 'traffic') setTrafficEntryView(p === 'accountManagement' ? 'accounts' : 'publish');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
       ...window.history.state,
@@ -524,6 +527,7 @@ export default function App() {
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
+      if (nextPage === 'traffic') setTrafficEntryView(incomingDetail.view === 'accounts' ? 'accounts' : 'publish');
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
@@ -721,7 +725,7 @@ export default function App() {
         </Suspense>
       )}
       <div data-app-page-slot className="min-h-0 flex-1 overflow-hidden">
-        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate(starterMode ? 'digitalEmployees' : 'strategy')}>
+        <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
@@ -757,7 +761,7 @@ export default function App() {
               onScriptPanelOpen={() => setScriptPanelOpen(true)}
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               onSessionRefresh={() => void refreshSession()}
-              initialView="publish"
+              initialView={trafficEntryView}
               visibleModes={['publish', 'accounts']}
               pageTitle={PAGE_REGISTRY.traffic.canonicalTitle}
               storageScope={session.tenant?.id || session.user.tenantId}
@@ -807,20 +811,6 @@ export default function App() {
               )}
             </div>
           )}
-          {page === 'accountManagement' && (
-            <TrafficPage
-              key="account-management"
-              onEnterConversation={enterConversation}
-              onLeaveConversation={leaveConversation}
-              isInConversation={false}
-              onNavigate={handleNavigate}
-              initialView="accounts"
-              showModeTabs={false}
-              pageTitle={PAGE_REGISTRY.accountManagement.canonicalTitle}
-              storageScope={session.tenant?.id || session.user.tenantId}
-              socialContentTaskId={activeSocialContentTaskId}
-            />
-          )}
           {page === 'socialMonitoring' && <SocialMonitoringPage onNavigate={handleNavigate} />}
           {page === 'scriptLibrary' && <ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} />}
           {(['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'] as Page[]).includes(page) && <PlatformAdsPage page={page} onNavigate={handleNavigate} />}
@@ -852,7 +842,6 @@ export default function App() {
           {page === 'scheduled' && <ScheduledPage onAction={startAgentTask} />}
           {page === 'admin' && <AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} />}
           {page === 'adminDelivery' && <AdminDeliveryPage />}
-          {page === 'contentFormulaAdmin' && <ContentFormulaAdminPage />}
           {(page === 'channels' || page === 'youtube') && <IntegrationsPage />}
           </Suspense>
         </PageErrorBoundary>

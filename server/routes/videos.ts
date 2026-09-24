@@ -1663,6 +1663,11 @@ function videoListWhere(tenantId: string, platform?: string, status?: string): R
   return where;
 }
 
+const testTenantVisibleListCache = new Map<string, {
+  expiresAt: number;
+  items: Record<string, unknown>[];
+}>();
+
 async function listPublicVideosForTenant(input: {
   tenantId: string;
   page: number;
@@ -1738,9 +1743,15 @@ async function listPublicVideosForTenant(input: {
 
   const visible: Record<string, unknown>[] = [];
   const seenSourceUrls = new Set<string>();
+  const cacheKey = JSON.stringify([input.tenantId, input.platform || '', input.status || '', 'video']);
   const scanTenantVideos = async () => {
     visible.length = 0;
     seenSourceUrls.clear();
+    const cached = testTenantVisibleListCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      visible.push(...cached.items);
+      return;
+    }
     let scanPage = 1;
     let totalPages = 1;
     do {
@@ -1761,6 +1772,10 @@ async function listPublicVideosForTenant(input: {
       totalPages = result.totalPages || 1;
       scanPage += 1;
     } while (scanPage <= totalPages && scanPage <= 50);
+    testTenantVisibleListCache.set(cacheKey, {
+      expiresAt: Date.now() + 12_000,
+      items: [...visible],
+    });
   };
 
   await scanTenantVideos();
@@ -1882,6 +1897,31 @@ function withImagePublicBaselines(items: Record<string, unknown>[], baselineUniv
 
 // ─── GET /videos ──────────────────────────────────────────────────────────────
 // Query: page, perPage, platform, status, contentFormat(video|image)
+async function tenantInventoryTotal(tenantId: string, contentFormat: ContentFormat): Promise<number> {
+  const imageInventory = await store.list<Record<string, unknown>>(COL, {
+    where: { tenantId, contentFormat: 'image' },
+    page: 1,
+    perPage: 1,
+  });
+  if (contentFormat === 'image') return imageInventory.totalItems;
+  // Legacy crawled videos predate the contentFormat column. Count them as
+  // video by subtracting the explicit image inventory from all tenant records.
+  const allInventory = await store.list<Record<string, unknown>>(COL, {
+    where: { tenantId },
+    page: 1,
+    perPage: 1,
+  });
+  return Math.max(0, allInventory.totalItems - imageInventory.totalItems);
+}
+
+videosRouter.get('/inventory-summary', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const rawContentFormat = String(_req.query.contentFormat || 'video');
+  const contentFormat: ContentFormat = rawContentFormat === 'image' ? 'image' : 'video';
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.json({ contentFormat, totalItems: await tenantInventoryTotal(tenantId, contentFormat) });
+});
+
 videosRouter.get('/', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const { page = '1', perPage = '20', platform, status, search, crawlRange = 'all', contentFormat: rawContentFormat = 'video' } = req.query as Record<string, string>;
@@ -1892,23 +1932,19 @@ videosRouter.get('/', async (req, res) => {
   // Inventory KPI: every crawled record owned by this tenant. This deliberately
   // ignores page/search/status/admin aggregation; the inspiration list below may
   // hide failed or processing records, but they still belong to the crawl total.
-  const inventory = await store.list<Record<string, unknown>>(COL, {
-    where: { tenantId, contentFormat },
-    page: 1,
-    perPage: 1,
-  });
-  const inventoryTotalItems = inventory.totalItems;
-
-  const result = await listPublicVideosForTenant({
-    tenantId,
-    platform,
-    status,
-    contentFormat,
-    search,
-    crawlRange,
-    page: pageNumber,
-    perPage: perPageNumber,
-  });
+  const [inventoryTotalItems, result] = await Promise.all([
+    tenantInventoryTotal(tenantId, contentFormat),
+    listPublicVideosForTenant({
+      tenantId,
+      platform,
+      status,
+      contentFormat,
+      search,
+      crawlRange,
+      page: pageNumber,
+      perPage: perPageNumber,
+    }),
+  ]);
 
   // Keep list requests read-only and fast. Repair/download/analysis work belongs
   // to crawl jobs or explicit user actions; launching it from GET made every page
@@ -1917,7 +1953,7 @@ videosRouter.get('/', async (req, res) => {
   if (contentFormat === 'image') {
     // listPublicVideosForTenant has already scanned and filtered the image records.
     // A second full collection scan here doubled list latency as the inspiration
-    // library grew. The first page contains the latest 20 records, which is also the
+    // library grew. The first page contains the latest requested page of records, which is also the
     // product definition of the public recent-account baseline.
     res.json({ ...result, inventoryTotalItems, items: withImagePublicBaselines(result.items).map(item => withSignedThumbnail({ ...item, canManage: String(item.tenantId || '') === tenantId }, tenantId)) });
     return;
@@ -2045,6 +2081,18 @@ videosRouter.get('/:id/media-url', async (req, res) => {
   const filename = String(record.videoFileId || '');
   if (!filename && !analysis.videoObjectKey) { res.status(404).json({ error: 'Video not stored' }); return; }
   res.setHeader('Cache-Control', 'private, no-store');
+  const normalizedLocalFile = filename.replace(/\\/g, '/').replace(/^\/+/, '');
+  const recordTenantId = String(record.tenantId || '');
+  const expectedPrefix = `tenants/${recordTenantId}/`;
+  const tenantRoot = path.resolve(MEDIA_DIR, 'tenants', recordTenantId);
+  const localPath = path.resolve(MEDIA_DIR, normalizedLocalFile);
+  if (normalizedLocalFile.startsWith(expectedPrefix)
+    && localPath.startsWith(`${tenantRoot}${path.sep}`)
+    && fs.existsSync(localPath)
+    && fs.statSync(localPath).isFile()) {
+    res.json({ url: signAssetUrl(`/media/${normalizedLocalFile}`, tenantId) });
+    return;
+  }
   res.json({ url: signAssetUrl(`/api/overseas/videos/${encodeURIComponent(req.params.id)}/media`, tenantId) });
 });
 
@@ -2743,6 +2791,43 @@ async function queueAnalyzeSource(
   }).catch((e) => {
     console.warn('[videos] async analyze-source failed:', e instanceof Error ? e.message : e);
   });
+}
+
+/** Internal service entry used by task-scoped viral replication. It upgrades
+ * an existing tenant-owned trend record to full-video exact analysis without
+ * exposing the admin reanalyze route or trusting a caller-supplied tenant. */
+export async function queueExactSourceAnalysisForTenant(input: {
+  tenantId: string;
+  recordId: string;
+}): Promise<'already_ready' | 'queued'> {
+  const record = await store.getById<Record<string, unknown>>(COL, input.recordId);
+  if (!record || String(record.tenantId || '') !== input.tenantId) throw new Error('Trend video not found');
+  const previous = videoAnalysisOf(record);
+  if (String(previous.analysisMode) === 'exact'
+    && String(previous.analysisQuality) === 'video'
+    && Array.isArray(parseJsonRecord<Record<string, unknown>>(previous.gemini, {}).scriptDetails15s)) {
+    return 'already_ready';
+  }
+  if (String(previous.requestedAnalysisMode) === 'exact'
+    && ['queued', 'waiting_for_video', 'analyzing'].includes(String(previous.geminiStatus || ''))) {
+    return 'queued';
+  }
+  const analysisRunId = randomUUID();
+  const nextAnalysis = {
+    ...previous,
+    requestedAnalysisMode: 'exact',
+    analysisRunId,
+    analysisRunMode: 'exact',
+    geminiStatus: 'queued',
+    analysisQueuedAt: new Date().toISOString(),
+    analysisError: undefined,
+  };
+  await store.update(COL, input.recordId, {
+    status: 'pending' as VideoStatus,
+    aiAnalysis: JSON.stringify(nextAnalysis),
+  });
+  await queueAnalyzeSource({ ...record, aiAnalysis: JSON.stringify(nextAnalysis) });
+  return 'queued';
 }
 
 async function enqueueCrawledRecordsForAnalysis(records: unknown[]): Promise<void> {

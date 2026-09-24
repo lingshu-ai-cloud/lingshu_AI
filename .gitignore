@@ -24,6 +24,9 @@ data/materials.json
 data/studio-projects.json
 data/demo-usage.json
 data/oauth-config.json
+data/account-hub/
+data/startup-hub/
+data/startup-hub-files/
 data/product-api.json
 data/bgm/
 data/bgm.json
@@ -72,6 +75,7 @@ data/trend-videos.json
 data/daily-briefing-queue.json
 logs/
 output/
+dist-account-hub/
 tmp/
 __pycache__/
 *.pyc

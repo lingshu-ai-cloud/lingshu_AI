@@ -1,5 +1,4 @@
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
-import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy';
 import { socialContentCurrentArtifacts } from './socialContentModel';
 
 export interface SocialContentWeeklyPlan {
@@ -10,8 +9,8 @@ export interface SocialContentWeeklyPlan {
   budgetLabel: string;
   materialCount: number;
   referenceCount: number;
-  shootingGap: boolean;
-  shootingLabel: string;
+  managedSupplyActive: boolean;
+  assetSupplyLabel: string;
   productionLanes: Array<{ label: string; status: string }>;
 }
 
@@ -20,7 +19,6 @@ function money(value: number): string {
 }
 
 export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): SocialContentWeeklyPlan {
-  const materialPolicy = socialContentMaterialPolicy(task.theme?.themeId ?? null);
   const artifacts = socialContentCurrentArtifacts(task.artifacts);
   const activeSources = task.sources.filter(source => source.status === 'active');
   const materialCount = activeSources.filter(source => source.kind === 'material').length;
@@ -28,23 +26,20 @@ export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): Soc
   const reviewCount = artifacts.filter(artifact => artifact.status === 'review_required').length;
   const completedCount = artifacts.filter(artifact => artifact.status === 'approved').length;
   const targetCount = task.brief.requestedOutputCount ?? Math.max(artifacts.length, 1);
-  const shootingGap = materialCount === 0;
+  const managedSupplyActive = materialCount === 0;
 
   let needUserAction = '当前无需处理';
   if (!task.readiness.complete) needUserAction = `补充 ${task.readiness.missing.length} 项资料`;
   else if (reviewCount > 0) needUserAction = `验收 ${reviewCount} 项内容`;
   else if (artifacts.some(artifact => artifact.status === 'changes_requested')) needUserAction = '查看本批修改进度';
-  else if (shootingGap && ['plan_review', 'producing', 'attention'].includes(task.status)) needUserAction = '处理集中补拍';
 
   const weeklyBudget = task.brief.weeklyBudgetCny ?? null;
   const budgetLabel = weeklyBudget === null
     ? '待设置'
     : `${money(weeklyBudget)} 上限`;
-  const shootingLabel = shootingGap
-    ? task.brief.shootingWindowMinutes == null
-      ? '需确认一次集中补拍'
-      : `可安排 ${task.brief.shootingWindowMinutes} 分钟集中拍摄`
-    : '现有素材可先行生产';
+  const assetSupplyLabel = managedSupplyActive
+    ? '系统将逐镜判断数字人、合规素材、信息图或生成画面能否安全替代；缺少必要事实或权利时会明确暂停'
+    : '优先保护并加工客户现有素材';
 
   return {
     targetCount,
@@ -54,12 +49,12 @@ export function buildSocialContentWeeklyPlan(task: SocialContentTaskDetail): Soc
     budgetLabel,
     materialCount,
     referenceCount,
-    shootingGap,
-    shootingLabel,
+    managedSupplyActive,
+    assetSupplyLabel,
     productionLanes: [
-      { label: '现有素材制作', status: materialCount > 0 ? `已关联 ${materialCount} 项素材` : `等待${materialPolicy.subjectLabel}` },
-      { label: materialPolicy.focusLabel, status: task.brief.productRef ? '纳入本周计划' : '本期未指定' },
-      { label: '结构变体测试', status: referenceCount > 0 ? `分析 ${referenceCount} 条参考` : '按历史表现安排' },
+      { label: '画面供给', status: materialCount > 0 ? `已关联 ${materialCount} 项客户素材` : '零素材托管，逐镜判断可行性' },
+      { label: '产品与事实', status: task.brief.productRef ? '纳入本周计划' : '只使用通用安全表达' },
+      { label: '脚本与结构', status: referenceCount > 0 ? `逐镜分析 ${referenceCount} 条参考` : '由编导 Agent 按主题组织' },
     ],
   };
 }

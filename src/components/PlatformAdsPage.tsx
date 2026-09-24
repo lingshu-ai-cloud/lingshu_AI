@@ -11,7 +11,6 @@ import {
   FileText,
   Layers3,
   Link2,
-  Megaphone,
   Plus,
   Target,
   ShieldCheck,
@@ -55,11 +54,6 @@ const channels = [
     color: "#e45148",
     description: "覆盖 Shorts 与多种视频版位",
   },
-];
-const tabs: { id: Page; title: string }[] = [
-  { id: "adsOverview", title: "投放总览" },
-  { id: "adsPlans", title: "投放计划" },
-  { id: "adsManaged", title: "AI 托管" },
 ];
 type Draft = AdManagement & Pick<PlatformAdTask, 'currency' | 'status' | 'version' | 'proposal' | 'authorization' | 'sourceContext'> & {
   id: string;
@@ -117,9 +111,6 @@ export default function PlatformAdsPage({
     configuration: { ...emptyAdPlanConfiguration },
   });
   const isOverviewPage = page === "adsOverview" || page === "adsCreatives";
-  const title = isOverviewPage
-    ? "投放总览"
-    : tabs.find((tab) => tab.id === page)?.title || "投放总览";
   useEffect(() => {
     if (page === "adsCreatives") setOverviewTab("creatives");
   }, [page]);
@@ -223,14 +214,6 @@ export default function PlatformAdsPage({
 
   return (
     <div className="ads-workspace">
-      <header className="ads-topbar">
-        <div className="ads-topbar-title">
-          <span className="ads-topbar-icon" aria-hidden="true">
-            <Megaphone size={13} />
-          </span>
-          <h1>{title}</h1>
-        </div>
-      </header>
       <main className="ads-main">
         <div className={isOverviewPage ? "ads-overview-toolbar" : "ads-page-toolbar"}>
           {isOverviewPage && (

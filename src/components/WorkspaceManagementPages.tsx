@@ -250,15 +250,16 @@ function HoverMedia({ title, poster, url }: { title: string; poster?: string; ur
   </div>;
 }
 
-function PageShell({ icon, title, description, children }: {
+function PageShell({ icon, title, description, hideHeader = false, children }: {
   icon: ReactNode;
   title: string;
   description: string;
+  hideHeader?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="workspace-management-page flex h-full flex-col bg-white">
-      <header className="shrink-0 border-b border-border px-5 py-4 sm:px-6">
+      {!hideHeader && <header className="shrink-0 border-b border-border px-5 py-4 sm:px-6">
         <div className="mx-auto flex max-w-6xl items-start gap-3">
           <span className="mt-1 flex h-6 w-6 items-center justify-center text-accent">{icon}</span>
           <div>
@@ -266,7 +267,7 @@ function PageShell({ icon, title, description, children }: {
             <p className="mt-1 text-xs leading-5 text-text-muted">{description}</p>
           </div>
         </div>
-      </header>
+      </header>}
       <main className="min-h-0 flex-1 overflow-y-auto bg-[#f8faf7] px-4 py-6 sm:px-6">
         <div className="mx-auto max-w-6xl">
           {children}
@@ -820,7 +821,7 @@ export function AgentMemoryPage({ includeMockCustomers = false, mockCustomerScop
     await action();
   };
   return (
-    <PageShell icon={<BrainCircuit size={14} />} title="智能体记忆" description="查看智能体从真实业务中沉淀的经验，并明确每条记忆的来源、用途与使用边界。">
+    <PageShell hideHeader icon={<BrainCircuit size={14} />} title="智能体记忆" description="查看智能体从真实业务中沉淀的经验，并明确每条记忆的来源、用途与使用边界。">
       <div className="mb-4 flex gap-6 overflow-x-auto border-b border-border">
         {tabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setTab(id); setQuery(''); }} className={`flex h-11 shrink-0 items-center justify-center gap-2 border-b-2 px-1 text-xs font-semibold transition-colors ${tab === id ? 'border-accent text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'}`}><Icon size={15} className={tab === id ? 'text-emerald-600' : ''} />{label}</button>)}
       </div>
@@ -984,7 +985,7 @@ export function OrganizationPermissionsPage() {
     count: members.filter(member => member.role === definition.id).length,
   }));
   return (
-    <PageShell icon={<UserRoundCog size={14} />} title="组织与权限" description="管理组织成员、角色权限和数据访问范围。">
+    <PageShell hideHeader icon={<UserRoundCog size={14} />} title="组织与权限" description="管理组织成员、角色权限和数据访问范围。">
       <div className="mb-4 grid gap-3 sm:grid-cols-2">
         <div className="rounded-2xl border border-border bg-white p-4"><Users size={18} className="text-emerald-600" /><p className="mt-3 text-2xl font-bold text-text-primary">{members.length}</p><p className="text-xs text-text-muted">组织成员</p></div>
         <div className="rounded-2xl border border-border bg-white p-4"><ShieldCheck size={18} className="text-emerald-600" /><p className="mt-3 text-2xl font-bold text-text-primary">{roles.length}</p><p className="text-xs text-text-muted">预设角色</p></div>

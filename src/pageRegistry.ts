@@ -21,7 +21,6 @@ export const PAGE_IDS = [
   'scheduled',
   'admin',
   'adminDelivery',
-  'contentFormulaAdmin',
   'channels',
   'youtube',
   'agentMemory',
@@ -48,7 +47,7 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   scriptLibrary: { navLabel: '脚本库', canonicalTitle: '脚本库', navParent: 'smartAssets' },
   smartAssets: { navLabel: '内容制作', canonicalTitle: '内容制作' },
   socialMonitoring: { navLabel: '内容监控', canonicalTitle: '账号内容监控' },
-  accountManagement: { navLabel: '渠道设置', canonicalTitle: '渠道与授权设置' },
+  accountManagement: { navLabel: '账号', canonicalTitle: '发布与渠道 · 账号', navParent: 'traffic' },
   adsOverview: { navLabel: '投放总览', canonicalTitle: '投放总览' },
   adsPlans: { navLabel: '投放计划', canonicalTitle: '投放计划' },
   adsCreatives: { navLabel: '广告素材', canonicalTitle: '广告素材', navParent: 'adsPlans' },
@@ -62,7 +61,6 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   scheduled: { navLabel: '定时任务', canonicalTitle: '定时任务' },
   admin: { navLabel: '账号总控', canonicalTitle: '账号总控' },
   adminDelivery: { navLabel: '客户运维', canonicalTitle: '客户运维' },
-  contentFormulaAdmin: { navLabel: '爆款公式库', canonicalTitle: '管理员爆款公式库' },
   channels: { navLabel: '渠道连接', canonicalTitle: '渠道连接', navParent: 'plugins' },
   youtube: { navLabel: 'YouTube 连接', canonicalTitle: 'YouTube 连接', navParent: 'plugins' },
   agentMemory: { navLabel: '智能体记忆', canonicalTitle: '智能体记忆' },
@@ -90,7 +88,9 @@ export function isPage(value: unknown): value is Page {
  */
 export function resolvePage(value: unknown): Page | null {
   if (!isPage(value)) return null;
-  return value === 'retention' ? 'conversion' : value;
+  if (value === 'retention') return 'conversion';
+  if (value === 'accountManagement') return 'traffic';
+  return value;
 }
 
 export type LegacyTrafficView = 'materials' | 'create' | 'publish' | 'accounts';
@@ -101,6 +101,6 @@ export function resolveNavigationPage(value: unknown, view?: unknown): Page | nu
   if (page !== 'traffic') return page;
   if (view === 'materials') return 'socialInspiration';
   if (view === 'create') return 'smartAssets';
-  if (view === 'accounts') return 'accountManagement';
+  if (view === 'accounts') return 'traffic';
   return page;
 }

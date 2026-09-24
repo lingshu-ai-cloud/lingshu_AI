@@ -26,6 +26,7 @@ import { authRouter } from './routes/auth.js';
 import { youtubeRouter } from './routes/youtube.js';
 import { socialRouter } from './routes/social.js';
 import { socialEngagementRouter } from './routes/socialEngagement.js';
+import { socialDiscoveryRouter } from './routes/socialDiscovery.js';
 import { socialChannelsRouter } from './socialChannels/router.js';
 import { wecomCustomerServiceRouter } from './routes/wecomCustomerService.js';
 import { platformIntegrationsRouter } from './routes/platformIntegrations.js';
@@ -57,6 +58,7 @@ import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
 import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
 import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
 import { platformAdImportsRouter } from './routes/platformAdImports.js';
+import { accountHubRouter } from './routes/accountHub.js';
 import {
   apiRateLimitConfig,
   configureHttpServer,
@@ -203,12 +205,14 @@ app.use('/api', assistLinksRouter);
 app.use('/api/overseas/youtube', youtubeRouter);
 app.use('/api/overseas/social', socialRouter);
 app.use('/api/overseas/social-engagement', socialEngagementRouter);
+app.use('/api/overseas/social-discovery', socialDiscoveryRouter);
 app.use('/api/overseas/social-channels', socialChannelsRouter);
 app.use('/api/overseas/wecom-customer-service', wecomCustomerServiceRouter);
 app.use('/api/overseas/scheduler', schedulerRouter);
 app.use('/api/overseas/plugins', pluginsRouter);
 app.use('/api/overseas/auth', authRouter);
 app.use('/api/overseas/admin', adminRouter);
+app.use('/api/overseas/account-hub', accountHubRouter);
 app.use('/api/overseas/support-access', supportAccessRouter);
 app.use('/api/overseas/crawl-worker', crawlWorkerRouter);
 app.use('/api/overseas/studio', studioRouter);

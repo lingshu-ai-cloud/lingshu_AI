@@ -1,6 +1,7 @@
 import { formatDemoQuotaError } from './studioQuotaMessage';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
+import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 
 const VERIFIED_AI_GENERATION_PATHS = new Set([
   'script',
@@ -764,7 +765,20 @@ export const studioApi = {
       return { ok: false, error: '素材编辑失败' };
     }
   },
-  deleteMaterial: (id: string) => del(`materials/${id}`),
+  deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: authHeader(),
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      return response.ok && payload.ok
+        ? { ok: true }
+        : { ok: false, error: payload.error || `素材删除失败（HTTP ${response.status}）` };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '素材删除失败' };
+    }
+  },
 
   digitalHumanAvatars: () => get<{ items: Array<{ id: string; name: string }> }>('digital-human/avatars', { items: [] }),
   approveDigitalHumanJob: (id: string) => post<{ ok: boolean; job?: DigitalHumanJob }>(`digital-human/jobs/${encodeURIComponent(id)}/approve`, { reviewed: true }, { ok: false }),
@@ -882,6 +896,7 @@ export interface Material {
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
   visualObservations?: string[];
+  scriptAnalysis?: MaterialScriptAnalysis;
   createdAt: string;
 }
 

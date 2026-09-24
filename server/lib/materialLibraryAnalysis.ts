@@ -6,8 +6,21 @@ import { readMaterialLibrary, updateLocalMaterial, type MaterialRecord } from '.
 import { getOwnedCloudMaterialRecord, updateCloudMaterial } from './cloudMaterials.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
+import { buildMaterialScriptAnalysis, reusableMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 const jobs = new KeyedWorkQueue(2);
 export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`);
+function scriptAnalysisForRecord(record: MaterialRecord, revision: string): MaterialScriptAnalysis | null {
+  if (record.segmentAnalysisStatus !== 'completed' || record.analysisSourceRevision !== revision) return null;
+  return reusableMaterialScriptAnalysis(record.scriptAnalysis, revision) || buildMaterialScriptAnalysis({
+    materialId: record.id,
+    name: String(record.name || ''),
+    sourceRevision: revision,
+    duration: Number(record.duration || 0),
+    segments: Array.isArray(record.segments) ? record.segments : [],
+    visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
+    analyzedAt: String(record.updatedAt || record.createdAt || '') || undefined,
+  });
+}
 export function libraryCandidate(record: MaterialRecord): AssetCandidate {
   const cloud = record.id.startsWith('pb-');
   const mediaRoot = path.resolve(process.cwd(), 'data/media');
@@ -19,14 +32,18 @@ export function libraryCandidate(record: MaterialRecord): AssetCandidate {
     productId: String(record.productId || ''), productName: String(record.productName || ''),
     observations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
     visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
-    segments: Array.isArray(record.segments) ? record.segments : [], tags: [], synthetic: false,
+    segments: Array.isArray(record.segments) ? record.segments : [],
+    scriptAnalysis: scriptAnalysisForRecord(record, analysisFileRevision(record)) || undefined,
+    tags: String(record.tags || '').split(/[,，]/).map(value => value.trim()).filter(Boolean), synthetic: false,
     authorization: { status: record.scope === 'shared' ? 'licensed' : 'owned', scope: record.scope === 'shared' ? 'shared' : 'tenant', evidence: String(record.licenseEvidence || record.sourceUrl || '租户上传素材') },
     source: record.scope === 'shared' ? 'licensed_shared_material' : 'tenant_material',
   };
 }
 export function analysisFileRevision(record: MaterialRecord): string {
-  const candidate = libraryCandidate(record);
-  const stat = candidate.localPath ? fs.statSync(candidate.localPath) : undefined;
+  const cloud = record.id.startsWith('pb-');
+  const mediaRoot = path.resolve(process.cwd(), 'data/media');
+  const localPath = record.file && !cloud ? path.resolve(mediaRoot, record.file) : '';
+  const stat = localPath && fs.existsSync(localPath) ? fs.statSync(localPath) : undefined;
   return crypto.createHash('sha256').update(JSON.stringify([record.id, record.file, record.objectKey, record.sourceRevision || '', stat?.size, stat?.mtimeMs])).digest('hex');
 }
 async function ownedMaterial(tenantId: string, id: string): Promise<MaterialRecord> {
@@ -38,7 +55,24 @@ async function ownedMaterial(tenantId: string, id: string): Promise<MaterialReco
   return record;
 }
 async function patch(tenantId: string, id: string, changes: Record<string, unknown>) {
-  const ok = id.startsWith('pb-') ? await updateCloudMaterial(id.slice(3), changes) : updateLocalMaterial(id, tenantId, changes);
+  let ok: boolean;
+  if (id.startsWith('pb-') && changes.scriptAnalysis) {
+    const cloudId = id.slice(3);
+    const raw = await getOwnedCloudMaterialRecord(cloudId, tenantId);
+    const rawProvenance = raw?.provenance;
+    let provenance: Record<string, unknown> = {};
+    if (rawProvenance && typeof rawProvenance === 'object' && !Array.isArray(rawProvenance)) provenance = rawProvenance as Record<string, unknown>;
+    else if (typeof rawProvenance === 'string') {
+      try { provenance = JSON.parse(rawProvenance) as Record<string, unknown>; } catch { provenance = {}; }
+    }
+    const { scriptAnalysis, ...cloudChanges } = changes;
+    ok = await updateCloudMaterial(cloudId, {
+      ...cloudChanges,
+      provenance: { ...provenance, materialScriptAnalysis: scriptAnalysis },
+    });
+  } else {
+    ok = id.startsWith('pb-') ? await updateCloudMaterial(id.slice(3), changes) : updateLocalMaterial(id, tenantId, changes);
+  }
   if (!ok) throw Error('素材分析结果保存失败，请重试');
 }
 export async function requestMaterialAnalysis(tenantId: string, id: string, retry = false): Promise<{ status: string; reused: boolean }> {
@@ -46,7 +80,21 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
   if (jobs.has(key)) return { status: 'analyzing', reused: true };
   const record = await ownedMaterial(tenantId, id);
   const revision = analysisFileRevision(record);
-  if (!retry && record.segmentAnalysisStatus === 'completed' && record.analysisSourceRevision === revision) return { status: 'completed', reused: true };
+  if (!retry && record.segmentAnalysisStatus === 'completed' && record.analysisSourceRevision === revision) {
+    if (!reusableMaterialScriptAnalysis(record.scriptAnalysis, revision)) {
+      await patch(tenantId, id, {
+        scriptAnalysis: buildMaterialScriptAnalysis({
+          materialId: id,
+          name: String(record.name || ''),
+          sourceRevision: revision,
+          duration: Number(record.duration || 0),
+          segments: Array.isArray(record.segments) ? record.segments : [],
+          visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
+        }),
+      });
+    }
+    return { status: 'completed', reused: true };
+  }
   // Check again after the awaited ownership lookup, before reserving this job.
   if (jobs.has(key)) return { status: 'analyzing', reused: true };
   const created = await jobs.enqueue(key,
@@ -57,13 +105,38 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
       const result = await analyzeProductionMaterial(libraryCandidate(record), tenantId, true);
       const current = await ownedMaterial(tenantId, id);
       if (analysisFileRevision(current) !== revision) throw Error('素材文件已变化，请重新分析当前版本');
-      await patch(tenantId, id, { duration: result.duration, segments: result.segments, visualObservations: result.observations,
+      const scriptAnalysis = buildMaterialScriptAnalysis({
+        materialId: id,
+        name: String(record.name || ''),
+        sourceRevision: revision,
+        duration: result.duration,
+        segments: result.segments,
+        visualObservations: result.observations,
+      });
+      await patch(tenantId, id, { duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
         segmentAnalysisStatus: 'completed', segmentAnalysisError: '', analysisSourceRevision: revision });
     } catch (error) {
       await patch(tenantId, id, { segmentAnalysisStatus: 'failed', segmentAnalysisError: materialAnalysisError(error) });
     }
   }, error => console.warn('[material-analysis]', error instanceof Error ? error.message : 'failed'));
   return { status: 'pending', reused: !created };
+}
+export async function saveMaterialSegmentsWithScriptAnalysis(
+  tenantId: string,
+  record: MaterialRecord,
+  segments: Array<Record<string, unknown>>,
+): Promise<MaterialScriptAnalysis> {
+  const revision = analysisFileRevision(record);
+  const scriptAnalysis = buildMaterialScriptAnalysis({
+    materialId: record.id,
+    name: String(record.name || ''),
+    sourceRevision: revision,
+    duration: Number(record.duration || 0),
+    segments,
+    visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
+  });
+  await patch(tenantId, record.id, { segments, scriptAnalysis, analysisSourceRevision: revision });
+  return scriptAnalysis;
 }
 export async function waitForMaterialAnalysis(tenantId: string, id: string) {
   await requestMaterialAnalysis(tenantId, id);

@@ -14,7 +14,7 @@ import { crawlImagePostsForTenant, crawlVideosForTenant, getVideoPipelineStats }
 import { createCrawlWorkerJob } from './crawlWorker.js';
 import type { Platform } from '../types/index.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { resolveCrawlKeywords } from '../lib/crawlKeywords.js';
+import { resolveCrawlKeywords, resolveCrawlStrategy } from '../lib/crawlKeywords.js';
 import { normalizeKeywordInput, type KeywordPlatform } from '../../src/lib/keywordInput.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1006,17 +1006,18 @@ function resolveCrawlerPlatform(raw: unknown, fallback = 'youtube'): string {
 
 function normalizeCrawlerConfig(config: Record<string, string>, fallbackPlatform = 'youtube'): Record<string, string> {
   const platform = resolveCrawlerPlatform(config.platforms, fallbackPlatform);
-  const rawKeywords = String(config.keywords || config.keyword || 'skincare').trim() || 'skincare';
+  const rawKeywords = String(config.keywords || config.keyword || '').trim();
   const normalized = normalizeKeywordInput(rawKeywords, platform as KeywordPlatform);
   return {
     ...config,
     platforms: platform,
-    keywords: normalized.serialized || 'skincare',
+    keywords: normalized.serialized,
+    keywordSource: config.keywordSource || 'business_profile',
     limit: normalizeCrawlerLimit(config.limit),
   };
 }
 
-function normalizedKeywordList(value: string | undefined, platform: Platform, fallback = ['skincare']): string[] {
+function normalizedKeywordList(value: string | undefined, platform: Platform, fallback: string[] = []): string[] {
   const normalized = normalizeKeywordInput(String(value || ''), platform as KeywordPlatform);
   return normalized.items.length > 0 ? normalized.items : fallback;
 }
@@ -1024,18 +1025,42 @@ function normalizedKeywordList(value: string | undefined, platform: Platform, fa
 async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const tenantId = await resolveSchedulerTenantId(task);
   const requestedKeywords = task.config.keywordSource ? (task.config.keywordInput || '') : (task.config.keywords || task.config.keyword || '');
-  const selection = resolveCrawlKeywords(requestedKeywords, await readTenantEnterpriseProfile(tenantId));
+  const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
+  const selection = resolveCrawlKeywords(requestedKeywords, enterpriseProfile);
   const resolvedKeywords = selection.keywords.join(', ');
-  if (selection.source !== 'explicit') {
+  const platforms = splitConfigList(task.config.platforms, ['youtube'])
+    .filter((platform): platform is Platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
+  const crawlStrategy = resolveCrawlStrategy({
+    explicit: requestedKeywords,
+    profile: enterpriseProfile,
+    platforms,
+    businessGoal: task.config.businessGoal || task.config.goal,
+  });
+  if (selection.source !== 'explicit' || task.config.crawlStrategyVersion !== crawlStrategy.version) {
     const tasks = load();
     const saved = tasks.find(item => item.id === task.id && item.tenantId === tenantId);
     if (saved) {
-      saved.config = { ...saved.config, keywords: resolvedKeywords, keywordInput: requestedKeywords, keywordSource: selection.source, keywordEvidence: selection.evidence.join('、') };
+      saved.config = {
+        ...saved.config,
+        keywords: resolvedKeywords,
+        keywordInput: requestedKeywords,
+        keywordSource: selection.source,
+        keywordEvidence: selection.evidence.join('、'),
+        crawlStrategyId: crawlStrategy.crawlStrategyId,
+        crawlStrategyVersion: crawlStrategy.version,
+        crawlStrategy: JSON.stringify(crawlStrategy),
+        keywordSetId: crawlStrategy.keywordSet.keywordSetId,
+        keywordSetVersion: String(crawlStrategy.keywordSet.version),
+        discoveryBriefId: crawlStrategy.discoveryBrief.discoveryBriefId,
+        enabledSceneIds: crawlStrategy.discoveryBrief.trackedSceneIds.join(','),
+        discoveryModes: crawlStrategy.discoveryBrief.discoveryModes.join(','),
+        lookbackDays: String(crawlStrategy.discoveryBrief.lookbackDays),
+        resultLimit: String(crawlStrategy.discoveryBrief.resultLimit),
+        maxRunCost: crawlStrategy.discoveryBrief.budgetLimitCny === null ? '' : String(crawlStrategy.discoveryBrief.budgetLimitCny),
+      };
       save(tasks);
     }
   }
-  const platforms = splitConfigList(task.config.platforms, ['youtube'])
-    .filter((platform): platform is Platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
   const displayedKeywords = new Set<string>();
   const limit = Math.max(1, Math.min(50, Number(task.config.limit || 5) || 5));
   const { dateFrom, dateTo } = beijingDateRange(task.config.dateWindowDays);

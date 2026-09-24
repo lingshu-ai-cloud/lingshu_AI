@@ -4,7 +4,7 @@ import {
   Home, Users, LayoutGrid, BarChart3, Megaphone, Bot,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, WandSparkles, RadioTower, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
+  Clapperboard, WandSparkles, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
@@ -22,12 +22,12 @@ interface NavSection {
 
 const navItem = (id: Page, icon: ReactNode) => ({ id, label: PAGE_REGISTRY[id].navLabel, icon });
 
-const HOME_NAV_ITEM = navItem('strategy', <Home size={16} />);
+const HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
 
 const OPERATIONS_NAV: NavSection = {
   label: '经营管理',
   items: [
-    navItem('digitalEmployees', <Target size={16} />),
+    navItem('strategy', <Home size={16} />),
   ],
 };
 
@@ -75,14 +75,12 @@ const ADMIN_NAV: NavSection = {
   items: [
     navItem('admin', <ShieldCheck size={16} />),
     navItem('adminDelivery', <PlugZap size={16} />),
-    navItem('contentFormulaAdmin', <ListTree size={16} />),
   ],
 };
 
 const SYSTEM_NAV: NavSection = {
   label: '系统设置',
   items: [
-    navItem('accountManagement', <RadioTower size={16} />),
     navItem('plugins', <PlugZap size={16} />),
     navItem('organizationPermissions', <UserRoundCog size={16} />),
   ],
@@ -99,7 +97,7 @@ const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
 };
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
-  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions', 'contentFormulaAdmin']),
+  super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
   admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
   social_operator: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
   customer_service: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'orders', 'scheduled']),
@@ -269,7 +267,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     ? [
       { ...STARTER_BUSINESS_OVERVIEW_NAV, items: STARTER_BUSINESS_OVERVIEW_NAV.items.filter(item => allowedPages.has(item.id)) },
       ...roleSections
-        .map(section => ({ ...section, items: section.items.filter(item => item.id !== 'digitalEmployees') }))
+        .map(section => ({ ...section, items: section.items.filter(item => item.id !== 'digitalEmployees' && item.id !== 'strategy') }))
         .filter(section => section.items.length > 0),
     ].filter(section => section.items.length > 0)
     : roleSections;

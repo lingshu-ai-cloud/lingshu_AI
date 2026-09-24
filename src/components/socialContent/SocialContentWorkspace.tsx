@@ -10,7 +10,11 @@ import type {
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { attachSocialContentNavigationState } from '../../lib/socialContentContext';
-import { socialContentCanRegisterPublication } from '../../lib/socialContentModel';
+import {
+  socialContentCanRegisterPublication,
+  type SocialContentCreationPath,
+  type SocialContentMaterialInput,
+} from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
 import SocialTaskEditorDialog from './SocialTaskEditorDialog';
 import SocialTaskOverview from './SocialTaskOverview';
@@ -21,6 +25,9 @@ interface EditorSession {
   target: SocialContentSaveTarget;
   initialThemeId?: SocialContentThemeId | '';
   initialMode?: SocialContentTaskMode;
+  initialCreationPath?: SocialContentCreationPath;
+  initialMaterialInput?: SocialContentMaterialInput;
+  initialManagedMode?: 'one_click_managed';
   lockMode?: boolean;
 }
 
@@ -28,6 +35,9 @@ export interface SocialContentCreateRequest {
   requestId: number;
   themeId: SocialContentThemeId | '';
   mode?: SocialContentTaskMode;
+  creationPath?: SocialContentCreationPath;
+  materialInput?: SocialContentMaterialInput;
+  managedMode?: 'one_click_managed';
 }
 
 function editorAttemptId(): string {
@@ -61,6 +71,9 @@ export default function SocialContentWorkspace({
       target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
       initialThemeId: themeId,
       initialMode: defaultCreateMode,
+      initialCreationPath: 'material_processing',
+      initialMaterialInput: 'none',
+      initialManagedMode: 'one_click_managed',
       lockMode: Boolean(defaultCreateMode),
     });
   }, [defaultCreateMode]);
@@ -72,6 +85,9 @@ export default function SocialContentWorkspace({
       target: { mode: 'new', taskId: null, expectedVersion: null, attemptId: editorAttemptId() },
       initialThemeId: createRequest.themeId,
       initialMode: createRequest.mode || defaultCreateMode,
+      initialCreationPath: createRequest.creationPath,
+      initialMaterialInput: createRequest.materialInput,
+      initialManagedMode: createRequest.managedMode,
       lockMode: Boolean(createRequest.mode || defaultCreateMode),
     });
   }, [createRequest, defaultCreateMode]);
@@ -176,6 +192,9 @@ export default function SocialContentWorkspace({
         task={editor?.task || null}
         initialThemeId={editor?.initialThemeId}
         initialMode={editor?.initialMode}
+        initialCreationPath={editor?.initialCreationPath}
+        initialMaterialInput={editor?.initialMaterialInput}
+        initialManagedMode={editor?.initialManagedMode}
         lockMode={editor?.lockMode}
         catalog={state.workspace.catalog}
         busy={state.busy}

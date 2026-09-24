@@ -7,7 +7,7 @@ export default function SocialWeeklySummary({ task, onEdit }: { task: SocialCont
   const cards = [
     { label: '本周准备做什么', value: `${plan.targetCount} 项内容`, detail: task.brief.productRef || task.brief.objective, icon: ClipboardList },
     { label: '已经完成多少', value: `${plan.completedCount} / ${plan.targetCount}`, detail: plan.reviewCount > 0 ? `${plan.reviewCount} 项待验收` : '按当前批次统计', icon: CheckCircle2 },
-    { label: '需要我做什么', value: plan.needUserAction, detail: plan.shootingGap ? plan.shootingLabel : '其余工作自动推进', icon: AlertCircle },
+    { label: '需要我做什么', value: plan.needUserAction, detail: plan.managedSupplyActive ? '没有素材时由系统自动补齐' : '其余工作自动推进', icon: AlertCircle },
     { label: '本周预算', value: plan.budgetLabel, detail: task.brief.weeklyBudgetCny == null ? '可在本周设置中补充' : '实际成本以生产记录为准', icon: CircleDollarSign },
   ];
   return (
@@ -24,7 +24,7 @@ export default function SocialWeeklySummary({ task, onEdit }: { task: SocialCont
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {plan.productionLanes.map(lane => <div key={lane.label} className="rounded-lg bg-surface-2 px-3 py-2.5"><p className="text-[11px] font-bold text-text-primary">{lane.label}</p><p className="mt-1 text-[10px] text-text-muted">{lane.status}</p></div>)}
         </div>
-        {plan.shootingGap && <button type="button" onClick={onEdit} className="mt-3 w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-left text-xs font-bold text-amber-900">集中补拍 · {plan.shootingLabel}</button>}
+        {plan.managedSupplyActive && <div className="mt-3 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-left text-xs font-bold text-emerald-900">零素材托管 · {plan.assetSupplyLabel}</div>}
       </div>
     </section>
   );
