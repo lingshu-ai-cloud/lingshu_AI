@@ -23,7 +23,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   });
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    throw new SocialProgramRequestError(
+      response.status,
+      'social_program_invalid_response',
+      '社媒经营服务尚未正确加载，请刷新服务后重试。',
+    );
+  }
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new SocialProgramRequestError(
+      response.status,
+      'social_program_invalid_response',
+      '社媒经营服务返回了无法识别的数据。',
+    );
+  }
   if (!response.ok) {
     throw new SocialProgramRequestError(
       response.status,
@@ -38,7 +53,9 @@ const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 
 export const socialProgramApi = {
   async list(): Promise<SocialProgram[]> {
-    return (await request<{ items: SocialProgram[] }>('/')).items;
+    const payload = await request<{ items: SocialProgram[] }>('/');
+    if (!Array.isArray(payload.items)) throw new SocialProgramRequestError(502, 'social_program_invalid_response', '社媒经营项目列表格式不正确。');
+    return payload.items;
   },
   async get(programId: string): Promise<SocialProgram> {
     return (await request<{ item: SocialProgram }>(`/${encodeURIComponent(programId)}`)).item;
@@ -50,7 +67,9 @@ export const socialProgramApi = {
     return (await request<{ item: SocialProgram }>(`/${encodeURIComponent(programId)}`, { method: 'PATCH', ...json(input) })).item;
   },
   async listAccounts(programId: string): Promise<OwnedSocialAccount[]> {
-    return (await request<{ items: OwnedSocialAccount[] }>(`/${encodeURIComponent(programId)}/accounts`)).items;
+    const payload = await request<{ items: OwnedSocialAccount[] }>(`/${encodeURIComponent(programId)}/accounts`);
+    if (!Array.isArray(payload.items)) throw new SocialProgramRequestError(502, 'social_program_invalid_response', '自有账号列表格式不正确。');
+    return payload.items;
   },
   async createAccount(programId: string, input: Record<string, unknown>): Promise<OwnedSocialAccount> {
     return (await request<{ item: OwnedSocialAccount }>(`/${encodeURIComponent(programId)}/accounts`, { method: 'POST', ...json(input) })).item;
