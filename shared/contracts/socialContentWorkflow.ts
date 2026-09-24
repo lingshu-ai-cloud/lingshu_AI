@@ -37,6 +37,20 @@ export type SocialContentTaskMode = typeof SOCIAL_CONTENT_TASK_MODES[number];
 export const SOCIAL_CONTENT_CREATION_MODES = ['material_processing', 'viral_replication'] as const;
 export type SocialContentCreationMode = typeof SOCIAL_CONTENT_CREATION_MODES[number];
 
+/**
+ * How reference evidence is allowed to shape a viral-replication task.
+ * Historic clone tasks omit this field and are projected as
+ * `single_source_fidelity` when they contain one production reference.
+ */
+export const SOCIAL_REPLICATION_REFERENCE_MODES = [
+  'single_source_fidelity',
+  'account_format_series',
+  'multi_source_hybrid',
+] as const;
+export type SocialReplicationReferenceMode = typeof SOCIAL_REPLICATION_REFERENCE_MODES[number];
+/** Product-language alias used by the PRD and API documentation. */
+export type ReferenceMode = SocialReplicationReferenceMode;
+
 /** Readiness of customer-owned visual material; `none` is a supported starting state. */
 export const SOCIAL_ASSET_AVAILABILITIES = ['ready', 'limited', 'none'] as const;
 export type SocialAssetAvailability = typeof SOCIAL_ASSET_AVAILABILITIES[number];
@@ -274,6 +288,88 @@ export interface SocialReferenceShotAnalysis {
   mustDifferPoints: string[];
 }
 
+export type SocialTimelineSubjectKind = 'person' | 'product' | 'prop' | 'environment' | 'screen_text' | 'other';
+
+/**
+ * Production-grade semantic beat. This is intentionally richer than the
+ * legacy shot analysis: micro states and continuity must be data, not prompt
+ * prose, before a high-fidelity task may claim to preserve them.
+ */
+export interface SocialTimelineBeat {
+  beatId: string;
+  referenceAnalysisId: string;
+  referenceShotId: string | null;
+  startSeconds: number;
+  endSeconds: number;
+  purpose: SocialShotFunction;
+  subjects: Array<{
+    subjectId: string;
+    kind: SocialTimelineSubjectKind;
+    description: string;
+    identitySensitive: boolean;
+  }>;
+  action: {
+    startState: string;
+    path: string;
+    endState: string;
+    spatialRelation: string;
+    startsAtSeconds: number | null;
+    revealAtSeconds: number | null;
+  };
+  objectStates: Array<{
+    subjectId: string | null;
+    attribute: string;
+    value: string;
+    visibility: 'clear' | 'partial' | 'uncertain';
+    continuityKey: string | null;
+  }>;
+  shotLanguage: {
+    shotSize: string;
+    cameraAngle: string;
+    movement: string;
+    composition: string;
+    subjectAreaRatio: number | null;
+    subjectPosition: string | null;
+  };
+  lighting: {
+    direction: string | null;
+    softness: string | null;
+    colorTemperature: string | null;
+    contrast: string | null;
+    shadowAndHighlight: string | null;
+  };
+  environment: {
+    semanticType: string | null;
+    materials: string[];
+    clutterDensity: string | null;
+    livedInDetails: string[];
+  };
+  audioLayers: {
+    voice: string | null;
+    captions: string | null;
+    ambient: string | null;
+    music: string | null;
+    soundEffects: string | null;
+  };
+  rhythm: {
+    description: string;
+    cutAtSeconds: number | null;
+    beatAtSeconds: number[];
+  };
+  continuity: {
+    incomingState: string[];
+    outgoingState: string[];
+    conflicts: string[];
+  };
+  observation: {
+    observableFacts: string[];
+    inferredIntent: string[];
+    causalGaps: string[];
+    confidence: number | null;
+    needsHumanReview: boolean;
+  };
+}
+
 export interface SocialThreeSecondHook {
   hookId: string;
   role: 'primary' | 'alternative';
@@ -311,10 +407,219 @@ export interface SocialReferenceVideoAnalysis {
     fullTimelineCovered: boolean;
   };
   shots: SocialReferenceShotAnalysis[];
+  /** Optional on historic analyses; projected from `shots` when absent. */
+  timelineBeats?: SocialTimelineBeat[];
   hookAnalysis: SocialThreeSecondHook | null;
   rightsNotice: string;
   createdAt: string;
 }
+
+export interface SocialVersionedObjectRef {
+  objectType: string;
+  id: string;
+  version: string;
+}
+
+/** Account-level evidence; metrics are always relative to this account/platform. */
+export interface SocialBenchmarkAccountSnapshot {
+  snapshotId: string;
+  version: string;
+  platform: string;
+  platformAccountId: string;
+  canonicalUrl: string;
+  displayName: string;
+  accountType: SocialBenchmarkAccountType;
+  positioning: string[];
+  audiences: string[];
+  recurringFormats: string[];
+  styleFingerprint: string[];
+  performanceBaselineRefs: string[];
+  representativeContentAnalysisIds: string[];
+  conversionEntryPoints: string[];
+  capturedAt: string;
+}
+
+/** Content-level bridge between an account snapshot and exact media analysis. */
+export interface SocialReferenceContentAnalysis {
+  contentAnalysisId: string;
+  version: string;
+  benchmarkAccountSnapshotId: string | null;
+  sourceContentId: string;
+  referenceAnalysisId: string | null;
+  businessPurpose: string;
+  audienceStage: string | null;
+  narrativeShell: string;
+  hook: string;
+  proofMethod: string[];
+  callToAction: string | null;
+  relativePerformance: number | null;
+  transferableMechanisms: string[];
+  mustReplace: string[];
+  inapplicableConditions: string[];
+  evidenceRefs: string[];
+}
+
+/** Frozen account rules are referenced by version, never silently re-read. */
+export interface SocialAccountPlaybookRef extends SocialVersionedObjectRef {
+  objectType: 'account_playbook';
+  accountRef: string;
+}
+
+/** Account → content → media → beat lineage used by every replication decision. */
+export interface SocialReplicationReferenceChain {
+  benchmarkAccountSnapshot: SocialVersionedObjectRef | null;
+  referenceContentAnalysis: SocialVersionedObjectRef | null;
+  referenceAnalysis: SocialVersionedObjectRef | null;
+  timelineBeats: SocialVersionedObjectRef[];
+  targetAccountPlaybook: SocialAccountPlaybookRef | null;
+  integrity: {
+    complete: boolean;
+    missing: Array<'benchmark_account' | 'reference_content' | 'reference_analysis' | 'timeline_beats' | 'account_playbook'>;
+    checkedAt: string;
+  };
+}
+
+export const SOCIAL_REPLICATION_FACTOR_CATEGORIES = [
+  'hook',
+  'composition',
+  'lighting',
+  'environment',
+  'object_state',
+  'interaction',
+  'camera',
+  'rhythm',
+  'audio',
+  'caption',
+  'identity',
+] as const;
+export type SocialReplicationFactorCategory = typeof SOCIAL_REPLICATION_FACTOR_CATEGORIES[number];
+
+export const SOCIAL_REPLICATION_FACTOR_POLICIES = [
+  'lock',
+  'equivalent',
+  'bounded',
+  'replace_identity',
+  'prohibit_reuse',
+  'free',
+] as const;
+export type SocialReplicationFactorPolicy = typeof SOCIAL_REPLICATION_FACTOR_POLICIES[number];
+export type SocialReplicationFactorImportance = 'critical' | 'high' | 'medium' | 'low';
+export type SocialReplicationCausalRole = 'retention' | 'understanding' | 'proof' | 'trust' | 'emotion' | 'conversion';
+export type SocialReplicationCausalStatus = 'creative_hypothesis' | 'observed_correlation' | 'repeated_association' | 'experimental_support';
+
+export interface SocialReplicationFactorEvidence {
+  evidenceId: string;
+  level: 'source_observation' | 'account_relative_performance' | 'repeated_format' | 'timepoint_behavior' | 'owned_account_experiment';
+  sourceRef: string;
+  description: string;
+  confidence: number;
+  supports: Array<'presence' | 'causal_role' | 'policy'>;
+  capturedAtSeconds: number | null;
+}
+
+/** Machine-readable target; `description` is display-only and never the gate. */
+export interface SocialReplicationFactorTarget {
+  metric: string;
+  value: string | number | boolean | string[];
+  unit: string | null;
+  regionRef: string | null;
+  stateKey: string | null;
+}
+
+export interface SocialReplicationFactorTolerance {
+  metric: string;
+  minimum: number | null;
+  maximum: number | null;
+  allowedValues: string[];
+  maximumDeviation: number | null;
+  unit: string | null;
+  humanReviewWhen: string[];
+}
+
+export interface SocialReplicationFactorValidator {
+  validatorId: string;
+  kind: 'timeline_alignment' | 'vision_state' | 'spatial_relation' | 'composition' | 'lighting' | 'motion' | 'audio' | 'ocr' | 'identity' | 'rights_fingerprint' | 'human_review';
+  detector: string;
+  blocking: boolean;
+  threshold: number | null;
+  evidenceOutput: Array<'reference_frame' | 'output_frame' | 'measurement' | 'match_region' | 'audio_segment' | 'review_note'>;
+  fallbackToHuman: boolean;
+}
+
+/** One frozen, independently verifiable Director-owned replication factor. */
+export interface SocialReplicationFactorSpec {
+  factorId: string;
+  version: string;
+  beatId: string;
+  referenceShotId: string | null;
+  category: SocialReplicationFactorCategory;
+  description: string;
+  causalRole: SocialReplicationCausalRole;
+  causalStatus: SocialReplicationCausalStatus;
+  policy: SocialReplicationFactorPolicy;
+  target: SocialReplicationFactorTarget;
+  tolerance: SocialReplicationFactorTolerance;
+  importance: SocialReplicationFactorImportance;
+  observationConfidence: number;
+  causalConfidence: number;
+  evidenceRefs: SocialReplicationFactorEvidence[];
+  validator: SocialReplicationFactorValidator;
+  status: 'draft' | 'frozen' | 'superseded';
+  frozenAt: string | null;
+  decisionOwner: 'director_agent';
+}
+/** Product-language alias used by the PRD and API documentation. */
+export type ReplicationFactorSpec = SocialReplicationFactorSpec;
+
+export interface SocialReplicationReferenceAssignment {
+  assignmentId: string;
+  inspirationId: string;
+  analysisId: string;
+  analysisVersion: string;
+  role: 'primary_structure' | 'proof_reference' | 'visual_rhythm' | 'cta_reference';
+  primary: boolean;
+  purpose: string;
+  chain: SocialReplicationReferenceChain;
+}
+
+export interface SocialReplicationJobContext {
+  programRef?: SocialVersionedObjectRef | null;
+  targetAccountRef?: SocialVersionedObjectRef | null;
+  accountPlaybookRef?: SocialAccountPlaybookRef | null;
+  benchmarkAccountSnapshotRef?: SocialVersionedObjectRef | null;
+  referenceContentAnalysisRef?: SocialVersionedObjectRef | null;
+  referenceMode?: SocialReplicationReferenceMode;
+  primaryReferenceAnalysisId?: string | null;
+  primaryExperimentVariable?: string | null;
+}
+
+/** Single source of truth shared by the legacy Studio entry and the new Agent chain. */
+export interface SocialReplicationJob {
+  replicationJobId: string;
+  version: string;
+  contentTaskId: string;
+  status: 'draft' | 'reference_ready' | 'factor_ready' | 'director_ready' | 'producing' | 'evaluating' | 'creative_review' | 'completed' | 'blocked';
+  referenceMode: SocialReplicationReferenceMode;
+  target: {
+    programRef: SocialVersionedObjectRef | null;
+    accountRef: SocialVersionedObjectRef | null;
+    accountPlaybookRef: SocialAccountPlaybookRef | null;
+    productRef: string | null;
+  };
+  businessContextRef: SocialVersionedObjectRef;
+  referenceAssignments: SocialReplicationReferenceAssignment[];
+  primaryReferenceAnalysisId: string | null;
+  referenceChain: SocialReplicationReferenceChain;
+  factorSpecVersion: string;
+  factorSpecs: SocialReplicationFactorSpec[];
+  primaryExperimentVariable: string | null;
+  frozenAt: string | null;
+  inputRefs: SocialVersionedObjectRef[];
+  createdBy: 'director_agent';
+  createdAt: string;
+}
+/** Product-language alias used by the PRD and API documentation. */
+export type ReplicationJob = SocialReplicationJob;
 
 /** Multi-sample retrieval memory. It is evidence-backed guidance, never a mandatory formula. */
 export interface SocialCreativePatternMemory {
@@ -543,11 +848,13 @@ export interface SocialShotMaterialMapEntry {
 export const SOCIAL_AGENT_WORKFLOW_STAGES = [
   'planned',
   'reference_ready',
+  'factor_ready',
   'director_ready',
   'execution_planning',
   'director_review',
   'producing',
   'technical_review',
+  'media_evaluation',
   'creative_review',
   'asset_review',
   'ready_to_publish',
@@ -626,7 +933,23 @@ export interface SocialDirectorBriefScene {
   truthBoundary: SocialShotTruthBoundary;
   allowedVariation: string[];
   acceptanceCriteria: string[];
+  /**
+   * Machine-verifiable subset of the frozen factor spec. Optional only for
+   * historic DirectorBrief records created before ReplicationJob v1.
+   */
+  replicationFactors?: Array<{
+    factorId: string;
+    factorSpecVersion: string;
+    category: SocialReplicationFactorCategory;
+    policy: SocialReplicationFactorPolicy;
+    importance: SocialReplicationFactorImportance;
+    target: SocialReplicationFactorTarget;
+    tolerance: SocialReplicationFactorTolerance;
+    validator: SocialReplicationFactorValidator;
+  }>;
+  /** @deprecated Human-readable compatibility projection. */
   fidelityPoints: string[];
+  /** @deprecated Human-readable compatibility projection. */
   mustDifferPoints: string[];
 }
 
@@ -636,6 +959,10 @@ export interface SocialDirectorBrief {
   version: string;
   status: 'ready' | 'blocked';
   source: { weeklyPackageId: string | null; adHocBusinessContextId: string | null };
+  /** Present for viral replication; optional only on historic records. */
+  replicationJobRef?: { replicationJobId: string; version: string; factorSpecVersion: string } | null;
+  referenceMode?: SocialReplicationReferenceMode | null;
+  accountPlaybookRef?: SocialAccountPlaybookRef | null;
   referenceAnalysis: {
     analysisId: string;
     version: string;
@@ -708,6 +1035,14 @@ export interface SocialExecutionCandidate {
 
 export interface SocialContentExecutionScenePlan {
   sceneId: string;
+  /** Frozen Director-owned requirements this scene must realize. */
+  replicationFactorIds?: string[];
+  factorFeasibility?: Array<{
+    factorId: string;
+    feasible: boolean;
+    reason: string;
+    plannedValidatorId: string;
+  }>;
   feasibility: SocialProductionFeasibility;
   feasibilityReason: string;
   candidates: SocialExecutionCandidate[];
@@ -799,8 +1134,61 @@ export interface SocialProductionResult {
   createdAt: string;
 }
 
+export interface SocialReplicationEvaluationDimension {
+  status: 'passed' | 'failed' | 'review_required' | 'not_applicable';
+  score: number | null;
+  blockingFactorIds: string[];
+  evidenceRefs: string[];
+  summary: string;
+}
+
+/** Independent evidence report. It may not change factor weights or tolerances. */
+export interface SocialReplicationEvaluation {
+  evaluationId: string;
+  version: string;
+  replicationJobId: string;
+  replicationJobVersion: string;
+  factorSpecVersion: string;
+  productionResultId: string;
+  attemptId: string;
+  status: 'running' | 'passed' | 'failed' | 'review_required';
+  viralFactorFidelity: SocialReplicationEvaluationDimension;
+  identityReplacement: SocialReplicationEvaluationDimension;
+  originalityDifference: SocialReplicationEvaluationDimension;
+  unauthorizedReuseRisk: SocialReplicationEvaluationDimension;
+  accountAndFactFit: SocialReplicationEvaluationDimension;
+  sceneResults: Array<{
+    sceneId: string;
+    factorResults: Array<{
+      factorId: string;
+      status: 'passed' | 'failed' | 'review_required';
+      measuredValue: string | number | boolean | string[] | null;
+      evidenceRefs: string[];
+      repairAction: string | null;
+    }>;
+  }>;
+  generatedBy: 'media_evaluation_worker';
+  generatedAt: string;
+  directorDecision: {
+    status: 'pending' | 'approved' | 'changes_required';
+    reviewedBy: 'director_agent';
+    failedCriteria: string[];
+    reviewedAt: string | null;
+  };
+}
+
+export interface SocialWorkflowResponsibilityBoundary {
+  businessGoalOwner: 'business_agent';
+  factorDecisionOwner: 'director_agent';
+  executionOwner: 'content_agent';
+  metricEvidenceProvider: 'metrics_worker';
+  mediaEvidenceProvider: 'media_evaluation_worker';
+  finalGateOrder: ['content_agent', 'media_evaluation_worker', 'director_agent', 'user'];
+  selfApprovalForbidden: true;
+}
+
 export interface SocialContentAgentWorkflow {
-  schemaVersion: 'social-content-agent-workflow.v1';
+  schemaVersion: 'social-content-agent-workflow.v1' | 'social-content-agent-workflow.v2';
   stage: SocialAgentWorkflowStage;
   contentPlanId: string;
   videoTaskId: string;
@@ -808,10 +1196,14 @@ export interface SocialContentAgentWorkflow {
   adHocBusinessContext: SocialAdHocBusinessContext | null;
   discoveryBrief: SocialDiscoveryBrief | null;
   inspirationHandoffs: SocialInspirationHandoff[];
+  /** Unified job is absent only for material-processing or historic records. */
+  replicationJob?: SocialReplicationJob | null;
+  responsibilityBoundary?: SocialWorkflowResponsibilityBoundary;
   directorBrief: SocialDirectorBrief;
   executionPlan: SocialContentExecutionPlan;
   executionPlanReview: SocialExecutionPlanReview;
   productionResult: SocialProductionResult | null;
+  replicationEvaluation?: SocialReplicationEvaluation | null;
 }
 
 export const SOCIAL_ARTIFACT_STATUSES = ['draft', 'review_required', 'approved', 'changes_requested', 'superseded'] as const;
@@ -895,6 +1287,13 @@ export interface SocialContentTaskBrief {
   brandNotes: string | null;
   restrictions: string[];
   callToAction: string | null;
+  /** Target business/account lineage for the unified social-program workflow. */
+  programRef?: SocialVersionedObjectRef | null;
+  targetAccountRef?: SocialVersionedObjectRef | null;
+  accountPlaybookRef?: SocialAccountPlaybookRef | null;
+  /** Explicit only for advanced use; historic clone tasks infer single-source. */
+  referenceMode?: SocialReplicationReferenceMode;
+  primaryExperimentVariable?: string | null;
   /** New two-entry workflow. Omitted on historic tasks. */
   creationMode?: SocialContentCreationMode;
   /** Customer visual readiness is informative and must never be the sole blocker. */
@@ -1091,6 +1490,8 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   materialRequirements?: SocialMaterialRequirement[];
   referenceVideoAnalysis?: SocialReferenceVideoAnalysis | null;
   replicationScript?: SocialReplicationScriptVersion | null;
+  /** Unified viral-replication truth; absent on material-processing/historic tasks. */
+  replicationJob?: SocialReplicationJob | null;
   shotMaterialMap?: SocialShotMaterialMapEntry[];
   /** Unified Business → Director → Content Agent projection. */
   agentWorkflow?: SocialContentAgentWorkflow;
@@ -1166,6 +1567,11 @@ export interface CreateSocialContentTaskInput {
   brandNotes?: string | null;
   restrictions?: string[];
   callToAction?: string | null;
+  programRef?: SocialVersionedObjectRef | null;
+  targetAccountRef?: SocialVersionedObjectRef | null;
+  accountPlaybookRef?: SocialAccountPlaybookRef | null;
+  referenceMode?: SocialReplicationReferenceMode;
+  primaryExperimentVariable?: string | null;
   creationMode?: SocialContentCreationMode;
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;

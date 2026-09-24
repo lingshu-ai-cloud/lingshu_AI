@@ -58,6 +58,7 @@ import {
   type SocialProductionAsset,
   type SocialProductionPlan,
 } from './socialContentProductionPlan.js';
+import { evaluateSocialReplicationResult } from './replicationEvaluationAdapter.js';
 import {
   executeSocialAssetSupplyPlan,
   type SocialAssetSupplyExecution,
@@ -1074,6 +1075,7 @@ export interface SocialContentAutoProductionRuntime {
   inspectScenes?: typeof inspectRenderedScenes;
   runFfmpeg?: typeof runVisualFfmpeg;
   createCover?: typeof createVideoCover;
+  evaluateReplication?: typeof evaluateSocialReplicationResult;
   backendFilePort?: SocialContentBackendFilePort;
 }
 
@@ -1578,6 +1580,29 @@ export async function runSocialContentAutoProduction(input: {
     taskId: input.taskId,
     reference: persistedDirectorPlan.reference,
   });
+  const productionResultId = `production_result_${socialRequestHash({ taskId: input.taskId, runId: input.runId, executionPlanId: agentWorkflow.executionPlan.executionPlanId }).slice(0, 20)}`;
+  let replicationEvaluation = null;
+  if (agentWorkflow.replicationJob) {
+    await writeExecutionStage({
+      ...input,
+      stage: 'media_evaluation',
+      message: '独立媒体评估 Worker 正在核对爆点保真、身份替换、原创差异、复用风险和账号适配。',
+      extra: {
+        replicationJobId: agentWorkflow.replicationJob.replicationJobId,
+        factorSpecVersion: agentWorkflow.replicationJob.factorSpecVersion,
+      },
+    });
+    const evaluated = await (input.runtime?.evaluateReplication ?? evaluateSocialReplicationResult)({
+      workflow: agentWorkflow,
+      replicationScript: detail.replicationScript ?? null,
+      productionResultId,
+      outputVideoPath: result.outputPath,
+      evidence: {
+        outputText: adaptedScript,
+      },
+    });
+    replicationEvaluation = evaluated.evaluation;
+  }
   const creativeReviewFailures = [
     ...(agentWorkflow.executionPlanReview.approved ? [] : ['内容执行方案未通过编导审核']),
     ...(contentHandoff.scenes.length > 0 ? [] : ['成片没有可验收的镜头']),
@@ -1589,18 +1614,25 @@ export async function runSocialContentAutoProduction(input: {
     stage: 'creative_review',
     message: creativeReviewFailures.length
       ? '编导 Agent 的结构与表达验收未通过，正在停止提交并保留当前结果。'
-      : '技术质检通过，编导 Agent 已按 DirectorBrief 完成结构与表达验收。',
+      : replicationEvaluation && replicationEvaluation.status !== 'passed'
+        ? '成片已保留为候选；独立媒体检测尚未自动放行，等待编导逐镜复核或局部返工。'
+        : '技术质检和独立媒体检测通过，编导 Agent 已按 DirectorBrief 完成结构与表达验收。',
     extra: {
       directorBriefId: agentWorkflow.directorBrief.directorBriefId,
       checkedSceneCount: contentHandoff.scenes.length,
       failedCriteria: creativeReviewFailures,
+      replicationEvaluationId: replicationEvaluation?.evaluationId ?? null,
+      replicationEvaluationStatus: replicationEvaluation?.status ?? null,
     },
   });
   if (creativeReviewFailures.length) {
     throw new Error(`director_revision_required:${creativeReviewFailures.join('；')}`);
   }
+  const evaluationFailures = replicationEvaluation?.status === 'passed'
+    ? []
+    : replicationEvaluation?.directorDecision.failedCriteria ?? [];
   const productionResult: SocialProductionResult = {
-    productionResultId: `production_result_${socialRequestHash({ taskId: input.taskId, runId: input.runId, executionPlanId: agentWorkflow.executionPlan.executionPlanId }).slice(0, 20)}`,
+    productionResultId,
     version: detail.version,
     executionPlanId: agentWorkflow.executionPlan.executionPlanId,
     executionPlanVersion: agentWorkflow.executionPlan.version,
@@ -1617,7 +1649,11 @@ export async function runSocialContentAutoProduction(input: {
       provenanceCandidateIds: scene.recommendedCandidateIds,
     })),
     technicalReview: { approved: true, checkedScenes: sceneQuality.checkedScenes, failures: [] },
-    creativeReview: { approved: true, failedCriteria: [], reviewedBy: 'director_agent' },
+    creativeReview: {
+      approved: !replicationEvaluation || replicationEvaluation.status === 'passed',
+      failedCriteria: evaluationFailures,
+      reviewedBy: 'director_agent',
+    },
     artifactResourceRef: file.fileRef,
     createdAt: new Date().toISOString(),
   };
@@ -1676,6 +1712,7 @@ export async function runSocialContentAutoProduction(input: {
         directorPlan: directorSummary,
         directorPlanReference: persistedDirectorPlan.reference,
         productionResult,
+        ...(replicationEvaluation ? { replicationEvaluation } : {}),
         adaptedScript,
         scriptAdaptation: adaptation,
 	    ...(assetSupplyExecution ? { assetSupplyExecution } : {}),

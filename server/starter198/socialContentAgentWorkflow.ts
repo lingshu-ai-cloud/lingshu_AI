@@ -18,6 +18,11 @@ import type {
   SocialInspirationHandoff,
   SocialReferenceShotAnalysis,
   SocialReferenceVideoAnalysis,
+  SocialReplicationFactorSpec,
+  SocialReplicationJob,
+  SocialReplicationJobContext,
+  SocialReplicationReferenceChain,
+  SocialReplicationReferenceMode,
   SocialReplicationScriptShot,
   SocialReplicationScriptVersion,
   SocialShotSourceStrategy,
@@ -25,6 +30,11 @@ import type {
   SocialTaskSource,
   SocialWeeklyContentPackage,
 } from '../../shared/contracts/socialContentWorkflow.js';
+import {
+  buildSocialReplicationFactorSpecs,
+  buildSocialTimelineBeats,
+  inferSocialReplicationReferenceMode,
+} from '../../shared/socialInspirationStrategy.js';
 import { socialRequestHash } from './socialContentValidation.js';
 
 type CapabilityDefinition = {
@@ -227,6 +237,164 @@ function buildInspirationHandoffs(input: BuildSocialAgentWorkflowInput): SocialI
   }];
 }
 
+function mergeInspirationHandoffs(
+  generated: SocialInspirationHandoff[],
+  provided: SocialInspirationHandoff[],
+): SocialInspirationHandoff[] {
+  const byAnalysisId = new Map<string, SocialInspirationHandoff>();
+  for (const handoff of [...provided, ...generated]) byAnalysisId.set(handoff.analysisId, handoff);
+  return [...byAnalysisId.values()];
+}
+
+function referenceChain(input: {
+  context: SocialReplicationJobContext | undefined;
+  analysis: SocialReferenceVideoAnalysis | null;
+  analysisId?: string;
+  analysisVersion?: string;
+  timelineBeatIds?: string[];
+  checkedAt: string;
+}): SocialReplicationReferenceChain {
+  const benchmarkAccountSnapshot = input.context?.benchmarkAccountSnapshotRef ?? null;
+  const referenceContentAnalysis = input.context?.referenceContentAnalysisRef ?? null;
+  const analysisId = input.analysisId ?? input.analysis?.analysisId ?? null;
+  const analysisVersion = input.analysisVersion ?? input.analysis?.version ?? null;
+  const referenceAnalysis = analysisId ? {
+    objectType: 'reference_analysis',
+    id: analysisId,
+    version: analysisVersion || 'historic',
+  } : null;
+  const timelineBeatIds = input.timelineBeatIds ?? (input.analysis ? buildSocialTimelineBeats(input.analysis).map(beat => beat.beatId) : []);
+  const timelineBeats = timelineBeatIds.map(beatId => ({
+    objectType: 'timeline_beat',
+    id: beatId,
+    version: analysisVersion || 'historic',
+  }));
+  const targetAccountPlaybook = input.context?.accountPlaybookRef ?? null;
+  const missing: SocialReplicationReferenceChain['integrity']['missing'] = [];
+  if (!benchmarkAccountSnapshot) missing.push('benchmark_account');
+  if (!referenceContentAnalysis) missing.push('reference_content');
+  if (!referenceAnalysis) missing.push('reference_analysis');
+  if (!timelineBeats.length) missing.push('timeline_beats');
+  if (!targetAccountPlaybook) missing.push('account_playbook');
+  return {
+    benchmarkAccountSnapshot,
+    referenceContentAnalysis,
+    referenceAnalysis,
+    timelineBeats,
+    targetAccountPlaybook,
+    integrity: { complete: missing.length === 0, missing, checkedAt: input.checkedAt },
+  };
+}
+
+function buildReplicationJob(input: BuildSocialAgentWorkflowInput, context: ReturnType<typeof buildBusinessContext>, handoffs: SocialInspirationHandoff[]): SocialReplicationJob | null {
+  if (input.brief.creationMode !== 'viral_replication') return null;
+  const createdAt = (input.now ?? new Date()).toISOString();
+  const replicationContext: SocialReplicationJobContext = {
+    ...input.replicationContext,
+    programRef: input.replicationContext?.programRef ?? input.brief.programRef ?? null,
+    targetAccountRef: input.replicationContext?.targetAccountRef ?? input.brief.targetAccountRef ?? null,
+    accountPlaybookRef: input.replicationContext?.accountPlaybookRef ?? input.brief.accountPlaybookRef ?? null,
+    referenceMode: input.replicationContext?.referenceMode ?? input.brief.referenceMode,
+    primaryExperimentVariable: input.replicationContext?.primaryExperimentVariable ?? input.brief.primaryExperimentVariable ?? null,
+  };
+  const referenceMode: SocialReplicationReferenceMode = inferSocialReplicationReferenceMode({
+    explicitMode: replicationContext.referenceMode,
+    userRequestedExactReplication: replicationContext.referenceMode === 'single_source_fidelity',
+    referenceCount: handoffs.length || (input.referenceAnalysis ? 1 : 0),
+    hasAccountFormatEvidence: Boolean(input.replicationContext?.benchmarkAccountSnapshotRef),
+  });
+  const timelineBeats = input.referenceAnalysis ? buildSocialTimelineBeats(input.referenceAnalysis) : [];
+  const fullTimelineReady = Boolean(input.referenceAnalysis?.status === 'ready'
+    && input.referenceAnalysis.coverage?.fullTimelineCovered !== false
+    && timelineBeats.length);
+  const factors: SocialReplicationFactorSpec[] = input.referenceAnalysis && fullTimelineReady
+    ? buildSocialReplicationFactorSpecs({
+      analysis: input.referenceAnalysis,
+      referenceMode,
+      version: input.taskVersion,
+      frozenAt: createdAt,
+    })
+    : [];
+  const chain = referenceChain({
+    context: replicationContext,
+    analysis: input.referenceAnalysis,
+    timelineBeatIds: timelineBeats.map(beat => beat.beatId),
+    checkedAt: createdAt,
+  });
+  const primaryAnalysisId = replicationContext.primaryReferenceAnalysisId
+    ?? input.referenceAnalysis?.analysisId
+    ?? handoffs.find(handoff => handoff.referenceRole === 'primary_structure')?.analysisId
+    ?? null;
+  const assignments = handoffs.map((handoff, index) => {
+    const primary = referenceMode === 'single_source_fidelity'
+      ? handoff.analysisId === primaryAnalysisId
+      : handoff.referenceRole === 'primary_structure' && index === handoffs.findIndex(item => item.referenceRole === 'primary_structure');
+    return {
+      assignmentId: stableId('reference_assignment', { taskId: input.taskId, analysisId: handoff.analysisId, role: handoff.referenceRole }),
+      inspirationId: handoff.inspirationId,
+      analysisId: handoff.analysisId,
+      analysisVersion: handoff.analysisVersion,
+      role: handoff.referenceRole,
+      primary,
+      purpose: handoff.whySelected.join('；') || `作为${handoff.referenceRole}参考`,
+      chain: handoff.analysisId === input.referenceAnalysis?.analysisId ? chain : referenceChain({
+        context: replicationContext,
+        analysis: null,
+        analysisId: handoff.analysisId,
+        analysisVersion: handoff.analysisVersion,
+        timelineBeatIds: [],
+        checkedAt: createdAt,
+      }),
+    };
+  });
+  const singleSourcePrimaryCount = assignments.filter(assignment => assignment.primary).length;
+  const factorReady = fullTimelineReady
+    && factors.length > 0
+    && factors.every(factor => factor.evidenceRefs.length > 0 && factor.validator.detector && factor.target.metric)
+    && (referenceMode !== 'single_source_fidelity' || singleSourcePrimaryCount === 1);
+  const blocked = Boolean(input.referenceAnalysis && !fullTimelineReady)
+    || (referenceMode === 'single_source_fidelity' && assignments.length > 0 && singleSourcePrimaryCount !== 1);
+  const businessContextRef = context.weeklyPackage ? {
+    objectType: 'weekly_content_package', id: context.weeklyPackage.packageId, version: context.weeklyPackage.version,
+  } : {
+    objectType: 'ad_hoc_business_context',
+    id: context.adHocBusinessContext?.contextId ?? stableId('ad_hoc_context', { taskId: input.taskId }),
+    version: context.adHocBusinessContext?.version ?? input.taskVersion,
+  };
+  const inputRefCandidates = [
+    businessContextRef,
+    ...(chain.benchmarkAccountSnapshot ? [chain.benchmarkAccountSnapshot] : []),
+    ...(chain.referenceContentAnalysis ? [chain.referenceContentAnalysis] : []),
+    ...(chain.referenceAnalysis ? [chain.referenceAnalysis] : []),
+    ...(chain.targetAccountPlaybook ? [chain.targetAccountPlaybook] : []),
+  ];
+  const inputRefs = [...new Map(inputRefCandidates.map(ref => [JSON.stringify(ref), ref])).values()];
+  return {
+    replicationJobId: stableId('replication_job', { taskId: input.taskId }),
+    version: input.taskVersion,
+    contentTaskId: input.taskId,
+    status: blocked ? 'blocked' : factorReady ? 'factor_ready' : input.referenceAnalysis?.status === 'ready' ? 'reference_ready' : 'draft',
+    referenceMode,
+    target: {
+      programRef: replicationContext.programRef ?? null,
+      accountRef: replicationContext.targetAccountRef ?? null,
+      accountPlaybookRef: replicationContext.accountPlaybookRef ?? null,
+      productRef: input.brief.productRef,
+    },
+    businessContextRef,
+    referenceAssignments: assignments,
+    primaryReferenceAnalysisId: primaryAnalysisId,
+    referenceChain: chain,
+    factorSpecVersion: input.taskVersion,
+    factorSpecs: factors,
+    primaryExperimentVariable: replicationContext.primaryExperimentVariable ?? null,
+    frozenAt: factorReady ? createdAt : null,
+    inputRefs,
+    createdBy: 'director_agent',
+    createdAt,
+  };
+}
+
 function safeBoundary(boundary: SocialShotTruthBoundary): SocialShotTruthBoundary {
   return {
     ...boundary,
@@ -266,6 +434,7 @@ function directorScene(input: {
   script: SocialReplicationScriptShot | null;
   supply: SocialAssetSupplyShotPlan;
   reference: SocialReferenceShotAnalysis | undefined;
+  replicationFactors: SocialReplicationFactorSpec[];
 }): SocialDirectorBriefScene {
   const startSeconds = input.script?.startSeconds ?? input.reference?.startSeconds ?? input.index * 3;
   const endSeconds = input.script?.endSeconds ?? input.reference?.endSeconds ?? startSeconds + 3;
@@ -311,8 +480,19 @@ function directorScene(input: {
       `画面可观察地实现：${targetVisual}`,
       `镜头时长控制在约 ${Math.max(0.2, endSeconds - startSeconds).toFixed(1)} 秒`,
       ...evidence.map(item => `证据要求：${item}`),
+      ...input.replicationFactors.map(factor => `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
       ...(boundary.mustNotImplyCustomerReality ? ['合成或通用画面不得被表述为客户真实证据'] : []),
     ]),
+    replicationFactors: input.replicationFactors.map(factor => ({
+      factorId: factor.factorId,
+      factorSpecVersion: factor.version,
+      category: factor.category,
+      policy: factor.policy,
+      importance: factor.importance,
+      target: structuredClone(factor.target),
+      tolerance: structuredClone(factor.tolerance),
+      validator: structuredClone(factor.validator),
+    })),
     fidelityPoints: input.script?.fidelityPoints ?? input.reference?.fidelityPoints ?? [],
     mustDifferPoints: input.script?.mustDifferPoints ?? input.reference?.mustDifferPoints ?? [],
   };
@@ -322,6 +502,7 @@ function buildDirectorBrief(
   input: BuildSocialAgentWorkflowInput,
   context: ReturnType<typeof buildBusinessContext>,
   inspirationHandoffs: SocialInspirationHandoff[],
+  replicationJob: SocialReplicationJob | null,
 ): SocialDirectorBrief {
   const scriptShots = input.replicationScript?.shots ?? [];
   const supplyShots = input.assetSupplyPlan.shots;
@@ -335,12 +516,16 @@ function buildDirectorBrief(
       script,
       supply,
       reference: referenceById.get(script?.referenceShotId || '') ?? input.referenceAnalysis?.shots[index],
+      replicationFactors: replicationJob?.factorSpecs.filter(factor => (
+        factor.referenceShotId === (script?.referenceShotId ?? input.referenceAnalysis?.shots[index]?.shotId ?? null)
+      )) ?? [],
     });
   }).filter((scene): scene is SocialDirectorBriefScene => Boolean(scene));
   const coverage = input.referenceAnalysis?.coverage;
   const referenceRequired = input.brief.creationMode === 'viral_replication';
   const referenceReady = !referenceRequired || Boolean(input.referenceAnalysis?.status === 'ready' && coverage?.fullTimelineCovered !== false);
-  const status = scenes.length > 0 && referenceReady ? 'ready' : 'blocked';
+  const factorsReady = !referenceRequired || replicationJob?.status === 'factor_ready';
+  const status = scenes.length > 0 && referenceReady && factorsReady ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   return {
     directorBriefId: stableId('director_brief', { taskId: input.taskId }),
@@ -350,6 +535,13 @@ function buildDirectorBrief(
       weeklyPackageId: context.weeklyPackage?.packageId ?? null,
       adHocBusinessContextId: context.adHocBusinessContext?.contextId ?? null,
     },
+    replicationJobRef: replicationJob ? {
+      replicationJobId: replicationJob.replicationJobId,
+      version: replicationJob.version,
+      factorSpecVersion: replicationJob.factorSpecVersion,
+    } : null,
+    referenceMode: replicationJob?.referenceMode ?? null,
+    accountPlaybookRef: replicationJob?.target.accountPlaybookRef ?? null,
     referenceAnalysis: input.referenceAnalysis ? {
       analysisId: input.referenceAnalysis.analysisId,
       version: input.referenceAnalysis.version || input.taskVersion,
@@ -378,12 +570,22 @@ function buildDirectorBrief(
       '参考视频只用于分析结构和节奏，不复制原片素材、人物、声音、商标或原文案',
       ...(input.assetSupplyPlan.status === 'requires_rights_confirmation' ? ['参考内容或素材权利尚待确认'] : []),
     ]),
-    referenceEvidence: input.referenceAnalysis ? input.referenceAnalysis.shots.map(shot => ({
-      analysisId: input.referenceAnalysis!.analysisId,
-      referenceShotId: shot.shotId,
-      transferable: [...shot.fidelityPoints],
-      mustReplace: [...shot.mustDifferPoints],
-    })) : [],
+    referenceEvidence: [
+      ...(input.referenceAnalysis ? input.referenceAnalysis.shots.map(shot => ({
+        analysisId: input.referenceAnalysis!.analysisId,
+        referenceShotId: shot.shotId,
+        transferable: [...shot.fidelityPoints],
+        mustReplace: [...shot.mustDifferPoints],
+      })) : []),
+      ...inspirationHandoffs
+        .filter(handoff => handoff.analysisId !== input.referenceAnalysis?.analysisId)
+        .map(handoff => ({
+          analysisId: handoff.analysisId,
+          referenceShotId: null,
+          transferable: [...handoff.adaptationBoundary.reusable],
+          mustReplace: [...handoff.adaptationBoundary.mustReplace, ...handoff.adaptationBoundary.prohibited],
+        })),
+    ],
     budgetCny: positiveNumber(input.brief.perItemBudgetCny),
     dueAt: input.brief.dueAt,
     scenes,
@@ -470,6 +672,13 @@ function executionScene(input: {
   const fallback = candidates.find(candidate => candidate.sourceStrategy === input.supply.fallbackSourceStrategy && candidate.candidateId !== preferred?.candidateId);
   return {
     sceneId: input.scene.sceneId,
+    replicationFactorIds: (input.scene.replicationFactors ?? []).map(factor => factor.factorId),
+    factorFeasibility: (input.scene.replicationFactors ?? []).map(factor => ({
+      factorId: factor.factorId,
+      feasible: Boolean(preferred),
+      reason: preferred ? `由推荐候选 ${preferred.label} 承担，并在成片后由 ${factor.validator.detector} 独立检测` : '当前没有可执行候选',
+      plannedValidatorId: factor.validator.validatorId,
+    })),
     feasibility: input.supply.feasibility,
     feasibilityReason: input.supply.feasibilityReason,
     candidates,
@@ -534,6 +743,15 @@ function reviewScene(input: {
   if (!input.plan.recommendedCandidateIds.length) {
     failedCriteria.push('没有可执行的推荐候选');
     requiredRevision.push('补充候选素材或可用能力后重新提交');
+    reasonCodes.push('capability_mismatch');
+  }
+  const requiredFactorIds = (input.scene.replicationFactors ?? []).map(factor => factor.factorId);
+  const plannedFactorIds = new Set(input.plan.replicationFactorIds ?? []);
+  const missingFactorIds = requiredFactorIds.filter(factorId => !plannedFactorIds.has(factorId));
+  const infeasibleFactorIds = (input.plan.factorFeasibility ?? []).filter(item => !item.feasible).map(item => item.factorId);
+  if (missingFactorIds.length || infeasibleFactorIds.length) {
+    failedCriteria.push(`存在未被执行方案承接的裂变因素：${unique([...missingFactorIds, ...infeasibleFactorIds]).join('、')}`);
+    requiredRevision.push('为每个冻结因素补充可执行候选和独立检测器，不得通过放宽因素规格绕过');
     reasonCodes.push('capability_mismatch');
   }
   if (input.scene.truthBoundary.customerEvidenceRequired
@@ -606,12 +824,14 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
   };
 }
 
-function taskStage(input: BuildSocialAgentWorkflowInput, review: SocialExecutionPlanReview): SocialAgentWorkflowStage {
+function taskStage(input: BuildSocialAgentWorkflowInput, review: SocialExecutionPlanReview, replicationJob: SocialReplicationJob | null): SocialAgentWorkflowStage {
   if (!review.approved) {
     if (review.reasonCodes.includes('rights_missing')) return 'needs_rights';
     if (review.reasonCodes.includes('facts_missing')) return 'needs_facts';
     if (review.reasonCodes.includes('budget_exceeded')) return 'needs_budget';
     if (review.sceneResults.some(result => result.feasibility === 'goal_degraded')) return 'goal_degraded';
+    if (replicationJob?.status === 'factor_ready') return 'factor_ready';
+    if (replicationJob?.status === 'reference_ready' || replicationJob?.status === 'blocked') return 'reference_ready';
     if (input.referenceAnalysis?.status !== 'ready' && input.brief.creationMode === 'viral_replication') return 'planned';
     return 'director_review';
   }
@@ -644,6 +864,11 @@ export interface BuildSocialAgentWorkflowInput {
   assetSupplyPlan: SocialAssetSupplyPlan;
   referenceAnalysis: SocialReferenceVideoAnalysis | null;
   replicationScript: SocialReplicationScriptVersion | null;
+  /** Optional versioned account/content lineage; omitted on historic tasks. */
+  replicationContext?: SocialReplicationJobContext;
+  /** Additional references used only by series/hybrid modes. */
+  inspirationHandoffs?: SocialInspirationHandoff[];
+  now?: Date;
 }
 
 /**
@@ -654,23 +879,39 @@ export interface BuildSocialAgentWorkflowInput {
 export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): SocialContentAgentWorkflow {
   const context = buildBusinessContext(input);
   const discoveryBrief = buildDiscoveryBrief(input);
-  const inspirationHandoffs = buildInspirationHandoffs(input);
-  const directorBrief = buildDirectorBrief(input, context, inspirationHandoffs);
+  const inspirationHandoffs = mergeInspirationHandoffs(
+    buildInspirationHandoffs(input),
+    input.inspirationHandoffs ?? [],
+  );
+  const replicationJob = buildReplicationJob(input, context, inspirationHandoffs);
+  const directorBrief = buildDirectorBrief(input, context, inspirationHandoffs, replicationJob);
+  if (replicationJob?.status === 'factor_ready' && directorBrief.status === 'ready') replicationJob.status = 'director_ready';
   const executionPlan = buildExecutionPlan(input, directorBrief);
   const executionPlanReview = buildReview(input, directorBrief, executionPlan);
   executionPlan.status = executionPlanReview.approved ? 'approved' : 'blocked';
   return {
-    schemaVersion: 'social-content-agent-workflow.v1',
-    stage: taskStage(input, executionPlanReview),
+    schemaVersion: 'social-content-agent-workflow.v2',
+    stage: taskStage(input, executionPlanReview, replicationJob),
     contentPlanId: stableId('content_plan', { weeklyPlanId: input.weeklyPlanId, taskId: input.taskId }),
     videoTaskId: input.taskId,
     weeklyPackage: context.weeklyPackage,
     adHocBusinessContext: context.adHocBusinessContext,
     discoveryBrief,
     inspirationHandoffs,
+    replicationJob,
+    responsibilityBoundary: {
+      businessGoalOwner: 'business_agent',
+      factorDecisionOwner: 'director_agent',
+      executionOwner: 'content_agent',
+      metricEvidenceProvider: 'metrics_worker',
+      mediaEvidenceProvider: 'media_evaluation_worker',
+      finalGateOrder: ['content_agent', 'media_evaluation_worker', 'director_agent', 'user'],
+      selfApprovalForbidden: true,
+    },
     directorBrief,
     executionPlan,
     executionPlanReview,
     productionResult: null,
+    replicationEvaluation: null,
   };
 }

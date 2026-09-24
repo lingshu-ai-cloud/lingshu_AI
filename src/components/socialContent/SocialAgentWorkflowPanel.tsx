@@ -12,11 +12,13 @@ import { socialShotFunctionLabel, socialShotSourceStrategyLabel } from '../../li
 const STAGE_LABEL: Record<SocialAgentWorkflowStage, string> = {
   planned: '经营目标已建立',
   reference_ready: '参考分析已完成',
+  factor_ready: '爆点因素已冻结',
   director_ready: '导演方案已完成',
   execution_planning: '内容方案规划中',
   director_review: '编导自动审核中',
   producing: '内容制作中',
   technical_review: '技术质检中',
+  media_evaluation: '相似度与原创度检测中',
   creative_review: '表达验收中',
   asset_review: '成片待验收',
   ready_to_publish: '可以准备发布',
@@ -39,6 +41,24 @@ const READINESS_LABEL = {
   strategy_reference: '策略级参考',
   production_reference: '生产级参考',
 } as const;
+
+const EVALUATION_DIMENSIONS = [
+  ['viralFactorFidelity', '爆点因果保真'],
+  ['identityReplacement', '产品与人物替换'],
+  ['originalityDifference', '原创差异'],
+  ['unauthorizedReuseRisk', '未授权复用风险'],
+  ['accountAndFactFit', '账号与事实适配'],
+] as const;
+
+const EVALUATION_STATUS_LABEL = {
+  passed: '通过', failed: '未通过', review_required: '需复核', not_applicable: '不适用',
+} as const;
+
+function evaluationTone(status: keyof typeof EVALUATION_STATUS_LABEL): string {
+  if (status === 'passed') return 'border-emerald-100 bg-emerald-50 text-emerald-900';
+  if (status === 'failed') return 'border-rose-200 bg-rose-50 text-rose-900';
+  return 'border-amber-100 bg-amber-50 text-amber-900';
+}
 
 function feasibilityTone(value: SocialProductionFeasibility): string {
   if (value === 'full_fidelity') return 'bg-emerald-50 text-emerald-800';
@@ -152,6 +172,21 @@ export default function SocialAgentWorkflowPanel({ task }: { task: SocialContent
 
       <div className="mt-4 flex items-center justify-between gap-3"><div><p className="text-[10px] font-black text-text-muted">逐镜交接与审核</p><p className="mt-1 text-xs font-bold text-text-primary">表达目标和技术方案分开管理</p></div><span className="flex items-center gap-1 text-[9px] font-bold text-text-muted">内部候选默认收起<ChevronRight size={12} /></span></div>
       <div className="mt-3 space-y-3">{workflow.directorBrief.scenes.map(scene => <SceneRow key={scene.sceneId} scene={scene} execution={executionByScene.get(scene.sceneId)} review={reviewByScene.get(scene.sceneId)} />)}</div>
+
+      {workflow.replicationEvaluation && <section className="mt-4 rounded-xl border border-border bg-surface-2/40 p-3.5" aria-label="成片相似度与原创度检测">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div><p className="text-[10px] font-black text-text-muted">独立媒体评估 Worker</p><p className="mt-1 text-xs font-black text-text-primary">成片相似度与原创度检测</p></div>
+          <span className={`rounded-full border px-2.5 py-1 text-[9px] font-black ${workflow.replicationEvaluation.status === 'passed' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : workflow.replicationEvaluation.status === 'failed' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{workflow.replicationEvaluation.status === 'passed' ? '可进入编导放行' : workflow.replicationEvaluation.status === 'failed' ? '存在硬阻断项' : '等待人工复核'}</span>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {EVALUATION_DIMENSIONS.map(([key, label]) => {
+            const result = workflow.replicationEvaluation![key];
+            return <article key={key} className={`rounded-lg border p-2.5 ${evaluationTone(result.status)}`}><p className="text-[9px] font-black">{label}</p><p className="mt-1 text-xs font-black">{EVALUATION_STATUS_LABEL[result.status]}{result.score === null ? '' : ` · ${Math.round(result.score)}`}</p><p className="mt-1 line-clamp-3 text-[9px] leading-4 opacity-80">{result.summary}</p></article>;
+          })}
+        </div>
+        {workflow.replicationEvaluation.directorDecision.failedCriteria.length > 0 && <p className="mt-2 text-[10px] leading-4 text-rose-800">逐镜返工／复核：{workflow.replicationEvaluation.directorDecision.failedCriteria.slice(0, 4).join('；')}</p>}
+        <p className="mt-2 text-[9px] leading-4 text-text-muted">检测器只验证冻结因素和权利风险，不承诺传播结果；缺少连续帧、音频指纹或身份识别证据时不会自动判定通过。</p>
+      </section>}
 
       {blocked && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-[10px] font-black text-amber-900">当前不能静默继续</p><p className="mt-1 text-[10px] leading-4 text-amber-800">{workflow.executionPlanReview.requiredRevision.join('；') || '需要补齐事实、权利或可执行候选后重新审核。'}</p></div>}
     </section>

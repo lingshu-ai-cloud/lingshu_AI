@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Film, FileText, Music, Image as ImageIcon, Play, Send, Check, ChevronLeft, ChevronRight, Folder, Search, Volume2, Mic, Download, Loader2, Sparkles, Wand2, Copy, RefreshCw, Clock, Upload, X, Plus, List, Save, FolderOpen, Trash2, Pause, ChevronDown, Heart, ExternalLink, Languages } from 'lucide-react';
 import { studioApi, getDesktopRender, type StudioProject, type VariationBatch, type Material, type MaterialSegment, type BgmTrack, type CoverStyle, type SubCue, type TtsStyleOptions, type StudioAudioCapabilities, type FbPosterResult, type LeadContentPackageResult, type StoryboardQualityResult, type VideoGenerationVersion, type StudioScriptResult, type StudioScriptQualityStatus, type StudioScriptQualityChecks, type StudioGenerationProvenance, type DigitalHumanCapabilities, type DigitalHumanJob } from '../lib/studioApi';
+import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
 import type { Page } from '../App';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader } from '../lib/auth';
@@ -3139,6 +3140,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [soundCandidatesPerContent, setSoundCandidatesPerContent] = useState<1 | 2>(1);
   const [bgmVol, setBgmVol] = useState(35);
   const [voiceVol, setVoiceVol] = useState(100);
+  const [effectPreset, setEffectPreset] = useState<EffectPresetId>('natural');
+  const [effectIntensity, setEffectIntensity] = useState<EffectIntensity>(0);
+  const [disabledEffectSceneIds, setDisabledEffectSceneIds] = useState<string[]>([]);
   const [bgms, setBgms] = useState<Bgm[]>(BGMS);
   const [playingBgm, setPlayingBgm] = useState<string | null>(null);
   const [bgmUploading, setBgmUploading] = useState(false);
@@ -3513,7 +3517,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const asrContextRef = useRef('');
   asrContextRef.current = JSON.stringify([projectId, productionAudioUrl, activeVoiceLang, voiceDrafts[activeVoiceLang], script]);
   const shotProductionContext = JSON.stringify({ language: activeVoiceLang || lang, ratio, productInfo, audioIdentity: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', audioDuration: voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.duration || 0 : voiceoverDur, audioSegments: shootingSlots.map(item => ({ id: item.id, duration: item.duration })), alignment: alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues, alignmentSource: voiceoverAudios[activeVoiceLang]?.alignmentSource });
-  const productionSignature = JSON.stringify({ renderPolicyVersion: 'avatar-cover-v2', script, ratio, assignments: storyboardAssignments, clipEdits, bgm, bgmVol, voiceVol, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
+  const productionSignature = JSON.stringify({ renderPolicyVersion: 'effects-v1', script, ratio, assignments: storyboardAssignments, clipEdits, bgm, bgmVol, voiceVol, effectPreset, effectIntensity, disabledEffectSceneIds, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
   const productionKey = (slotId: string, assembly = activeAssemblyId) => `${assembly}:${shootingSlots.find(item => item.slotId === slotId)?.id || slotId}`;
   const productionFor = (slot: StoryboardSlot) => shotProductions[productionKey(slot.id)] || newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId);
   const openProduction = (slot: StoryboardSlot) => {
@@ -4514,6 +4518,21 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       timelineDuration || duration,
       outputVoiceoverDur > 0 ? outputVoiceoverDur : timelineDuration || duration,
     ));
+    const effectTimeline = outputTimeline.map((item, index) => ({
+      sceneId: 'sceneId' in item && typeof item.sceneId === 'string'
+        ? item.sceneId
+        : ('clipId' in item ? String(item.clipId || index) : String(index)),
+      clipId: 'clipId' in item ? String(item.clipId || '') : undefined,
+      targetDuration: item.targetDuration,
+    }));
+    const disabledEffects = new Set(disabledEffectSceneIds);
+    const presetEffectPlan = createPresetEffectPlan(effectPreset, effectIntensity, effectTimeline, 198);
+    const effectPlan = {
+      ...presetEffectPlan,
+      scenes: presetEffectPlan.scenes.map(scene => disabledEffects.has(scene.sceneId)
+        ? { ...scene, enabled: false, transitionOut: { type: 'cut' as const, duration: 0 }, overlays: [] }
+        : scene),
+    };
     const spec = {
       materials: outputTimeline.length ? outputTimeline.map(item => item.name) : matNames,
       timeline: outputTimeline,
@@ -4531,6 +4550,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       platform,
       language: outputLanguage,
       voiceoverUrl: voiceoverMode === 'none' ? undefined : outputVoiceoverUrl ?? undefined,
+      effectPlan,
       subtitles: subtitlesOn ? {
         mode: subMode,
         style: { font: coverStyle.font, color: coverStyle.color, weight: coverStyle.weight, fontFamily: coverStyle.fontFamily },
@@ -7086,7 +7106,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     videoThemeId, themePainPoint, themeConversionGoal, lastGeneratedSetupSignature, presenterMode, presentationMode, presentationSources,
     selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, assemblyName, hookMaterialId, materialSnapshots,
     storyboardAssemblies: assembliesForSave, activeAssemblyId, script, scriptType, voiceoverLines, modeScripts, activeModeScriptId, voice, voiceCandidates,
-    bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
+    bgm, bgmCandidates, platformBgms, assemblyBgms, materialVersionBgms, soundCandidatesPerContent, bgmVol, voiceVol, effectPreset, effectIntensity, disabledEffectSceneIds, cover, coverTitle, coverStyle, capturedCoverFrameUrl, materialVersionCovers, account, caption,
     subtitlesOn, subMode, clipEdits, voiceoverMode, uploadedVoiceName, customVoiceId, customVoiceName, customVoiceUrl,
     ttsPreset, ttsEmotion, ttsEmotionIntensity, ttsSpeed, ttsPauseStyle, ttsPronunciationText, ttsLanguageSettings, voiceLangs, activeVoiceLang, voiceDrafts, voiceDraftStaleLangs, voiceoverStaleLangs,
     voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang,
@@ -7319,6 +7339,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (s.soundCandidatesPerContent === 1 || s.soundCandidatesPerContent === 2) setSoundCandidatesPerContent(s.soundCandidatesPerContent);
     if (typeof s.bgmVol === 'number') setBgmVol(s.bgmVol);
     if (typeof s.voiceVol === 'number') setVoiceVol(s.voiceVol);
+    if (s.effectPreset === 'natural' || s.effectPreset === 'dynamic' || s.effectPreset === 'tech' || s.effectPreset === 'cinematic') setEffectPreset(s.effectPreset);
+    if (s.effectIntensity === 0 || s.effectIntensity === 1 || s.effectIntensity === 2 || s.effectIntensity === 3) setEffectIntensity(s.effectIntensity);
+    setDisabledEffectSceneIds(Array.isArray(s.disabledEffectSceneIds) ? s.disabledEffectSceneIds.filter((value): value is string => typeof value === 'string') : []);
     if (s.cover && s.cover !== 'gradient') setCover(s.cover as string);
     if (typeof s.coverTitle === 'string') setCoverTitle(s.coverTitle);
     if (s.coverStyle) setCoverStyle(s.coverStyle as CoverStyle);
@@ -10876,6 +10899,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                   <Volume2 size={13} className="mx-auto mb-1" />{item.label}
                 </button>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-border bg-white p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div><p className="text-xs font-black text-text-primary">视频特效</p><p className="mt-0.5 text-[10px] text-text-muted">白名单运镜、调色、转场与装饰层</p></div>
+                <span className="rounded-full bg-surface-2 px-2 py-1 text-[9px] font-bold text-text-muted">EffectPlan v1</span>
+              </div>
+              <div className="mt-3 grid grid-cols-4 gap-1">
+                {([
+                  ['natural', '自然'], ['dynamic', '动感'], ['tech', '科技'], ['cinematic', '电影'],
+                ] as Array<[EffectPresetId, string]>).map(([value, label]) => <button key={value} type="button" onClick={() => { setEffectPreset(value); setRendered(false); }} className={`rounded-lg px-1.5 py-2 text-[10px] font-bold ${effectPreset === value ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted'}`}>{label}</button>)}
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-1">
+                {([['关闭', 0], ['弱', 1], ['中', 2], ['强', 3]] as Array<[string, EffectIntensity]>).map(([label, value]) => <button key={value} type="button" onClick={() => { setEffectIntensity(value); setRendered(false); }} className={`rounded-lg border px-1.5 py-1.5 text-[10px] font-bold ${effectIntensity === value ? 'border-accent bg-accent/5 text-accent' : 'border-border text-text-muted'}`}>{label}</button>)}
+              </div>
+              {effectIntensity > 0 && renderTimeline.length > 0 && <div className="mt-3 max-h-28 space-y-1 overflow-y-auto border-t border-border pt-2">
+                {renderTimeline.map((item, index) => {
+                  const id = String(item.clipId || index);
+                  const enabled = !disabledEffectSceneIds.includes(id);
+                  return <label key={`${id}-${index}`} className="flex items-center justify-between gap-2 text-[10px] text-text-secondary"><span className="truncate">镜头 {index + 1} · {item.name}</span><input type="checkbox" checked={enabled} onChange={() => { setDisabledEffectSceneIds(current => enabled ? [...current, id] : current.filter(value => value !== id)); setRendered(false); }} className="accent-emerald-600" /></label>;
+                })}
+              </div>}
             </div>
 
             <div className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5">

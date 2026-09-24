@@ -20,6 +20,7 @@ import { contentLibraryRouter } from './contentLibrary.js';
 import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
+import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
 import { Router, type Request, type Response } from 'express';
@@ -3692,8 +3693,11 @@ interface SubtitleSpec { mode: 'off' | 'target' | 'bilingual'; cues: SubCue[]; s
 interface RenderSpec {
   materials?: string[];
   timeline?: {
+    sceneId?: string;
+    clipId?: string;
     name: string;
     url?: string;
+    type?: 'video' | 'image' | 'audio';
     trimStart?: number;
     trimEnd?: number;
     speed?: number;
@@ -3715,6 +3719,7 @@ interface RenderSpec {
   language?: string;
   voiceoverUrl?: string; // 前端在脚本步生成配音后回传的 /tts/xxx.wav
   subtitles?: SubtitleSpec; // 字幕轨：桌面端 ffmpeg 按 cue 烧录
+  effectPlan?: EffectPlanV1; // 白名单特效计划；服务端会再次标准化
 }
 
 interface RenderManifest {
@@ -3736,6 +3741,7 @@ interface RenderManifest {
   cover: { id: string | null; title: string; url: string | null };
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
+  effectPlan?: EffectPlanV1;
 }
 
 function absoluteAssetUrl(base: string, value?: string | null): string | null {
@@ -3751,6 +3757,14 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
   const urlByName = new Map(loadMaterials()
     .filter(m => m.scope === 'shared' || (tenantId && m.tenantId === tenantId))
     .map(m => [m.name, m.url]));
+  const rawTimeline: NonNullable<RenderSpec['timeline']> = spec.timeline?.length
+    ? spec.timeline
+    : (spec.materials ?? []).map(name => ({ name }));
+  const normalizedEffectPlan = spec.effectPlan ? normalizeEffectPlan(spec.effectPlan, rawTimeline.map((item, index) => ({
+    sceneId: item.sceneId || item.clipId || String(index),
+    clipId: item.clipId,
+    targetDuration: item.targetDuration,
+  }))) : undefined;
   return {
     jobId,
     spec: {
@@ -3763,7 +3777,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
       voiceVol: spec.voiceVol ?? 100,
     },
     script: spec.script ?? '',
-    timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name }))).map((item, index) => {
+    timeline: rawTimeline.map((item, index) => {
       const rel = urlByName.get(item.name);
       const directUrl = 'url' in item && typeof item.url === 'string' ? item.url : undefined;
       const resolvedUrl = absoluteAssetUrl(base, directUrl || rel);
@@ -3779,6 +3793,7 @@ function buildManifest(jobId: string, spec: RenderSpec, base: string): RenderMan
       return { id: spec.bgm ?? null, url: track ? `${base}${track.url}` : null };
     })(),
     subtitles: spec.subtitles && spec.subtitles.mode !== 'off' ? spec.subtitles : undefined,
+    effectPlan: normalizedEffectPlan,
   };
 }
 

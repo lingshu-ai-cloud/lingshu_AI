@@ -2,6 +2,7 @@ import { formatDemoQuotaError } from './studioQuotaMessage';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
+import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 
 const VERIFIED_AI_GENERATION_PATHS = new Set([
   'script',
@@ -244,6 +245,8 @@ export interface SubtitleSpec {
 export interface RenderSpec {
   materials: string[];
   timeline?: {
+    sceneId?: string;
+    clipId?: string;
     name: string;
     url?: string;
     type?: 'video' | 'image' | 'audio';
@@ -269,6 +272,7 @@ export interface RenderSpec {
   voiceoverUrl?: string;
   coverUrl?: string;
   subtitles?: SubtitleSpec;       // 字幕轨（桌面端 ffmpeg 烧录）
+  effectPlan?: EffectPlanV1;      // 版本化白名单特效计划
 }
 
 export interface RenderManifest {
@@ -277,6 +281,8 @@ export interface RenderManifest {
   script: string;
   timeline: {
     index: number;
+    sceneId?: string;
+    clipId?: string;
     name: string;
     url: string | null;
     trimStart?: number;
@@ -290,6 +296,7 @@ export interface RenderManifest {
   cover: { id: string | null; title: string; url: string | null };
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
+  effectPlan?: EffectPlanV1;
 }
 
 export interface RenderAuthorization {
@@ -317,6 +324,9 @@ export function getDesktopRender(): DesktopRenderBridge | undefined {
 
 /** 离线 / 未授权时的本地兜底 manifest，桥接服务端 buildManifest 的结构 */
 function localManifest(spec: RenderSpec): RenderManifest {
+  const timeline: NonNullable<RenderSpec['timeline']> = spec.timeline?.length
+    ? spec.timeline
+    : (spec.materials ?? []).map(name => ({ name }));
   return {
     jobId: `local-${Date.now()}`,
     spec: {
@@ -328,7 +338,7 @@ function localManifest(spec: RenderSpec): RenderManifest {
       voiceVol: spec.voiceVol ?? 100,
     },
     script: spec.script ?? '',
-    timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name })))
+    timeline: timeline
       .map((item, index) => {
         const candidateUrl = Reflect.get(item, 'url');
         return { index, ...item, url: typeof candidateUrl === 'string' ? candidateUrl : null };
@@ -337,6 +347,11 @@ function localManifest(spec: RenderSpec): RenderManifest {
     cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: spec.coverUrl ?? null },
     bgm: { id: spec.bgm ?? null, url: null },
     subtitles: spec.subtitles,
+    effectPlan: spec.effectPlan ? normalizeEffectPlan(spec.effectPlan, timeline.map((item, index) => ({
+      sceneId: item.sceneId || item.clipId || String(index),
+      clipId: item.clipId,
+      targetDuration: item.targetDuration,
+    }))) : undefined,
   };
 }
 

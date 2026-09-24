@@ -2,6 +2,10 @@ export const PAGE_IDS = [
   'digitalEmployees',
   'agentMonitor',
   'strategy',
+  'socialWorkspace',
+  'socialSetup',
+  'socialAccounts',
+  'socialPlanning',
   'traffic',
   'socialInspiration',
   'scriptLibrary',
@@ -42,6 +46,10 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   digitalEmployees: { navLabel: '智能经营', canonicalTitle: '智能经营' },
   agentMonitor: { navLabel: '运行监控', canonicalTitle: '运行监控' },
   strategy: { navLabel: '首页', canonicalTitle: '首页' },
+  socialWorkspace: { navLabel: '经营工作台', canonicalTitle: '社媒经营工作台' },
+  socialSetup: { navLabel: '项目搭建', canonicalTitle: '社媒项目搭建' },
+  socialAccounts: { navLabel: '账号矩阵', canonicalTitle: '自有账号矩阵' },
+  socialPlanning: { navLabel: '月周计划', canonicalTitle: '月周经营计划' },
   traffic: { navLabel: '发布与渠道', canonicalTitle: '发布与渠道' },
   socialInspiration: { navLabel: '灵感中心', canonicalTitle: '灵感中心' },
   scriptLibrary: { navLabel: '脚本库', canonicalTitle: '脚本库', navParent: 'smartAssets' },
@@ -66,6 +74,13 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   agentMemory: { navLabel: '智能体记忆', canonicalTitle: '智能体记忆' },
   organizationPermissions: { navLabel: '组织与权限', canonicalTitle: '组织与权限' },
 } satisfies Record<Page, PageDefinition>;
+
+export const SOCIAL_PROGRAM_NAV_PAGES = [
+  'socialWorkspace',
+  'socialSetup',
+  'socialAccounts',
+  'socialPlanning',
+] as const satisfies readonly Page[];
 
 /** Primary organic-content destinations. Account authorization stays in settings. */
 export const PRIMARY_SOCIAL_NAV_PAGES = [

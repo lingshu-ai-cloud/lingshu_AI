@@ -21,6 +21,7 @@ import {
   type SocialMetricSubmission,
   type SocialPublicationRecord,
   type SocialProductionResult,
+  type SocialReplicationEvaluation,
   type SocialTaskSource,
   type SocialWorkPackageSelection,
 } from '../../shared/contracts/socialContentWorkflow.js';
@@ -507,7 +508,14 @@ export async function readSocialTaskDetail(input: {
       }]
       : [];
   })[0] ?? null;
+  const replicationEvaluation = [...artifactViews].reverse().flatMap(artifact => {
+    const row = socialObject(artifact.content?.replicationEvaluation);
+    return row && socialText(row.evaluationId) && socialText(row.replicationJobId)
+      ? [structuredClone(row) as unknown as SocialReplicationEvaluation]
+      : [];
+  })[0] ?? null;
   agentWorkflow.productionResult = productionResult;
+  agentWorkflow.replicationEvaluation = replicationEvaluation;
   return {
     ...summary,
     assetSupplyPlan,

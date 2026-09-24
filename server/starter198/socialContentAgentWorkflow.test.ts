@@ -122,6 +122,17 @@ const workflow = buildSocialAgentWorkflow({
   assetSupplyPlan: supply,
   referenceAnalysis,
   replicationScript,
+  replicationContext: {
+    referenceMode: 'single_source_fidelity',
+    programRef: { objectType: 'social_program', id: 'program-1', version: '2' },
+    targetAccountRef: { objectType: 'owned_social_account', id: 'account-1', version: '4' },
+    accountPlaybookRef: { objectType: 'account_playbook', id: 'playbook-1', version: '5', accountRef: 'account-1' },
+    benchmarkAccountSnapshotRef: { objectType: 'benchmark_account_snapshot', id: 'benchmark-1', version: '6' },
+    referenceContentAnalysisRef: { objectType: 'reference_content_analysis', id: 'content-analysis-1', version: '7' },
+    primaryReferenceAnalysisId: referenceAnalysis.analysisId,
+    primaryExperimentVariable: '开场动作',
+  },
+  now: new Date('2026-09-24T00:00:00.000Z'),
 });
 
 assert.equal(workflow.weeklyPackage?.originalContentCount, 2);
@@ -137,6 +148,22 @@ assert.ok(workflow.executionPlan.scenes.every(scene => scene.idempotencyKey.star
 assert.equal(workflow.executionPlanReview.approved, true);
 assert.equal(workflow.executionPlan.status, 'approved');
 assert.equal(workflow.stage, 'director_ready');
+assert.equal(workflow.schemaVersion, 'social-content-agent-workflow.v2');
+assert.equal(workflow.replicationJob?.referenceMode, 'single_source_fidelity');
+assert.equal(workflow.replicationJob?.status, 'director_ready');
+assert.equal(workflow.replicationJob?.referenceAssignments.filter(item => item.primary).length, 1);
+assert.equal(workflow.replicationJob?.referenceChain.integrity.complete, true);
+assert.equal(workflow.replicationJob?.factorSpecs.every(factor => factor.status === 'frozen'), true);
+assert.ok((workflow.replicationJob?.factorSpecs.length ?? 0) > 0);
+assert.equal(workflow.directorBrief.replicationJobRef?.factorSpecVersion, '12');
+assert.equal(workflow.directorBrief.accountPlaybookRef?.id, 'playbook-1');
+assert.ok(workflow.directorBrief.scenes.every(scene => (scene.replicationFactors?.length ?? 0) > 0));
+assert.ok(workflow.executionPlan.scenes.every(scene => (
+  (scene.replicationFactorIds?.length ?? 0) > 0
+  && scene.factorFeasibility?.every(factor => factor.feasible)
+)));
+assert.deepEqual(workflow.responsibilityBoundary?.finalGateOrder, ['content_agent', 'media_evaluation_worker', 'director_agent', 'user']);
+assert.equal(workflow.responsibilityBoundary?.selfApprovalForbidden, true);
 
 const directorJson = JSON.stringify(workflow.directorBrief);
 assert.doesNotMatch(directorJson, /sourceStrategy|candidateId|provider|model|clipId/);
@@ -182,7 +209,31 @@ const incomplete = buildSocialAgentWorkflow({
   referenceAnalysis: incompleteReference, replicationScript,
 });
 assert.equal(incomplete.directorBrief.status, 'blocked');
+assert.equal(incomplete.replicationJob?.status, 'blocked');
 assert.equal(incomplete.executionPlanReview.approved, false);
 assert.ok(incomplete.executionPlanReview.failedCriteria.some(item => /参考分析/.test(item)));
+
+const materialOnly = buildSocialAgentWorkflow({
+  taskId: 'task-material', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, creationMode: 'material_processing' }, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis: null, replicationScript: null,
+});
+assert.equal(materialOnly.replicationJob, null, 'material-processing and historic non-clone tasks stay compatible');
+assert.equal(materialOnly.directorBrief.referenceMode, null);
+
+const hybrid = buildSocialAgentWorkflow({
+  taskId: 'task-hybrid', taskVersion: '2', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply,
+  referenceAnalysis, replicationScript,
+  replicationContext: { referenceMode: 'multi_source_hybrid', primaryReferenceAnalysisId: referenceAnalysis.analysisId },
+  inspirationHandoffs: [{
+    ...workflow.inspirationHandoffs[0]!, inspirationId: 'proof-inspiration', analysisId: 'proof-analysis', analysisVersion: '4',
+    referenceRole: 'proof_reference', whySelected: ['提供证明方式，不改变主参考镜头结构'],
+  }],
+});
+assert.equal(hybrid.replicationJob?.referenceAssignments.length, 2);
+assert.equal(hybrid.replicationJob?.referenceAssignments.filter(item => item.primary).length, 1);
+assert.equal(hybrid.replicationJob?.referenceAssignments.find(item => item.analysisId === 'proof-analysis')?.role, 'proof_reference');
+assert.ok(hybrid.directorBrief.referenceEvidence.some(item => item.analysisId === 'proof-analysis'));
 
 console.log('social content agent workflow tests passed');
