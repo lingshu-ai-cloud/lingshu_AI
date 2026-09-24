@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { assessMaterialCandidate, assessTransformation, commercialDigitalHumanGate, type ShotRequirement } from './creativeTransformation.js';
+import { assessMaterialCandidate, assessTransformation, buildPersonExecutionStrategy, commercialDigitalHumanGate, type ShotRequirement } from './creativeTransformation.js';
 
 const proofShot: ShotRequirement = {
   id: 'proof-1', purpose: 'proof', narration: '工厂每天交付一万件', requiredEvidence: ['工厂实拍'],
@@ -29,4 +29,28 @@ assert.equal(unsafeSwap.recommendedMode, 'structure_remake');
 
 assert.equal(commercialDigitalHumanGate({ passed: true, lipSyncScore: 4.862, avOffsetFrames: 2, freezeSegments: 0 }, 'quality').passed, false);
 assert.equal(commercialDigitalHumanGate({ passed: true, lipSyncScore: 7.5, avOffsetFrames: 1, freezeSegments: 0 }, 'quality').passed, true);
+
+const externalAuto = buildPersonExecutionStrategy({
+  requestedMode: 'auto', sourceKind: 'external_reference', targetDurationSeconds: 5,
+  rights: { referenceVideo: 'not_required', sourcePerson: 'not_required', targetPerson: 'cleared', voice: 'not_required', productBrand: 'not_required' },
+  source: { personCount: 1, continuousShot: true, durationSeconds: 5 },
+});
+assert.equal(externalAuto.mode, 'creative');
+assert.equal(externalAuto.feasibility, 'functional_equivalent');
+
+const blockedDirectEdit = buildPersonExecutionStrategy({
+  requestedMode: 'fast', sourceKind: 'external_reference', targetDurationSeconds: 5,
+  rights: { referenceVideo: 'not_required', sourcePerson: 'not_required', targetPerson: 'cleared', voice: 'not_required', productBrand: 'not_required' },
+  source: { personCount: 1, continuousShot: true, durationSeconds: 5, faceForwardRatio: 0.95, maximumOcclusionRatio: 0.05 },
+});
+assert.equal(blockedDirectEdit.status, 'blocked');
+assert.equal(blockedDirectEdit.estimatedCredits, 0);
+
+const authorizedExpert = buildPersonExecutionStrategy({
+  requestedMode: 'expert', sourceKind: 'licensed_asset', targetDurationSeconds: 5, budgetCredits: 30,
+  rights: { referenceVideo: 'cleared', sourcePerson: 'cleared', targetPerson: 'cleared', voice: 'cleared', productBrand: 'not_required' },
+  source: { personCount: 1, continuousShot: true, durationSeconds: 5 },
+});
+assert.equal(authorizedExpert.status, 'review');
+assert.equal(authorizedExpert.estimatedCredits, 25);
 console.log('creative transformation policy tests passed');

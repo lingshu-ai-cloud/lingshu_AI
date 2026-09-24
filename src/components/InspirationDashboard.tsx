@@ -8,7 +8,7 @@ import {
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
   Lightbulb, Flame, BarChart2, ChevronRight, Film, Download, Plus,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2,
-  SlidersHorizontal, Eye, Package,
+  SlidersHorizontal, Eye, Package, ScanFace,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
@@ -1370,7 +1370,7 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
 }
 
 // ── Analysis Panel ────────────────────────────────────────────────────────────
-function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, actionNotice, specialRecommendation }: { video: TrendVideo; onGenerateScript: (analysis?: ScriptAnalysis) => void; onRetry?: () => void; onExactAnalysis?: () => void; actionNotice?: string; specialRecommendation?: AccountSpecialRecommendation | null }) {
+function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onExactAnalysis, actionNotice, specialRecommendation }: { video: TrendVideo; onGenerateScript: (analysis?: ScriptAnalysis) => void; onPersonReplace: (analysis?: ScriptAnalysis) => void; onRetry?: () => void; onExactAnalysis?: () => void; actionNotice?: string; specialRecommendation?: AccountSpecialRecommendation | null }) {
   const [loaded, setLoaded] = useState(false);
   const [analysis, setAnalysis] = useState<ScriptAnalysis | null>(null);
   const [activeBookmark, setActiveBookmark] = useState<'reason' | 'frames' | 'script' | 'adapt' | ImageInsightTab>(video.contentFormat === 'image' ? 'overview' : 'reason');
@@ -1767,6 +1767,9 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
           {video.contentFormat === 'image' ? (hasTrustedImageAnalysis ? '套用企业资料生成获客内容包' : '先完成图片分析') : videoGenerationBlocked ? '先完成合格的全片精确分析' : 'AI一键爆款迭代'}
           <ChevronRight size={15} />
         </button>
+        {video.contentFormat !== 'image' && <button type="button" onClick={() => onPersonReplace(analysis || undefined)} disabled={videoGenerationBlocked} className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-violet-300 bg-white py-3 text-sm font-bold text-violet-700 transition-colors enabled:hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50">
+          <ScanFace size={16}/>爆款分镜人物替换<ChevronRight size={15}/>
+        </button>}
       </div>
     </div>
   );
@@ -2072,6 +2075,24 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
     }
   };
 
+  const enterPersonReplacement = (confirmedAnalysis?: ScriptAnalysis) => {
+    const realAnalysis = confirmedAnalysis || getAnalysis(video);
+    onEnterWorkflow?.({
+      source: 'inspiration_person_replace',
+      video,
+      scriptType: 'storyboard',
+      language,
+      productInfo,
+      referenceAnalysis: realAnalysis ? {
+        title: video.title,
+        visualStyle: realAnalysis.scriptSummary15s.visualStyle,
+        coreEmotion: realAnalysis.scriptSummary15s.coreEmotion,
+        details: realAnalysis.scriptDetails15s,
+      } : undefined,
+    });
+    onClose();
+  };
+
   const selectedLang = LANGUAGES.find(l => l.code === language);
 
   return (
@@ -2130,7 +2151,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
         {activeTab === 'analysis' ? (
           <motion.div key="analysis" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <AnalysisPanel key={video.id} video={video} onGenerateScript={enterQuickCutFromAnalysis} onRetry={onRetry} onExactAnalysis={onExactAnalysis} actionNotice={refinementSyncError || actionNotice} specialRecommendation={specialRecommendation} />
+            <AnalysisPanel key={video.id} video={video} onGenerateScript={enterQuickCutFromAnalysis} onPersonReplace={enterPersonReplacement} onRetry={onRetry} onExactAnalysis={onExactAnalysis} actionNotice={refinementSyncError || actionNotice} specialRecommendation={specialRecommendation} />
           </motion.div>
         ) : (
           <motion.div key="generate" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}

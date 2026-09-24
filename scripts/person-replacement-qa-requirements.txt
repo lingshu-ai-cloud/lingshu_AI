@@ -1,0 +1,5 @@
+# Optional visual-model adapter environment. Core technical QA uses ffmpeg-static and runs without Python.
+numpy<2
+opencv-contrib-python==4.10.0.84
+mediapipe==0.10.14
+scikit-image<0.23

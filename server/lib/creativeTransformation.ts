@@ -1,6 +1,9 @@
 export type CreationMode = 'viral_remix' | 'material_first' | 'product_first';
 export type TransformationMode = 'talking_avatar' | 'face_swap' | 'head_swap' | 'person_replace' | 'product_replace' | 'structure_remake';
 export type PresenterMode = 'original' | 'digital_human' | 'voiceover_broll' | 'none';
+export type PersonStrategyMode = 'fast' | 'expert' | 'creative';
+export type PersonStrategyFeasibility = 'full_fidelity' | 'functional_equivalent' | 'goal_degraded' | 'blocked_for_facts_or_rights';
+export type PersonSourceKind = 'customer_asset' | 'licensed_asset' | 'external_reference';
 export type ShotPurpose = 'hook' | 'need' | 'feature' | 'value' | 'proof' | 'cta';
 
 export interface RightsDeclaration {
@@ -9,6 +12,32 @@ export interface RightsDeclaration {
   targetPerson: 'cleared' | 'unknown' | 'not_required';
   voice: 'cleared' | 'unknown' | 'not_required';
   productBrand: 'cleared' | 'unknown' | 'not_required';
+}
+
+export interface PersonExecutionStrategyInput {
+  requestedMode: PersonStrategyMode | 'auto';
+  sourceKind: PersonSourceKind;
+  rights: RightsDeclaration;
+  source: TransformationAssessmentInput['source'];
+  targetDurationSeconds: number;
+  budgetCredits?: number;
+  maxAttempts?: number;
+}
+
+export interface PersonExecutionStrategy {
+  mode: PersonStrategyMode;
+  transformationMode: 'head_swap' | 'person_replace' | 'structure_remake';
+  feasibility: PersonStrategyFeasibility;
+  status: 'ready' | 'review' | 'blocked';
+  publicMethodLabel: string;
+  lockedElements: string[];
+  internalProviderRoute: string[];
+  estimatedCredits: number;
+  maxAttempts: number;
+  fallbackMode?: 'expert' | 'creative';
+  blockers: string[];
+  warnings: string[];
+  requiredQa: string[];
 }
 
 export interface ShotRequirement {
@@ -151,6 +180,42 @@ export function assessTransformation(input: TransformationAssessmentInput): Tran
     warnings,
     requiredQa,
     recommendedMode: blockers.length && mode !== 'structure_remake' ? 'structure_remake' : mode,
+  };
+}
+
+export function buildPersonExecutionStrategy(input: PersonExecutionStrategyInput): PersonExecutionStrategy {
+  const strictSource = input.sourceKind !== 'external_reference';
+  const inferred: PersonStrategyMode = input.sourceKind === 'external_reference'
+    ? 'creative'
+    : /full|全身/i.test(String((input.source as Record<string, unknown>).framing || '')) ? 'expert' : 'fast';
+  const mode = input.requestedMode === 'auto' ? inferred : input.requestedMode;
+  const transformationMode = mode === 'fast' ? 'head_swap' : mode === 'expert' ? 'person_replace' : 'structure_remake';
+  const assessment = assessTransformation({ mode: transformationMode, rights: input.rights, source: input.source });
+  const blockers = [...assessment.blockers];
+  if (!strictSource && mode !== 'creative') blockers.push('外部参考仅可用于结构分析，不能直接编辑原画面');
+  const feasibility: PersonStrategyFeasibility = blockers.length
+    ? 'blocked_for_facts_or_rights'
+    : mode === 'creative' && input.sourceKind === 'external_reference'
+      ? 'functional_equivalent'
+      : assessment.status === 'review' ? 'goal_degraded' : 'full_fidelity';
+  const seconds = Math.max(0, Math.min(30, Number(input.targetDurationSeconds) || 0));
+  const estimatedCredits = mode === 'fast' ? 0 : Math.ceil(seconds * (mode === 'expert' ? 5 : 30));
+  if (Number.isFinite(input.budgetCredits) && estimatedCredits > Number(input.budgetCredits)) blockers.push('预计生成积分超过本镜头预算');
+  const finalFeasibility = blockers.length ? 'blocked_for_facts_or_rights' : feasibility;
+  return {
+    mode,
+    transformationMode,
+    feasibility: finalFeasibility,
+    status: blockers.length ? 'blocked' : assessment.status === 'compatible' ? 'ready' : 'review',
+    publicMethodLabel: mode === 'fast' ? '保留原表演，精准替换头部人物特征' : mode === 'expert' ? '保留原表演，更换完整人物' : '按参考镜头功能重新演绎',
+    lockedElements: mode === 'creative' ? ['原口播核心信息', '品牌禁用项与授权边界', '目标人物身份'] : ['构图与机位', '人物位置与姿势', '身体动作与手势节奏', '口播与口型时序', '时长、剪辑点与原音轨'],
+    internalProviderRoute: mode === 'fast' ? ['local_head_pipeline'] : mode === 'expert' ? ['runway_kling_motion', 'runway_seedance', 'runway_act_two'] : ['runway_seedance', 'runway_kling_motion', 'runway_act_two'],
+    estimatedCredits,
+    maxAttempts: Math.max(1, Math.min(3, Math.floor(Number(input.maxAttempts) || 2))),
+    ...(mode === 'fast' ? { fallbackMode: 'expert' as const } : mode === 'expert' ? { fallbackMode: 'creative' as const } : {}),
+    blockers,
+    warnings: assessment.warnings,
+    requiredQa: assessment.requiredQa,
   };
 }
 

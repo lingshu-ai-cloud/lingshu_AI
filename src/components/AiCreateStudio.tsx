@@ -50,6 +50,7 @@ import {
   withStudioTimeout,
 } from './studio/studioAuthenticatedMedia';
 import { BenchmarkVideoPreview, LeadContentPackagePreview, VariationChipEditor } from './studio/StudioPreviewPanels';
+import RunwayPersonReplacementPanel from './studio/RunwayPersonReplacementPanel';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
@@ -9790,6 +9791,13 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
             {(scriptStageTab === 'theme' || scriptStageTab === 'script') && (
             <>
+            {videoKickoff?.source === 'inspiration_person_replace' && (
+              <RunwayPersonReplacementPanel
+                title={videoKickoff.video?.title || videoKickoff.referenceAnalysis?.title}
+                videoUrl={videoKickoff.video?.aiAnalysis?.materialUrl || videoKickoff.video?.videoUrl}
+                shots={videoKickoff.referenceAnalysis?.details || []}
+              />
+            )}
             <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

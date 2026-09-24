@@ -97,7 +97,7 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
-import { assessTransformation, commercialDigitalHumanGate, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
+import { assessTransformation, buildPersonExecutionStrategy, commercialDigitalHumanGate, type PersonExecutionStrategyInput, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
 import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
@@ -4338,6 +4338,19 @@ studioRouter.post('/transformations/assess', (req, res) => {
     res.json({ ok: true, assessment: assessTransformation(input) });
   } catch (error) {
     res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '替换兼容性评估失败' });
+  }
+});
+
+studioRouter.post('/person-replacement/plan', (req, res) => {
+  try {
+    const input = req.body as PersonExecutionStrategyInput;
+    if (!input || !input.requestedMode || !input.sourceKind || !input.rights || !input.source) {
+      res.status(400).json({ ok: false, error: '缺少人物处理方式、来源、授权声明或源素材指标' });
+      return;
+    }
+    res.json({ ok: true, strategy: buildPersonExecutionStrategy(input) });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : '人物执行方案生成失败' });
   }
 });
 
