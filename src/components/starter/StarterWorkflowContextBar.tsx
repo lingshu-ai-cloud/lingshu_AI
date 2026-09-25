@@ -9,6 +9,10 @@ type WorkflowContext = {
 const PAGE_WORKFLOW_CONTEXT: Partial<Record<Page, WorkflowContext>> = {
   agentMonitor: { flow: ['查看运行状态', '定位需要处理的事项', '回到业务页面处理'] },
   strategy: { flow: ['查看经营信号', '确认优先事项', '推进今天的计划'] },
+  socialWorkspace: { flow: ['查看项目状态', '处理当前前置项', '进入账号或计划执行'] },
+  socialSetup: { flow: ['确认品牌与市场', '选择经营路线', '建立项目事实边界'] },
+  socialAccounts: { flow: ['录入真实账号', '确认账号角色', '建立账号规则'] },
+  socialPlanning: { flow: ['确认月目标', '绑定执行账号', '形成周内容任务'] },
   socialInspiration: { flow: ['明确内容目标', '筛选可用灵感', '进入内容制作'] },
   scriptLibrary: { flow: ['整理选题', '沉淀可用脚本', '复用到内容制作'] },
   smartAssets: { flow: ['确认选题与脚本', '制作并检查内容', '进入发布与渠道'] },

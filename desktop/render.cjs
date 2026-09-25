@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const { layoutFilters, tempoFilters, muteIntervals } = require('./shot-composition.cjs');
+const { normalizeEffectPlan, sceneEffectFilters, joinSceneFilters, audioEventFilters } = require('./effect-composition.cjs');
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -354,6 +355,13 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     if (manifest && manifest.requireVisualAssets === true && clipErrors.length) {
       throw new Error(`时间线素材不完整，已停止渲染：${clipErrors.join('；')}`);
     }
+    // Treat the manifest as untrusted even when it came from our server. Old
+    // projects have no effectPlan and normalize to intensity=0 + hard cuts.
+    const effectPlan = normalizeEffectPlan(manifest && manifest.effectPlan, localClips.map((clip, index) => ({
+      sceneId: clip.sceneId || clip.clipId || String(index),
+      clipId: clip.clipId,
+      targetDuration: clip.targetDuration,
+    })));
 
     // Product and background layers are separate FFmpeg inputs. A declared
     // layer must download successfully; silently dropping it would change the
@@ -448,8 +456,22 @@ async function composite(manifest, onProgress = () => {}, outDir) {
           filters.push(`[bg${i}][fg${i}]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,settb=AVTB,setpts=N/(30*TB),format=yuv420p[v${i}]`);
         }
       });
-      filters.push(`${localClips.map((_, i) => `[v${i}]`).join('')}concat=n=${n}:v=1:a=0[vcat]`);
-      vlabel = '[vcat]';
+      const effectLabels = [];
+      const targets = [];
+      localClips.forEach((clip, index) => {
+        const target = Math.max(0.5, finiteNumber(clip.targetDuration, duration / n));
+        const output = `ve${index}`;
+        filters.push(...sceneEffectFilters({
+          source: `[v${index}]`, output,
+          scene: effectPlan.scenes[index], width: w, height: h, target,
+          intensity: effectPlan.intensity,
+        }));
+        effectLabels.push(`[${output}]`);
+        targets.push(target);
+      });
+      const joined = joinSceneFilters({ labels: effectLabels, scenes: effectPlan.scenes, targets, output: 'vcat' });
+      filters.push(...joined.filters);
+      vlabel = joined.output;
     } else {
       // 兜底：纯色背景
       args.push('-f', 'lavfi', '-t', String(duration), '-i', `color=c=0x141A2E:s=${w}x${h}:r=30`);
@@ -530,8 +552,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       audioCursor += target;
     });
     filters.push(sourceLabels.length
-      ? `[abase]${sourceLabels.join('')}amix=inputs=${sourceLabels.length + 1}:duration=longest:normalize=0[aout]`
-      : '[abase]anull[aout]');
+      ? `[abase]${sourceLabels.join('')}amix=inputs=${sourceLabels.length + 1}:duration=longest:normalize=0[acontent]`
+      : '[abase]anull[acontent]');
+    const effectAudio = audioEventFilters(effectPlan.audioEvents, '[acontent]', 'aout');
+    filters.push(...effectAudio.filters);
 
     args.push(
       '-filter_complex', filters.join(';'),
@@ -564,14 +588,14 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         }
       });
       proc.on('error', err => resolve({ ok: false, error: String(err) }));
-      proc.on('close', code => {
+      proc.on('close', (code, signal) => {
         clearTimeout(killTimer);
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
         if (code === 0) {
           onProgress(100);
           resolve({ ok: true, outputPath });
         } else {
-          resolve({ ok: false, error: code === null ? 'ffmpeg 合成超时，请缩短素材或重试' : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
+          resolve({ ok: false, error: code === null ? `ffmpeg 被信号 ${signal || 'unknown'} 中止\n${stderr.slice(-1200)}` : `ffmpeg exited ${code}\n${stderr.slice(-1200)}` });
         }
       });
     });

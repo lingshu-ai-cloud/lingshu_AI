@@ -17,7 +17,8 @@ import {
   type SocialContentNavigationEventDetail,
 } from './lib/socialContentContext';
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
-import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
+import { PAGE_REGISTRY, SOCIAL_PROGRAM_NAV_PAGES, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
+import { SocialProgramProvider } from './contexts/SocialProgramContext';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
@@ -41,8 +42,13 @@ const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'
 const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
 const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWorkspacePage'));
 const SocialContentPlanningPage = lazy(() => import('./components/socialContent/SocialContentPlanningPage'));
+const SocialWorkspacePage = lazy(() => import('./components/socialProgram/SocialWorkspacePage'));
+const SocialSetupPage = lazy(() => import('./components/socialProgram/SocialSetupPage'));
+const SocialAccountsPage = lazy(() => import('./components/socialProgram/SocialAccountsPage'));
+const SocialPlanningPage = lazy(() => import('./components/socialProgram/SocialPlanningPage'));
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
+const DesignPrototype = lazy(() => import('./dev/DesignPrototype'));
 
 export type { Page } from './pageRegistry';
 
@@ -73,9 +79,9 @@ export type AgentAction = (agent: AgentType, task: string) => void;
 
 const AGENT_PAGES: Page[] = ['strategy', 'traffic', 'conversion', 'retention'];
 const ROLE_PAGE_ACCESS: Record<import('./lib/auth').OrganizationRole, Set<Page>> = {
-  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
-  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
-  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
+  super_admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'admin', 'adminDelivery', 'channels', 'youtube']),
+  admin: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'enterprise', 'agentMemory', 'plugins', 'organizationPermissions', 'scheduled', 'channels', 'youtube']),
+  social_operator: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'scheduled']),
   customer_service: new Set(['digitalEmployees', 'agentMonitor', 'strategy', 'conversion', 'wecomCustomerService', 'retention', 'orders', 'scheduled']),
 };
 type StarterAccessState = 'loading' | 'starter_198' | 'legacy' | 'unavailable';
@@ -201,6 +207,13 @@ class PageErrorBoundary extends Component<
 
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (publicPath === '/design-prototype') {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <DesignPrototype />
+      </Suspense>
+    );
+  }
   if (publicPath.startsWith('/assist/')) return <AssistLinkPage />;
   if (publicPath === '/privacy') return <LegalPages kind="privacy" />;
   if (publicPath === '/terms') return <LegalPages kind="terms" />;
@@ -689,6 +702,7 @@ export default function App() {
     && smartAssetsView === 'create'
     && !activeSocialContentTaskId
     && !smartAssetsWorkflowContext;
+  const isSocialProgramPage = (SOCIAL_PROGRAM_NAV_PAGES as readonly Page[]).includes(page);
 
   return (
     <Layout page={page} onNavigate={handleNavigate} conversation={conversation} session={session} onLogout={handleLogout}
@@ -733,6 +747,14 @@ export default function App() {
               : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
           {monitorMounted && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
+          {isSocialProgramPage && (
+            <SocialProgramProvider scope={session.tenant?.id || session.user.tenantId}>
+              {page === 'socialWorkspace' && <SocialWorkspacePage onNavigate={handleNavigate} />}
+              {page === 'socialSetup' && <SocialSetupPage onNavigate={handleNavigate} />}
+              {page === 'socialAccounts' && <SocialAccountsPage onNavigate={handleNavigate} />}
+              {page === 'socialPlanning' && <SocialPlanningPage onNavigate={handleNavigate} />}
+            </SocialProgramProvider>
+          )}
           {page === 'strategy' && (
             <StrategyPage
               onEnterConversation={enterConversation}

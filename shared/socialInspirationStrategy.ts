@@ -11,7 +11,15 @@ import type {
   SocialInspirationReadiness,
   SocialInspirationScores,
   SocialKeywordEvidenceSource,
+  SocialReferenceVideoAnalysis,
+  SocialReplicationCausalRole,
+  SocialReplicationFactorCategory,
+  SocialReplicationFactorEvidence,
+  SocialReplicationFactorPolicy,
+  SocialReplicationFactorSpec,
+  SocialReplicationReferenceMode,
   SocialSceneCluster,
+  SocialTimelineBeat,
 } from './contracts/socialContentWorkflow';
 
 function unique(values: string[]): string[] {
@@ -30,6 +38,300 @@ function stableHash(value: string): string {
 
 function stableId(prefix: string, value: unknown): string {
   return `${prefix}_${stableHash(JSON.stringify(value))}`;
+}
+
+function factorCategory(value: string, fallback: SocialReplicationFactorCategory): SocialReplicationFactorCategory {
+  if (/钩子|首帧|前三秒|first frame|hook/i.test(value)) return 'hook';
+  if (/光|阴影|高光|色温|lighting|shadow|highlight/i.test(value)) return 'lighting';
+  if (/桌|环境|场景|背景|杂物|生活化|environment|background/i.test(value)) return 'environment';
+  if (/开盖|闭盖|封膜|残留|痕迹|湿润|干燥|磨损|膏|液体|粉末|状态|state/i.test(value)) return 'object_state';
+  if (/手|触碰|接触|视线|姿态|动作|交互|interaction|gesture/i.test(value)) return 'interaction';
+  if (/构图|占比|位置|遮挡|前景|后景|中心|留白|composition/i.test(value)) return 'composition';
+  if (/机位|俯拍|仰拍|特写|景别|运镜|镜头|camera|angle|close-up/i.test(value)) return 'camera';
+  if (/节奏|时长|切镜|卡点|停顿|rhythm|timing|pace/i.test(value)) return 'rhythm';
+  if (/音乐|音效|声音|口播|audio|music|voice/i.test(value)) return 'audio';
+  if (/字幕|文案|文字|caption|text|ocr/i.test(value)) return 'caption';
+  if (/产品|人脸|人物|品牌|商标|logo|身份|identity|face/i.test(value)) return 'identity';
+  return fallback;
+}
+
+function causalRoleForPurpose(purpose: SocialTimelineBeat['purpose']): SocialReplicationCausalRole {
+  if (purpose === 'hook') return 'retention';
+  if (purpose === 'proof' || purpose === 'demonstration') return 'proof';
+  if (purpose === 'trust') return 'trust';
+  if (purpose === 'call_to_action') return 'conversion';
+  if (purpose === 'transition') return 'emotion';
+  return 'understanding';
+}
+
+function validatorForCategory(category: SocialReplicationFactorCategory, policy: SocialReplicationFactorPolicy) {
+  const kind = policy === 'prohibit_reuse' ? 'rights_fingerprint' as const
+    : category === 'rhythm' || category === 'hook' ? 'timeline_alignment' as const
+    : category === 'composition' ? 'composition' as const
+      : category === 'lighting' ? 'lighting' as const
+        : category === 'interaction' ? 'motion' as const
+          : category === 'audio' ? 'audio' as const
+            : category === 'caption' ? 'ocr' as const
+              : category === 'identity' && policy === 'replace_identity' ? 'identity' as const
+                  : category === 'environment' ? 'spatial_relation' as const
+                    : 'vision_state' as const;
+  return {
+    kind,
+    detector: kind === 'timeline_alignment' ? 'semantic-beat-dtw'
+      : kind === 'composition' ? 'subject-mask-layout'
+        : kind === 'lighting' ? 'light-direction-color-contrast'
+          : kind === 'motion' ? 'object-hand-track'
+            : kind === 'audio' ? 'audio-energy-and-fingerprint'
+              : kind === 'ocr' ? 'ocr-text-similarity'
+                : kind === 'identity' ? 'identity-region-replacement'
+                  : kind === 'rights_fingerprint' ? 'perceptual-and-audio-fingerprint'
+                    : kind === 'spatial_relation' ? 'scene-graph-relation'
+                      : 'multimodal-state-check',
+    evidenceOutput: kind === 'audio'
+      ? ['audio_segment', 'measurement'] as const
+      : kind === 'rights_fingerprint'
+        ? ['match_region', 'measurement'] as const
+        : ['reference_frame', 'output_frame', 'measurement'] as const,
+  };
+}
+
+/**
+ * Projects historic shot analysis into the production-grade beat contract.
+ * Unknown micro details remain explicit null/empty fields instead of being
+ * hallucinated by the Director Agent.
+ */
+export function buildSocialTimelineBeats(analysis: SocialReferenceVideoAnalysis): SocialTimelineBeat[] {
+  if (analysis.timelineBeats?.length) return structuredClone(analysis.timelineBeats);
+  const observationConfidence = analysis.coverage?.overallConfidence ?? null;
+  return analysis.shots.map((shot, index): SocialTimelineBeat => ({
+    beatId: stableId('timeline_beat', { analysisId: analysis.analysisId, shotId: shot.shotId, index }),
+    referenceAnalysisId: analysis.analysisId,
+    referenceShotId: shot.shotId,
+    startSeconds: shot.startSeconds,
+    endSeconds: shot.endSeconds,
+    purpose: shot.purpose,
+    subjects: (shot.tags?.subjects ?? []).map((description, subjectIndex) => ({
+      subjectId: stableId('subject', { shotId: shot.shotId, description, subjectIndex }),
+      kind: /人|person|face/i.test(description) ? 'person'
+        : /产品|商品|瓶|罐|product/i.test(description) ? 'product'
+          : /字幕|文字|screen|caption/i.test(description) ? 'screen_text'
+            : 'other',
+      description,
+      identitySensitive: /人|person|face|产品|商品|品牌|product|logo/i.test(description),
+    })),
+    action: {
+      startState: shot.action?.startState ?? '',
+      path: shot.action?.path ?? shot.visualDescription,
+      endState: shot.action?.endState ?? '',
+      spatialRelation: shot.action?.spatialRelation ?? '',
+      startsAtSeconds: null,
+      revealAtSeconds: null,
+    },
+    objectStates: [],
+    shotLanguage: {
+      shotSize: shot.shotLanguage?.shotSize ?? '',
+      cameraAngle: shot.shotLanguage?.cameraAngle ?? '',
+      movement: shot.shotLanguage?.movement ?? '',
+      composition: shot.shotLanguage?.composition ?? '',
+      subjectAreaRatio: null,
+      subjectPosition: null,
+    },
+    lighting: { direction: null, softness: null, colorTemperature: null, contrast: null, shadowAndHighlight: null },
+    environment: {
+      semanticType: shot.tags?.sceneTypes?.[0] ?? null,
+      materials: [],
+      clutterDensity: null,
+      livedInDetails: [],
+    },
+    audioLayers: {
+      voice: shot.audioLayers?.voice ?? shot.spokenText,
+      captions: shot.audioLayers?.captions ?? shot.captionText,
+      ambient: shot.audioLayers?.ambient ?? shot.audioDescription,
+      music: shot.audioLayers?.music ?? null,
+      soundEffects: shot.audioLayers?.soundEffects ?? null,
+    },
+    rhythm: { description: shot.rhythmDescription, cutAtSeconds: shot.endSeconds, beatAtSeconds: [] },
+    continuity: { incomingState: [], outgoingState: [], conflicts: [] },
+    observation: {
+      observableFacts: [...(shot.observation?.observableFacts ?? [])],
+      inferredIntent: [...(shot.observation?.inferredIntent ?? [])],
+      causalGaps: [...(shot.observation?.causalGaps ?? [])],
+      confidence: observationConfidence,
+      needsHumanReview: Boolean(shot.observation?.causalGaps?.length),
+    },
+  }));
+}
+
+export function inferSocialReplicationReferenceMode(input: {
+  explicitMode?: SocialReplicationReferenceMode | null;
+  userRequestedExactReplication?: boolean;
+  referenceCount: number;
+  hasAccountFormatEvidence?: boolean;
+}): SocialReplicationReferenceMode {
+  if (input.explicitMode) return input.explicitMode;
+  if (input.userRequestedExactReplication || input.referenceCount <= 1) return 'single_source_fidelity';
+  if (input.hasAccountFormatEvidence) return 'account_format_series';
+  return 'multi_source_hybrid';
+}
+
+export interface BuildSocialReplicationFactorSpecsInput {
+  analysis: SocialReferenceVideoAnalysis;
+  referenceMode: SocialReplicationReferenceMode;
+  version: string;
+  frozenAt?: string | null;
+  additionalEvidence?: Array<{
+    matchText: string;
+    evidence: SocialReplicationFactorEvidence;
+  }>;
+}
+
+/**
+ * Builds Director-owned factor hypotheses from observable media evidence.
+ * Without account metrics or controlled experiments causal confidence stays
+ * deliberately low; source popularity is never treated as proof of causality.
+ */
+export function buildSocialReplicationFactorSpecs(input: BuildSocialReplicationFactorSpecsInput): SocialReplicationFactorSpec[] {
+  const beats = buildSocialTimelineBeats(input.analysis);
+  const shotsById = new Map(input.analysis.shots.map(shot => [shot.shotId, shot]));
+  const frozenAt = input.frozenAt === undefined ? new Date().toISOString() : input.frozenAt;
+  const factorRows: Array<{
+    beat: SocialTimelineBeat;
+    category: SocialReplicationFactorCategory;
+    description: string;
+    policy: SocialReplicationFactorPolicy;
+    importance: SocialReplicationFactorSpec['importance'];
+    metric: string;
+    value: SocialReplicationFactorSpec['target']['value'];
+    unit?: string | null;
+  }> = [];
+  const add = (row: typeof factorRows[number]) => {
+    if (!row.description.trim()) return;
+    if (factorRows.some(item => item.beat.beatId === row.beat.beatId && item.category === row.category && item.description === row.description)) return;
+    factorRows.push(row);
+  };
+
+  for (const beat of beats) {
+    const shot = beat.referenceShotId ? shotsById.get(beat.referenceShotId) : undefined;
+    for (const point of shot?.fidelityPoints ?? []) {
+      const category = factorCategory(point, beat.purpose === 'hook' ? 'hook' : 'rhythm');
+      const policy: SocialReplicationFactorPolicy = category === 'environment' ? 'equivalent'
+        : category === 'composition' || category === 'lighting' || category === 'camera' ? 'bounded'
+          : category === 'object_state' || category === 'interaction' || category === 'hook' ? 'lock' : 'lock';
+      add({ beat, category, description: point, policy, importance: beat.purpose === 'hook' ? 'critical' : 'high', metric: `${category}.semantic_state`, value: point });
+    }
+    for (const point of shot?.mustDifferPoints ?? []) {
+      const category = factorCategory(point, 'identity');
+      const policy: SocialReplicationFactorPolicy = category === 'identity' ? 'replace_identity' : 'prohibit_reuse';
+      add({ beat, category, description: point, policy, importance: 'critical', metric: `${category}.replacement`, value: true });
+    }
+    for (const state of beat.objectStates) {
+      add({ beat, category: 'object_state', description: `${state.attribute}：${state.value}`, policy: state.visibility === 'clear' ? 'lock' : 'bounded', importance: state.visibility === 'clear' ? 'critical' : 'high', metric: `object_state.${state.attribute}`, value: state.value });
+    }
+    for (const subject of beat.subjects.filter(item => item.identitySensitive)) {
+      add({
+        beat,
+        category: 'identity',
+        description: `替换参考主体身份：${subject.description}`,
+        policy: 'replace_identity',
+        importance: 'critical',
+        metric: `identity.${subject.subjectId}.replaced`,
+        value: true,
+      });
+    }
+    if (beat.action.path) {
+      add({ beat, category: 'interaction', description: beat.action.path, policy: beat.purpose === 'hook' ? 'lock' : 'bounded', importance: beat.purpose === 'hook' ? 'critical' : 'high', metric: 'interaction.action_path', value: beat.action.path });
+    }
+    if (beat.environment.semanticType) {
+      add({ beat, category: 'environment', description: `保持感知等价环境：${beat.environment.semanticType}`, policy: 'equivalent', importance: beat.purpose === 'hook' ? 'high' : 'medium', metric: 'environment.semantic_type', value: beat.environment.semanticType });
+    }
+    const lightingValues = Object.entries(beat.lighting).filter((entry): entry is [string, string] => Boolean(entry[1]));
+    if (lightingValues.length) {
+      add({ beat, category: 'lighting', description: lightingValues.map(([key, value]) => `${key}:${value}`).join('；'), policy: 'bounded', importance: 'high', metric: 'lighting.attributes', value: lightingValues.map(([key, value]) => `${key}:${value}`) });
+    }
+    const cameraValues = [beat.shotLanguage.shotSize, beat.shotLanguage.cameraAngle, beat.shotLanguage.movement].filter(Boolean);
+    if (cameraValues.length) {
+      add({ beat, category: 'camera', description: cameraValues.join('；'), policy: beat.purpose === 'hook' ? 'lock' : 'bounded', importance: beat.purpose === 'hook' ? 'high' : 'medium', metric: 'camera.language', value: cameraValues });
+    }
+    if (beat.shotLanguage.composition) {
+      add({ beat, category: 'composition', description: beat.shotLanguage.composition, policy: 'bounded', importance: 'high', metric: 'composition.layout', value: beat.shotLanguage.composition });
+    }
+    if (beat.rhythm.description) {
+      add({ beat, category: 'rhythm', description: beat.rhythm.description, policy: 'lock', importance: beat.purpose === 'hook' ? 'critical' : 'high', metric: 'rhythm.duration_seconds', value: +(beat.endSeconds - beat.startSeconds).toFixed(3), unit: 'seconds' });
+    }
+  }
+  const firstBeat = beats[0];
+  if (firstBeat && input.referenceMode === 'single_source_fidelity') {
+    add({ beat: firstBeat, category: 'identity', description: '禁止复用原视频连续画面、Logo、水印和独特美术资产', policy: 'prohibit_reuse', importance: 'critical', metric: 'rights.visual_fingerprint_match', value: false });
+    add({ beat: firstBeat, category: 'audio', description: '禁止复用原始音乐、口播录音和声音素材', policy: 'prohibit_reuse', importance: 'critical', metric: 'rights.audio_fingerprint_match', value: false });
+    add({ beat: firstBeat, category: 'caption', description: '禁止照搬原台词、字幕和 CTA 文案', policy: 'prohibit_reuse', importance: 'critical', metric: 'rights.text_similarity_block', value: false });
+  }
+
+  return factorRows.map((row, index): SocialReplicationFactorSpec => {
+    const effectivePolicy: SocialReplicationFactorPolicy = input.referenceMode === 'account_format_series' && row.policy === 'lock'
+      ? (row.category === 'environment' || row.category === 'hook' ? 'equivalent' : 'bounded')
+      : row.policy;
+    const sourceEvidence: SocialReplicationFactorEvidence = {
+      evidenceId: stableId('factor_evidence', { analysisId: input.analysis.analysisId, beatId: row.beat.beatId, description: row.description }),
+      level: 'source_observation',
+      sourceRef: `${input.analysis.analysisId}:${row.beat.startSeconds}-${row.beat.endSeconds}`,
+      description: `参考视频在 ${row.beat.startSeconds}-${row.beat.endSeconds}s 可观察到：${row.description}`,
+      confidence: clamp01(row.beat.observation.confidence ?? input.analysis.coverage?.overallConfidence ?? 0.7),
+      supports: ['presence', 'policy'],
+      capturedAtSeconds: row.beat.startSeconds,
+    };
+    const extraEvidence = (input.additionalEvidence ?? [])
+      .filter(item => row.description.includes(item.matchText) || item.matchText.includes(row.description))
+      .map(item => item.evidence);
+    const evidenceRefs = [sourceEvidence, ...extraEvidence];
+    const evidenceLevels = new Set(evidenceRefs.map(item => item.level));
+    const causalStatus = evidenceLevels.has('owned_account_experiment') ? 'experimental_support' as const
+      : evidenceLevels.has('timepoint_behavior') || evidenceLevels.has('repeated_format') ? 'repeated_association' as const
+        : evidenceLevels.has('account_relative_performance') ? 'observed_correlation' as const
+          : 'creative_hypothesis' as const;
+    const causalConfidence = causalStatus === 'experimental_support' ? 0.85
+      : causalStatus === 'repeated_association' ? 0.65
+        : causalStatus === 'observed_correlation' ? 0.45 : 0.25;
+    const validator = validatorForCategory(row.category, effectivePolicy);
+    const toleranceMaximum = row.metric === 'rhythm.duration_seconds'
+      ? Math.max(0.15, Number(row.value) * 0.12) : null;
+    return {
+      factorId: stableId('replication_factor', { analysisId: input.analysis.analysisId, beatId: row.beat.beatId, category: row.category, description: row.description, index }),
+      version: input.version,
+      beatId: row.beat.beatId,
+      referenceShotId: row.beat.referenceShotId,
+      category: row.category,
+      description: row.description,
+      causalRole: causalRoleForPurpose(row.beat.purpose),
+      causalStatus,
+      policy: effectivePolicy,
+      target: { metric: row.metric, value: row.value, unit: row.unit ?? null, regionRef: null, stateKey: row.category === 'object_state' ? row.metric : null },
+      tolerance: {
+        metric: row.metric,
+        minimum: null,
+        maximum: toleranceMaximum,
+        allowedValues: typeof row.value === 'string' ? [row.value] : Array.isArray(row.value) ? row.value : [],
+        maximumDeviation: toleranceMaximum,
+        unit: row.unit ?? null,
+        humanReviewWhen: row.beat.observation.needsHumanReview ? ['参考分析存在因果缺口或低置信状态'] : [],
+      },
+      importance: row.importance,
+      observationConfidence: sourceEvidence.confidence,
+      causalConfidence,
+      evidenceRefs,
+      validator: {
+        validatorId: stableId('factor_validator', { category: row.category, policy: effectivePolicy, metric: row.metric }),
+        kind: validator.kind,
+        detector: validator.detector,
+        blocking: row.importance === 'critical' || effectivePolicy === 'replace_identity' || effectivePolicy === 'prohibit_reuse',
+        threshold: effectivePolicy === 'equivalent' || effectivePolicy === 'bounded' ? 0.75 : null,
+        evidenceOutput: [...validator.evidenceOutput],
+        fallbackToHuman: true,
+      },
+      status: frozenAt ? 'frozen' : 'draft',
+      frozenAt,
+      decisionOwner: 'director_agent',
+    };
+  });
 }
 
 export interface SocialSceneClusterInput {
