@@ -53,4 +53,5 @@ const authorizedExpert = buildPersonExecutionStrategy({
 });
 assert.equal(authorizedExpert.status, 'review');
 assert.equal(authorizedExpert.estimatedCredits, 25);
+assert.deepEqual(authorizedExpert.internalProviderRoute, ['runway_kling_motion']);
 console.log('creative transformation policy tests passed');

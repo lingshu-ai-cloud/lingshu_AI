@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {
   createRuntimeReadinessProbe,
+  digitalHumanProviderReadiness,
   readinessCacheTtlMs,
   requiredCapabilityIssues,
   runtimeCapabilities,
   runtimeReadiness,
+  sentenceReplicationReadiness,
 } from './readiness.js';
 
 const previous = { ...process.env };
@@ -22,6 +24,68 @@ try {
     'capability_unavailable:quote:quote_skill_not_enabled',
     'unknown_required_capability:unknown',
   ]);
+
+  const sentenceBlocked = sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'false',
+    R2_BUCKET_NAME: 'assets',
+  });
+  assert.equal(sentenceBlocked.ready, false);
+  assert.deepEqual(sentenceBlocked.missing, [
+    'SEEDANCE_SENTENCE_ENABLED=true', 'SEEDANCE_API_KEY', 'SEEDANCE_MODEL', 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
+    '对象存储 endpoint/account', '对象存储 access key', '对象存储 secret key',
+  ]);
+  const sentenceReady = sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
+    OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
+  });
+  assert.deepEqual(sentenceReady, { ready: true, missing: [] });
+  const semanticBlocked = sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test', DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true',
+    OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
+  });
+  assert.deepEqual(semanticBlocked.missing, ['DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）', 'QWEN_DIGITAL_HUMAN_QA_MODEL']);
+  assert.deepEqual(sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test', DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY_FILE: '/secret/key', QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
+    OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
+  }), { ready: true, missing: [] });
+  assert.deepEqual(sentenceReplicationReadiness({
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test',
+    COS_REGION: 'ap-shanghai', COS_BUCKET: 'assets', COS_SECRET_ID: 'configured-for-test', COS_SECRET_KEY: 'configured-for-test',
+  }), { ready: true, missing: [] });
+
+  const providerBlocked = digitalHumanProviderReadiness({
+    RUNWAY_ACT_TWO_ENABLED: 'true',
+    RUNWAYML_API_SECRET: 'configured-for-test',
+  });
+  assert.equal(providerBlocked.runwayActTwo.ready, false);
+  assert.match(providerBlocked.runwayActTwo.reason || '', /object_storage/);
+  assert.match(providerBlocked.runwayActTwo.reason || '', /RUNWAY_ACT_TWO_CNY_PER_CREDIT/);
+  assert.doesNotMatch(providerBlocked.runwayActTwo.reason || '', /configured-for-test/,
+    'provider readiness must never expose secret values');
+  const providerReady = digitalHumanProviderReadiness({
+    RUNWAY_ACT_TWO_ENABLED: 'true', RUNWAYML_API_SECRET: 'configured-for-test',
+    OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test',
+    OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
+    RUNWAY_ACT_TWO_CNY_PER_CREDIT: '0.1', RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND: '1',
+    DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT: '30', DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY: '300',
+  });
+  assert.deepEqual(providerReady.runwayActTwo, { ready: true });
+  assert.equal(providerReady.heygen.ready, false, 'Runway readiness must be independent of HeyGen');
+
+  delete process.env.HEYGEN_GENERATION_ENABLED;
+  delete process.env.HEYGEN_API_KEY;
+  process.env.RUNWAY_ACT_TWO_ENABLED = 'true';
+  process.env.RUNWAYML_API_SECRET = 'configured-for-test';
+  process.env.OBJECT_STORAGE_ENDPOINT = 'https://object.example.test';
+  process.env.OBJECT_STORAGE_ACCESS_KEY_ID = 'configured-for-test';
+  process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = 'configured-for-test';
+  process.env.OBJECT_STORAGE_BUCKET_NAME = 'assets';
+  process.env.RUNWAY_ACT_TWO_CNY_PER_CREDIT = '0.1';
+  process.env.RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND = '1';
+  process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT = '30';
+  process.env.DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY = '300';
+  assert.equal(runtimeCapabilities('web').digital_human.ready, true,
+    'a fully configured Runway Act-Two adapter must satisfy digital-human readiness');
 
   process.env.GEMINI_API_KEY = 'configured-for-test';
   assert.equal(runtimeCapabilities('web').text_generation.ready, false, 'an unrelated provider key must not satisfy the selected backend');

@@ -1,0 +1,301 @@
+import { planPersonShotClusters } from './personShotClustering.js';
+
+export interface DigitalHumanReferenceCue {
+  id: string;
+  start: number;
+  end: number;
+  originalText: string;
+  targetText: string;
+  shotIds: string[];
+  /** Only person shots enter the paid first-frame replacement chain. */
+  personShot?: boolean;
+  classificationSource?: 'analysis' | 'manual';
+  composition?: { presenterKey: string; shotSize: string; cameraAngle: string; background: string; actionIntent: string };
+  compositionClusterId?: string;
+  /** Tenant-owned replacement footage for product/factory/B-roll cues. */
+  nonPersonMaterialId?: string;
+  /** The source frame is extracted locally for structure/composition analysis. */
+  sourceFirstFrame?: { time: number; materialId?: string; imageUrl?: string };
+  /** The rebuilt frame contains the selected enterprise presenter and becomes video input. */
+  targetFirstFrame?: { materialId?: string; imageUrl?: string; state: 'pending' | 'ready' | 'failed' };
+  /** Optional paid Qwen composition draft. It is never used as Seedance input without a separate final-frame step. */
+  draftFirstFrame?: { provider: 'qwen'; materialId: string; imageUrl?: string; state: 'ready'; estimatedCostCny: number };
+  generatedClip?: { materialId?: string; videoUrl?: string; state: 'pending' | 'ready' | 'failed'; duration?: number };
+}
+
+/** Provider-independent requirements shared by the editor and server admission checks. */
+export interface DigitalHumanRequirements {
+  workflow: 'material_processing' | 'viral_replication';
+  method: 'talking' | 'replace' | 'reenact';
+  preferredProvider?: 'auto' | 'kling' | 'sd' | 'runway' | 'self_hosted';
+  /** Viral reenactment defaults to local sentence/frame decomposition; direct reference is opt-in. */
+  replicationMode?: 'sentence_first_frame' | 'direct_reference';
+  contentConfirmed: boolean;
+  action: string;
+  scene: string;
+  preserve: string;
+  reference?: {
+    materialId?: string;
+    videoUrl: string;
+    start: number;
+    end: number;
+    originalText: string;
+    derivativeAuthorized: boolean;
+    derivativeAuthorizationEvidence?: string;
+    modelInputAuthorized?: boolean;
+    modelInputAuthorizationEvidence?: string;
+    cues?: DigitalHumanReferenceCue[];
+  };
+}
+
+export const newDigitalHumanRequirements = (): DigitalHumanRequirements => ({
+  workflow: 'material_processing', method: 'talking', preferredProvider: 'auto', replicationMode: 'sentence_first_frame', contentConfirmed: false,
+  action: '', scene: '', preserve: '',
+});
+
+/** Evidence required before a source video may leave the tenant boundary for generation. */
+export function referenceModelInputAuthorization(requirements: DigitalHumanRequirements | undefined, confirmedAt: string): { evidence: string; confirmedAt: string } | null {
+  if (!requirements || requirements.method === 'talking') return null;
+  if (requirements.method === 'reenact' && (requirements.replicationMode || 'sentence_first_frame') === 'sentence_first_frame') return null;
+  const reference = requirements.reference;
+  const evidence = requirements.method === 'replace' ? reference?.derivativeAuthorizationEvidence : reference?.modelInputAuthorizationEvidence;
+  const authorized = requirements.method === 'replace' ? reference?.derivativeAuthorized : reference?.modelInputAuthorized;
+  return authorized === true && evidence?.trim() && evidence.trim().length <= 500 ? { evidence: evidence.trim(), confirmedAt } : null;
+}
+
+export interface DigitalHumanPlan {
+  state: 'needs_input' | 'needs_confirmation' | 'preview_only' | 'ready';
+  executable: boolean;
+  reasons: string[];
+  steps: string[];
+  provider: 'heygen' | 'local_head_pipeline' | 'runway_seedance' | 'runway_kling_motion' | 'runway_act_two' | 'self_hosted_video' | null;
+}
+
+export type DigitalHumanRouteStepStatus = 'completed' | 'ready' | 'blocked' | 'running' | 'attention' | 'failed';
+export interface DigitalHumanRouteStep {
+  id: 'source_alignment' | 'generation' | 'automatic_quality' | 'manual_review' | 'assembly';
+  label: string;
+  actor: 'system' | 'provider' | 'user';
+  tool: string | null;
+  dependsOn: DigitalHumanRouteStep['id'][];
+  status: DigitalHumanRouteStepStatus;
+}
+
+export interface DigitalHumanPlanRecord extends DigitalHumanPlan {
+  id: string;
+  projectId: string;
+  assemblyId: string;
+  shotId: string;
+  fingerprint: string;
+  workflow: DigitalHumanRequirements['workflow'];
+  method: DigitalHumanRequirements['method'];
+  presenterId: string;
+  presenterAssetVersion: number;
+  candidateTools: string[];
+  estimatedCostCny: number | null;
+  origin?: 'manual' | 'content_agent';
+  sourceTaskId?: string;
+  sourceTaskVersion?: string;
+  inputSnapshot?: DigitalHumanInputSnapshot;
+  routeSteps?: DigitalHumanRouteStep[];
+  routeDecision?: DigitalHumanRouteDecision | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SentenceReplicationResult {
+  cues: DigitalHumanReferenceCue[];
+  materialId: string;
+  candidateUrl?: string;
+  providerTaskIds?: string[];
+  executionId?: string;
+  sentenceJobId?: string;
+  candidateOutput?: { materialId: string; objectKey?: string; localFile?: string; contentSha256: string; objectEtag?: string };
+  cueQuality?: SentenceCueQuality[];
+  failedCueIds?: string[];
+  state: 'completed';
+}
+
+export interface SentenceCueQuality {
+  cueId: string;
+  kind: 'person_generated' | 'non_person_material';
+  state: 'manual_review' | 'failed' | 'accepted';
+  checks: Array<{ key: 'media' | 'identity' | 'motion' | 'product_brand_text' | 'background' | 'audio_sync' | 'reuse_risk'; status: 'passed' | 'failed' | 'pending'; evidence: string }>;
+}
+
+export interface SentenceFirstFrameDraftResult {
+  cues: DigitalHumanReferenceCue[];
+  operationIds: string[];
+  estimatedCostCny: number;
+  provider: 'qwen';
+  state: 'completed';
+}
+
+export interface DigitalHumanRouteDecision {
+  targetDurationSeconds: number | null;
+  budgetLimitCny?: number | null;
+  requiredPreservation: string[];
+  selectedTool: string | null;
+  evaluations: Array<{ tool: string; compatible: boolean; reasons: string[]; qualityInspection: boolean; estimatedCostCny: number | null }>;
+}
+
+export interface DigitalHumanInputSnapshot {
+  narration: string;
+  language: string;
+  ratio: string;
+  targetDurationSeconds: number | null;
+  sound: 'voiceover' | 'source' | 'silent';
+  presenterId: string;
+  presenterAssetVersion: number;
+  presenterReferenceMaterialIds: string[];
+  presenterInput?: { materialId: string; objectKey: string; type?: 'image' | 'video'; objectEtag?: string } | null;
+  voiceMapping: { avatarId: string; voiceId: string } | null;
+  productId: string;
+  productMaterialId: string;
+  backgroundMaterialId: string;
+  requirements: DigitalHumanRequirements | null;
+  revisionFeedback?: string | null;
+  audioSegment?: { segmentId: string; checksumSha256: string; start: number; duration: number } | null;
+  referenceInput?: { materialId: string; clipObjectKey: string; start: number; duration: number; sourceObjectEtag?: string; clipObjectEtag?: string } | null;
+  derivativeAuthorization?: { evidence: string; confirmedAt: string } | null;
+  modelInputAuthorization?: { evidence: string; confirmedAt: string } | null;
+}
+
+export interface DigitalHumanExecutionRecord {
+  id: string;
+  planId: string;
+  jobId: string;
+  projectId: string;
+  assemblyId: string;
+  shotId: string;
+  fingerprint: string;
+  tool: string;
+  provider: string;
+  model: string | null;
+  presenterAssetVersion: number;
+  /** Whether the supplier task was created. Missing on legacy records and counted conservatively. */
+  submissionOutcome?: 'created' | 'unknown' | 'rejected';
+  inputSnapshot?: DigitalHumanInputSnapshot;
+  candidateOutput?: { materialId: string; objectKey?: string; localFile?: string; contentSha256: string; objectEtag?: string } | null;
+  routeSteps?: DigitalHumanRouteStep[];
+  adoption?: { candidateId: string; materialId: string; assemblyVersion: string; adoptedAt: string; planId?: string; fingerprint?: string; presenterAssetVersion?: number; qualityReviewedAt?: string; candidateObjectKey?: string; candidateLocalFile?: string; candidateContentSha256?: string; candidateObjectEtag?: string } | null;
+  state: 'submitting' | 'pending' | 'completed' | 'failed' | 'uncertain' | 'cancelled';
+  externalTaskId: string | null;
+  materialId: string | null;
+  estimatedCostCny: number | null;
+  actualCostCny: number | null;
+  costStatus: 'estimated' | 'awaiting_invoice' | 'reconciled';
+  costSourceRef: string | null;
+  error: string;
+  quality: import('./digitalHumanQuality').DigitalHumanQualityReport;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function digitalHumanRouteSteps(method: DigitalHumanRequirements['method'], provider: string | null, executable: boolean, planState?: DigitalHumanPlan['state']): DigitalHumanRouteStep[] {
+  const generationLabel = method === 'talking' ? '生成人物口播' : method === 'replace' ? '执行人物替换' : '生成参考重演';
+  const inputStatus: DigitalHumanRouteStepStatus = planState === 'needs_input' ? 'attention' : planState === 'needs_confirmation' ? 'ready' : 'completed';
+  return [
+    { id: 'source_alignment', label: method === 'talking' ? '确认人物与口播输入' : '确认原片、逐句映射与保留要求', actor: 'system', tool: null, dependsOn: [], status: inputStatus },
+    { id: 'generation', label: generationLabel, actor: 'provider', tool: provider, dependsOn: ['source_alignment'], status: executable ? 'ready' : 'blocked' },
+    { id: 'automatic_quality', label: '自动媒体与画面检查', actor: 'system', tool: null, dependsOn: ['generation'], status: 'blocked' },
+    { id: 'manual_review', label: '人工验收人物、口型与保留内容', actor: 'user', tool: null, dependsOn: ['automatic_quality'], status: 'blocked' },
+    { id: 'assembly', label: '确认候选并填入分镜', actor: 'user', tool: null, dependsOn: ['manual_review'], status: 'blocked' },
+  ];
+}
+
+export function usesDirectReferenceVideo(requirements?: DigitalHumanRequirements): boolean {
+  if (!requirements || requirements.method === 'talking') return false;
+  if (requirements.method === 'replace') return true;
+  return requirements.replicationMode === 'direct_reference';
+}
+
+export function cueFirstFrameTime(cue: DigitalHumanReferenceCue): number {
+  const explicit = Number(cue.sourceFirstFrame?.time);
+  return Number.isFinite(explicit) && explicit >= cue.start && explicit < cue.end ? explicit : cue.start;
+}
+
+export function routeStepsForExecution(
+  steps: DigitalHumanRouteStep[],
+  state: DigitalHumanExecutionRecord['state'],
+  quality: import('./digitalHumanQuality').DigitalHumanQualityReport,
+  assembled = false,
+): DigitalHumanRouteStep[] {
+  const automatic = quality.checks.filter(check => check.mode === 'automatic');
+  const automaticFailed = automatic.some(check => check.status === 'failed');
+  const automaticPassed = automatic.length > 0 && automatic.every(check => check.status === 'passed');
+  return steps.map(step => {
+    if (step.id === 'source_alignment') return { ...step, status: 'completed' };
+    if (step.id === 'generation') return { ...step, status: state === 'completed' ? 'completed' : state === 'failed' || state === 'cancelled' ? 'failed' : state === 'uncertain' ? 'attention' : 'running' };
+    if (step.id === 'automatic_quality') return { ...step, status: automaticFailed ? 'failed' : automaticPassed ? 'completed' : state === 'completed' ? 'running' : 'blocked' };
+    if (step.id === 'manual_review') return { ...step, status: quality.state === 'accepted' ? 'completed' : quality.state === 'failed' ? 'failed' : quality.state === 'manual_review' ? 'ready' : 'blocked' };
+    return { ...step, status: assembled ? 'completed' : quality.state === 'accepted' ? 'ready' : 'blocked' };
+  });
+}
+
+export function candidateToolsFor(requirements?: DigitalHumanRequirements): string[] {
+  if (!requirements || requirements.method === 'talking') return ['heygen'];
+  const preference = requirements.preferredProvider || 'auto';
+  if (preference === 'kling') return ['runway_kling_motion'];
+  if (preference === 'sd') return ['runway_seedance'];
+  if (preference === 'runway') return requirements.method === 'reenact' ? ['runway_act_two'] : [];
+  if (preference === 'self_hosted') return requirements.method === 'replace' ? ['local_head_pipeline'] : ['self_hosted_video'];
+  // Act-Two creates a new performance from a character asset and a driving video. It does
+  // not replace the person inside the original pixels, so it must never be advertised for
+  // the keep-the-original-shot replacement route.
+  if (requirements.method === 'replace') return ['local_head_pipeline', 'runway_kling_motion'];
+  return ['runway_kling_motion', 'runway_seedance', 'runway_act_two', 'self_hosted_video'];
+}
+
+export function referenceCues(requirements?: DigitalHumanRequirements): DigitalHumanReferenceCue[] {
+  const reference = requirements?.reference;
+  if (!reference) return [];
+  if (Array.isArray(reference.cues) && reference.cues.length) return reference.cues;
+  if (!reference.originalText.trim() || !Number.isFinite(reference.start) || !Number.isFinite(reference.end) || reference.end <= reference.start) return [];
+  return [{ id: 'legacy-reference', start: reference.start, end: reference.end, originalText: reference.originalText, targetText: '', shotIds: [] }];
+}
+
+/** Legacy talking shots keep their existing confirmation flow. No implicit fallback. */
+export function planDigitalHumanShot(input: {
+  requirements?: DigitalHumanRequirements;
+  narration: string;
+  hasAuthorizedPresenter: boolean;
+  talkingAvailable: boolean;
+  presenterCapabilities?: Array<'talking' | 'reference_image' | 'reference_video' | 'person_replacement'>;
+}): DigitalHumanPlan {
+  const r = input.requirements;
+  const reasons: string[] = [];
+  if (!input.hasAuthorizedPresenter) reasons.push('请选择已授权的企业人物');
+  if (input.presenterCapabilities && r?.method === 'talking' && !input.presenterCapabilities.includes('talking')) reasons.push('所选人物缺少口播能力，请补充人物与声音映射');
+  if (input.presenterCapabilities && r && r.method !== 'talking' && !input.presenterCapabilities.some(item => ['reference_image', 'reference_video', 'person_replacement'].includes(item))) reasons.push('所选人物缺少参考图片或视频资产');
+  if (!input.narration?.trim()) reasons.push('请填写本镜头口播');
+  if (r && (!['material_processing', 'viral_replication'].includes(r.workflow) || !['talking', 'replace', 'reenact'].includes(r.method))) reasons.push('镜头制作方式无效');
+  const referenceDriven = r && (r.workflow === 'viral_replication' || r.method !== 'talking');
+  if (referenceDriven) {
+    const ref = r.reference;
+    if (!ref?.videoUrl?.trim() || !Number.isFinite(ref.start) || !Number.isFinite(ref.end) || ref.start < 0 || ref.end <= ref.start) reasons.push('请补齐原片与有效的镜头时间段');
+    if (!ref?.originalText?.trim()) reasons.push('请补齐原片对应语句');
+    const cues = referenceCues(r);
+    if (!cues.length || cues.some(cue => !cue.id?.trim() || !Number.isFinite(cue.start) || !Number.isFinite(cue.end) || cue.start < 0 || cue.end <= cue.start || !cue.originalText?.trim())) reasons.push('原片逐句时间轴不完整');
+    if (cues.some(cue => !Array.isArray(cue.shotIds))) reasons.push('原片语句与分镜映射无效');
+    if (r.method === 'reenact' && (r.replicationMode || 'sentence_first_frame') === 'sentence_first_frame' && cues.length) reasons.push(...planPersonShotClusters(cues,3).blockers);
+    if (r.method !== 'talking' && (!r.action?.trim() || !r.scene?.trim())) reasons.push('请补齐人物动作与场景要求');
+    if (r.method !== 'talking' && !r.preserve?.trim()) reasons.push('请明确需要保留的画面内容');
+    if (r.method === 'replace' && ref?.derivativeAuthorized !== true) reasons.push('保留原镜头替换人物需要确认源视频派生使用授权');
+    if (r.method === 'replace' && ref?.derivativeAuthorized === true && (!ref.derivativeAuthorizationEvidence?.trim() || ref.derivativeAuthorizationEvidence.trim().length > 500)) reasons.push('请填写有效的源视频派生授权依据');
+  }
+  const steps = r?.method === 'replace'
+    ? ['对齐原片语句与镜头', '制作目标人物层', '核验动作、产品与背景保真', '预览确认后填入分镜']
+    : r?.method === 'reenact' && (r.replicationMode || 'sentence_first_frame') === 'sentence_first_frame'
+      ? ['按口播逐句切分原片并提取首帧', '将每句首帧重建为目标企业人物', '按目标口播逐句生成短视频', '按原节奏拼接并预览确认']
+      : r?.method === 'reenact'
+        ? ['对齐原片语句与镜头', '将授权原片提交为动作参考', '生成动作视频与口播', '预览确认后填入分镜']
+      : ['使用已确认人物与口播', '生成数字人口播', '核验音画与时长', '预览确认后填入分镜'];
+  if (reasons.length) return { state: 'needs_input', executable: false, reasons, steps, provider: null };
+  if (r && r.contentConfirmed !== true) return { state: 'needs_confirmation', executable: false, reasons: ['请确认本镜头人物、口播和画面要求'], steps, provider: null };
+  if (r && r.method !== 'talking') return { state: 'preview_only', executable: false, reasons: ['仅支持方案预览：参考人物制作链尚未接通，不会改用口播接口生成'], steps, provider: null };
+  // Talking APIs do not honor custom motion or scene constraints.
+  if (r && [r.action, r.scene, r.preserve].some(value => value?.trim())) return { state: 'preview_only', executable: false, reasons: ['当前口播链无法执行自定义动作、场景或画面保留要求，仅支持方案预览'], steps, provider: null };
+  if (!input.talkingAvailable) return { state: 'preview_only', executable: false, reasons: ['数字人口播服务尚未配置或启用'], steps, provider: null };
+  return { state: 'ready', executable: true, reasons: [], steps, provider: 'heygen' };
+}

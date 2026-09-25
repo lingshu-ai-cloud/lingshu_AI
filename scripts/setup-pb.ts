@@ -103,6 +103,13 @@ const COLLECTIONS: CollectionSpec[] = [
   },
   { name: 'studio_production_defaults', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }] },
   { name: 'studio_avatar_jobs', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }, { name: 'input', type: 'json', maxSize: 2000000 }] },
+  { name: 'studio_digital_human_plans', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'shot_key', type: 'text', required: true }, { name: 'fingerprint', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }] },
+  { name: 'studio_digital_human_executions', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'job_id', type: 'text', required: true }, { name: 'plan_id', type: 'text', required: true }, { name: 'request_id', type: 'text' }, { name: 'payload', type: 'json', maxSize: 2000000 }], indexes: [
+    "CREATE UNIQUE INDEX `idx_studio_dh_execution_request` ON `studio_digital_human_executions` (`tenant_id`, `request_id`) WHERE `request_id` != ''",
+  ] },
+  { name: 'studio_sentence_replication_jobs', fields: [{ name: 'tenant_id', type: 'text', required: true }, { name: 'project_id', type: 'text', required: true }, { name: 'request_id', type: 'text', required: true }, { name: 'payload', type: 'json', maxSize: 2000000 }], indexes: [
+    'CREATE UNIQUE INDEX idx_studio_sentence_replication_request ON studio_sentence_replication_jobs (tenant_id, request_id)',
+  ] },
   {
     name: 'studio_shooting_tasks',
     fields: [

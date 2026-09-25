@@ -99,6 +99,10 @@ assert.match(studioSource, /withoutStudioWorkflowContext\([\s\S]{0,180}JSON\.par
 assert.match(studioSource, /resolveStudioWorkflowProjectEntry\(nextProjects, workflowContext\)/, 'a content-production handoff must resolve exact task projects before entering Studio');
 assert.match(studioSource, /if \(workflowContext\) \{[\s\S]{0,180}removeItem\(STUDIO_OPEN_PROJECT_KEY\)/, 'workflow context must override and consume a remembered browser draft');
 assert.match(studioSource, /silent && !projectId && !studioSpecHasMeaningfulContent\(nextSpec\)/, 'background autosave must not create empty unnamed drafts');
+assert.match(studioSource, /onCreatePresenter=\{async input => \{/,'the current shot must expose inline presenter completion');
+assert.match(studioSource, /uploadMaterialFile\(input\.file,\{folder:'presenter',type:'image',sourceType:'presenter-inline-upload'\}\)/,'inline completion must upload the selected portrait');
+assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterials\(\)/,'inline completion must refresh enterprise presenters and Studio materials before returning');
+assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresenterId\|\|presenterId/, 'the first inline presenter becomes the enterprise default while remaining selected in the originating shot');
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 assert.match(trafficSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');

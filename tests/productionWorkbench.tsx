@@ -18,7 +18,14 @@ window.fetch = async (input, init) => {
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
   if (path.includes('/enterprise/profile')) return json({ company: { name: '测试企业' }, products: { categories: '设备', items: [{ id: 'product-test', name: '测试设备', category: '设备' }] }, socialStrategy: { preferredLanguage: 'zh', businessLanguages: ['zh'] } });
-  if (path.includes('/production/capabilities')) return json({ configured: false, reason: '交互测试不连接供应商', costPerSecond: null });
+  if (path.includes('/production/capabilities')) return json({ configured: false, reason: '交互测试不连接供应商', costPerSecond: null, tools: [
+    { id: 'heygen', label: 'HeyGen 人物口播', execution: false, reason: '交互测试不连接供应商' },
+    { id: 'runway_kling_motion', label: 'Kling', execution: false, reason: 'Kling 尚未注册真实执行适配器' },
+    { id: 'runway_seedance', label: 'Seedance（SD）', execution: false, reason: 'Seedance 参考人物服务未启用' },
+    { id: 'runway_act_two', label: 'Runway', execution: false, reason: 'Runway 未配置' },
+    { id: 'local_head_pipeline', label: '自有模型 · 本地逐帧处理', execution: false, reason: '本地处理器未启用' },
+    { id: 'self_hosted_video', label: '自有数字人模型', execution: false, reason: '自有模型尚未注册真实执行适配器' },
+  ] });
   if (path.includes('/production/defaults')) { if (init?.method === 'POST') defaults = body; return json(defaults); }
   if (path.includes('/production/jobs')) return json([]);
   if (path.endsWith('/projects')) { if (init?.method === 'POST') { Object.assign(project, body); return json({ ok: true, project }); } return json([project]); }

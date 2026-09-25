@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { enterpriseAssetContentType, enterpriseAssetObjectKeyFromTenantKey } from '../server/storage/enterpriseAssets.js';
-import { objectStorageEnabled, r2Head, r2Upload } from '../server/storage/r2.js';
+import { objectStorageEnabled, objectStorageHead, objectStorageUpload } from '../server/storage/objectStorage.js';
 
 dotenv.config({ path: process.env.ENV_FILE_PATH || '.env.production' });
 
@@ -75,15 +75,15 @@ async function main(): Promise<void> {
   let migratedThisRun = 0;
   let bytesThisRun = 0;
   for (const file of pending.slice(0, batchSize)) {
-    const existing = await r2Head(file.key);
+    const existing = await objectStorageHead(file.key);
     if (!existing || existing.size !== file.size) {
-      await r2Upload({
+      await objectStorageUpload({
         key: file.key,
         body: fs.readFileSync(file.source),
         contentType: enterpriseAssetContentType(file.source),
       });
     }
-    const verified = await r2Head(file.key);
+    const verified = await objectStorageHead(file.key);
     if (!verified || verified.size !== file.size) throw new Error(`verification failed for ${file.relative}`);
     state.entries[file.relative] = {
       key: file.key,

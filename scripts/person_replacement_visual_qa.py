@@ -43,6 +43,7 @@ def main():
     duration = min(source.get(cv2.CAP_PROP_FRAME_COUNT)/max(1, source.get(cv2.CAP_PROP_FPS)), candidate.get(cv2.CAP_PROP_FRAME_COUNT)/max(1, candidate.get(cv2.CAP_PROP_FPS)))
     times = np.arange(0, duration, 1/max(.5, args.sample_fps))
     pose_errors, hand_scores, background_scores, face_scores = [], [], [], []
+    source_wrist_separation, candidate_wrist_separation = [], []
     source_pose_prev = candidate_pose_prev = None
     artifact_count = pose_pairs = hand_pairs = face_pairs = 0
     mp_pose, mp_hands, mp_seg, mp_face = mp.solutions.pose, mp.solutions.hands, mp.solutions.selfie_segmentation, mp.solutions.face_detection
@@ -72,6 +73,15 @@ def main():
                     candidate_jump = np.linalg.norm(pb[:,:2]-candidate_pose_prev[:,:2], axis=1).mean()
                     if candidate_jump > source_jump + .12: artifact_count += 1
                 source_pose_prev, candidate_pose_prev = pa, pb
+                # Pose wrists are more consistently detected than full hand landmarks.
+                # Normalize wrist separation by shoulder width so identity/body-size
+                # changes do not dominate the gesture-timing comparison.
+                required = (11, 12, 15, 16)
+                if all(pa[i,2] > .5 and pb[i,2] > .5 for i in required):
+                    source_shoulders = max(.05, float(np.linalg.norm(pa[11,:2] - pa[12,:2])))
+                    candidate_shoulders = max(.05, float(np.linalg.norm(pb[11,:2] - pb[12,:2])))
+                    source_wrist_separation.append(float(np.linalg.norm(pa[15,:2] - pa[16,:2]) / source_shoulders))
+                    candidate_wrist_separation.append(float(np.linalg.norm(pb[15,:2] - pb[16,:2]) / candidate_shoulders))
             ha, hb = hand_map(hands.process(rgb_a)), hand_map(hands.process(rgb_b))
             for label in set(ha).intersection(hb):
                 distances = np.linalg.norm(ha[label][:,:2]-hb[label][:,:2], axis=1)
@@ -87,16 +97,34 @@ def main():
             hist_a = face_histogram(a, da[0] if da else None); hist_b = face_histogram(b, db[0] if db else None)
             if hist_a is not None and hist_b is not None:
                 face_scores.append(float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))); face_pairs += 1
+    wrist_mae = None
+    wrist_motion_correlation = None
+    if source_wrist_separation:
+        source_wrist = np.asarray(source_wrist_separation, dtype=np.float32)
+        candidate_wrist = np.asarray(candidate_wrist_separation, dtype=np.float32)
+        wrist_mae = float(np.abs(source_wrist - candidate_wrist).mean())
+        if len(source_wrist) >= 3:
+            source_motion, candidate_motion = np.diff(source_wrist), np.diff(candidate_wrist)
+            if source_motion.std() > 1e-6 and candidate_motion.std() > 1e-6:
+                wrist_motion_correlation = float(np.corrcoef(source_motion, candidate_motion)[0,1])
     report = {
         'version': 1, 'sampleFps': args.sample_fps, 'sampleCount': int(len(times)),
         'normalizedPoseError': mean_or_none(pose_errors), 'posePairCount': pose_pairs,
         'handPckAt008': mean_or_none(hand_scores), 'handPairCount': hand_pairs,
+        'wristSeparationMae': wrist_mae,
+        'wristMotionCorrelation': wrist_motion_correlation,
+        'wristPosePairCount': len(source_wrist_separation),
+        'wristSeparationTimeline': {
+            'source': [round(float(v), 4) for v in source_wrist_separation],
+            'candidate': [round(float(v), 4) for v in candidate_wrist_separation]
+        },
         'backgroundSsim': mean_or_none(background_scores),
         'faceAppearanceCorrelationProxy': mean_or_none(face_scores), 'facePairCount': face_pairs,
         'landmarkArtifactCount': artifact_count,
         'limitations': [
             'faceAppearanceCorrelationProxy 是颜色纹理代理，不是人物身份模型，不能单独确认身份',
             'MediaPipe 未检出手部或姿态时指标为 null，质量门禁必须按缺失指标处理',
+            'wristSeparationMae 与 wristMotionCorrelation 基于肩宽归一化的双腕间距，用于比较合手/分手动作时间轴',
             '背景 SSIM 使用源片与候选片人物分割蒙版的并集之外区域'
         ]
     }

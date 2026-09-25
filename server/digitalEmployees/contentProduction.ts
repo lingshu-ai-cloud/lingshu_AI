@@ -27,7 +27,7 @@ import { synthesizeStudioVoiceForAutomation, ensureHeygenAutomationJob, heygenOu
 import { assessScriptQualityV2, storyboardSceneRanges, type StudioScriptMaterialInfo } from '../lib/studioScriptQualityV2.js';
 import { fetchCloudMaterial, listCloudMaterials } from '../lib/cloudMaterials.js';
 import { store } from '../storage/index.js';
-import { objectStorageEnabled, r2SignedGetUrl } from '../storage/r2.js';
+import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { isSyntheticMaterial, syntheticMaterialMarker } from '../lib/materialTruthfulness.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
 import { inspectRenderedVisuals, inspectRenderedScenes } from '../lib/renderVisualQuality.js';
@@ -894,7 +894,7 @@ export async function assetRenderUrl(asset: AssetCandidate, tenantId: string): P
   if (asset.localPath && fs.existsSync(asset.localPath)) {
     return `data:${mimeFromFile(asset.localPath)};base64,${fs.readFileSync(asset.localPath).toString('base64')}`;
   }
-  if (asset.objectKey && objectStorageEnabled()) return r2SignedGetUrl(asset.objectKey, 15 * 60);
+  if (asset.objectKey && objectStorageEnabled()) return objectStorageSignedGetUrl(asset.objectKey, 15 * 60);
   if (asset.cloudRecordId) {
     const response = await fetchCloudMaterial(asset.cloudRecordId, asset.type === 'video' ? 'videoFile' : 'posterFile', undefined, tenantId);
     if (response?.ok) {

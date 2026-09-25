@@ -17,6 +17,12 @@ export type SocialProductionAsset = {
   /** Concrete commercial/derivative-use evidence for authorized shared
    * inventory. It is required before stock can enter a zero-asset render. */
   authorizationRef?: string;
+  /** External generation provenance. These fields are audit data, not proof
+   * that a provider call succeeded; an asset only enters production after the
+   * adapter has verified a completed task and a concrete output file. */
+  providerId?: string;
+  providerTaskId?: string;
+  idempotencyKey?: string;
   duration: number;
   visualObservations: string[];
   /** Legacy display labels. They are never sufficient to authorize an

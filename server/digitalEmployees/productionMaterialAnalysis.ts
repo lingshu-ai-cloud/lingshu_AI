@@ -10,7 +10,7 @@ import { analyzeImagePostEvidenceWithQwen } from '../agents/qwen.js';
 import { analyzeMaterialVideo, productionAnalysisSegments } from '../routes/studio.js';
 import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
-import { r2GetObject } from '../storage/r2.js';
+import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { fetchCloudMaterial } from '../lib/cloudMaterials.js';
 import { evidenceClips, observationStrings } from './sceneEvidence.js';
 import type { AssetCandidate } from './contentProduction.js';
@@ -56,7 +56,7 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
     if (fs.statSync(asset.localPath).size > MAX_BYTES) throw Error('production_input_required:素材超过110MB上传限制，请先拆分文件');
     bytes = fs.readFileSync(asset.localPath);
   } else if (asset.objectKey) {
-    const media = await r2GetObject(asset.objectKey, `bytes=0-${MAX_BYTES}`);
+    const media = await objectStorageGetObject(asset.objectKey, `bytes=0-${MAX_BYTES}`);
     if (!media) throw Error('素材文件不可读');
     bytes = await readMaterialBytes(media.body, { cancel: () => { (media.body as { destroy?: () => void }).destroy?.(); } });
   } else if (asset.cloudRecordId) {

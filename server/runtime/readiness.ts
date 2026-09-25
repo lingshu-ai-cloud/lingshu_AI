@@ -17,6 +17,17 @@ export interface CapabilityState {
   reason?: string;
 }
 
+/**
+ * Prerequisites for the local, per-sentence replication worker. This is kept
+ * deliberately configuration-only: it never validates a credential with a
+ * provider and never returns a configured value.
+ */
+export interface SentenceReplicationReadiness {
+  ready: boolean;
+  missing: string[];
+  reason?: string;
+}
+
 const KNOWN_CAPABILITIES: RuntimeCapability[] = [
   'text_generation',
   'qwen_generation',
@@ -31,6 +42,91 @@ const KNOWN_CAPABILITIES: RuntimeCapability[] = [
 
 const enabled = (name: string) => process.env[name] === 'true';
 const present = (name: string) => Boolean(String(process.env[name] || '').trim());
+
+const envEnabled = (env: NodeJS.ProcessEnv, name: string) => String(env[name] || '').trim().toLowerCase() === 'true';
+const envPresent = (env: NodeJS.ProcessEnv, name: string) => Boolean(String(env[name] || '').trim());
+const positiveFinite = (env: NodeJS.ProcessEnv, name: string) => {
+  const value = Number(String(env[name] || '').trim());
+  return Number.isFinite(value) && value > 0;
+};
+
+export interface DigitalHumanProviderReadiness {
+  heygen: CapabilityState;
+  custom: CapabilityState;
+  runwayActTwo: CapabilityState;
+  seedanceReference: CapabilityState;
+}
+
+/**
+ * Configuration-only provider audit. It deliberately performs no network or
+ * paid supplier call and never returns credential values.
+ */
+export function digitalHumanProviderReadiness(
+  env: NodeJS.ProcessEnv = process.env,
+): DigitalHumanProviderReadiness {
+  const objectStorageReady = (envPresent(env, 'OBJECT_STORAGE_ENDPOINT') || envPresent(env, 'R2_ACCOUNT_ID') || envPresent(env, 'COS_ENDPOINT') || envPresent(env, 'COS_REGION'))
+    && (envPresent(env, 'OBJECT_STORAGE_ACCESS_KEY_ID') || envPresent(env, 'R2_ACCESS_KEY_ID') || envPresent(env, 'COS_SECRET_ID'))
+    && (envPresent(env, 'OBJECT_STORAGE_SECRET_ACCESS_KEY') || envPresent(env, 'R2_SECRET_ACCESS_KEY') || envPresent(env, 'COS_SECRET_KEY'))
+    && (envPresent(env, 'OBJECT_STORAGE_BUCKET_NAME') || envPresent(env, 'R2_BUCKET_NAME') || envPresent(env, 'COS_BUCKET'));
+  const state = (missing: string[]): CapabilityState => ({
+    ready: missing.length === 0,
+    ...(missing.length ? { reason: `missing:${missing.join(',')}` } : {}),
+  });
+  return {
+    heygen: state([
+      ...(!envEnabled(env, 'HEYGEN_GENERATION_ENABLED') ? ['HEYGEN_GENERATION_ENABLED=true'] : []),
+      ...(!envPresent(env, 'HEYGEN_API_KEY') ? ['HEYGEN_API_KEY'] : []),
+    ]),
+    custom: state([
+      ...(!envPresent(env, 'DIGITAL_HUMAN_API_URL') ? ['DIGITAL_HUMAN_API_URL'] : []),
+      ...(!envPresent(env, 'DIGITAL_HUMAN_API_KEY') ? ['DIGITAL_HUMAN_API_KEY'] : []),
+    ]),
+    runwayActTwo: state([
+      ...(!envEnabled(env, 'RUNWAY_ACT_TWO_ENABLED') ? ['RUNWAY_ACT_TWO_ENABLED=true'] : []),
+      ...(!envPresent(env, 'RUNWAYML_API_SECRET') ? ['RUNWAYML_API_SECRET'] : []),
+      ...(!objectStorageReady ? ['object_storage'] : []),
+      ...(!positiveFinite(env, 'RUNWAY_ACT_TWO_CNY_PER_CREDIT') ? ['RUNWAY_ACT_TWO_CNY_PER_CREDIT'] : []),
+      ...(!positiveFinite(env, 'RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND') ? ['RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND'] : []),
+      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT') ? ['DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT'] : []),
+      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY') ? ['DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY'] : []),
+    ]),
+    seedanceReference: state([
+      ...(!envEnabled(env, 'SEEDANCE_REFERENCE_ENABLED') ? ['SEEDANCE_REFERENCE_ENABLED=true'] : []),
+      ...(!envPresent(env, 'SEEDANCE_API_KEY') ? ['SEEDANCE_API_KEY'] : []),
+      ...(!envPresent(env, 'SEEDANCE_MODEL') ? ['SEEDANCE_MODEL'] : []),
+      ...(!objectStorageReady ? ['object_storage'] : []),
+      ...(!positiveFinite(env, 'SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND') ? ['SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND'] : []),
+      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT') ? ['DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT'] : []),
+      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY') ? ['DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY'] : []),
+    ]),
+  };
+}
+
+export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.env): SentenceReplicationReadiness {
+  const configured = (name: string) => Boolean(String(env[name] || '').trim());
+  const switchedOn = (name: string) => String(env[name] || '').trim().toLowerCase() === 'true';
+  const objectEndpoint = configured('OBJECT_STORAGE_ENDPOINT') || configured('R2_ACCOUNT_ID') || configured('COS_ENDPOINT') || configured('COS_REGION');
+  const objectAccessKey = configured('OBJECT_STORAGE_ACCESS_KEY_ID') || configured('R2_ACCESS_KEY_ID') || configured('COS_SECRET_ID');
+  const objectSecret = configured('OBJECT_STORAGE_SECRET_ACCESS_KEY') || configured('R2_SECRET_ACCESS_KEY') || configured('COS_SECRET_KEY');
+  const objectBucket = configured('OBJECT_STORAGE_BUCKET_NAME') || configured('R2_BUCKET_NAME') || configured('COS_BUCKET');
+  const missing = [
+    !switchedOn('SEEDANCE_SENTENCE_ENABLED') && 'SEEDANCE_SENTENCE_ENABLED=true',
+    !configured('SEEDANCE_API_KEY') && 'SEEDANCE_API_KEY',
+    !configured('SEEDANCE_MODEL') && 'SEEDANCE_MODEL',
+    !(configured('SEEDREAM_API_KEY') || configured('SEEDANCE_API_KEY')) && 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
+    switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !(configured('DASHSCOPE_API_KEY') || configured('DASHSCOPE_API_KEY_FILE')) && 'DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）',
+    switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !configured('QWEN_DIGITAL_HUMAN_QA_MODEL') && 'QWEN_DIGITAL_HUMAN_QA_MODEL',
+    !objectEndpoint && '对象存储 endpoint/account',
+    !objectAccessKey && '对象存储 access key',
+    !objectSecret && '对象存储 secret key',
+    !objectBucket && '对象存储 bucket',
+  ].filter(Boolean) as string[];
+  return {
+    ready: missing.length === 0,
+    missing,
+    ...(missing.length ? { reason: `逐句复刻尚不可执行，缺少：${missing.join('、')}` } : {}),
+  };
+}
 
 function textGenerationCapability(): CapabilityState {
   const backend = String(process.env.OVERSEAS_LLM_BACKEND || 'qwen').trim().toLowerCase();
@@ -52,8 +148,8 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
   const ttsReady = present('MINIMAX_API_KEY') || present('PIPER_BIN') || present('XTTS_BIN');
   const videoReady = (enabled('SEEDANCE_VIDEO_ENABLED') && present('SEEDANCE_API_KEY'))
     || (enabled('GEMINI_VIDEO_ENABLED') && present('GEMINI_API_KEY'));
-  const digitalHumanReady = (enabled('HEYGEN_GENERATION_ENABLED') && present('HEYGEN_API_KEY'))
-    || (present('DIGITAL_HUMAN_API_URL') && present('DIGITAL_HUMAN_API_KEY'));
+  const digitalHumanProviders = digitalHumanProviderReadiness();
+  const digitalHumanReady = Object.values(digitalHumanProviders).some(provider => provider.ready);
   const starterWorkersReady = background
     && enabled('STARTER_PUBLICATION_PACKAGE_WORKER_ENABLED')
     && enabled('STARTER_QUOTE_ARTIFACT_WORKER_ENABLED')

@@ -6,6 +6,7 @@ import type {
   SocialReplicationScriptVersion,
 } from '../../shared/contracts/socialContentWorkflow';
 import { buildSocialAgentWorkflow, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
+import { alignSocialAssetSupplyPlanToBaseline } from './socialContentAssetSupplyExecution';
 
 const brief: SocialContentTaskBrief = {
   title: '面向采购商的产品介绍',
@@ -176,16 +177,82 @@ assert.ok(workflow.executionPlan.scenes.every(scene => scene.candidates.every(ca
   && candidate.durationFitScore >= 0
   && 'executionRecordId' in candidate.provenance
 ))));
-assert.ok(socialContentCapabilityRegistry().every(capability => (
+const runtimeCapabilities = socialContentCapabilityRegistry();
+assert.ok(runtimeCapabilities.every(capability => (
   capability.canDo.length > 0
   && capability.cannotDo.length > 0
   && capability.inputRequirements.length > 0
   && capability.fallbackStrategies.length > 0
   && capability.concurrencyLimit > 0
   && capability.rateLimitPerMinute > 0
-  && capability.availability === 'available'
+  && capability.planningAvailability === 'supported'
+  && capability.availability === (capability.executable ? 'available' : 'unavailable')
   && capability.applicableScenes.length > 0
 )));
+assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.executable, false);
+assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.availabilityReason, '未注册执行适配器');
+assert.deepEqual(runtimeCapabilities.find(item => item.strategy === 'motion_graphics')?.registeredAdapterIds, ['system_safe_motion_graphics.v1']);
+
+const runtimeBlockedDigitalHuman = buildSocialAgentWorkflow({
+  taskId: 'task-runtime-blocked', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, creationMode: 'viral_replication' }, sources: [], factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: createSocialAssetSupplyPlan({
+    creationMode: 'viral_replication', planVersion: 'runtime-blocked', confirmedFactRefs: ['knowledge:product-1'],
+    inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+    shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '企业人物口播' }],
+  }),
+  referenceAnalysis, replicationScript: null,
+});
+assert.ok(runtimeBlockedDigitalHuman.executionPlan.scenes.every(scene => (
+  scene.candidates.every(candidate => candidate.sourceStrategy !== 'authorized_digital_presenter')
+)));
+
+const runtimeEnabledDigitalHuman = socialContentCapabilityRegistry([{
+  strategy: 'authorized_digital_presenter', adapterIds: ['heygen.v3'], environmentReady: true, reason: null,
+}]);
+assert.equal(runtimeEnabledDigitalHuman.find(item => item.strategy === 'authorized_digital_presenter')?.executable, true);
+assert.equal(runtimeEnabledDigitalHuman.find(item => item.strategy === 'authorized_digital_presenter')?.registeredAdapterIds[0], 'heygen.v3');
+const runtimeDegradedDigitalHuman = socialContentCapabilityRegistry([{
+  strategy: 'authorized_digital_presenter', adapterIds: ['heygen.v3'], environmentReady: false, reason: 'HEYGEN_API_KEY 缺失',
+}]);
+assert.equal(runtimeDegradedDigitalHuman.find(item => item.strategy === 'authorized_digital_presenter')?.availability, 'degraded');
+assert.equal(runtimeDegradedDigitalHuman.find(item => item.strategy === 'authorized_digital_presenter')?.executable, false);
+const runtimeReadyDigitalHumanWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-runtime-ready', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, creationMode: 'viral_replication' }, sources: [], factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: createSocialAssetSupplyPlan({
+    creationMode: 'viral_replication', planVersion: 'runtime-ready', confirmedFactRefs: ['knowledge:product-1'],
+    inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+    shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '企业人物口播' }],
+  }),
+  referenceAnalysis, replicationScript: null,
+  capabilityRuntime: [{
+    strategy: 'authorized_digital_presenter', adapterIds: ['heygen.v3'], environmentReady: true, reason: null,
+  }],
+});
+assert.ok(runtimeReadyDigitalHumanWorkflow.executionPlan.scenes.some(scene => (
+  scene.candidates.some(candidate => candidate.sourceStrategy === 'authorized_digital_presenter'
+    && candidate.providerId === 'heygen.v3')
+)));
+
+const digitalHumanSupply = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication', planVersion: 'digital-human-1', confirmedFactRefs: ['knowledge:product-1'],
+  inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+  shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '使用企业人物逐句重新演绎' }],
+});
+const alignedDigitalHumanSupply = alignSocialAssetSupplyPlanToBaseline({
+  plan: digitalHumanSupply,
+  baseline: {
+    schemaVersion: 'social-content-script-baseline.v1', version: '1', source: 'knowledge_fallback',
+    formulaReference: null, themeId: null, language: 'en', lockedAt: '2026-09-24T00:00:00.000Z', createdBeforeMaterialAdaptation: true,
+    scenes: [{ sceneId: 'scene-hook', formulaNodeId: null, shotFunction: 'hook', subject: 'enterprise presenter', action: 'speaks to camera', script: 'Discover the difference.', voiceover: 'Discover the difference.', narration: 'Discover the difference.', caption: 'Discover the difference.' }],
+  },
+});
+assert.equal(alignedDigitalHumanSupply.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
+assert.equal(alignedDigitalHumanSupply.shots[0]?.digitalHumanPlan?.workflow, 'viral_replication');
+assert.equal(alignedDigitalHumanSupply.shots[0]?.digitalHumanPlan?.executionState, 'preview_only');
+assert.deepEqual(alignedDigitalHumanSupply.shots[0]?.digitalHumanPlan?.referenceMaterialIds, ['reference-video-1']);
+assert.deepEqual(alignedDigitalHumanSupply.shots[0]?.sourceRefs, ['presenter-enterprise-1']);
 
 const blockedSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',

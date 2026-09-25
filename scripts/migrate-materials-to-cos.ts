@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { materialAssetContentType, materialAssetObjectKey } from '../server/storage/materialAssets.js';
-import { objectStorageEnabled, r2Head, r2Upload } from '../server/storage/r2.js';
+import { objectStorageEnabled, objectStorageHead, objectStorageUpload } from '../server/storage/objectStorage.js';
 
 dotenv.config({ path: process.env.ENV_FILE_PATH || '.env.production' });
 
@@ -34,11 +34,11 @@ function localPath(value?: string): string | null {
 async function uploadFile(tenantId: string, filePath: string): Promise<string> {
   const key = materialAssetObjectKey(tenantId, path.basename(filePath));
   const stat = fs.statSync(filePath);
-  const existing = await r2Head(key);
+  const existing = await objectStorageHead(key);
   if (!existing || existing.size !== stat.size) {
-    await r2Upload({ key, body: fs.readFileSync(filePath), contentType: materialAssetContentType(filePath) });
+    await objectStorageUpload({ key, body: fs.readFileSync(filePath), contentType: materialAssetContentType(filePath) });
   }
-  const verified = await r2Head(key);
+  const verified = await objectStorageHead(key);
   if (!verified || verified.size !== stat.size) throw new Error(`COS verification failed: ${key}`);
   return key;
 }

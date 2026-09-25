@@ -50,6 +50,7 @@ import { consumeDemoQuota, isDemoMode } from '../lib/demo.js';
 import { generatePosterImage, imageExt, type ReferenceImage } from '../lib/imageGen.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { releaseSeedanceBudget, reserveSeedanceBudget, type SeedanceBudgetReservation } from '../lib/seedanceBudget.js';
+import { runVeoWorker } from '../lib/generativeVideoGateway.js';
 import { createLinkedAbort } from '../lib/abort.js';
 import { invalidatePublishingApprovalForProject } from '../digitalEmployees/publishingExecution.js';
 import { verifiedStudioGenerationFromSpec } from '../lib/studioGenerationVerification.js';
@@ -100,7 +101,7 @@ import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetDir
 import { requireAdminUser } from '../lib/demoAccounts.js';
 import { listPublishRecords, recommendPublish, type PublishPlatform } from '../lib/publishHistory.js';
 import { assessTransformation, buildPersonExecutionStrategy, commercialDigitalHumanGate, type PersonExecutionStrategyInput, type TransformationAssessmentInput } from '../lib/creativeTransformation.js';
-import { objectStorageEnabled, r2Delete, r2Download, r2GetObject, r2Head, r2SignedGetUrl, r2Upload } from '../storage/r2.js';
+import { objectStorageEnabled, objectStorageDelete, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageSignedGetUrl, objectStorageUpload } from '../storage/objectStorage.js';
 import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllowed, sharedObjectKey, tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
@@ -220,8 +221,7 @@ function analysisDetailsTimelineQuality(details: unknown, duration: unknown) {
 }
 
 const GENERATED_MEDIA_DIR = path.join(__dirname, '../../data/media/generated');
-const GEMINI_VIDEO_WORKER = path.join(__dirname, '../../scripts/gemini-video-worker.mjs');
-const SEEDANCE_BASE_URL = 'https://ark.ap-southeast.bytepluses.com/api/v3';
+const SEEDANCE_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 
 function geminiVideoConfig() {
   const apiKey = (process.env.GEMINI_API_KEY || '').trim();
@@ -294,11 +294,11 @@ async function createGeneratedVideoMaterial(input: {
   if (posterOk) material.poster = generatedMediaUrl(input.tenantId, posterFile);
   if (objectStorageEnabled()) {
     material.objectKey = materialAssetObjectKey(input.tenantId, input.filename);
-    await r2Upload({ key: material.objectKey, body: fs.readFileSync(filePath), contentType: materialAssetContentType(input.filename) });
+    await objectStorageUpload({ key: material.objectKey, body: fs.readFileSync(filePath), contentType: materialAssetContentType(input.filename) });
     material.url = '';
     if (posterOk) {
       material.posterObjectKey = materialAssetObjectKey(input.tenantId, posterFile);
-      await r2Upload({ key: material.posterObjectKey, body: fs.readFileSync(posterPath), contentType: 'image/jpeg' });
+      await objectStorageUpload({ key: material.posterObjectKey, body: fs.readFileSync(posterPath), contentType: 'image/jpeg' });
       material.poster = undefined;
     }
     fs.rmSync(filePath, { force: true });
@@ -341,7 +341,7 @@ async function createGeneratedImageMaterial(input: {
   if (objectStorageEnabled()) {
     material.objectKey = materialAssetObjectKey(input.tenantId, filename);
     material.posterObjectKey = material.objectKey;
-    await r2Upload({ key: material.objectKey, body: input.bytes, contentType: input.mimeType });
+    await objectStorageUpload({ key: material.objectKey, body: input.bytes, contentType: input.mimeType });
     material.url = '';
     material.poster = undefined;
     fs.rmSync(filePath, { force: true });
@@ -441,65 +441,8 @@ async function downloadGeneratedVideo(url: string, filename: string, tenantId: s
   return generatedMediaUrl(tenantId, filename);
 }
 
-function proxyEnvDefaults() {
-  const proxy = process.env.GEMINI_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || 'http://127.0.0.1:7890';
-  return {
-    NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY || '1',
-    HTTPS_PROXY: process.env.HTTPS_PROXY || proxy,
-    HTTP_PROXY: process.env.HTTP_PROXY || proxy,
-    https_proxy: process.env.https_proxy || process.env.HTTPS_PROXY || proxy,
-    http_proxy: process.env.http_proxy || process.env.HTTP_PROXY || proxy,
-  };
-}
-
 async function runGeminiVideoWorker(job: Record<string, unknown>, timeoutMs: number) {
-  fs.mkdirSync(GENERATED_MEDIA_DIR, { recursive: true });
-  const jobFile = path.join(GENERATED_MEDIA_DIR, `gemini-job-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
-  fs.writeFileSync(jobFile, JSON.stringify(job), 'utf8');
-  try {
-    const result = await new Promise<any>((resolve, reject) => {
-      const child = spawn(process.execPath, [GEMINI_VIDEO_WORKER, jobFile], {
-        cwd: path.join(__dirname, '../..'),
-        env: { ...process.env, ...proxyEnvDefaults() },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error('Gemini video worker timed out'));
-      }, timeoutMs + 30_000);
-      child.stdout.on('data', chunk => { stdout += chunk.toString(); });
-      child.stderr.on('data', chunk => { stderr += chunk.toString(); });
-      child.on('error', error => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      child.on('close', code => {
-        clearTimeout(timer);
-        const text = stdout.trim();
-        if (!text) {
-          reject(new Error((stderr || `Gemini video worker exited with code ${code}`).slice(0, 500)));
-          return;
-        }
-        try {
-          resolve(JSON.parse(text));
-        } catch {
-          const jsonStart = text.lastIndexOf('{"ok"');
-          if (jsonStart >= 0) {
-            try {
-              resolve(JSON.parse(text.slice(jsonStart)));
-              return;
-            } catch {}
-          }
-          reject(new Error(`Gemini video worker returned invalid JSON: ${text.slice(0, 300)}`));
-        }
-      });
-    });
-    return result;
-  } finally {
-    try { fs.unlinkSync(jobFile); } catch {}
-  }
+  return runVeoWorker(job, timeoutMs);
 }
 
 /** 从 LLM 输出里抽取第一个 JSON（对象或数组） */
@@ -1781,7 +1724,7 @@ studioRouter.post('/storyboard-quality-check', async (req, res) => {
   const cosTempPath = material.objectKey ? path.join(GENERATED_MEDIA_DIR, `quality-source-${material.id}${path.extname(material.file) || '.mp4'}`) : '';
   const filePath = cosTempPath || path.join(MEDIA_DIR, material.file);
   if (material.objectKey) {
-    const downloaded = await r2Download(material.objectKey);
+    const downloaded = await objectStorageDownload(material.objectKey);
     if (downloaded?.buf.length) fs.writeFileSync(filePath, downloaded.buf);
   }
   if (!fs.existsSync(filePath)) {
@@ -4985,7 +4928,7 @@ studioRouter.post('/materials/:id/classify', async (req, res) => {
       if (!downloaded?.ok) throw new Error('素材数据库中的原片不可读');
       fs.writeFileSync(mediaPath, Buffer.from(await downloaded.arrayBuffer()), { mode: 0o600 });
     } else if (material.objectKey) {
-      const downloaded = await r2Download(material.objectKey);
+      const downloaded = await objectStorageDownload(material.objectKey);
       if (!downloaded?.buf.length) throw new Error('COS 素材文件不存在');
       fs.writeFileSync(mediaPath, downloaded.buf, { mode: 0o600 });
     }
@@ -5107,12 +5050,12 @@ studioRouter.delete('/materials/:id', async (req, res) => {
     || (Array.isArray((m as Material & { sourceTaskFileRefs?: unknown[] }).sourceTaskFileRefs)
       && (m as Material & { sourceTaskFileRefs?: unknown[] }).sourceTaskFileRefs!.length > 0);
   if (m.objectKey) {
-    if (!taskBacked) await r2Delete(m.objectKey).catch(error => console.error('[materials] COS delete failed', error));
+    if (!taskBacked) await objectStorageDelete(m.objectKey).catch(error => console.error('[materials] COS delete failed', error));
   } else try { fs.unlinkSync(path.join(MEDIA_DIR, m.file)); } catch { /* file may be gone */ }
-  if (m.posterObjectKey && m.posterObjectKey !== m.objectKey) await r2Delete(m.posterObjectKey).catch(error => console.error('[materials] COS poster delete failed', error));
+  if (m.posterObjectKey && m.posterObjectKey !== m.objectKey) await objectStorageDelete(m.posterObjectKey).catch(error => console.error('[materials] COS poster delete failed', error));
   if (m.poster && m.poster !== m.url) { try { fs.unlinkSync(path.join(MEDIA_DIR, m.poster.replace(/^\/media\//, ''))); } catch { /* ignore */ } }
   for (const segment of m.segments || []) {
-    if (segment.posterObjectKey) await r2Delete(segment.posterObjectKey).catch(error => console.error('[materials] COS segment poster delete failed', error));
+    if (segment.posterObjectKey) await objectStorageDelete(segment.posterObjectKey).catch(error => console.error('[materials] COS segment poster delete failed', error));
     else if (segment.poster) try { fs.unlinkSync(path.join(MEDIA_DIR, segment.poster.replace(/^\/media\//, ''))); } catch { /* ignore */ }
   }
   persistMaterials(list.filter(x => x.id !== req.params.id));
@@ -5293,7 +5236,7 @@ async function persistPrivateStudioAsset(namespace: string, tenantId: string, fi
   const file = path.basename(filePath);
   if (!objectStorageEnabled()) return scopedStudioAssetUrl(namespace, file);
   const key = tenantPrivateObjectKey(namespace, tenantId, file);
-  await r2Upload({ key, body: fs.readFileSync(filePath), contentType: materialAssetContentType(file, contentType || '') });
+  await objectStorageUpload({ key, body: fs.readFileSync(filePath), contentType: materialAssetContentType(file, contentType || '') });
   return privateStudioAssetUrl(namespace, tenantId, file);
 }
 
@@ -5301,7 +5244,7 @@ studioRouter.get('/private-assets/:namespace/:file', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const namespace = String(req.params.namespace || '');
   if (!['tts', 'voice-samples', 'covers', 'exports', 'materials'].includes(namespace)) { res.status(404).end(); return; }
-  const object = await r2GetObject(tenantPrivateObjectKey(namespace, tenantId, req.params.file), req.headers.range);
+  const object = await objectStorageGetObject(tenantPrivateObjectKey(namespace, tenantId, req.params.file), req.headers.range);
   if (!object) { res.status(404).end(); return; }
   res.setHeader('Content-Type', object.contentType);
   res.setHeader('Cache-Control', 'private, max-age=300');
@@ -6305,7 +6248,7 @@ async function alignTtsAudio(transcript: string, url: string | undefined, durati
   } catch {}
   if (!objectStorageEnabled()) throw Error('该音频需要真实对齐。请重新生成句级配音，或配置私有对象存储后使用千问音频对齐');
   await persistPrivateStudioAsset('tts', tenantId, file);
-  const signed = await r2SignedGetUrl(tenantPrivateObjectKey('tts', tenantId, path.basename(file)), 15 * 60);
+  const signed = await objectStorageSignedGetUrl(tenantPrivateObjectKey('tts', tenantId, path.basename(file)), 15 * 60);
   return { cues: await alignQwenFile(signed, transcript, duration, file + '.asr.json'), source: 'audio_ai' };
 }
 
@@ -6914,7 +6857,7 @@ export function automationBgmCatalog(tenantId: string) {
 export async function automationBgmAudio(tenantId: string, id: string): Promise<string> {
   const track = userBgms(tenantId).find(item => item.id === id);
   if (!track) throw Error('所选配乐已不可用，请在生产现场更换');
-  if (track.objectKey) return r2SignedGetUrl(track.objectKey, materialSignedUrlTtlSeconds());
+  if (track.objectKey) return objectStorageSignedGetUrl(track.objectKey, materialSignedUrlTtlSeconds());
   const relative = track.url.replace(/^\/bgm\//, '');
   const root = path.resolve(BGM_ROOT);
   const file = path.resolve(root, relative);
@@ -6927,7 +6870,7 @@ studioRouter.get('/bgm', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.json(await Promise.all(withRecommendedBgmNames(userBgms(tenantId)).map(async track => ({
     ...track,
-    url: track.objectKey ? await r2SignedGetUrl(track.objectKey, materialSignedUrlTtlSeconds()) : track.url ? signAssetUrl(track.url, tenantId) : track.url,
+    url: track.objectKey ? await objectStorageSignedGetUrl(track.objectKey, materialSignedUrlTtlSeconds()) : track.url ? signAssetUrl(track.url, tenantId) : track.url,
     objectKey: undefined,
   }))));
 });
@@ -6945,7 +6888,7 @@ studioRouter.post('/bgm', async (req, res) => {
   const file = `${id}.${ext}`;
   const buf = Buffer.from(String(dataBase64).replace(/^data:[^,]+,/, ''), 'base64');
   const objectKey = objectStorageEnabled() ? (admin ? sharedObjectKey('bgm', file) : tenantPrivateObjectKey('bgm', tenantId, file)) : undefined;
-  if (objectKey) await r2Upload({ key: objectKey, body: buf, contentType: materialAssetContentType(file, String(mimeType || '')) });
+  if (objectKey) await objectStorageUpload({ key: objectKey, body: buf, contentType: materialAssetContentType(file, String(mimeType || '')) });
   else fs.writeFileSync(path.join(assetDir, file), buf);
   const list = loadBgm();
   const tenantTracks = userBgms(tenantId);
@@ -6985,7 +6928,7 @@ studioRouter.delete('/bgm/:id', async (req, res) => {
     : !t.tenantId
       ? path.join(BGM_ROOT, t.file)
       : path.join(scopedStudioAssetDir(BGM_ROOT), t.file);
-  if (t.objectKey) await r2Delete(t.objectKey).catch(() => undefined);
+  if (t.objectKey) await objectStorageDelete(t.objectKey).catch(() => undefined);
   else try { fs.unlinkSync(assetPath); } catch { /* ignore */ }
   persistBgm(list.filter(x => x.id !== req.params.id));
   res.json({ ok: true });
@@ -7429,7 +7372,7 @@ async function resolveReferenceImages(materialIds: unknown, tenantId: string): P
       try {
         const key = material.type === 'image' ? material.objectKey : material.posterObjectKey;
         if (!key) continue;
-        const downloaded = await r2Download(key);
+        const downloaded = await objectStorageDownload(key);
         if (!downloaded?.buf.length) continue;
         refs.push({ mimeType: downloaded.contentType, base64: downloaded.buf.toString('base64') });
       } catch {

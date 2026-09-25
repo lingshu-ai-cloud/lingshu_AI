@@ -53,24 +53,64 @@ type CapabilityDefinition = {
   qualityRange: string;
   concurrencyLimit: number;
   rateLimitPerMinute: number;
-  availability: 'available' | 'degraded' | 'unavailable';
+  /** Product-level support. This does not assert that the current runtime can execute it. */
+  planningAvailability: 'supported' | 'experimental' | 'unsupported';
   authorizationScope: string;
   dataRestriction: string;
   fallbackStrategies: SocialShotSourceStrategy[];
   applicableScenes: SocialDirectorBriefScene['purpose'][];
 };
 
-const CAPABILITIES: CapabilityDefinition[] = [
-  { strategy: 'customer_product_image_animation', label: '产品图动效', evidenceStrength: 'supporting', estimatedCostCny: 0.35, estimatedSeconds: 45, estimatedSuccessRate: 0.94, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['锁定产品图并生成运镜、景深和非事实性背景'], cannotDo: ['重绘包装文字、商标或证明真实使用效果'], inputRequirements: ['已授权且清晰的客户产品图'], outputSpec: '竖屏或横屏短镜头', qualityRange: '产品身份保持优先', concurrencyLimit: 4, rateLimitPerMinute: 30, availability: 'available', authorizationScope: '当前租户产品素材', dataRestriction: '本地处理优先', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
-  { strategy: 'authorized_digital_presenter', label: '授权数字人口播', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.2, estimatedSeconds: 150, estimatedSuccessRate: 0.87, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成授权形象的稳定口播'], cannotDo: ['冒充客户员工、客户证言或真实身份'], inputRequirements: ['已确认口播', '可用形象授权', '目标语言'], outputSpec: '带透明或合成背景的口播镜头', qualityRange: '口型与身份连续性需逐镜检查', concurrencyLimit: 2, rateLimitPerMinute: 10, availability: 'available', authorizationScope: '租户已授权数字人', dataRestriction: '仅传输生成所需文案和授权形象', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'call_to_action'] },
-  { strategy: 'licensed_stock_asset', label: '商用授权素材库', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.8, estimatedSeconds: 30, estimatedSuccessRate: 0.9, dataTransfer: 'external_processor', rightsStatus: 'confirmed', canDo: ['补充环境、气氛和转场画面'], cannotDo: ['作为客户真实工厂、案例或效果证据'], inputRequirements: ['场景语义', '平台和权利范围'], outputSpec: '已授权图片或视频片段', qualityRange: '依赖素材库供给', concurrencyLimit: 8, rateLimitPerMinute: 60, availability: 'available', authorizationScope: '商用授权范围内', dataRestriction: '只发送检索词和规格', fallbackStrategies: ['non_evidentiary_ai_visual', 'motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
-  { strategy: 'non_evidentiary_ai_visual', label: '非证明性生成画面', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.8, estimatedSeconds: 220, estimatedSuccessRate: 0.74, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成概念、气氛和非证明性辅助画面'], cannotDo: ['伪造客户工厂、案例、认证、效果或真实产品细节'], inputRequirements: ['真值边界', '画面目标', '禁止事项'], outputSpec: '图片或短视频镜头', qualityRange: '一致性和文字准确性需复检', concurrencyLimit: 2, rateLimitPerMinute: 8, availability: 'available', authorizationScope: '允许外部生成的非敏感输入', dataRestriction: '真实客户证据不得外传或作为生成目标', fallbackStrategies: ['motion_graphics', 'licensed_stock_asset'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
-  { strategy: 'motion_graphics', label: '动态图文与示意动画', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.25, estimatedSeconds: 35, estimatedSuccessRate: 0.97, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['生成流程示意、字幕、图标和品牌动画'], cannotDo: ['替代未经确认的产品事实或真实证据'], inputRequirements: ['已确认文案或事实'], outputSpec: '可组合的视频图形层', qualityRange: '稳定可控', concurrencyLimit: 8, rateLimitPerMinute: 120, availability: 'available', authorizationScope: '当前租户品牌资产', dataRestriction: '本地处理', fallbackStrategies: ['authorized_digital_presenter'], applicableScenes: ['hook', 'problem', 'value', 'demonstration', 'transition', 'call_to_action'] },
-  { strategy: 'verified_fact_card', label: '已确认事实卡片', evidenceStrength: 'supporting', estimatedCostCny: 0.12, estimatedSeconds: 20, estimatedSuccessRate: 0.99, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['把已确认参数和事实转为可读信息卡'], cannotDo: ['补写未确认参数、认证、价格或效果'], inputRequirements: ['可追溯事实引用'], outputSpec: '品牌化信息卡视频层', qualityRange: '事实准确性优先', concurrencyLimit: 16, rateLimitPerMinute: 240, availability: 'available', authorizationScope: '当前任务确认事实', dataRestriction: '本地处理', fallbackStrategies: ['motion_graphics'], applicableScenes: ['value', 'demonstration', 'proof', 'trust', 'call_to_action'] },
+export interface SocialContentCapabilityRuntimeRegistration {
+  strategy: SocialShotSourceStrategy;
+  adapterIds: string[];
+  environmentReady: boolean;
+  reason: string | null;
+}
+
+export type SocialContentCapabilityRuntime = CapabilityDefinition & {
+  availability: 'available' | 'degraded' | 'unavailable';
+  executable: boolean;
+  registeredAdapterIds: string[];
+  availabilityReason: string | null;
+};
+
+/** These adapters are unconditionally registered by socialContentAutoProduction.
+ * Provider-backed adapters must be passed explicitly after their environment is checked. */
+const EMBEDDED_RUNTIME_REGISTRATIONS: SocialContentCapabilityRuntimeRegistration[] = [
+  { strategy: 'customer_real_asset', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
+  { strategy: 'customer_product_image_animation', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
+  { strategy: 'licensed_stock_asset', adapterIds: ['authorized_shared_library.v1'], environmentReady: true, reason: '执行仍取决于租户可见库存与逐条授权记录' },
+  { strategy: 'motion_graphics', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
+  { strategy: 'verified_fact_card', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
 ];
 
-export function socialContentCapabilityRegistry(): ReadonlyArray<Readonly<CapabilityDefinition>> {
-  return structuredClone(CAPABILITIES);
+const CAPABILITIES: CapabilityDefinition[] = [
+  { strategy: 'customer_product_image_animation', label: '产品图动效', evidenceStrength: 'supporting', estimatedCostCny: 0.35, estimatedSeconds: 45, estimatedSuccessRate: 0.94, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['锁定产品图并生成运镜、景深和非事实性背景'], cannotDo: ['重绘包装文字、商标或证明真实使用效果'], inputRequirements: ['已授权且清晰的客户产品图'], outputSpec: '竖屏或横屏短镜头', qualityRange: '产品身份保持优先', concurrencyLimit: 4, rateLimitPerMinute: 30, planningAvailability: 'supported', authorizationScope: '当前租户产品素材', dataRestriction: '本地处理优先', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
+  { strategy: 'authorized_digital_presenter', label: '授权数字人口播', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.2, estimatedSeconds: 150, estimatedSuccessRate: 0.87, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成授权形象的稳定口播'], cannotDo: ['冒充客户员工、客户证言或真实身份'], inputRequirements: ['已确认口播', '可用形象授权', '目标语言'], outputSpec: '带透明或合成背景的口播镜头', qualityRange: '口型与身份连续性需逐镜检查', concurrencyLimit: 2, rateLimitPerMinute: 10, planningAvailability: 'supported', authorizationScope: '租户已授权数字人', dataRestriction: '仅传输生成所需文案和授权形象', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'call_to_action'] },
+  { strategy: 'licensed_stock_asset', label: '商用授权素材库', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.8, estimatedSeconds: 30, estimatedSuccessRate: 0.9, dataTransfer: 'external_processor', rightsStatus: 'confirmed', canDo: ['补充环境、气氛和转场画面'], cannotDo: ['作为客户真实工厂、案例或效果证据'], inputRequirements: ['场景语义', '平台和权利范围'], outputSpec: '已授权图片或视频片段', qualityRange: '依赖素材库供给', concurrencyLimit: 8, rateLimitPerMinute: 60, planningAvailability: 'supported', authorizationScope: '商用授权范围内', dataRestriction: '只发送检索词和规格', fallbackStrategies: ['non_evidentiary_ai_visual', 'motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
+  { strategy: 'non_evidentiary_ai_visual', label: '非证明性生成画面', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.8, estimatedSeconds: 220, estimatedSuccessRate: 0.74, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成概念、气氛和非证明性辅助画面'], cannotDo: ['伪造客户工厂、案例、认证、效果或真实产品细节'], inputRequirements: ['真值边界', '画面目标', '禁止事项'], outputSpec: '图片或短视频镜头', qualityRange: '一致性和文字准确性需复检', concurrencyLimit: 2, rateLimitPerMinute: 8, planningAvailability: 'supported', authorizationScope: '允许外部生成的非敏感输入', dataRestriction: '真实客户证据不得外传或作为生成目标', fallbackStrategies: ['motion_graphics', 'licensed_stock_asset'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
+  { strategy: 'motion_graphics', label: '动态图文与示意动画', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.25, estimatedSeconds: 35, estimatedSuccessRate: 0.97, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['生成流程示意、字幕、图标和品牌动画'], cannotDo: ['替代未经确认的产品事实或真实证据'], inputRequirements: ['已确认文案或事实'], outputSpec: '可组合的视频图形层', qualityRange: '稳定可控', concurrencyLimit: 8, rateLimitPerMinute: 120, planningAvailability: 'supported', authorizationScope: '当前租户品牌资产', dataRestriction: '本地处理', fallbackStrategies: ['authorized_digital_presenter'], applicableScenes: ['hook', 'problem', 'value', 'demonstration', 'transition', 'call_to_action'] },
+  { strategy: 'verified_fact_card', label: '已确认事实卡片', evidenceStrength: 'supporting', estimatedCostCny: 0.12, estimatedSeconds: 20, estimatedSuccessRate: 0.99, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['把已确认参数和事实转为可读信息卡'], cannotDo: ['补写未确认参数、认证、价格或效果'], inputRequirements: ['可追溯事实引用'], outputSpec: '品牌化信息卡视频层', qualityRange: '事实准确性优先', concurrencyLimit: 16, rateLimitPerMinute: 240, planningAvailability: 'supported', authorizationScope: '当前任务确认事实', dataRestriction: '本地处理', fallbackStrategies: ['motion_graphics'], applicableScenes: ['value', 'demonstration', 'proof', 'trust', 'call_to_action'] },
+];
+
+export function socialContentCapabilityRegistry(
+  registrations: SocialContentCapabilityRuntimeRegistration[] = EMBEDDED_RUNTIME_REGISTRATIONS,
+): ReadonlyArray<Readonly<SocialContentCapabilityRuntime>> {
+  const byStrategy = new Map(registrations.map(item => [item.strategy, item]));
+  return CAPABILITIES.map(capability => {
+    const runtime = byStrategy.get(capability.strategy);
+    const adapterIds = runtime?.adapterIds.filter(Boolean) ?? [];
+    const executable = adapterIds.length > 0 && runtime?.environmentReady === true;
+    return {
+      ...structuredClone(capability),
+      availability: executable ? 'available' : adapterIds.length > 0 ? 'degraded' : 'unavailable',
+      executable,
+      registeredAdapterIds: [...adapterIds],
+      availabilityReason: executable ? runtime?.reason ?? null
+        : runtime?.reason ?? (adapterIds.length ? '执行环境未就绪' : '未注册执行适配器'),
+    };
+  });
 }
 
 function unique<T>(values: T[]): T[] {
@@ -111,7 +151,8 @@ function buildBusinessContext(input: BuildSocialAgentWorkflowInput): {
         dueAt: input.brief.dueAt,
         availableAssetRefs: input.sources.filter(source => source.kind === 'material').map(source => source.sourceId),
         customerCanShoot: false,
-        availableCapabilities: CAPABILITIES.filter(item => item.availability === 'available').map(item => item.strategy),
+        availableCapabilities: socialContentCapabilityRegistry(input.capabilityRuntime)
+          .filter(item => item.executable).map(item => item.strategy),
         priorities: ['must_do'],
         successCriteria: unique([
           input.brief.objective,
@@ -598,8 +639,13 @@ function capabilityCandidates(input: {
   taskVersion: string;
   sceneId: string;
   supply: SocialAssetSupplyShotPlan;
+  capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
 }): SocialExecutionCandidate[] {
-  const actualAssets = input.supply.sourceRefs.map((sourceRef, index): SocialExecutionCandidate => ({
+  const runtimeRegistration = new Map((input.capabilityRuntime ?? EMBEDDED_RUNTIME_REGISTRATIONS)
+    .map(item => [item.strategy, item]));
+  const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
+  const sourceExecutable = Boolean(sourceRuntime?.environmentReady && sourceRuntime.adapterIds.length);
+  const actualAssets = (sourceExecutable ? input.supply.sourceRefs : []).map((sourceRef, index): SocialExecutionCandidate => ({
     candidateId: stableId('candidate', { sceneId: input.sceneId, sourceRef }),
     kind: 'asset',
     label: `客户或已授权素材 ${index + 1}`,
@@ -618,7 +664,7 @@ function capabilityCandidates(input: {
     estimatedSeconds: 8,
     estimatedSuccessRate: 0.99,
     dataTransfer: 'local_only',
-    providerId: null,
+    providerId: sourceRuntime?.adapterIds[0] ?? null,
     modelId: null,
     clipId: sourceRef,
     timeRange: null,
@@ -626,7 +672,8 @@ function capabilityCandidates(input: {
     retryPolicy: { maxAttempts: 1, fallbackStrategies: input.supply.fallbackSourceStrategy ? [input.supply.fallbackSourceStrategy] : [] },
     provenance: { origin: 'customer', inputVersion: input.taskVersion, authorizationRef: sourceRef, executionRecordId: null },
   }));
-  const capabilityRows = CAPABILITIES
+  const capabilityRows = socialContentCapabilityRegistry(input.capabilityRuntime)
+    .filter(capability => capability.executable)
     .filter(capability => !input.supply.truthBoundary.customerEvidenceRequired || capability.evidenceStrength === 'strong')
     .map((capability): SocialExecutionCandidate => ({
       candidateId: stableId('capability', { sceneId: input.sceneId, strategy: capability.strategy }),
@@ -648,7 +695,7 @@ function capabilityCandidates(input: {
       estimatedSeconds: capability.estimatedSeconds,
       estimatedSuccessRate: capability.estimatedSuccessRate,
       dataTransfer: capability.dataTransfer,
-      providerId: capability.dataTransfer === 'local_only' ? 'lingshu-local' : `registered:${capability.strategy}`,
+      providerId: capability.registeredAdapterIds[0] ?? null,
       modelId: null,
       clipId: null,
       timeRange: null,
@@ -666,6 +713,7 @@ function executionScene(input: {
   taskVersion: string;
   scene: SocialDirectorBriefScene;
   supply: SocialAssetSupplyShotPlan;
+  capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
 }): SocialContentExecutionScenePlan {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
   const preferred = candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy) ?? candidates[0];
@@ -700,7 +748,13 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
   const supplyById = new Map(input.assetSupplyPlan.shots.map(shot => [shot.shotId, shot]));
   const scenes = directorBrief.scenes.flatMap(scene => {
     const supply = supplyById.get(scene.sceneId) ?? input.assetSupplyPlan.shots[scene.order - 1];
-    return supply ? [executionScene({ taskId: input.taskId, taskVersion: input.taskVersion, scene, supply })] : [];
+    return supply ? [executionScene({
+      taskId: input.taskId,
+      taskVersion: input.taskVersion,
+      scene,
+      supply,
+      capabilityRuntime: input.capabilityRuntime,
+    })] : [];
   });
   return {
     executionPlanId: stableId('execution_plan', { taskId: input.taskId }),
@@ -868,6 +922,8 @@ export interface BuildSocialAgentWorkflowInput {
   replicationContext?: SocialReplicationJobContext;
   /** Additional references used only by series/hybrid modes. */
   inspirationHandoffs?: SocialInspirationHandoff[];
+  /** Runtime registrations after adapter and environment readiness checks. Omit to use only embedded adapters. */
+  capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   now?: Date;
 }
 

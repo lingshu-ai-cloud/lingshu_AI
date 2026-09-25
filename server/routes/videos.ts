@@ -13,7 +13,7 @@ import ffmpegStatic from 'ffmpeg-static';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { attachFile, fetchFile } from '../storage/files.js';
-import { objectStorageEnabled, r2Download, r2GetObject, r2Head, r2Upload } from '../storage/r2.js';
+import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
 import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
 import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
@@ -66,14 +66,14 @@ async function uploadCrawlerCosObject(
       : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
         : contentType.includes('mp4') ? 'mp4' : 'bin';
   const key = crawlerCosKey(record, role, extension);
-  await r2Upload({ key, body, contentType });
-  const verified = await r2Head(key);
+  await objectStorageUpload({ key, body, contentType });
+  const verified = await objectStorageHead(key);
   if (!verified || verified.size !== body.length) throw new Error(`COS crawler upload verification failed: ${key}`);
   return key;
 }
 
 async function streamCrawlerCosObject(res: Response, key: string, range?: string): Promise<boolean> {
-  const object = await r2GetObject(key, range);
+  const object = await objectStorageGetObject(key, range);
   if (!object) return false;
   res.status(object.contentRange ? 206 : 200);
   res.setHeader('Content-Type', object.contentType || 'application/octet-stream');
@@ -2116,9 +2116,9 @@ async function generateThumbnailFromStoredVideo(record: Record<string, unknown>)
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const videoKey = String(analysis.videoObjectKey || '');
   const filename = String(record.videoFileId || '');
-  let video: Awaited<ReturnType<typeof r2Download>> | null = null;
+  let video: Awaited<ReturnType<typeof objectStorageDownload>> | null = null;
   try {
-    video = videoKey ? await r2Download(videoKey) : (filename ? await fetchFile(COL, recordId, filename) : null);
+    video = videoKey ? await objectStorageDownload(videoKey) : (filename ? await fetchFile(COL, recordId, filename) : null);
   } catch (error) {
     // A stale object key must result in a missing thumbnail, not an unhandled
     // rejection that takes down the local API while the queue is rendering.
@@ -2403,7 +2403,7 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
         if (!response?.ok) throw new Error('云端素材文件不可读');
         fs.writeFileSync(tempPath, Buffer.from(await response.arrayBuffer()));
       } else if (material!.objectKey) {
-        const downloaded = await r2Download(material!.objectKey);
+        const downloaded = await objectStorageDownload(material!.objectKey);
         if (!downloaded?.buf.length) throw new Error('COS 素材文件不可读');
         fs.writeFileSync(tempPath, downloaded.buf);
       } else {
@@ -2546,7 +2546,7 @@ async function triggerVideoAnalysis(
     const record = await store.getById<Record<string, unknown>>(COL, recordId);
     const previousRecordAnalysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
     let dl = previousRecordAnalysis.videoObjectKey
-      ? await r2Download(String(previousRecordAnalysis.videoObjectKey))
+      ? await objectStorageDownload(String(previousRecordAnalysis.videoObjectKey))
       : await fetchFile(COL, recordId, filename);
     // COS/S3-compatible storage can briefly return an empty/not-found response
     // while HEAD succeeds (gateway propagation or a transient upstream miss).
@@ -2554,7 +2554,7 @@ async function triggerVideoAnalysis(
     if (!dl && previousRecordAnalysis.videoObjectKey) {
       for (const delayMs of [500, 1500]) {
         await new Promise(resolve => setTimeout(resolve, delayMs));
-        dl = await r2Download(String(previousRecordAnalysis.videoObjectKey));
+        dl = await objectStorageDownload(String(previousRecordAnalysis.videoObjectKey));
         if (dl) break;
       }
     }

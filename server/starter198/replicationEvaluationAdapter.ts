@@ -12,6 +12,7 @@ import {
   type ReplicationEvaluationReport,
   type ReuseRiskEvidence,
 } from '../lib/replicationEvaluation.js';
+import { inspectReplicationMediaEvidence } from '../lib/replicationMediaEvidenceWorker.js';
 
 type AdapterEvidence = {
   factorEvidence?: ReplicationFactorEvidence[];
@@ -118,14 +119,43 @@ export async function evaluateSocialReplicationResult(input: {
       explanation: job.target.accountPlaybookRef ? '使用冻结的账号规则版本' : '即时任务未绑定账号规则',
     },
   ];
+  let automaticFactorEvidence: ReplicationFactorEvidence[] = [];
+  let automaticReuseRiskEvidence: ReuseRiskEvidence[] = [];
+  if (input.evidence?.referenceVideoPath && input.evidence.referenceVideoPath !== input.outputVideoPath) {
+    try {
+      const inspected = await inspectReplicationMediaEvidence({
+        referenceVideoPath: input.evidence.referenceVideoPath,
+        outputVideoPath: input.outputVideoPath,
+        factors: factorSpecs.map(factor => ({
+          factorId: factor.factorId,
+          sceneId: factor.sceneId,
+          category: factor.category,
+          policy: factor.policy,
+        })),
+      });
+      automaticFactorEvidence = inspected.factorEvidence;
+      automaticReuseRiskEvidence = inspected.reuseRiskEvidence;
+    } catch {
+      // The evaluation kernel will keep the affected checks incomplete. Media
+      // inspection failure must never be converted into a passing result.
+    }
+  }
+  const suppliedFactorIds = new Set((input.evidence?.factorEvidence ?? []).map(item => item.factorId));
+  const suppliedReuseKinds = new Set((input.evidence?.reuseRiskEvidence ?? []).map(item => item.kind));
   const report = await evaluateReplication({
     referenceTimeline,
     outputTimeline,
     factors: factorSpecs,
-    factorEvidence: input.evidence?.factorEvidence ?? [],
+    factorEvidence: [
+      ...(input.evidence?.factorEvidence ?? []),
+      ...automaticFactorEvidence.filter(item => !suppliedFactorIds.has(item.factorId)),
+    ],
     identityRequirements,
     identityEvidence: input.evidence?.identityEvidence ?? [],
-    reuseRiskEvidence: input.evidence?.reuseRiskEvidence ?? [],
+    reuseRiskEvidence: [
+      ...(input.evidence?.reuseRiskEvidence ?? []),
+      ...automaticReuseRiskEvidence.filter(item => !suppliedReuseKinds.has(item.kind)),
+    ],
     accountProductFitChecks: input.evidence?.accountProductFitChecks ?? defaultFitChecks,
     media: {
       referenceVideoPath: input.evidence?.referenceVideoPath ?? null,

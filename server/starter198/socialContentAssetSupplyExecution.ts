@@ -110,7 +110,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
   baseline: StoredSocialScriptBaseline;
 }): SocialAssetSupplyPlan {
   const confirmedFactRefs = [...new Set(input.plan.shots.flatMap(shot => shot.truthBoundary.confirmedFactRefs))];
-  return createSocialAssetSupplyPlan({
+  const aligned = createSocialAssetSupplyPlan({
     creationMode: input.plan.creationMode,
     assetAvailability: input.plan.assetAvailability,
     managementMode: input.plan.managementMode,
@@ -124,6 +124,24 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
       truthSensitiveSubject: truthSensitiveSubject(scene),
     })),
   });
+  const originalById = new Map(input.plan.shots.map(shot => [shot.shotId, shot]));
+  return {
+    ...aligned,
+    shots: aligned.shots.map((shot, index) => {
+      const original = originalById.get(shot.shotId) ?? input.plan.shots[index];
+      if (!original?.digitalHumanPlan || shot.truthBoundary.subject !== 'none') return shot;
+      return {
+        ...shot,
+        sourceStrategy: 'authorized_digital_presenter',
+        sourceRefs: [...original.digitalHumanPlan.presenterAssetIds],
+        fallbackSourceStrategy: original.fallbackSourceStrategy ?? 'motion_graphics',
+        productionInstruction: original.productionInstruction,
+        feasibility: original.feasibility,
+        feasibilityReason: original.feasibilityReason,
+        digitalHumanPlan: structuredClone(original.digitalHumanPlan),
+      };
+    }),
+  };
 }
 
 function truthBoundaryViolation(

@@ -7,6 +7,7 @@ test('defines distinct contracts for all three modes', () => {
   assert.match(PERSON_REPLACEMENT_MODE_CONTRACTS.fast.label, /面部＋头部＋发型/);
   assert.equal(PERSON_REPLACEMENT_MODE_CONTRACTS.expert.label, '保真全人物');
   assert.equal(PERSON_REPLACEMENT_MODE_CONTRACTS.expert.providerOrder[0], 'runway_kling_motion');
+  assert.deepEqual(PERSON_REPLACEMENT_MODE_CONTRACTS.expert.providerOrder, ['runway_kling_motion']);
   assert.equal(PERSON_REPLACEMENT_MODE_CONTRACTS.creative.allowsCompositionChange, true);
   assert.equal(PERSON_REPLACEMENT_MODE_CONTRACTS.fast.maturity, 'limited');
   assert.equal(PERSON_REPLACEMENT_MODE_CONTRACTS.expert.maturity, 'experimental');

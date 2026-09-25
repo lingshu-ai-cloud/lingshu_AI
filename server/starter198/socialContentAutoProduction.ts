@@ -20,7 +20,7 @@ import {
   synthesizeStudioVoiceForAutomation,
 } from '../routes/studio.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
-import { objectStorageEnabled, r2SignedGetUrl } from '../storage/r2.js';
+import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
@@ -64,6 +64,9 @@ import {
   type SocialAssetSupplyExecution,
   type SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
+import { createConfiguredSocialAiVisualAdapter } from './socialContentAiVisualAdapter.js';
+import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
+import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
 import {
   buildSocialDirectorPlan,
   parseStoredSocialDirectorPlan,
@@ -371,7 +374,7 @@ export async function resolveTaskProductionMaterialLocation(input: {
     || (socialText(record.url).startsWith('/media/') ? safeLocalMediaPath(socialText(record.url).slice('/media/'.length)) : '');
   if (localPath) return { url: localPath, localPath };
   const objectKey = socialText(record.objectKey);
-  if (objectKey && objectStorageEnabled()) return { url: await r2SignedGetUrl(objectKey, 15 * 60) };
+  if (objectKey && objectStorageEnabled()) return { url: await objectStorageSignedGetUrl(objectKey, 15 * 60) };
   // Arbitrary URLs from inventory data are not render inputs. Importing them
   // into tenant-owned storage is the only supported path, preventing SSRF and
   // removing ambient-cookie/public-route authorization assumptions.
@@ -1241,6 +1244,9 @@ export async function runSocialContentAutoProduction(input: {
 	  let assets = analyzed.assets;
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
 	  if (zeroAssetRoute && detail.assetSupplyPlan) {
+	    const environmentPresenter = input.repository.dataStore
+	      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+	      : null;
 	    const supplied = await executeSocialAssetSupplyPlan({
 	      tenantId: input.tenantId,
 	      taskId: input.taskId,
@@ -1248,7 +1254,12 @@ export async function runSocialContentAutoProduction(input: {
 	      plan: detail.assetSupplyPlan,
 	      baseline: activeBaseline,
 	      availableAssets: assets,
-	      adapters: [...(input.assetSupplyAdapters ?? []), ...existingAssetSupplyAdapters()],
+	      adapters: [
+	        ...(input.assetSupplyAdapters ?? []),
+	        ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
+	        createConfiguredSocialAiVisualAdapter(),
+	        ...existingAssetSupplyAdapters(),
+	      ],
 	    });
 	    // Only assets selected by the governed per-shot router may enter a
 	    // zero-asset render. Ambient shared inventory cannot bypass its trace.
@@ -1583,6 +1594,16 @@ export async function runSocialContentAutoProduction(input: {
   const productionResultId = `production_result_${socialRequestHash({ taskId: input.taskId, runId: input.runId, executionPlanId: agentWorkflow.executionPlan.executionPlanId }).slice(0, 20)}`;
   let replicationEvaluation = null;
   if (agentWorkflow.replicationJob) {
+    const referenceSourceId = detail.referenceVideoAnalysis?.referenceSourceId;
+    const referenceAsset = referenceSourceId
+      ? rawAssets.find(asset => asset.sourceId === referenceSourceId || asset.id === referenceSourceId)
+      : undefined;
+    const referenceVideoPath = referenceAsset?.localPath && existsSync(referenceAsset.localPath)
+      ? referenceAsset.localPath
+      : null;
+    const referenceText = (detail.replicationScript?.shots ?? [])
+      .map(shot => shot.spokenText || shot.captionText || shot.visualInstruction)
+      .map(socialText).filter(Boolean).join('\n') || null;
     await writeExecutionStage({
       ...input,
       stage: 'media_evaluation',
@@ -1598,6 +1619,8 @@ export async function runSocialContentAutoProduction(input: {
       productionResultId,
       outputVideoPath: result.outputPath,
       evidence: {
+        referenceVideoPath,
+        referenceText,
         outputText: adaptedScript,
       },
     });

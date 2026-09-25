@@ -21,8 +21,34 @@ assert.equal(zeroAssetPlan.overallFeasibility, 'functional_equivalent');
 assert.equal(zeroAssetPlan.canProduceWithoutCustomerShoot, true);
 assert.ok(zeroAssetPlan.shots.length >= 4);
 assert.ok(zeroAssetPlan.shots.every(shot => shot.customerShootRequired === false));
-assert.equal(zeroAssetPlan.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
+assert.equal(zeroAssetPlan.shots[0]?.sourceStrategy, 'motion_graphics');
 assert.ok(zeroAssetPlan.shots.every(shot => shot.sourceStrategy !== 'customer_real_asset'));
+assert.ok(zeroAssetPlan.shots.every(shot => !shot.digitalHumanPlan));
+
+const presenterDrivenPlan = createSocialAssetSupplyPlan({
+  creationMode: 'material_processing',
+  confirmedFactRefs: ['fact-product-name'],
+  inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+  shots: [{ shotId: 'presenter-value', function: 'value', requestedDescription: '企业人物介绍产品价值' }],
+});
+assert.equal(presenterDrivenPlan.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
+assert.deepEqual(presenterDrivenPlan.shots[0]?.sourceRefs, ['presenter-enterprise-1']);
+assert.deepEqual(presenterDrivenPlan.shots[0]?.digitalHumanPlan, {
+  workflow: 'material_processing', method: 'talking', presenterAssetIds: ['presenter-enterprise-1'],
+  referenceMaterialIds: [],
+  referenceRequired: false, candidateTools: ['heygen'], executionState: 'ready_for_capability_check',
+});
+
+const viralPresenterPlan = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication',
+  confirmedFactRefs: ['fact-product-name'],
+  inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+  shots: [{ shotId: 'reference-hook', function: 'hook', requestedDescription: '逐句复刻参考镜头节奏并替换人物' }],
+});
+assert.deepEqual(viralPresenterPlan.shots[0]?.digitalHumanPlan, {
+  workflow: 'viral_replication', method: 'replace', presenterAssetIds: ['presenter-enterprise-1'], referenceMaterialIds: ['reference-video-1'],
+  referenceRequired: true, candidateTools: ['local_head_pipeline', 'runway_kling_motion'], executionState: 'preview_only',
+});
 
 const truthSensitivePlan = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',

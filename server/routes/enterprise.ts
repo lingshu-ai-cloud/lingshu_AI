@@ -18,7 +18,7 @@ import {
   type ProductApiCredential,
 } from '../lib/productApiCredentials.js';
 import { enterpriseProductApiRouter } from './enterpriseProductApi.js';
-import { objectStorageEnabled, r2GetObject, r2Upload } from '../storage/r2.js';
+import { objectStorageEnabled, objectStorageGetObject, objectStorageUpload } from '../storage/objectStorage.js';
 import {
   enterpriseAssetContentType,
   enterpriseAssetObjectKey,
@@ -2034,7 +2034,7 @@ enterpriseRouter.post('/assets', async (req, res) => {
 
   try {
     if (objectStorageEnabled()) {
-      await r2Upload({
+      await objectStorageUpload({
         key: enterpriseAssetObjectKey(tenantId, storedName),
         body: buffer,
         contentType,
@@ -2068,7 +2068,7 @@ enterpriseRouter.get('/assets/:file', async (req, res) => {
       const requestedRange = /^bytes=\d*-\d*$/.test(String(req.headers.range || ''))
         ? String(req.headers.range)
         : undefined;
-      const object = await r2GetObject(enterpriseAssetObjectKey(tenantId, file), requestedRange);
+      const object = await objectStorageGetObject(enterpriseAssetObjectKey(tenantId, file), requestedRange);
       if (object) {
         res.setHeader('Content-Type', object.contentType);
         res.setHeader('Cache-Control', 'private, max-age=300');

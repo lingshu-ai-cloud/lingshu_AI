@@ -54,8 +54,8 @@ export const PERSON_REPLACEMENT_MODE_CONTRACTS: Record<PersonReplacementMode, Pe
   expert: {
     mode: 'expert', scope: 'full_person', label: '保真全人物', shortLabel: '保真全人物',
     description: '替换完整人物外观，以原视频姿势、手势、口播和镜头为驱动约束。',
-    runwayRole: 'Runway 生成候选；按 Kling、Seedance、Act-Two 顺序评测，并回贴原背景。',
-    providerOrder: ['runway_kling_motion', 'runway_seedance', 'runway_act_two'], lockedElements: STRICT_PRESERVATION_LOCKS,
+    runwayRole: '仅使用明确声明原镜头人物替换能力的链路生成候选，并回贴原背景。',
+    providerOrder: ['runway_kling_motion'], lockedElements: STRICT_PRESERVATION_LOCKS,
     requiresAutomaticReview: true, allowsCompositionChange: false,
     maturity: 'experimental', maturityLabel: '实验中 · 尚未通过保真验收',
     suitableFor: ['已授权的单人短镜头', '先生成人物层，再回贴原背景'],

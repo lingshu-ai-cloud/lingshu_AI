@@ -1,34 +1,158 @@
+import type { DigitalHumanRequirements } from './digitalHumanPlan';
 export type AppearancePreference = 'auto' | 'avatar' | 'real' | 'none';
 export type ShotSource = 'material' | 'avatar' | 'ai' | 'shoot';
+/**
+ * The visual intent of a storyboard shot.  This deliberately stays separate
+ * from `source`: a product close-up can be made from material or AI, while an
+ * enterprise presenter can use an existing take or the digital-human route.
+ */
+export type ShotContentType = 'enterprise_presenter' | 'ugc' | 'product' | 'factory_scene' | 'broll' | 'information';
 export type ShotSound = 'voiceover' | 'source' | 'silent';
 export type ShotLayout = 'full' | 'split' | 'pip';
-export interface PresenterAsset { id: string; name: string; avatarId: string; voiceId: string; authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square' }
-export interface ProductionDefaults { preference: AppearancePreference; presenters: PresenterAsset[]; defaultPresenterId: string }
+export type PresenterCapability = 'talking' | 'reference_image' | 'reference_video' | 'person_replacement';
+export type ArkCertificationStatus = 'profile_incomplete' | 'authorization_pending' | 'ark_pending' | 'processing' | 'active' | 'failed' | 'disabled';
+export interface ArkPresenterCertification {
+  projectName: string;
+  /** Provider-side real-person asset group. Kept separate from the usable image asset ID. */
+  groupId?: string;
+  assetUri: string;
+  assetType: 'image' | 'video' | '';
+  status: ArkCertificationStatus;
+  materialId: string;
+  syncedAt?: string;
+  failureReason?: string;
+  verificationSource?: 'ark_api' | 'manual_console';
+}
+export interface PresenterAsset {
+  id: string; name: string;
+  /** Legacy aliases retained while existing HeyGen records migrate to toolMappings. */
+  avatarId: string; voiceId: string;
+  authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square';
+  assetVersion?: number;
+  /** Machine-readable retained consent evidence. A bare `authorized` flag is not sufficient for supplier submission. */
+  rightsEvidence?: {
+    authorizationRef: string; consentRef: string; grantedAt: string; expiresAt?: string; revokedAt?: string;
+    subjectAdultConfirmed: boolean; permittedProviders: Array<'heygen' | 'volcengine_ark' | 'dashscope'>;
+    permittedUses: Array<'digital_presenter' | 'voice_synthesis' | 'person_replacement' | 'quality_inspection'>;
+    providerScopes?: Array<{ provider: 'heygen' | 'volcengine_ark' | 'dashscope'; uses: Array<'digital_presenter' | 'voice_synthesis' | 'person_replacement' | 'quality_inspection'> }>;
+  };
+  capabilities?: PresenterCapability[];
+  referenceMaterialIds?: string[];
+  arkCertification?: ArkPresenterCertification;
+  toolMappings?: { heygen?: { avatarId: string; voiceId: string }; runway?: { referenceMaterialIds: string[] }; sd?: { referenceMaterialIds: string[] }; seedance?: { referenceMaterialIds: string[] } };
+}
+export interface ProductionDefaults {
+  preference: AppearancePreference;
+  presenters: PresenterAsset[];
+  defaultPresenterId: string;
+  defaultSound: ShotSound;
+  defaultLayout: ShotLayout;
+}
 export interface ShotCandidate { id: string; materialId: string; fingerprint: string; createdAt: string; source: ShotSource; jobId?: string }
 export interface ShotProduction {
+  digitalHuman?: DigitalHumanRequirements;
+  /** Older saved shots omit this and are treated as enterprise presenters only when their source is avatar. */
+  contentType?: ShotContentType;
+  /** Role constraints are for a newly generated, non-identifiable UGC character. */
+  ugcRole?: string;
+  ugcScenario?: string;
+  ugcExpression?: string;
   source: ShotSource; sound: ShotSound; layout: ShotLayout; presenterId: string;
   productId: string; productMaterialId: string; backgroundMaterialId: string; backgroundMode: 'independent' | 'baked';
   transparent: boolean; narration: string; locked: boolean; factsConfirmed: boolean;
   candidates: ShotCandidate[]; adoptedId: string; revision: number;
 }
-export const EMPTY_DEFAULTS: ProductionDefaults = { preference: 'auto', presenters: [], defaultPresenterId: '' };
-export const newShotProduction = (narration = '', presenterId = ''): ShotProduction => ({
-  source: 'material', sound: 'voiceover', layout: 'full', presenterId, productId: '', productMaterialId: '', backgroundMaterialId: '',
+export const EMPTY_DEFAULTS: ProductionDefaults = { preference: 'auto', presenters: [], defaultPresenterId: '', defaultSound: 'voiceover', defaultLayout: 'full' };
+export function presenterCapabilities(asset: PresenterAsset): PresenterCapability[] {
+  const inferred: PresenterCapability[] = Array.isArray(asset.capabilities) ? [...asset.capabilities] : [];
+  const avatarId = asset.toolMappings?.heygen?.avatarId || asset.avatarId;
+  const voiceId = asset.toolMappings?.heygen?.voiceId || asset.voiceId;
+  const referenceMaterialIds = asset.toolMappings?.runway?.referenceMaterialIds || asset.toolMappings?.seedance?.referenceMaterialIds || asset.toolMappings?.sd?.referenceMaterialIds || asset.referenceMaterialIds || [];
+  if (avatarId && voiceId) inferred.push('talking');
+  if (referenceMaterialIds.length) inferred.push('reference_image', 'reference_video', 'person_replacement');
+  return [...new Set(inferred)];
+}
+
+/** Stable identity of generation-affecting presenter inputs. Labels and defaults do not change generated media. */
+export function presenterAssetFingerprint(asset: PresenterAsset): string {
+  const avatarId = asset.toolMappings?.heygen?.avatarId || asset.avatarId || '';
+  const voiceId = asset.toolMappings?.heygen?.voiceId || asset.voiceId || '';
+  const runway = asset.toolMappings?.runway?.referenceMaterialIds || asset.referenceMaterialIds || [];
+  const sd = asset.toolMappings?.seedance?.referenceMaterialIds || asset.toolMappings?.sd?.referenceMaterialIds || asset.referenceMaterialIds || [];
+  const rights = asset.rightsEvidence ? {
+    authorizationRef: asset.rightsEvidence.authorizationRef, consentRef: asset.rightsEvidence.consentRef,
+    grantedAt: asset.rightsEvidence.grantedAt, expiresAt: asset.rightsEvidence.expiresAt || '', revokedAt: asset.rightsEvidence.revokedAt || '',
+    subjectAdultConfirmed: asset.rightsEvidence.subjectAdultConfirmed,
+    permittedProviders: [...new Set(asset.rightsEvidence.permittedProviders)].sort(),
+    permittedUses: [...new Set(asset.rightsEvidence.permittedUses)].sort(),
+    providerScopes: (asset.rightsEvidence.providerScopes || []).map(item=>({provider:item.provider,uses:[...new Set(item.uses)].sort()})).sort((a,b)=>a.provider.localeCompare(b.provider)),
+  } : null;
+  const ark = asset.arkCertification ? { projectName: asset.arkCertification.projectName, groupId: asset.arkCertification.groupId || '', assetUri: asset.arkCertification.assetUri,
+    assetType: asset.arkCertification.assetType, status: asset.arkCertification.status, materialId: asset.arkCertification.materialId,
+    syncedAt: asset.arkCertification.syncedAt || '', verificationSource: asset.arkCertification.verificationSource || '' } : null;
+  return JSON.stringify({ avatarId, voiceId, runway: [...new Set(runway.map(String))].sort(), sd: [...new Set(sd.map(String))].sort(), rights, ark,
+    supportsAlpha: Boolean(asset.supportsAlpha), nativeOrientation: asset.nativeOrientation || 'unknown' });
+}
+export const newShotProduction = (narration = '', presenterId = '', defaults?: Pick<ProductionDefaults, 'defaultSound' | 'defaultLayout'>): ShotProduction => ({
+  source: 'material', sound: defaults?.defaultSound || 'voiceover', layout: defaults?.defaultLayout || 'full', presenterId, productId: '', productMaterialId: '', backgroundMaterialId: '',
   backgroundMode: 'independent', transparent: false, narration, locked: false, factsConfirmed: false, candidates: [], adoptedId: '', revision: 1,
 });
 
+/** Apply whole-video defaults only to editable digital-human shots in one assembly. */
+export function applyDefaultsToUnlockedAvatarShots(
+  shots: Record<string, ShotProduction>,
+  assemblyId: string,
+  defaults: Pick<ProductionDefaults, 'defaultPresenterId' | 'defaultSound' | 'defaultLayout'>,
+): Record<string, ShotProduction> {
+  return Object.fromEntries(Object.entries(shots).map(([key, shot]) => {
+    if (!key.startsWith(`${assemblyId}:`) || shot.source !== 'avatar' || shot.locked) return [key, shot];
+    return [key, patchShot(shot, {
+      presenterId: defaults.defaultPresenterId || shot.presenterId,
+      sound: defaults.defaultSound,
+      layout: defaults.defaultLayout,
+    })];
+  }));
+}
+
 /** Independent layers don't invalidate an expensive presenter generation. */
-export function shotFingerprint(shot: ShotProduction, context: string): string {
+export function shotFingerprint(shot: ShotProduction, context: string, shotId?: string): string {
   let normalizedContext = context;
-  try { const value = JSON.parse(context); if (shot.source !== 'avatar' || shot.sound !== 'voiceover') { delete value.audioIdentity; delete value.audioDuration; delete value.audioSegments; delete value.alignment; delete value.alignmentSource; } normalizedContext = JSON.stringify(value); } catch { /* opaque legacy context */ }
-  return JSON.stringify({ source: shot.source, sound: shot.sound, narration: shot.source === 'avatar' || shot.sound === 'source' ? shot.narration : '',
+  try {
+    const value = JSON.parse(context);
+    if (shot.source !== 'avatar' || shot.sound !== 'voiceover') {
+      delete value.audioIdentity; delete value.audioDuration; delete value.audioSegments; delete value.alignment; delete value.alignmentSource;
+    } else if (shotId && Array.isArray(value.audioSegments)) {
+      // A shared voiceover is rendered once, but each digital-human shot only depends on
+      // its own aligned slice. Global file URLs and total duration would invalidate every
+      // candidate when one sentence changes.
+      const scopedSegments = value.audioSegments.filter((segment: { id?: unknown }) => String(segment?.id || '') === shotId);
+      if (scopedSegments.length) {
+        value.audioSegments = scopedSegments;
+        delete value.audioIdentity; delete value.audioDuration; delete value.alignment; delete value.alignmentSource;
+      }
+    }
+    normalizedContext = JSON.stringify(value);
+  } catch { /* opaque legacy context */ }
+  const digitalHuman = shot.digitalHuman ? structuredClone(shot.digitalHuman) : undefined;
+  if (digitalHuman?.reference?.cues) digitalHuman.reference.cues = digitalHuman.reference.cues.map(cue => {
+    const { targetFirstFrame: _targetFirstFrame, generatedClip: _generatedClip, ...inputCue } = cue;
+    return inputCue;
+  });
+  return JSON.stringify({ source: shot.source, contentType: shot.contentType || (shot.source === 'avatar' ? 'enterprise_presenter' : 'product'), sound: shot.sound, narration: shot.source === 'avatar' || shot.sound === 'source' ? shot.narration : '',
     presenterId: shot.presenterId, productId: shot.productId, transparent: shot.transparent,
-    background: shot.backgroundMode === 'baked' ? shot.backgroundMaterialId : '', context: normalizedContext });
+    ...(shot.contentType === 'ugc' ? { ugcRole: shot.ugcRole || '', ugcScenario: shot.ugcScenario || '', ugcExpression: shot.ugcExpression || '' } : {}),
+    background: shot.backgroundMode === 'baked' ? shot.backgroundMaterialId : '', context: normalizedContext,
+    ...(shot.source === 'avatar' && digitalHuman ? { digitalHuman } : {}) });
 }
 export function patchShot(current: ShotProduction, patch: Partial<ShotProduction>): ShotProduction {
   if (current.locked && patch.locked !== false) throw new Error('请先解锁镜头');
   const changesFacts = patch.productId !== undefined && patch.productId !== current.productId;
-  return { ...current, ...patch, ...(changesFacts ? { factsConfirmed: false } : {}), revision: current.revision + 1 };
+  const next = { ...current, ...patch, ...(changesFacts ? { factsConfirmed: false } : {}), revision: current.revision + 1 };
+  if (next.digitalHuman && (next.narration !== current.narration || next.presenterId !== current.presenterId
+    || (patch.digitalHuman && JSON.stringify({ ...patch.digitalHuman, contentConfirmed: false }) !== JSON.stringify({ ...current.digitalHuman, contentConfirmed: false })))) {
+    next.digitalHuman = { ...next.digitalHuman, contentConfirmed: false };
+  }
+  return next;
 }
 export function recommendShot(input: { detail: string; preference: AppearancePreference; locked: boolean; hasMaterial: boolean; hasPresenter: boolean }): { source: ShotSource; reason: string } {
   if (input.locked) return { source: 'material', reason: '镜头已锁定，保持当前选择' };
@@ -40,11 +164,11 @@ export function recommendShot(input: { detail: string; preference: AppearancePre
   if ((input.preference === 'avatar' || /口播|讲解|解释|FAQ|presenter|talking/i.test(input.detail)) && input.hasPresenter) return { source: 'avatar', reason: '使用授权人物讲解，按确认台词生成新口型' };
   return { source: 'material', reason: '优先补充产品素材；创意场景可手动选择AI生成' };
 }
-export function shotBlockers(shot: ShotProduction, context: string): string[] {
+export function shotBlockers(shot: ShotProduction, context: string, shotId?: string): string[] {
   const result: string[] = [];
   const candidate = shot.candidates.find(item => item.id === shot.adoptedId);
   if (shot.source === 'avatar' && (!candidate || candidate.source !== 'avatar')) result.push('请生成并采用当前数字人镜头候选，不能将原素材视为已生成数字人');
-  if (candidate && candidate.fingerprint !== shotFingerprint(shot, context)) result.push('已采用画面与当前人物/台词/产品要求不一致，请生成或采用匹配候选');
+  if (candidate && candidate.fingerprint !== shotFingerprint(shot, context, shotId)) result.push('已采用画面与当前人物/台词/产品要求不一致，请生成或采用匹配候选');
   if (shot.productId && !shot.factsConfirmed) result.push('更换产品后，请核对并确认台词中的产品事实');
   if (shot.layout !== 'full' && !shot.productMaterialId) result.push('分屏或画中画缺少产品素材');
   if (shot.source === 'avatar' && shot.layout === 'pip' && !shot.transparent) result.push('数字人画中画需要去背景的透明人物层；当前可改用全屏普通混剪');

@@ -10,6 +10,15 @@ export function materialAssetObjectKey(tenantId: string, filename: string): stri
   return `${MATERIAL_ASSET_PREFIX}/${materialAssetTenantKey(tenantId)}/${path.basename(filename)}`;
 }
 
+export function isTenantPrivateObjectKey(objectKey: string, tenantId: string): boolean {
+  const parts = String(objectKey).split('/');
+  return parts.length === 4
+    && /^[a-z0-9._-]+$/i.test(parts[0] || '')
+    && parts[1] === 'tenants'
+    && parts[2] === materialAssetTenantKey(tenantId)
+    && Boolean(parts[3] && parts[3] !== '.' && parts[3] !== '..' && path.basename(parts[3]) === parts[3]);
+}
+
 export function tenantPrivateObjectKey(namespace: string, tenantId: string, filename: string): string {
   const safeNamespace = String(namespace).replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'assets';
   return `${safeNamespace}/tenants/${materialAssetTenantKey(tenantId)}/${path.basename(filename)}`;

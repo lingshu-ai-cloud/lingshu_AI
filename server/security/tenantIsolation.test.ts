@@ -177,7 +177,7 @@ const cloudMaterials = read('server/lib/cloudMaterials.ts');
 assert.match(cloudMaterials, /tenantId: input\.tenantId/, 'PocketBase material records must derive tenant ownership from the authenticated upload input');
 assert.match(cloudMaterials, /materialTenantId\(record\) !== input\.tenantId/, 'PocketBase material writes must verify the returned tenant before exposing the record');
 assert.match(studio, /material\.objectKey[\s\S]*?privateStudioAssetUrl\('materials', tenantId/, 'private COS material reads must use the signed application route');
-assert.match(studio, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?r2GetObject\(tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'the private asset route must bind object reads to the authenticated tenant');
+assert.match(studio, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?objectStorageGetObject\(tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'the private asset route must bind object reads to the authenticated tenant');
 assert.match(studio, /item\.id === req\.params\.id && item\.tenantId === tenantId/, 'material mutations must enforce tenant ownership');
 assert.match(studio, /where: \{ tenant_id: tenantId \}/, 'studio projects must be queried by authenticated tenant');
 assert.match(studio, /existing\.tenant_id !== tenantId/, 'studio project mutations must enforce tenant ownership');

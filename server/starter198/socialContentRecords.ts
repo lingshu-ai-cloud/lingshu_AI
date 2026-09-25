@@ -53,6 +53,23 @@ import {
 } from './socialContentScriptSources.js';
 import { buildSocialAgentWorkflow } from './socialContentAgentWorkflow.js';
 
+export async function readAuthorizedPresenterAssetIds(repository: Starter198Repository, tenantId: string): Promise<string[]> {
+  if (!repository.dataStore) return [];
+  try {
+    const defaults = await repository.dataStore.list<{ tenant_id: string; payload?: { presenters?: Array<Record<string, unknown>> } }>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
+    if (defaults.totalItems > 1 || defaults.items.length > 1) throw new Error('duplicate_defaults');
+    return (defaults.items[0]?.payload?.presenters || []).filter(item => {
+      const mappings = item.toolMappings && typeof item.toolMappings === 'object' ? item.toolMappings as Record<string, any> : {};
+      return item.authorized === true && String(item.id || '').trim() && (Boolean(String(item.avatarId || '').trim() && String(item.voiceId || '').trim())
+        || (Array.isArray(item.referenceMaterialIds) && item.referenceMaterialIds.some(Boolean))
+        || Boolean(String(mappings.heygen?.avatarId || '').trim() && String(mappings.heygen?.voiceId || '').trim())
+        || (Array.isArray(mappings.runway?.referenceMaterialIds) && mappings.runway.referenceMaterialIds.some(Boolean)));
+    }).map(item => String(item.id));
+  } catch {
+    throw new SocialContentWorkflowError('social_content_presenter_assets_unavailable', 503);
+  }
+}
+
 const storedCount = (value: unknown): number => {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value))) {
     throw new SocialContentWorkflowError('social_content_task_counter_invalid', 503);
@@ -462,6 +479,7 @@ export async function readSocialTaskDetail(input: {
   const customerVideoIds = activeMaterials
     .filter(source => !productImageIds.includes(source.sourceId))
     .map(source => source.sourceId);
+  const presenterAssetIds = await readAuthorizedPresenterAssetIds(input.repository, input.tenantId);
   const confirmedFactRefs = [
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
@@ -474,7 +492,10 @@ export async function readSocialTaskDetail(input: {
     assetAvailability: summary.brief.assetAvailability,
     managementMode: summary.brief.managementMode,
     planVersion: summary.version,
-    inventory: { customerVideoIds, productImageIds },
+    inventory: { customerVideoIds, productImageIds, presenterAssetIds,
+      referenceVideoIds: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
+        && referenceVideoAnalysis && customerVideoIds.includes(referenceVideoAnalysis.referenceSourceId)
+        ? [referenceVideoAnalysis.referenceSourceId] : [] },
     confirmedFactRefs,
     shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,

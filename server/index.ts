@@ -69,6 +69,7 @@ import {
 } from './runtime/httpSafety.js';
 import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/readiness.js';
 import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
+import { objectStorageConfigurationIssues } from './storage/objectStorage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
@@ -76,6 +77,11 @@ console.log(`[runtime] role=${processRole} http=${processRoleStartsHttp(processR
 await ensureLocalPocketBase();
 configureNetworkProxy();
 const startupReadinessIssues: string[] = [];
+const storageConfigurationIssues = objectStorageConfigurationIssues();
+if (storageConfigurationIssues.length) {
+  startupReadinessIssues.push(`object_storage_config_invalid:${storageConfigurationIssues.join(',')}`);
+  console.error(`[storage] invalid configuration: ${storageConfigurationIssues.join(', ')}`);
+}
 const runtimeSchemaRepairRequested = process.env.RUNTIME_SCHEMA_REPAIR_ENABLED === 'true';
 if (runtimeSchemaRepairRequested && process.env.NODE_ENV === 'production') {
   // Production schema has one authority: versioned PocketBase migrations.

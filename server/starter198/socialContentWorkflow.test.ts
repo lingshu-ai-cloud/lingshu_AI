@@ -1337,11 +1337,10 @@ try {
   assert.equal(zeroExecution.shots.every((shot: any) => shot.provenance.representation === 'non_evidentiary_visual'), true,
     'zero-material generated visuals are never represented as customer factory, case or effect evidence');
   assert.equal(zeroExecution.shots.some((shot: any) => shot.attempts.some((attempt: any) => (
-    attempt.sourceStrategy === 'authorized_digital_presenter' && attempt.status === 'rejected_by_truth_boundary'
-  ))), true, 'a provider result that presents synthetic media as customer evidence is rejected before fallback');
-  assert.equal(zeroExecution.shots.some((shot: any) => shot.fallbackApplied
-    && shot.sourceStrategy === 'motion_graphics'), true,
-  'a rejected digital-human result falls back to a traceable, non-evidentiary visual');
+    attempt.sourceStrategy === 'authorized_digital_presenter'
+  ))), false, 'without an authorized enterprise presenter asset the agent must not call a digital-human provider');
+  assert.equal(zeroExecution.shots.every((shot: any) => shot.sourceStrategy !== 'authorized_digital_presenter'), true,
+    'zero-input production uses a traceable non-evidentiary route instead of inventing a presenter');
 
   const viralReferenceTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-viral-reference-create-001',

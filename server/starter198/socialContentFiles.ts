@@ -13,7 +13,7 @@ import {
   materialAssetTypeAllowed,
   tenantPrivateObjectKey,
 } from '../storage/materialAssets.js';
-import { objectStorageEnabled, r2Download, r2GetObject, r2Head, r2UploadFile } from '../storage/r2.js';
+import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUploadFile } from '../storage/objectStorage.js';
 import { attachFileFromPath, fetchFile } from '../storage/files.js';
 import {
   acquireDurableOperationLease,
@@ -253,10 +253,10 @@ export async function storeSocialContentFile(input: {
       const storageKey = input.materialLibrary && materialAssetTypeAllowed(mimeType)
         ? materialAssetObjectKey(input.tenantId, storedName)
         : tenantPrivateObjectKey('social-content-sources', input.tenantId, storedName);
-      const current = await r2Head(storageKey);
+      const current = await objectStorageHead(storageKey);
       if (!current || current.size !== byteSize || current.contentType !== mimeType) {
-        await r2UploadFile({ key: storageKey, filePath: temporary, contentType: mimeType, contentLength: byteSize });
-        const verified = await r2Head(storageKey);
+        await objectStorageUploadFile({ key: storageKey, filePath: temporary, contentType: mimeType, contentLength: byteSize });
+        const verified = await objectStorageHead(storageKey);
         if (!verified || verified.size !== byteSize) throw new SocialContentWorkflowError('social_content_file_storage_unavailable', 503);
       }
       return { storageKind: 'object', storageKey, name, mimeType, byteSize, sha256 };
@@ -401,7 +401,7 @@ export async function registerSocialTaskCreativeMaterial(input: {
     if (!input.transientPath) throw new SocialContentWorkflowError('social_content_material_storage_unavailable', 503);
     media = { name: path.basename(input.stored.storageKey), contentType: input.file.mimeType, path: input.transientPath };
   } else if (input.stored.storageKind === 'object') {
-    const object = await r2Download(input.stored.storageKey);
+    const object = await objectStorageDownload(input.stored.storageKey);
     if (!object?.buf.length || createHash('sha256').update(object.buf).digest('hex') !== input.stored.sha256) {
       throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
     }
@@ -690,7 +690,7 @@ export async function readSocialContentFile(input: {
 }): Promise<{
   view: SocialContentFile;
   localPath?: string;
-  object?: Awaited<ReturnType<typeof r2GetObject>>;
+  object?: Awaited<ReturnType<typeof objectStorageGetObject>>;
   backend?: { buf: Buffer; contentType: string };
 }> {
   const record = await findSocialContentFile(input);
@@ -699,7 +699,7 @@ export async function readSocialContentFile(input: {
   const kind = socialText(record.storage_kind);
   const key = socialText(record.storage_key);
   if (kind === 'object') {
-    const object = await r2GetObject(key);
+    const object = await objectStorageGetObject(key);
     if (!object) throw new SocialContentWorkflowError('social_content_file_not_found', 404);
     return { view, object };
   }
@@ -764,7 +764,7 @@ export async function assertSocialContentFilePersisted(input: {
     return view;
   }
   if (kind === 'object') {
-    const head = await r2Head(key);
+    const head = await objectStorageHead(key);
     if (!head || head.size !== view.size || head.contentType !== view.mimeType) {
       throw new SocialContentWorkflowError('social_content_file_integrity_violation', 503);
     }

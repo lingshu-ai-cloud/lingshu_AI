@@ -5,11 +5,64 @@ import { withPaidOperationLock } from '../lib/paidOperationLock.js';
 import { studioPaidBudget } from '../lib/studioPaidBudget.js';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
-import { EMPTY_DEFAULTS, shotFingerprint, type AvatarJob, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
+import { EMPTY_DEFAULTS, presenterAssetFingerprint, presenterCapabilities, shotFingerprint, type AvatarJob, type PresenterAsset, type PresenterCapability, type ProductionDefaults, type ShotProduction } from '../../src/lib/shotProduction.js';
 import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAlignment.js';
+import { candidateToolsFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
+import { deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
+import { digitalHumanToolCapabilities, isDefinitiveSupplierSubmissionError, requiredReferencePreservation, selectReferenceAdapter, verifiedSupplierCost, type DigitalHumanExecutionAdapter, type DigitalHumanToolId } from '../lib/digitalHumanProviderRegistry.js';
+import { sentenceReplicationReadiness, type SentenceReplicationReadiness } from '../runtime/readiness.js';
+import { planPersonShotClusters } from '../../src/lib/personShotClustering.js';
 
 type JobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: AvatarJob; input: HeyGenInput };
-export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string>, options: { client?: HeyGenClient; enabled?: () => boolean; lockRoot?: string; reserve?: (id: string) => Promise<void>; prepareAudio?: (ref: NonNullable<HeyGenInput['audioRef']>, tenantId: string) => Promise<Uint8Array> } = {}) {
+type PlanStoreRecord = { id: string; tenant_id: string; project_id: string; shot_key: string; fingerprint: string; payload: DigitalHumanPlanRecord };
+type ExecutionStoreRecord = { id: string; tenant_id: string; project_id: string; job_id: string; plan_id: string; request_id?: string; payload: DigitalHumanExecutionRecord };
+type SentenceJobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: { state: 'running' | 'completed' | 'failed' | 'uncertain'; fingerprint: string; assemblyId: string; shotId: string; providerTasks?: Record<string,string>; result?: SentenceReplicationResult; error?: string; createdAt: string; updatedAt: string } };
+type FirstFrameDraftJobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: { state: 'running' | 'completed' | 'failed'; fingerprint: string; assemblyId: string; shotId: string; result?: SentenceFirstFrameDraftResult; error?: string; createdAt: string; updatedAt: string } };
+type ImportedVideoResult = { materialId: string; objectKey?: string; localFile?: string; contentSha256?: string; objectEtag?: string };
+type ReferenceImportResult = ImportedVideoResult & { technicalMetrics?: ReferenceTechnicalMetrics; visualMetrics?: ReferenceVisualMetrics };
+export function candidateOutputFromImport(imported: ImportedVideoResult): NonNullable<DigitalHumanExecutionRecord['candidateOutput']> | undefined {
+  const contentSha256 = String(imported.contentSha256 || '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(contentSha256)) return undefined;
+  if (imported.objectKey && imported.objectEtag) return { materialId: imported.materialId, objectKey: imported.objectKey, contentSha256, objectEtag: imported.objectEtag };
+  if (imported.localFile) return { materialId: imported.materialId, localFile: imported.localFile, contentSha256 };
+  return undefined;
+}
+export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string | ImportedVideoResult>, options: {
+  client?: HeyGenClient; enabled?: () => boolean; lockRoot?: string; reserve?: (id: string) => Promise<void>;
+  prepareAudio?: (ref: NonNullable<HeyGenInput['audioRef']>, tenantId: string) => Promise<Uint8Array | { bytes: Uint8Array; segmentId: string; checksumSha256: string; start: number; duration: number }>;
+  adapters?: DigitalHumanExecutionAdapter[];
+  referenceBudgetLimitCny?: number;
+  maxAttemptsPerShot?: number;
+  reserveReference?: (tool: DigitalHumanToolId, id: string, estimatedCostCny: number | null) => Promise<void>;
+  releaseReference?: (tool: DigitalHumanToolId, id: string) => Promise<void>;
+  importReferenceVideo?: (url: string, execution: DigitalHumanExecutionRecord, tenantId: string) => Promise<ReferenceImportResult>;
+  importReferenceObject?: (objectKey: string, execution: DigitalHumanExecutionRecord, tenantId: string) => Promise<ReferenceImportResult>;
+  resolveReferenceInputs?: (input: { shot: ShotProduction; presenter: PresenterAsset; tenantId: string }) => Promise<{ characterUrl: string; characterType: 'image' | 'video'; characterMaterialId?: string; characterObjectKey?: string; characterObjectEtag?: string; referenceVideoUrl: string; referenceClipKey?: string; referenceClipObjectEtag?: string; referenceSourceObjectEtag?: string; referenceMaterialId?: string; referenceStart?: number; referenceDuration?: number }>;
+  inspectReferenceQuality?: (input: {
+    /** Exact cropped source evidence used for motion/background/product comparison. */
+    referenceClipObjectKey: string;
+    referenceMaterialId: string;
+    /** Authorized enterprise-person inputs used for identity comparison. */
+    presenterReferenceMaterialIds: string[];
+    /** Persisted candidate identity; candidateVideoUrl is only a short-lived fetch hint. */
+    candidateMaterialId: string;
+    candidateVideoUrl: string;
+    execution: DigitalHumanExecutionRecord;
+    tenantId: string;
+  }) => Promise<Partial<Record<ModelQualityKey, ModelQualityDecision>>>;
+  verifyCandidateOutput?: (evidence: NonNullable<DigitalHumanExecutionRecord['candidateOutput']>, tenantId: string) => Promise<boolean>;
+  verifyReferenceInputs?: (snapshot: NonNullable<DigitalHumanExecutionRecord['inputSnapshot']>, tenantId: string) => Promise<boolean>;
+  reconcileHeyGenCost?: (externalTaskId: string) => Promise<{ actualCostCny?: number; costSourceRef?: string }>;
+  validatePresenterMaterials?: (tenantId: string, materialIds: string[]) => Promise<void>;
+  verifyArkAsset?: (input: { tenantId: string; projectName: string; groupId: string; assetId: string }) => Promise<{ status: 'processing' | 'active' | 'failed'; assetType: 'image' | 'video'; failureReason?: string }>;
+  bindArkAsset?: (input: { tenantId: string; presenterId: string; certification: NonNullable<PresenterAsset['arkCertification']> }) => Promise<void>;
+  prepareSentenceFirstFrames?: (input: { tenantId: string; referenceMaterialId: string; cues: DigitalHumanReferenceCue[] }) => Promise<DigitalHumanReferenceCue[]>;
+  generateSentenceFirstFrameDrafts?: (input:{tenantId:string;projectId:string;assemblyId:string;presenter:PresenterAsset;cues:DigitalHumanReferenceCue[]})=>Promise<SentenceFirstFrameDraftResult>;
+  runSentenceReplication?: (input: { tenantId: string; projectId: string; assemblyId: string; shotId: string; fingerprint: string; shot: ShotProduction; presenter: PresenterAsset; cues: DigitalHumanReferenceCue[]; requestId: string; reuseCueMaterialIds?:Record<string,string>; reuseCueQuality?:NonNullable<SentenceReplicationResult['cueQuality']>; onProviderTaskSubmitted?: (cueId:string,taskId:string)=>Promise<void> }) => Promise<SentenceReplicationResult>;
+  /** Allows isolated tests or an alternate worker to expose its own preflight. */
+  sentenceReplicationReadiness?: () => SentenceReplicationReadiness;
+  toolUnavailableReasons?: Partial<Record<DigitalHumanToolId, string>>;
+} = {}) {
   const router = Router();
   const locks = new Map<string, Promise<unknown>>();
   const exclusive = async <T>(key: string, operation: () => Promise<T>): Promise<T> => {
@@ -19,32 +72,457 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
   };
   const enabled = () => options.enabled?.() ?? Boolean(process.env.HEYGEN_API_KEY && process.env.HEYGEN_GENERATION_ENABLED === 'true');
   const client = () => options.client || new HeyGenClient(process.env.HEYGEN_API_KEY || '');
+  const executableReferenceAdapters = () => options.reserveReference && options.importReferenceVideo && options.resolveReferenceInputs ? options.adapters || [] : [];
+  const referenceBudgetLimitCny = () => {
+    const value = Number(options.referenceBudgetLimitCny ?? process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+  const maxAttemptsPerShot = () => {
+    const value = Number(options.maxAttemptsPerShot ?? process.env.DIGITAL_HUMAN_MAX_ATTEMPTS_PER_SHOT ?? 3);
+    return Number.isSafeInteger(value) && value >= 1 && value <= 10 ? value : 3;
+  };
+  const sentenceReadiness = () => options.sentenceReplicationReadiness?.() ?? sentenceReplicationReadiness();
+  const releaseReferenceReservation = async (tool: DigitalHumanToolId, requestId: string): Promise<string> => {
+    if (!options.releaseReference) return '';
+    try { await options.releaseReference(tool, requestId); return ''; }
+    catch (error) { return `预算预占释放失败，请管理员核对账本：${error instanceof Error ? error.message : '未知错误'}`; }
+  };
+  const assertCandidateOutputCurrent = async (record: ExecutionStoreRecord, tenantId: string) => {
+    const evidence = record.payload.candidateOutput;
+    if (!evidence) return;
+    if (evidence.materialId !== record.payload.materialId || !options.verifyCandidateOutput) throw new Error('候选输出缺少可复核的存储证据服务，不能验收或填入分镜');
+    if (!await options.verifyCandidateOutput(evidence, tenantId)) throw new Error('候选输出对象版本已变化，或本地文件内容已变化，历史质检失效；请恢复原文件或生成新候选');
+  };
+  const assertAttemptAvailable = async (input: { tenantId: string; projectId: string; assemblyId: string; shotId: string; fingerprint: string; presenterAssetVersion: number }) => {
+    const records = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: input.tenantId, project_id: input.projectId }, perPage: 500 });
+    const attempts = records.items.filter(item => item.payload.assemblyId === input.assemblyId && item.payload.shotId === input.shotId
+      && item.payload.fingerprint === input.fingerprint && item.payload.presenterAssetVersion === input.presenterAssetVersion
+      && item.payload.submissionOutcome !== 'rejected').length;
+    if (attempts >= maxAttemptsPerShot()) throw new Error(`本镜头当前要求与人物版本已达到 ${maxAttemptsPerShot()} 次生成上限；请先比较已有候选，或修改镜头要求后保存新方案`);
+  };
   const readDefaults = async (tenantId: string) => (await store.list<any>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 1 })).items[0];
+  const persistPlan = async (input: { tenantId: string; project: any; assemblyId: string; shotId: string; fingerprint: string; origin?: 'manual' | 'content_agent'; sourceTaskId?: string; sourceTaskVersion?: string }) => {
+    const { tenantId, project, assemblyId, shotId, fingerprint } = input;
+    const shot = project.spec?.shotProductions?.[`${assemblyId}:${shotId}`] as ShotProduction | undefined;
+    if (!shot || shot.source !== 'avatar') throw new Error('草稿中未找到当前数字人分镜');
+    if (!fingerprint || shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), shotId) !== fingerprint) throw new Error('镜头要求与已保存草稿不一致，请保存后重试');
+    const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
+    const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
+    const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : []).find((item: any) => String(item.id) === shotId);
+    const now = new Date().toISOString();
+    let plan = planDigitalHumanShot({ requirements: shot.digitalHuman, narration: shot.narration, hasAuthorizedPresenter: Boolean(presenter), talkingAvailable: enabled(), presenterCapabilities: presenter ? presenterCapabilities(presenter) : undefined });
+    let referenceEstimatedCostCny: number | null = null;
+    let routeDecision: DigitalHumanPlanRecord['routeDecision'] = null;
+    const modelInputAuthorization = referenceModelInputAuthorization(shot.digitalHuman, now);
+    if (shot.digitalHuman && shot.digitalHuman.method !== 'talking' && plan.state === 'preview_only' && modelInputAuthorization) {
+      const requiredPreservation = requiredReferencePreservation({ preserve: shot.digitalHuman.preserve, productMaterialId: shot.productMaterialId, backgroundMaterialId: shot.backgroundMaterialId });
+      const selection = selectReferenceAdapter({ adapters: executableReferenceAdapters(), candidates: candidateToolsFor(shot.digitalHuman), method: shot.digitalHuman.method,
+        targetDurationSeconds: Number(slot?.duration) || null,
+        maxEstimatedCostCny: referenceBudgetLimitCny(),
+        requiredPreservation });
+      routeDecision = { targetDurationSeconds: Number(slot?.duration) || null, budgetLimitCny: referenceBudgetLimitCny(), requiredPreservation, selectedTool: selection.adapter?.id || null, evaluations: selection.evaluations };
+      if (selection.adapter) {
+        plan = { ...plan, state: 'ready', executable: true, reasons: [], provider: selection.adapter.id };
+        referenceEstimatedCostCny = selection.estimatedCostCny;
+      } else if (executableReferenceAdapters().length) {
+        plan = { ...plan, reasons: [selection.reason] };
+      }
+    } else if (shot.digitalHuman?.method === 'reenact' && usesDirectReferenceVideo(shot.digitalHuman) && plan.state === 'preview_only' && !modelInputAuthorization) {
+      plan = { ...plan, reasons: ['当前仅做结构分析与方案预览；如需把源视频提交给生成模型，请确认模型输入授权并填写依据'] };
+    } else if (shot.digitalHuman?.method === 'reenact' && !usesDirectReferenceVideo(shot.digitalHuman) && plan.state === 'preview_only') {
+      plan = { ...plan, reasons: ['逐句首帧重建方案已就绪；等待接通“首帧提取 → 目标人物首帧生成 → 逐句视频生成 → 拼接”编排器'] };
+    }
+    const shotKey = `${assemblyId}:${shotId}`;
+    const rate = Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND);
+    const presenterVersion = Math.max(1, presenter?.assetVersion || 1);
+    const existing = (await store.list<PlanStoreRecord>('studio_digital_human_plans', { where: { tenant_id: tenantId, project_id: project.id, shot_key: shotKey, fingerprint }, perPage: 500 })).items
+      .find(item => item.payload.presenterAssetVersion === presenterVersion);
+    const inputSnapshot = {
+      narration: shot.narration, language: String(project.spec?.activeVoiceLang || project.spec?.lang || ''), ratio: String(project.spec?.ratio || ''),
+      targetDurationSeconds: Number.isFinite(Number(slot?.duration)) && Number(slot?.duration) > 0 ? Number(slot?.duration) : null,
+      sound: shot.sound, presenterId: shot.presenterId, presenterAssetVersion: presenterVersion,
+      presenterReferenceMaterialIds: [...new Set((presenter?.toolMappings?.runway?.referenceMaterialIds || presenter?.referenceMaterialIds || []).map(String).filter(Boolean))],
+      voiceMapping: presenter?.avatarId && presenter?.voiceId ? { avatarId: presenter.avatarId, voiceId: presenter.voiceId } : null,
+      productId: shot.productId, productMaterialId: shot.productMaterialId, backgroundMaterialId: shot.backgroundMaterialId,
+      requirements: shot.digitalHuman ? structuredClone(shot.digitalHuman) : null,
+      ...(shot.digitalHuman?.method === 'replace' && shot.digitalHuman.reference?.derivativeAuthorized === true && shot.digitalHuman.reference.derivativeAuthorizationEvidence?.trim() ? {
+        derivativeAuthorization: { evidence: shot.digitalHuman.reference.derivativeAuthorizationEvidence.trim(), confirmedAt: now },
+      } : {}),
+      ...(modelInputAuthorization ? { modelInputAuthorization } : {}),
+    };
+    const payload: DigitalHumanPlanRecord = { id: existing?.id || '', projectId: project.id, assemblyId, shotId, fingerprint,
+      workflow: shot.digitalHuman?.workflow || 'material_processing', method: shot.digitalHuman?.method || 'talking', presenterId: shot.presenterId,
+      presenterAssetVersion: presenterVersion, candidateTools: candidateToolsFor(shot.digitalHuman), inputSnapshot,
+      routeSteps: digitalHumanRouteSteps(shot.digitalHuman?.method || 'talking', plan.provider, plan.executable, plan.state),
+      routeDecision,
+      estimatedCostCny: plan.provider === 'heygen' && rate > 0 ? Number((Math.max(1, shot.narration.length / 4) * rate).toFixed(2)) : referenceEstimatedCostCny,
+      ...plan, origin: input.origin || existing?.payload.origin || 'manual',
+      ...((input.sourceTaskId || existing?.payload.sourceTaskId) ? { sourceTaskId: input.sourceTaskId || existing?.payload.sourceTaskId } : {}),
+      ...((input.sourceTaskVersion || existing?.payload.sourceTaskVersion) ? { sourceTaskVersion: input.sourceTaskVersion || existing?.payload.sourceTaskVersion } : {}),
+      createdAt: existing?.payload.createdAt || now, updatedAt: now };
+    if (existing) {
+      if (!await store.update('studio_digital_human_plans', existing.id, { payload })) throw new Error('制作方案来源版本更新失败');
+      return { ...payload, id: existing.id };
+    }
+    const saved = await store.create<PlanStoreRecord>('studio_digital_human_plans', { tenant_id: tenantId, project_id: project.id, shot_key: shotKey, fingerprint, payload });
+    if (!saved) throw new Error('制作方案保存失败');
+    return { ...payload, id: saved.id };
+  };
   router.get('/capabilities', (_req, res) => {
     const rate = Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND);
     const budget = studioPaidBudget.status('heygen');
-    res.json({ configured: enabled() && budget.allowed, reason: !enabled() ? '管理员须配置 HEYGEN_API_KEY 并明确启用 HEYGEN_GENERATION_ENABLED；当前不会发起付费生成' : budget.reason, costPerSecond: rate > 0 ? rate : null, budget });
+    res.json({ configured: enabled() && budget.allowed, reason: !enabled() ? '管理员须配置 HEYGEN_API_KEY 并明确启用 HEYGEN_GENERATION_ENABLED；当前不会发起付费生成' : budget.reason, costPerSecond: rate > 0 ? rate : null, budget, referenceBudgetLimitCny: referenceBudgetLimitCny(), maxAttemptsPerShot: maxAttemptsPerShot(),
+      tools: digitalHumanToolCapabilities({ talkingEnabled: enabled() && budget.allowed, talkingCostReconciliation: Boolean(options.reconcileHeyGenCost), adapters: executableReferenceAdapters(), unavailableReasons: options.toolUnavailableReasons }) });
   });
   router.get('/defaults', async (_req, res) => {
-    try { res.json((await readDefaults(res.locals.tenantId))?.payload || EMPTY_DEFAULTS); }
+    try { res.json({ ...EMPTY_DEFAULTS, ...((await readDefaults(res.locals.tenantId))?.payload || {}) }); }
     catch { res.status(503).json({ error: '企业出镜设置读取失败' }); }
+  });
+  router.get('/plans', async (req, res) => {
+    try {
+      const projectId = String(req.query.projectId || '');
+      const result = await store.list<PlanStoreRecord>('studio_digital_human_plans', { where: { tenant_id: res.locals.tenantId, project_id: projectId }, perPage: 500 });
+      res.json(result.items.filter(item => item.tenant_id === res.locals.tenantId).map(item => ({ ...item.payload, id: item.id })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    } catch { res.status(503).json({ error: '数字人分镜制作方案读取失败' }); }
+  });
+  router.get('/executions', async (req, res) => {
+    try {
+      const result = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: res.locals.tenantId, project_id: String(req.query.projectId || '') }, perPage: 500 });
+      res.json(result.items.filter(item => item.tenant_id === res.locals.tenantId).map(item => ({ ...item.payload, id: item.id })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    } catch { res.status(503).json({ error: '数字人执行记录读取失败' }); }
+  });
+  router.post('/executions/:id/cost', async (req, res) => {
+    try {
+      const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
+      if (!record || record.tenant_id !== res.locals.tenantId) throw new Error('数字人执行记录不存在');
+      const amount = Number(req.body?.actualCostCny); const sourceRef = String(req.body?.sourceRef || '').trim();
+      if (!Number.isFinite(amount) || amount < 0 || amount > 1_000_000 || !sourceRef || sourceRef.length > 300) throw new Error('实际费用或账单依据无效');
+      const payload: DigitalHumanExecutionRecord = { ...record.payload, id: record.id, actualCostCny: Number(amount.toFixed(4)), costStatus: 'reconciled', costSourceRef: sourceRef, updatedAt: new Date().toISOString() };
+      if (!await store.update('studio_digital_human_executions', record.id, { payload })) throw new Error('实际费用保存失败');
+      res.json(payload);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '实际费用保存失败' }); }
+  });
+  router.post('/executions/:id/reconcile-cost', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const payload = await exclusive(`cost-reconcile:${tenantId}:${req.params.id}`, async () => {
+        const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
+        if (!record || record.tenant_id !== tenantId) throw new Error('数字人执行记录不存在');
+        if (record.payload.costStatus === 'reconciled') return { ...record.payload, id: record.id };
+        if (record.payload.state !== 'completed' || !record.payload.externalTaskId) throw new Error('供应商任务尚未完成，不能核对最终账单');
+        const adapter = (options.adapters || []).find(item => item.id === record.payload.tool);
+        const lookup = record.payload.tool === 'heygen'
+          ? options.reconcileHeyGenCost
+          : adapter?.cost ? (externalTaskId: string) => adapter.cost!(externalTaskId) : undefined;
+        if (!lookup) throw new Error('当前供应商未提供可核验的账单查询能力');
+        const evidence = verifiedSupplierCost(await lookup(record.payload.externalTaskId));
+        if (!evidence) throw new Error('供应商账单尚未生成，请稍后核对原任务；不会使用预计费用替代');
+        const next: DigitalHumanExecutionRecord = { ...record.payload, id: record.id, ...evidence, costStatus: 'reconciled', updatedAt: new Date().toISOString() };
+        if (!await store.update('studio_digital_human_executions', record.id, { payload: next })) throw new Error('供应商账单对账结果保存失败');
+        return next;
+      });
+      res.json(payload);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '供应商账单对账失败' }); }
+  });
+  router.post('/executions/:id/quality', async (req, res) => {
+    try {
+      const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
+      if (!record || record.tenant_id !== res.locals.tenantId) throw new Error('数字人执行记录不存在');
+      if (record.payload.adoption) throw new Error('候选已填入分镜；如需更换，请先创建新的候选或装配版本，不能改写已采用版本的验收结论');
+      if (record.payload.quality.state !== 'manual_review') throw new Error('当前候选的人工验收已经结束；不通过后请按修改意见生成新候选，不能改写原结论');
+      if (record.payload.quality.checks.find(check => check.key === 'media_import')?.status !== 'passed') throw new Error('媒体尚未通过入库检查，不能完成人工验收');
+      await assertCandidateOutputCurrent(record, res.locals.tenantId as string);
+      const raw = req.body?.decisions;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('请提交人工验收结果');
+      const pendingManual = record.payload.quality.checks.filter(check => check.mode === 'manual' && check.status === 'pending');
+      const allowed = new Set(pendingManual.map(check => check.key));
+      const decisions: Record<string, { passed: boolean; evidence: string }> = {};
+      for (const [key, value] of Object.entries(raw as Record<string, any>)) {
+        if (!allowed.has(key) || typeof value?.passed !== 'boolean' || !String(value?.evidence || '').trim()) throw new Error('人工验收项目或依据无效');
+        decisions[key] = { passed: value.passed, evidence: String(value.evidence).trim().slice(0, 500) };
+      }
+      if (!pendingManual.length || pendingManual.some(check => !decisions[check.key]) || Object.keys(decisions).length !== pendingManual.length) {
+        throw new Error('请一次提交当前候选全部待人工验收项目的明确结论');
+      }
+      const reviewNote = String(req.body?.reviewNote || '').trim().slice(0, 1000);
+      if (Object.values(decisions).some(decision => !decision.passed) && !reviewNote) throw new Error('质检不通过时请填写具体修改意见');
+      const quality = reviewDigitalHumanQuality(record.payload.quality, decisions, new Date().toISOString(), reviewNote);
+      const payload = { ...record.payload, id: record.id, quality,
+        routeSteps: record.payload.routeSteps ? routeStepsForExecution(record.payload.routeSteps, record.payload.state, quality, Boolean(record.payload.adoption)) : undefined,
+        updatedAt: new Date().toISOString() };
+      if (!await store.update('studio_digital_human_executions', record.id, { payload })) throw new Error('人工验收结果保存失败');
+      res.json(payload);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '人工验收结果保存失败' }); }
+  });
+  router.post('/plans', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const b = req.body || {};
+      const project = await store.getById<any>('studio_projects', String(b.projectId || ''));
+      if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
+      res.json(await persistPlan({ tenantId, project, assemblyId: String(b.assemblyId || ''), shotId: String(b.shotId || ''), fingerprint: String(b.fingerprint || '') }));
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '数字人分镜制作方案保存失败' }); }
+  });
+
+  router.post('/sentence-first-frames', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string; const b = req.body || {};
+      const project = await store.getById<any>('studio_projects', String(b.projectId || ''));
+      if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
+      const shot = project.spec?.shotProductions?.[`${b.assemblyId}:${b.shotId}`] as ShotProduction | undefined;
+      if (!shot?.digitalHuman || shot.digitalHuman.workflow !== 'viral_replication' || shot.digitalHuman.method !== 'reenact'
+        || usesDirectReferenceVideo(shot.digitalHuman)) throw new Error('当前分镜不是逐句首帧重建路线');
+      if (shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), String(b.shotId || '')) !== String(b.fingerprint || '')) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
+      const materialId = String(shot.digitalHuman.reference?.materialId || ''); const cues = referenceCues(shot.digitalHuman);
+      if (!materialId || !cues.length) throw new Error('请先绑定爆款参考视频并完成逐句分析');
+      const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
+      if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
+      if (!options.prepareSentenceFirstFrames) throw new Error('逐句首帧提取服务尚未配置');
+      res.json({ cues: await options.prepareSentenceFirstFrames({ tenantId, referenceMaterialId: materialId, cues }), clusterPlan });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句首帧提取失败' }); }
+  });
+
+  router.post('/sentence-first-frame-drafts',async(req,res)=>{
+    try{const tenantId=res.locals.tenantId as string;const b=req.body||{};const requestId=String(b.requestId||'');if(b.confirmed!==true||!/^[A-Za-z0-9_:.-]{1,150}$/.test(requestId))throw new Error('请确认千问首帧草稿生成及计费，并提供有效请求标识');const result=await exclusive(`qwen-first-frame-draft:${tenantId}:${requestId}`,async()=>{const prior=(await store.list<FirstFrameDraftJobRecord>('studio_first_frame_draft_jobs',{where:{tenant_id:tenantId,request_id:requestId},perPage:1})).items[0];if(prior){if(prior.payload.state==='completed'&&prior.payload.result)return prior.payload.result;throw new Error(prior.payload.state==='failed'?`该千问草稿请求已失败并留档：${prior.payload.error||'原因未知'}；修正后请使用新请求标识`:'该千问草稿请求状态未确认，请核对原任务，勿重复提交计费');}const project=await store.getById<any>('studio_projects',String(b.projectId||''));if(!project||project.tenant_id!==tenantId||project.status!=='draft')throw new Error('创作草稿不存在或不可编辑');const assemblyId=String(b.assemblyId||''),shotId=String(b.shotId||''),fingerprint=String(b.fingerprint||'');const shot=project.spec?.shotProductions?.[`${assemblyId}:${shotId}`] as ShotProduction|undefined;if(!shot?.digitalHuman||shot.digitalHuman.workflow!=='viral_replication'||shot.digitalHuman.method!=='reenact'||usesDirectReferenceVideo(shot.digitalHuman))throw new Error('当前分镜不是逐句首帧重建路线');if(shotFingerprint(shot,String(project.spec?.shotProductionContext||''),shotId)!==fingerprint)throw new Error('数字人参数与已保存草稿不一致，请保存后重试');const defaults=(await readDefaults(tenantId))?.payload as ProductionDefaults|undefined;const presenter=defaults?.presenters.find(item=>item.id===shot.presenterId&&item.authorized);if(!presenter)throw new Error('请选择已授权企业人物');const cues=referenceCues(shot.digitalHuman);if(!cues.length||cues.some(cue=>cue.personShot!==false&&!cue.sourceFirstFrame?.materialId))throw new Error('请先完成全部人物镜头的逐句源首帧提取');if(!options.generateSentenceFirstFrameDrafts)throw new Error('千问首帧草稿服务尚未配置');const now=new Date().toISOString();const created=await store.create<FirstFrameDraftJobRecord>('studio_first_frame_draft_jobs',{tenant_id:tenantId,project_id:project.id,request_id:requestId,payload:{state:'running',fingerprint,assemblyId,shotId,createdAt:now,updatedAt:now}});if(!created)throw new Error('千问首帧草稿作业留档失败，未发起计费');try{const generated=await options.generateSentenceFirstFrameDrafts({tenantId,projectId:project.id,assemblyId,presenter,cues});await store.update('studio_first_frame_draft_jobs',created.id,{payload:{...created.payload,state:'completed',result:generated,updatedAt:new Date().toISOString()}});return generated;}catch(error){await store.update('studio_first_frame_draft_jobs',created.id,{payload:{...created.payload,state:'failed',error:error instanceof Error?error.message:'生成失败',updatedAt:new Date().toISOString()}});throw error;}});res.json(result);}catch(error){res.status(400).json({error:error instanceof Error?error.message:'千问首帧草稿生成失败'});}
+  });
+
+  router.get('/sentence-replication-readiness', (_req, res) => {
+    // Safe to return to the UI: this reports variable names only, never values.
+    res.json(sentenceReadiness());
+  });
+
+  router.get('/sentence-replication-jobs/:id', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const record = await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs', req.params.id);
+      if (!record || record.tenant_id !== tenantId) throw new Error('逐句生产作业不存在');
+      if (record.payload.state !== 'completed' || !record.payload.result) throw new Error(`逐句生产作业尚未完成：${record.payload.state}`);
+      res.json({ ...record.payload.result, sentenceJobId: record.id });
+    } catch (error) { res.status(404).json({ error: error instanceof Error ? error.message : '逐句生产作业读取失败' }); }
+  });
+
+  router.post('/sentence-replication-jobs', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string; const b = req.body || {};
+      if (b.confirmed !== true || !/^[A-Za-z0-9_:.-]{1,150}$/.test(String(b.requestId || ''))) throw new Error('请确认逐句视频生成及供应商计费，并提供有效请求标识');
+      const result = await exclusive(`sentence-replication:${tenantId}:${b.requestId}`, async () => {
+        const requestId = String(b.requestId);
+        const existing = (await store.list<SentenceJobRecord>('studio_sentence_replication_jobs', { where: { tenant_id: tenantId, request_id: requestId }, perPage: 1 })).items[0];
+        if (existing) {
+          if (existing.payload.state === 'completed' && existing.payload.result) return existing.payload.result;
+          throw new Error(existing.payload.state === 'failed'
+            ? `该请求已失败并已留档：${existing.payload.error || '原因未知'}。修正输入后请发起新请求，勿复用请求标识`
+            : '该请求已有生成记录，状态未确认；请核对原任务，勿重复提交计费');
+        }
+        const project = await store.getById<any>('studio_projects', String(b.projectId || ''));
+        if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
+        const shot = project.spec?.shotProductions?.[`${b.assemblyId}:${b.shotId}`] as ShotProduction | undefined;
+        if (!shot?.digitalHuman || shot.digitalHuman.workflow !== 'viral_replication' || shot.digitalHuman.method !== 'reenact' || usesDirectReferenceVideo(shot.digitalHuman)) throw new Error('当前分镜不是逐句首帧重建路线');
+        const fingerprint = String(b.fingerprint || '');
+        if (shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), String(b.shotId || '')) !== fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
+        const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
+        const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
+        if (!presenter) throw new Error('请选择已授权企业人物');
+        const cues = referenceCues(shot.digitalHuman);
+        const clusterPlan = planPersonShotClusters(cues, Math.max(1, Number(process.env.DIGITAL_HUMAN_MAX_FIRST_FRAMES_PER_VIDEO) || 3));
+        if (clusterPlan.state !== 'ready') throw new Error(clusterPlan.blockers.join('；'));
+        if (!clusterPlan.personCueIds.length) throw new Error('当前视频没有人物镜头，不应调用人物首帧或 Seedance 人物生成；请按普通素材混剪路线制作');
+        if (!cues.length || cues.some(cue => cue.personShot !== false && !cue.sourceFirstFrame?.materialId)) throw new Error('请先完成全部人物镜头的逐句源首帧提取');
+        if (!options.runSentenceReplication) throw new Error('逐句目标人物首帧与视频编排器尚未配置');
+        const readiness = sentenceReadiness();
+        if (!readiness.ready) throw new Error(readiness.reason);
+        const savedPlan = await persistPlan({ tenantId, project, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint });
+        const now = new Date().toISOString();
+        const record = await store.create<SentenceJobRecord>('studio_sentence_replication_jobs', { tenant_id: tenantId, project_id: project.id, request_id: requestId,
+          payload: { state: 'running', fingerprint, assemblyId: String(b.assemblyId), shotId: String(b.shotId), createdAt: now, updatedAt: now } });
+        if (!record) throw new Error('逐句生成请求记录保存失败，尚未调用供应商');
+        try {
+          const generated = await options.runSentenceReplication({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint, shot, presenter, cues, requestId,
+            onProviderTaskSubmitted: async (cueId,taskId)=>{ const providerTasks={...(record.payload.providerTasks||{}),[cueId]:taskId}; record.payload={...record.payload,providerTasks,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload:record.payload})) throw new Error('Seedance 已受理任务但任务 ID 持久化失败；请核对原任务，勿重复提交'); } });
+          if (!generated.candidateOutput) throw new Error('逐句拼接候选缺少可复核的对象版本与内容哈希');
+          let quality = initialDigitalHumanQuality(shot.digitalHuman);
+          quality = recordDigitalHumanMediaCheck(quality, { passed: true, evidence: `material:${generated.materialId}` });
+          quality = deferUnavailableVisualChecksToManual(quality);
+          const execution: DigitalHumanExecutionRecord = { id: '', planId: savedPlan.id, jobId: record.id, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint,
+            tool: 'runway_seedance', provider: 'sentence_first_frame_pipeline', model: process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128', presenterAssetVersion: presenter.assetVersion || 1,
+            submissionOutcome: 'created', candidateOutput: generated.candidateOutput, routeSteps: routeStepsForExecution(savedPlan.routeSteps || [], 'completed', quality), state: 'completed',
+            externalTaskId: generated.providerTaskIds?.join(',') || null, materialId: generated.materialId, estimatedCostCny: null, actualCostCny: null, costStatus: 'awaiting_invoice', costSourceRef: null,
+            error: '', quality, createdAt: now, updatedAt: new Date().toISOString() };
+          const executionRecord = await store.create<ExecutionStoreRecord>('studio_digital_human_executions', { tenant_id: tenantId, project_id: project.id, job_id: record.id, plan_id: savedPlan.id, request_id: requestId, payload: execution });
+          if (!executionRecord) throw new Error('逐句生成已完成但验收记录保存失败；请核对素材库，勿重复提交');
+          const completed = { ...generated, executionId: executionRecord.id, sentenceJobId: record.id };
+          const payload: SentenceJobRecord['payload'] = { ...record.payload, state: 'completed', result: completed, updatedAt: new Date().toISOString() };
+          if (!await store.update('studio_sentence_replication_jobs', record.id, { payload })) throw new Error('逐句生成已完成但结果记录保存失败；请核对素材库，勿重复提交');
+          return completed;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '逐句生成失败';
+          const uncertain = /未知|超时|核对原任务|已完成但/.test(message);
+          await store.update('studio_sentence_replication_jobs', record.id, { payload: { ...record.payload, state: uncertain ? 'uncertain' : 'failed', error: message, updatedAt: new Date().toISOString() } });
+          throw error;
+        }
+      });
+      res.json(result);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '逐句爆款复刻失败' }); }
+  });
+  router.post('/sentence-replication-jobs/:id/cue-quality', async (req,res)=>{
+    try { const tenantId=res.locals.tenantId as string; const record=await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs',req.params.id);
+      if(!record || record.tenant_id!==tenantId || record.payload.state!=='completed' || !record.payload.result?.cueQuality) throw new Error('逐镜质检记录不存在或生产尚未完成');
+      const submitted=req.body?.decisions && typeof req.body.decisions==='object'?req.body.decisions as Record<string,Record<string,{passed?:unknown;evidence?:unknown}>>:{};
+      const allowed=new Set(['identity','motion','product_brand_text','background','audio_sync','reuse_risk']);
+      const cueQuality=record.payload.result.cueQuality.map(cue=>{ const decisions=submitted[cue.cueId]||{}; const checks=cue.checks.map(check=>{ if(check.status!=='pending'||!allowed.has(check.key)||!decisions[check.key]) return check; const decision=decisions[check.key]!; const evidence=String(decision.evidence||'').trim(); if(typeof decision.passed!=='boolean'||!evidence) throw new Error(`镜头 ${cue.cueId} 的 ${check.key} 缺少明确结论或证据`); return {...check,status:decision.passed?'passed' as const:'failed' as const,evidence}; }); const state=checks.some(check=>check.status==='failed')?'failed':checks.every(check=>check.status==='passed')?'accepted':'manual_review'; return {...cue,checks,state}; });
+      const failedCueIds=cueQuality.filter(cue=>cue.state==='failed').map(cue=>cue.cueId); const result={...record.payload.result,cueQuality,failedCueIds}; const payload={...record.payload,result,updatedAt:new Date().toISOString()}; if(!await store.update('studio_sentence_replication_jobs',record.id,{payload})) throw new Error('逐镜质检结果保存失败'); res.json(result);
+    } catch(error){res.status(400).json({error:error instanceof Error?error.message:'逐镜质检保存失败'});}
+  });
+  router.post('/sentence-replication-jobs/:id/retry-failed',async(req,res)=>{
+    let retryRecord:SentenceJobRecord|undefined;
+    try { const tenantId=res.locals.tenantId as string; const requestId=String(req.body?.requestId||''); if(req.body?.confirmed!==true||!/^[A-Za-z0-9_:.-]{1,150}$/.test(requestId)) throw new Error('请确认局部返工计费，并提供新的有效请求标识');
+      const result=await exclusive(`sentence-repair:${tenantId}:${requestId}`,async()=>{ const previous=await store.getById<SentenceJobRecord>('studio_sentence_replication_jobs',req.params.id); if(!previous||previous.tenant_id!==tenantId||previous.payload.state!=='completed'||!previous.payload.result) throw new Error('原逐句作业不存在或尚未完成');
+        const existing=(await store.list<SentenceJobRecord>('studio_sentence_replication_jobs',{where:{tenant_id:tenantId,request_id:requestId},perPage:1})).items[0]; if(existing){if(existing.payload.state==='completed'&&existing.payload.result)return existing.payload.result;throw new Error('该返工请求已存在且状态未确认，请核对原任务，勿重复提交计费');}
+        const failed=new Set(previous.payload.result.failedCueIds||[]); if(!failed.size) throw new Error('原作业没有已确认的失败镜头，无需发起局部返工');
+        const project=await store.getById<any>('studio_projects',previous.project_id); if(!project||project.tenant_id!==tenantId||project.status!=='draft') throw new Error('创作草稿不存在或不可编辑');
+        const {assemblyId,shotId,fingerprint}=previous.payload; const shot=project.spec?.shotProductions?.[`${assemblyId}:${shotId}`] as ShotProduction|undefined; if(!shot||shotFingerprint(shot,String(project.spec?.shotProductionContext||''),shotId)!==fingerprint) throw new Error('分镜要求已经变化，请保存为新的完整生产请求');
+        const defaults=(await readDefaults(tenantId))?.payload as ProductionDefaults|undefined; const presenter=defaults?.presenters.find(item=>item.id===shot.presenterId&&item.authorized); if(!presenter)throw new Error('原人物资产已不可用'); const cues=referenceCues(shot.digitalHuman);
+        const priorCues=new Map(previous.payload.result.cues.map(cue=>[cue.id,cue])); const reuseCueMaterialIds:Record<string,string>={}; for(const cue of cues)if(!failed.has(cue.id)){const materialId=String(priorCues.get(cue.id)?.generatedClip?.materialId||'');if(!materialId)throw new Error(`已通过镜头 ${cue.id} 缺少可复用素材`);reuseCueMaterialIds[cue.id]=materialId;}
+        const reuseCueQuality=(previous.payload.result.cueQuality||[]).filter(item=>!failed.has(item.cueId)&&item.state==='accepted'); if(Object.keys(reuseCueMaterialIds).length!==reuseCueQuality.length)throw new Error('已通过镜头缺少完整质量验收证据，不能在局部返工中直接复用');
+        const now=new Date().toISOString(); const createdRetry=await store.create<SentenceJobRecord>('studio_sentence_replication_jobs',{tenant_id:tenantId,project_id:project.id,request_id:requestId,payload:{state:'running',fingerprint,assemblyId,shotId,createdAt:now,updatedAt:now}}); if(!createdRetry)throw new Error('局部返工作业保存失败，尚未调用供应商'); retryRecord=createdRetry;
+        try { const generated=await options.runSentenceReplication!({tenantId,projectId:project.id,assemblyId,shotId,fingerprint,shot,presenter,cues,requestId,reuseCueMaterialIds,reuseCueQuality,onProviderTaskSubmitted:async(cueId,taskId)=>{const providerTasks={...(retryRecord!.payload.providerTasks||{}),[cueId]:taskId};retryRecord!.payload={...retryRecord!.payload,providerTasks,updatedAt:new Date().toISOString()};if(!await store.update('studio_sentence_replication_jobs',retryRecord!.id,{payload:retryRecord!.payload}))throw new Error('Seedance 已受理返工任务但任务 ID 持久化失败；请核对原任务，勿重复提交');}});
+          if(!generated.candidateOutput)throw new Error('局部返工拼接结果缺少可复核对象证据'); const savedPlan=await persistPlan({tenantId,project,assemblyId,shotId,fingerprint}); let quality=recordDigitalHumanMediaCheck(initialDigitalHumanQuality(shot.digitalHuman),{passed:true,evidence:`material:${generated.materialId}`});quality=deferUnavailableVisualChecksToManual(quality); const execution:DigitalHumanExecutionRecord={id:'',planId:savedPlan.id,jobId:retryRecord.id,projectId:project.id,assemblyId,shotId,fingerprint,tool:'runway_seedance',provider:'sentence_first_frame_repair',model:process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',presenterAssetVersion:presenter.assetVersion||1,submissionOutcome:'created',candidateOutput:generated.candidateOutput,routeSteps:routeStepsForExecution(savedPlan.routeSteps||[],'completed',quality),state:'completed',externalTaskId:generated.providerTaskIds?.join(',')||null,materialId:generated.materialId,estimatedCostCny:null,actualCostCny:null,costStatus:'awaiting_invoice',costSourceRef:null,error:'',quality,createdAt:now,updatedAt:new Date().toISOString()}; const executionRecord=await store.create<ExecutionStoreRecord>('studio_digital_human_executions',{tenant_id:tenantId,project_id:project.id,job_id:retryRecord.id,plan_id:savedPlan.id,request_id:requestId,payload:execution});if(!executionRecord)throw new Error('局部返工已完成但执行记录保存失败；请核对素材库，勿重复提交'); const completed={...generated,executionId:executionRecord.id,sentenceJobId:retryRecord.id}; const payload={...retryRecord.payload,state:'completed' as const,result:completed,updatedAt:new Date().toISOString()};if(!await store.update('studio_sentence_replication_jobs',retryRecord.id,{payload}))throw new Error('局部返工已完成但结果记录保存失败；请核对素材库，勿重复提交');return completed;
+        }catch(error){const message=error instanceof Error?error.message:'局部返工失败';const uncertain=/未知|超时|核对原任务|已完成但|已受理/.test(message);await store.update('studio_sentence_replication_jobs',retryRecord.id,{payload:{...retryRecord.payload,state:uncertain?'uncertain':'failed',error:message,updatedAt:new Date().toISOString()}});throw error;}
+      });res.json(result);
+    }catch(error){res.status(400).json({error:error instanceof Error?error.message:'逐镜局部返工失败'});}
+  });
+  router.post('/executions/:id/adopt', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const payload = await exclusive(`adopt:${tenantId}:${req.params.id}`, async () => {
+        const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
+        if (!record || record.tenant_id !== tenantId) throw new Error('数字人执行记录不存在');
+        const candidateId = String(req.body?.candidateId || ''); const materialId = String(req.body?.materialId || '');
+        if (!candidateId || !materialId) throw new Error('候选或素材标识无效');
+        if (record.payload.quality.state !== 'accepted' || !record.payload.quality.reviewedAt || record.payload.state !== 'completed' || record.payload.materialId !== materialId) throw new Error('候选尚未完成生成与逐项人工验收，不能填入分镜');
+        await assertCandidateOutputCurrent(record, tenantId);
+        if (record.payload.adoption) {
+          if (record.payload.adoption.candidateId !== candidateId || record.payload.adoption.materialId !== materialId) throw new Error('该执行结果已填入其他候选，不能静默改写装配记录');
+          return { ...record.payload, id: record.id };
+        }
+        const project = await store.getById<any>('studio_projects', record.project_id);
+        if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
+        const shotKey = `${record.payload.assemblyId}:${record.payload.shotId}`;
+        const shot = project.spec?.shotProductions?.[shotKey] as ShotProduction | undefined;
+        if (!shot || shot.locked || shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), record.payload.shotId) !== record.payload.fingerprint) throw new Error('当前分镜要求已变化或已锁定，不能采用旧候选');
+        const candidate = shot.candidates.find(item => item.id === candidateId && item.materialId === materialId && item.fingerprint === record.payload.fingerprint
+          && (item.jobId === record.id || item.jobId === record.payload.jobId));
+        if (!candidate) throw new Error('当前草稿中未找到与本次执行匹配的候选');
+        const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : []).find((item: any) => String(item.id) === record.payload.shotId);
+        if (!slot?.slotId) throw new Error('当前分镜缺少装配时间轴绑定');
+        const adoptedAt = new Date().toISOString(); const assemblyVersion = randomUUID();
+        const nextSpec = structuredClone(project.spec || {});
+        nextSpec.shotProductions = { ...(nextSpec.shotProductions || {}), [shotKey]: { ...shot, adoptedId: candidateId } };
+        nextSpec.storyboardAssignments = { ...(nextSpec.storyboardAssignments || {}), [slot.slotId]: materialId };
+        const adoption = { candidateId, materialId, assemblyVersion, adoptedAt, planId: record.payload.planId, fingerprint: record.payload.fingerprint,
+          presenterAssetVersion: record.payload.presenterAssetVersion, qualityReviewedAt: record.payload.quality.reviewedAt,
+          ...(record.payload.candidateOutput ? { ...(record.payload.candidateOutput.objectKey ? { candidateObjectKey: record.payload.candidateOutput.objectKey } : {}),
+            ...(record.payload.candidateOutput.localFile ? { candidateLocalFile: record.payload.candidateOutput.localFile } : {}),
+            candidateContentSha256: record.payload.candidateOutput.contentSha256,
+            ...(record.payload.candidateOutput.objectEtag ? { candidateObjectEtag: record.payload.candidateOutput.objectEtag } : {}) } : {}) };
+        nextSpec.digitalHumanAssemblyAdoptions = { ...(nextSpec.digitalHumanAssemblyAdoptions || {}), [shotKey]: { executionId: record.id, ...adoption } };
+        if (!await store.update('studio_projects', project.id, { spec: nextSpec })) throw new Error('候选装配保存失败');
+        const next: DigitalHumanExecutionRecord = { ...record.payload, id: record.id, adoption,
+          routeSteps: record.payload.routeSteps ? routeStepsForExecution(record.payload.routeSteps, record.payload.state, record.payload.quality, true) : undefined,
+          updatedAt: adoptedAt };
+        if (!await store.update('studio_digital_human_executions', record.id, { payload: next })) throw new Error('候选已写入草稿，但执行装配记录保存失败；请刷新原任务修复，勿重新生成');
+        return next;
+      });
+      res.json(payload);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '候选填入分镜失败' }); }
+  });
+  router.post('/plans/sync-agent', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const project = await store.getById<any>('studio_projects', String(req.body?.projectId || ''));
+      if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
+      const sourcePlans = Array.isArray(project.spec?.socialDigitalHumanPlans) ? project.spec.socialDigitalHumanPlans : [];
+      const slots = Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [];
+      const assemblyId = String(project.spec?.activeAssemblyId || '');
+      const records: DigitalHumanPlanRecord[] = [];
+      for (const [index, source] of sourcePlans.entries()) {
+        const slot = slots.find((item: any) => item.slotId === source.shotId) || slots[Number.isInteger(source.shotIndex) ? source.shotIndex : index];
+        if (!slot?.id) continue;
+        const shot = project.spec?.shotProductions?.[`${assemblyId}:${slot.id}`] as ShotProduction | undefined;
+        if (!shot || shot.source !== 'avatar') continue;
+        records.push(await persistPlan({ tenantId, project, assemblyId, shotId: String(slot.id), fingerprint: shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), String(slot.id)),
+          origin: 'content_agent', sourceTaskId: String(source.sourceTaskId || ''), sourceTaskVersion: String(source.sourceTaskVersion || '') }));
+      }
+      res.json(records);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Content Agent 分镜方案同步失败' }); }
   });
   router.post('/defaults', async (req, res) => {
     try {
       const tenantId = res.locals.tenantId as string;
       const b = req.body as ProductionDefaults;
-      if (!b || !['auto', 'avatar', 'real', 'none'].includes(b.preference) || !Array.isArray(b.presenters) || b.presenters.length > 50 || b.presenters.some(item => !item || !item.id || !item.name || !item.avatarId || !item.voiceId || item.authorized !== true)
+      if (!b || !['auto', 'avatar', 'real', 'none'].includes(b.preference) || !Array.isArray(b.presenters) || b.presenters.length > 50 || b.presenters.some(item => !item || !item.id || !item.name || item.authorized !== true
+        || (!((item.avatarId && item.voiceId) || (item.toolMappings?.heygen?.avatarId && item.toolMappings?.heygen?.voiceId)) && !(Array.isArray(item.referenceMaterialIds) && item.referenceMaterialIds.some(Boolean))))
         || new Set(b.presenters.map(item => item.id)).size !== b.presenters.length || (b.defaultPresenterId && !b.presenters.some(item => item.id === b.defaultPresenterId))) {
         res.status(400).json({ error: '请完整填写人物、声音ID并确认已取得使用授权' }); return;
       }
-      const payload: ProductionDefaults = { preference: b.preference, defaultPresenterId: String(b.defaultPresenterId || ''), presenters: b.presenters.map(item => ({ id: String(item.id).slice(0, 100), name: String(item.name).slice(0, 100), avatarId: String(item.avatarId).slice(0, 200), voiceId: String(item.voiceId).slice(0, 200), authorized: item.authorized === true, supportsAlpha: item.supportsAlpha === true, nativeOrientation: ['portrait', 'landscape', 'square'].includes(item.nativeOrientation || '') ? item.nativeOrientation : 'unknown' })) };
-      await exclusive(`defaults:${tenantId}`, async () => {
-        const existing = await readDefaults(tenantId);
-        const saved = existing ? await store.update('studio_production_defaults', existing.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenantId, payload });
+      if (options.validatePresenterMaterials) {
+        const presenterMaterialIds = b.presenters.flatMap(item => [item.referenceMaterialIds,
+          item.toolMappings?.seedance?.referenceMaterialIds, item.toolMappings?.sd?.referenceMaterialIds,
+          item.toolMappings?.runway?.referenceMaterialIds].flatMap(ids => Array.isArray(ids) ? ids : []));
+        try { await options.validatePresenterMaterials(tenantId, presenterMaterialIds); }
+        catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '人物参考资产校验失败' }); return; }
+      }
+      const payload = await exclusive(`defaults:${tenantId}`, async () => {
+        const existing = await readDefaults(tenantId); const previous = (existing?.payload as ProductionDefaults | undefined)?.presenters || [];
+        const next: ProductionDefaults = { preference: b.preference, defaultPresenterId: String(b.defaultPresenterId || ''),
+          defaultSound: ['voiceover', 'source', 'silent'].includes(b.defaultSound) ? b.defaultSound : 'voiceover',
+          defaultLayout: ['full', 'split', 'pip'].includes(b.defaultLayout) ? b.defaultLayout : 'full', presenters: b.presenters.map(item => {
+        const referenceMaterialIds = Array.isArray(item.referenceMaterialIds) ? [...new Set(item.referenceMaterialIds.map(id => String(id).trim()).filter(Boolean))].slice(0, 30) : [];
+        const avatarId = String(item.toolMappings?.heygen?.avatarId || item.avatarId).slice(0, 200);
+        const voiceId = String(item.toolMappings?.heygen?.voiceId || item.voiceId).slice(0, 200);
+        const capabilities: PresenterCapability[] = [...(avatarId && voiceId ? ['talking' as const] : []), ...(referenceMaterialIds.length ? ['reference_image' as const, 'reference_video' as const, 'person_replacement' as const] : [])];
+        const certification = item.arkCertification && typeof item.arkCertification === 'object' ? item.arkCertification : undefined;
+        const assetUri = String(certification?.assetUri || '').trim(); const assetStatus = String(certification?.status || 'ark_pending');
+        if (assetUri && !/^asset:\/\/asset-[a-z0-9-]+$/i.test(assetUri)) throw new Error('方舟 Asset ID 格式无效');
+        if (assetStatus === 'active' && (!assetUri || certification?.assetType !== 'image' || !referenceMaterialIds.includes(String(certification?.materialId || '')) || !item.rightsEvidence?.authorizationRef || !item.rightsEvidence?.consentRef || item.rightsEvidence?.subjectAdultConfirmed !== true)) {
+          throw new Error('方舟图片资产标记为 Active 前，必须绑定人物图片并补齐主体授权、同意凭证和成年人确认');
+        }
+        const normalized: PresenterAsset = { id: String(item.id).slice(0, 100), name: String(item.name).slice(0, 100), avatarId, voiceId,
+          authorized: item.authorized === true, supportsAlpha: item.supportsAlpha === true,
+          nativeOrientation: ['portrait', 'landscape', 'square'].includes(item.nativeOrientation || '') ? item.nativeOrientation : 'unknown',
+          assetVersion: 1, capabilities, referenceMaterialIds,
+          ...(item.rightsEvidence && typeof item.rightsEvidence === 'object' ? { rightsEvidence: structuredClone(item.rightsEvidence) } : {}),
+          ...(certification ? { arkCertification: { projectName: String(certification.projectName || 'default').slice(0, 100), groupId: String(certification.groupId || '').slice(0, 200), assetUri,
+            assetType: certification.assetType === 'image' || certification.assetType === 'video' ? certification.assetType : '',
+            status: ['profile_incomplete','authorization_pending','ark_pending','processing','active','failed','disabled'].includes(assetStatus) ? assetStatus as NonNullable<PresenterAsset['arkCertification']>['status'] : 'ark_pending',
+            materialId: String(certification.materialId || '').slice(0, 200), syncedAt: certification.syncedAt ? String(certification.syncedAt) : undefined,
+            failureReason: certification.failureReason ? String(certification.failureReason).slice(0, 500) : undefined,
+            verificationSource: certification.verificationSource === 'ark_api' || certification.verificationSource === 'manual_console' ? certification.verificationSource : undefined } } : {}),
+          toolMappings: { ...(avatarId && voiceId ? { heygen: { avatarId, voiceId } } : {}),
+            ...(referenceMaterialIds.length ? { runway: { referenceMaterialIds }, sd: { referenceMaterialIds }, seedance: { referenceMaterialIds } } : {}) },
+        };
+        const old = previous.find(value => value.id === normalized.id);
+        normalized.assetVersion = old ? Math.max(1, old.assetVersion || 1) + (presenterAssetFingerprint(old) === presenterAssetFingerprint(normalized) ? 0 : 1) : 1;
+        return normalized;
+      }) };
+        const saved = existing ? await store.update('studio_production_defaults', existing.id, { payload: next }) : await store.create('studio_production_defaults', { tenant_id: tenantId, payload: next });
         if (!saved) throw new Error('storage');
+        if (options.bindArkAsset) for (const presenter of next.presenters) if (presenter.arkCertification?.materialId) await options.bindArkAsset({ tenantId, presenterId: presenter.id, certification: presenter.arkCertification });
+        return next;
       });
       res.json(payload);
-    } catch { res.status(503).json({ error: '企业出镜设置保存失败' }); }
+    } catch (error) { const message = error instanceof Error ? error.message : '企业出镜设置保存失败'; res.status(message === 'storage' ? 503 : 400).json({ error: message === 'storage' ? '企业出镜设置保存失败' : message }); }
+  });
+  router.post('/presenters/ark-status', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string; const assetUri = String(req.body?.assetUri || '').trim();
+      const match = /^asset:\/\/(asset-[a-z0-9-]+)$/i.exec(assetUri); if (!match) throw new Error('请输入有效的方舟 asset:// 图片资产 ID');
+      if (!options.verifyArkAsset) { res.status(409).json({ error: '当前套餐未配置 Assets API 只读查询；请在方舟控制台确认状态为 Active 后选择“控制台人工确认”' }); return; }
+      const groupId = String(req.body?.groupId || '').trim();
+      if (!/^group-[a-z0-9-]+$/i.test(groupId)) throw new Error('请先关联有效的方舟人物资产组');
+      const result = await options.verifyArkAsset({ tenantId, projectName: String(req.body?.projectName || 'default').trim() || 'default', groupId, assetId: match[1] });
+      res.json({ ...result, assetUri, syncedAt: new Date().toISOString(), verificationSource: 'ark_api' });
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '方舟资产状态查询失败' }); }
   });
   router.get('/jobs', async (req, res) => {
     try {
@@ -57,20 +535,48 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
     if (!await store.update('studio_avatar_jobs', record.id, { payload })) throw new Error('镜头任务状态保存失败，请刷新原任务；不要重复提交');
     record.payload = payload; return payload;
   };
+  const readExecution = async (jobId: string) => (await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { job_id: jobId }, perPage: 1 })).items[0];
+  const updateExecution = async (jobId: string, patch: Partial<DigitalHumanExecutionRecord>) => {
+    const record = await readExecution(jobId);
+    if (!record) throw new Error('数字人执行记录缺失，请勿重复提交');
+    let payload = { ...record.payload, id: record.id, ...patch, updatedAt: new Date().toISOString() };
+    if (payload.routeSteps) payload = { ...payload, routeSteps: routeStepsForExecution(payload.routeSteps, payload.state, payload.quality, Boolean(payload.adoption)) };
+    if (!await store.update('studio_digital_human_executions', record.id, { payload })) throw new Error('数字人执行状态保存失败，请刷新原任务；不要重复提交');
+    return payload;
+  };
+  const latestRevisionFeedback = async (tenantId: string, projectId: string, assemblyId: string, shotId: string, fingerprint: string, presenterAssetVersion: number) => {
+    const result = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId, project_id: projectId }, perPage: 500 });
+    return result.items.filter(item => item.payload.assemblyId === assemblyId && item.payload.shotId === shotId && item.payload.fingerprint === fingerprint
+      && item.payload.presenterAssetVersion === presenterAssetVersion && item.payload.quality.state === 'failed' && item.payload.quality.reviewNote)
+      .sort((a, b) => b.payload.updatedAt.localeCompare(a.payload.updatedAt))[0]?.payload.quality.reviewNote || null;
+  };
   const submitRemote = async (record: JobRecord) => {
     try {
       if (record.input.audioRef && !record.input.audioAssetId) {
         if (!options.prepareAudio) throw new Error('统一旁白分段服务不可用');
-        const audio = await options.prepareAudio(record.input.audioRef, record.tenant_id);
+        const prepared = await options.prepareAudio(record.input.audioRef, record.tenant_id);
+        const audio = prepared instanceof Uint8Array ? prepared : prepared.bytes;
         const audioAssetId = await client().uploadAudio(audio, `${record.request_id}:audio`);
         const input = { ...record.input, audioAssetId };
         if (!await store.update('studio_avatar_jobs', record.id, { input })) throw new Error('音频资产绑定保存失败');
         record.input = input;
+        if (!(prepared instanceof Uint8Array)) {
+          const execution = await readExecution(record.id);
+          if (!execution) throw new Error('数字人执行记录缺失，请勿重复提交');
+          await updateExecution(record.id, { inputSnapshot: execution.payload.inputSnapshot ? { ...execution.payload.inputSnapshot, audioSegment: {
+            segmentId: prepared.segmentId, checksumSha256: prepared.checksumSha256, start: prepared.start, duration: prepared.duration,
+          } } : execution.payload.inputSnapshot });
+        }
       }
       const remoteId = await client().create(record.input, record.request_id);
-      return await update(record, { remoteId, status: 'pending', error: '' });
+      const job = await update(record, { remoteId, status: 'pending', error: '' });
+      await updateExecution(record.id, { externalTaskId: remoteId, submissionOutcome: 'created', state: 'pending', error: '' });
+      return job;
     } catch (error) {
-      return update(record, { status: 'uncertain', error: error instanceof Error ? error.message : '供应商提交结果待核实' });
+      const message = error instanceof Error ? error.message : '供应商提交结果待核实';
+      const job = await update(record, { status: 'uncertain', error: message });
+      await updateExecution(record.id, { state: 'uncertain', error: message });
+      return job;
     }
   };
   router.post('/jobs', async (req, res) => {
@@ -91,10 +597,12 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         if (!shot) throw new Error('草稿中未找到当前镜头，请重新打开分镜');
         if (shot.source !== 'avatar') throw new Error('当前镜头尚未保存为数字人来源');
         if (shot.locked) throw new Error('当前镜头已锁定，请先解锁');
-        if (shotFingerprint(shot, String(context || '')) !== b.fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
+        if (shotFingerprint(shot, String(context || ''), String(b.shotId || '')) !== b.fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
         const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
         const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
         if (!presenter) throw new Error('请先保存已授权的人物与声音资产');
+        const plan = planDigitalHumanShot({ requirements: shot.digitalHuman, narration: shot.narration, hasAuthorizedPresenter: Boolean(presenter), talkingAvailable: enabled(), presenterCapabilities: presenter ? presenterCapabilities(presenter) : undefined });
+        if (!plan.executable) throw new Error(plan.reasons.join('；'));
         if (shot.layout === 'pip' && !shot.transparent) throw new Error('数字人画中画需要去背景的透明人物层；请先核验透明支持，或改用全屏普通混剪');
         if (b.ratio === '9:16' && !shot.transparent && presenter.nativeOrientation !== 'portrait') throw new Error('竖屏生成前须在人物资产中核验原生竖屏画幅；横屏或未知人物可能产生大面积留白，已阻止付费提交');
         if (shot.transparent && !presenter.supportsAlpha) throw new Error('该人物未确认支持透明视频，不能生成独立背景人物层');
@@ -118,9 +626,27 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           input.audioRef = { url: audioUrl, start: range.start, duration: range.end - range.start };
         }
         const payload: AvatarJob = { id: '', projectId: project.id, shotId: String(b.shotId), assemblyId: String(b.assemblyId), fingerprint: b.fingerprint, status: 'submitting', createdAt: now, updatedAt: now };
+        const savedPlan = (await store.list<PlanStoreRecord>('studio_digital_human_plans', { where: { tenant_id: tenantId, project_id: project.id, shot_key: `${b.assemblyId}:${b.shotId}`, fingerprint: b.fingerprint }, perPage: 500 })).items
+          .find(item => item.payload.presenterAssetVersion === Math.max(1, presenter.assetVersion || 1));
+        if (!savedPlan || !savedPlan.payload.executable || savedPlan.payload.provider !== 'heygen') throw new Error('请先保存当前分镜的可执行制作方案');
+        await assertAttemptAvailable({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint: b.fingerprint,
+          presenterAssetVersion: savedPlan.payload.presenterAssetVersion });
         await (options.reserve || (id => studioPaidBudget.reserve('heygen', id)))(`${tenantId}:${b.requestId}`);
         const record = await store.create<JobRecord>('studio_avatar_jobs', { tenant_id: tenantId, project_id: project.id, request_id: `${tenantId}:${b.requestId}`, payload, input });
         if (!record) throw new Error('任务存储不可用，未发起付费生成');
+        const quality = initialDigitalHumanQuality(shot.digitalHuman, now);
+        const execution: DigitalHumanExecutionRecord = { id: '', planId: savedPlan.id, jobId: record.id, projectId: project.id,
+          assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint: b.fingerprint, tool: 'heygen', provider: 'heygen', model: null,
+          presenterAssetVersion: savedPlan.payload.presenterAssetVersion, submissionOutcome: 'unknown', inputSnapshot: savedPlan.payload.inputSnapshot ? { ...savedPlan.payload.inputSnapshot,
+            revisionFeedback: await latestRevisionFeedback(tenantId, project.id, String(b.assemblyId), String(b.shotId), b.fingerprint, savedPlan.payload.presenterAssetVersion) } : undefined,
+          state: 'submitting', externalTaskId: null, materialId: null,
+          estimatedCostCny: savedPlan.payload.estimatedCostCny, actualCostCny: null, costStatus: 'estimated', costSourceRef: null, error: '',
+          quality, routeSteps: routeStepsForExecution(savedPlan.payload.routeSteps || digitalHumanRouteSteps('talking', 'heygen', true), 'submitting', quality), createdAt: now, updatedAt: now };
+        const executionRecord = await store.create<ExecutionStoreRecord>('studio_digital_human_executions', { tenant_id: tenantId, project_id: project.id, job_id: record.id, plan_id: savedPlan.id, payload: execution });
+        if (!executionRecord) {
+          await store.delete('studio_avatar_jobs', record.id).catch(() => false);
+          throw new Error('执行记录存储不可用，未发起付费生成');
+        }
         return submitRemote(record);
       });
       res.json(job);
@@ -138,16 +664,213 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const remote = await client().status(record.payload.remoteId);
         if (remote.status === 'completed') {
           try {
-            const materialId = await importVideo(remote.url!, remote.duration!, { ...record.payload, id: record.id }, record.input, record.tenant_id);
-            return await update(record, { status: 'completed', materialId, error: '' });
+            const imported = await importVideo(remote.url!, remote.duration!, { ...record.payload, id: record.id }, record.input, record.tenant_id);
+            const materialId = typeof imported === 'string' ? imported : imported.materialId;
+            const candidateOutput = typeof imported === 'string' ? undefined : candidateOutputFromImport(imported);
+            if (!candidateOutput) throw new Error('新候选缺少可复核的存储引用、内容 SHA-256 或对象版本，不能进入人工验收');
+            const job = await update(record, { status: 'completed', materialId, error: '' });
+            const execution = await readExecution(record.id);
+            if (!execution) throw new Error('数字人执行记录缺失，请勿重复提交');
+            await updateExecution(record.id, { state: 'completed', materialId, ...(candidateOutput ? { candidateOutput } : {}), costStatus: 'awaiting_invoice', error: '',
+              quality: recordDigitalHumanMediaCheck(execution.payload.quality, { passed: true, evidence: `material:${materialId}` }) });
+            return job;
           } catch (error) {
-            return update(record, { status: 'pending', error: `供应商已生成，但下载或技术检查未通过：${error instanceof Error ? error.message : '导入失败'}。刷新仅复查原任务，不重新生成。` });
+            const message = `供应商已生成，但下载或技术检查未通过：${error instanceof Error ? error.message : '导入失败'}。刷新仅复查原任务，不重新生成。`;
+            const job = await update(record, { status: 'pending', error: message });
+            const execution = await readExecution(record.id);
+            if (!execution) throw new Error('数字人执行记录缺失，请勿重复提交');
+            await updateExecution(record.id, { state: 'pending', error: message,
+              quality: recordDigitalHumanMediaCheck(execution.payload.quality, { passed: false, evidence: message }) });
+            return job;
           }
         }
-        return update(record, { status: remote.status, error: remote.error || '' });
+        const job = await update(record, { status: remote.status, error: remote.error || '' });
+        await updateExecution(record.id, { state: remote.status, error: remote.error || '' });
+        return job;
       });
       res.json(job);
     } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '镜头状态刷新失败' }); }
+  });
+
+  router.post('/reference-jobs', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string; const b = req.body || {};
+      if (b.confirmed !== true || !/^[A-Za-z0-9_:.-]{1,150}$/.test(String(b.requestId || ''))) throw new Error('请确认本镜头生成及供应商计费，并提供有效请求标识');
+      const execution = await exclusive(`reference-submit:${tenantId}`, async () => {
+        const requestId = `${tenantId}:${b.requestId}`;
+        const existing = (await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId, request_id: requestId }, perPage: 1 })).items[0];
+        if (existing) return { ...existing.payload, id: existing.id };
+        const project = await store.getById<any>('studio_projects', String(b.projectId || ''));
+        if (!project || project.tenant_id !== tenantId || project.status !== 'draft') throw new Error('创作草稿不存在或不可编辑');
+        const shot = project.spec?.shotProductions?.[`${b.assemblyId}:${b.shotId}`] as ShotProduction | undefined;
+        if (!shot || shot.source !== 'avatar' || shot.locked) throw new Error('当前数字人分镜不存在或已锁定');
+        if (shotFingerprint(shot, String(project.spec?.shotProductionContext || ''), String(b.shotId || '')) !== b.fingerprint) throw new Error('数字人参数与已保存草稿不一致，请保存后重试');
+        if (!shot.digitalHuman || shot.digitalHuman.method === 'talking') throw new Error('人物口播请使用口播生成任务');
+        const defaults = (await readDefaults(tenantId))?.payload as ProductionDefaults | undefined;
+        const presenter = defaults?.presenters.find(item => item.id === shot.presenterId && item.authorized);
+        if (!presenter || !presenterCapabilities(presenter).some(value => ['reference_image', 'reference_video', 'person_replacement'].includes(value))) throw new Error('请先保存已授权的人物参考资产');
+        const savedPlan = (await store.list<PlanStoreRecord>('studio_digital_human_plans', { where: { tenant_id: tenantId, project_id: project.id, shot_key: `${b.assemblyId}:${b.shotId}`, fingerprint: b.fingerprint }, perPage: 500 })).items
+          .find(item => item.payload.presenterAssetVersion === Math.max(1, presenter.assetVersion || 1));
+        if (!savedPlan?.payload.executable || !savedPlan.payload.provider || savedPlan.payload.provider === 'heygen') throw new Error('请先保存当前分镜的可执行参考人物制作方案');
+        if (shot.digitalHuman.method === 'replace' && (!savedPlan.payload.inputSnapshot?.derivativeAuthorization?.evidence || !savedPlan.payload.inputSnapshot.derivativeAuthorization.confirmedAt)) {
+          throw new Error('当前人物替换方案缺少服务端固化的源视频派生授权依据，请重新确认并保存方案');
+        }
+        if (usesDirectReferenceVideo(shot.digitalHuman) && (!savedPlan.payload.inputSnapshot?.modelInputAuthorization?.evidence || !savedPlan.payload.inputSnapshot.modelInputAuthorization.confirmedAt)) {
+          throw new Error('当前参考人物方案缺少服务端固化的源视频模型输入授权依据，不能提交给生成供应商');
+        }
+        if (!usesDirectReferenceVideo(shot.digitalHuman)) throw new Error('逐句首帧重建必须由分句编排器执行，不能把整段爆款原片提交给参考视频适配器');
+        const existingExecutions = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: tenantId, project_id: project.id }, perPage: 500 });
+        if (existingExecutions.items.some(item => item.payload.assemblyId === String(b.assemblyId) && item.payload.shotId === String(b.shotId)
+          && item.payload.fingerprint === b.fingerprint && item.payload.presenterAssetVersion === savedPlan.payload.presenterAssetVersion
+          && ['submitting', 'pending', 'uncertain'].includes(item.payload.state))) {
+          throw new Error('该镜头已有未结束的参考人物任务，请刷新或取消原任务，不重复提交');
+        }
+        await assertAttemptAvailable({ tenantId, projectId: project.id, assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint: b.fingerprint,
+          presenterAssetVersion: savedPlan.payload.presenterAssetVersion });
+        const slot = (Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : []).find((item: any) => String(item.id) === String(b.shotId));
+        const selection = selectReferenceAdapter({ adapters: executableReferenceAdapters(), candidates: candidateToolsFor(shot.digitalHuman), method: shot.digitalHuman.method,
+          targetDurationSeconds: Number(slot?.duration) || null,
+          maxEstimatedCostCny: referenceBudgetLimitCny(),
+          requiredPreservation: requiredReferencePreservation({ preserve: shot.digitalHuman.preserve, productMaterialId: shot.productMaterialId, backgroundMaterialId: shot.backgroundMaterialId }) });
+        const adapter = selection.adapter;
+        if (!adapter || adapter.id !== savedPlan.payload.provider) throw new Error(selection.reason || '制作方案对应的参考人物执行适配器当前不可用或能力已变化，请重新保存方案');
+        const resolvedInputs = await options.resolveReferenceInputs!({ shot, presenter, tenantId });
+        const ratio = ({ '9:16': '720:1280', '16:9': '1280:720', '1:1': '960:960' } as const)[String(project.spec?.ratio || '') as '9:16' | '16:9' | '1:1'];
+        if (!ratio) throw new Error('当前画幅不受参考人物适配器支持');
+        await options.reserveReference!(adapter.id, requestId, selection.estimatedCostCny);
+        const now = new Date().toISOString(); const jobId = `reference:${randomUUID()}`;
+        const revisionFeedback = await latestRevisionFeedback(tenantId, project.id, String(b.assemblyId), String(b.shotId), b.fingerprint, savedPlan.payload.presenterAssetVersion);
+        const quality = initialDigitalHumanQuality(shot.digitalHuman, now);
+        const payload: DigitalHumanExecutionRecord = { id: '', planId: savedPlan.id, jobId, projectId: project.id,
+          assemblyId: String(b.assemblyId), shotId: String(b.shotId), fingerprint: b.fingerprint, tool: adapter.id, provider: adapter.id, model: null,
+          presenterAssetVersion: savedPlan.payload.presenterAssetVersion, submissionOutcome: 'unknown', inputSnapshot: savedPlan.payload.inputSnapshot ? { ...savedPlan.payload.inputSnapshot, revisionFeedback,
+            ...(resolvedInputs.characterMaterialId && resolvedInputs.characterObjectKey ? { presenterInput: {
+              materialId: resolvedInputs.characterMaterialId, objectKey: resolvedInputs.characterObjectKey, type: resolvedInputs.characterType, objectEtag: resolvedInputs.characterObjectEtag,
+            } } : {}),
+            ...(resolvedInputs.referenceClipKey && resolvedInputs.referenceMaterialId && resolvedInputs.referenceStart != null && resolvedInputs.referenceDuration != null ? { referenceInput: {
+              materialId: resolvedInputs.referenceMaterialId, clipObjectKey: resolvedInputs.referenceClipKey, start: resolvedInputs.referenceStart, duration: resolvedInputs.referenceDuration,
+              sourceObjectEtag: resolvedInputs.referenceSourceObjectEtag, clipObjectEtag: resolvedInputs.referenceClipObjectEtag,
+            } } : {}) } : undefined,
+          state: 'submitting', externalTaskId: null, materialId: null,
+          estimatedCostCny: savedPlan.payload.estimatedCostCny, actualCostCny: null, costStatus: 'estimated', costSourceRef: null, error: '',
+          quality, routeSteps: routeStepsForExecution(savedPlan.payload.routeSteps || digitalHumanRouteSteps(shot.digitalHuman.method, adapter.id, true), 'submitting', quality), createdAt: now, updatedAt: now };
+        let record: ExecutionStoreRecord | null;
+        try {
+          record = await store.create<ExecutionStoreRecord>('studio_digital_human_executions', { tenant_id: tenantId, project_id: project.id, job_id: jobId, plan_id: savedPlan.id, request_id: requestId, payload });
+          if (!record) throw new Error('执行记录存储不可用，未发起供应商生成');
+        } catch (error) {
+          const releaseError = await releaseReferenceReservation(adapter.id, requestId);
+          const message = error instanceof Error ? error.message : '执行记录存储不可用，未发起供应商生成';
+          throw new Error(releaseError ? `${message}；${releaseError}` : message);
+        }
+        try {
+          const submitted = await adapter.submit({ projectId: project.id, assemblyId: b.assemblyId, shotId: b.shotId, shot, presenter, revisionFeedback, ...resolvedInputs,
+          ratio, targetDurationSeconds: Number(slot?.duration) || null, bodyControl: true, expressionIntensity: 3 }, requestId);
+          const next = { ...payload, id: record.id, externalTaskId: submitted.externalTaskId, submissionOutcome: 'created' as const, state: 'pending' as const,
+            routeSteps: payload.routeSteps ? routeStepsForExecution(payload.routeSteps, 'pending', payload.quality) : undefined, updatedAt: new Date().toISOString() };
+          if (!await store.update('studio_digital_human_executions', record.id, { payload: next })) throw new Error('供应商任务已提交但状态保存失败，请核对原任务');
+          return next;
+        } catch (error) {
+          const definitive = isDefinitiveSupplierSubmissionError(error);
+          const releaseError = definitive ? await releaseReferenceReservation(adapter.id, requestId) : '';
+          const state = definitive ? 'failed' as const : 'uncertain' as const;
+          const baseError = error instanceof Error ? error.message : '供应商提交结果待核实';
+          const next = { ...payload, id: record.id, state, submissionOutcome: definitive ? 'rejected' as const : 'unknown' as const, error: releaseError ? `${baseError}；${releaseError}` : baseError,
+            routeSteps: payload.routeSteps ? routeStepsForExecution(payload.routeSteps, state, payload.quality) : undefined, updatedAt: new Date().toISOString() };
+          if (!await store.update('studio_digital_human_executions', record.id, { payload: next })) throw new Error('供应商提交结果无法写入执行记录，请核对原任务与预算账本');
+          return next;
+        }
+      });
+      res.json(execution);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '参考人物生成提交失败' }); }
+  });
+
+  router.post('/reference-jobs/:id/refresh', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const result = await exclusive(`reference-refresh:${req.params.id}`, async () => {
+        const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
+        if (!record || record.tenant_id !== tenantId || record.payload.tool === 'heygen') throw new Error('参考人物执行记录不存在');
+        if (['completed', 'failed'].includes(record.payload.state)) return { ...record.payload, id: record.id };
+        if (!record.payload.externalTaskId) throw new Error('提交结果未知：刷新不会再次生成，请核对供应商任务和账单');
+        const adapter = (options.adapters || []).find(item => item.id === record.payload.tool);
+        if (!adapter) throw new Error('原执行适配器当前不可用，不能查询任务状态');
+        let remote: Awaited<ReturnType<DigitalHumanExecutionAdapter['status']>>;
+        try {
+          remote = await adapter.status(record.payload.externalTaskId);
+        } catch (error) {
+          const message = `供应商状态查询失败：${error instanceof Error ? error.message : '未知错误'}。可稍后重查原任务，系统不会重新提交生成。`;
+          const payload = { ...record.payload, id: record.id, error: message, updatedAt: new Date().toISOString() };
+          if (!await store.update('studio_digital_human_executions', record.id, { payload })) throw new Error('供应商状态查询失败且执行记录更新失败');
+          throw new Error(message);
+        }
+        let payload: DigitalHumanExecutionRecord = { ...record.payload, id: record.id, state: remote.state, error: remote.error || '', updatedAt: new Date().toISOString() };
+        const supplierCost = verifiedSupplierCost(remote);
+        if (supplierCost) payload = { ...payload, ...supplierCost, costStatus: 'reconciled' };
+        if (remote.state === 'completed') {
+          if ((!remote.outputUrl || !options.importReferenceVideo) && (!remote.outputObjectKey || !options.importReferenceObject)) throw new Error('供应商已完成，但参考视频导入服务不可用');
+          try {
+            const snapshot = payload.inputSnapshot;
+            const requiresVersionCheck = Boolean(snapshot?.presenterInput?.objectEtag || snapshot?.referenceInput?.clipObjectEtag);
+            if (requiresVersionCheck && (!snapshot || !options.verifyReferenceInputs || !await options.verifyReferenceInputs(snapshot, tenantId))) {
+              throw new Error('当次人物或精确参考片段对象版本已变化，不能使用当前对象完成历史任务质检');
+            }
+            const imported = remote.outputObjectKey
+              ? await options.importReferenceObject!(remote.outputObjectKey, payload, tenantId)
+              : await options.importReferenceVideo!(remote.outputUrl!, payload, tenantId);
+            let quality = recordDigitalHumanMediaCheck(payload.quality, { passed: true, evidence: `material:${imported.materialId}` });
+            if (imported.technicalMetrics) quality = recordReferenceTechnicalChecks(quality, imported.technicalMetrics);
+            if (imported.visualMetrics) quality = recordReferenceVisualChecks(quality, imported.visualMetrics);
+            else quality = deferUnavailableVisualChecksToManual(quality);
+            if (options.inspectReferenceQuality) {
+              const referenceInput = payload.inputSnapshot?.referenceInput;
+              const presenterInput = payload.inputSnapshot?.presenterInput;
+              if (!referenceInput?.clipObjectKey || !referenceInput.materialId) throw new Error('模型质检缺少精确原片证据');
+              if (!presenterInput?.materialId || !presenterInput.objectKey) throw new Error('身份质检缺少本次实际采用的企业人物资产证据');
+              quality = recordModelQualityChecks(quality, await options.inspectReferenceQuality({
+                referenceClipObjectKey: referenceInput.clipObjectKey,
+                referenceMaterialId: referenceInput.materialId,
+                presenterReferenceMaterialIds: [presenterInput.materialId],
+                candidateMaterialId: imported.materialId,
+                candidateVideoUrl: remote.outputUrl || '',
+                execution: payload,
+                tenantId,
+              }));
+            }
+            const candidateOutput = candidateOutputFromImport(imported);
+            if (!candidateOutput) throw new Error('新候选缺少可复核的存储引用、内容 SHA-256 或对象版本，不能进入人工验收');
+            payload = { ...payload, materialId: imported.materialId, ...(candidateOutput ? { candidateOutput } : {}), costStatus: payload.costStatus === 'reconciled' ? 'reconciled' : 'awaiting_invoice', quality };
+          } catch (error) {
+            const message = `供应商已生成，但下载或技术检查未通过：${error instanceof Error ? error.message : '导入失败'}。刷新仅复查原任务，不重新生成。`;
+            payload = { ...payload, state: 'pending', error: message, quality: recordDigitalHumanMediaCheck(payload.quality, { passed: false, evidence: message }) };
+          }
+        }
+        if (payload.routeSteps) payload = { ...payload, routeSteps: routeStepsForExecution(payload.routeSteps, payload.state, payload.quality) };
+        if (!await store.update('studio_digital_human_executions', record.id, { payload })) throw new Error('参考人物执行状态保存失败');
+        return payload;
+      });
+      res.json(result);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '参考人物任务刷新失败' }); }
+  });
+  router.post('/reference-jobs/:id/cancel', async (req, res) => {
+    try {
+      const tenantId = res.locals.tenantId as string;
+      const payload = await exclusive(`reference-cancel:${req.params.id}`, async () => {
+        const record = await store.getById<ExecutionStoreRecord>('studio_digital_human_executions', req.params.id);
+        if (!record || record.tenant_id !== tenantId || record.payload.tool === 'heygen') throw new Error('参考人物执行记录不存在');
+        if (record.payload.state === 'cancelled') return { ...record.payload, id: record.id };
+        if (!['submitting', 'pending'].includes(record.payload.state) || !record.payload.externalTaskId) throw new Error('当前任务不能取消；提交结果未知或任务已结束时请核对供应商状态');
+        const adapter = (options.adapters || []).find(item => item.id === record.payload.tool);
+        if (!adapter?.cancel) throw new Error('当前执行工具未提供可核验的取消能力，不能只在本地标记取消');
+        const cancelled = await adapter.cancel(record.payload.externalTaskId);
+        if (!cancelled.cancelled) throw new Error(cancelled.reason || '供应商未确认取消，任务状态保持不变');
+        const next: DigitalHumanExecutionRecord = { ...record.payload, id: record.id, state: 'cancelled', error: cancelled.reason || '',
+          routeSteps: record.payload.routeSteps ? routeStepsForExecution(record.payload.routeSteps, 'cancelled', record.payload.quality) : undefined, updatedAt: new Date().toISOString() };
+        if (!await store.update('studio_digital_human_executions', record.id, { payload: next })) throw new Error('取消结果保存失败，请核对供应商原任务');
+        return next;
+      });
+      res.json(payload);
+    } catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : '参考人物任务取消失败' }); }
   });
   return router;
 }

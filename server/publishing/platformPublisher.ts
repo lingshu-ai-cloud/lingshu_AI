@@ -20,7 +20,7 @@ import {
 } from '../integrations/social.js';
 import { recordSuccessfulPublish, type PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
-import { r2Upload } from '../storage/r2.js';
+import { objectStorageUpload } from '../storage/objectStorage.js';
 import { appendTrackedWaLink, createTrackedPostDraft, finalizeTrackedPost, type PostRecord } from './waLink.js';
 import {
   freezePublishSourceClaim,
@@ -162,7 +162,7 @@ async function publicVideoUrlIfNeeded(filePath: string | undefined): Promise<str
   const publicBase = process.env.R2_PUBLIC_URL?.trim();
   if (!publicBase || !fs.existsSync(filePath)) return undefined;
   const key = `social-publish/${Date.now()}-${path.basename(filePath).replace(/[^\w.-]+/g, '-')}`;
-  return r2Upload({ key, body: fs.readFileSync(filePath), contentType: socialVideoContentType(filePath) });
+  return objectStorageUpload({ key, body: fs.readFileSync(filePath), contentType: socialVideoContentType(filePath) });
 }
 
 async function instagramCompatibleVideo(filePath: string | undefined): Promise<string | undefined> {

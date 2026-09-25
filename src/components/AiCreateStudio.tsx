@@ -27,12 +27,13 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
 import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifactMedia';
 import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
-import { useStudioSocialTaskHydration } from './socialContent/useStudioSocialTaskHydration';
+import { useStudioSocialTaskHydration, type StudioSocialTaskSeed } from './socialContent/useStudioSocialTaskHydration';
 import { reconcileShootingSlots, shootingRefillTarget, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
 import ShootingTaskDialog from './ShootingTaskDialog';
 import ShotProductionPanel from './ShotProductionPanel';
+import DigitalHumanProductionOverview from './studio/DigitalHumanProductionOverview';
 import RenderedVideoPlayer from './RenderedVideoPlayer';
-import { avatarCandidateReady, automaticAvatarRefreshes, EMPTY_DEFAULTS, newShotProduction, patchShot, shotFingerprint, shotBlockers, recommendShot, productionSummary, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
+import { applyDefaultsToUnlockedAvatarShots, avatarCandidateReady, automaticAvatarRefreshes, EMPTY_DEFAULTS, newShotProduction, patchShot, presenterCapabilities, shotFingerprint, shotBlockers, recommendShot, productionSummary, type ShotProduction, type ProductionDefaults, type AvatarJob, type AppearancePreference } from '../lib/shotProduction';
 import { productionApi } from '../lib/productionApi';
 import { matchEvidenceSegment, usableEvidenceSegment } from '../lib/segmentEvidence';
 import { mapNarrationCues, spokenText, validateSpeechCues } from '../lib/narrationAlignment';
@@ -51,7 +52,8 @@ import {
   withStudioTimeout,
 } from './studio/studioAuthenticatedMedia';
 import { BenchmarkVideoPreview, LeadContentPackagePreview, VariationChipEditor } from './studio/StudioPreviewPanels';
-import RunwayPersonReplacementPanel from './studio/RunwayPersonReplacementPanel';
+import { newDigitalHumanRequirements, planDigitalHumanShot, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord } from '../lib/digitalHumanPlan';
+import { shotKeyframeCues } from '../lib/shotKeyframes';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
@@ -706,6 +708,13 @@ function parseCueRange(value: string): { start: number; end: number } | null {
   const rawEnd = Number(match[2]);
   if (!Number.isFinite(start) || !Number.isFinite(rawEnd)) return null;
   return { start: Math.max(0, start), end: Math.max(start + 0.3, rawEnd) };
+}
+
+function inferPersonShot(value: string): boolean | undefined {
+  const text=String(value||'').toLowerCase();
+  if(/人物|真人|口播|讲解|主持|主播|模特|面部|半身|全身|woman|man|person|presenter|speaker|talking/.test(text)) return true;
+  if(/产品|机器|设备|工厂|车间|包装|细节|特写|信息图|文字卡|场景空镜|b-?roll|product|factory|machine|diagram/.test(text)) return false;
+  return undefined;
 }
 
 function normalizeCueTimeline(cues: SubCue[], totalDur: number): SubCue[] {
@@ -3029,6 +3038,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const [appearancePreference, setAppearancePreference] = useState<AppearancePreference | ''>('');
   const [productionEditorId, setProductionEditorId] = useState('');
   const [productionJobs, setProductionJobs] = useState<AvatarJob[]>([]);
+  const [productionPlans, setProductionPlans] = useState<DigitalHumanPlanRecord[]>([]);
+  const [productionExecutions, setProductionExecutions] = useState<DigitalHumanExecutionRecord[]>([]);
+  const [productionSentenceResults, setProductionSentenceResults] = useState<Record<string, import('../lib/digitalHumanPlan').SentenceReplicationResult>>({});
+  const [socialDigitalHumanPlans, setSocialDigitalHumanPlans] = useState<StudioSocialTaskSeed['digitalHumanShotPlans']>([]);
   const productionRefreshInFlight = useRef(new Set<string>());
   const [productionRefreshingIds, setProductionRefreshingIds] = useState<string[]>([]);
   const [renderProductionSignatures, setRenderProductionSignatures] = useState<Record<string, string>>({});
@@ -3036,7 +3049,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const productionRequestIds = useRef(new Map<string, string>());
   const projectRevisionRef = useRef<unknown>(undefined);
   const [productionError, setProductionError] = useState('');
-  const [productionCapability, setProductionCapability] = useState({ configured: false, reason: '正在读取数字人配置', costPerSecond: null as number | null });
+  const [productionCapability, setProductionCapability] = useState({ configured: false, reason: '正在读取数字人配置', costPerSecond: null as number | null, referenceBudgetLimitCny: null as number | null, maxAttemptsPerShot: 3,
+    tools: [] as Array<{ id: string; label: string; methods: string[]; planning: boolean; execution: boolean; qualityInspection: boolean; cancellation: boolean; costReconciliation: boolean; reason: string; executionProfile?: { maxDurationSeconds?: number; preserves: string[]; qualityInspection: boolean; estimatedCostCnyPerSecond?: number } }> });
   const [digitalHumanNotice, setDigitalHumanNotice] = useState('');
   const [digitalHumanMode, setDigitalHumanMode] = useState<'fast' | 'quality'>('quality');
   const [digitalHumanConsent, setDigitalHumanConsent] = useState(false);
@@ -3395,6 +3409,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         }
       }
       if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
+      setSocialDigitalHumanPlans(seed.digitalHumanShotPlans);
       const hydrationNotices = [
         seed.factVerificationNotice,
         seed.unsupportedLanguages.length ? `本次任务中的${seed.unsupportedLanguages.join('、')}暂不在创作语言列表中，请先选择可用语言。` : '',
@@ -3517,13 +3532,113 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const productionAudioUrl = (voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.url : voiceoverUrl) || '';
   const asrContextRef = useRef('');
   asrContextRef.current = JSON.stringify([projectId, productionAudioUrl, activeVoiceLang, voiceDrafts[activeVoiceLang], script]);
-  const shotProductionContext = JSON.stringify({ language: activeVoiceLang || lang, ratio, productInfo, audioIdentity: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', audioDuration: voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.duration || 0 : voiceoverDur, audioSegments: shootingSlots.map(item => ({ id: item.id, duration: item.duration })), alignment: alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues, alignmentSource: voiceoverAudios[activeVoiceLang]?.alignmentSource });
-  const productionSignature = JSON.stringify({ renderPolicyVersion: 'effects-v1', script, ratio, assignments: storyboardAssignments, clipEdits, bgm, bgmVol, voiceVol, effectPreset, effectIntensity, disabledEffectSceneIds, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
+  const productionAlignment = alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues || [];
+  const shotProductionContext = JSON.stringify({
+    language: activeVoiceLang || lang, ratio, productInfo,
+    audioIdentity: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '',
+    audioDuration: voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.duration || 0 : voiceoverDur,
+    voiceProfile: voiceoverMode === 'upload'
+      ? { mode: 'upload', identity: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '' }
+      : { mode: voiceoverMode, voiceId: activeTtsSettings.voiceId || voice, preset: ttsPreset, emotion: ttsEmotion, emotionIntensity: ttsEmotionIntensity, speed: ttsSpeed, pauseStyle: ttsPauseStyle, pronunciation: ttsPronunciationText },
+    audioSegments: shootingSlots.map(item => {
+      const storyboard = storyboardSlots.find(slot => slot.id === item.slotId);
+      return { id: item.id, duration: item.duration, cues: storyboard ? productionAlignment
+        .filter(cue => cue.end > storyboard.start && cue.start < storyboard.end)
+        .map(cue => ({ text: cue.text, start: Math.max(0, cue.start - storyboard.start), end: Math.min(storyboard.end, cue.end) - storyboard.start })) : [] };
+    }),
+    alignment: productionAlignment,
+    alignmentSource: voiceoverAudios[activeVoiceLang]?.alignmentSource,
+  });
+  const productionSignature = JSON.stringify({ renderPolicyVersion: 'avatar-cover-v2-effects-v1', script, ratio, assignments: storyboardAssignments, clipEdits, bgm, bgmVol, voiceVol, effectPreset, effectIntensity, disabledEffectSceneIds, subtitlesOn, subMode, audio: productionAudioUrl ? new URL(productionAudioUrl, 'http://local').pathname : '', alignment: alignedCuesByLang, alignmentSources: Object.fromEntries(Object.entries(voiceoverAudios).map(([code, audio]) => [code, audio.alignmentSource])), shots: Object.fromEntries(Object.entries(shotProductions).map(([key, value]) => { const { candidates, revision, locked, ...output } = value; return [key, output]; })) });
   const productionKey = (slotId: string, assembly = activeAssemblyId) => `${assembly}:${shootingSlots.find(item => item.slotId === slotId)?.id || slotId}`;
-  const productionFor = (slot: StoryboardSlot) => shotProductions[productionKey(slot.id)] || newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId);
+  const newProductionFor = (slot: StoryboardSlot): ShotProduction => {
+    const shot = newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId, productionDefaults);
+    const requirements = newDigitalHumanRequirements();
+    const agentPlan = socialDigitalHumanPlans.find(item => item.shotId === slot.id)
+      ?? socialDigitalHumanPlans.find(item => item.shotIndex === storyboardSlots.findIndex(candidate => candidate.id === slot.id));
+    if (agentPlan) {
+      shot.source = 'avatar';
+      shot.sound = 'source';
+      shot.presenterId = agentPlan.presenterAssetIds.find(id => productionDefaults.presenters.some(item => item.id === id))
+        || productionDefaults.defaultPresenterId;
+      requirements.workflow = agentPlan.workflow;
+      requirements.method = agentPlan.method;
+      requirements.action = agentPlan.requestedDescription;
+      requirements.scene = agentPlan.requestedDescription;
+      requirements.preserve = agentPlan.workflow === 'viral_replication'
+        ? '参考视频的信息作用与语句节奏、企业人物身份、已确认产品事实'
+        : '';
+      const referenceMaterialId = agentPlan.referenceMaterialIds[0];
+      if (agentPlan.referenceRequired && referenceMaterialId) {
+        const referenceMaterial = materials.find(item => item.id === referenceMaterialId && item.type === 'video');
+        requirements.reference = {
+          materialId: referenceMaterialId,
+          videoUrl: referenceMaterial?.url || '',
+          start: 0,
+          end: 0,
+          originalText: '',
+          derivativeAuthorized: false,
+          cues: [],
+        };
+      }
+    }
+    if (mode === 'clone' && videoKickoff?.referenceAnalysis?.details?.length) {
+      const matching = videoKickoff.referenceAnalysis.details.filter(item => {
+        const range = parseCueRange(item.time);
+        return range && range.start < slot.end && range.end > slot.start;
+      });
+      const ranges = matching.map(item => parseCueRange(item.time)!);
+      requirements.workflow = 'viral_replication';
+      requirements.method = videoKickoff.source === 'inspiration_person_replace' ? 'replace' : 'reenact';
+      requirements.action = matching.map(item => item.visual).filter(Boolean).join('\n');
+      requirements.scene = matching.map(item => item.environment).filter(Boolean).join('\n');
+      requirements.preserve = '原片对应语句与表达节奏、目标人物身份、产品事实';
+      requirements.reference = {
+        videoUrl: videoKickoff.video?.aiAnalysis?.materialUrl || videoKickoff.video?.videoUrl || '',
+        start: ranges.length ? Math.min(...ranges.map(item => item.start)) : slot.start,
+        end: ranges.length ? Math.max(...ranges.map(item => item.end)) : slot.end,
+        originalText: matching.map(item => item.dialogue).filter(Boolean).join('\n'),
+        derivativeAuthorized: false,
+        cues: matching.map((item, index) => {
+          const range = parseCueRange(item.time)!;
+          const personShot=inferPersonShot(`${item.visual || ''} ${item.environment || ''}`);
+          return { id: `${slot.id}:reference:${index}:${range.start}-${range.end}`, start: range.start, end: range.end,
+            originalText: item.dialogue || '', targetText: '', shotIds: storyboardSlots.filter(candidate => range.start < candidate.end && range.end > candidate.start).map(candidate => candidate.id),
+            ...(personShot===undefined?{}:{personShot,classificationSource:'analysis' as const}),
+            ...(personShot===true?{compositionClusterId:`${item.visual || '人物'}|${item.environment || '场景'}`.slice(0,160)}:{}) };
+        }).filter(cue => cue.originalText.trim()),
+      };
+    }
+    return { ...shot, digitalHuman: requirements };
+  };
+  const productionFor = (slot: StoryboardSlot) => shotProductions[productionKey(slot.id)] || newProductionFor(slot);
+  const productionFingerprint = (slot: StoryboardSlot, shot = productionFor(slot)) => shotFingerprint(
+    shot,
+    shotProductionContext,
+    shootingSlots.find(item => item.slotId === slot.id)?.id || slot.id,
+  );
+  useEffect(() => {
+    if (!socialDigitalHumanPlans.length || !storyboardSlots.length) return;
+    setShotProductions(current => {
+      let next = current;
+      for (const plan of socialDigitalHumanPlans) {
+        const slot = storyboardSlots.find(item => item.id === plan.shotId) || storyboardSlots[plan.shotIndex];
+        if (!slot) continue;
+        const key = productionKey(slot.id);
+        if (!next[key]) next = { ...next, [key]: newProductionFor(slot) };
+      }
+      return next;
+    });
+  }, [activeAssemblyId, socialDigitalHumanPlans, storyboardSlots, shootingSlots]);
   const openProduction = (slot: StoryboardSlot) => {
     const key = productionKey(slot.id);
-    setShotProductions(current => current[key] ? current : { ...current, [key]: newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId) });
+    const scriptNarration = storyboardSlotScript(slot.detail).voice;
+    setShotProductions(current => {
+      const existing = current[key];
+      if (!existing) return { ...current, [key]: newProductionFor(slot) };
+      if (!scriptNarration || existing.narration === scriptNarration) return current;
+      return { ...current, [key]: patchShot(existing, { narration: scriptNarration }) };
+    });
     setProductionError(''); setProductionEditorId(slot.id); setActiveStoryboardSlotId(slot.id);
   };
   useEffect(() => {
@@ -3532,9 +3647,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     return () => { live = false; };
   }, []);
   useEffect(() => {
-    if (!projectId) { setProductionJobs([]); return; }
+    if (!projectId) { setProductionJobs([]); setProductionPlans([]); setProductionExecutions([]); return; }
     let live = true;
-    const refresh = () => void productionApi.jobs(projectId).then(jobs => { if (live) setProductionJobs(jobs); }).catch(error => { if (live) setProductionError(String(error)); });
+    const refresh = () => void Promise.all([productionApi.jobs(projectId), productionApi.plans(projectId), productionApi.executions(projectId)]).then(([jobs, plans, executions]) => { if (live) { setProductionJobs(jobs); setProductionPlans(plans); setProductionExecutions(executions); } }).catch(error => { if (live) setProductionError(String(error)); });
     refresh(); window.addEventListener('focus', refresh);
     return () => { live = false; window.removeEventListener('focus', refresh); };
   }, [projectId]);
@@ -3590,7 +3705,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (productionFor(slot).locked) { setModeNotice('镜头已锁定，请先解锁'); return; }
     const requestProductionKey = productionKey(slot.id);
     const requestProduction = { ...productionFor(slot), source: 'ai' as const };
-    const requestFingerprint = shotFingerprint(requestProduction, shotProductionContext);
+    const requestFingerprint = productionFingerprint(slot, requestProduction);
     const plan = planOverride ?? sourcePlanFor(slot);
     const versionGroupKey = `studio:${projectId || generationSessionId.current}:assembly:${activeAssemblyId}:frame:${slot.id}`;
     const selectedVersion = storyboardVideoVersions[slot.id]?.find(item => item.isSelected);
@@ -4279,7 +4394,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const targetStart = timelineCursor;
       timelineCursor += targetDuration;
       return {
-        production: shotProductions[productionKey(slot.id, assembly.id)] || newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId),
+        production: shotProductions[productionKey(slot.id, assembly.id)] || newShotProduction(storyboardSlotScript(slot.detail).voice, productionDefaults.defaultPresenterId, productionDefaults),
         voiceStart: slot.start, voiceEnd: slot.end,
         screenCaption: storyboardSlotScript(slot.detail).subtitle,
         productUrl: materialById.get((shotProductions[productionKey(slot.id, assembly.id)] || productionFor(slot)).productMaterialId)?.url,
@@ -6393,7 +6508,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }
       const production = productionPatches[productionKey(slot.id)] || { ...productionFor(slot), source: 'shoot' as const };
       const candidateId = `shoot-${task.id}-${candidate.id}`;
-      productionPatches[productionKey(slot.id)] = { ...production, adoptedId: candidateId, candidates: [...production.candidates, { id: candidateId, materialId: candidate.id, source: 'shoot', fingerprint: shotFingerprint(production, shotProductionContext), createdAt: new Date().toISOString() }] };
+      productionPatches[productionKey(slot.id)] = { ...production, adoptedId: candidateId, candidates: [...production.candidates, { id: candidateId, materialId: candidate.id, source: 'shoot', fingerprint: productionFingerprint(slot, production), createdAt: new Date().toISOString() }] };
       plans[slot.id] = { mode: 'local', decided: true, confirmed: false, critical: false };
       adopted.push(candidate.id);
       adoptions[task.id] = candidate.id;
@@ -7098,7 +7213,15 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     segmentAnalysisStatus: item.segmentAnalysisStatus,
     segments: item.segments,
   }));
-  const collectSpec = () => ({
+  const collectSpec = () => {
+    let savedShotProductions = shotProductions;
+    for (const plan of socialDigitalHumanPlans) {
+      const slot = storyboardSlots.find(item => item.id === plan.shotId) || storyboardSlots[plan.shotIndex];
+      if (!slot) continue;
+      const key = productionKey(slot.id);
+      if (!savedShotProductions[key]) savedShotProductions = { ...savedShotProductions, [key]: newProductionFor(slot) };
+    }
+    return ({
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
     activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
@@ -7113,9 +7236,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     voiceoverUrl, voiceoverDur, voiceoverAudios, languageRenderOutputs, languageRenderVersions, referenceVoiceStrength, useReferenceVoiceStyle, alignedCuesByLang,
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
-    shootingSlots, shotProductions, shotProductionContext,
+    shootingSlots, shotProductions: savedShotProductions, shotProductionContext, socialDigitalHumanPlans,
     posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
-  });
+    });
+  };
 
   const applySpec = (s: Record<string, unknown>) => {
     studioSettingsEditedRef.current = true;
@@ -7146,6 +7270,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     shootingSlotsRef.current = Array.isArray(s.shootingSlots) ? s.shootingSlots as ShootingSlot[] : [];
     setShootingIdentityEpoch(current => current + 1);
     setShotProductions(s.shotProductions && typeof s.shotProductions === 'object' ? s.shotProductions as Record<string, ShotProduction> : {});
+    setSocialDigitalHumanPlans(Array.isArray(s.socialDigitalHumanPlans) ? s.socialDigitalHumanPlans as StudioSocialTaskSeed['digitalHumanShotPlans'] : []);
     setVoiceoverStaleLangs(Array.isArray(s.voiceoverStaleLangs) ? s.voiceoverStaleLangs as string[] : []);
     const restoredVoiceDrafts = s.voiceDrafts && typeof s.voiceDrafts === 'object'
       ? s.voiceDrafts as Record<string, string>
@@ -7471,6 +7596,10 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       if (project?.id && status !== 'template') {
         setProjectId(project.id);
         setProjects(current => [project, ...current.filter(item => item.id !== project.id)]);
+        if (socialDigitalHumanPlans.length) {
+          const syncedPlans = await productionApi.syncAgentPlans(project.id);
+          setProductionPlans(current => [...syncedPlans, ...current.filter(item => !syncedPlans.some(synced => synced.id === item.id))]);
+        }
         if (!workflowContext && new URLSearchParams(location.search).get('page') === 'smartAssets') {
           const url = new URL(location.href);
           url.searchParams.set('project', project.id);
@@ -7511,6 +7640,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       const job = await productionApi.refresh(id);
       if (job.projectId !== currentProjectRef.current) return;
       setProductionJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
+      setProductionExecutions(await productionApi.executions(job.projectId));
       if (job.status === 'completed' && job.materialId) {
         await refreshMaterials();
         if (job.projectId !== currentProjectRef.current) return;
@@ -7526,6 +7656,42 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       productionRefreshInFlight.current.delete(id);
       setProductionRefreshingIds(current => current.filter(item => item !== id));
     }
+  };
+  const refreshReferenceProduction = async (id: string) => {
+    if (productionRefreshInFlight.current.has(id)) return;
+    const requestedProject = currentProjectRef.current;
+    productionRefreshInFlight.current.add(id); setProductionRefreshingIds(current => [...current, id]); setProductionError('');
+    try {
+      const execution = await productionApi.refreshReference(id);
+      if (execution.projectId !== currentProjectRef.current) return;
+      setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
+      if (execution.state === 'completed' && execution.materialId) await refreshMaterials();
+    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '参考人物任务刷新失败'); }
+    finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
+  };
+  const cancelReferenceProduction = async (id: string) => {
+    if (productionRefreshInFlight.current.has(id)) return;
+    const requestedProject = currentProjectRef.current;
+    productionRefreshInFlight.current.add(id); setProductionRefreshingIds(current => [...current, id]); setProductionError('');
+    try {
+      const execution = await productionApi.cancelReference(id);
+      if (execution.projectId !== currentProjectRef.current) return;
+      setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
+      setDigitalHumanNotice('供应商已确认取消当前分镜任务；历史执行记录已保留。');
+    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '参考人物任务取消失败'); }
+    finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
+  };
+  const reconcileProductionCost = async (id: string) => {
+    if (productionRefreshInFlight.current.has(id)) return;
+    const requestedProject = currentProjectRef.current;
+    productionRefreshInFlight.current.add(id); setProductionRefreshingIds(current => [...current, id]); setProductionError('');
+    try {
+      const execution = await productionApi.reconcileSupplierCost(id);
+      if (execution.projectId !== currentProjectRef.current) return;
+      setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
+      setDigitalHumanNotice(`供应商账单已核对：实际费用 ¥${(execution.actualCostCny || 0).toFixed(2)}，依据 ${execution.costSourceRef || '供应商用量记录'}。`);
+    } catch (error) { if (currentProjectRef.current === requestedProject) setProductionError(error instanceof Error ? error.message : '供应商账单核对失败'); }
+    finally { productionRefreshInFlight.current.delete(id); setProductionRefreshingIds(current => current.filter(item => item !== id)); }
   };
   useEffect(() => {
     setShotProductions(current => {
@@ -7544,6 +7710,28 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     const timer = window.setTimeout(() => { void Promise.all(pending.map(job => refreshProductionJob(job.id))); }, 10000);
     return () => window.clearTimeout(timer);
   }, [productionJobs, projectId]);
+  useEffect(() => {
+    setShotProductions(current => {
+      let next = current;
+      for (const execution of productionExecutions) {
+        if (execution.projectId !== projectId || execution.tool === 'heygen' || execution.state !== 'completed' || !execution.materialId) continue;
+        const key = `${execution.assemblyId}:${execution.shotId}`; const shot = next[key];
+        if (!shot || shot.candidates.some(item => item.jobId === execution.id)) continue;
+        next = { ...next, [key]: { ...shot, candidates: [...shot.candidates, { id: `execution-${execution.id}`, materialId: execution.materialId, source: 'avatar', fingerprint: execution.fingerprint, jobId: execution.id, createdAt: execution.updatedAt }] } };
+      }
+      return next;
+    });
+  }, [productionExecutions, projectId]);
+  useEffect(() => {
+    const jobIds = [...new Set(productionExecutions.filter(item => item.projectId === projectId && item.provider.startsWith('sentence_first_frame')).map(item => item.jobId).filter(Boolean))];
+    const missing = jobIds.filter(id => !productionSentenceResults[id]);
+    if (!missing.length) return;
+    let cancelled = false;
+    void Promise.all(missing.map(async id => [id, await productionApi.sentenceReplicationJob(id)] as const)).then(entries => {
+      if (!cancelled) setProductionSentenceResults(current => ({ ...current, ...Object.fromEntries(entries) }));
+    }).catch(error => { if (!cancelled) setProductionError(error instanceof Error ? error.message : '逐镜质检记录读取失败'); });
+    return () => { cancelled = true; };
+  }, [productionExecutions, projectId, productionSentenceResults]);
 
   const generateProductionAvatar = async () => {
     const slot = storyboardSlots.find(item => item.id === productionEditorId);
@@ -7555,23 +7743,114 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     if (savingProj || autosaveInFlightRef.current || sourceDraftCheckPending || existingSourceDraftPrompt) { setProductionError('草稿仍在恢复或保存，请稍后重试'); return; }
     setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
     try {
+      const fingerprint = productionFingerprint(slot, shot);
       const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未发起生成');
       projectRevisionRef.current = saved.project.updatedAt;
       setProjectId(saved.project.id);
-      const existingJobs = await productionApi.jobs(saved.project.id);
+      const savedProductionPlan = await productionApi.savePlan({ projectId: saved.project.id, assemblyId: activeAssemblyId,
+        shotId: shootingSlots.find(item => item.slotId === slot.id)!.id, fingerprint: productionFingerprint(slot, shot) });
+      if (!savedProductionPlan.executable) throw new Error(savedProductionPlan.reasons.join('；') || '当前分镜制作方案不可执行');
+      setProductionPlans(current => [savedProductionPlan, ...current.filter(item => item.id !== savedProductionPlan.id)]);
+      const existingJobs = await productionApi.jobs(saved.project.id); const existingExecutions = await productionApi.executions(saved.project.id);
       const unresolved = existingJobs.find(job => job.assemblyId === activeAssemblyId && job.shotId === shootingSlots.find(item => item.slotId === slot.id)?.id
-        && job.fingerprint === shotFingerprint(shot, shotProductionContext) && ['submitting', 'pending', 'uncertain'].includes(job.status));
-      if (unresolved) { setProductionJobs(existingJobs); throw new Error('该镜头已有未结束任务，请先刷新原任务，不重复提交计费。'); }
-      const requestKey = `${saved.project.id}:${productionKey(slot.id)}:${shotFingerprint(shot, shotProductionContext)}`;
+        && job.fingerprint === productionFingerprint(slot, shot) && ['submitting', 'pending', 'uncertain'].includes(job.status));
+      const unresolvedExecution = existingExecutions.find(item => item.assemblyId === activeAssemblyId && item.shotId === shootingSlots.find(candidate => candidate.slotId === slot.id)?.id
+        && item.fingerprint === productionFingerprint(slot, shot) && ['submitting', 'pending', 'uncertain'].includes(item.state));
+      if (unresolved || unresolvedExecution) { setProductionJobs(existingJobs); setProductionExecutions(existingExecutions); throw new Error('该镜头已有未结束任务，请先刷新原任务，不重复提交计费。'); }
+      const requestKey = `${saved.project.id}:${productionKey(slot.id)}:${productionFingerprint(slot, shot)}`;
       const requestId = productionRequestIds.current.get(requestKey) || crypto.randomUUID();
       productionRequestIds.current.set(requestKey, requestId);
+      if (savedProductionPlan.provider !== 'heygen') {
+        const execution = await productionApi.submitReference({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: shootingSlots.find(item => item.slotId === slot.id)!.id,
+          fingerprint: productionFingerprint(slot, shot), requestId, confirmed: true });
+        productionRequestIds.current.delete(requestKey);
+        setProductionExecutions(current => [execution, ...current.filter(item => item.id !== execution.id)]);
+        return;
+      }
       const job = await productionApi.submit({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: shootingSlots.find(item => item.slotId === slot.id)!.id,
-        shot, presenter, ratio, fingerprint: shotFingerprint(shot, shotProductionContext), requestId, confirmed: true });
+        shot, presenter, ratio, fingerprint: productionFingerprint(slot, shot), requestId, confirmed: true });
       productionRequestIds.current.delete(requestKey);
+      setProductionExecutions(await productionApi.executions(saved.project.id));
       setProductionJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
     } catch (error) { setProductionError(error instanceof Error ? error.message : '提交失败'); }
     finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+  };
+
+  const saveProductionPlan = async () => {
+    const slot = storyboardSlots.find(item => item.id === productionEditorId);
+    if (!slot || productionBusy) return;
+    const shot = productionFor(slot); const persistedShot = shootingSlots.find(item => item.slotId === slot.id);
+    if (!persistedShot) { setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本'); return; }
+    if (savingProj || autosaveInFlightRef.current || sourceDraftCheckPending || existingSourceDraftPrompt) { setProductionError('草稿仍在恢复或保存，请稍后重试'); return; }
+    setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
+    try {
+      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，制作方案未保存');
+      projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
+      const record = await productionApi.savePlan({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id, fingerprint: productionFingerprint(slot, shot) });
+      setProductionPlans(current => [record, ...current.filter(item => item.id !== record.id && !(item.assemblyId === record.assemblyId && item.shotId === record.shotId && item.fingerprint === record.fingerprint))]);
+      setDigitalHumanNotice(record.state === 'ready' ? '当前分镜制作方案已保存，可以生成候选。' : `当前分镜制作方案已保存：${record.reasons.join('；') || '等待后续能力接入'}`);
+    } catch (error) { setProductionError(error instanceof Error ? error.message : '制作方案保存失败'); }
+    finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+  };
+
+  const prepareProductionSentenceFrames = async () => {
+    const slot = storyboardSlots.find(item => item.id === productionEditorId); if (!slot || productionBusy) return;
+    const shot = productionFor(slot); const persistedShot = shootingSlots.find(item => item.slotId === slot.id);
+    if (!persistedShot) { setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本'); return; }
+    setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
+    try {
+      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未提取逐句首帧');
+      projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
+      const result = await productionApi.prepareSentenceFirstFrames({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id, fingerprint: productionFingerprint(slot, shot) });
+      setShotProductions(current => {
+        const key = productionKey(slot.id); const currentShot = current[key] || shot; if (!currentShot.digitalHuman?.reference) return current;
+        return { ...current, [key]: { ...currentShot, digitalHuman: { ...currentShot.digitalHuman, contentConfirmed: false,
+          reference: { ...currentShot.digitalHuman.reference, cues: result.cues } }, revision: currentShot.revision + 1 } };
+      });
+      await refreshMaterials(); setDigitalHumanNotice(`已提取 ${result.cues.length} 个逐句首帧。请检查后生成目标人物首帧。`);
+    } catch (error) { setProductionError(error instanceof Error ? error.message : '逐句首帧提取失败'); }
+    finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+  };
+
+  const runProductionSentenceReplication = async () => {
+    const slot = storyboardSlots.find(item => item.id === productionEditorId); if (!slot || productionBusy) return;
+    const shot = productionFor(slot); const persistedShot = shootingSlots.find(item => item.slotId === slot.id);
+    if (!persistedShot) { setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本'); return; }
+    setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
+    try {
+      const fingerprint = productionFingerprint(slot, shot);
+      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未启动逐句生成');
+      projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
+      const result = await productionApi.runSentenceReplication({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id,
+        fingerprint, requestId: crypto.randomUUID(), confirmed: true });
+      if (result.sentenceJobId) setProductionSentenceResults(current => ({ ...current, [result.sentenceJobId!]: result }));
+      await refreshMaterials(); setProductionExecutions(await productionApi.executions(saved.project.id));
+      setShotProductions(current => { const key = productionKey(slot.id); const currentShot = current[key] || shot; if (!currentShot.digitalHuman?.reference) return current;
+        const nextShot = { ...currentShot, digitalHuman: { ...currentShot.digitalHuman, contentConfirmed: false, reference: { ...currentShot.digitalHuman.reference, cues: result.cues } }, revision: currentShot.revision + 1 };
+        return { ...current, [key]: { ...nextShot, candidates: [...currentShot.candidates, { id: `sentence-${crypto.randomUUID()}`, materialId: result.materialId, source: 'avatar', fingerprint, jobId: result.executionId, createdAt: new Date().toISOString() }] } }; });
+      setDigitalHumanNotice(`已完成 ${result.cues.length} 句目标人物视频并拼接为候选，请预览和验收。`);
+    } catch (error) { setProductionError(error instanceof Error ? error.message : '逐句爆款复刻失败'); }
+    finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+  };
+
+  const generateProductionSentenceDrafts=async()=>{const slot=storyboardSlots.find(item=>item.id===productionEditorId);if(!slot||productionBusy)return;const shot=productionFor(slot);const persistedShot=shootingSlots.find(item=>item.slotId===slot.id);if(!persistedShot){setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本');return;}setProductionBusy(true);setProductionError('');autosaveInFlightRef.current=true;try{const fingerprint=productionFingerprint(slot,shot);const saved=await studioApi.saveProject({id:projectId||undefined,title:projectTitle,status:'draft',spec:collectSpec()});if(!saved.ok||!saved.project?.id)throw new Error('草稿保存失败，未启动千问首帧草稿');projectRevisionRef.current=saved.project.updatedAt;setProjectId(saved.project.id);const result=await productionApi.generateSentenceFirstFrameDrafts({projectId:saved.project.id,assemblyId:activeAssemblyId,shotId:persistedShot.id,fingerprint,requestId:crypto.randomUUID(),confirmed:true});setShotProductions(current=>{const key=productionKey(slot.id);const currentShot=current[key]||shot;if(!currentShot.digitalHuman?.reference)return current;return{...current,[key]:{...currentShot,digitalHuman:{...currentShot.digitalHuman,contentConfirmed:false,reference:{...currentShot.digitalHuman.reference,cues:result.cues}},revision:currentShot.revision+1}};});await refreshMaterials();setDigitalHumanNotice(`已生成 ${result.operationIds.length} 张千问构图草稿，预计费用 ¥${result.estimatedCostCny.toFixed(2)}。草稿不会直接交给 Seedance。`);}catch(error){setProductionError(error instanceof Error?error.message:'千问首帧草稿生成失败');}finally{autosaveInFlightRef.current=false;setProductionBusy(false);}};
+
+  const reviewProductionSentenceCue = async (cueId:string, decisionsByKey:Record<string,boolean>, evidence:string) => {
+    const slot=storyboardSlots.find(item=>item.id===productionEditorId); if(!slot||productionBusy)return; const shot=productionFor(slot); const persistedShot=shootingSlots.find(item=>item.slotId===slot.id); if(!persistedShot)return;
+    const execution=productionExecutions.filter(item=>item.assemblyId===activeAssemblyId&&item.shotId===persistedShot.id&&item.fingerprint===productionFingerprint(slot,shot)&&item.provider.startsWith('sentence_first_frame')).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];
+    const result=execution?productionSentenceResults[execution.jobId]:undefined; const cue=result?.cueQuality?.find(item=>item.cueId===cueId); if(!execution||!result||!cue){setProductionError('当前逐镜质检记录不存在');return;}
+    const pending=cue.checks.filter(check=>check.status==='pending'); if(!pending.length||pending.some(check=>decisionsByKey[check.key]===undefined)||!evidence.trim()){setProductionError('请完成该镜头全部待验收项目并填写证据');return;}
+    setProductionBusy(true);setProductionError(''); try{const decisions=Object.fromEntries(pending.map(check=>[check.key,{passed:decisionsByKey[check.key],evidence:evidence.trim()}]));const reviewed=await productionApi.reviewSentenceCueQuality(execution.jobId,{[cueId]:decisions});setProductionSentenceResults(current=>({...current,[execution.jobId]:reviewed}));setDigitalHumanNotice(`镜头 ${cueId} 的逐项验收已保存。`);}catch(error){setProductionError(error instanceof Error?error.message:'逐镜验收保存失败');}finally{setProductionBusy(false);}
+  };
+
+  const retryProductionFailedSentenceCues = async () => {
+    const slot=storyboardSlots.find(item=>item.id===productionEditorId);if(!slot||productionBusy)return;const shot=productionFor(slot);const persistedShot=shootingSlots.find(item=>item.slotId===slot.id);if(!persistedShot)return;const fingerprint=productionFingerprint(slot,shot);
+    const execution=productionExecutions.filter(item=>item.assemblyId===activeAssemblyId&&item.shotId===persistedShot.id&&item.fingerprint===fingerprint&&item.provider.startsWith('sentence_first_frame')).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];const previous=execution?productionSentenceResults[execution.jobId]:undefined;if(!execution||!previous?.failedCueIds?.length){setProductionError('当前没有已确认的失败镜头');return;}
+    setProductionBusy(true);setProductionError('');try{const result=await productionApi.retryFailedSentenceCues(execution.jobId,crypto.randomUUID(),true);if(result.sentenceJobId)setProductionSentenceResults(current=>({...current,[result.sentenceJobId!]:result}));await refreshMaterials();if(projectId)setProductionExecutions(await productionApi.executions(projectId));setShotProductions(current=>{const key=productionKey(slot.id);const currentShot=current[key]||shot;if(!currentShot.digitalHuman?.reference)return current;const nextShot={...currentShot,digitalHuman:{...currentShot.digitalHuman,contentConfirmed:false,reference:{...currentShot.digitalHuman.reference,cues:result.cues}},revision:currentShot.revision+1};return{...current,[key]:{...nextShot,candidates:[...currentShot.candidates,{id:`sentence-repair-${crypto.randomUUID()}`,materialId:result.materialId,source:'avatar',fingerprint,jobId:result.executionId,createdAt:new Date().toISOString()}]}};});setDigitalHumanNotice(`已只重做 ${previous.failedCueIds.length} 个失败镜头，其余已验收镜头沿用。请验收新的候选。`);}catch(error){setProductionError(error instanceof Error?error.message:'失败镜头局部重做失败');}finally{setProductionBusy(false);}
   };
 
   const applyProductionNarration = () => {
@@ -7590,14 +7869,36 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setRendered(false); setProductionError(''); setModeNotice('台词已同步到脚本；旧配音、字幕对齐和成片需更新。其他镜头画面保留。');
   };
 
-  const adoptProductionCandidate = (candidateId: string) => {
+  const adoptProductionCandidate = async (candidateId: string) => {
     const slot = storyboardSlots.find(item => item.id === productionEditorId); if (!slot) return;
     const shot = productionFor(slot); const candidate = shot.candidates.find(item => item.id === candidateId);
-    if (!candidate || shot.locked || candidate.fingerprint !== shotFingerprint(shot, shotProductionContext)) return;
-    if (!avatarCandidateReady(candidate, productionJobs.filter(job => job.projectId === projectId && `${job.assemblyId}:${job.shotId}` === productionKey(slot.id)))) {
+    if (!candidate || shot.locked || candidate.fingerprint !== productionFingerprint(slot, shot)) return;
+    const currentPresenterVersion = Math.max(1, productionDefaults.presenters.find(item => item.id === shot.presenterId)?.assetVersion || 1);
+    const execution = productionExecutions.find(item => (item.id === candidate.jobId || item.jobId === candidate.jobId) && item.presenterAssetVersion === currentPresenterVersion);
+    const taskReady = execution ? execution.state === 'completed' && execution.materialId === candidate.materialId && execution.fingerprint === candidate.fingerprint
+      : avatarCandidateReady(candidate, productionJobs.filter(job => job.projectId === projectId && `${job.assemblyId}:${job.shotId}` === productionKey(slot.id)));
+    if (!taskReady) {
       setProductionError('数字人任务未完成或仍待核验，请刷新原任务；不能采用未验证的候选'); return;
     }
+    const acceptedExecution = execution?.quality.state === 'accepted' ? execution : productionExecutions.find(item => item.jobId === candidate.jobId && item.presenterAssetVersion === currentPresenterVersion && item.quality.state === 'accepted');
+    const qualityAccepted = Boolean(acceptedExecution);
+    if (candidate.source === 'avatar' && !qualityAccepted) {
+      setProductionError('请先完成当前数字人候选的人物、口播和口型人工验收'); return;
+    }
     const clip = materialById.get(candidate.materialId); if (!clip) { setProductionError('候选素材未就绪，请刷新任务或素材库'); return; }
+    if (candidate.source === 'avatar') {
+      if (!acceptedExecution || savingProj || autosaveInFlightRef.current) { setProductionError('草稿正在保存或执行记录尚未就绪，请稍后再采用'); return; }
+      setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
+      try {
+        const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+        if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，候选尚未填入分镜');
+        projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
+        const adoptedExecution = await productionApi.adoptExecution(acceptedExecution.id, { candidateId, materialId: candidate.materialId });
+        setProductionExecutions(current => [adoptedExecution, ...current.filter(item => item.id !== adoptedExecution.id)]);
+      } catch (error) {
+        setProductionError(error instanceof Error ? error.message : '候选填入分镜失败'); return;
+      } finally { autosaveInFlightRef.current = false; setProductionBusy(false); }
+    }
     setShotProductions(current => ({ ...current, [productionKey(slot.id)]: { ...shot, adoptedId: candidateId } }));
     setStoryboardAssignments(current => ({ ...current, [slot.id]: clip.id }));
     setClipEdits(current => ({ ...current, [slotClipEditKey(slot.id, clip.id)]: candidate.source === 'avatar' || shot.sound === 'source'
@@ -9815,11 +10116,11 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             {(scriptStageTab === 'theme' || scriptStageTab === 'script') && (
             <>
             {videoKickoff?.source === 'inspiration_person_replace' && (
-              <RunwayPersonReplacementPanel
-                title={videoKickoff.video?.title || videoKickoff.referenceAnalysis?.title}
-                videoUrl={videoKickoff.video?.aiAnalysis?.materialUrl || videoKickoff.video?.videoUrl}
-                shots={videoKickoff.referenceAnalysis?.details || []}
-              />
+              <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-4 text-xs">
+                <p className="font-bold">爆款裂变 · 分镜人物制作</p>
+                <p className="mt-2">原片分析已带入。请在具体分镜的「选择数字人」中核对原句、人物、动作与场景，再确认制作要求。</p>
+                <p className="mt-1 text-text-muted">参考人物制作当前仅支持方案预览；人物口播沿用已接通的生成能力。</p>
+              </div>
             )}
             <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -12499,6 +12800,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                     <button
                       type="button"
                       onClick={() => {
+                        if (productionFor(activeWorkbenchSlot).locked) { setModeNotice('镜头已锁定，请先解锁'); return; }
                         openProduction(activeWorkbenchSlot);
                         const key = productionKey(activeWorkbenchSlot.id);
                         setShotProductions(current => ({
@@ -12669,15 +12971,43 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           )}
         </div>
       </StudioWorkbenchFrame>
+      <DigitalHumanProductionOverview
+        shots={storyboardSlots.flatMap((slot, index) => {
+          const shot = productionFor(slot); if (shot.source !== 'avatar') return [];
+          const persistedShotId = shootingSlots.find(item => item.slotId === slot.id)?.id || slot.id;
+          const fingerprint = productionFingerprint(slot, shot);
+          const presenterVersion = Math.max(1, productionDefaults.presenters.find(item => item.id === shot.presenterId)?.assetVersion || 1);
+          return [{ shotId: slot.id, title: `分镜 ${index + 1} · ${slot.title}`, plan: productionPlans.find(item => item.projectId === projectId && item.assemblyId === activeAssemblyId && item.shotId === persistedShotId && item.fingerprint === fingerprint && item.presenterAssetVersion === presenterVersion),
+            executions: productionExecutions.filter(item => item.projectId === projectId && item.assemblyId === activeAssemblyId && item.shotId === persistedShotId && item.fingerprint === fingerprint && item.presenterAssetVersion === presenterVersion) }];
+        })}
+        onOpenShot={shotId => { setProductionEditorId(shotId); setProductionError(''); }}
+      />
       {productionEditorSlot && (
         <ShotProductionPanel
           shot={productionFor(productionEditorSlot)}
+          shotId={shootingSlots.find(item => item.slotId === productionEditorSlot.id)?.id || productionEditorSlot.id}
+          scriptNarration={storyboardSlotScript(productionEditorSlot.detail).voice}
+          shotDuration={Math.max(0.001, productionEditorSlot.end - productionEditorSlot.start)}
+          keyframeCues={shotKeyframeCues({ shotStart: productionEditorSlot.start, shotEnd: productionEditorSlot.end,
+            cues: alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues || [],
+            fallbackText: productionFor(productionEditorSlot).narration })}
           context={shotProductionContext}
           title={`分镜 ${storyboardSlots.findIndex(item => item.id === productionEditorSlot.id) + 1}`}
           defaults={productionDefaults}
           materials={materials}
           products={selectedProductOptions.map(item => ({ id: item.id, label: item.label }))}
           jobs={productionJobs.filter(job => job.projectId === projectId && `${job.assemblyId}:${job.shotId}` === productionKey(productionEditorSlot.id))}
+          savedPlan={productionPlans.find(item => item.projectId === projectId && `${item.assemblyId}:${item.shotId}` === productionKey(productionEditorSlot.id)
+            && item.fingerprint === productionFingerprint(productionEditorSlot)
+            && item.presenterAssetVersion === Math.max(1, productionDefaults.presenters.find(presenter => presenter.id === productionFor(productionEditorSlot).presenterId)?.assetVersion || 1))}
+          sourcePlan={socialDigitalHumanPlans.find(item => item.shotId === productionEditorSlot.id)
+            ?? socialDigitalHumanPlans.find(item => item.shotIndex === storyboardSlots.findIndex(candidate => candidate.id === productionEditorSlot.id))}
+          executions={productionExecutions.filter(item => `${item.assemblyId}:${item.shotId}` === productionKey(productionEditorSlot.id)
+            && item.fingerprint === productionFingerprint(productionEditorSlot)
+            && item.presenterAssetVersion === Math.max(1, productionDefaults.presenters.find(presenter => presenter.id === productionFor(productionEditorSlot).presenterId)?.assetVersion || 1))}
+          sentenceResult={productionSentenceResults[productionExecutions.filter(item => `${item.assemblyId}:${item.shotId}` === productionKey(productionEditorSlot.id)
+            && item.fingerprint === productionFingerprint(productionEditorSlot)
+            && item.provider.startsWith('sentence_first_frame')).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0]?.jobId || '']}
           refreshingJobIds={productionRefreshingIds}
           preview={materialById.get(storyboardAssignments[productionEditorSlot.id] || '')}
           reason={recommendShot({ detail: productionEditorSlot.detail, preference: appearancePreference || productionDefaults.preference, locked: productionFor(productionEditorSlot).locked, hasMaterial: Boolean(storyboardAssignments[productionEditorSlot.id]), hasPresenter: productionDefaults.presenters.length > 0 }).reason}
@@ -12685,7 +13015,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           busy={productionBusy}
           configured={productionCapability.configured}
           capabilityReason={productionCapability.reason}
+          toolCapabilities={productionCapability.tools}
           costPerSecond={productionCapability.costPerSecond}
+          maxAttemptsPerShot={productionCapability.maxAttemptsPerShot}
           onChange={patch => {
             try {
               const key = productionKey(productionEditorSlot.id);
@@ -12696,12 +13028,48 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           onClose={() => { setProductionEditorId(''); setProductionError(''); setDigitalHumanNotice(''); }}
           onNarration={applyProductionNarration}
           onDefaults={async value => { const saved = await productionApi.saveDefaults(value); setProductionDefaults(saved); }}
+          onCreatePresenter={async input => {
+            const uploaded=await studioApi.uploadMaterialFile(input.file,{folder:'presenter',type:'image',sourceType:'presenter-inline-upload'});
+            if(!uploaded.ok||!uploaded.material?.id)throw new Error(uploaded.error||'人物图片上传失败');
+            const presenterId=crypto.randomUUID();const now=new Date().toISOString();
+            const presenter:import('../lib/shotProduction').PresenterAsset={id:presenterId,name:input.name.trim(),avatarId:'',voiceId:'',authorized:true,supportsAlpha:false,referenceMaterialIds:[uploaded.material.id],rightsEvidence:{authorizationRef:input.authorizationRef.trim(),consentRef:input.consentRef.trim(),grantedAt:now,subjectAdultConfirmed:input.subjectAdultConfirmed,permittedProviders:['volcengine_ark'],permittedUses:['digital_presenter','person_replacement']},arkCertification:{projectName:'default',assetUri:input.arkAssetUri||'',assetType:input.arkAssetUri?'image':'',status:input.arkActiveConfirmed?'active':'ark_pending',materialId:uploaded.material.id,...(input.arkActiveConfirmed?{syncedAt:now,verificationSource:'manual_console' as const}:{})}};
+            const saved=await productionApi.saveDefaults({...productionDefaults,presenters:[...productionDefaults.presenters,presenter],defaultPresenterId:productionDefaults.defaultPresenterId||presenterId});
+            setProductionDefaults(saved);await refreshMaterials();const created=saved.presenters.find(item=>item.id===presenterId);if(!created)throw new Error('人物已上传，但企业人物回填失败，请刷新后检查原任务');return created;
+          }}
+          onApplyDefaultsToUnlocked={() => {
+            setShotProductions(current => applyDefaultsToUnlockedAvatarShots(current, activeAssemblyId, productionDefaults));
+            setDigitalHumanNotice('已将企业默认人物、声音和布局应用到当前视频全部未锁定数字人分镜；人物变化的镜头需要重新确认内容。');
+          }}
+          onSavePlan={() => void saveProductionPlan()}
+          onPrepareSentenceFrames={() => void prepareProductionSentenceFrames()}
+          onGenerateSentenceDrafts={()=>void generateProductionSentenceDrafts()}
+          onRunSentenceReplication={() => void runProductionSentenceReplication()}
+          onReviewSentenceCue={(cueId,decisions,evidence)=>void reviewProductionSentenceCue(cueId,decisions,evidence)}
+          onRetryFailedSentenceCues={()=>void retryProductionFailedSentenceCues()}
           onGenerate={() => void generateProductionAvatar()}
           onAi={() => { setProductionEditorId(''); void generateStoryboardShot(productionEditorSlot, { ...sourcePlanFor(productionEditorSlot), mode: 'ai', decided: true, confirmed: false }); }}
           onShoot={() => { setProductionEditorId(''); setShootingError(''); setShootingSlotId(productionEditorSlot.id); }}
           onMaterial={() => setProductionEditorId('')}
-          onAdopt={adoptProductionCandidate}
+          onAdopt={id => void adoptProductionCandidate(id)}
           onRefresh={id => void refreshProductionJob(id)}
+          onRefreshExecution={id => void refreshReferenceProduction(id)}
+          onCancelExecution={id => void cancelReferenceProduction(id)}
+          onReconcileExecutionCost={id => void reconcileProductionCost(id)}
+          onReviewExecution={async (id, decisionsByKey, feedback = '') => {
+            try {
+              const execution = productionExecutions.find(item => item.id === id);
+              if (!execution) return;
+              const pending = execution.quality.checks.filter(check => check.mode === 'manual' && check.status === 'pending');
+              if (!pending.length || pending.some(check => decisionsByKey[check.key] === undefined)) throw new Error('请逐项完成全部人工验收');
+              if (pending.some(check => decisionsByKey[check.key] === false) && !feedback.trim()) throw new Error('存在未通过项目时必须填写具体修改意见');
+              const decisions = Object.fromEntries(pending.map(check => [check.key, {
+                passed: decisionsByKey[check.key],
+                evidence: decisionsByKey[check.key] ? `用户在分镜候选预览中逐项确认通过${feedback.trim() ? `：${feedback.trim()}` : ''}` : `用户修改意见：${feedback.trim()}`,
+              }]));
+              const reviewed = await productionApi.reviewExecutionQuality(id, decisions, feedback);
+              setProductionExecutions(current => [reviewed, ...current.filter(item => item.id !== reviewed.id)]);
+            } catch (error) { setProductionError(error instanceof Error ? error.message : '人工验收保存失败'); }
+          }}
         />
       )}
       </div>

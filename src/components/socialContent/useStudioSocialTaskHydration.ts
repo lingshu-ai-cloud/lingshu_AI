@@ -22,6 +22,20 @@ export interface StudioSocialTaskSeed {
   factVerificationNotice: string;
   selectedMaterialIds: string[];
   unsupportedLanguages: string[];
+  digitalHumanShotPlans: Array<{
+    shotId: string;
+    shotIndex: number;
+    requestedDescription: string;
+    workflow: 'material_processing' | 'viral_replication';
+    method: 'talking' | 'replace' | 'reenact';
+    presenterAssetIds: string[];
+    referenceMaterialIds: string[];
+    referenceRequired: boolean;
+    candidateTools: string[];
+    executionState: 'needs_presenter' | 'needs_confirmation' | 'preview_only' | 'ready_for_capability_check';
+    sourceTaskId: string;
+    sourceTaskVersion: string;
+  }>;
 }
 
 const STUDIO_THEME_BY_SOCIAL_THEME = {
@@ -84,6 +98,17 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     brief.productRef ? `产品引用“${brief.productRef}”` : '',
     brief.brandNotes ? '任务备注' : '',
   ].filter(Boolean);
+  const digitalHumanShotPlans = (task.assetSupplyPlan?.shots ?? []).flatMap((shot, shotIndex) => shot.digitalHumanPlan ? [{
+    shotId: shot.shotId,
+    shotIndex,
+    requestedDescription: clean(shot.requestedDescription),
+    ...shot.digitalHumanPlan,
+    presenterAssetIds: [...shot.digitalHumanPlan.presenterAssetIds],
+    referenceMaterialIds: [...shot.digitalHumanPlan.referenceMaterialIds],
+    candidateTools: [...shot.digitalHumanPlan.candidateTools],
+    sourceTaskId: task.taskId,
+    sourceTaskVersion: task.version,
+  }] : []);
   return {
     projectTitle: clean(brief.title) || '社媒内容任务',
     productReference: clean(brief.productRef),
@@ -105,6 +130,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
       : '',
     selectedMaterialIds,
     unsupportedLanguages: languagePairs.filter(item => !item.code).map(item => item.language),
+    digitalHumanShotPlans,
   };
 }
 

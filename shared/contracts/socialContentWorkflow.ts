@@ -223,6 +223,16 @@ export interface SocialAssetSupplyShotPlan {
   feasibility: SocialProductionFeasibility;
   feasibilityReason: string;
   customerShootRequired: false;
+  /** Present only when this storyboard shot uses the shared digital-human stack. */
+  digitalHumanPlan?: {
+    workflow: 'material_processing' | 'viral_replication';
+    method: 'talking' | 'replace' | 'reenact';
+    presenterAssetIds: string[];
+    referenceMaterialIds: string[];
+    referenceRequired: boolean;
+    candidateTools: string[];
+    executionState: 'needs_presenter' | 'needs_confirmation' | 'preview_only' | 'ready_for_capability_check';
+  };
 }
 
 /**

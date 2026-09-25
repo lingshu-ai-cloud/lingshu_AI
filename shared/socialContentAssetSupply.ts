@@ -16,6 +16,7 @@ export interface SocialAssetInventory {
   customerVideoIds?: string[];
   productImageIds?: string[];
   presenterAssetIds?: string[];
+  referenceVideoIds?: string[];
   factoryEvidenceAssetIds?: string[];
   customerCaseEvidenceAssetIds?: string[];
   productEffectEvidenceAssetIds?: string[];
@@ -45,6 +46,7 @@ const EMPTY_INVENTORY: Required<SocialAssetInventory> = {
   customerVideoIds: [],
   productImageIds: [],
   presenterAssetIds: [],
+  referenceVideoIds: [],
   factoryEvidenceAssetIds: [],
   customerCaseEvidenceAssetIds: [],
   productEffectEvidenceAssetIds: [],
@@ -75,6 +77,7 @@ function normalizeInventory(input?: SocialAssetInventory): Required<SocialAssetI
     customerVideoIds: unique(input?.customerVideoIds),
     productImageIds: unique(input?.productImageIds),
     presenterAssetIds: unique(input?.presenterAssetIds),
+    referenceVideoIds: unique(input?.referenceVideoIds),
     factoryEvidenceAssetIds: unique(input?.factoryEvidenceAssetIds),
     customerCaseEvidenceAssetIds: unique(input?.customerCaseEvidenceAssetIds),
     productEffectEvidenceAssetIds: unique(input?.productEffectEvidenceAssetIds),
@@ -142,7 +145,12 @@ function generalStrategy(
   shot: SocialAssetSupplyShotRequest,
   inventory: Required<SocialAssetInventory>,
   confirmedFactRefs: string[],
+  creationMode: SocialContentCreationMode,
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string } {
+  if (creationMode === 'viral_replication' && inventory.presenterAssetIds.length > 0 && inventory.referenceVideoIds.length > 0) {
+    return { strategy: 'authorized_digital_presenter', refs: inventory.presenterAssetIds,
+      instruction: '使用统一数字人技术栈，以素材库参考视频逐句对齐并由已授权企业人物驱动；逐镜确认采用原片换人或参考重演' };
+  }
   if (inventory.customerVideoIds.length > 0) {
     return {
       strategy: 'customer_real_asset',
@@ -159,9 +167,9 @@ function generalStrategy(
   }
   if (inventory.presenterAssetIds.length > 0) {
     return {
-      strategy: 'customer_real_asset',
+      strategy: 'authorized_digital_presenter',
       refs: inventory.presenterAssetIds,
-      instruction: '保留已授权人物身份和关键动作，用配音、字幕与图文层完成镜头',
+      instruction: '使用统一数字人技术栈，以已授权企业人物和本镜头口播制作画面；按业务路线校验参考素材、人物能力与内容确认',
     };
   }
   if (shot.function === 'proof' && confirmedFactRefs.length > 0) {
@@ -180,9 +188,9 @@ function generalStrategy(
   }
   if (shot.function === 'hook' || shot.function === 'value' || shot.function === 'call_to_action') {
     return {
-      strategy: 'authorized_digital_presenter',
+      strategy: 'motion_graphics',
       refs: [],
-      instruction: '由已授权数字人或配音承担口播，搭配品牌图文；不虚构产品外观、工厂、案例或效果',
+      instruction: '在没有已授权企业人物资产时使用配音与品牌图文完成表达；不得假定存在可用数字人',
     };
   }
   return {
@@ -201,10 +209,16 @@ function fallbackFor(strategy: SocialShotSourceStrategy): SocialShotSourceStrate
   return 'motion_graphics';
 }
 
+function digitalHumanMethod(creationMode: SocialContentCreationMode, description: string | null | undefined): 'talking' | 'replace' | 'reenact' {
+  if (creationMode !== 'viral_replication') return 'talking';
+  return /重新演绎|reenact|re-?perform/i.test(String(description || '')) ? 'reenact' : 'replace';
+}
+
 function planShot(
   shot: SocialAssetSupplyShotRequest,
   inventory: Required<SocialAssetInventory>,
   confirmedFactRefs: string[],
+  creationMode: SocialContentCreationMode,
 ): SocialAssetSupplyShotPlan {
   const subject = shot.truthSensitiveSubject ?? 'none';
   const evidenceRefs = evidenceRefsFor(subject, inventory);
@@ -278,7 +292,7 @@ function planShot(
     };
   }
 
-  const selected = generalStrategy(shot, inventory, confirmedFactRefs);
+  const selected = generalStrategy(shot, inventory, confirmedFactRefs, creationMode);
   const hasUsableInput = selected.refs.length > 0 || confirmedFactRefs.length > 0;
   const feasibility = !hasUsableInput
     ? 'blocked_for_facts_or_rights'
@@ -316,6 +330,22 @@ function planShot(
         ? '已有确认事实，可通过授权能力或非证据型画面保持镜头功能'
         : '尚未确认最基本的产品事实，不能安全生成对外内容',
     customerShootRequired: false,
+    ...(selected.strategy === 'authorized_digital_presenter' ? {
+      digitalHumanPlan: {
+        workflow: creationMode,
+        method: digitalHumanMethod(creationMode, shot.requestedDescription),
+        presenterAssetIds: [...inventory.presenterAssetIds],
+        referenceMaterialIds: creationMode === 'viral_replication' ? [...inventory.referenceVideoIds] : [],
+        referenceRequired: creationMode === 'viral_replication',
+        candidateTools: creationMode !== 'viral_replication' ? ['heygen']
+          : digitalHumanMethod(creationMode, shot.requestedDescription) === 'replace'
+            ? ['local_head_pipeline', 'runway_kling_motion']
+            : ['runway_seedance', 'runway_kling_motion', 'runway_act_two'],
+        executionState: inventory.presenterAssetIds.length
+          ? creationMode === 'viral_replication' ? inventory.referenceVideoIds.length ? 'preview_only' as const : 'needs_confirmation' as const : 'ready_for_capability_check' as const
+          : 'needs_presenter' as const,
+      },
+    } : {}),
   };
 }
 
@@ -332,7 +362,7 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
   const requestedShots = input.shots?.length ? input.shots : DEFAULT_SHOTS[input.creationMode];
   const needsFacts = confirmedFactRefs.length === 0;
   const needsRights = input.rightsConfirmationRequired === true;
-  const shots = requestedShots.map(shot => planShot(shot, inventory, confirmedFactRefs));
+  const shots = requestedShots.map(shot => planShot(shot, inventory, confirmedFactRefs, input.creationMode));
   const overallFeasibility = needsRights || shots.some(shot => shot.feasibility === 'blocked_for_facts_or_rights')
     ? 'blocked_for_facts_or_rights'
     : shots.some(shot => shot.feasibility === 'goal_degraded')

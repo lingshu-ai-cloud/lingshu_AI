@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { newShotProduction, patchShot, shotFingerprint, shotBlockers, recommendShot } from './shotProduction.js';
+import { applyDefaultsToUnlockedAvatarShots, newShotProduction, patchShot, presenterAssetFingerprint, presenterCapabilities, shotFingerprint, shotBlockers, recommendShot } from './shotProduction.js';
 import { transcriptMatches } from './shootingWorkflow.js';
 import { automaticAvatarRefreshes, avatarCandidateReady, type AvatarJob } from './shotProduction.js';
 test('review failures stop automatic polling and stale or unverified candidates cannot be adopted', () => {
@@ -58,12 +58,36 @@ test('evidence and real-person preferences never turn into synthetic proof', () 
   assert.equal(recommendShot({ ...input, detail: '产品解释', preference: 'real' }).source, 'shoot');
   assert.equal(recommendShot({ ...input, detail: '产品解释' }).source, 'avatar');
 });
+
+test('tool-specific presenter mappings expose talking, reenactment and replacement capabilities', () => {
+  assert.deepEqual(presenterCapabilities({ id: 'p', name: 'P', avatarId: '', voiceId: '', authorized: true, supportsAlpha: false,
+    toolMappings: { heygen: { avatarId: 'avatar', voiceId: 'voice' }, runway: { referenceMaterialIds: ['portrait'] } } }),
+  ['talking', 'reference_image', 'reference_video', 'person_replacement']);
+});
+
+test('presenter asset fingerprint changes only when generation inputs change', () => {
+  const base = { id: 'p', name: 'Alice', avatarId: 'a', voiceId: 'v', authorized: true, supportsAlpha: false, nativeOrientation: 'portrait' as const, referenceMaterialIds: ['m2', 'm1'] };
+  assert.equal(presenterAssetFingerprint(base), presenterAssetFingerprint({ ...base, name: 'Alice renamed', assetVersion: 9, referenceMaterialIds: ['m1', 'm2'] }));
+  assert.notEqual(presenterAssetFingerprint(base), presenterAssetFingerprint({ ...base, voiceId: 'v2' }));
+  assert.notEqual(presenterAssetFingerprint(base), presenterAssetFingerprint({ ...base, referenceMaterialIds: ['m1'] }));
+});
 test('audio changes invalidate lip-sync only when using the shared voiceover', () => {
   const shared = { ...newShotProduction('hello'), source: 'avatar' as const };
   const a = JSON.stringify({ language: 'en', audioIdentity: '/a.wav' }), b = JSON.stringify({ language: 'en', audioIdentity: '/b.wav' });
   assert.notEqual(shotFingerprint(shared, a), shotFingerprint(shared, b));
   assert.equal(shotFingerprint({ ...shared, sound: 'source' }, a), shotFingerprint({ ...shared, sound: 'source' }, b));
   assert.notEqual(shotFingerprint(shared, JSON.stringify({ audioSegments: [{ id: 'a', duration: 3 }] })), shotFingerprint(shared, JSON.stringify({ audioSegments: [{ id: 'a', duration: 4 }] })));
+});
+test('shared voiceover invalidates only the digital-human shot whose aligned segment changed', () => {
+  const shot = { ...newShotProduction('hello'), source: 'avatar' as const };
+  const before = JSON.stringify({ audioIdentity: '/whole-v1.wav', audioDuration: 8, voiceProfile: { voiceId: 'v1' }, alignment: [{ start: 0, end: 4 }], audioSegments: [{ id: 'shot-a', duration: 4, cues: [{ text: 'hello', start: 0, end: 4 }] }, { id: 'shot-b', duration: 4, cues: [{ text: 'world', start: 0, end: 4 }] }] });
+  const changedA = JSON.stringify({ audioIdentity: '/whole-v2.wav', audioDuration: 9, voiceProfile: { voiceId: 'v1' }, alignment: [{ start: 0, end: 5 }], audioSegments: [{ id: 'shot-a', duration: 5, cues: [{ text: 'hello', start: 0, end: 5 }] }, { id: 'shot-b', duration: 4, cues: [{ text: 'world', start: 0, end: 4 }] }] });
+  assert.notEqual(shotFingerprint(shot, before, 'shot-a'), shotFingerprint(shot, changedA, 'shot-a'));
+  assert.equal(shotFingerprint(shot, before, 'shot-b'), shotFingerprint(shot, changedA, 'shot-b'));
+  assert.notEqual(shotFingerprint(shot, before), shotFingerprint(shot, changedA));
+  const changedVoice = JSON.stringify({ ...JSON.parse(before), voiceProfile: { voiceId: 'v2' } });
+  assert.notEqual(shotFingerprint(shot, before, 'shot-b'), shotFingerprint(shot, changedVoice, 'shot-b'));
+  assert.notEqual(shotFingerprint(shot, before, 'missing-shot'), shotFingerprint(shot, changedA, 'missing-shot'));
 });
 test('recorded speech requires actual matching transcription, not a script hint', () => {
   assert.equal(transcriptMatches(undefined, '产能100台'), false);
@@ -78,4 +102,43 @@ test('shot commands are scoped, explicit and never execute supplier actions', ()
   assert.deepEqual(parseShotCommand('解锁镜头'), { locked: false });
   assert.equal(parseShotCommand('把所有镜头生成并直接发布'), null);
   assert.equal(productionSummary({}), '');
+});
+
+test('new shots inherit enterprise sound and layout defaults without changing historic callers', () => {
+  const inherited = newShotProduction('hello', 'person-1', { defaultSound: 'source', defaultLayout: 'split' });
+  assert.equal(inherited.presenterId, 'person-1');
+  assert.equal(inherited.sound, 'source');
+  assert.equal(inherited.layout, 'split');
+  const legacy = newShotProduction('hello');
+  assert.equal(legacy.sound, 'voiceover');
+  assert.equal(legacy.layout, 'full');
+});
+
+test('whole-video defaults update only unlocked avatar shots in the selected assembly', () => {
+  const editable = {
+    ...newShotProduction('hello', 'old-person'), source: 'avatar' as const,
+    digitalHuman: {
+      workflow: 'material_processing' as const, method: 'talking' as const, contentConfirmed: true,
+      action: '', scene: '', preserve: '',
+    },
+  };
+  const locked = { ...editable, locked: true };
+  const material = { ...newShotProduction('product'), source: 'material' as const };
+  const shots = { 'cut-a:avatar': editable, 'cut-a:locked': locked, 'cut-a:material': material, 'cut-b:avatar': editable };
+  const result = applyDefaultsToUnlockedAvatarShots(shots, 'cut-a', {
+    defaultPresenterId: 'new-person', defaultSound: 'source', defaultLayout: 'split',
+  });
+  assert.equal(result['cut-a:avatar']?.presenterId, 'new-person');
+  assert.equal(result['cut-a:avatar']?.sound, 'source');
+  assert.equal(result['cut-a:avatar']?.layout, 'split');
+  assert.equal(result['cut-a:avatar']?.digitalHuman?.contentConfirmed, false);
+  assert.equal(result['cut-a:avatar']?.revision, editable.revision + 1);
+  assert.strictEqual(result['cut-a:locked'], locked);
+  assert.strictEqual(result['cut-a:material'], material);
+  assert.strictEqual(result['cut-b:avatar'], editable);
+
+  const keepPerson = applyDefaultsToUnlockedAvatarShots({ 'cut-a:avatar': editable }, 'cut-a', {
+    defaultPresenterId: '', defaultSound: 'silent', defaultLayout: 'pip',
+  });
+  assert.equal(keepPerson['cut-a:avatar']?.presenterId, 'old-person');
 });

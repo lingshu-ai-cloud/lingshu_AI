@@ -209,7 +209,7 @@ export function buildPersonExecutionStrategy(input: PersonExecutionStrategyInput
     status: blockers.length ? 'blocked' : assessment.status === 'compatible' ? 'ready' : 'review',
     publicMethodLabel: mode === 'fast' ? '保留原表演，精准替换头部人物特征' : mode === 'expert' ? '保留原表演，更换完整人物' : '按参考镜头功能重新演绎',
     lockedElements: mode === 'creative' ? ['原口播核心信息', '品牌禁用项与授权边界', '目标人物身份'] : ['构图与机位', '人物位置与姿势', '身体动作与手势节奏', '口播与口型时序', '时长、剪辑点与原音轨'],
-    internalProviderRoute: mode === 'fast' ? ['local_head_pipeline'] : mode === 'expert' ? ['runway_kling_motion', 'runway_seedance', 'runway_act_two'] : ['runway_seedance', 'runway_kling_motion', 'runway_act_two'],
+    internalProviderRoute: mode === 'fast' ? ['local_head_pipeline'] : mode === 'expert' ? ['runway_kling_motion'] : ['runway_seedance', 'runway_kling_motion', 'runway_act_two'],
     estimatedCredits,
     maxAttempts: Math.max(1, Math.min(3, Math.floor(Number(input.maxAttempts) || 2))),
     ...(mode === 'fast' ? { fallbackMode: 'expert' as const } : mode === 'expert' ? { fallbackMode: 'creative' as const } : {}),

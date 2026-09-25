@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow.js';
 import { socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
+import { createSocialAssetSupplyPlan } from '../../../shared/socialContentAssetSupply.js';
 
 const task = {
   taskId: 'socialtask_test', version: '1', status: 'attention',
@@ -69,5 +70,20 @@ const presetTopic = socialTaskToStudioSeed({
 });
 assert.equal(presetTopic.contentTheme, 'product_proof');
 assert.equal(presetTopic.themeTopic, '', 'preset topic remains represented by the mapped Studio theme');
+
+const digitalHumanSeed = socialTaskToStudioSeed({
+  ...task,
+  assetSupplyPlan: createSocialAssetSupplyPlan({
+    creationMode: 'viral_replication', planVersion: 'plan-3', confirmedFactRefs: ['fact-product'],
+    inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+    shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '企业人物复刻参考片的开场节奏' }],
+  }),
+});
+assert.deepEqual(digitalHumanSeed.digitalHumanShotPlans, [{
+  shotId: 'scene-hook', shotIndex: 0, requestedDescription: '企业人物复刻参考片的开场节奏',
+  workflow: 'viral_replication', method: 'replace', presenterAssetIds: ['presenter-enterprise-1'], referenceMaterialIds: ['reference-video-1'],
+  referenceRequired: true, candidateTools: ['local_head_pipeline', 'runway_kling_motion'],
+  executionState: 'preview_only', sourceTaskId: task.taskId, sourceTaskVersion: task.version,
+}]);
 
 console.log('studio social task hydration tests passed');

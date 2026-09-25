@@ -14,7 +14,7 @@ import { assessBant, selectProgressionGoal, type BantAssessment, type Progressio
 import { automationFailureHandoff, evaluateHandoff, notifyCustomerHandoff, shouldRestrictToPublicInfo } from '../sales/handoff.js';
 import { advanceSpinStage, selectSpinGuidance, type SpinState, type SpinGuidance } from '../sales/spin.js';
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
-import { r2Upload } from '../storage/r2.js';
+import { objectStorageUpload } from '../storage/objectStorage.js';
 import { store } from '../storage/index.js';
 import { sendTenantWhatsAppTextWithReceipts } from './send.js';
 import { deliverAutoReply } from './autoReplyDelivery.js';
@@ -301,7 +301,7 @@ async function syncBackupsToR2(now = new Date()): Promise<void> {
     const files = listFilesRecursive(backupDir);
     for (const file of files) {
       const relative = path.relative(BACKUP_ROOT, file).split(path.sep).join('/');
-      await r2Upload({
+      await objectStorageUpload({
         key: `${prefix}/${relative}`,
         body: fs.readFileSync(file),
         contentType: 'application/json',
