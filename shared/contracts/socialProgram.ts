@@ -49,6 +49,7 @@ export interface SocialProgram {
   activeMonthlyPlanRef: VersionedSocialRef | null;
   activeWeeklyPlanRef: VersionedSocialRef | null;
   activeWeeklyOperatingPackageRef: VersionedSocialRef | null;
+  activeBusinessContentGoalRef?: VersionedSocialRef | null;
   version: number;
   status: 'active' | 'archived';
   createdAt: string;
@@ -127,6 +128,7 @@ export interface WeeklyOperatingPackage {
   weekEnd: string;
   objective: string;
   enterpriseProfileRef: VersionedSocialRef | null;
+  businessContentGoalRef?: VersionedSocialRef | null;
   monthlyPlanRef: VersionedSocialRef | null;
   workflows: WeeklyOperatingWorkflow[];
   socialContentPackage: SocialWeeklyContentPackage;
