@@ -961,7 +961,7 @@ export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): 
       executionOwner: 'content_agent',
       metricEvidenceProvider: 'metrics_worker',
       mediaEvidenceProvider: 'media_evaluation_worker',
-      finalGateOrder: ['content_agent', 'media_evaluation_worker', 'director_agent', 'user'],
+      finalGateOrder: ['content_agent', 'media_evaluation_worker', 'director_agent', 'business_agent', 'rules_engine'],
       selfApprovalForbidden: true,
     },
     directorBrief,
