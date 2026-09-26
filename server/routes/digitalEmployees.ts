@@ -9,7 +9,7 @@ import type { ReviewTodoBoard } from '../../src/lib/reviewTodos.js';
 import { nextTaskFailure, taskRetryDue, type TaskFailure } from '../digitalEmployees/taskRetry.js';
 import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState } from '../digitalEmployees/executionDiagnostics.js';
 import { listTenantEmployees } from './auth.js';
-import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers } from '../digitalEmployees/weeklyPackage.js';
+import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
@@ -332,19 +332,6 @@ function executionConfigForPlan(plan: PlanRecord | null, fallback: DigitalEmploy
   return body.businessPackage ? packageConfig(body.businessPackage as WeeklyPackage, config) : config;
 }
 
-function criticalBusinessConfigChanges(before: DigitalEmployeeConfig, after: DigitalEmployeeConfig): string[] {
-  const stable = (values: string[]) => JSON.stringify([...new Set(values)].sort());
-  const changed: string[] = [];
-  if (before.focusProducts !== after.focusProducts) changed.push('products');
-  if (before.targetMarkets !== after.targetMarkets) changed.push('markets');
-  if (before.customerProfile !== after.customerProfile) changed.push('audience');
-  if (stable(before.videoLanguages) !== stable(after.videoLanguages)) changed.push('languages');
-  if (stable(before.publishingTargets.map(item => item.platform)) !== stable(after.publishingTargets.map(item => item.platform))) changed.push('platforms');
-  if (stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}`))) changed.push('accounts');
-  if (before.allowRealPublishing !== after.allowRealPublishing) changed.push('realPublishingPermission');
-  return changed;
-}
-
 function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; status: string; version: number; createdAt: string; updatedAt: string } {
   return {
     id: record.id,
@@ -617,7 +604,7 @@ async function appendAuthorizationRequiredEvent(input: {
     ...input,
     type: 'authorization_required',
     level: 'warning',
-    summary: '本周发布授权范围已变更，受影响的自动发布已暂停，请查看差异并重新授权。',
+    summary: '本周预算、产品、市场或发布授权范围已变更，受影响的自动发布已暂停，请查看差异并重新授权。',
     payload: {
       eventType: input.reason === 'critical_business_change' ? 'critical_business_change' : 'weekly_package_adjusted',
       reason: input.reason,
@@ -2231,7 +2218,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
       runId: run.id,
       type: 'critical_business_change',
       level: 'warning',
-      summary: '产品、市场、平台账号或真实发布许可已变更；运行中周包仍使用原授权快照，请查看影响并决定是否重新规划。',
+      summary: '产品、市场、平台账号或真实发布许可已变更；运行中周包（含原预算边界）仍使用原授权快照，请查看影响并决定是否重新规划。',
       payload: { eventType: 'critical_business_change', changedFields, action: 'review_weekly_package' },
     });
   }

@@ -1,7 +1,7 @@
 import { assessMaturity, normalizeAssessment, assessmentQuestions, type OperatingAssessment } from '../../src/lib/operatingMaturity.js';
 import { planConfigForDisplay, type DigitalEmployeeConfig as ClientConfig } from '../../src/lib/digitalEmployees.js';
 import assert from 'node:assert/strict';
-import { recommendPackage, compilePackage, normalizePackage, validatePackage, grantCovers, packageConfig } from './weeklyPackage.js';
+import { recommendPackage, compilePackage, normalizePackage, validatePackage, grantCovers, packageConfig, criticalBusinessConfigChanges } from './weeklyPackage.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
@@ -16,6 +16,12 @@ const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({
   ],
 }));
 assert.equal(twoAccounts.authorization.maxPublishItems, 2, 'the default bound covers actual account publish assignments');
+assert.deepEqual(criticalBusinessConfigChanges(config, config), []);
+assert.deepEqual(criticalBusinessConfigChanges(config, {
+  ...config,
+  focusProducts: 'B', targetMarkets: 'EU', customerProfile: 'distributors', videoLanguages: ['ar'],
+  publishingTargets: [{ platform: 'facebook', accountId: 'account-b', accountLabel: 'B' }], allowRealPublishing: true,
+}), ['products', 'markets', 'audience', 'languages', 'platforms', 'accounts', 'realPublishingPermission']);
 assert.deepEqual(pack.tasks.map(t => t.templateId), ['readiness', 'director', 'production', 'publishing', 'customers', 'followup', 'review']);
 assert.ok(pack.directorPlan, 'recommended packages include a director plan');
 assert.equal(pack.directorPlan?.originalTarget, 1);

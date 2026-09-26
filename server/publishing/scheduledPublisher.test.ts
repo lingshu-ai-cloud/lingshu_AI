@@ -49,6 +49,10 @@ assert.equal(isScheduledPostDue(post('scheduled', {}, {
   workflowRunId: 'run-1', realPublishingAuthorized: true, authorizationMode: 'bounded',
   targetAccountIds: ['account-1'], boundedAuthorization: { ...boundedAuthorization, maxPublishItems: 2 },
 }), now), false, 'a modified authorization snapshot must fail closed');
+assert.equal(isScheduledPostDue(post('scheduled', {}, {
+  workflowRunId: 'run-1', realPublishingAuthorized: true, authorizationMode: 'bounded',
+  targetAccountIds: ['account-1'], boundedAuthorization: { schemaVersion: 1, accountBindings: null },
+}), now), false, 'a malformed stored authorization must fail closed without crashing the worker');
 assert.equal(
   isScheduledPostDue(post('scheduled', {}, { workflowRunId: 'run-1', realPublishingAuthorized: true }), now),
   true,

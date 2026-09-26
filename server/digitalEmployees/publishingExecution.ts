@@ -91,9 +91,28 @@ export function boundedAuthorizationIssue(snapshot: BoundedPublishingAuthorizati
   scheduledAt: string;
 }): string {
   if (!snapshot) return 'bounded_authorization_missing';
+  const raw = snapshot as unknown as Record<string, unknown>;
+  const boundary = record(raw.businessBoundary);
+  const bindings = raw.accountBindings;
+  const languages = boundary.languages;
+  const platforms = boundary.platforms;
+  if (!Array.isArray(bindings) || !bindings.every(binding => {
+    const item = record(binding);
+    return Boolean(text(item.accountId) && text(item.platform));
+  }) || !Array.isArray(languages) || !languages.every(language => typeof language === 'string')
+    || !Array.isArray(platforms) || !platforms.every(platform => typeof platform === 'string')
+    || typeof raw.snapshotHash !== 'string' || !Number.isInteger(raw.packageRevision)
+    || !Number.isInteger(raw.maxPublishItems)
+    || !Number.isFinite(Number(boundary.productionBudget)) || !Number.isFinite(Number(boundary.paidMediaBudget))) {
+    return 'bounded_authorization_malformed';
+  }
   if (snapshot.schemaVersion !== 1) return 'bounded_authorization_version_unsupported';
   const { snapshotHash, schemaVersion: _schemaVersion, ...value } = snapshot;
-  if (buildBoundedPublishingAuthorization(value).snapshotHash !== snapshotHash) return 'bounded_authorization_tampered';
+  try {
+    if (buildBoundedPublishingAuthorization(value).snapshotHash !== snapshotHash) return 'bounded_authorization_tampered';
+  } catch {
+    return 'bounded_authorization_malformed';
+  }
   if (!snapshot.authorizedBy || !snapshot.authorizedAt) return 'bounded_authorization_actor_missing';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(snapshot.endsAt)
     || snapshot.startsAt > snapshot.endsAt || !Number.isFinite(Date.parse(snapshot.authorizedAt))) return 'bounded_authorization_period_invalid';

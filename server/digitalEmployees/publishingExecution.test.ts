@@ -32,6 +32,8 @@ assert.ok(bounded.authorizationSnapshot, 'bounded weekly approval must freeze it
 assert.equal(boundedAuthorizationIssue(bounded.authorizationSnapshot, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), '');
 assert.equal(boundedAuthorizationIssue(bounded.authorizationSnapshot, { accountId: 'outside', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_account_mismatch');
 assert.equal(boundedAuthorizationIssue({ ...bounded.authorizationSnapshot!, schemaVersion: 2 as 1 }, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_version_unsupported');
+assert.equal(boundedAuthorizationIssue({ ...bounded.authorizationSnapshot!, businessBoundary: null } as any, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_malformed');
+assert.equal(boundedAuthorizationIssue({ ...bounded.authorizationSnapshot!, accountBindings: 'account-1' } as any, { accountId: 'account-1', platform: 'facebook', scheduledAt: bounded.items[0]!.scheduledAt }), 'bounded_authorization_malformed');
 assert.throws(() => buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, boundedAuthorization: { ...boundedInput, accountBindings: [] } }), /bounded_authorization_account_mismatch/);
 assert.throws(() => buildPublishingApprovalPackage({
   ...base,

@@ -95,6 +95,19 @@ export function packageTaskForKey(pack: WeeklyPackage | undefined, key: string):
   return pack?.tasks.find(t => t.templateId === template?.id);
 }
 
+export function criticalBusinessConfigChanges(before: DigitalEmployeeConfig, after: DigitalEmployeeConfig): string[] {
+  const stable = (values: string[]) => JSON.stringify([...new Set(values)].sort());
+  const changed: string[] = [];
+  if (before.focusProducts !== after.focusProducts) changed.push('products');
+  if (before.targetMarkets !== after.targetMarkets) changed.push('markets');
+  if (before.customerProfile !== after.customerProfile) changed.push('audience');
+  if (stable(before.videoLanguages) !== stable(after.videoLanguages)) changed.push('languages');
+  if (stable(before.publishingTargets.map(item => item.platform)) !== stable(after.publishingTargets.map(item => item.platform))) changed.push('platforms');
+  if (stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}`))) changed.push('accounts');
+  if (before.allowRealPublishing !== after.allowRealPublishing) changed.push('realPublishingPermission');
+  return changed;
+}
+
 // A package grant authorizes only the frozen scope. A later content edit is
 // separately detected by the existing content hash and quality preflight.
 export function grantCovers(pack: WeeklyPackage, effect: 'publish' | 'send', ids: string[], count: number, now: string, endsAt: string): boolean {
