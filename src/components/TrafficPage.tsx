@@ -27,8 +27,10 @@ import {
   createPublishItem,
   createPublishItems,
   dateTimeLocalValue,
+  directPublishOutcome,
   mergePublishItems,
   nextScheduleValue,
+  pendingDirectPublishAccountIds,
   publishItemId,
   publishSourceRequestFields,
   publishStorageKey,
@@ -185,7 +187,7 @@ const TRAFFIC_MODE_ORDER: ViewMode[] = ['materials', 'create', 'publish', 'accou
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers ?? {}) } });
   const data = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
-  if (!response.ok) throw new Error(data.message || data.error || '请求失败');
+  if (!response.ok) throw Object.assign(new Error(data.message || data.error || '请求失败'), { statusCode: response.status });
   return data;
 }
 
@@ -1162,7 +1164,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       let itemSuccesses = 0;
       let itemProcessing = 0;
       const deliveryResults = { ...item.deliveryResults };
-      for (const account of targets) {
+      const pendingAccountIds = new Set(pendingDirectPublishAccountIds(item, targets.map(account => account.id)));
+      for (const account of targets.filter(account => pendingAccountIds.has(account.id))) {
         const meta = PLATFORM_META[account.platform];
         const copy = item.platformCopy[account.platform];
         try {
@@ -1213,24 +1216,25 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
           }
         } catch (e) {
           failedTargets += 1;
-          itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}`);
+          const statusCode = Number((e as { statusCode?: unknown } | null)?.statusCode);
+          const ambiguous = !statusCode || statusCode === 409 || statusCode >= 500;
+          if (ambiguous) deliveryResults[account.id] = { platform: account.platform, deliveryStatus: 'unknown' };
+          itemFailures.push(`${meta.label} · ${account.title}: ${e instanceof Error ? e.message : '发布失败'}${ambiguous ? '；结果不明，请先核对平台回执，禁止直接重发' : ''}`);
         }
         updateItem(item.id, {
           completedTargets: itemSuccesses + itemProcessing + itemFailures.length,
           deliveryResults,
         });
       }
+      const outcome = directPublishOutcome(targets.map(account => account.id), deliveryResults, itemFailures.length);
+      const hasUnknown = targets.some(account => deliveryResults[account.id]?.deliveryStatus === 'unknown');
       updateItem(item.id, {
-        status: itemProcessing
-          ? (itemFailures.length ? 'partial' : 'provider_processing')
-          : itemFailures.length
-            ? (itemSuccesses ? 'partial' : 'failed')
-            : 'published',
+        status: outcome.status,
         completedTargets: targets.length,
         deliveryResults,
-        error: itemFailures.length ? itemFailures.join('；') : undefined,
+        error: itemFailures.length ? itemFailures.join('；') : hasUnknown ? '存在结果不明的发布尝试，请先核对平台回执，禁止直接重发。' : undefined,
       });
-      if (!itemFailures.length && !itemProcessing && itemSuccesses > 0 && item.calendarPostIds?.length) {
+      if (outcome.allPublished && item.calendarPostIds?.length) {
         await Promise.all(item.calendarPostIds.map(postId =>
           fetch(`/api/overseas/publishing/calendar/${postId}`, {
             method: 'DELETE',

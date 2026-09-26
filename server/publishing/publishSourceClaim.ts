@@ -91,6 +91,15 @@ export function localPublishingVideo(tenantId: string, videoPath: unknown): stri
   const uploadDir = publishingUploadDir(tenantId);
   if (!resolved || !resolved.startsWith(`${uploadDir}${path.sep}`)) return null;
   if (!PUBLISH_VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return null;
+  // A lexical prefix alone does not protect the tenant boundary when an
+  // uploaded path (or a parent directory) is a symlink.
+  try {
+    const realUploadDir = fs.realpathSync(uploadDir);
+    const realVideoPath = fs.realpathSync(resolved);
+    if (!realVideoPath.startsWith(`${realUploadDir}${path.sep}`)) return null;
+  } catch {
+    return null;
+  }
   return resolved;
 }
 

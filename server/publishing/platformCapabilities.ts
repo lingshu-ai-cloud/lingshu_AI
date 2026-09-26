@@ -223,7 +223,12 @@ export async function refreshPlatformCapabilityEvidence(input: {
     return persistProbeEvidence({ ...input, status: 'verified', providerRef, now, dataStore });
   } catch (error) {
     const reason = text(error instanceof Error ? error.message : error) || 'provider_probe_failed';
-    return persistProbeEvidence({ ...input, status: 'unavailable', reasonCode: reason.slice(0, 120), providerRef: 'probe-failed', now, dataStore });
+    // Keep a failed receipt probe tied to the requested receipt. Otherwise a
+    // provider outage retries on every poll because the generic failure ref
+    // never matches the requested receipt in ensurePlatformCapability.
+    const providerRef = input.capability === 'publishing.receipt_lookup' && text(input.receiptId)
+      ? `receipt:${text(input.receiptId)}` : 'probe-failed';
+    return persistProbeEvidence({ ...input, status: 'unavailable', reasonCode: reason.slice(0, 120), providerRef, now, dataStore });
   }
 }
 
@@ -244,17 +249,35 @@ export async function ensurePlatformCapability(input: {
 }): Promise<PlatformCapabilityDecision> {
   const dataStore = input.dataStore ?? store;
   const now = input.now ?? new Date();
-  const decision = await platformCapabilityDecision({ ...input, now, dataStore });
   const requestedReceiptRef = input.capability === 'publishing.receipt_lookup' && text(input.receiptId)
     ? `provider:${input.platform}:receipt:${text(input.receiptId)}` : '';
-  if (decision.status === 'available' && (!requestedReceiptRef || decision.evidenceRef === requestedReceiptRef)) return decision;
+  // Receipt lookup is specific to one provider receipt. A successful probe
+  // for another receipt cannot authorize it, nor can a newer failed probe for
+  // another receipt hide its own cached result.
+  const decision = requestedReceiptRef
+    ? await (async (): Promise<PlatformCapabilityDecision> => {
+      const rows = await dataStore.list<PlatformCapabilityEvidence>(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION, {
+        where: { tenant_id: text(input.tenantId), account_id: text(input.accountId), platform: input.platform,
+          capability: input.capability, evidence_ref: requestedReceiptRef },
+        sort: '-verified_at', page: 1, perPage: 2,
+      }).catch(() => ({ items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 2 }));
+      const evidence = rows.items[0];
+      if (rows.items[1]?.verified_at === evidence?.verified_at) return { platform: input.platform, accountId: input.accountId, capability: input.capability, status: 'unavailable', reason: 'capability_evidence_ambiguous' };
+      if (!evidence) return { platform: input.platform, accountId: input.accountId, capability: input.capability, status: 'unavailable', reason: 'provider_capability_not_verified' };
+      return { platform: input.platform, accountId: input.accountId, capability: input.capability,
+        status: platformCapabilityEvidenceIsCurrent(evidence, now) ? 'available' : 'unavailable',
+        reason: platformCapabilityEvidenceIsCurrent(evidence, now) ? 'provider_capability_verified' : evidence.reason_code || 'provider_capability_expired_or_unavailable',
+        verifiedAt: evidence.verified_at, evidenceRef: evidence.evidence_ref };
+    })()
+    : await platformCapabilityDecision({ ...input, now, dataStore });
+  if (decision.status === 'available') return decision;
   const latest = await dataStore.list<PlatformCapabilityEvidence>(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION, {
-    where: { tenant_id: text(input.tenantId), account_id: text(input.accountId), platform: input.platform, capability: input.capability },
+    where: { tenant_id: text(input.tenantId), account_id: text(input.accountId), platform: input.platform,
+      capability: input.capability, ...(requestedReceiptRef ? { evidence_ref: requestedReceiptRef } : {}) },
     sort: '-verified_at', page: 1, perPage: 1,
   }).catch(() => ({ items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 1 }));
   const retryAfter = Date.parse(text(latest.items[0]?.expires_at));
-  const latestMatchesRequest = !requestedReceiptRef || latest.items[0]?.evidence_ref === requestedReceiptRef;
-  if (latestMatchesRequest && latest.items[0]?.status !== 'verified' && Number.isFinite(retryAfter) && retryAfter > now.getTime()) return decision;
+  if (latest.items[0]?.status !== 'verified' && Number.isFinite(retryAfter) && retryAfter > now.getTime()) return decision;
   const refreshed = await refreshPlatformCapabilityEvidence({ ...input, now, dataStore });
   if (platformCapabilityEvidenceIsCurrent(refreshed, now)
     && (!requestedReceiptRef || refreshed.evidence_ref === requestedReceiptRef)) {

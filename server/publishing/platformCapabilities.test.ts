@@ -157,3 +157,46 @@ test('TikTok first publish needs only creator capability; each receipt is probed
   assert.equal((await ensurePlatformCapability({ tenantId: 'tenant-a', accountId: 'tt-a', platform: 'tiktok', capability: 'publishing.receipt_lookup', receiptId: 'pub-second', now, dataStore, providers: probe })).status, 'available');
   assert.deepEqual(calls, ['tiktok', 'receipt', 'receipt']);
 });
+
+test('failed TikTok receipt probe is throttled per receipt without blocking another receipt', async () => {
+  const dataStore = new MemoryStore();
+  dataStore.rows.set('social_accounts', [{
+    id: 'tt-a', tenantId: 'tenant-a', platform: 'tiktok', status: 'connected', providerAccountId: 'open-a',
+    accessToken: sealAccountCredential('access'), refreshToken: '', scope: 'video.publish',
+  }]);
+  const calls: string[] = [];
+  const failed = providers(calls);
+  failed.tiktokReceipt = async (_token, receipt) => {
+    calls.push(receipt);
+    throw new Error('provider_unavailable');
+  };
+  const input = { tenantId: 'tenant-a', accountId: 'tt-a', platform: 'tiktok' as const,
+    capability: 'publishing.receipt_lookup' as const, now, dataStore, providers: failed };
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-a' })).status, 'unavailable');
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-a' })).status, 'unavailable');
+  assert.deepEqual(calls, ['receipt-a']);
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-b' })).status, 'unavailable');
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-b' })).status, 'unavailable');
+  assert.deepEqual(calls, ['receipt-a', 'receipt-b']);
+});
+
+test('a newer receipt failure does not hide a previous receipt success', async () => {
+  const dataStore = new MemoryStore();
+  dataStore.rows.set('social_accounts', [{
+    id: 'tt-a', tenantId: 'tenant-a', platform: 'tiktok', status: 'connected', providerAccountId: 'open-a',
+    accessToken: sealAccountCredential('access'), refreshToken: '', scope: 'video.publish',
+  }]);
+  const calls: string[] = [];
+  const provider = providers(calls);
+  provider.tiktokReceipt = async (_token, receipt) => {
+    calls.push(receipt);
+    if (receipt === 'receipt-b') throw new Error('provider_unavailable');
+    return { publishId: receipt };
+  };
+  const input = { tenantId: 'tenant-a', accountId: 'tt-a', platform: 'tiktok' as const,
+    capability: 'publishing.receipt_lookup' as const, now, dataStore, providers: provider };
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-a' })).status, 'available');
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-b' })).status, 'unavailable');
+  assert.equal((await ensurePlatformCapability({ ...input, receiptId: 'receipt-a' })).status, 'available');
+  assert.deepEqual(calls, ['receipt-a', 'receipt-b']);
+});

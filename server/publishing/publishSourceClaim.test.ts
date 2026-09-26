@@ -55,6 +55,13 @@ try {
   );
   const manualClaim = await freezePublishSourceClaim(tenantId, { sourceKind: 'manual_upload', videoPath: manualVideo });
   assert.equal(manualClaim.sourceKind, 'manual_upload');
+  const escapedManualVideo = path.join(uploadDir, 'manual-escaped.mp4');
+  fs.symlinkSync(sourceVideo, escapedManualVideo);
+  await assert.rejects(
+    freezePublishSourceClaim(tenantId, { sourceKind: 'manual_upload', videoPath: escapedManualVideo }),
+    error => error instanceof PublishSourceVerificationError && error.code === 'manual_upload_source_uncontrolled',
+    'a manual upload symlink must not read a file outside the tenant upload directory',
+  );
   fs.appendFileSync(manualVideo, Buffer.from([1]));
   await assert.rejects(
     verifyFrozenPublishSourceClaim(tenantId, manualClaim),

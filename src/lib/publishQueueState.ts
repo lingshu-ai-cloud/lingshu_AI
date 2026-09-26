@@ -61,7 +61,7 @@ export type DirectPublishResponse = {
 
 export type PublishTargetDeliveryResult = {
   platform: PublishPlatform;
-  deliveryStatus: 'published' | 'provider_accepted';
+  deliveryStatus: 'published' | 'provider_accepted' | 'unknown';
   providerReceiptId?: string;
   platformPostId?: string;
   platformUrl?: string;
@@ -126,6 +126,30 @@ export type PublishQueueItem = StudioGenerationFields & {
   copyAudit?: CopyAuditRecord;
   error?: string;
 };
+
+/** A partial retry must not submit accounts already accepted by a provider. */
+export function pendingDirectPublishAccountIds(item: PublishQueueItem, connectedAccountIds: readonly string[]): string[] {
+  return connectedAccountIds.filter(accountId =>
+    item.targetAccountIds.includes(accountId) && !item.deliveryResults[accountId],
+  );
+}
+
+export function directPublishOutcome(
+  targetAccountIds: readonly string[],
+  deliveryResults: Readonly<Record<string, PublishTargetDeliveryResult>>,
+  failedCount: number,
+): { status: 'published' | 'provider_processing' | 'partial' | 'failed'; allPublished: boolean } {
+  const deliveries = targetAccountIds.map(id => deliveryResults[id]).filter(Boolean);
+  const allPublished = targetAccountIds.length > 0
+    && deliveries.length === targetAccountIds.length
+    && deliveries.every(delivery => delivery.deliveryStatus === 'published');
+  if (allPublished && failedCount === 0) return { status: 'published', allPublished };
+  if (deliveries.length === targetAccountIds.length && failedCount === 0
+    && deliveries.every(delivery => delivery.deliveryStatus !== 'unknown')) {
+    return { status: 'provider_processing', allPublished: false };
+  }
+  return { status: deliveries.length ? 'partial' : 'failed', allPublished: false };
+}
 export function publishItemId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -227,6 +251,10 @@ function normalizeStoredDeliveryResults(value: unknown): Record<string, PublishT
     }
     if (deliveryStatus === 'published' && platformPostId) {
       normalized[accountId] = { platform, deliveryStatus, platformPostId, ...(providerReceiptId ? { providerReceiptId } : {}), ...(platformUrl ? { platformUrl } : {}) };
+      continue;
+    }
+    if (deliveryStatus === 'unknown') {
+      normalized[accountId] = { platform, deliveryStatus, ...(providerReceiptId ? { providerReceiptId } : {}) };
     }
   }
   return normalized;
