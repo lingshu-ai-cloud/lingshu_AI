@@ -70,7 +70,7 @@ assert.equal(dataStore.rows.get('social_publication_attempts')?.[0]?.status, 'pu
 
 process.env.GOOGLE_CLIENT_ID = 'configured-is-not-proof';
 assert.equal(realPublishingCapabilities().find(item => item.platform === 'youtube')?.status, 'unavailable');
-assert.equal(realPublishingCapabilities([{ id: 'e1', tenant_id: 'tenant-a', account_id: 'account-1', platform: 'youtube', capability: 'publishing.official', status: 'verified', evidence_source: 'provider_probe', evidence_ref: 'probe-1', verified_at: '2026-09-25T00:00:00Z', created_at: '2026-09-25T00:00:00Z', updated_at: '2026-09-25T00:00:00Z' }], new Date('2026-09-26T00:00:00Z')).find(item => item.platform === 'youtube')?.status, 'available');
+assert.equal(realPublishingCapabilities([{ id: 'e1', tenant_id: 'tenant-a', account_id: 'account-1', platform: 'youtube', capability: 'publishing.official', status: 'verified', evidence_source: 'provider_probe', evidence_ref: 'provider:youtube:account:account-1', verified_at: '2026-09-25T23:50:00Z', expires_at: '2026-09-26T00:05:00Z', created_at: '2026-09-25T23:50:00Z', updated_at: '2026-09-25T23:50:00Z' }], new Date('2026-09-26T00:00:00Z')).find(item => item.platform === 'youtube')?.status, 'available');
 delete process.env.GOOGLE_CLIENT_ID;
 
 const workerStore = memoryStore();

@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { socialAccessToken } from '../lib/accountCredentials.js';
-import { platformCapabilityDecision } from './platformCapabilities.js';
+import { ensurePlatformCapability } from './platformCapabilities.js';
 import { publishVideoToAccount, resolvePendingPublishToAccount, type PublishToAccountInput, type PublishToAccountResult, type PendingPublishResolution } from './platformPublisher.js';
 import { socialProductionPublishSourceClaim } from './publishSourceClaim.js';
 import { materializeSocialProductionVideo } from './socialProductionMedia.js';
@@ -29,8 +29,10 @@ function localVideoPath(downloadUrl: string): string {
 
 /**
  * Account-scoped official TikTok adapter. Availability means the connected
- * account, decryptable credential, publish permission probe, and receipt
- * lookup probe all exist. Configuration alone never opens the gate.
+ * account, decryptable credential, and publish permission probe exist.
+ * Receipt lookup is probed later with the real receipt returned by first
+ * submission, avoiding a circular prerequisite. Configuration alone never
+ * opens the gate.
  */
 export async function createTikTokWeeklyPublishingAdapter(input: {
   tenantId: string;
@@ -48,12 +50,10 @@ export async function createTikTokWeeklyPublishingAdapter(input: {
     try { socialAccessToken(account as unknown as Record<string, unknown>); }
     catch { unavailableReason = 'tiktok_credential_unavailable'; }
   }
-  const [publishDecision, lookupDecision] = await Promise.all([
-    platformCapabilityDecision({ tenantId: input.tenantId, accountId: input.accountId, platform: 'tiktok', capability: 'publishing.official', now: input.now, dataStore }),
-    platformCapabilityDecision({ tenantId: input.tenantId, accountId: input.accountId, platform: 'tiktok', capability: 'publishing.receipt_lookup', now: input.now, dataStore }),
-  ]);
-  if (!unavailableReason && publishDecision.status !== 'available') unavailableReason = publishDecision.reason;
-  if (!unavailableReason && lookupDecision.status !== 'available') unavailableReason = lookupDecision.reason;
+  if (!unavailableReason) {
+    const publishDecision = await ensurePlatformCapability({ tenantId: input.tenantId, accountId: input.accountId, platform: 'tiktok', capability: 'publishing.official', now: input.now, dataStore });
+    if (publishDecision.status !== 'available') unavailableReason = publishDecision.reason;
+  }
   const ports = input.ports ?? { publish: publishVideoToAccount, reconcile: resolvePendingPublishToAccount };
 
   return {
@@ -94,6 +94,12 @@ export async function createTikTokWeeklyPublishingAdapter(input: {
     },
     async reconcile({ assignment, attempt }) {
       if (!attempt.provider_receipt_id) return { status: 'unknown', failureCode: 'provider_receipt_missing' };
+      const lookupDecision = await ensurePlatformCapability({
+        tenantId: assignment.tenantId, accountId: assignment.accountId, platform: 'tiktok',
+        capability: 'publishing.receipt_lookup', receiptId: attempt.provider_receipt_id, dataStore,
+        now: input.now,
+      });
+      if (lookupDecision.status !== 'available') return { status: 'unknown', providerReceiptId: attempt.provider_receipt_id, failureCode: lookupDecision.reason };
       const result = await ports.reconcile({ tenantId: assignment.tenantId, accountId: assignment.accountId, platform: 'tiktok', providerReceiptId: attempt.provider_receipt_id });
       if (result.status === 'published' && result.platformPostId) return { status: 'published', providerReceiptId: result.providerReceiptId, platformPostId: result.platformPostId, platformUrl: result.platformUrl };
       if (result.status === 'failed') return { status: 'failed', providerReceiptId: result.providerReceiptId, failureCode: result.error || result.providerStatus || 'provider_rejected' };

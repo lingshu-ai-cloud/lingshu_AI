@@ -92,9 +92,36 @@ process.env.PLATFORM_TOKEN_ENCRYPTION_KEY = 'weekly-worker-test-key';
 const permissionStore = memoryStore();
 await seed(permissionStore, { ...weekly, socialContentPackage: { ...weekly.socialContentPackage, publicationTasks: [tasks[0]!], publicationTaskTarget: 1, originalContentTarget: 1, authorization: { ...weekly.socialContentPackage.authorization, accountIds: ['account-1'], maxPublishItems: 1 } } });
 permissionStore.rows.set('social_accounts', [{ id: 'account-1', tenantId: 'tenant-a', platform: 'tiktok', status: 'connected', accessToken: sealAccountCredential('token') }]);
-permissionStore.rows.set('social_platform_capability_evidence', [{ id: 'publish-probe', tenant_id: 'tenant-a', account_id: 'account-1', platform: 'tiktok', capability: 'publishing.official', status: 'verified', evidence_source: 'provider_probe', evidence_ref: 'probe-1', verified_at: '2026-09-25T00:00:00Z', created_at: '2026-09-25T00:00:00Z', updated_at: '2026-09-25T00:00:00Z' }]);
+permissionStore.rows.set('social_platform_capability_evidence', [{ id: 'publish-probe', tenant_id: 'tenant-a', account_id: 'account-1', platform: 'tiktok', capability: 'publishing.official', status: 'verified', evidence_source: 'provider_probe', evidence_ref: 'provider:tiktok:account:account-1', verified_at: '2026-09-25T00:50:00Z', expires_at: '2026-09-25T01:05:00Z', created_at: '2026-09-25T00:50:00Z', updated_at: '2026-09-25T00:50:00Z' }]);
 scan = await runWeeklyPublicationExecutionScan({ dataStore: permissionStore, now: new Date('2026-09-25T01:00:00Z') });
-assert.equal(scan.errors[0]?.code, 'provider_capability_not_verified');
-assert.equal(permissionStore.rows.get(PUBLICATION_ATTEMPTS)?.length ?? 0, 0, 'missing receipt permission must fail before an attempt/effect');
+assert.equal(scan.errors.some(item => item.code === 'provider_capability_not_verified'), false, 'a first TikTok publish must not require a receipt that cannot exist yet');
+assert.equal(permissionStore.rows.get(PUBLICATION_ATTEMPTS)?.length ?? 0, 1, 'the official publish probe opens the durable first-attempt path; receipt lookup is checked only during reconciliation');
+
+// The execution worker routes every first-release platform through the same
+// durable assignment/authorization path instead of silently skipping it.
+for (const platform of ['youtube', 'instagram', 'facebook'] as const) {
+  const platformStore = memoryStore();
+  const platformTask = { ...task(`task-${platform}`, `account-${platform}`), platform };
+  const platformWeekly = {
+    ...weekly,
+    packageId: `weekly-${platform}`,
+    workflowTasks: [{ ...weekly.workflowTasks[0]!, taskId: `workflow-${platform}`, taskRef: { type: 'weekly_workflow_task' as const, id: `workflow-${platform}`, version: 1 } }],
+    socialContentPackage: {
+      ...weekly.socialContentPackage, operatingPackageId: `weekly-${platform}`,
+      publicationTasks: [platformTask], publicationTaskTarget: 1, originalContentTarget: 1,
+      authorization: { ...weekly.socialContentPackage.authorization, accountIds: [`account-${platform}`], maxPublishItems: 1 },
+    },
+  } satisfies WeeklyOperatingPackage;
+  await seed(platformStore, platformWeekly);
+  let platformPublishCalls = 0;
+  const platformAdapter: WeeklyPublishingProviderAdapter = {
+    provider: `${platform}-official-api`, platform, capability: 'available',
+    async publish() { platformPublishCalls += 1; return { status: 'published', providerReceiptId: `${platform}-post-1`, platformPostId: `${platform}-post-1` }; },
+    async reconcile() { return { status: 'unknown' }; },
+  };
+  const platformScan = await runWeeklyPublicationExecutionScan({ dataStore: platformStore, adapterFactory: async () => platformAdapter });
+  assert.equal(platformScan.published, 1, `${platform} assignment must execute through the weekly worker: ${JSON.stringify(platformScan)}`);
+  assert.equal(platformPublishCalls, 1);
+}
 
 console.log('weekly publication execution worker tests passed');

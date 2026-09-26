@@ -2,7 +2,7 @@ import type { WeeklyOperatingPackage } from '../../shared/contracts/socialProgra
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { readStarterPublicationPackage } from './starterPublicationPackage.js';
-import { createTikTokWeeklyPublishingAdapter } from './tiktokWeeklyPublishingAdapter.js';
+import { createWeeklyPublishingAdapter } from './weeklyPublishingAdapter.js';
 import { executeWeeklyPublication, reconcileWeeklyPublication, PUBLICATION_ASSIGNMENTS, PUBLICATION_ATTEMPTS, type DurablePublicationAttempt, type StoredPublicationAssignment, type WeeklyPublishingProviderAdapter } from './weeklyLineage.js';
 
 type WeeklyPackageRow = { id: string; tenant_id: string; package_id: string; version: number; payload: WeeklyOperatingPackage };
@@ -21,12 +21,11 @@ export async function runWeeklyPublicationExecutionScan(input: {
   const result: WeeklyPublicationExecutionResult = { scanned: rows.items.length, published: 0, pending: 0, failed: 0, skipped: 0, errors: [] };
   for (const row of rows.items) {
     try {
-      if (row.platform !== 'tiktok') { result.skipped += 1; continue; }
       const weeklyRows = await dataStore.list<WeeklyPackageRow>('social_weekly_operating_packages', { where: { tenant_id: row.tenant_id, package_id: row.operating_package_id, version: row.operating_package_version }, page: 1, perPage: 2 });
       if (weeklyRows.totalItems !== 1 || !weeklyRows.items[0]) throw new Error('weekly_operating_package_not_found');
       const publicationPackage = await readStarterPublicationPackage(row.tenant_id, row.package_id, dataStore);
       if (!publicationPackage) throw new Error('publication_package_not_found');
-      const adapter = input.adapterFactory ? await input.adapterFactory(row) : await createTikTokWeeklyPublishingAdapter({ tenantId: row.tenant_id, accountId: row.account_id, dataStore, now: input.now });
+      const adapter = input.adapterFactory ? await input.adapterFactory(row) : await createWeeklyPublishingAdapter({ tenantId: row.tenant_id, accountId: row.account_id, platform: row.platform, dataStore, now: input.now });
       if (adapter.capability !== 'available') { result.errors.push({ tenantId: row.tenant_id, assignmentId: row.assignment_id, code: adapter.unavailableReason || 'publishing_provider_unavailable' }); continue; }
       const attempts = await dataStore.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, { where: { tenant_id: row.tenant_id, assignment_id: row.assignment_id }, page: 1, perPage: 2 });
       const existing = attempts.items[0];

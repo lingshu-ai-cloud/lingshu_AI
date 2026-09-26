@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "environment": "pre_release",
+  "capturedAt": "",
+  "evidenceSource": {
+    "collector": "live_pre_release_requests",
+    "pocketBaseRequestId": "",
+    "rawEvidenceSha256": "",
+    "chromeSessionRecordIds": {
+      "tiktok": "",
+      "facebook": "",
+      "instagram": "",
+      "youtube": ""
+    }
+  },
+  "credentials": {
+    "pocketBaseAuthenticated": false,
+    "applicationSessionAuthenticated": false,
+    "platformSessions": {
+      "tiktok": false,
+      "facebook": false,
+      "instagram": false,
+      "youtube": false
+    },
+    "platformApiAuthorized": {
+      "tiktok": false,
+      "facebook": false,
+      "instagram": false,
+      "youtube": false
+    },
+    "publishTargetIds": {
+      "tiktok": "",
+      "facebook": "",
+      "instagram": "",
+      "youtube": ""
+    }
+  },
+  "sourceArtifact": {
+    "tenantId": "",
+    "artifactId": "",
+    "artifactVersion": 0,
+    "contentHash": "",
+    "approvalId": "",
+    "kind": "digital_human"
+  },
+  "approval": {
+    "tenantId": "",
+    "artifactId": "",
+    "artifactVersion": 0,
+    "contentHash": "",
+    "approvalId": "",
+    "status": "approved",
+    "approvedAt": ""
+  },
+  "receipts": [],
+  "isolationProbe": {
+    "foreignTenantId": "",
+    "readDenied": false,
+    "mutationDenied": false,
+    "leakedRecordIds": []
+  },
+  "revocationProbe": {
+    "approvalRevoked": false,
+    "publishRejected": false,
+    "providerNetworkCalls": 0
+  }
+}

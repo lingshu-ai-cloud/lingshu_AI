@@ -8,8 +8,9 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import axios from 'axios';
 import ffmpegStatic from 'ffmpeg-static';
-import { uploadVideoToYouTube, type YouTubeConfig } from '../integrations/youtube.js';
+import { getAccessToken, uploadVideoToYouTube, type YouTubeConfig } from '../integrations/youtube.js';
 import {
   getTikTokPublishStatus,
   publishInstagramReel,
@@ -378,6 +379,60 @@ export async function resolvePendingPublishToAccount(input: {
   platform: PublishPlatform;
   providerReceiptId: string;
 }): Promise<PendingPublishResolution> {
+  const receipt = input.providerReceiptId.trim();
+  if (!receipt) throw publishError('平台发布回执为空', 400);
+  if (input.platform === 'youtube') {
+    const account = await store.getById<YouTubeAccountRecord>('youtube_accounts', input.accountId);
+    if (!account || account.tenantId !== input.tenantId) throw publishError('YouTube account not found', 404);
+    if (account.status !== 'connected') throw publishError('YouTube account is not connected', 400);
+    const token = await getAccessToken(youtubeCredentials(account as unknown as Record<string, unknown>));
+    const response = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+      params: { part: 'id,status,processingDetails', id: receipt },
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const video = response.data?.items?.[0];
+    if (!video?.id) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'NOT_FOUND', error: 'YouTube 未找到该视频，需人工核对' };
+    const uploadStatus = String(video.status?.uploadStatus || '').toLowerCase();
+    if (uploadStatus === 'failed' || uploadStatus === 'rejected' || uploadStatus === 'deleted') {
+      return { status: 'failed', providerReceiptId: receipt, platformPostId: receipt, platformUrl: `https://www.youtube.com/watch?v=${receipt}`, providerStatus: uploadStatus, error: String(video.status?.failureReason || video.status?.rejectionReason || 'YouTube processing failed') };
+    }
+    if (uploadStatus && uploadStatus !== 'processed') {
+      return { status: 'processing', providerReceiptId: receipt, platformPostId: receipt, platformUrl: `https://www.youtube.com/watch?v=${receipt}`, providerStatus: uploadStatus, error: '' };
+    }
+    const privacyStatus = String(video.status?.privacyStatus || '').toLowerCase();
+    if (privacyStatus !== 'public') {
+      return {
+        status: 'processing', providerReceiptId: receipt, platformPostId: receipt,
+        platformUrl: `https://www.youtube.com/watch?v=${receipt}`,
+        providerStatus: `processed:${privacyStatus || 'privacy_unknown'}`,
+        error: `YouTube 视频已处理但尚未公开（${privacyStatus || 'unknown'}）`,
+      };
+    }
+    return { status: 'published', providerReceiptId: receipt, platformPostId: receipt, platformUrl: `https://www.youtube.com/watch?v=${receipt}`, providerStatus: 'processed:public', error: '' };
+  }
+  if (input.platform === 'facebook' || input.platform === 'instagram') {
+    const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
+    if (!account || account.tenantId !== input.tenantId || account.platform !== input.platform) throw publishError('Social account not found', 404);
+    if (account.status !== 'connected') throw publishError('Social account is not connected', 400);
+    const response = await axios.get(`https://graph.facebook.com/${process.env.META_GRAPH_VERSION?.trim() || 'v25.0'}/${encodeURIComponent(receipt)}`, {
+      params: {
+        access_token: socialAccessToken(account as unknown as Record<string, unknown>),
+        fields: input.platform === 'facebook' ? 'id,permalink_url,status' : 'id,permalink,media_type',
+      },
+    });
+    const id = String(response.data?.id || '').trim();
+    if (!id) return { status: 'unknown', providerReceiptId: receipt, platformPostId: '', platformUrl: '', providerStatus: 'NOT_FOUND', error: `${input.platform} 未找到该内容，需人工核对` };
+    if (input.platform === 'facebook') {
+      const videoStatus = String(response.data?.status?.video_status || response.data?.status || '').toLowerCase();
+      if (videoStatus === 'error' || videoStatus === 'failed') return { status: 'failed', providerReceiptId: receipt, platformPostId: id, platformUrl: String(response.data?.permalink_url || ''), providerStatus: videoStatus, error: 'Facebook 视频处理失败' };
+      if (videoStatus && !['ready', 'published', 'complete', 'completed'].includes(videoStatus)) return { status: 'processing', providerReceiptId: receipt, platformPostId: id, platformUrl: String(response.data?.permalink_url || ''), providerStatus: videoStatus, error: '' };
+    }
+    return {
+      status: 'published', providerReceiptId: receipt, platformPostId: id,
+      platformUrl: String(response.data?.permalink_url || response.data?.permalink || ''),
+      providerStatus: 'published', error: '',
+    };
+  }
   if (input.platform !== 'tiktok') {
     return {
       status: 'unknown',

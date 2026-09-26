@@ -20,7 +20,7 @@ function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
       return { items: items.slice((page - 1) * perPage, page * perPage) as T[], totalItems: items.length, totalPages: Math.ceil(items.length / perPage), page, perPage };
     },
     async getById<T>(collection: string, id: string) { return (rows.get(collection) || []).find(row => row.id === id) as T || null; },
-    async create<T>() { return null as T | null; }, async update() { return false; }, async delete() { return false; },
+    async create<T>(collection: string, data: Record<string, unknown>) { const item = { id: `${collection}-${(rows.get(collection)?.length || 0) + 1}`, ...data }; rows.set(collection, [...(rows.get(collection) || []), item]); return item as T; }, async update() { return false; }, async delete() { return false; },
   };
 }
 
@@ -31,7 +31,7 @@ const videoPath = path.join(mediaDir, 'video.mp4');
 fs.writeFileSync(videoPath, Buffer.from('approved-video-fixture'));
 const videoHash = createHash('sha256').update(fs.readFileSync(videoPath)).digest('hex');
 dataStore.rows.set('social_accounts', [{ id: 'account-1', tenantId: 'tenant-a', platform: 'tiktok', status: 'connected', accessToken: sealAccountCredential('token') }]);
-const evidence = (capability: string) => ({ id: capability, tenant_id: 'tenant-a', account_id: 'account-1', platform: 'tiktok', capability, status: 'verified', evidence_source: 'provider_probe', evidence_ref: `probe-${capability}`, verified_at: '2026-09-25T00:00:00Z', created_at: '2026-09-25T00:00:00Z', updated_at: '2026-09-25T00:00:00Z' });
+const evidence = (capability: string) => ({ id: capability, tenant_id: 'tenant-a', account_id: 'account-1', platform: 'tiktok', capability, status: 'verified', evidence_source: 'provider_probe', evidence_ref: capability === 'publishing.receipt_lookup' ? 'provider:tiktok:receipt:receipt-1' : 'provider:tiktok:account:account-1', verified_at: '2026-09-25T23:50:00Z', expires_at: '2026-09-26T00:05:00Z', created_at: '2026-09-25T23:50:00Z', updated_at: '2026-09-25T23:50:00Z' });
 dataStore.rows.set('social_platform_capability_evidence', [evidence('publishing.official'), evidence('publishing.receipt_lookup')]);
 dataStore.rows.set('starter_social_content_artifacts', [{
   id: 'artifact-row', tenant_id: 'tenant-a', artifact_id: 'artifact-1', version: 'v1', status: 'approved',
@@ -66,7 +66,6 @@ artifact.content.productionResult.technicalReview.approved = true;
 
 dataStore.rows.set('social_platform_capability_evidence', [evidence('publishing.official')]);
 const unavailable = await createTikTokWeeklyPublishingAdapter({ tenantId: 'tenant-a', accountId: 'account-1', dataStore, now: new Date('2026-09-26T00:00:00Z'), ports: { async publish() { throw new Error('must not run'); }, async reconcile() { throw new Error('must not run'); } } });
-assert.equal(unavailable.capability, 'unavailable');
-assert.equal(unavailable.unavailableReason, 'provider_capability_not_verified');
+assert.equal(unavailable.capability, 'available', 'first publish requires only the official publish probe');
 console.log('TikTok weekly official publishing adapter tests passed');
 fs.rmSync(mediaDir, { recursive: true, force: true });

@@ -152,6 +152,23 @@ export async function getTikTokUser(accessToken: string): Promise<TikTokUser> {
   };
 }
 
+/** TikTok's side-effect-free Content Posting capability endpoint. */
+export async function probeTikTokPublishingPermission(accessToken: string): Promise<{ granted: boolean }> {
+  const response = await axios.post(`${TIKTOK_API}/v2/post/publish/creator_info/query/`, {}, {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },
+  });
+  return { granted: Boolean(response.data?.data?.creator_username) };
+}
+
+/** Provider-granted permissions, queried from Meta rather than trusted from our account row. */
+export async function getMetaGrantedPermissions(accessToken: string, graphVersion: string): Promise<string[]> {
+  const response = await axios.get(`${META_GRAPH}/${graphVersion}/me/permissions`, { params: { access_token: accessToken } });
+  return (response.data?.data || [])
+    .filter((item: any) => item?.status === 'granted')
+    .map((item: any) => String(item.permission || ''))
+    .filter(Boolean);
+}
+
 export async function getTikTokVideos(accessToken: string, maxResults = 20) {
   const fields = [
     'id',

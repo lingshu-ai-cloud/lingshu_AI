@@ -5,7 +5,7 @@ import type { PublishableProductionResult } from '../digitalEmployees/publishing
 import { buildStarterPublicationPackage, createStarterPublicationPackage, type StarterPublicationPackage } from './starterPublicationPackage.js';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
-import type { PlatformCapabilityEvidence } from './platformCapabilities.js';
+import { platformCapabilityEvidenceIsCurrent, type PlatformCapabilityEvidence } from './platformCapabilities.js';
 
 export type PublishingCapability = { platform: 'tiktok' | 'facebook' | 'instagram' | 'youtube'; status: 'available' | 'unavailable'; reason?: string; accountIds?: string[]; verifiedAt?: string };
 export type SimulatedReceiptOutcome = 'success' | 'rejected' | 'unknown';
@@ -393,8 +393,7 @@ export function realPublishingCapabilities(evidence: PlatformCapabilityEvidence[
   const platforms: PublishingCapability['platform'][] = ['youtube', 'facebook', 'instagram', 'tiktok'];
   return platforms.map(platform => {
     const verified = evidence.filter(item => item.platform === platform && item.capability === 'publishing.official'
-      && item.status === 'verified' && item.evidence_ref && Number.isFinite(Date.parse(item.verified_at))
-      && (!item.expires_at || Date.parse(item.expires_at) > now.getTime()));
+      && platformCapabilityEvidenceIsCurrent(item, now));
     return verified.length
       ? { platform, status: 'available', reason: 'provider_capability_verified', accountIds: [...new Set(verified.map(item => item.account_id))], verifiedAt: verified.map(item => item.verified_at).sort().at(-1) }
       : { platform, status: 'unavailable', reason: 'provider_publish_permission_not_verified' };
