@@ -16,6 +16,14 @@ import { applyWorkflowEvent } from './workflowState.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 import type { CapacityPlan } from '../socialOperating/capacityPlanner.js';
 import type { AutomationPolicyResolution } from '../socialOperating/automationPolicyResolver.js';
+import {
+  activateWeeklyExecutionTasks,
+  cancelWeeklyExecutionTasks,
+  listWeeklyExecutionTasks,
+  materializeWeeklyExecutionTasks,
+  projectWeeklyExecution,
+  summarizeWeeklyExecutionTasks,
+} from './executionTasks.js';
 
 const PACKAGES = 'social_weekly_operating_packages';
 const PROGRAMS = 'social_programs';
@@ -441,6 +449,8 @@ function packageFromInput(args: {
     monthlyPlanRef: versionedRef(args.input.monthlyPlanRef ?? args.program.activeMonthlyPlanRef),
     workflows: workflow.workflows,
     workflowTasks: workflow.tasks,
+    executionTaskRefs: [],
+    executionSummary: summarizeWeeklyExecutionTasks([], timestamp),
     appliedWorkflowEvents: [],
     workflowStateVersion: 0,
     taskVersionMappings: workflow.mappings,
@@ -460,7 +470,7 @@ function packageFromInput(args: {
   };
 }
 
-async function savePackage(dataStore: DataStore, tenantId: string, item: WeeklyOperatingPackage): Promise<void> {
+async function savePackage(dataStore: DataStore, tenantId: string, item: WeeklyOperatingPackage): Promise<PackageRow> {
   const saved = await dataStore.create<PackageRow>(PACKAGES, {
     tenant_id: tenantId,
     program_id: item.programId,
@@ -474,6 +484,7 @@ async function savePackage(dataStore: DataStore, tenantId: string, item: WeeklyO
     updated_at: item.updatedAt,
   });
   if (!saved) throw new SocialProgramError('weekly_operating_package_storage_unavailable', 503, '周任务包暂时无法保存。');
+  return saved;
 }
 
 export function createWeeklyOperatingPackageService(dataStore: DataStore) {
@@ -566,6 +577,13 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     return { input: { ...input, businessContentGoal: goal, capacityPlan: capacity, automationPolicy: policy }, goal, capacity, policy };
   }
 
+  async function withExecutionProjection(tenantId: string, item: WeeklyOperatingPackage): Promise<WeeklyOperatingPackage> {
+    const tasks = await listWeeklyExecutionTasks(
+      dataStore, tenantId, item.programId, item.packageId, item.version,
+    );
+    return projectWeeklyExecution(item, tasks);
+  }
+
   async function withAuthoritativeDecisions(
     tenantId: string,
     programId: string,
@@ -625,14 +643,14 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const where: Record<string, string> = { tenant_id: tenantId, program_id: programId };
       if (weekStart) where.week_start = dateOnly(weekStart, 'week_start_invalid');
       const result = await dataStore.list<PackageRow>(PACKAGES, { where, sort: '-version', page: 1, perPage: 300 });
-      return Promise.all(result.items.map(row => projectWorkflowState(dataStore, tenantId, row)));
+      return Promise.all(result.items.map(async row => withExecutionProjection(tenantId, await projectWorkflowState(dataStore, tenantId, row))));
     },
 
     async get(tenantId: string, programId: string, packageId: string): Promise<WeeklyOperatingPackage> {
       await programRow(dataStore, tenantId, programId);
       const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
       if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      return projectWorkflowState(dataStore, tenantId, row);
+      return withExecutionProjection(tenantId, await projectWorkflowState(dataStore, tenantId, row));
     },
 
     async create(tenantId: string, userId: string, programId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
@@ -648,8 +666,14 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if (!item.objective || !item.successCriteria.length) {
         throw new SocialProgramError('weekly_operating_package_incomplete', 400, '周任务包必须包含经营目标和成功标准。');
       }
-      await savePackage(dataStore, tenantId, item);
-      return item;
+      const saved = await savePackage(dataStore, tenantId, item);
+      try {
+        const tasks = await materializeWeeklyExecutionTasks(dataStore, tenantId, item);
+        return projectWeeklyExecution(item, tasks, item.updatedAt);
+      } catch (error) {
+        await dataStore.delete(PACKAGES, saved.id);
+        throw error;
+      }
     },
 
     async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
@@ -696,7 +720,14 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if (!item.objective || !item.successCriteria.length) {
         throw new SocialProgramError('weekly_operating_package_incomplete', 400, '周任务包必须包含经营目标和成功标准。');
       }
-      await savePackage(dataStore, tenantId, item);
+      const saved = await savePackage(dataStore, tenantId, item);
+      let projected: WeeklyOperatingPackage;
+      try {
+        projected = projectWeeklyExecution(item, await materializeWeeklyExecutionTasks(dataStore, tenantId, item), item.updatedAt);
+      } catch (error) {
+        await dataStore.delete(PACKAGES, saved.id);
+        throw error;
+      }
       if (current.payload.socialContentPackage.authorization.allowRealPublishing) {
         const timestamp = at();
         const invalidated: WeeklyOperatingPackage = {
@@ -716,7 +747,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
           throw new SocialProgramError('weekly_operating_package_storage_unavailable', 503, '旧版本发布授权暂时无法失效。');
         }
       }
-      return item;
+      return projected;
     },
 
     async activate(
@@ -824,7 +855,14 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         }
         throw new SocialProgramError('program_storage_unavailable', 503, '周任务包激活失败，已回滚当前版本。');
       }
-      return activated;
+      for (const previous of supersededRows) {
+        await cancelWeeklyExecutionTasks(
+          dataStore, tenantId, previous.payload.programId, previous.payload.packageId, previous.payload.version,
+          `superseded_by:${activated.packageId}:${activated.version}`, activated.updatedAt,
+        );
+      }
+      const tasks = await activateWeeklyExecutionTasks(dataStore, tenantId, activated, activated.updatedAt);
+      return projectWeeklyExecution(activated, tasks, activated.updatedAt);
     },
 
     async retire(
@@ -892,7 +930,10 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
           throw new SocialProgramError('program_storage_unavailable', 503, '周任务包撤回失败，已回滚当前版本。');
         }
       }
-      return retired;
+      const tasks = await cancelWeeklyExecutionTasks(
+        dataStore, tenantId, programId, packageId, retired.version, `package_retired:${userId}`, timestamp,
+      );
+      return projectWeeklyExecution(retired, tasks, timestamp);
     },
 
     async applyWorkflowEvent(
@@ -916,7 +957,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
           if (eventDigest(prior) !== eventDigest(event)) {
             throw new SocialProgramError('workflow_event_conflict', 409, '同一事件 ID 不得承载不同内容。');
           }
-          return projected;
+          return withExecutionProjection(tenantId, projected);
         }
         const expectedStateVersion = Number(input.expectedStateVersion);
         if (!Number.isSafeInteger(expectedStateVersion) || expectedStateVersion < 0) {
@@ -978,7 +1019,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
           const replay = rows.find(row => row.event_id === event.eventId);
           if (replay) {
             if (replay.event_digest !== digest) throw new SocialProgramError('workflow_event_conflict', 409, '同一事件 ID 不得承载不同内容。');
-            return projectWorkflowState(dataStore, tenantId, current);
+            return withExecutionProjection(tenantId, await projectWorkflowState(dataStore, tenantId, current));
           }
           const latest = await projectWorkflowState(dataStore, tenantId, current);
           if (latest.workflowStateVersion !== expectedStateVersion) {
@@ -986,7 +1027,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
           }
           throw new SocialProgramError('workflow_event_storage_unavailable', 503, '工作流事件暂时无法保存。');
         }
-        return { ...updated, workflowStateVersion: nextStateVersion };
+        return withExecutionProjection(tenantId, { ...updated, workflowStateVersion: nextStateVersion });
       });
     },
   };

@@ -7,6 +7,7 @@ import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOpe
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
 import type { OperatingPlanningRequest } from '../../shared/contracts/socialOperatingDecision.js';
+import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -18,6 +19,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const service = createSocialProgramService(dataStore);
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
   const operating = createSocialOperatingOrchestrationService(dataStore);
+  const executionTasks = createWeeklyExecutionTaskService(dataStore);
 
   router.get('/', asyncRoute(async (_req, res) => {
     const { tenantId } = res.locals as AuthLocals;
@@ -155,6 +157,38 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
       tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
     );
     res.json({ item });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/execution-tasks', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const programId = String(req.params.programId || '');
+    const packageId = String(req.params.packageId || '');
+    const pkg = await weeklyPackages.get(tenantId, programId, packageId);
+    const requestedVersion = Number(req.query.version ?? pkg.version);
+    if (!Number.isSafeInteger(requestedVersion) || requestedVersion < 1) {
+      throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
+    }
+    res.json({ items: await executionTasks.list(tenantId, programId, packageId, requestedVersion) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/block', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.block(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), String(req.body?.reason || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/unblock', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.unblock(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), req.body?.reason) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/cancel', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.cancel(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), String(req.body?.reason || '')) });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/recover', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ items: await executionTasks.recoverDeadLetter(tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || '')) });
   }));
 
   router.post('/:programId/operating-packages/:packageId/workflow-events', asyncRoute(async (req, res) => {

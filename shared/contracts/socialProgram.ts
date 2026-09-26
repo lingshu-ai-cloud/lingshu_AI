@@ -73,6 +73,74 @@ export type WeeklyOperatingWorkflowStatus = 'planned' | 'blocked' | 'in_progress
 
 export type WeeklyWorkflowTaskStatus = WeeklyOperatingWorkflowStatus;
 
+export const WEEKLY_EXECUTION_TASK_STATUSES = [
+  'pending_activation',
+  'queued',
+  'leased',
+  'blocked',
+  'succeeded',
+  'cancelled',
+  'dead_letter',
+] as const;
+export type WeeklyExecutionTaskStatus = typeof WEEKLY_EXECUTION_TASK_STATUSES[number];
+export type WeeklyExecutionTaskScope = 'package' | 'content' | 'adaptation' | 'account' | 'publication';
+
+export interface WeeklyExecutionTaskLease {
+  leaseId: string;
+  token: string;
+  workerId: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+export interface WeeklyExecutionTaskBudget {
+  category: 'none' | 'discovery' | 'production';
+  limitCny: number | null;
+}
+
+/**
+ * Durable unit consumed by a worker. The snapshots and versioned references
+ * deliberately make the task self-contained: a worker must never silently
+ * read a newer package, policy or planning decision while executing it.
+ */
+export interface WeeklyExecutionTask {
+  taskId: string;
+  tenantId: string;
+  programId: string;
+  packageId: string;
+  packageVersion: number;
+  workflowKind: WeeklyOperatingWorkflowKind;
+  scope: WeeklyExecutionTaskScope;
+  subjectId: string;
+  accountId: string | null;
+  publicationTaskId: string | null;
+  dependsOnTaskIds: string[];
+  upstreamVersionRefs: VersionedSocialRef[];
+  inputSnapshot: Record<string, unknown>;
+  idempotencyKey: string;
+  budget: WeeklyExecutionTaskBudget;
+  status: WeeklyExecutionTaskStatus;
+  ownBlockingReasons: string[];
+  inheritedBlockingTaskIds: string[];
+  attempt: number;
+  maxAttempts: number;
+  nextAttemptAt: string | null;
+  lease: WeeklyExecutionTaskLease | null;
+  resultRefs: VersionedSocialRef[];
+  lastError: { code: string; message: string; retryable: boolean; occurredAt: string } | null;
+  recoveredFromDeadLetterAt: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WeeklyExecutionStatusSummary {
+  total: number;
+  byStatus: Record<WeeklyExecutionTaskStatus, number>;
+  byWorkflow: Record<WeeklyOperatingWorkflowKind, WeeklyOperatingWorkflowStatus>;
+  refreshedAt: string;
+}
+
 export interface WeeklyWorkflowTask {
   taskId: string;
   kind: WeeklyOperatingWorkflowKind;
@@ -160,6 +228,9 @@ export interface WeeklyOperatingPackage {
   monthlyPlanRef: VersionedSocialRef | null;
   workflows: WeeklyOperatingWorkflow[];
   workflowTasks: WeeklyWorkflowTask[];
+  /** Present on R3-aware reads; optional while older R1 consumers migrate. */
+  executionTaskRefs?: VersionedSocialRef[];
+  executionSummary?: WeeklyExecutionStatusSummary;
   appliedWorkflowEvents: WeeklyWorkflowEvent[];
   /** Independent append-only workflow stream version; absent only on legacy rows. */
   workflowStateVersion?: number;
