@@ -5,13 +5,15 @@ import type { ShotRoutingAvailability, ShotRoutingRequirements } from '../../sha
 const available: ShotRoutingAvailability = {
   enterprisePresenterReady: true, enterprisePresenterImageReady: true,
   presenterTalkingAvailable: true, firstFrameVideoAvailable: true,
+  productSceneReplicationAvailable: true, productIdentityReferencesReady: true,
+  accountPresenterProfileConsistent: true,
   ugcActorAvailable: true, materialEditAvailable: true, aiBrollAvailable: true,
   authorizedReferenceMotion: true, budgetAvailable: true,
 };
 
 function requirements(patch: Partial<ShotRoutingRequirements> = {}): ShotRoutingRequirements {
   return {
-    shotType: 'enterprise_presenter', visualRole: '解释产品卖点', identityRequirement: 'enterprise_presenter',
+    shotType: 'enterprise_presenter', visualRole: '解释产品卖点', identityRequirement: 'enterprise_presenter', productIdentityRequirement: 'none',
     speechRequirement: 'precise_lip_sync', backgroundRequirement: 'preserve_composition', motionRequirement: 'light_gesture',
     referenceUse: 'first_frame_composition', durationSeconds: 3,
     evidence: { sourceRange: { startSeconds: 0, endSeconds: 3 }, keyframeIds: ['frame-1'], asrText: '设备连续工作八小时。', materialIds: ['reference-1'] },
@@ -35,7 +37,12 @@ const ugc = decideShotRoute(requirements({ shotType: 'ugc_actor', visualRole: '�
 assert.equal(ugc.route, 'ugc_actor');
 assert.match(ugc.reasons.join(' '), /不复刻参考人物身份/);
 
-for (const shotType of ['product_close_up', 'factory_operation', 'usage_scene', 'information_card', 'transition_atmosphere'] as const) {
+const productScene = decideShotRoute(requirements({ shotType: 'product_close_up', identityRequirement: 'none', productIdentityRequirement: 'locked_product', speechRequirement: 'none', backgroundRequirement: 'preserve_composition', motionRequirement: 'none', referenceUse: 'first_frame_composition' }), available);
+assert.equal(productScene.route, 'product_scene_replication');
+assert.equal(productScene.executable, true);
+assert.ok(productScene.requiredCapabilities.includes('camera_trajectory_lock'));
+
+for (const shotType of ['factory_operation', 'usage_scene', 'information_card', 'transition_atmosphere'] as const) {
   const decision = decideShotRoute(requirements({ shotType, identityRequirement: 'none', speechRequirement: 'none', backgroundRequirement: 'flexible', motionRequirement: 'none', referenceUse: 'structure_only' }), available);
   assert.equal(decision.route, 'material_edit', `${shotType} should avoid the digital-human route`);
 }
@@ -44,6 +51,14 @@ const missingImage = decideShotRoute(requirements(), { ...available, enterpriseP
 assert.equal(missingImage.executable, false);
 assert.equal(missingImage.status, 'needs_input');
 assert.ok(missingImage.blockers.some(value => value.includes('可信图片资产')));
+
+const inconsistentAccountPresenter = decideShotRoute(requirements(), { ...available, accountPresenterProfileConsistent: false });
+assert.equal(inconsistentAccountPresenter.executable, false);
+assert.ok(inconsistentAccountPresenter.blockers.some(value => value.includes('发布账号')));
+
+const missingProductIdentity = decideShotRoute(requirements({ shotType: 'product_close_up', identityRequirement: 'none', productIdentityRequirement: 'locked_product' }), { ...available, productIdentityReferencesReady: false });
+assert.equal(missingProductIdentity.executable, false);
+assert.ok(missingProductIdentity.blockers.some(value => value.includes('产品身份')));
 
 const uncertain = decideShotRoute(requirements({ confidence: { shotType: .95, identity: .7, speech: .96, background: .91, motion: .9 } }), available);
 assert.equal(uncertain.requiresUserConfirmation, true);

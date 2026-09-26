@@ -51,12 +51,20 @@ const SocialPlanningPage = lazy(() => import('./components/socialProgram/SocialP
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
 const DesignPrototype = lazy(() => import('./dev/DesignPrototype'));
+const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 export type { Page } from './pageRegistry';
 export type { AgentAction, AgentType, Conversation, ConversationContext, KickoffSignal, Message, RestoreSignal, Source } from './appSession';
 
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (publicPath === '/startup-hub-preview') {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <StartupHubPage preview />
+      </Suspense>
+    );
+  }
   if (publicPath === '/design-prototype') {
     return (
       <Suspense fallback={<PageLoading />}>

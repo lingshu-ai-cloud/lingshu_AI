@@ -10,6 +10,7 @@
 export const SHOT_ROUTING_ROUTES = [
   'presenter_talking',
   'first_frame_video',
+  'product_scene_replication',
   'ugc_actor',
   'material_edit',
   'ai_broll',
@@ -28,6 +29,7 @@ export const SHOT_ROUTING_SHOT_TYPES = [
 export type ShotRoutingShotType = typeof SHOT_ROUTING_SHOT_TYPES[number];
 
 export type ShotIdentityRequirement = 'enterprise_presenter' | 'industry_role' | 'none';
+export type ShotProductIdentityRequirement = 'locked_product' | 'generic_product' | 'none';
 export type ShotSpeechRequirement = 'precise_lip_sync' | 'voiceover_ok' | 'none';
 export type ShotBackgroundRequirement = 'preserve_composition' | 'preserve_scene' | 'flexible';
 export type ShotMotionRequirement = 'authorized_reference_motion' | 'light_gesture' | 'none';
@@ -55,6 +57,7 @@ export interface ShotRoutingRequirements {
   shotType: ShotRoutingShotType;
   visualRole: string;
   identityRequirement: ShotIdentityRequirement;
+  productIdentityRequirement: ShotProductIdentityRequirement;
   speechRequirement: ShotSpeechRequirement;
   backgroundRequirement: ShotBackgroundRequirement;
   motionRequirement: ShotMotionRequirement;
@@ -70,6 +73,9 @@ export interface ShotRoutingAvailability {
   enterprisePresenterImageReady: boolean;
   presenterTalkingAvailable: boolean;
   firstFrameVideoAvailable: boolean;
+  productSceneReplicationAvailable: boolean;
+  productIdentityReferencesReady: boolean;
+  accountPresenterProfileConsistent: boolean;
   ugcActorAvailable: boolean;
   materialEditAvailable: boolean;
   aiBrollAvailable: boolean;

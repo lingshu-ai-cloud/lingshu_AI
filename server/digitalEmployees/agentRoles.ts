@@ -8,10 +8,10 @@ export const VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES: readonly VisibleDigitalEmploy
   'customer',
 ];
 
-const ORCHESTRATOR_TASK_KEYS = new Set(['context_readiness', 'goal_decomposition']);
+const ORCHESTRATOR_TASK_KEYS = new Set(['context_readiness']);
 const DIRECTOR_TASK_KEYS = new Set(['scheduled_source_collection', 'viral_analysis', 'content_mode_routing']);
 const CONTENT_TASK_KEYS = new Set(['content_production', 'content_quality_gate']);
-const BUSINESS_TASK_KEYS = new Set(['content_release_approval', 'publishing_calendar', 'platform_publish', 'weekly_review']);
+const BUSINESS_TASK_KEYS = new Set(['goal_decomposition', 'content_release_approval', 'publishing_calendar', 'platform_publish', 'weekly_review']);
 const CUSTOMER_TASK_KEYS = new Set(['customer_attribution', 'customer_segmentation', 'followup_batch_draft', 'followup_batch_approval', 'followup_dispatch']);
 
 /**

@@ -45,6 +45,8 @@ import {
   type SocialProductionFeasibility,
   type SocialShotTruthBoundary,
   type SocialFunctionalEquivalentReplacement,
+  type SocialAccountPresenterLock,
+  type SocialProductSceneReplicationSpec,
   type SocialAssetSupplyShotPlan,
   type SocialAssetSupplyPlan,
   type SocialReferenceShotTags,
@@ -199,6 +201,8 @@ export interface SocialDirectorBriefScene {
   truthBoundary: SocialShotTruthBoundary;
   allowedVariation: string[];
   acceptanceCriteria: string[];
+  /** Frozen scene/camera language for product-reference-driven generation. */
+  productSceneReplication?: SocialProductSceneReplicationSpec;
   /**
    * Machine-verifiable subset of the frozen factor spec. Optional only for
    * historic DirectorBrief records created before ReplicationJob v1.
@@ -229,6 +233,8 @@ export interface SocialDirectorBrief {
   replicationJobRef?: { replicationJobId: string; version: string; factorSpecVersion: string } | null;
   referenceMode?: SocialReplicationReferenceMode | null;
   accountPlaybookRef?: SocialAccountPlaybookRef | null;
+  /** Same published presenter identity must be reused by every presenter scene. */
+  accountPresenterLock?: SocialAccountPresenterLock | null;
   referenceAnalysis: {
     analysisId: string;
     version: string;
@@ -322,6 +328,7 @@ export interface SocialContentExecutionScenePlan {
   rightsRisks: string[];
   dataTransferRisks: string[];
   idempotencyKey: string;
+  productSceneReplication?: SocialProductSceneReplicationSpec;
 }
 
 /** Content-Agent-owned implementation plan. */
@@ -335,6 +342,7 @@ export interface SocialContentExecutionPlan {
   maxReviewRounds: number;
   budgetLimitCny: number | null;
   deadlineAt: string | null;
+  accountPresenterLock?: SocialAccountPresenterLock | null;
   estimatedTotalCostCny: number;
   estimatedTotalSeconds: number;
   scenes: SocialContentExecutionScenePlan[];

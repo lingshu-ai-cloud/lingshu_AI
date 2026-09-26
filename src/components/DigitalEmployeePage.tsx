@@ -101,6 +101,7 @@ const EMPTY_CONFIG: DigitalEmployeeConfig = {
   targetMarkets: "",
   customerProfile: "",
   operatingMaturity: "starting",
+  socialOperatingProfile: "starter_four_platform",
   defaultParticipation: "agent",
   autonomyMode: "managed",
   approvalOwner: "",
@@ -1154,6 +1155,7 @@ function OnboardingPanel({
           <div className="mt-4 space-y-4">
         {mode === "first" && <Field label="接入目标"><select className={inputClass} value={form.primaryGoal} onChange={event=>set("primaryGoal",event.target.value as DigitalEmployeeConfig["primaryGoal"])}><option value="awareness">品牌曝光</option><option value="leads">获取询盘</option><option value="sales">推进成交</option><option value="reactivation">老客唤醒</option></select></Field>}
         <Field label="运营阶段"><select className={inputClass} value={form.operatingMaturity || "growing"} onChange={e => set("operatingMaturity", e.target.value as DigitalEmployeeConfig["operatingMaturity"])}>{Object.entries(maturityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field>
+        <Field label="社媒矩阵阶段"><select className={inputClass} value={form.socialOperatingProfile || "starter_four_platform"} onChange={e => set("socialOperatingProfile", e.target.value as DigitalEmployeeConfig["socialOperatingProfile"])}><option value="starter_four_platform">四平台单账号验证（默认）</option><option value="dual_account_growth">TikTok / Facebook 双账号增长</option></select><p className="mt-1 text-[10px] leading-relaxed text-slate-500">先验证真实发布、数据和有效询盘，再扩为品牌能力号与买家顾问号；切换不会自动创建或授权外部账号。</p></Field>
         {mode === "first" && <details className="rounded-xl border border-slate-200 bg-white p-4 text-sm"><summary className="cursor-pointer font-semibold text-slate-800">查看运营阶段判断依据</summary><div className="mt-3 text-slate-600"><p>{maturityProfiles[form.operatingMaturity || 'growing'].features}</p><p className="mt-2 text-slate-500">验收重点：{maturityProfiles[form.operatingMaturity || 'growing'].criteria}</p>{assessMaturity(form.operatingAssessment).gaps.length > 0 && <p className="mt-2">优先补齐：{assessMaturity(form.operatingAssessment).gaps.map(g => gapLabels[g]).join('、')}</p>}<details className="mt-3 rounded-xl bg-slate-50 p-3"><summary className="cursor-pointer text-xs font-semibold">六个问题辅助判断</summary><div className="mt-4"><OperatingAssessmentEditor value={form.operatingAssessment} maturity={form.operatingMaturity || 'growing'} onChange={value => set('operatingAssessment', value)} onAdopt={value => set('operatingMaturity', value)}/></div></details></div></details>}
         <Field label="默认参与方式"><select className={inputClass} value={form.defaultParticipation || "agent"} onChange={e => set("defaultParticipation", e.target.value as DigitalEmployeeConfig["defaultParticipation"])}><option value="agent">Agent 为主，确认计划后自动推进</option><option value="team">团队协作，任务分配到成员或 Agent</option></select></Field>
         <Field label="自主等级">

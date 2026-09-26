@@ -16,6 +16,7 @@ import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 type PresenterRecord = Record<string, unknown> & {
   id?: string; name?: string; authorized?: boolean; assetVersion?: number;
   avatarId?: string; voiceId?: string; authorizationRef?: string; consentRef?: string;
+  socialAccountId?: string; presenterProfileId?: string; presenterProfileVersion?: string; consistencyKey?: string;
   rightsEvidence?: unknown;
   toolMappings?: { heygen?: { avatarId?: string; voiceId?: string } };
 };
@@ -96,7 +97,11 @@ function configuredPresenter(item: PresenterRecord, presenterAssetId: string): A
   if (!validated.ok) return null;
   return { presenterAssetId, providerId: 'heygen', providerPresenterId: validated.avatarId, providerVoiceId: validated.voiceId,
     authorizationRef: validated.rights.authorizationRef, consentRef: validated.rights.consentRef,
-    assetVersion: validated.assetVersion, authorized: true };
+    assetVersion: validated.assetVersion, authorized: true,
+    socialAccountId: String(item.socialAccountId || '') || undefined,
+    presenterProfileId: String(item.presenterProfileId || '') || undefined,
+    presenterProfileVersion: String(item.presenterProfileVersion || '') || undefined,
+    consistencyKey: String(item.consistencyKey || '') || undefined };
 }
 
 /** Creates the concrete ports used by the social adapter. The environment
@@ -107,11 +112,13 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
   const pollInterval = Math.max(0, deps.pollIntervalMs ?? 5_000);
   return {
     maximumCostCny: Number(deps.budget.status('heygen').reservationCny) || 0,
-    async resolvePresenter({ tenantId, presenterAssetId }) {
+    async resolvePresenter({ tenantId, presenterAssetId, socialAccountId }) {
       const result = await deps.store.list<{ payload?: { presenters?: PresenterRecord[] } }>('studio_production_defaults',
         { where: { tenant_id: tenantId }, perPage: 2 });
       if (result.totalItems !== 1 || result.items.length !== 1) return null;
-      return (result.items[0]?.payload?.presenters || []).map(item => configuredPresenter(item, presenterAssetId)).find(Boolean) || null;
+      return (result.items[0]?.payload?.presenters || [])
+        .filter(item => !socialAccountId || item.socialAccountId === socialAccountId)
+        .map(item => configuredPresenter(item, presenterAssetId)).find(Boolean) || null;
     },
     async authorizeBudget({ idempotencyKey, maximumCostCny }) {
       if (!deps.storageReady()) return { allowed: false, reason: 'object_storage_unavailable' };
@@ -131,7 +138,9 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         record = await deps.store.create<any>('studio_social_presenter_jobs', { tenant_id: input.tenantId,
           task_id: input.taskId, shot_id: input.shotId, request_id: input.idempotencyKey, status: 'submitting',
           provider: 'heygen', presenter_asset_id: input.presenter.presenterAssetId, authorization_ref: input.presenter.authorizationRef,
-          consent_ref: input.presenter.consentRef, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+          consent_ref: input.presenter.consentRef, social_account_id: input.presenter.socialAccountId || '',
+          presenter_profile_id: input.presenter.presenterProfileId || '', presenter_profile_version: input.presenter.presenterProfileVersion || '',
+          presenter_consistency_key: input.presenter.consistencyKey || '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
         if (!record) return { status: 'uncertain', error: 'provider_job_claim_failed' };
         try {
           providerTaskId = await deps.client.create({ avatarId: input.presenter.providerPresenterId,

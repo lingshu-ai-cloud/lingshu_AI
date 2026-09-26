@@ -6,7 +6,7 @@ import type { ShotContentType, ShotProduction, ShotSource } from './shotProducti
  * same fields without changing the storyboard UI.
  */
 export type ShotRoutingDecision = {
-  route: 'presenter_talking' | 'first_frame_video' | 'ugc_actor' | 'material_edit' | 'ai_broll';
+  route: 'presenter_talking' | 'first_frame_video' | 'product_scene_replication' | 'ugc_actor' | 'material_edit' | 'ai_broll';
   confidence: number;
   reasons: string[];
   requiresUserConfirmation: boolean;
@@ -17,7 +17,7 @@ export type ShotRoutingDecision = {
 const typeOf = (shot: ShotProduction): ShotContentType => shot.contentType || (shot.source === 'avatar' ? 'enterprise_presenter' : 'product');
 
 export function routeLabel(route: ShotRoutingDecision['route']): string {
-  return ({ presenter_talking: '企业人物口播', first_frame_video: '目标人物首帧驱动', ugc_actor: 'AI 行业角色', material_edit: '素材剪辑', ai_broll: 'AI 补镜' } as const)[route];
+  return ({ presenter_talking: '企业人物口播', first_frame_video: '目标人物首帧驱动', product_scene_replication: 'AIGC 产品场景复刻', ugc_actor: 'AI 行业角色', material_edit: '素材剪辑', ai_broll: 'AI 补镜' } as const)[route];
 }
 
 export function presentShotRouting(shot: ShotProduction, input: { hasPresenter: boolean; hasMaterial: boolean; recommendation?: string }): ShotRoutingDecision {
@@ -48,6 +48,24 @@ export function presentShotRouting(shot: ShotProduction, input: { hasPresenter: 
     return { route: 'ugc_actor', confidence: missing.length ? 0.62 : 0.86,
       reasons: ['本镜头需要行业真实感，而非指定企业人物。', '参考真人的脸、声音和身份不会作为模型输入。'],
       requiresUserConfirmation: Boolean(missing.length), missing, alternatives };
+  }
+  if (contentType === 'product') {
+    const hasProductReference = Boolean(shot.productMaterialId || input.hasMaterial);
+    alternatives.push(
+      { route: 'product_scene_replication', label: 'AIGC 产品场景复刻', source: 'ai', description: '锁定产品身份，按参考的布景、产品槽位和完整镜头轨迹生成。' },
+      { route: 'material_edit', label: '已有产品视频', source: 'material', description: '已有高质量产品运镜时直接剪辑。' },
+      { route: 'ai_broll', label: '通用说明画面', source: 'ai', description: '没有产品参考图时只生成不展示具体外观的功能说明。' },
+    );
+    return {
+      route: hasProductReference ? 'product_scene_replication' : 'ai_broll',
+      confidence: hasProductReference ? 0.9 : 0.58,
+      reasons: hasProductReference
+        ? ['真实产品参考图用于锁定外观，不要求用户拍摄运镜视频。', '场景拓扑、产品槽位和镜头轨迹将作为独立验收项。']
+        : ['尚无法锁定具体产品外观，先生成非产品身份的说明画面。'],
+      requiresUserConfirmation: !hasProductReference,
+      missing: hasProductReference ? [] : ['缺少至少一张已授权产品参考图'],
+      alternatives,
+    };
   }
   const useAi = shot.source === 'ai' || !input.hasMaterial;
   alternatives.push(

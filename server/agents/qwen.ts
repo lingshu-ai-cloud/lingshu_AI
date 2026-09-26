@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { VideoAiAnalysis } from '../types/index.js';
 import { normalizeVideoAnalysis } from './gemini.js';
+import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 
 const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
 const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
@@ -186,15 +187,22 @@ ${modeInstruction}
   - scriptDetails15s: array（字段名仅为历史兼容），必须覆盖原视频完整时长，不得在15秒处截断；按导演镜头详析；每项包含 time（start-end区间，最多两位小数）、environment、shot、camera、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential（object：score 为 0-100 且必须拉开差距，锚点 85以上=强钩子或强证据、70-84=有明确记忆点、50-69=功能性过渡、50以下=信息稀薄；mechanisms 最多4项只写本镜头真实成立的机制，没有就空数组；whyEffective 一句话说明理由并引用本镜头具体画面或台词，低于50分要说明弱在哪里。禁止套用通用话术）、subtitle、audio、note。observedFacts 只写可见事实；inferredIntent 明确标注推断的表达意图；causalGap 写意图中存在但视频未展示的因果动作；omniPrompt 用英文写可直接交给视频模型的逐时段动作提示，必须复现可见动作，不得擅自补 causalGap；omniNegativePrompt 用英文列出最容易生成错的动作、物理关系和 UI。主体动作/对象/运镜/营销功能改变才切镜；长镜头用 beats 记录镜头内 time/action/dialogue/onScreenText。口播、画面字幕、环境声、BGM和音效必须分开；无法确认留空，专名/价格/左右方向/ASR不确定需 needsReview=true
 - recommendedScriptType: "voiceover" | "storyboard"`;
 
-  const meta = [
-    `标题：${opts.title || '未知'}`,
+  const externalEvidence = untrustedPromptData('video_metadata_and_asr', JSON.stringify({
+    title: opts.title || '',
+    views: opts.views || '',
+    tags: opts.tags || [],
+    transcript: opts.transcript?.segments.map(item => ({
+      start: Number(item.start.toFixed(1)),
+      end: Number(item.end.toFixed(1)),
+      text: item.text,
+    })) || [],
+  }), 30_000);
+  const captureMetadata = [
     `平台：${opts.platform || '未知'}`,
     opts.duration ? `时长：${opts.duration}s` : '',
-    opts.views ? `热度/播放：${opts.views}` : '',
-    opts.tags?.length ? `标签：${opts.tags.join(', ')}` : '',
     `关键帧时间：${opts.frames.map(frame => frame.timeLabel).join(', ')}`,
-    opts.transcript?.segments.length ? `独立ASR逐段转写（优先用于dialogue，专名/价格仍需结合画面校验）：\n${opts.transcript.segments.map(item => `[${item.start.toFixed(1)}-${item.end.toFixed(1)}s] ${item.text}`).join('\n')}` : '',
   ].filter(Boolean).join('\n');
+  const meta = `${externalEvidence}\n可信采样参数（由系统生成）：\n${captureMetadata}`;
 
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: `${meta}\n\n请分析这些关键帧，输出上述 JSON。` },
@@ -244,11 +252,13 @@ export async function detectVideoTimelineWithQwen(opts: {
   signal?: AbortSignal;
 }): Promise<QwenTimelinePlan> {
   if (!opts.frames.length) throw new Error('Qwen timeline detection requires frames');
+  const titleEvidence = untrustedPromptData('video_title', opts.title || '未知', 500);
   const completion = await client().chat.completions.create({
     model: QWEN_EXACT_VL_MODEL(),
     messages: [{ role: 'user', content: [
       { type: 'text', text: `你是视频时间轴检测器。只输出合法JSON，不要解释。根据按时间排列的真实关键帧建立连续分析窗口，不编造画面、台词、品牌或动作。
-视频标题：${opts.title || '未知'}；平台：${opts.platform || '未知'}；局部时长：${opts.duration.toFixed(2)}s；帧时间：${opts.frames.map(frame => frame.timeLabel).join(', ')}。
+${titleEvidence}
+平台：${opts.platform || '未知'}；局部时长：${opts.duration.toFixed(2)}s；帧时间：${opts.frames.map(frame => frame.timeLabel).join(', ')}。
 JSON字段：theme、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType，以及boundaries。
 boundaries每项仅含id、start、end、reason、evidence。必须从0连续无重叠覆盖到${opts.duration.toFixed(2)}，每段最长5秒；真实内容稳定时也拆成连续“分析窗口”，reason写“连续观察窗口”，不要伪称转场。start/end为数字，id依次为b1、b2。evidence只写可见变化或持续状态。` },
       ...opts.frames.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
@@ -357,13 +367,13 @@ Schema:
 - visibleText 只能写实际能读清的 OCR 文字。
 - reusableModules 只能复用构图、信息层级、色彩关系、轮播功能；竞品品牌、Logo、产品、包装、联系方式必须写入 replace。
 - 不输出爆款评分，不根据点赞量推断因果。`;
-  const meta = [
-    `标题：${opts.title || ''}`,
-    `原始 caption：${opts.caption || ''}`,
-    `平台：${opts.platform || ''}`,
-    opts.tags?.length ? `标签：${opts.tags.join(', ')}` : '',
-    `图片数量：${opts.images.length}`,
-  ].filter(Boolean).join('\n');
+  const meta = untrustedPromptData('image_post_metadata', JSON.stringify({
+    title: opts.title || '',
+    caption: opts.caption || '',
+    platform: opts.platform || '',
+    tags: opts.tags || [],
+    imageCount: opts.images.length,
+  }), 12_000);
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: `${meta}\n\n按顺序分析下面的轮播图片。` },
     ...opts.images.sort((a, b) => a.imageIndex - b.imageIndex).map(image => ({

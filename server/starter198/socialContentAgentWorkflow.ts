@@ -151,7 +151,14 @@ function directorScene(input: {
       ...evidence.map(item => `证据要求：${item}`),
       ...input.replicationFactors.map(factor => `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
       ...(boundary.mustNotImplyCustomerReality ? ['合成或通用画面不得被表述为客户真实证据'] : []),
+      ...(input.supply.productSceneReplication ? [
+        '产品身份相似度、Logo 与标签 OCR 必须通过，不得重设计产品',
+        '场景拓扑、产品槽位和镜头轨迹必须在冻结容差内，不得退化为单图平移缩放',
+      ] : []),
     ]),
+    ...(input.supply.productSceneReplication ? {
+      productSceneReplication: structuredClone(input.supply.productSceneReplication),
+    } : {}),
     replicationFactors: input.replicationFactors.map(factor => ({
       factorId: factor.factorId,
       factorSpecVersion: factor.version,
@@ -225,6 +232,9 @@ function buildDirectorBrief(
     } : null,
     referenceMode: replicationJob?.referenceMode ?? null,
     accountPlaybookRef: replicationJob?.target.accountPlaybookRef ?? null,
+    accountPresenterLock: input.assetSupplyPlan.accountPresenterLock
+      ? structuredClone(input.assetSupplyPlan.accountPresenterLock)
+      : null,
     referenceAnalysis: input.referenceAnalysis ? {
       analysisId: input.referenceAnalysis.analysisId,
       version: input.referenceAnalysis.version || input.taskVersion,
@@ -319,6 +329,11 @@ function capabilityCandidates(input: {
   const capabilityRows = socialContentCapabilityRegistry(input.capabilityRuntime)
     .filter(capability => capability.executable)
     .filter(capability => !input.supply.truthBoundary.customerEvidenceRequired || capability.evidenceStrength === 'strong')
+    .filter(capability => capability.strategy !== 'authorized_digital_presenter'
+      || (input.supply.digitalHumanPlan !== undefined
+        && ['preview_only', 'ready_for_capability_check'].includes(input.supply.digitalHumanPlan.executionState)))
+    .filter(capability => capability.strategy !== 'aigc_product_scene_replication'
+      || (input.supply.productSceneReplication !== undefined && input.supply.sourceRefs.length > 0))
     .map((capability): SocialExecutionCandidate => ({
       candidateId: stableId('capability', { sceneId: input.sceneId, strategy: capability.strategy }),
       kind: 'capability',
@@ -385,6 +400,9 @@ function executionScene(input: {
       ? ['部分外部能力受授权范围限制，执行前必须校验租户授权'] : [],
     dataTransferRisks: preferred?.dataTransfer === 'external_processor' ? ['推荐路线会把必要输入发送给外部处理服务'] : [],
     idempotencyKey: stableId('social_scene_execution', { taskId: input.taskId, taskVersion: input.taskVersion, sceneId: input.scene.sceneId }),
+    ...(input.supply.productSceneReplication ? {
+      productSceneReplication: structuredClone(input.supply.productSceneReplication),
+    } : {}),
   };
 }
 
@@ -410,6 +428,9 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     maxReviewRounds: 3,
     budgetLimitCny: positiveNumber(input.brief.perItemBudgetCny),
     deadlineAt: input.brief.dueAt,
+    accountPresenterLock: directorBrief.accountPresenterLock
+      ? structuredClone(directorBrief.accountPresenterLock)
+      : null,
     estimatedTotalCostCny: +scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2),
     estimatedTotalSeconds: +scenes.reduce((sum, scene) => sum + scene.estimatedSeconds, 0).toFixed(1),
     scenes,

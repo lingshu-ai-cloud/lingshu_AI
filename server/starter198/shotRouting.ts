@@ -27,6 +27,9 @@ function candidateRoutes(input: ShotRoutingRequirements): ShotRoutingRoute[] {
     }
     return ['presenter_talking', 'first_frame_video', 'material_edit'];
   }
+  if (input.productIdentityRequirement === 'locked_product' || input.shotType === 'product_close_up') {
+    return ['product_scene_replication', 'material_edit', 'ai_broll'];
+  }
   if (input.identityRequirement === 'industry_role') return ['ugc_actor', 'material_edit', 'ai_broll'];
   if (input.shotType === 'information_card') return ['material_edit', 'ai_broll'];
   return ['material_edit', 'ai_broll'];
@@ -39,6 +42,14 @@ function capabilitiesFor(route: ShotRoutingRoute, input: ShotRoutingRequirements
     input.backgroundRequirement !== 'flexible' ? 'background_composition_preservation' : '',
     input.speechRequirement === 'precise_lip_sync' ? 'precise_lip_sync' : '',
   ]);
+  if (route === 'product_scene_replication') return [
+    'product_identity_lock',
+    'product_label_ocr',
+    'scene_topology_lock',
+    'product_slot_layout_lock',
+    'camera_trajectory_lock',
+    'short_clip_generation',
+  ];
   if (route === 'ugc_actor') return ['synthetic_industry_role', 'short_clip_generation'];
   if (route === 'material_edit') return ['authorized_material_or_enterprise_asset_editing'];
   return ['non_evidentiary_ai_broll'];
@@ -46,11 +57,16 @@ function capabilitiesFor(route: ShotRoutingRoute, input: ShotRoutingRequirements
 
 function routeAvailable(route: ShotRoutingRoute, input: ShotRoutingRequirements, availability: ShotRoutingAvailability): boolean {
   if (!availability.budgetAvailable) return false;
-  if (route === 'presenter_talking') return availability.enterprisePresenterReady && availability.presenterTalkingAvailable;
+  if (route === 'presenter_talking') return availability.enterprisePresenterReady
+    && availability.accountPresenterProfileConsistent
+    && availability.presenterTalkingAvailable;
   if (route === 'first_frame_video') return availability.enterprisePresenterReady
+    && availability.accountPresenterProfileConsistent
     && availability.enterprisePresenterImageReady
     && availability.firstFrameVideoAvailable
     && (input.motionRequirement !== 'authorized_reference_motion' || availability.authorizedReferenceMotion);
+  if (route === 'product_scene_replication') return availability.productIdentityReferencesReady
+    && availability.productSceneReplicationAvailable;
   if (route === 'ugc_actor') return availability.ugcActorAvailable;
   if (route === 'material_edit') return availability.materialEditAvailable;
   return availability.aiBrollAvailable;
@@ -60,9 +76,12 @@ function routeBlockers(route: ShotRoutingRoute, input: ShotRoutingRequirements, 
   const blockers: string[] = [];
   if (!availability.budgetAvailable) blockers.push('预算不可用');
   if ((route === 'presenter_talking' || route === 'first_frame_video') && !availability.enterprisePresenterReady) blockers.push('缺少已授权的企业人物资产');
+  if ((route === 'presenter_talking' || route === 'first_frame_video') && !availability.accountPresenterProfileConsistent) blockers.push('当前发布账号尚未绑定唯一已发布的数字人身份版本');
   if (route === 'first_frame_video' && !availability.enterprisePresenterImageReady) blockers.push('缺少可用于目标人物首帧的可信图片资产');
   if (route === 'presenter_talking' && !availability.presenterTalkingAvailable) blockers.push('人物口播能力当前不可用');
   if (route === 'first_frame_video' && !availability.firstFrameVideoAvailable) blockers.push('首帧驱动视频能力当前不可用');
+  if (route === 'product_scene_replication' && !availability.productIdentityReferencesReady) blockers.push('缺少可锁定产品身份的已授权参考图');
+  if (route === 'product_scene_replication' && !availability.productSceneReplicationAvailable) blockers.push('AIGC 产品场景复刻能力当前不可用');
   if (route === 'ugc_actor' && !availability.ugcActorAvailable) blockers.push('AI 行业角色能力当前不可用');
   if (route === 'material_edit' && !availability.materialEditAvailable) blockers.push('素材剪辑能力当前不可用');
   if (route === 'ai_broll' && !availability.aiBrollAvailable) blockers.push('AI 补镜能力当前不可用');
@@ -99,6 +118,7 @@ export function decideShotRoute(
     `镜头类型：${requirements.shotType}`,
     `叙事用途：${requirements.visualRole || '未说明'}`,
     requirements.identityRequirement === 'enterprise_presenter' ? '需要使用企业人物身份' : requirements.identityRequirement === 'industry_role' ? '只需行业角色，不复刻参考人物身份' : '不需要固定人物身份',
+    requirements.productIdentityRequirement === 'locked_product' ? '产品轮廓、材质、颜色、Logo 和标签文字必须锁定' : requirements.productIdentityRequirement === 'generic_product' ? '允许使用通用产品示意' : '无产品身份要求',
     requirements.speechRequirement === 'precise_lip_sync' ? '需要精确口型' : requirements.speechRequirement === 'voiceover_ok' ? '可使用后配音' : '无需口播',
     requirements.backgroundRequirement !== 'flexible' ? '需要保留背景或构图' : '场景可以重新设计',
   ];

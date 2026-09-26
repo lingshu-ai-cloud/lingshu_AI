@@ -289,7 +289,8 @@ const SOCIAL_SHOT_FUNCTION_LABEL: Record<SocialShotFunction, string> = {
 const SOCIAL_SHOT_SOURCE_STRATEGY_LABEL: Record<SocialShotSourceStrategy, string> = {
   customer_real_asset: '客户真实素材',
   customer_product_image_animation: '商品图动效',
-  authorized_digital_presenter: '数字人口播',
+  aigc_product_scene_replication: 'AIGC 产品场景复刻',
+  authorized_digital_presenter: '账号一致数字人口播',
   licensed_stock_asset: '合规素材库',
   non_evidentiary_ai_visual: 'AI 辅助画面',
   motion_graphics: '动态图形',

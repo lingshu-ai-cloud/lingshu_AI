@@ -8,6 +8,7 @@ import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAl
 import { candidateToolsFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
 import { deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
 import { digitalHumanToolCapabilities, isDefinitiveSupplierSubmissionError, requiredReferencePreservation, selectReferenceAdapter, verifiedSupplierCost, type DigitalHumanExecutionAdapter, type DigitalHumanToolId } from '../lib/digitalHumanProviderRegistry.js';
+import { normalizePresenterAccountIdentity } from '../lib/presenterAccountIdentity.js';
 import { planPersonShotClusters } from '../../src/lib/personShotClustering.js';
 import type { ExecutionStoreRecord, FirstFrameDraftJobRecord, ImportedVideoResult, JobRecord, PlanStoreRecord, ProductionRouterOptions, ReferenceImportResult, SentenceJobRecord } from './productionContracts.js';
 import { candidateOutputFromImport, createProductionRuntime, createProductionStoreRuntime } from './productionRuntime.js';
@@ -397,6 +398,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const avatarId = String(item.toolMappings?.heygen?.avatarId || item.avatarId).slice(0, 200);
         const voiceId = String(item.toolMappings?.heygen?.voiceId || item.voiceId).slice(0, 200);
         const capabilities: PresenterCapability[] = [...(avatarId && voiceId ? ['talking' as const] : []), ...(referenceMaterialIds.length ? ['reference_image' as const, 'reference_video' as const, 'person_replacement' as const] : [])];
+        const accountIdentity = normalizePresenterAccountIdentity(item);
         const certification = item.arkCertification && typeof item.arkCertification === 'object' ? item.arkCertification : undefined;
         const assetUri = String(certification?.assetUri || '').trim(); const assetStatus = String(certification?.status || 'ark_pending');
         if (assetUri && !/^asset:\/\/asset-[a-z0-9-]+$/i.test(assetUri)) throw new Error('方舟 Asset ID 格式无效');
@@ -407,6 +409,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           authorized: item.authorized === true, supportsAlpha: item.supportsAlpha === true,
           nativeOrientation: ['portrait', 'landscape', 'square'].includes(item.nativeOrientation || '') ? item.nativeOrientation : 'unknown',
           assetVersion: 1, capabilities, referenceMaterialIds,
+          ...accountIdentity,
           ...(item.rightsEvidence && typeof item.rightsEvidence === 'object' ? { rightsEvidence: structuredClone(item.rightsEvidence) } : {}),
           ...(certification ? { arkCertification: { projectName: String(certification.projectName || 'default').slice(0, 100), groupId: String(certification.groupId || '').slice(0, 200), assetUri,
             assetType: certification.assetType === 'image' || certification.assetType === 'video' ? certification.assetType : '',

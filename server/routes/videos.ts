@@ -6,7 +6,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import ffmpegStatic from 'ffmpeg-static';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -20,7 +20,9 @@ import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWo
 import { isDemoMode } from '../lib/demo.js';
 import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/videoAdminAlerts.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
-import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl } from '../lib/assetAccess.js';
+import { ASSET_SESSION_COOKIE, cookieValue, signAssetUrl, tenantAssetDir, tenantAssetRelativePath } from '../lib/assetAccess.js';
+import { buildDownloadedReferenceMaterial } from '../lib/downloadedReferenceMaterial.js';
+import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedPublicVideoSource } from '../lib/publicVideoSourceSecurity.js';
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
@@ -144,6 +146,17 @@ interface Material {
   objectKey?: string;
   tenantId?: string;
   scope: 'shared' | 'own';
+  usage?: 'editable' | 'reference_only';
+  sourceType?: string;
+  sourceUrl?: string;
+  rightsReviewStatus?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  mayAnalyze?: boolean;
+  mayUseInProduction?: boolean;
+  contentSha256?: string;
+  provenance?: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -2613,18 +2626,16 @@ async function handleAnalyzeSource(
       }
     }
 
-    const remoteUrl = String(input.sourceUrl || record?.sourceUrl || '').trim();
-    if (!/^https?:\/\//i.test(remoteUrl)) {
-      res.status(400).json({ error: 'A public sourceUrl is required for analysis' });
+    const source = resolvedPublicVideoSource(record, input);
+    if (!source) {
+      res.status(400).json({ error: '只允许当前记录绑定的 YouTube、TikTok、Instagram 或 Facebook HTTPS 单条视频链接' });
       return;
     }
-
-    const inferredPlatform = (input.platform || record?.platform || inferPlatformFromUrl(remoteUrl)) as Platform;
     const job = {
       record,
-      sourceUrl: remoteUrl,
-      title: String(input.title || record?.title || `${inferredPlatform}-video`),
-      platform: inferredPlatform,
+      sourceUrl: source.sourceUrl,
+      title: String(input.title || record?.title || `${source.platform}-video`),
+      platform: source.platform,
     };
 
     if (input.async && record?.id) {
@@ -3027,7 +3038,7 @@ export async function backfillMissingCrawledMedia(records: unknown[]): Promise<v
   }).slice(0, 3);
   for (const record of storageCandidates) {
     const recordId = String(record.id || '');
-    void downloadMaterialJob({ record, sourceUrl: String(record.sourceUrl), title: String(record.title || '爬取视频'), platform: record.platform as Platform, duration: Number(record.duration || 0) })
+    void downloadMaterialJob({ record, tenantId: String(record.tenantId || ''), sourceUrl: String(record.sourceUrl), title: String(record.title || '爬取视频'), platform: record.platform as Platform, duration: Number(record.duration || 0) })
       .then(() => pocketBaseBackfillFailures.delete(recordId))
       .catch(error => {
         // Failed public downloads should not be hammered every minute. Manual retry remains available.
@@ -3083,6 +3094,18 @@ function shouldQueueVideoAnalysis(record: Record<string, unknown>): boolean {
   return true;
 }
 
+function resolvedPublicVideoSource(
+  record: Record<string, unknown> | null,
+  input: { sourceUrl?: string; platform?: Platform },
+): ValidatedPublicVideoSource | null {
+  return resolvePublicVideoSource({
+    recordSourceUrl: record?.sourceUrl,
+    recordPlatform: record?.platform,
+    requestedSourceUrl: input.sourceUrl,
+    requestedPlatform: input.platform,
+  });
+}
+
 async function handleDownloadMaterial(
   req: Request,
   res: Response,
@@ -3099,18 +3122,17 @@ async function handleDownloadMaterial(
       }
     }
 
-    const remoteUrl = String(input.sourceUrl || record?.sourceUrl || '').trim();
-    if (!/^https?:\/\//i.test(remoteUrl)) {
-      res.status(400).json({ error: 'A public sourceUrl is required for download' });
+    const source = resolvedPublicVideoSource(record, input);
+    if (!source) {
+      res.status(400).json({ error: '只允许当前记录绑定的 YouTube、TikTok、Instagram 或 Facebook HTTPS 单条视频链接' });
       return;
     }
-
-    const inferredPlatform = (input.platform || record?.platform || inferPlatformFromUrl(remoteUrl)) as Platform;
     const job = {
       record,
-      sourceUrl: remoteUrl,
-      title: String(input.title || record?.title || `${inferredPlatform}-video`),
-      platform: inferredPlatform,
+      tenantId,
+      sourceUrl: source.sourceUrl,
+      title: String(input.title || record?.title || `${source.platform}-video`),
+      platform: source.platform,
       duration: Number(record?.duration || 0),
     };
 
@@ -3137,12 +3159,16 @@ async function handleDownloadMaterial(
 
 async function downloadMaterialJob(input: {
   record: Record<string, unknown> | null;
+  tenantId: string;
   sourceUrl: string;
   title: string;
   platform: Platform;
   duration: number;
 }): Promise<Material> {
-  return withDownloadSlot(() => downloadMaterialJobInner(input));
+  const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
+  if (!source) throw new Error('unsafe_public_video_source');
+  if (!input.tenantId.trim()) throw new Error('download_material_tenant_missing');
+  return withDownloadSlot(() => downloadMaterialJobInner({ ...input, ...source }));
 }
 
 async function compressPocketBasePreview(sourcePath: string): Promise<string> {
@@ -3186,6 +3212,7 @@ async function compressVideoBufferForPocketBase(buf: Buffer, extension: string):
 
 async function downloadMaterialJobInner(input: {
   record: Record<string, unknown> | null;
+  tenantId: string;
   sourceUrl: string;
   title: string;
   platform: Platform;
@@ -3278,6 +3305,9 @@ export async function analyzeSourceVideoJob(input: {
   suppressVisibleBackfill?: boolean;
   forceManualFailure?: boolean;
 }, adapters: SourceAnalysisAdapters = {}): Promise<unknown> {
+  const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
+  if (!source) throw new Error('unsafe_public_video_source');
+  input = { ...input, ...source };
   const key = String(input.record?.id || '');
   const execute = () => withDownloadSlot(() => analyzeSourceVideoJobInner(input, adapters));
   return key ? activeAnalysisRecords.run(key, () => (adapters.lease || durableAnalysisRecords).run(key, execute)) : execute();
@@ -4657,11 +4687,13 @@ async function downloadVideoToMaterial(input: {
   title: string;
   platform: Platform;
   duration: number;
+  tenantId: string;
   record?: Record<string, unknown> | null;
 }): Promise<Material> {
-  fs.mkdirSync(MEDIA_DIR, { recursive: true });
+  const tenantMediaDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
+  fs.mkdirSync(tenantMediaDir, { recursive: true });
   const id = randomUUID();
-  const outTpl = path.join(MEDIA_DIR, `${id}.%(ext)s`);
+  const outTpl = path.join(tenantMediaDir, `${id}.%(ext)s`);
   const downloadArgs = [
     '--no-playlist',
     '--merge-output-format', 'mp4',
@@ -4671,8 +4703,8 @@ async function downloadVideoToMaterial(input: {
   ];
   const cleanupIncompleteDownload = () => {
     try {
-      for (const filename of fs.readdirSync(MEDIA_DIR)) {
-        if (filename.startsWith(`${id}.`) && filename.endsWith('.part')) fs.unlinkSync(path.join(MEDIA_DIR, filename));
+      for (const filename of fs.readdirSync(tenantMediaDir)) {
+        if (filename.startsWith(`${id}.`) && filename.endsWith('.part')) fs.unlinkSync(path.join(tenantMediaDir, filename));
       }
     } catch { /* best effort */ }
   };
@@ -4697,7 +4729,7 @@ async function downloadVideoToMaterial(input: {
       const downloaded = input.platform === 'instagram'
         ? await downloadInstagramVideoViaApify(input.sourceUrl, tenantId)
         : await downloadTikTokVideoViaApify(input.sourceUrl, tenantId);
-      const materialPath = path.join(MEDIA_DIR, `${id}.mp4`);
+      const materialPath = path.join(tenantMediaDir, `${id}.mp4`);
       fs.copyFileSync(downloaded.filePath, materialPath);
       cleanupTempVideo(downloaded.filePath);
       ytDlpError = null;
@@ -4707,29 +4739,30 @@ async function downloadVideoToMaterial(input: {
     cleanupIncompleteDownload();
     throw ytDlpError instanceof Error ? ytDlpError : new Error('yt-dlp failed for material download');
   }
-  const downloaded = pickDownloadedVideoFile(id);
+  const downloaded = pickDownloadedVideoFile(id, tenantMediaDir);
   if (!downloaded) {
     cleanupIncompleteDownload();
     throw new Error('yt-dlp did not produce a video file');
   }
 
-  const fullPath = path.join(MEDIA_DIR, downloaded);
+  const fullPath = path.join(tenantMediaDir, downloaded);
   const posterFile = `${id}.poster.jpg`;
-  const posterPath = path.join(MEDIA_DIR, posterFile);
+  const posterPath = path.join(tenantMediaDir, posterFile);
   const posterOk = await extractPoster(fullPath, posterPath, input.duration > 1 ? 1 : 0);
-  const material: Material = {
+  const createdAt = new Date().toISOString();
+  const material = buildDownloadedReferenceMaterial({
     id,
+    tenantId: input.tenantId,
     name: safeMaterialName(input.title, input.platform),
-    folder: 'hot',
-    type: 'video',
+    platform: input.platform,
+    sourceUrl: input.sourceUrl,
     duration: input.duration || await probeDuration(fullPath),
     size: humanSize(fs.statSync(fullPath).size),
-    file: downloaded,
-    url: `/media/${downloaded}`,
-    poster: posterOk ? `/media/${posterFile}` : undefined,
-    scope: 'own',
-    createdAt: new Date().toISOString(),
-  };
+    file: tenantAssetRelativePath(input.tenantId, downloaded),
+    poster: posterOk ? tenantAssetRelativePath(input.tenantId, posterFile) : undefined,
+    contentSha256: createHash('sha256').update(fs.readFileSync(fullPath)).digest('hex'),
+    createdAt,
+  }) as Material;
   persistMaterials([material, ...loadMaterials().filter(m => m.id !== material.id)]);
   return material;
 }
@@ -4740,6 +4773,9 @@ export async function downloadVideoForAnalysis(input: {
   platform: Platform;
   record?: Record<string, unknown> | null;
 }, executeDownload = execFileAsync, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
+  const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
+  if (!source) throw new Error('unsafe_public_video_source');
+  input = { ...input, ...source };
   fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
   const tenantId = apifyTenantIdFromRecord(input.record);
   // Facebook's public page frequently blocks yt-dlp or makes it retry several

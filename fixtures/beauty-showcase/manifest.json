@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "tenantId": "local_tenant_customer_aurelia_beauty",
+  "exportedAt": "2026-09-26T12:59:44.280Z",
+  "counts": {
+    "trendVideos": 30,
+    "competitorAccounts": 27,
+    "materials": 30,
+    "mediaFiles": 45
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 1117,
+      "sha256": "42b2954c16cdf68fd61d85c49b220d9829354bc31ece8f6ee93cf91cbf11f909"
+    },
+    {
+      "path": "account-data.json",
+      "bytes": 452693,
+      "sha256": "0149ac3e52fdcaebb5d0556298f551102f0a714835bac6620fd2bff95656ae3a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/beauty-1.png",
+      "bytes": 76994,
+      "sha256": "86c206c9a162bb3fee59afe95c5bf304c5ef0e3067abc6ebdde4534c2aebadde"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/beauty-2.png",
+      "bytes": 74175,
+      "sha256": "bfc9bef04fd195c18f659c89f23f9341659fa7a42dc9f0452ec3dcdd38d41f44"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/beauty-3.png",
+      "bytes": 71258,
+      "sha256": "d64a2b992aeb8e047ab6a1d2d850eba63f25a2a0bf8ca920511fb398fd0e892f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/beauty-4.png",
+      "bytes": 76028,
+      "sha256": "0324d749107ddf9b1fa8749257d253822b5cd8d5da0d9fcfb1b8d3403fb6511d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/beauty-5.png",
+      "bytes": 70595,
+      "sha256": "a4f95464b47452e1a090db4545779173fe7419296a15d919fce90a7871fe826d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-cucumber-mask.jpg",
+      "bytes": 173190,
+      "sha256": "398b59ba79f7b15eb791f7afe421ca842e47f32de6fa55cbb89f92d7abdf9a2d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-holding-skincare-jar.jpg",
+      "bytes": 100222,
+      "sha256": "c3d905c325fdc1b476ce0949e01d37d34018b9879473f019fee7d8b0d44436ba"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-korean-cosmetics.jpg",
+      "bytes": 166316,
+      "sha256": "03b954a30287cf949bc82457c2e74ff079ea0e35403d9db141ffa5f281ecd5c9"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-makeup-brushes.jpg",
+      "bytes": 110586,
+      "sha256": "e98f4c25fe259e84a5ba839e6f159501b0dcb8f477a2736c2f9a9e1dfb8440e2"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-pink-cosmetic-jar.jpg",
+      "bytes": 172501,
+      "sha256": "d9918d5ccb1b139699f0bd791313e8498c2232d50b62829cfc0430ada74035c2"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-01-pamasol-0s.mp4",
+      "bytes": 285267,
+      "sha256": "8260b2f7b85b59bfba9df54be05fc2048f85c5d5d0f50542a6574f516438d9f9"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-02-pamasol-8s.mp4",
+      "bytes": 357171,
+      "sha256": "96888dfa77a16beb6273d98cf98c4ce76e3f24c957a0155ba61f233e4cf2423f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-03-pamasol-20s.mp4",
+      "bytes": 193068,
+      "sha256": "29abe072f109d7d8f7dd6a69213496abd20f3c157b1845da0e6ad4874f054c24"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-04-pamasol-32s.mp4",
+      "bytes": 191971,
+      "sha256": "7d24ed83ae94c61107a37dc0ef5c90d4c5e176cb4746a488e9bcf62b3bff79d4"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-05-pamasol-44s.mp4",
+      "bytes": 323057,
+      "sha256": "97225c692b22c53e231ae7fd1214ea4ec7f40a967b27182bf36e9706a470e28a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-06-pamasol-56s.mp4",
+      "bytes": 244210,
+      "sha256": "8d7dbb9861acd70fcc477a9103a4f32e2568f718905cd98deb963f8918ea67c8"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-07-pamasol-68s.mp4",
+      "bytes": 238629,
+      "sha256": "63c737deb1c91444654a2dd36b9cc42b6b533a8e34834de2b4a6682c310973c3"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-08-pamasol-88s.mp4",
+      "bytes": 242152,
+      "sha256": "44909fde9432c0b7ee45c701bd526b93f9248a68c931951069d03e8c322f21f3"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-09-capping-0s.mp4",
+      "bytes": 418960,
+      "sha256": "e1c46ae0c7dc2eb4ae5a11503df3cef4688702a38061d4c91916e6b4a8ba0029"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-10-capping-7s.mp4",
+      "bytes": 502731,
+      "sha256": "153ebf87f7ef66662c6e44c532e0b113286337cde7fd1060c66cc90d2ab0294d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-11-capping-14s.mp4",
+      "bytes": 408817,
+      "sha256": "3182002a03e49b2b2a24f7d42ebeddb33ed4f6b52fe46648f0f231dbfac4acca"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-12-packaging-2s.mp4",
+      "bytes": 331269,
+      "sha256": "30d26879f4cb4bb6c4b3403a7427260306fb6a4b5871a766839da6df156fb7c4"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-13-packaging-8s.mp4",
+      "bytes": 460244,
+      "sha256": "a8088b160990ef5ebea5ba59dc029bd1db6b340a525200a6470017b5064a7c48"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-14-packaging-14s.mp4",
+      "bytes": 408136,
+      "sha256": "b0396fac3f672e0a717dce3fcc9fdb21dba5e87a5728f9ecb045f7b383e674b0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-15-packaging-20s.mp4",
+      "bytes": 318484,
+      "sha256": "0187d18bd5ed00fbea0096da129554d3a096bf5b07bfca656ac022cda8c2e68c"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-16-packaging-28s.mp4",
+      "bytes": 267364,
+      "sha256": "0344310f0f0c7ccdae0138ba468b2ee2f771618d947953a08a310444d5c95570"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-17-stockLab-0s.mp4",
+      "bytes": 279854,
+      "sha256": "a532a997f20ac584aff29c9f782bc15191dca9b790fb2466018588fce7256674"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-18-stockLab-6s.mp4",
+      "bytes": 256180,
+      "sha256": "f8c96a1c044e5a96910e289a6142b0760d76b16e47b6ff3fbd68b49c9e8fc1a0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-19-stockLab-12s.mp4",
+      "bytes": 226745,
+      "sha256": "7769b6166d73368bc9ad923a880beb9c642702d15daa74375490a6a1e2c5a686"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-20-fanuc-0s.mp4",
+      "bytes": 2333768,
+      "sha256": "416ff3cf52d1f82846e9e488c3b336bae0ff7879d5da3ddc1079a1ab6e815ad2"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-21-fanuc-8s.mp4",
+      "bytes": 2527437,
+      "sha256": "bfea35cf54b078e59c8cc0910ca2daae4a5beda55946319c14f1356b95f844f7"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/eyeshadow-palette.jpg",
+      "bytes": 11514113,
+      "sha256": "72076c8498cce90988cb9f64e12cb7b2d5e2e21122ed1cc9dd3d74445031c42b"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/lipstick-application.jpg",
+      "bytes": 1053742,
+      "sha256": "da00fdbcf2b7054eb36d3d353df76c5dc4801497e187209c9036a7f6aa75c419"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/nail-polish-bottles.jpg",
+      "bytes": 4728556,
+      "sha256": "9735da68ae6d549db47c6889e048fe7aafe40524c62ef3fbc43f891bec004348"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/perfume-bottle.jpg",
+      "bytes": 109295,
+      "sha256": "66acc30e2be14d7a02c5a01c9ea086aadc687776edcd09abda0449a96e4f5a7a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-1.jpg",
+      "bytes": 98134,
+      "sha256": "ac0c352d43edf08129e51f230be7d07f0021c6bb0e2666b1a6ca69f12746884f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-1.mp4",
+      "bytes": 1262411,
+      "sha256": "1dfaf308e98acd82e088da1fb7c2983fa6a1d6753f9d00d2399dc45f1bd82a42"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-2.jpg",
+      "bytes": 111039,
+      "sha256": "f0f5f9173dc710461be8b5f575f014914aa1be96cf905ba6beac92058735ed50"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-2.mp4",
+      "bytes": 999001,
+      "sha256": "2f09721ad3980d37717899cb00d5091dd4b8ddbb11d8bfd8973ab2c8abdbecc1"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-3.jpg",
+      "bytes": 157704,
+      "sha256": "73b65402b004f010c15e02e4d47205e678f0dc43f1e3f7e54308fb0e778e7344"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-3.mp4",
+      "bytes": 4602740,
+      "sha256": "5366ca8243685b5ca74bc4de09631b12768fcedd7f5344181e3d049536315f79"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-4.jpg",
+      "bytes": 313460,
+      "sha256": "e034339616517a78f1556f544ffa71a60d3218ca760d06850d375b4509600f29"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-4.mp4",
+      "bytes": 13503097,
+      "sha256": "db9af2594d21c84e9a4d5b908c6a5c905588620e64373dbe762dba43936c2516"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-5.jpg",
+      "bytes": 130631,
+      "sha256": "7e987ae46ace1ec11614be9a3b52158607886df00fd02ba2c2d19cd0e1c10c4f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-5.mp4",
+      "bytes": 350259,
+      "sha256": "4e706fbde2e8cc78d21cae1cf42014c4e60790af8bb742adb8c09c763eb4ee13"
+    }
+  ]
+}

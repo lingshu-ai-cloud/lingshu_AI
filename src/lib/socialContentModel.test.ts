@@ -39,7 +39,8 @@ assert.equal(socialContentMaterialCanStart('limited', { hasVideo: false, imageCo
 assert.equal(socialContentMaterialCanStart('limited', { hasVideo: false, imageCount: 0, referenceLinkCount: 1 }), true);
 assert.equal(socialContentMaterialCanStart('ready', { hasVideo: false, imageCount: 1, referenceLinkCount: 0 }), false);
 assert.equal(socialShotFunctionLabel('hook'), '前三秒钩子');
-assert.equal(socialShotSourceStrategyLabel('authorized_digital_presenter'), '数字人口播');
+assert.equal(socialShotSourceStrategyLabel('authorized_digital_presenter'), '账号一致数字人口播');
+assert.equal(socialShotSourceStrategyLabel('aigc_product_scene_replication'), 'AIGC 产品场景复刻');
 assert.deepEqual(socialShotMaterialCountsLabel({
   customerAssetIds: ['customer-1'],
   generatedAssetIds: ['generated-1', 'generated-2'],

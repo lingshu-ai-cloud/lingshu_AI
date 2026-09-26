@@ -54,6 +54,20 @@ assert.ok(!grantCovers(scoped, 'publish', ['account-a'], 1, '2026-09-13', goal.e
 assert.ok(!grantCovers(scoped, 'send', ['customer-b'], 1, '2026-09-08', goal.endsAt));
 assert.ok(grantCovers(pack, 'publish', ['account-a'], 1, '2026-09-08', goal.endsAt));
 assert.ok(!grantCovers({ ...pack, authorization: { ...pack.authorization, mode: 'each' } }, 'publish', ['account-a'], 1, '2026-09-08', goal.endsAt));
+const legacyPackage = normalizePackage({
+  ...pack,
+  tasks: [
+    ...pack.tasks.filter(task => task.templateId !== 'director'),
+    { templateId: 'collection', title: '旧采集任务', ownerId: '', ownerName: '', dueAt: goal.endsAt, notes: '采集范围', sourceProjectIds: [] },
+    { templateId: 'inspiration', title: '旧灵感任务', ownerId: '', ownerName: '', dueAt: goal.endsAt, notes: '筛选依据', sourceProjectIds: [] },
+  ],
+} as unknown as typeof pack);
+assert.equal(legacyPackage.tasks.filter(task => task.templateId === 'director').length, 1, 'legacy collection and inspiration tasks migrate into one director task');
+assert.match(legacyPackage.tasks.find(task => task.templateId === 'director')!.notes, /采集范围/);
+assert.match(legacyPackage.tasks.find(task => task.templateId === 'director')!.notes, /筛选依据/);
+const prematureGrowth = validatePackage(pack, goal, { ...config, socialOperatingProfile: 'dual_account_growth' });
+assert.ok(prematureGrowth.some(issue => issue.includes('稳定经营')));
+assert.ok(prematureGrowth.some(issue => issue.includes('tiktok')));
 const late = structuredClone(pack); late.tasks[0].dueAt = '2026-09-13'; assert.ok(validatePackage(late, goal).length);
 const team = recommendPackage(goal, { ...config, defaultParticipation: 'team' }, 'member-a', 'Alice');
 assert.equal(team.tasks.find(t => t.templateId === 'production')?.ownerId, 'member-a');

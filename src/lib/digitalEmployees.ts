@@ -5,6 +5,7 @@ import { type OperatingAssessment } from './operatingMaturity';
 import type { WeeklyPackage } from "./weeklyPackage";
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
+import type { SocialOperatingProfileId } from '../../shared/contracts/socialOperatingProfile';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
@@ -33,6 +34,7 @@ export interface DigitalEmployeeConfig {
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";
   operatingAssessment?: OperatingAssessment;
+  socialOperatingProfile?: SocialOperatingProfileId;
   defaultParticipation?: "agent" | "team";
   videoDefaults?: Partial<VideoCreationPlan>;
   /** Languages generated autonomously for every content order. */

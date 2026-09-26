@@ -76,6 +76,12 @@ const digitalHumanSeed = socialTaskToStudioSeed({
   assetSupplyPlan: createSocialAssetSupplyPlan({
     creationMode: 'viral_replication', planVersion: 'plan-3', confirmedFactRefs: ['fact-product'],
     inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+    accountPresenterLock: {
+      socialAccountId: 'account-tiktok', presenterProfileId: 'profile-host', presenterProfileVersion: '3',
+      presenterAssetId: 'presenter-enterprise-1', avatarId: 'avatar-v3', voiceProfileId: 'voice-v3',
+      consentRef: 'consent-3', commercialRightsStatus: 'cleared', status: 'published',
+      consistencyKey: 'account-tiktok:profile-host:3',
+    },
     shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '企业人物复刻参考片的开场节奏' }],
   }),
 });
@@ -83,7 +89,12 @@ assert.deepEqual(digitalHumanSeed.digitalHumanShotPlans, [{
   shotId: 'scene-hook', shotIndex: 0, requestedDescription: '企业人物复刻参考片的开场节奏',
   workflow: 'viral_replication', method: 'replace', presenterAssetIds: ['presenter-enterprise-1'], referenceMaterialIds: ['reference-video-1'],
   referenceRequired: true, candidateTools: ['local_head_pipeline', 'runway_kling_motion'],
-  executionState: 'preview_only', sourceTaskId: task.taskId, sourceTaskVersion: task.version,
+  executionState: 'preview_only', accountPresenterLock: {
+    socialAccountId: 'account-tiktok', presenterProfileId: 'profile-host', presenterProfileVersion: '3',
+    presenterAssetId: 'presenter-enterprise-1', avatarId: 'avatar-v3', voiceProfileId: 'voice-v3',
+    consentRef: 'consent-3', commercialRightsStatus: 'cleared', status: 'published',
+    consistencyKey: 'account-tiktok:profile-host:3',
+  }, sourceTaskId: task.taskId, sourceTaskVersion: task.version,
 }]);
 
 console.log('studio social task hydration tests passed');

@@ -229,6 +229,11 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     brandNotes: value.brandNotes ?? null,
     restrictions: value.restrictions ?? [],
     callToAction: value.callToAction ?? null,
+    programRef: value.programRef ?? null,
+    targetAccountRef: value.targetAccountRef ?? null,
+    accountPlaybookRef: value.accountPlaybookRef ?? null,
+    referenceMode: value.referenceMode,
+    primaryExperimentVariable: value.primaryExperimentVariable ?? null,
     creationMode: value.creationMode
       ?? (value.legacyCreationRoute === 'clone' ? 'viral_replication' : 'material_processing'),
     assetAvailability: value.assetAvailability ?? 'none',

@@ -80,7 +80,8 @@ assert.deepEqual([...new Set(plan.tasks.map(task => task.agentRole))].sort(), ['
 assert.equal(plan.tasks.some(task => ['knowledge', 'planner', 'risk', 'channel', 'review'].includes(task.agentRole)), false);
 
 const byKey = new Map(plan.tasks.map(task => [task.key, task]));
-for (const key of ['context_readiness', 'goal_decomposition']) assert.equal(byKey.get(key)?.agentRole, 'orchestrator', `${key} belongs to 灵小枢`);
+assert.equal(byKey.get('context_readiness')?.agentRole, 'orchestrator', 'context readiness belongs to 灵小枢');
+assert.equal(byKey.get('goal_decomposition')?.agentRole, 'business', '经营 Agent owns objective, account, cadence, CTA and authorization decisions');
 for (const key of ['scheduled_source_collection', 'viral_analysis', 'content_mode_routing']) assert.equal(byKey.get(key)?.agentRole, 'director', `${key} belongs to the director Agent`);
 for (const key of ['content_production', 'content_quality_gate']) assert.equal(byKey.get(key)?.agentRole, 'content', `${key} belongs to the content Agent`);
 for (const key of ['content_release_approval', 'publishing_calendar', 'platform_publish', 'weekly_review']) assert.equal(byKey.get(key)?.agentRole, 'business', `${key} belongs to the business Agent`);

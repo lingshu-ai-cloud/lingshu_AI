@@ -1,4 +1,5 @@
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from './videoLanguages.js';
+import type { SocialAccountRole } from './socialOperatingProfile.js';
 
 /** Frozen user choices shared by planning, script, voice and rendering. */
 export interface VideoCreationPlan {
@@ -8,7 +9,7 @@ export interface VideoCreationPlan {
   evidenceRequirement?: string;
   directorStatus?: 'candidate' | 'script_draft' | 'script_approved' | 'in_production' | 'review' | 'approved' | 'blocked';
   estimatedCost?: number;
-  matrix?: { accountId: string; audience: string; objective: string; cta: string };
+  matrix?: { accountId: string; audience: string; objective: string; cta: string; accountRole?: SocialAccountRole; formats?: string[] };
   reviewRequirements?: Array<{ todoId: string; reference: string; scene: number; startsAt: number; endsAt: number; requirements: string; materials: string; acceptance: string }>;
   route: 'clone' | 'material' | 'product';
   productName: string;
@@ -56,7 +57,11 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     evidenceRequirement: String(value.evidenceRequirement || '').trim().slice(0, 1000),
     directorStatus: ['candidate', 'script_draft', 'script_approved', 'in_production', 'review', 'approved', 'blocked'].includes(String(value.directorStatus)) ? value.directorStatus : 'candidate',
     estimatedCost: Math.max(0, Math.round((Number(value.estimatedCost) || 0) * 100) / 100),
-    ...(value.matrix && typeof value.matrix === 'object' ? { matrix: { accountId: String(value.matrix.accountId || '').trim().slice(0, 160), audience: String(value.matrix.audience || '').trim().slice(0, 500), objective: String(value.matrix.objective || '').trim().slice(0, 500), cta: String(value.matrix.cta || '').trim().slice(0, 500) } } : {}),
+    ...(value.matrix && typeof value.matrix === 'object' ? { matrix: {
+      accountId: String(value.matrix.accountId || '').trim().slice(0, 160), audience: String(value.matrix.audience || '').trim().slice(0, 500), objective: String(value.matrix.objective || '').trim().slice(0, 500), cta: String(value.matrix.cta || '').trim().slice(0, 500),
+      accountRole: ['brand_capability', 'buyer_advisor', 'brand_combined'].includes(String(value.matrix.accountRole)) ? value.matrix.accountRole : 'brand_combined',
+      formats: Array.isArray(value.matrix.formats) ? [...new Set(value.matrix.formats.map(item => String(item).trim()).filter(Boolean))].slice(0, 8) : [],
+    } } : {}),
     ...(Array.isArray(value.reviewRequirements) ? { reviewRequirements: value.reviewRequirements.slice(0, 5).map(r => ({ todoId: String(r.todoId || '').slice(0, 80), reference: String(r.reference || '').slice(0, 4000), scene: 1, startsAt: 0, endsAt: 3, requirements: String(r.requirements || '').slice(0, 4000), materials: String(r.materials || '').slice(0, 4000), acceptance: String(r.acceptance || '').slice(0, 4000) })) } : {}),
     route: ['clone', 'material', 'product'].includes(String(value.route)) ? value.route! : 'product',
     productName: String(value.productName || '').trim().slice(0, 180), theme: String(value.theme || '').trim().slice(0, 500),

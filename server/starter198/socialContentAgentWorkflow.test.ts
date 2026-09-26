@@ -45,6 +45,12 @@ const truthBoundary = {
   mustNotImplyCustomerReality: true,
   prohibitedRepresentations: ['alter_locked_product_identity' as const, 'present_synthetic_media_as_customer_evidence' as const],
 };
+const presenterLock = {
+  socialAccountId: 'account-1', presenterProfileId: 'profile-1', presenterProfileVersion: '2',
+  presenterAssetId: 'presenter-enterprise-1', avatarId: 'avatar-1', voiceProfileId: 'voice-1',
+  consentRef: 'consent-1', commercialRightsStatus: 'cleared' as const, status: 'published' as const,
+  consistencyKey: 'account-1:profile-1:2',
+};
 
 const referenceAnalysis: SocialReferenceVideoAnalysis = {
   analysisId: 'analysis-1',
@@ -199,6 +205,7 @@ const runtimeBlockedDigitalHuman = buildSocialAgentWorkflow({
   assetSupplyPlan: createSocialAssetSupplyPlan({
     creationMode: 'viral_replication', planVersion: 'runtime-blocked', confirmedFactRefs: ['knowledge:product-1'],
     inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+    accountPresenterLock: presenterLock,
     shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '企业人物口播' }],
   }),
   referenceAnalysis, replicationScript: null,
@@ -222,7 +229,8 @@ const runtimeReadyDigitalHumanWorkflow = buildSocialAgentWorkflow({
   brief: { ...brief, creationMode: 'viral_replication' }, sources: [], factSourceRefs: ['knowledge:product-1'],
   assetSupplyPlan: createSocialAssetSupplyPlan({
     creationMode: 'viral_replication', planVersion: 'runtime-ready', confirmedFactRefs: ['knowledge:product-1'],
-    inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+    inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+    accountPresenterLock: presenterLock,
     shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '企业人物口播' }],
   }),
   referenceAnalysis, replicationScript: null,
@@ -238,6 +246,7 @@ assert.ok(runtimeReadyDigitalHumanWorkflow.executionPlan.scenes.some(scene => (
 const digitalHumanSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication', planVersion: 'digital-human-1', confirmedFactRefs: ['knowledge:product-1'],
   inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+  accountPresenterLock: presenterLock,
   shots: [{ shotId: 'scene-hook', function: 'hook', requestedDescription: '使用企业人物逐句重新演绎' }],
 });
 const alignedDigitalHumanSupply = alignSocialAssetSupplyPlanToBaseline({
@@ -253,6 +262,26 @@ assert.equal(alignedDigitalHumanSupply.shots[0]?.digitalHumanPlan?.workflow, 'vi
 assert.equal(alignedDigitalHumanSupply.shots[0]?.digitalHumanPlan?.executionState, 'preview_only');
 assert.deepEqual(alignedDigitalHumanSupply.shots[0]?.digitalHumanPlan?.referenceMaterialIds, ['reference-video-1']);
 assert.deepEqual(alignedDigitalHumanSupply.shots[0]?.sourceRefs, ['presenter-enterprise-1']);
+assert.equal(alignedDigitalHumanSupply.accountPresenterLock?.consistencyKey, presenterLock.consistencyKey);
+
+const productSceneSupply = createSocialAssetSupplyPlan({
+  creationMode: 'material_processing', planVersion: 'product-scene-1', confirmedFactRefs: ['knowledge:product-1'],
+  inventory: { productIdentityGroups: [
+    { productRef: 'serum', imageIds: ['serum-front'] },
+    { productRef: 'cream', imageIds: ['cream-front'] },
+  ] },
+  shots: [{ shotId: 'scene-product', function: 'hook', requestedDescription: '多产品在干净展台上有序摆放并环绕展示' }],
+});
+const productSceneWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-product-scene', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, creationMode: 'material_processing' }, sources: [], factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: productSceneSupply, referenceAnalysis: null, replicationScript: null,
+  capabilityRuntime: [{ strategy: 'aigc_product_scene_replication', adapterIds: ['controlled_product_scene_replication.v1'], environmentReady: true, reason: null }],
+});
+assert.equal(productSceneWorkflow.directorBrief.scenes[0]?.productSceneReplication?.sceneLock.productSlots.length, 2);
+assert.equal(productSceneWorkflow.executionPlan.scenes[0]?.selectedSourceStrategy, 'aigc_product_scene_replication');
+assert.equal(productSceneWorkflow.executionPlan.scenes[0]?.productSceneReplication?.cameraLock.movementPath.includes('环绕'), true);
+assert.ok(productSceneWorkflow.directorBrief.scenes[0]?.acceptanceCriteria.some(item => item.includes('单图平移缩放')));
 
 const blockedSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',

@@ -164,6 +164,7 @@ export type SocialTruthSensitiveSubject = typeof SOCIAL_TRUTH_SENSITIVE_SUBJECTS
 export const SOCIAL_SHOT_SOURCE_STRATEGIES = [
   'customer_real_asset',
   'customer_product_image_animation',
+  'aigc_product_scene_replication',
   'authorized_digital_presenter',
   'licensed_stock_asset',
   'non_evidentiary_ai_visual',
@@ -210,6 +211,78 @@ export interface SocialFunctionalEquivalentReplacement {
   reason: string | null;
 }
 
+/**
+ * Published identity used by one social account. New tasks must reference the
+ * published version instead of choosing an avatar and voice independently.
+ */
+export interface SocialAccountPresenterLock {
+  socialAccountId: string;
+  presenterProfileId: string;
+  presenterProfileVersion: string;
+  presenterAssetId: string;
+  avatarId: string;
+  voiceProfileId: string;
+  consentRef: string;
+  commercialRightsStatus: 'cleared' | 'restricted' | 'expired';
+  status: 'published' | 'retired';
+  /** Stable account + profile + version key persisted on every generated clip. */
+  consistencyKey: string;
+}
+
+export interface SocialProductIdentityGroup {
+  productRef: string;
+  referenceImageIds: string[];
+  requiredVisibleElements: string[];
+  forbiddenChanges: Array<'shape' | 'material' | 'color' | 'logo' | 'label_text' | 'packaging_structure'>;
+}
+
+/** Machine-verifiable product-scene contract; this is not a free-form prompt. */
+export interface SocialProductSceneReplicationSpec {
+  schemaVersion: 'social-product-scene-replication.v1';
+  templateSource: 'reference_shot' | 'account_scene_template' | 'system_clean_stage';
+  sceneTemplateKey: string;
+  referenceShotId: string | null;
+  productIdentity: {
+    groups: SocialProductIdentityGroup[];
+    identitySimilarityMinimum: number;
+    ocrExactMatchRequired: boolean;
+  };
+  sceneLock: {
+    environment: string;
+    background: string;
+    platform: string;
+    lighting: string;
+    composition: string;
+    productSlots: Array<{
+      slotId: string;
+      productRef: string;
+      placement: string;
+      orientation: string;
+      scale: number;
+    }>;
+  };
+  cameraLock: {
+    shotSize: string;
+    cameraAngle: string;
+    lensFeel: string;
+    startFrame: string;
+    movementPath: string;
+    endFrame: string;
+    durationSeconds: number;
+    easing: string;
+  };
+  tolerance: {
+    durationSeconds: number;
+    productPositionRatio: number;
+    productScaleRatio: number;
+    cameraPathDeviationRatio: number;
+  };
+  validation: {
+    requiredChecks: Array<'product_identity' | 'label_ocr' | 'scene_topology' | 'product_slot_layout' | 'camera_trajectory'>;
+    singleShotRetryOnFailure: true;
+  };
+}
+
 export interface SocialAssetSupplyShotPlan {
   shotId: string;
   function: SocialShotFunction;
@@ -223,6 +296,8 @@ export interface SocialAssetSupplyShotPlan {
   feasibility: SocialProductionFeasibility;
   feasibilityReason: string;
   customerShootRequired: false;
+  /** Present when real product reference images drive a full generated scene. */
+  productSceneReplication?: SocialProductSceneReplicationSpec;
   /** Present only when this storyboard shot uses the shared digital-human stack. */
   digitalHumanPlan?: {
     workflow: 'material_processing' | 'viral_replication';
@@ -232,6 +307,8 @@ export interface SocialAssetSupplyShotPlan {
     referenceRequired: boolean;
     candidateTools: string[];
     executionState: 'needs_presenter' | 'needs_confirmation' | 'preview_only' | 'ready_for_capability_check';
+    /** Null on historic plans and on tasks that still need an account profile. */
+    accountPresenterLock?: SocialAccountPresenterLock | null;
   };
 }
 
@@ -252,6 +329,8 @@ export interface SocialAssetSupplyPlan {
   customerActions: Array<'confirm_facts' | 'confirm_rights'>;
   systemActions: string[];
   optionalEnhancements: string[];
+  /** Account identity frozen for every presenter shot in this plan. */
+  accountPresenterLock?: SocialAccountPresenterLock | null;
   shots: SocialAssetSupplyShotPlan[];
 }
 

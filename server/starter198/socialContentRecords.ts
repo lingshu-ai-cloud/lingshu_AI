@@ -7,9 +7,12 @@ import {
   SOCIAL_ASSET_AVAILABILITIES,
   SOCIAL_CONTENT_CREATION_MODES,
   SOCIAL_CONTENT_MANAGEMENT_MODES,
+  SOCIAL_REPLICATION_REFERENCE_MODES,
   SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_WORK_PACKAGE_KINDS,
   type SocialArtifactStatus,
+  type SocialAccountPlaybookRef,
+  type SocialAccountPresenterLock,
   type SocialContentArtifact,
   type SocialContentTaskBrief,
   type SocialContentTaskDetail,
@@ -24,6 +27,7 @@ import {
   type SocialReplicationEvaluation,
   type SocialTaskSource,
   type SocialWorkPackageSelection,
+  type SocialVersionedObjectRef,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import {
@@ -53,21 +57,63 @@ import {
 } from './socialContentScriptSources.js';
 import { buildSocialAgentWorkflow } from './socialContentAgentWorkflow.js';
 
-export async function readAuthorizedPresenterAssetIds(repository: Starter198Repository, tenantId: string): Promise<string[]> {
-  if (!repository.dataStore) return [];
+type StoredPresenter = Record<string, unknown> & {
+  id?: string; authorized?: boolean; avatarId?: string; voiceId?: string;
+  socialAccountId?: string; presenterProfileId?: string; presenterProfileVersion?: string;
+  presenterProfileStatus?: string; commercialRightsStatus?: string; consistencyKey?: string;
+  rightsEvidence?: { authorizationRef?: string; consentRef?: string; expiresAt?: string; revokedAt?: string;
+    subjectAdultConfirmed?: boolean; permittedUses?: string[] };
+  toolMappings?: { heygen?: { avatarId?: string; voiceId?: string }; runway?: { referenceMaterialIds?: unknown[] } };
+  referenceMaterialIds?: unknown[];
+};
+
+export async function readAuthorizedPresenterInventory(repository: Starter198Repository, tenantId: string, socialAccountId?: string | null): Promise<{
+  assetIds: string[];
+  accountPresenterLock: SocialAccountPresenterLock | null;
+}> {
+  if (!repository.dataStore) return { assetIds: [], accountPresenterLock: null };
   try {
-    const defaults = await repository.dataStore.list<{ tenant_id: string; payload?: { presenters?: Array<Record<string, unknown>> } }>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
+    const defaults = await repository.dataStore.list<{ tenant_id: string; payload?: { presenters?: StoredPresenter[] } }>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
     if (defaults.totalItems > 1 || defaults.items.length > 1) throw new Error('duplicate_defaults');
-    return (defaults.items[0]?.payload?.presenters || []).filter(item => {
+    const usable = (defaults.items[0]?.payload?.presenters || []).filter(item => {
       const mappings = item.toolMappings && typeof item.toolMappings === 'object' ? item.toolMappings as Record<string, any> : {};
       return item.authorized === true && String(item.id || '').trim() && (Boolean(String(item.avatarId || '').trim() && String(item.voiceId || '').trim())
         || (Array.isArray(item.referenceMaterialIds) && item.referenceMaterialIds.some(Boolean))
         || Boolean(String(mappings.heygen?.avatarId || '').trim() && String(mappings.heygen?.voiceId || '').trim())
         || (Array.isArray(mappings.runway?.referenceMaterialIds) && mappings.runway.referenceMaterialIds.some(Boolean)));
-    }).map(item => String(item.id));
+    });
+    if (!socialAccountId) return { assetIds: usable.map(item => String(item.id)), accountPresenterLock: null };
+    const profiles = usable.flatMap(item => {
+      const avatarId = String(item.toolMappings?.heygen?.avatarId || item.avatarId || '').trim();
+      const voiceProfileId = String(item.toolMappings?.heygen?.voiceId || item.voiceId || '').trim();
+      const presenterProfileId = String(item.presenterProfileId || '').trim();
+      const presenterProfileVersion = String(item.presenterProfileVersion || '').trim();
+      const expectedKey = `${socialAccountId}:${presenterProfileId}:${presenterProfileVersion}`;
+      const authorizationRef = String(item.rightsEvidence?.authorizationRef || '').trim();
+      const consentRef = String(item.rightsEvidence?.consentRef || '').trim();
+      const expiresAt = item.rightsEvidence?.expiresAt ? Date.parse(item.rightsEvidence.expiresAt) : null;
+      const rightsReady = Boolean(authorizationRef && consentRef && !item.rightsEvidence?.revokedAt
+        && item.rightsEvidence?.subjectAdultConfirmed === true
+        && item.rightsEvidence?.permittedUses?.includes('digital_presenter')
+        && (expiresAt === null || (Number.isFinite(expiresAt) && expiresAt > Date.now())));
+      return item.socialAccountId === socialAccountId && item.presenterProfileStatus === 'published'
+        && item.commercialRightsStatus === 'cleared' && rightsReady
+        && presenterProfileId && presenterProfileVersion && avatarId && voiceProfileId
+        && item.consistencyKey === expectedKey
+        ? [{ socialAccountId, presenterProfileId, presenterProfileVersion, presenterAssetId: String(item.id),
+          avatarId, voiceProfileId, consentRef, commercialRightsStatus: 'cleared' as const,
+          status: 'published' as const, consistencyKey: expectedKey }]
+        : [];
+    });
+    if (profiles.length > 1) throw new Error('duplicate_published_account_presenter');
+    return { assetIds: profiles.map(item => item.presenterAssetId), accountPresenterLock: profiles[0] ?? null };
   } catch {
     throw new SocialContentWorkflowError('social_content_presenter_assets_unavailable', 503);
   }
+}
+
+export async function readAuthorizedPresenterAssetIds(repository: Starter198Repository, tenantId: string): Promise<string[]> {
+  return (await readAuthorizedPresenterInventory(repository, tenantId)).assetIds;
 }
 
 const storedCount = (value: unknown): number => {
@@ -83,6 +129,26 @@ const storedCount = (value: unknown): number => {
 
 function nullable(value: unknown): string | null {
   return socialText(value) || null;
+}
+
+function versionedObjectRef(value: unknown, expectedObjectType?: string): SocialVersionedObjectRef | null {
+  if (value === null || value === undefined || value === '') return null;
+  const row = socialObject(value);
+  const objectType = socialText(row?.objectType);
+  const id = socialText(row?.id);
+  const version = socialText(row?.version);
+  if (!row || !objectType || !id || !version || (expectedObjectType && objectType !== expectedObjectType)) {
+    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  }
+  return { objectType, id, version };
+}
+
+function accountPlaybookRef(value: unknown): SocialAccountPlaybookRef | null {
+  const base = versionedObjectRef(value, 'account_playbook');
+  if (!base) return null;
+  const accountRef = socialText(socialObject(value)?.accountRef);
+  if (!accountRef) throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  return { ...base, objectType: 'account_playbook', accountRef };
 }
 
 function jsonRecord(value: unknown, code: string): Record<string, unknown> {
@@ -127,9 +193,11 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   const creationMode = socialText(record.creationMode);
   const assetAvailability = socialText(record.assetAvailability);
   const managementMode = socialText(record.managementMode);
+  const referenceMode = socialText(record.referenceMode);
   if ((creationMode && !SOCIAL_CONTENT_CREATION_MODES.includes(creationMode as typeof SOCIAL_CONTENT_CREATION_MODES[number]))
     || (assetAvailability && !SOCIAL_ASSET_AVAILABILITIES.includes(assetAvailability as typeof SOCIAL_ASSET_AVAILABILITIES[number]))
-    || (managementMode && !SOCIAL_CONTENT_MANAGEMENT_MODES.includes(managementMode as typeof SOCIAL_CONTENT_MANAGEMENT_MODES[number]))) {
+    || (managementMode && !SOCIAL_CONTENT_MANAGEMENT_MODES.includes(managementMode as typeof SOCIAL_CONTENT_MANAGEMENT_MODES[number]))
+    || (referenceMode && !SOCIAL_REPLICATION_REFERENCE_MODES.includes(referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number]))) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
   return {
@@ -154,6 +222,11 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     brandNotes: nullable(record.brandNotes),
     restrictions: strings(record.restrictions, 'social_content_task_record_invalid'),
     callToAction: nullable(record.callToAction),
+    programRef: versionedObjectRef(record.programRef),
+    targetAccountRef: versionedObjectRef(record.targetAccountRef, 'owned_social_account'),
+    accountPlaybookRef: accountPlaybookRef(record.accountPlaybookRef),
+    ...(referenceMode ? { referenceMode: referenceMode as NonNullable<SocialContentTaskBrief['referenceMode']> } : {}),
+    primaryExperimentVariable: nullable(record.primaryExperimentVariable),
     ...(creationMode ? { creationMode: creationMode as NonNullable<SocialContentTaskBrief['creationMode']> } : {}),
     ...(assetAvailability ? { assetAvailability: assetAvailability as NonNullable<SocialContentTaskBrief['assetAvailability']> } : {}),
     ...(managementMode ? { managementMode: managementMode as NonNullable<SocialContentTaskBrief['managementMode']> } : {}),
@@ -479,7 +552,11 @@ export async function readSocialTaskDetail(input: {
   const customerVideoIds = activeMaterials
     .filter(source => !productImageIds.includes(source.sourceId))
     .map(source => source.sourceId);
-  const presenterAssetIds = await readAuthorizedPresenterAssetIds(input.repository, input.tenantId);
+  const presenterInventory = await readAuthorizedPresenterInventory(
+    input.repository,
+    input.tenantId,
+    summary.brief.targetAccountRef?.id,
+  );
   const confirmedFactRefs = [
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
@@ -492,16 +569,23 @@ export async function readSocialTaskDetail(input: {
     assetAvailability: summary.brief.assetAvailability,
     managementMode: summary.brief.managementMode,
     planVersion: summary.version,
-    inventory: { customerVideoIds, productImageIds, presenterAssetIds,
+    inventory: { customerVideoIds, productImageIds,
+      productIdentityGroups: productImageIds.length ? [{
+        productRef: summary.brief.productRef || 'task-product', imageIds: productImageIds,
+      }] : [],
+      presenterAssetIds: presenterInventory.assetIds,
       referenceVideoIds: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
         && referenceVideoAnalysis && customerVideoIds.includes(referenceVideoAnalysis.referenceSourceId)
         ? [referenceVideoAnalysis.referenceSourceId] : [] },
     confirmedFactRefs,
+    accountPresenterLock: presenterInventory.accountPresenterLock,
+    referenceShots: referenceVideoAnalysis?.shots,
     shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,
       function: shot.purpose,
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
+      referenceShotId: shot.referenceShotId,
     })),
     rightsConfirmationRequired: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
       && !activeSources.some(source => source.kind === 'reference_link'),

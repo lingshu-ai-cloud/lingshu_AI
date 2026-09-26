@@ -21,14 +21,23 @@ assert.equal(zeroAssetPlan.overallFeasibility, 'functional_equivalent');
 assert.equal(zeroAssetPlan.canProduceWithoutCustomerShoot, true);
 assert.ok(zeroAssetPlan.shots.length >= 4);
 assert.ok(zeroAssetPlan.shots.every(shot => shot.customerShootRequired === false));
-assert.equal(zeroAssetPlan.shots[0]?.sourceStrategy, 'motion_graphics');
+assert.equal(zeroAssetPlan.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
 assert.ok(zeroAssetPlan.shots.every(shot => shot.sourceStrategy !== 'customer_real_asset'));
-assert.ok(zeroAssetPlan.shots.every(shot => !shot.digitalHumanPlan));
+assert.equal(zeroAssetPlan.shots[0]?.digitalHumanPlan?.executionState, 'needs_presenter');
+assert.equal(zeroAssetPlan.shots[0]?.digitalHumanPlan?.accountPresenterLock, null);
+
+const presenterLock = {
+  socialAccountId: 'tiktok-account-1', presenterProfileId: 'profile-1', presenterProfileVersion: '3',
+  presenterAssetId: 'presenter-enterprise-1', avatarId: 'avatar-1', voiceProfileId: 'voice-1',
+  consentRef: 'consent-1', commercialRightsStatus: 'cleared' as const, status: 'published' as const,
+  consistencyKey: 'tiktok-account-1:profile-1:3',
+};
 
 const presenterDrivenPlan = createSocialAssetSupplyPlan({
   creationMode: 'material_processing',
   confirmedFactRefs: ['fact-product-name'],
   inventory: { presenterAssetIds: ['presenter-enterprise-1'] },
+  accountPresenterLock: presenterLock,
   shots: [{ shotId: 'presenter-value', function: 'value', requestedDescription: '企业人物介绍产品价值' }],
 });
 assert.equal(presenterDrivenPlan.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
@@ -36,18 +45,20 @@ assert.deepEqual(presenterDrivenPlan.shots[0]?.sourceRefs, ['presenter-enterpris
 assert.deepEqual(presenterDrivenPlan.shots[0]?.digitalHumanPlan, {
   workflow: 'material_processing', method: 'talking', presenterAssetIds: ['presenter-enterprise-1'],
   referenceMaterialIds: [],
-  referenceRequired: false, candidateTools: ['heygen'], executionState: 'ready_for_capability_check',
+  referenceRequired: false, candidateTools: ['heygen'], executionState: 'ready_for_capability_check', accountPresenterLock: presenterLock,
 });
+assert.equal(presenterDrivenPlan.accountPresenterLock?.consistencyKey, presenterLock.consistencyKey);
 
 const viralPresenterPlan = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',
   confirmedFactRefs: ['fact-product-name'],
   inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: ['reference-video-1'] },
+  accountPresenterLock: presenterLock,
   shots: [{ shotId: 'reference-hook', function: 'hook', requestedDescription: '逐句复刻参考镜头节奏并替换人物' }],
 });
 assert.deepEqual(viralPresenterPlan.shots[0]?.digitalHumanPlan, {
   workflow: 'viral_replication', method: 'replace', presenterAssetIds: ['presenter-enterprise-1'], referenceMaterialIds: ['reference-video-1'],
-  referenceRequired: true, candidateTools: ['local_head_pipeline', 'runway_kling_motion'], executionState: 'preview_only',
+  referenceRequired: true, candidateTools: ['local_head_pipeline', 'runway_kling_motion'], executionState: 'preview_only', accountPresenterLock: presenterLock,
 });
 
 const truthSensitivePlan = createSocialAssetSupplyPlan({
@@ -100,13 +111,22 @@ assert.equal(evidenceBackedPlan.shots[0]?.feasibility, 'full_fidelity');
 const productAnchoredPlan = createSocialAssetSupplyPlan({
   creationMode: 'material_processing',
   confirmedFactRefs: ['fact-product'],
-  inventory: { productImageIds: ['product-image-1'] },
+  inventory: {
+    productIdentityGroups: [
+      { productRef: 'serum', imageIds: ['serum-front', 'serum-side'] },
+      { productRef: 'cream', imageIds: ['cream-front'] },
+    ],
+  },
 });
 assert.equal(productAnchoredPlan.assetAvailability, 'limited');
 assert.equal(productAnchoredPlan.productionRoute, 'product_anchored_generation');
 assert.equal(productAnchoredPlan.overallFeasibility, 'full_fidelity');
-assert.ok(productAnchoredPlan.shots.every(shot => shot.sourceStrategy === 'customer_product_image_animation'));
-assert.ok(productAnchoredPlan.shots.every(shot => /锁定产品外观、包装、商标和文字/.test(shot.productionInstruction)));
+assert.ok(productAnchoredPlan.shots.every(shot => shot.sourceStrategy === 'aigc_product_scene_replication'));
+assert.ok(productAnchoredPlan.shots.every(shot => /完整场景拓扑|同一场景模板/.test(shot.productionInstruction)));
+assert.equal(productAnchoredPlan.shots[0]?.productSceneReplication?.sceneTemplateKey, 'system:clean-platform-orbit-v1');
+assert.equal(productAnchoredPlan.shots[0]?.productSceneReplication?.sceneLock.productSlots.length, 2);
+assert.equal(productAnchoredPlan.shots[0]?.productSceneReplication?.productIdentity.groups[0]?.referenceImageIds.length, 2);
+assert.match(productAnchoredPlan.shots[0]?.productSceneReplication?.cameraLock.movementPath || '', /环绕/);
 
 const factsPendingPlan = createSocialAssetSupplyPlan({ creationMode: 'material_processing' });
 assert.equal(factsPendingPlan.status, 'requires_fact_confirmation');

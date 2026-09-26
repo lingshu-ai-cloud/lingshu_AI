@@ -61,6 +61,7 @@ import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
 import { platformAdImportsRouter } from './routes/platformAdImports.js';
 import { accountHubRouter } from './routes/accountHub.js';
 import { agentNotificationsRouter } from './routes/agentNotifications.js';
+import { startupHubRouter } from './routes/startupHub.js';
 import {
   apiRateLimitConfig,
   configureHttpServer,
@@ -223,6 +224,7 @@ app.use('/api/overseas/auth', authRouter);
 app.use('/api/overseas/admin', adminRouter);
 app.use('/api/overseas/account-hub', accountHubRouter);
 app.use('/api/overseas/agent-notifications', agentNotificationsRouter);
+app.use('/api/overseas/startup-hub', startupHubRouter);
 app.use('/api/overseas/support-access', supportAccessRouter);
 app.use('/api/overseas/crawl-worker', crawlWorkerRouter);
 app.use('/api/overseas/studio', studioRouter);
