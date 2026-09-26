@@ -1,7 +1,11 @@
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, Circle, LayoutDashboard, ListChecks, Network, Users } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
 import { useSocialProgram } from '../../contexts/SocialProgramContext';
+import { socialProgramApi } from '../../lib/socialProgramApi';
+import type { WeeklyOperatingPackage } from '../../../shared/contracts/socialProgram';
 import SocialProgramPageFrame, { SOCIAL_STAGE_LABELS } from './SocialProgramPageFrame';
+import WeeklyOperatingWorkbench from './WeeklyOperatingWorkbench';
 
 const READINESS_LABELS = {
   foundationConfirmed: '基础资料',
@@ -17,7 +21,39 @@ const READINESS_LABELS = {
 } as const;
 
 export default function SocialWorkspacePage({ onNavigate }: { onNavigate: (page: Page) => void }) {
-  const { activeProgram, programs, accounts, loading, accountsLoading } = useSocialProgram();
+  const { activeProgram, programs, accounts, loading, accountsLoading, selectProgram } = useSocialProgram();
+  const [weeklyPackage, setWeeklyPackage] = useState<WeeklyOperatingPackage | null>(null);
+  const [packageLoading, setPackageLoading] = useState(false);
+  const [packageError, setPackageError] = useState('');
+  const query = new URLSearchParams(window.location.search);
+  const linkedProgramId = query.get('programId');
+  const linkedPackageId = query.get('packageId');
+  const linkedVersion = Number(query.get('version'));
+  const linkedTaskId = query.get('taskId');
+
+  useEffect(() => {
+    if (linkedProgramId && programs.some(item => item.programId === linkedProgramId) && activeProgram?.programId !== linkedProgramId) selectProgram(linkedProgramId);
+  }, [activeProgram?.programId, linkedProgramId, programs, selectProgram]);
+
+  const refreshPackage = useCallback(async () => {
+    if (!activeProgram) { setWeeklyPackage(null); return; }
+    setPackageLoading(true);
+    setPackageError('');
+    try {
+      const items = await socialProgramApi.listOperatingPackages(activeProgram.programId);
+      const selected = linkedPackageId
+        ? items.find(item => item.packageId === linkedPackageId && (!Number.isInteger(linkedVersion) || linkedVersion <= 0 || item.version === linkedVersion))
+        : items.find(item => item.packageId === activeProgram.activeWeeklyOperatingPackageRef?.id && item.version === activeProgram.activeWeeklyOperatingPackageRef?.version)
+          || items.find(item => item.status === 'active') || items[0];
+      setWeeklyPackage(selected || null);
+      if (linkedPackageId && !selected) setPackageError('深链指定的周包版本不存在，未使用其他版本替代。');
+    } catch (cause) {
+      setWeeklyPackage(null);
+      setPackageError(cause instanceof Error ? cause.message : '周工作台读取失败。');
+    } finally { setPackageLoading(false); }
+  }, [activeProgram, linkedPackageId, linkedVersion]);
+
+  useEffect(() => { void refreshPackage(); }, [refreshPackage]);
   if (!activeProgram) {
     return (
       <SocialProgramPageFrame title="社媒经营工作台" description="把对标研究、账号矩阵、经营计划和内容生产放进同一个可追溯项目。">
@@ -51,6 +87,8 @@ export default function SocialWorkspacePage({ onNavigate }: { onNavigate: (page:
           </button>
         ))}
       </section>
+
+      <WeeklyOperatingWorkbench pkg={weeklyPackage} loading={packageLoading} error={packageError} selectedTaskId={linkedTaskId} onRefresh={() => void refreshPackage()} />
 
       <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
