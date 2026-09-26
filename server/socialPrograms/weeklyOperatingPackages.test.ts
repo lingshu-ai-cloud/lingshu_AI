@@ -89,6 +89,11 @@ test('weekly operating package: default six-account cadence creates seven workfl
   assert.equal(item.status, 'draft');
   assert.equal(item.weekEnd, '2026-10-11');
   assert.deepEqual(item.workflows.map(workflow => workflow.kind), WEEKLY_OPERATING_WORKFLOW_KINDS);
+  assert.equal(item.workflowTasks.length, 7);
+  assert.ok(item.workflows.every(workflow => workflow.taskRefs.length === 1));
+  assert.ok(item.planningBlockers.includes('capacity_plan_unavailable'));
+  assert.ok(item.planningBlockers.some(reason => reason.endsWith(':cta_required')));
+  assert.equal(item.workflows.find(workflow => workflow.kind === 'readiness')!.status, 'blocked');
   assert.equal(item.socialContentPackage.originalContentTarget, 10);
   assert.equal(item.socialContentPackage.adaptationVersionTarget, 16);
   assert.equal(item.socialContentPackage.publicationTaskTarget, 26);
@@ -129,6 +134,7 @@ test('weekly operating package: user cadence creates an immutable revision and e
   assert.equal(revised.socialContentPackage.publicationTaskTarget, 6);
   assert.equal(revised.socialContentPackage.adaptationVersionTarget, 2);
   assert.equal(revised.socialContentPackage.authorization.maxPublishItems, 6);
+  assert.equal(revised.taskVersionMappings.length, 7);
   const history = await packages.list('tenant-a', program.programId);
   assert.deepEqual(history.map(item => item.version), [2, 1]);
   await assert.rejects(
@@ -136,6 +142,36 @@ test('weekly operating package: user cadence creates an immutable revision and e
     (error: unknown) => error instanceof SocialProgramError && error.code === 'version_conflict',
   );
   await assert.rejects(packages.get('tenant-b', program.programId, first.packageId), /\u793e\u5a92\u9879\u76ee\u4e0d\u5b58\u5728/);
+});
+
+test('weekly operating package: workflow event replay is idempotent and blocking stays on dependants', async () => {
+  const { packages, program } = await fixture();
+  const item = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '状态机', successCriteria: ['可重放'],
+  });
+  const readiness = item.workflowTasks.find(task => task.kind === 'readiness')!;
+  const event = { eventId: 'evt-1', taskId: readiness.taskId, type: 'unblock' as const, occurredAt: '2026-10-01T00:00:00.000Z' };
+  const once = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, { expectedVersion: 1, event });
+  const replay = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, { expectedVersion: 1, event });
+  assert.equal(replay.appliedWorkflowEvents.length, 1);
+  assert.deepEqual(replay, once);
+  const discovery = replay.workflowTasks.find(task => task.kind === 'discovery')!;
+  const blocked = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, {
+    expectedVersion: 1,
+    event: { eventId: 'evt-2', taskId: discovery.taskId, type: 'block', reason: 'discovery_provider_unavailable', occurredAt: '2026-10-01T00:01:00.000Z' },
+  });
+  assert.equal(blocked.workflowTasks.find(task => task.kind === 'readiness')!.status, 'planned');
+  assert.equal(blocked.workflowTasks.find(task => task.kind === 'directing')!.status, 'blocked');
+});
+
+test('weekly operating package: discovery and production budgets remain independent', async () => {
+  const { packages, program } = await fixture();
+  const item = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '预算隔离', successCriteria: ['预算不串用'],
+    weeklyBudgetCny: 2000, discoveryBudgetCny: 300,
+  });
+  assert.equal(item.socialContentPackage.weeklyBudgetCny, 2000);
+  assert.equal(item.discoveryBudgetCny, 300);
 });
 
 test('weekly operating package: revision preserves per-task fields for retained accounts', async () => {
@@ -209,6 +245,10 @@ test('weekly operating package: explicit activation authorizes only the frozen b
   });
   assert.equal(revised.socialContentPackage.authorization.allowRealPublishing, false, '新版本必须重新授权');
   assert.equal(revised.socialContentPackage.authorization.authorizedBy, null);
+  const history = await packages.list('tenant-a', program.programId);
+  const invalidatedV1 = history.find(item => item.version === 1)!;
+  assert.equal(invalidatedV1.socialContentPackage.authorization.allowRealPublishing, false);
+  assert.equal(invalidatedV1.socialContentPackage.authorization.revokedBy, 'owner');
   assert.equal((await programs.getProgram('tenant-a', program.programId)).version, 2);
 });
 

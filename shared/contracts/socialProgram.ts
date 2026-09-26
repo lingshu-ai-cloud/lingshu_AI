@@ -71,6 +71,34 @@ export const WEEKLY_OPERATING_PACKAGE_STATUSES = ['draft', 'active', 'superseded
 export type WeeklyOperatingPackageStatus = typeof WEEKLY_OPERATING_PACKAGE_STATUSES[number];
 export type WeeklyOperatingWorkflowStatus = 'planned' | 'blocked' | 'in_progress' | 'completed' | 'cancelled';
 
+export type WeeklyWorkflowTaskStatus = WeeklyOperatingWorkflowStatus;
+
+export interface WeeklyWorkflowTask {
+  taskId: string;
+  kind: WeeklyOperatingWorkflowKind;
+  taskRef: VersionedSocialRef;
+  dependsOnTaskIds: string[];
+  subjectRefs: VersionedSocialRef[];
+  status: WeeklyWorkflowTaskStatus;
+  ownBlockingReasons: string[];
+  inheritedBlockingTaskIds: string[];
+  carriedFromTaskId: string | null;
+}
+
+export interface WeeklyWorkflowEvent {
+  eventId: string;
+  taskId: string;
+  type: 'start' | 'complete' | 'block' | 'unblock' | 'cancel';
+  reason?: string | null;
+  occurredAt: string;
+}
+
+export interface WeeklyTaskVersionMapping {
+  previousTaskId: string;
+  nextTaskId: string | null;
+  handling: 'carried' | 'replaced' | 'cancelled';
+}
+
 export interface WeeklyOperatingWorkflow {
   kind: WeeklyOperatingWorkflowKind;
   status: WeeklyOperatingWorkflowStatus;
@@ -131,6 +159,13 @@ export interface WeeklyOperatingPackage {
   businessContentGoalRef?: VersionedSocialRef | null;
   monthlyPlanRef: VersionedSocialRef | null;
   workflows: WeeklyOperatingWorkflow[];
+  workflowTasks: WeeklyWorkflowTask[];
+  appliedWorkflowEvents: WeeklyWorkflowEvent[];
+  taskVersionMappings: WeeklyTaskVersionMapping[];
+  planningBlockers: string[];
+  capacityPlanRef: VersionedSocialRef | null;
+  automationPolicyRef: VersionedSocialRef | null;
+  discoveryBudgetCny: number | null;
   socialContentPackage: SocialWeeklyContentPackage;
   successCriteria: string[];
   changeReason: string | null;

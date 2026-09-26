@@ -1,15 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
-  WEEKLY_OPERATING_WORKFLOW_KINDS,
   type OwnedSocialAccount,
   type SocialPlatform,
   type SocialWeeklyContentPackage,
   type SocialWeeklyPublicationTask,
   type VersionedSocialRef,
   type WeeklyOperatingPackage,
+  type WeeklyWorkflowEvent,
 } from '../../shared/contracts/socialProgram.js';
+import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
 import { SocialProgramError } from './service.js';
+import { buildWeeklyWorkflow, type WeeklyAutomationPolicySnapshot, type WeeklyCapacitySnapshot } from './weeklyPlanner.js';
+import { applyWorkflowEvent } from './workflowState.js';
+import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
 const PACKAGES = 'social_weekly_operating_packages';
 const PROGRAMS = 'social_programs';
@@ -86,6 +90,25 @@ function versionedRef(value: unknown): VersionedSocialRef | null {
   const id = text(row.id, 160);
   const version = Number(row.version);
   return type && id && Number.isSafeInteger(version) && version > 0 ? { type, id, version } : null;
+}
+
+function businessGoal(value: unknown, programId: string): BusinessContentGoal | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const goal = value as BusinessContentGoal;
+  return goal.programId === programId && goal.goalId && Number.isSafeInteger(goal.version) ? goal : null;
+}
+
+function capacitySnapshot(value: unknown): WeeklyCapacitySnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = value as WeeklyCapacitySnapshot;
+  return versionedRef(item.ref) && (item.status === 'ready' || item.status === 'blocked') && Array.isArray(item.accountPlans)
+    ? item : null;
+}
+
+function policySnapshot(value: unknown): WeeklyAutomationPolicySnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = value as WeeklyAutomationPolicySnapshot;
+  return versionedRef(item.ref) && (item.status === 'ready' || item.status === 'blocked') ? item : null;
 }
 
 async function programRow(dataStore: DataStore, tenantId: string, programId: string): Promise<ProgramRow> {
@@ -245,14 +268,19 @@ function packageFromInput(args: {
   version: number;
   previousVersion: number | null;
   program: Record<string, unknown>;
+  previousPackage?: WeeklyOperatingPackage;
 }): WeeklyOperatingPackage {
   const weekStart = dateOnly(args.input.weekStart, 'week_start_invalid');
-  const plans = args.input.accountPlans === undefined
+  const capacity = capacitySnapshot(args.input.capacityPlan);
+  const policy = policySnapshot(args.input.automationPolicy);
+  const goal = businessGoal(args.input.businessContentGoal, args.programId);
+  const capacityAccountPlans = capacity?.status === 'ready' ? capacity.accountPlans : undefined;
+  const plans = (args.input.accountPlans ?? capacityAccountPlans) === undefined
     ? defaultAccountPlans(args.accounts)
-    : customAccountPlans(args.input.accountPlans, args.accounts);
+    : customAccountPlans(args.input.accountPlans ?? capacityAccountPlans, args.accounts);
   const publicationTaskTarget = plans.reduce((sum, plan) => sum + plan.publicationCount, 0);
   if (publicationTaskTarget > 100) throw new SocialProgramError('publication_target_too_large', 400, '单周发布任务不能超过 100 条。');
-  const originalContentTarget = positiveInteger(args.input.originalContentTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
+  const originalContentTarget = positiveInteger(args.input.originalContentTarget ?? capacity?.originalContentTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
   const tasks = publicationTasks(plans, originalContentTarget, args.input);
   const status = 'draft' as const;
   const timestamp = at();
@@ -265,7 +293,7 @@ function packageFromInput(args: {
     adaptationVersionTarget: publicationTaskTarget - originalContentTarget,
     publicationTaskTarget,
     publicationTasks: tasks,
-    weeklyBudgetCny: finiteBudget(args.input.weeklyBudgetCny),
+    weeklyBudgetCny: finiteBudget(args.input.weeklyBudgetCny ?? capacity?.productionBudgetCny),
     perItemBudgetCny: finiteBudget(args.input.perItemBudgetCny),
     capacityNotes: uniqueText(args.input.capacityNotes),
     authorization: {
@@ -281,6 +309,16 @@ function packageFromInput(args: {
       revokedAt: null,
     },
   };
+  const workflow = buildWeeklyWorkflow({
+    packageId: args.packageId,
+    version: args.version,
+    businessGoal: goal,
+    capacity,
+    automationPolicy: policy,
+    publicationTasks: tasks,
+    discoveryBudgetCny: finiteBudget(args.input.discoveryBudgetCny),
+    previousTasks: args.previousPackage?.workflowTasks,
+  });
   return {
     packageId: args.packageId,
     programId: args.programId,
@@ -288,10 +326,18 @@ function packageFromInput(args: {
     status,
     weekStart,
     weekEnd: weekEnd(weekStart),
-    objective: text(args.input.objective, 1_000),
+    objective: text(args.input.objective, 1_000) || goal?.objective || '',
     enterpriseProfileRef: versionedRef(args.input.enterpriseProfileRef ?? args.program.enterpriseProfileRef),
+    businessContentGoalRef: goal ? { type: 'business_content_goal', id: goal.goalId, version: goal.version } : versionedRef(args.input.businessContentGoalRef),
     monthlyPlanRef: versionedRef(args.input.monthlyPlanRef ?? args.program.activeMonthlyPlanRef),
-    workflows: WEEKLY_OPERATING_WORKFLOW_KINDS.map(kind => ({ kind, status: 'planned', taskRefs: [], blockingReasons: [] })),
+    workflows: workflow.workflows,
+    workflowTasks: workflow.tasks,
+    appliedWorkflowEvents: [],
+    taskVersionMappings: workflow.mappings,
+    planningBlockers: workflow.blockers,
+    capacityPlanRef: capacity?.ref ?? null,
+    automationPolicyRef: policy?.ref ?? null,
+    discoveryBudgetCny: finiteBudget(args.input.discoveryBudgetCny),
     socialContentPackage: contentPackage,
     successCriteria: uniqueText(args.input.successCriteria),
     changeReason: text(args.input.changeReason, 500) || null,
@@ -319,6 +365,23 @@ async function savePackage(dataStore: DataStore, tenantId: string, item: WeeklyO
 }
 
 export function createWeeklyOperatingPackageService(dataStore: DataStore) {
+  const operatingRepository = createSocialOperatingRepository(dataStore);
+
+  async function withAuthoritativeGoal(
+    tenantId: string,
+    programId: string,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const ref = versionedRef(input.businessContentGoalRef);
+    if (!ref) return input;
+    if (ref.type !== 'business_content_goal') {
+      throw new SocialProgramError('business_goal_ref_invalid', 400, '经营目标引用类型无效。');
+    }
+    const goal = await operatingRepository.getGoal(tenantId, programId, ref.id, ref.version);
+    if (!goal) throw new SocialProgramError('business_goal_not_found', 404, '经营目标不存在。');
+    return { ...input, businessContentGoal: goal };
+  }
+
   return {
     async list(tenantId: string, programId: string, weekStart?: string): Promise<WeeklyOperatingPackage[]> {
       await programRow(dataStore, tenantId, programId);
@@ -338,6 +401,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     async create(tenantId: string, userId: string, programId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
       const program = await programRow(dataStore, tenantId, programId);
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
+      input = await withAuthoritativeGoal(tenantId, programId, input);
       const item = packageFromInput({
         input, programId, userId, accounts, program: program.payload,
         packageId: randomUUID(), contentPackageId: randomUUID(), version: 1, previousVersion: null,
@@ -360,6 +424,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         weekStart: current.payload.weekStart,
         enterpriseProfileRef: current.payload.enterpriseProfileRef,
         monthlyPlanRef: current.payload.monthlyPlanRef,
+        businessContentGoalRef: current.payload.businessContentGoalRef,
         originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
         weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,
         perItemBudgetCny: current.payload.socialContentPackage.perItemBudgetCny,
@@ -375,15 +440,36 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         }, []),
         ...input,
       };
+      const resolved = await withAuthoritativeGoal(tenantId, programId, merged);
       const item = packageFromInput({
-        input: merged, programId, userId, accounts, program: program.payload,
+        input: resolved, programId, userId, accounts, program: program.payload,
         packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
         version: current.payload.version + 1, previousVersion: current.payload.version,
+        previousPackage: current.payload,
       });
       if (!item.objective || !item.successCriteria.length) {
         throw new SocialProgramError('weekly_operating_package_incomplete', 400, '周任务包必须包含经营目标和成功标准。');
       }
       await savePackage(dataStore, tenantId, item);
+      if (current.payload.socialContentPackage.authorization.allowRealPublishing) {
+        const timestamp = at();
+        const invalidated: WeeklyOperatingPackage = {
+          ...current.payload,
+          socialContentPackage: {
+            ...current.payload.socialContentPackage,
+            authorization: {
+              ...current.payload.socialContentPackage.authorization,
+              allowRealPublishing: false,
+              revokedBy: userId,
+              revokedAt: timestamp,
+            },
+          },
+          updatedAt: timestamp,
+        };
+        if (!await dataStore.update(PACKAGES, current.id, { payload: invalidated, updated_by: userId, updated_at: timestamp })) {
+          throw new SocialProgramError('weekly_operating_package_storage_unavailable', 503, '旧版本发布授权暂时无法失效。');
+        }
+      }
       return item;
     },
 
@@ -532,6 +618,28 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         }
       }
       return retired;
+    },
+
+    async applyWorkflowEvent(
+      tenantId: string,
+      userId: string,
+      programId: string,
+      packageId: string,
+      input: Record<string, unknown>,
+    ): Promise<WeeklyOperatingPackage> {
+      const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      requireExpectedVersion(current.payload.version, input.expectedVersion);
+      const event = input.event as WeeklyWorkflowEvent | undefined;
+      if (!event?.eventId || !event.taskId || !event.type || !event.occurredAt) {
+        throw new SocialProgramError('workflow_event_invalid', 400, '工作流事件字段不完整。');
+      }
+      const updated = applyWorkflowEvent(current.payload, event);
+      if (updated === current.payload) return current.payload;
+      if (!await dataStore.update(PACKAGES, current.id, { payload: updated, updated_by: userId, updated_at: updated.updatedAt })) {
+        throw new SocialProgramError('weekly_operating_package_storage_unavailable', 503, '工作流状态暂时无法保存。');
+      }
+      return updated;
     },
   };
 }
