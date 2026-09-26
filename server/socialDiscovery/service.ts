@@ -82,7 +82,7 @@ export async function executeApprovedDiscoveryRun(input: {
     scopeSnapshot: brief, modeStats: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
     stopReason: null, startedAt, finishedAt: null, error: null,
   };
-  const created = await store.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, initial);
+  const created = await store.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, { ...initial });
   if (!created) throw new Error('discovery_run_storage_unavailable');
 
   const modeStats: SocialInspirationCollectionRun['modeStats'] = {};

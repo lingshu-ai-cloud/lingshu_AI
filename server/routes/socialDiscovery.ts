@@ -49,12 +49,20 @@ function discoveryModes(value: unknown): SocialDiscoveryMode[] {
 function benchmarkAccounts(value: unknown): Array<{ accountRef: string; type: SocialBenchmarkAccountType; weight?: number }> {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 100).flatMap(entry => {
-    const item = entry && typeof entry === 'object' ? entry as Record<string, unknown> : { accountRef: entry };
+    const item: Record<string, unknown> = entry && typeof entry === 'object'
+      ? entry as Record<string, unknown>
+      : { accountRef: entry };
     const accountRef = String(item.accountRef || '').trim();
     if (!accountRef) return [];
-    const type = ['brand', 'factory', 'distributor', 'retailer', 'creator', 'media'].includes(String(item.type))
-      ? item.type as SocialBenchmarkAccountType
-      : 'brand';
+    const aliases: Record<string, SocialBenchmarkAccountType> = {
+      brand: 'brand_factory', factory: 'brand_factory', distributor: 'channel', retailer: 'channel',
+      creator: 'professional_creator', media: 'industry_media',
+    };
+    const rawType = String(item.type || '');
+    const validTypes: SocialBenchmarkAccountType[] = ['brand_factory', 'professional_creator', 'channel', 'user_reviewer', 'industry_media', 'expression_reference'];
+    const type = validTypes.includes(rawType as SocialBenchmarkAccountType)
+      ? rawType as SocialBenchmarkAccountType
+      : aliases[rawType] ?? 'brand_factory';
     const weight = Number(item.weight);
     return [{ accountRef, type, ...(Number.isFinite(weight) ? { weight: Math.max(0, Math.min(1, weight)) } : {}) }];
   });
