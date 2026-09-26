@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -51,6 +51,10 @@ try {
   assert.equal((await listAgentNotifications('tenant-a', 'user-a')).unreadCount, 1);
   assert.equal((await listAgentNotifications('tenant-a', 'user-b')).unreadCount, 2, 'read state is per user');
   assert.equal(await markAllAgentNotificationsRead('tenant-a', 'user-b'), 2);
+  const storedNotifications = JSON.parse(readFileSync(path.join(directory, 'agent_notifications.json'), 'utf8')) as Array<Record<string, unknown>>;
+  const storedReads = JSON.parse(readFileSync(path.join(directory, 'agent_notification_reads.json'), 'utf8')) as Array<Record<string, unknown>>;
+  assert.equal('read_by' in storedNotifications[0], false, 'notification rows must not contain a concurrently overwritten user map');
+  assert.equal(storedReads.length, 3, 'each user/notification read state must be an independent durable object');
 
   await assert.rejects(() => createAgentAdjustmentNotification({
     tenantId: 'tenant-a', eventKey: 'scope:empty', type: 'scope_changed',

@@ -10,6 +10,7 @@ import {
 } from '../../shared/contracts/agentNotification.js';
 
 const COLLECTION = 'agent_notifications';
+const READ_COLLECTION = 'agent_notification_reads';
 const TYPES = new Set<string>(AGENT_NOTIFICATION_TYPES);
 const SEVERITIES = new Set<AgentNotificationSeverity>(['info', 'warning', 'critical']);
 
@@ -27,8 +28,16 @@ interface StoredNotification extends Record<string, unknown> {
   entity_id: string;
   changes: AgentNotificationChange[];
   action: AgentNotification['action'] | null;
-  read_by: Record<string, string>;
   created_at: string;
+}
+
+interface StoredNotificationRead extends Record<string, unknown> {
+  id: string;
+  read_id: string;
+  tenant_id: string;
+  notification_id: string;
+  user_id: string;
+  read_at: string;
 }
 
 export class AgentNotificationError extends Error {
@@ -47,7 +56,7 @@ function normalizeChanges(value: unknown): AgentNotificationChange[] {
   });
 }
 
-function present(record: StoredNotification, userId: string): AgentNotification {
+function present(record: StoredNotification, readAt: string | null = null): AgentNotification {
   return {
     id: record.notification_id,
     type: record.type,
@@ -60,7 +69,7 @@ function present(record: StoredNotification, userId: string): AgentNotification 
     changes: Array.isArray(record.changes) ? record.changes : [],
     action: record.action || undefined,
     createdAt: record.created_at,
-    readAt: record.read_by?.[userId] || null,
+    readAt,
   };
 }
 
@@ -90,7 +99,7 @@ export async function createAgentNotification(input: {
     throw new AgentNotificationError('critical_business_change_requires_changes');
   }
   const existing = await store.list<StoredNotification>(COLLECTION, { where: { tenant_id: tenantId, event_key: eventKey }, perPage: 1 });
-  if (existing.items[0]) return { notification: present(existing.items[0], ''), created: false };
+  if (existing.items[0]) return { notification: present(existing.items[0]), created: false };
   const now = new Date().toISOString();
   let notification: StoredNotification | null;
   try {
@@ -107,18 +116,17 @@ export async function createAgentNotification(input: {
       entity_id: clean(input.entityId, 180),
       changes,
       action: input.action ? { label: clean(input.action.label, 80), page: clean(input.action.page, 80), href: clean(input.action.href, 500) || undefined } : null,
-      read_by: {},
       created_at: now,
       updated_at: now,
     });
   } catch (error) {
     // A concurrent producer may have won the unique tenant/event key race.
     const raced = await store.list<StoredNotification>(COLLECTION, { where: { tenant_id: tenantId, event_key: eventKey }, perPage: 1 });
-    if (raced.items[0]) return { notification: present(raced.items[0], ''), created: false };
+    if (raced.items[0]) return { notification: present(raced.items[0]), created: false };
     throw error;
   }
   if (!notification) throw new AgentNotificationError('notification_write_failed', 503);
-  return { notification: present(notification, ''), created: true };
+  return { notification: present(notification), created: true };
 }
 
 /**
@@ -155,12 +163,25 @@ async function listTenantRecords(tenantId: string): Promise<StoredNotification[]
   return records;
 }
 
+async function listUserReads(tenantId: string, userId: string): Promise<Map<string, string>> {
+  const reads = new Map<string, string>();
+  for (let page = 1; page <= 100; page += 1) {
+    const result = await store.list<StoredNotificationRead>(READ_COLLECTION, {
+      where: { tenant_id: tenantId, user_id: userId }, sort: '-read_at', page, perPage: 100,
+    });
+    for (const item of result.items) reads.set(item.notification_id, item.read_at);
+    if (page >= result.totalPages) break;
+  }
+  return reads;
+}
+
 export async function listAgentNotifications(tenantId: string, userId: string, limit = 30): Promise<AgentNotificationList> {
   const records = await listTenantRecords(clean(tenantId, 120));
-  const items = records.slice(0, Math.min(100, Math.max(1, limit))).map(item => present(item, userId));
+  const reads = await listUserReads(clean(tenantId, 120), clean(userId, 180));
+  const items = records.slice(0, Math.min(100, Math.max(1, limit))).map(item => present(item, reads.get(item.notification_id) || null));
   return {
     items,
-    unreadCount: records.reduce((count, item) => count + (item.read_by?.[userId] ? 0 : 1), 0),
+    unreadCount: records.reduce((count, item) => count + (reads.has(item.notification_id) ? 0 : 1), 0),
     latestAt: records[0]?.created_at || null,
   };
 }
@@ -171,18 +192,30 @@ export async function markAgentNotificationRead(tenantId: string, userId: string
   });
   const record = result.items[0];
   if (!record) throw new AgentNotificationError('notification_not_found', 404);
-  const readAt = record.read_by?.[userId] || new Date().toISOString();
-  if (!record.read_by?.[userId]) {
-    const updated = await store.update(COLLECTION, record.id, { read_by: { ...(record.read_by || {}), [userId]: readAt }, updated_at: readAt });
-    if (!updated) throw new AgentNotificationError('notification_read_write_failed', 503);
+  const identity = { tenant_id: clean(tenantId, 120), notification_id: record.notification_id, user_id: clean(userId, 180) };
+  const existing = await store.list<StoredNotificationRead>(READ_COLLECTION, { where: identity, perPage: 1 });
+  const readAt = existing.items[0]?.read_at || new Date().toISOString();
+  if (!existing.items[0]) {
+    try {
+      const created = await store.create<StoredNotificationRead>(READ_COLLECTION, {
+        read_id: `notification_read_${randomUUID()}`, ...identity, read_at: readAt,
+      });
+      if (!created) throw new AgentNotificationError('notification_read_write_failed', 503);
+    } catch (error) {
+      const raced = await store.list<StoredNotificationRead>(READ_COLLECTION, { where: identity, perPage: 1 });
+      if (!raced.items[0]) throw error;
+      return present(record, raced.items[0].read_at);
+    }
   }
-  return present({ ...record, read_by: { ...(record.read_by || {}), [userId]: readAt } }, userId);
+  return present(record, readAt);
 }
 
 export async function markAllAgentNotificationsRead(tenantId: string, userId: string): Promise<number> {
-  const unread = (await listTenantRecords(clean(tenantId, 120))).filter(item => !item.read_by?.[userId]);
+  const cleanTenantId = clean(tenantId, 120);
+  const cleanUserId = clean(userId, 180);
+  const [records, reads] = await Promise.all([listTenantRecords(cleanTenantId), listUserReads(cleanTenantId, cleanUserId)]);
+  const unread = records.filter(item => !reads.has(item.notification_id));
   const readAt = new Date().toISOString();
-  const updates = await Promise.all(unread.map(item => store.update(COLLECTION, item.id, { read_by: { ...(item.read_by || {}), [userId]: readAt }, updated_at: readAt })));
-  if (updates.some(updated => !updated)) throw new AgentNotificationError('notification_read_write_failed', 503);
+  await Promise.all(unread.map(item => markAgentNotificationRead(cleanTenantId, cleanUserId, item.notification_id)));
   return unread.length;
 }
