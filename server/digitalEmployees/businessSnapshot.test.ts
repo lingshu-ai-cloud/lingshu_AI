@@ -14,7 +14,8 @@ assert.match(source, /filter\(connectedAccount\)/, 'account readiness and counts
 assert.match(source, /completedWorkHasReceipt/, 'completed content metrics must require a verifiable render receipt');
 assert.match(source, /weekPosts\.filter\(hasPublishedReceipt\)/, 'published content metrics must require a platform/provider receipt');
 assert.match(source, /connectedMetricSnapshots/, 'social performance must exclude snapshots from disconnected accounts');
-assert.match(source, /published\.reduce\([\s\S]{0,160}item\.inquiries/, 'inquiry totals must only use posts with provider receipts');
+assert.match(source, /social_interaction_writebacks \+ sales\/CRM qualification/, 'inquiry totals must require faithful writeback plus sales/CRM confirmation');
+assert.doesNotMatch(source, /published\.reduce\([\s\S]{0,160}item\.inquiries/, 'post counters must not masquerade as qualified inquiries');
 
 type FixtureRecord = { id: string; [key: string]: unknown };
 const fixtures = new Map<string, FixtureRecord[]>();
@@ -91,6 +92,18 @@ try {
     { id: 'post-fake-published', tenant_id: tenantId, title: '仅状态成功', platform: 'facebook', published_at: '2026-09-03T01:00:00.000Z', inquiries: 99, deals: 9, stats: { status: 'published' } },
     { id: 'post-receipt', tenant_id: tenantId, title: '真实发布', platform: 'facebook', published_at: '2026-09-03T01:30:00.000Z', inquiries: 2, deals: 1, stats: { status: 'published', publishResults: { 'account-connected': { postId: 'provider-post-1' } } } },
   ]);
+  fixtures.set('social_interaction_writebacks', [
+    { id: 'interaction-qualified', tenant_id: tenantId, kind: 'inquiry', accountId: 'account-connected', contentId: 'post-receipt', businessDirectionRef: 'E2', occurredAt: '2026-09-03T01:40:00.000Z' },
+    { id: 'interaction-unknown-source', tenant_id: tenantId, kind: 'inquiry', accountId: 'account-connected', occurredAt: '2026-09-03T01:45:00.000Z' },
+    { id: 'interaction-comment', tenant_id: tenantId, kind: 'comment', accountId: 'account-connected', contentId: 'post-receipt', occurredAt: '2026-09-03T01:50:00.000Z' },
+  ]);
+  fixtures.set('social_sales_qualifications', [
+    { id: 'qualification-sales', tenant_id: tenantId, interaction_id: 'interaction-qualified', status: 'qualified', authority: 'sales', confirmed_at: '2026-09-03T02:00:00.000Z' },
+    { id: 'qualification-crm', tenant_id: tenantId, interaction_id: 'interaction-unknown-source', status: 'qualified', authority: 'crm', confirmed_at: '2026-09-03T02:01:00.000Z' },
+  ]);
+  fixtures.set('social_creative_learnings', [
+    { id: 'learning-1', tenant_id: tenantId, created_at: '2026-09-03T03:00:00.000Z' },
+  ]);
   fixtures.set('tenant_orders', [
     { id: 'order-paid', tenant_id: tenantId, order: { buyer: 'Buyer', product: 'Switch', amount: 100, status: '已付款', sourcePostId: 'post-receipt', orderDate: '2026-09-03' } },
     { id: 'order-refunded', tenant_id: tenantId, order: { buyer: 'Buyer', product: 'Switch', amount: 100, status: '退款', sourcePostId: 'post-receipt', orderDate: '2026-09-03' } },
@@ -113,7 +126,17 @@ try {
   );
   assert.equal(scheduled.content.scheduledPosts.value, 1);
   assert.equal(scheduled.content.publishedPosts.value, 1, 'only the post with a provider receipt is published');
-  assert.equal(scheduled.content.inquiries.value, 2, 'unreceipted post counters must not inflate inquiries');
+  assert.equal(scheduled.content.inquiries.value, 2, 'sales/CRM-confirmed inquiries count even when one has an explicitly unknown content source');
+  assert.equal(scheduled.attribution.postsWithInquiries, 1, 'only reliably linked inquiry content contributes to content attribution');
+  assert.equal(scheduled.interactionReview.comments, 1);
+  assert.equal(scheduled.interactionReview.inquiries, 2);
+  assert.equal(scheduled.interactionReview.qualifiedInquiries, 2);
+  assert.equal(scheduled.interactionReview.unknownSourceInquiries, 1, 'unknown inquiry sources remain explicit instead of receiving invented content attribution');
+  assert.equal(scheduled.interactionReview.creativeLearnings, 1);
+  assert.equal(scheduled.interactionReview.deadline, '2026-09-06T15:59:59.000Z', 'weekly snapshot deadline preserves the inclusive Asia/Shanghai reporting boundary');
+  assert.deepEqual(scheduled.interactionReview.breakdown.find(item => item.businessDirectionRef === 'E2'), {
+    businessDirectionRef: 'E2', accountId: 'account-connected', contentId: 'post-receipt', comments: 0, inquiries: 1, qualifiedInquiries: 1,
+  });
   assert.equal(scheduled.content.deals.value, 1, 'only in-period nonrefunded tenant orders attributed to receipted posts count as deals');
   assert.equal(scheduled.customer.outreachBatches.status, 'available');
   assert.equal(scheduled.customer.followupDrafts.value, 1);

@@ -705,6 +705,49 @@ const COLLECTIONS: CollectionSpec[] = [
     indexes: ['CREATE UNIQUE INDEX idx_weekly_reviews_run ON weekly_reviews (tenant_id, run_id)'],
   },
   {
+    name: 'social_interaction_writebacks',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'event_key', type: 'text', required: true },
+      { name: 'kind', type: 'text', required: true }, { name: 'platform', type: 'text', required: true },
+      { name: 'providerEventId', type: 'text', required: true }, { name: 'accountId', type: 'text', required: true },
+      { name: 'contentId', type: 'text' }, { name: 'body', type: 'text', required: true, max: 10000 },
+      { name: 'occurredAt', type: 'text', required: true }, { name: 'actorRef', type: 'text' }, { name: 'entryRef', type: 'text', max: 500 },
+      { name: 'ctaRef', type: 'text', max: 300 }, { name: 'businessDirectionRef', type: 'text', max: 300 }, { name: 'respondedAt', type: 'text' },
+      { name: 'qualificationFields', type: 'json', maxSize: 524288 },
+      { name: 'raw', type: 'json', maxSize: 2097152 }, { name: 'source_confidence', type: 'text', required: true },
+      { name: 'qualification_status', type: 'text', required: true }, { name: 'created_at', type: 'text', required: true }, { name: 'updated_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_interaction_event ON social_interaction_writebacks (tenant_id, event_key)',
+      'CREATE INDEX idx_social_interaction_content ON social_interaction_writebacks (tenant_id, accountId, contentId, occurredAt)',
+      'CREATE INDEX idx_social_interaction_kind ON social_interaction_writebacks (tenant_id, kind, occurredAt)',
+    ],
+  },
+  {
+    name: 'social_sales_qualifications',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'interaction_id', type: 'text', required: true },
+      { name: 'status', type: 'text', required: true }, { name: 'authority', type: 'text', required: true },
+      { name: 'actor_id', type: 'text', required: true }, { name: 'reason', type: 'text', required: true, max: 2000 },
+      { name: 'bant', type: 'json', maxSize: 524288 }, { name: 'confirmed_at', type: 'text', required: true },
+    ],
+    indexes: ['CREATE UNIQUE INDEX idx_social_sales_qualification ON social_sales_qualifications (tenant_id, interaction_id)'],
+  },
+  {
+    name: 'social_creative_learnings',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'learning_id', type: 'text', required: true },
+      { name: 'version', type: 'number', required: true }, { name: 'evidence_kind', type: 'text', required: true }, { name: 'scope', type: 'json', required: true, maxSize: 524288 },
+      { name: 'observation', type: 'text', required: true, max: 4000 }, { name: 'evidence_refs', type: 'json', required: true, maxSize: 524288 },
+      { name: 'sample', type: 'json', required: true, maxSize: 524288 }, { name: 'boundaries', type: 'json', required: true, maxSize: 524288 },
+      { name: 'next_action', type: 'text', required: true, max: 2000 }, { name: 'created_by', type: 'text', required: true }, { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_creative_learning_version ON social_creative_learnings (tenant_id, learning_id, version)',
+      'CREATE INDEX idx_social_creative_learning_created ON social_creative_learnings (tenant_id, created_at)',
+    ],
+  },
+  {
     name: 'workflow_corrections',
     fields: [
       { name: 'tenant_id', type: 'text', required: true },

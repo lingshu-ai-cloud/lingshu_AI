@@ -91,6 +91,24 @@ export interface BusinessSnapshot {
     postsWithInquiries: number;
     status: DataAvailability;
   };
+  interactionReview: {
+    deadline: string;
+    comments: number | null;
+    inquiries: number | null;
+    qualifiedInquiries: number | null;
+    unknownSourceInquiries: number | null;
+    creativeLearnings: number | null;
+    status: DataAvailability;
+    note: string;
+    breakdown: Array<{
+      businessDirectionRef: string | null;
+      accountId: string;
+      contentId: string | null;
+      comments: number;
+      inquiries: number;
+      qualifiedInquiries: number;
+    }>;
+  };
   dataGaps: string[];
 }
 
@@ -269,7 +287,7 @@ export async function buildBusinessSnapshot(
   const nowMs = now.getTime();
   const nextDay = nowMs + 24 * 60 * 60 * 1000;
 
-  const [profile, scheduledResult, videoResult, projectResult, postResult, socialResult, youtubeResult, segmentResult, batchResult, recipientResult, socialMetricSnapshots, orderResult] = await Promise.all([
+  const [profile, scheduledResult, videoResult, projectResult, postResult, socialResult, youtubeResult, segmentResult, batchResult, recipientResult, interactionResult, qualificationResult, learningResult, socialMetricSnapshots, orderResult] = await Promise.all([
     readTenantEnterpriseProfile(tenantId).catch(() => null),
     store.list<GenericRecord>('scheduled_tasks', { where: { tenant_id: tenantId }, perPage: 500 }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('trend_videos', { where: { tenantId }, perPage: 500, sort: '-crawledAt' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
@@ -280,6 +298,9 @@ export async function buildBusinessSnapshot(
     store.list<GenericRecord>('customer_segments', { where: { tenant_id: tenantId }, perPage: 200, sort: '-created_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('followup_batches', { where: { tenant_id: tenantId }, perPage: 200, sort: '-created_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
     store.list<GenericRecord>('followup_batch_items', { where: { tenant_id: tenantId }, perPage: 1000, sort: '-created_at' }).catch(() => ({ items: [] } as { items: GenericRecord[] })),
+    store.list<GenericRecord>('social_interaction_writebacks', { where: { tenant_id: tenantId }, perPage: 1000, sort: '-occurredAt' }).then(result => ({ ...result, failed: false })).catch(() => ({ items: [], failed: true } as { items: GenericRecord[]; failed: boolean })),
+    store.list<GenericRecord>('social_sales_qualifications', { where: { tenant_id: tenantId }, perPage: 1000, sort: '-confirmed_at' }).then(result => ({ ...result, failed: false })).catch(() => ({ items: [], failed: true } as { items: GenericRecord[]; failed: boolean })),
+    store.list<GenericRecord>('social_creative_learnings', { where: { tenant_id: tenantId }, perPage: 500, sort: '-created_at' }).then(result => ({ ...result, failed: false })).catch(() => ({ items: [], failed: true } as { items: GenericRecord[]; failed: boolean })),
     listSocialMetricSnapshots(tenantId).catch(() => []),
     readOrders(tenantId).then(items => ({ items, failed: false })).catch(() => ({ items: [], failed: true })),
   ]);
@@ -300,6 +321,36 @@ export async function buildBusinessSnapshot(
   const weekPosts = posts.filter(item => inRange(item.published_at || item.created, startsAt, endsAt));
   const weekBatches = batches.filter(item => inRange(item.created_at || item.created, startsAt, endsAt));
   const weekRecipients = recipients.filter(item => inRange(item.created_at || item.created, startsAt, endsAt));
+  const weekInteractions = interactionResult.items.filter(item => inRange(item.occurredAt || item.created_at, startsAt, endsAt));
+  const weekQualifications = qualificationResult.items.filter(item => inRange(item.confirmed_at, startsAt, endsAt));
+  const qualifiedInteractionIds = new Set(weekQualifications.filter(item => item.status === 'qualified' && ['sales', 'crm'].includes(String(item.authority))).map(item => String(item.interaction_id)));
+  const qualifiedInquiries = weekInteractions.filter(item => item.kind !== 'comment' && qualifiedInteractionIds.has(item.id));
+  const weekInquiries = weekInteractions.filter(item => item.kind !== 'comment');
+  const interactionReviewUnavailable = interactionResult.failed || qualificationResult.failed;
+  const interactionBreakdown = [...weekInteractions.reduce((groups, item) => {
+    const businessDirectionRef = String(item.businessDirectionRef || '').trim();
+    const accountId = String(item.accountId || '').trim();
+    const contentId = String(item.contentId || '').trim();
+    const groupKey = JSON.stringify([businessDirectionRef, accountId, contentId]);
+    const group = groups.get(groupKey) || {
+      businessDirectionRef: businessDirectionRef || null,
+      accountId,
+      contentId: contentId || null,
+      comments: 0,
+      inquiries: 0,
+      qualifiedInquiries: 0,
+    };
+    if (item.kind === 'comment') group.comments += 1;
+    else {
+      group.inquiries += 1;
+      if (qualifiedInteractionIds.has(item.id)) group.qualifiedInquiries += 1;
+    }
+    groups.set(groupKey, group);
+    return groups;
+  }, new Map<string, {
+    businessDirectionRef: string | null; accountId: string; contentId: string | null;
+    comments: number; inquiries: number; qualifiedInquiries: number;
+  }>()).values()];
   const published = weekPosts.filter(hasPublishedReceipt);
   const receiptPostIds = new Set(posts.filter(hasPublishedReceipt).map(item => item.id));
   const attributedPaidOrders = orderResult.items.filter(order => !syntheticRecord(order as unknown as Record<string, unknown>)
@@ -382,6 +433,9 @@ export async function buildBusinessSnapshot(
   if (!customers.length) dataGaps.push('暂无真实 WhatsApp 客户，客户指标不可用');
   if (!segments.length) dataGaps.push('尚未保存客户分层快照，无法生成可审计的逐客跟进名单');
   if (!batches.length) dataGaps.push('尚无批量跟进批次，触达指标等待回流');
+  if (interactionResult.failed) dataGaps.push('互动回写存储不可用，评论和询盘复盘指标暂不可用');
+  else if (!weekInteractions.length) dataGaps.push('本周期尚无忠实回写的评论、私信、表单或询盘记录');
+  if (!learningResult.failed && !learningResult.items.length) dataGaps.push('尚未形成带样本边界和证据引用的 CreativeLearning');
 
   const attributedCustomers = customers.filter(customer => customer.sourcePostId || customer.sourceTrackCode || String(customer.source || '').startsWith('whatsapp_from_')).length;
   const customersWithVerifiedAiReply = customers.filter(customer => (
@@ -391,7 +445,9 @@ export async function buildBusinessSnapshot(
       return event.actor === 'ai' && Boolean(audit.providerMessageId);
     })
   ));
-  const postsWithInquiries = published.filter(item => Number(item.inquiries || 0) > 0).length;
+  const postsWithInquiries = new Set(qualifiedInquiries
+    .map(item => String(item.contentId || ''))
+    .filter(contentId => contentId && receiptPostIds.has(contentId))).size;
 
   return {
     generatedAt: now.toISOString(),
@@ -412,7 +468,7 @@ export async function buildBusinessSnapshot(
       scheduledPosts: metric(publishingValue(scheduledPosts.length), 'posts.stats.status', publishingAvailability, publishingNote),
       publishedPosts: metric(publishingValue(published.length), 'posts.publishResults', publishingAvailability, publishingNote),
       failedPosts: metric(publishingValue(failed.length), 'posts.publishResults', publishingAvailability, publishingNote),
-      inquiries: metric(publishingValue(published.reduce((sum, item) => sum + Number(item.inquiries || 0), 0)), 'published posts with provider receipt + posts.inquiries', publishingAvailability, publishingNote),
+      inquiries: metric(interactionReviewUnavailable ? null : publishingValue(qualifiedInquiries.length), 'social_interaction_writebacks + sales/CRM qualification', interactionReviewUnavailable ? 'unavailable' : publishingAvailability, '只统计销售或可信 CRM 确认的有效询盘；未知内容来源仍保留并计入询盘总数'),
       deals: metric(orderResult.failed ? null : attributedPaidOrders.length, 'tenant_orders.sourcePostId + paid status + posts provider receipt', orderResult.failed ? 'unavailable' : 'available', '人工维护订单台账，按付款日（历史订单使用订单日）统计当前未退款的归因订单；不代表已核验支付网关回执'),
     },
     customer: {
@@ -445,6 +501,17 @@ export async function buildBusinessSnapshot(
     },
     next24Hours,
     attribution: { attributedCustomers, postsWithInquiries, status: posts.length && customers.length ? 'available' : 'pending' },
+    interactionReview: {
+      deadline: new Date(endsAt).toISOString(),
+      comments: interactionResult.failed ? null : weekInteractions.filter(item => item.kind === 'comment').length,
+      inquiries: interactionResult.failed ? null : weekInquiries.length,
+      qualifiedInquiries: interactionReviewUnavailable ? null : qualifiedInquiries.length,
+      unknownSourceInquiries: interactionResult.failed ? null : weekInquiries.filter(item => item.source_confidence === 'unknown' || !item.contentId).length,
+      creativeLearnings: learningResult.failed ? null : learningResult.items.filter(item => inRange(item.created_at, startsAt, endsAt)).length,
+      status: interactionReviewUnavailable || learningResult.failed ? 'unavailable' : 'available',
+      note: '评论必须关联账号和内容；询盘无法可靠关联内容时保留为未知来源，不伪造全链路归因。',
+      breakdown: interactionResult.failed ? [] : interactionBreakdown,
+    },
     dataGaps,
   };
 }

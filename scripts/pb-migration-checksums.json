@@ -86,6 +86,7 @@
     "1790467202_allow_zero_social_content_counters.js": "fbb268c9855318607e5845ac9ba37c9076562844f4b413242f8cdd91ba1324f2",
     "1790467203_create_social_director_plan_versions.js": "c779a70fe5ef519154abcd865a59dd8b1f5a210b173b892fe03c64d02fcf613d",
     "1790553600_create_social_discovery_foundation.js": "70a135784cfb8921f6d890e92c828ec5bb39de7aa259f6ff5a896cec479feaf5",
-    "1790640000_create_social_program_foundation.js": "8f8f0802cfe528e4a23b3078d2b4ead932fe7bd8b7739f8ad54cda8482b531c2"
+    "1790640000_create_social_program_foundation.js": "8f8f0802cfe528e4a23b3078d2b4ead932fe7bd8b7739f8ad54cda8482b531c2",
+    "1790726400_create_social_interaction_review.js": "51556e22bf823ee7a5846c96e52a489bacbc3895f99db357dd41283e90b1a6c8"
   }
 }

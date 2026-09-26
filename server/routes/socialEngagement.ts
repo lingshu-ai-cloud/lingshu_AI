@@ -6,6 +6,8 @@ import { getMyVideoComments, replyToYouTubeComment, type YouTubeConfig } from '.
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
+import { confirmSalesQualification, createCreativeLearning, listInteractionWritebacks, writebackInteraction } from '../socialEngagement/writeback.js';
 
 export const socialEngagementRouter = Router();
 socialEngagementRouter.use(requireAuth);
@@ -100,6 +102,7 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
       for (const comment of comments) {
         const stateKey = key('youtube', account.id, comment.id); const state = savedByKey.get(stateKey);
         const translation = stateTranslation(state);
+        await writebackInteraction(tenantId, { kind: 'comment', platform: 'youtube', providerEventId: comment.id, accountId: account.id, contentId: comment.videoId, body: comment.textDisplay, occurredAt: comment.publishedAt, actorRef: comment.authorName, raw: comment });
         items.push({ ...comment, platform: 'youtube', accountId: account.id, accountTitle: account.channelTitle, contentTitle: `YouTube video ${comment.videoId || ''}`, status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
       }
     } catch (error) { unavailable.push({ platform: 'youtube', reason: error instanceof Error ? error.message : '评论同步失败' }); }
@@ -120,6 +123,7 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
         for (const comment of comments) {
           const stateKey = key(account.platform, account.id, comment.id); const state = savedByKey.get(stateKey);
           const translation = stateTranslation(state);
+          await writebackInteraction(tenantId, { kind: 'comment', platform: account.platform, providerEventId: comment.id, accountId: account.id, contentId: post.id, body: comment.textDisplay, occurredAt: comment.publishedAt, actorRef: comment.authorName, raw: comment });
           items.push({ ...comment, platform: account.platform, accountId: account.id, accountTitle: account.title, contentTitle: post.title || post.description || `${account.platform} content`, status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
         }
       }
@@ -236,4 +240,50 @@ socialEngagementRouter.post('/comments/convert', async (req, res) => {
     error: 'whatsapp_contact_required',
     message: '评论用户添加 WhatsApp 并发送真实消息后，才会自动进入「我的客户」。',
   });
+});
+
+socialEngagementRouter.get('/interactions', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const kind = String(req.query.kind || '').trim();
+  if (kind && !['comment', 'direct_message', 'form', 'inquiry'].includes(kind)) { res.status(400).json({ error: 'invalid_interaction_kind' }); return; }
+  const items = await listInteractionWritebacks(tenantId, kind);
+  res.json({ items, total: items.length });
+});
+
+socialEngagementRouter.post('/interactions/writeback', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try {
+    const result = await writebackInteraction(tenantId, req.body);
+    res.status(result.repeated ? 200 : 201).json(result);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'interaction_writeback_failed';
+    res.status(code === 'comment_content_required' || code === 'interaction_fields_required' || code === 'invalid_interaction_kind' ? 400 : 503).json({ error: code });
+  }
+});
+
+socialEngagementRouter.post('/inquiries/:interactionId/qualification', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'customer_service'].includes(role)) { res.status(403).json({ error: 'sales_qualification_forbidden' }); return; }
+    if (req.body?.authority === 'crm') { res.status(403).json({ error: 'trusted_crm_integration_required' }); return; }
+    const item = await confirmSalesQualification({
+      tenantId, interactionId: req.params.interactionId,
+      status: req.body?.status, authority: 'sales',
+      actorId: userId, reason: req.body?.reason, bant: req.body?.bant,
+    });
+    res.json({ ok: true, item });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'qualification_writeback_failed';
+    res.status(code === 'inquiry_not_found' ? 404 : code.includes('required') ? 400 : 503).json({ error: code });
+  }
+});
+
+socialEngagementRouter.post('/creative-learnings', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try { res.status(201).json({ item: await createCreativeLearning(tenantId, userId, req.body) }); }
+  catch (error) {
+    const code = error instanceof Error ? error.message : 'creative_learning_writeback_failed';
+    res.status(code.startsWith('creative_learning_') && code !== 'creative_learning_writeback_unavailable' ? 400 : 503).json({ error: code });
+  }
 });
