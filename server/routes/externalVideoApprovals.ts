@@ -8,6 +8,7 @@ import { externalVideoApprovalHash, externalVideoApprovalSnapshot, externalVideo
 import { freezePublishSourceClaim, localPublishingVideo, publishingUploadDir, PublishSourceVerificationError, verifyFrozenPublishSourceClaim } from '../publishing/publishSourceClaim.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
+import { ExternalVideoApprovalConflict, withExternalVideoApprovalUniqueness } from '../publishing/externalVideoApprovalUniqueness.js';
 
 export const externalVideoApprovalsRouter = Router();
 externalVideoApprovalsRouter.use(requireAuth);
@@ -73,6 +74,9 @@ externalVideoApprovalsRouter.post('/', async (req, res) => {
     }
     const controlledVideoPath = sourceClaim.deliveryVideoPath;
     const sha256 = await externalVideoSha256(controlledVideoPath);
+    const updated = await withExternalVideoApprovalUniqueness({
+      tenantId, platform, accountIds: targets.map(target => target.accountId), videoSha256: sha256,
+    }, async () => {
     const post = await createTrackedPostDraft(tenantId, { platform, title, enabled: req.body?.trackWaLink === true }, {
       published_at: scheduledAt,
       stats: {
@@ -92,10 +96,13 @@ externalVideoApprovalsRouter.post('/', async (req, res) => {
     if (!saved) throw new Error('external_video_approval_persist_failed');
     const updated = await store.getById<PostRecord>('posts', post.id);
     if (!updated) throw new Error('external_video_approval_readback_failed');
+    return updated;
+    });
     res.status(201).json({ approval: externalApprovalResponse(updated) });
   } catch (error) {
-    const status = error instanceof PublishSourceVerificationError ? error.statusCode : 500;
-    res.status(status).json({ error: error instanceof PublishSourceVerificationError ? error.code : 'external_video_approval_failed' });
+    const status = error instanceof PublishSourceVerificationError ? error.statusCode
+      : error instanceof ExternalVideoApprovalConflict ? (error.code === 'external_video_approval_lock_unavailable' ? 503 : 409) : 500;
+    res.status(status).json({ error: error instanceof PublishSourceVerificationError || error instanceof ExternalVideoApprovalConflict ? error.code : 'external_video_approval_failed' });
   }
 });
 
@@ -111,42 +118,58 @@ externalVideoApprovalsRouter.get('/:id', async (req, res) => {
 
 externalVideoApprovalsRouter.post('/:id/approve', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
-  const post = await store.getById<PostRecord>('posts', String(req.params.id));
-  const stats = post ? parseJson<Record<string, unknown>>(post.stats, {}) : {};
-  if (!post || post.tenant_id !== tenantId || stats.origin !== 'authorized_external_video') {
+  const initial = await store.getById<PostRecord>('posts', String(req.params.id));
+  const initialStats = initial ? parseJson<Record<string, unknown>>(initial.stats, {}) : {};
+  if (!initial || initial.tenant_id !== tenantId || initialStats.origin !== 'authorized_external_video') {
     res.status(404).json({ error: 'external_video_approval_not_found' }); return;
   }
-  const contentHash = externalVideoApprovalHash(externalVideoApprovalSnapshot(post));
-  if (stats.status !== 'awaiting_approval' || text(req.body?.contentHash) !== contentHash
-    || text(stats.externalApprovalContentHash) !== contentHash) {
-    res.status(409).json({ error: 'external_video_approval_stale' }); return;
-  }
-  if (Date.parse(text(post.published_at)) <= Date.now()) {
-    res.status(409).json({ error: 'external_video_schedule_expired', message: '计划时间已过，请重新建单审批。' }); return;
-  }
+  const initialAccountIds = Array.isArray(initialStats.targetAccountIds) ? initialStats.targetAccountIds.map(text).filter(Boolean) : [];
   try {
-    await verifyFrozenPublishSourceClaim(tenantId, stats.publishSourceClaim, stats.videoPath);
-    if (await externalVideoSha256(text(stats.videoPath)) !== stats.videoSha256) {
-      res.status(409).json({ error: 'external_video_changed' }); return;
-    }
-    const accountIds = Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(text).filter(Boolean) : [];
-    const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: post.platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok', accountId, accountLabel: '' })));
-    if (invalidAccountIds.length || targets.length !== accountIds.length) {
-      res.status(409).json({ error: 'external_video_accounts_not_connected' }); return;
-    }
-    await assertNoUnresolvedPublishing({ tenantId, platform: post.platform, accountIds, videoPath: text(stats.videoPath), currentPostId: post.id });
-    const saved = await store.update('posts', post.id, { stats: {
-      ...stats, status: 'scheduled', externalApprovalStatus: 'approved',
-      externalApprovedContentHash: contentHash, externalApprovedAt: new Date().toISOString(),
-      externalApprovedBy: userId,
-    } });
-    if (!saved) throw new Error('external_video_approval_persist_failed');
-    const updated = await store.getById<PostRecord>('posts', post.id);
-    if (!updated || !externalVideoApprovalValid(updated)) throw new Error('external_video_approval_persist_failed');
-    res.json({ approval: externalApprovalResponse(updated), calendarPostId: updated.id });
+    await withExternalVideoApprovalUniqueness({
+      tenantId, platform: initial.platform, accountIds: initialAccountIds,
+      videoSha256: text(initialStats.videoSha256), currentPostId: initial.id,
+    }, async () => {
+      // Always reload under the database lease. Another HTTP request may have
+      // approved this post between the first read and acquisition.
+      const post = await store.getById<PostRecord>('posts', initial.id);
+      const stats = post ? parseJson<Record<string, unknown>>(post.stats, {}) : {};
+      if (!post || post.tenant_id !== tenantId || stats.origin !== 'authorized_external_video'
+        || post.platform !== initial.platform || stats.videoSha256 !== initialStats.videoSha256
+        || JSON.stringify(stats.targetAccountIds) !== JSON.stringify(initialStats.targetAccountIds)) {
+        res.status(409).json({ error: 'external_video_approval_stale' }); return;
+      }
+      const contentHash = externalVideoApprovalHash(externalVideoApprovalSnapshot(post));
+      if (stats.status !== 'awaiting_approval' || text(req.body?.contentHash) !== contentHash
+        || text(stats.externalApprovalContentHash) !== contentHash) {
+        res.status(409).json({ error: 'external_video_approval_stale' }); return;
+      }
+      if (Date.parse(text(post.published_at)) <= Date.now()) {
+        res.status(409).json({ error: 'external_video_schedule_expired', message: '计划时间已过，请重新建单审批。' }); return;
+      }
+      await verifyFrozenPublishSourceClaim(tenantId, stats.publishSourceClaim, stats.videoPath);
+      if (await externalVideoSha256(text(stats.videoPath)) !== stats.videoSha256) {
+        res.status(409).json({ error: 'external_video_changed' }); return;
+      }
+      const accountIds = Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(text).filter(Boolean) : [];
+      const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: post.platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok', accountId, accountLabel: '' })));
+      if (invalidAccountIds.length || targets.length !== accountIds.length) {
+        res.status(409).json({ error: 'external_video_accounts_not_connected' }); return;
+      }
+      await assertNoUnresolvedPublishing({ tenantId, platform: post.platform, accountIds, videoPath: text(stats.videoPath), currentPostId: post.id });
+      const saved = await store.update('posts', post.id, { stats: {
+        ...stats, status: 'scheduled', externalApprovalStatus: 'approved',
+        externalApprovedContentHash: contentHash, externalApprovedAt: new Date().toISOString(),
+        externalApprovedBy: userId,
+      } });
+      if (!saved) throw new Error('external_video_approval_persist_failed');
+      const updated = await store.getById<PostRecord>('posts', post.id);
+      if (!updated || !externalVideoApprovalValid(updated)) throw new Error('external_video_approval_persist_failed');
+      res.json({ approval: externalApprovalResponse(updated), calendarPostId: updated.id });
+    });
   } catch (error) {
-    const status = error instanceof PublishSourceVerificationError ? error.statusCode : 409;
+    if (res.headersSent) return;
+    const status = error instanceof PublishSourceVerificationError ? error.statusCode
+      : error instanceof ExternalVideoApprovalConflict ? (error.code === 'external_video_approval_lock_unavailable' ? 503 : 409) : 409;
     res.status(status).json({ error: error instanceof Error ? error.message : 'external_video_approval_failed' });
   }
 });
-

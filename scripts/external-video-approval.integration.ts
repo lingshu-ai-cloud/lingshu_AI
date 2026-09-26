@@ -101,7 +101,7 @@ try {
   });
   if (upload.status !== 201) throw new Error(`HTTP upload failed (${upload.status}): ${await upload.text()}`);
   const uploaded = await upload.json() as { video: { videoPath: string } };
-  const videoPath = uploaded.video.videoPath;
+  let videoPath = uploaded.video.videoPath;
   assert.equal(createHash('sha256').update(fs.readFileSync(videoPath)).digest('hex'), createHash('sha256').update(videoBytes).digest('hex'),
     'the controlled upload must preserve the exact source video bytes');
   const schedule = new Date(Date.now() + 15 * 60_000).toISOString();
@@ -157,6 +157,15 @@ try {
   await runScheduledPublishingCycle(cycleAt, dependencies as any);
   assert.equal(providerCalls, 4, 'final receipts must not republish');
 
+  // The successful four-platform hash is now permanently blocked for the same
+  // accounts. Use a separate controlled fixture for mutation/recovery cases.
+  const followupUpload = await fetch(`${base}/local-videos`, {
+    method: 'POST', headers: { authorization: 'Bearer tenant-a', 'x-file-name': 'followup.mp4', 'content-type': 'application/octet-stream' },
+    body: Buffer.from('authorized-followup-v1'),
+  });
+  assert.equal(followupUpload.status, 201);
+  videoPath = ((await followupUpload.json()) as { video: { videoPath: string } }).video.videoPath;
+
   const changed = await create('File mutation approval');
   assert.equal(changed.status, 201);
   fs.writeFileSync(videoPath, 'authorized-video-v2');
@@ -177,6 +186,7 @@ try {
   await runScheduledPublishingCycle(cycleAt, dependencies as any);
   assert.equal(providerCalls, 4, 'changed content after approval must not call provider');
 
+  fs.writeFileSync(videoPath, 'authorized-video-v4');
   const unknown = await create('Unknown outcome approval');
   assert.equal(unknown.status, 201);
   assert.equal((await request('tenant-a', `/external-video-approvals/${unknown.body.approval.id}/approve`, 'POST', { contentHash: unknown.body.approval.contentHash })).status, 200);
@@ -187,6 +197,42 @@ try {
   assert.equal(providerCalls, 5, 'unknown provider outcome must never blindly resend');
   const uncertain = await request('tenant-a', `/external-video-approvals/${unknown.body.approval.id}`);
   assert.equal(uncertain.body.approval.status, 'needs_attention');
+  assert.equal((await create('Duplicate after unknown outcome')).status, 409,
+    'unknown outcome must block a new approval for the same account and video hash');
+
+  const raceUpload = await fetch(`${base}/local-videos`, {
+    method: 'POST', headers: { authorization: 'Bearer tenant-a', 'x-file-name': 'race.mp4', 'content-type': 'application/octet-stream' },
+    body: Buffer.from('authorized-concurrent-video-v1'),
+  });
+  assert.equal(raceUpload.status, 201);
+  videoPath = ((await raceUpload.json()) as { video: { videoPath: string } }).video.videoPath;
+  const racedCreates = await Promise.all([create('Concurrent A'), create('Concurrent B')]);
+  assert.deepEqual(racedCreates.map(result => result.status).sort(), [201, 409],
+    'database lease plus scan must allow only one active approval for the same account and video hash');
+  const raceApproval = racedCreates.find(result => result.status === 201)!.body.approval;
+  const racedDecisions = await Promise.all([
+    request('tenant-a', `/external-video-approvals/${raceApproval.id}/approve`, 'POST', { contentHash: raceApproval.contentHash }),
+    request('tenant-a', `/external-video-approvals/${raceApproval.id}/approve`, 'POST', { contentHash: raceApproval.contentHash }),
+  ]);
+  assert.deepEqual(racedDecisions.map(result => result.status).sort(), [200, 409],
+    'concurrent approval of the same durable post must schedule it once');
+  await runScheduledPublishingCycle(cycleAt, dependencies as any);
+  assert.equal(providerCalls, 6, 'double create/approve must yield one provider call');
+  await runScheduledPublishingCycle(cycleAt, dependencies as any);
+  assert.equal(providerCalls, 6, 'race winner must not be resent');
+
+  const failedUpload = await fetch(`${base}/local-videos`, {
+    method: 'POST', headers: { authorization: 'Bearer tenant-a', 'x-file-name': 'failed.mp4', 'content-type': 'application/octet-stream' },
+    body: Buffer.from('authorized-failed-video-v1'),
+  });
+  assert.equal(failedUpload.status, 201);
+  videoPath = ((await failedUpload.json()) as { video: { videoPath: string } }).video.videoPath;
+  const terminalFailure = await create('Definitive failed delivery');
+  assert.equal(terminalFailure.status, 201);
+  const failedPost = await store.getById<any>('posts', terminalFailure.body.approval.id);
+  await store.update('posts', failedPost.id, { stats: { ...failedPost.stats, status: 'failed', publishResults: {} } });
+  assert.equal((await create('Retry after definitive failure')).status, 201,
+    'a terminal failure with no ambiguous or published receipt may be retried');
 
   console.log('external video approval real PocketBase + HTTP + Worker integration passed');
 } finally {
