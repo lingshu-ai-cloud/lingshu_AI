@@ -75,6 +75,8 @@ export function socialDirectorContentHandoff(plan: StoredSocialDirectorPlan): So
     direction: plan.direction,
     outputSpec: plan.outputSpec,
     bgmSelection: plan.bgmSelection,
+    effectPlan: plan.effectPlan ?? null,
+    collaboration: plan.collaboration ? structuredClone(plan.collaboration) : null,
     coverIntent: plan.coverIntent,
     scenes: plan.scenes.map(scene => {
       const material = materialById.get(scene.shotPlan.assetId);
@@ -124,11 +126,73 @@ export function socialDirectorSceneTimingCues(
   });
 }
 
-export function socialDirectorRenderTimeline(handoff: SocialDirectorContentHandoff, duration: number) {
-  const cues = socialDirectorSceneTimingCues(handoff, duration);
+/** Project locked captions onto the measured/provider TTS timeline. Source
+ * duration weights remain a render fallback only; subtitles follow the audio
+ * that the audience actually hears. */
+export function socialDirectorVoiceAlignedCaptionCues(
+  handoff: SocialDirectorContentHandoff,
+  voiceCues: Array<{ start: number; end: number; text: string }>,
+  duration: number,
+): Array<{ start: number; end: number; text: string }> {
+  assertHandoffIntegrity(handoff);
+  const limit = Math.max(.5, Number(duration));
+  const cues = voiceCues
+    .map(cue => ({ start: Math.max(0, Number(cue.start)), end: Math.min(limit, Number(cue.end)), text: String(cue.text || '') }))
+    .filter(cue => Number.isFinite(cue.start) && Number.isFinite(cue.end) && cue.end > cue.start && cue.text.trim())
+    .sort((left, right) => left.start - right.start);
+  if (!cues.length) return socialDirectorSceneTimingCues(handoff, limit);
+  const units = (value: string) => Math.max(1, [...value.normalize('NFKC')].filter(char => /[\p{L}\p{N}]/u.test(char)).length);
+  const cueUnits = cues.map(cue => units(cue.text));
+  const cueTotal = cueUnits.reduce((sum, value) => sum + value, 0);
+  const sceneUnits = handoff.scenes.map(scene => units(scene.voiceover));
+  const sceneTotal = sceneUnits.reduce((sum, value) => sum + value, 0);
+  const timeAt = (position: number): number => {
+    let consumed = 0;
+    for (let index = 0; index < cues.length; index += 1) {
+      const next = consumed + cueUnits[index]!;
+      if (position <= next || index === cues.length - 1) {
+        const ratio = Math.max(0, Math.min(1, (position - consumed) / cueUnits[index]!));
+        return cues[index]!.start + (cues[index]!.end - cues[index]!.start) * ratio;
+      }
+      consumed = next;
+    }
+    return cues.at(-1)!.end;
+  };
+  let sceneCursor = 0;
   return handoff.scenes.map((scene, index) => {
-    const targetStart = cues[index]!.start;
-    const targetEnd = cues[index]!.end;
+    const start = index === 0 ? cues[0]!.start : timeAt(cueTotal * sceneCursor / sceneTotal);
+    sceneCursor += sceneUnits[index]!;
+    const end = index === handoff.scenes.length - 1 ? cues.at(-1)!.end : timeAt(cueTotal * sceneCursor / sceneTotal);
+    return { start: roundSeconds(start), end: roundSeconds(Math.max(start + .05, end)), text: scene.caption };
+  });
+}
+
+export function socialDirectorRenderTimeline(
+  handoff: SocialDirectorContentHandoff,
+  duration: number,
+  measuredCues?: Array<{ start: number; end: number }>,
+) {
+  const cues = measuredCues?.length === handoff.scenes.length
+    && measuredCues.every((cue, index) => Number.isFinite(cue.start) && Number.isFinite(cue.end)
+      && cue.end > cue.start && (index === 0 || cue.start >= measuredCues[index - 1]!.end - .05))
+    ? measuredCues : socialDirectorSceneTimingCues(handoff, duration);
+  const beatEvidence = handoff.effectPlan?.beatSync ? handoff.effectPlan.beatEvidence : null;
+  const renderCues = cues.map(cue => ({ start: cue.start, end: cue.end }));
+  if (beatEvidence && beatEvidence.confidence >= .65) {
+    for (let index = 0; index < renderCues.length - 1; index += 1) {
+      const boundary = renderCues[index]!.end;
+      const nearest = beatEvidence.beats.slice().sort((left, right) => Math.abs(left - boundary) - Math.abs(right - boundary))[0];
+      if (nearest === undefined || Math.abs(nearest - boundary) > .12) continue;
+      const previous = index === 0 ? 0 : renderCues[index]!.start;
+      const following = renderCues[index + 1]!.end;
+      if (nearest - previous < .5 || following - nearest < .5) continue;
+      renderCues[index]!.end = nearest;
+      renderCues[index + 1]!.start = nearest;
+    }
+  }
+  return handoff.scenes.map((scene, index) => {
+    const targetStart = index === 0 ? 0 : renderCues[index]!.start;
+    const targetEnd = index === handoff.scenes.length - 1 ? Math.max(targetStart + .5, duration) : renderCues[index]!.end;
     const targetDuration = Math.max(0.5, targetEnd - targetStart);
     if (scene.source.type === 'image') {
       if (targetDuration > 4.2) throw new Error('director_revision_required:单张图片的锁定停留时长过长');
@@ -154,8 +218,8 @@ export function socialDirectorRenderTimeline(handoff: SocialDirectorContentHando
   });
 }
 
-export function socialDirectorCoverTimestamp(handoff: SocialDirectorContentHandoff, duration: number): number {
-  const cues = socialDirectorSceneTimingCues(handoff, duration);
+export function socialDirectorCoverTimestamp(handoff: SocialDirectorContentHandoff, duration: number, measuredCues?: Array<{ start: number; end: number }>): number {
+  const cues = measuredCues?.length === handoff.scenes.length ? measuredCues : socialDirectorSceneTimingCues(handoff, duration);
   const index = handoff.scenes.findIndex(scene => scene.sceneId === handoff.coverIntent.sceneId);
   if (index < 0) throw new SocialContentWorkflowError('social_content_director_handoff_lineage_invalid', 503);
   const cue = cues[index]!;

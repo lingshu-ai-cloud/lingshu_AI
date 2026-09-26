@@ -1,8 +1,15 @@
-import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
+import { editorialEvidenceScore, visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
 import type { SocialContentThemeId } from '../../shared/contracts/socialContentWorkflow.js';
 import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { socialText } from './socialContentValidation.js';
+import type { MaterialScriptAnalysis, MaterialScriptRole } from '../../shared/materialScriptAnalysis.js';
+import {
+  buildMaterialSceneReview,
+  materialReviewBundle,
+  type MaterialReviewBundle,
+  type MaterialSceneReview,
+} from '../videoProduction/materialQualityLearning.js';
 
 export type SocialProductionAsset = {
   id: string;
@@ -38,6 +45,7 @@ export type SocialProductionAsset = {
     exactTaskProductMatch: true;
   };
   segments: Array<Record<string, unknown>>;
+  scriptAnalysis?: MaterialScriptAnalysis;
   /** Auditable retrieval origin. It does not change the visual evidence score. */
   selectionOrigin?: 'task' | 'tenant_library' | 'shared_library' | 'system_graphic';
 };
@@ -58,6 +66,14 @@ export type ProductionClip = {
    * safe, fact-free edit may use them. */
   needsReview: boolean;
   evidenceBasis: 'visual_analysis' | 'user_product_association';
+  boundaryConfidence?: number;
+  cleanEntry?: boolean;
+  cleanExit?: boolean;
+  actionPeak?: number | null;
+  actionStart?: number;
+  actionEnd?: number;
+  editorialTerms?: string[];
+  role?: MaterialScriptRole;
 };
 
 export type PlannedProductionScene = {
@@ -70,6 +86,7 @@ export type PlannedProductionScene = {
   narration: string;
   clip: ProductionClip;
   semanticScore: number;
+  materialReview?: MaterialSceneReview;
 };
 
 export type SocialProductionPlan = {
@@ -84,6 +101,7 @@ export type SocialProductionPlan = {
   sourceClipSeconds: number;
   averageConfidence: number;
   notes: string[];
+  materialLearning?: MaterialReviewBundle;
 };
 
 function strings(value: unknown): string[] {
@@ -120,10 +138,21 @@ function hasLocalTaskWindows(asset: SocialProductionAsset): boolean {
 function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
   if (asset.type === 'image') {
     const observations = asset.visualObservations.map(socialText).filter(Boolean);
+    const indexed = asset.scriptAnalysis?.shots[0];
     return observations.length ? [{
       clipId: `${asset.id}:image`, evidenceShotId: `${asset.id}:image`, assetId: asset.id, assetName: asset.name, type: 'image',
       start: 0, end: 0, sourceDuration: 2.8, observations, confidence: 0.85,
       needsReview: false, evidenceBasis: 'visual_analysis',
+      ...(indexed ? {
+        role: indexed.role,
+        editorialTerms: [
+          ...(indexed.matchTags || []).filter(tag => tag !== indexed.role),
+          ...(indexed.editorial?.subjects || []),
+          ...(indexed.editorial?.actions || []),
+          ...(indexed.editorial?.environments || []),
+          ...(indexed.editorial?.shotLanguage || []),
+        ],
+      } : {}),
     }] : [];
   }
   if (!Number.isFinite(asset.duration) || asset.duration < 1.5) return [];
@@ -137,15 +166,51 @@ function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
       || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > asset.duration + 0.05
       || end - start < 1.2 || !observations.length) continue;
     const evidenceShotId = `${asset.id}:${socialText(segment.id) || `segment-${index + 1}`}`;
+    const indexed = asset.scriptAnalysis?.shots.find(shot => shot.segmentId === socialText(segment.id))
+      || asset.scriptAnalysis?.shots[index];
+    const trim = indexed?.editorial?.trim;
+    const bounded = (value: unknown, fallback: number) => {
+      const parsed = typeof value === 'number' ? value
+        : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+      return Number.isFinite(parsed) ? Math.max(start, Math.min(end, parsed)) : fallback;
+    };
+    const boundaryConfidence = Math.max(0, Math.min(1, Number(trim?.boundaryConfidence ?? segment.boundaryConfidence) || 0));
+    const cleanEntry = trim?.cleanEntry ?? segment.cleanEntry === true;
+    const cleanExit = trim?.cleanExit ?? segment.cleanExit === true;
+    const trustedBoundary = boundaryConfidence >= .6 && cleanEntry && cleanExit;
+    const safeStart = trustedBoundary ? bounded(trim?.preferredStartSeconds ?? segment.cleanStart, start) : start;
+    const safeEnd = trustedBoundary ? Math.max(safeStart, bounded(trim?.preferredEndSeconds ?? segment.cleanEnd, end)) : end;
+    if (safeEnd - safeStart < 1.2) continue;
     // Long analyzed sections are split into independent, non-overlapping edit
     // windows for trim-duration options. They remain one evidence shot and may
     // never satisfy more than one independent-shot requirement.
-    const windowCount = Math.max(1, Math.min(4, Math.floor((end - start) / 1.6)));
-    const windowDuration = Math.min(3.5, (end - start) / windowCount);
-    const windowStride = windowCount <= 1 ? 0 : ((end - start) - windowDuration) / (windowCount - 1);
-    for (let window = 0; window < windowCount; window += 1) {
-      const clipStart = start + window * windowStride;
-      const clipEnd = Math.min(end, clipStart + windowDuration);
+    const windowCount = Math.max(1, Math.min(4, Math.floor((safeEnd - safeStart) / 1.6)));
+    const windowDuration = Math.min(3.5, (safeEnd - safeStart) / windowCount);
+    const windowStride = windowCount <= 1 ? 0 : ((safeEnd - safeStart) - windowDuration) / (windowCount - 1);
+    const peakValue = trim?.actionPeakSeconds ?? segment.actionPeak;
+    const actionPeak = typeof peakValue === 'number' ? peakValue
+      : typeof peakValue === 'string' && peakValue.trim() ? Number(peakValue) : Number.NaN;
+    const actionStartValue = typeof segment.actionStart === 'number' ? segment.actionStart
+      : typeof segment.actionStart === 'string' && segment.actionStart.trim() ? Number(segment.actionStart) : Number.NaN;
+    const actionEndValue = typeof segment.actionEnd === 'number' ? segment.actionEnd
+      : typeof segment.actionEnd === 'string' && segment.actionEnd.trim() ? Number(segment.actionEnd) : Number.NaN;
+    const actionStart = Number.isFinite(actionStartValue) ? bounded(actionStartValue, safeStart) : undefined;
+    const actionEnd = Number.isFinite(actionEndValue) && actionStart !== undefined
+      ? Math.max(actionStart, bounded(actionEndValue, safeEnd)) : undefined;
+    const completeActionStart = actionStart !== undefined && actionEnd !== undefined && actionEnd - actionStart <= windowDuration
+      ? Math.max(safeStart, Math.min(actionStart, actionEnd - windowDuration)) : Number.NaN;
+    const completeActionEnd = actionStart !== undefined && actionEnd !== undefined && actionEnd - actionStart <= windowDuration
+      ? Math.min(actionStart, safeEnd - windowDuration) : Number.NaN;
+    const peakStart = Number.isFinite(actionPeak)
+      ? Math.max(Number.isFinite(completeActionStart) ? completeActionStart : safeStart,
+        Math.min(Number.isFinite(completeActionEnd) ? completeActionEnd : safeEnd - windowDuration, actionPeak - windowDuration / 2))
+      : null;
+    const windowStarts = [...new Set([
+      ...(peakStart === null ? [] : [Number(peakStart.toFixed(3))]),
+      ...Array.from({ length: windowCount }, (_, window) => Number((safeStart + window * windowStride).toFixed(3))),
+    ])].slice(0, 4);
+    for (const [window, clipStart] of windowStarts.entries()) {
+      const clipEnd = Math.min(safeEnd, clipStart + windowDuration);
       if (clipEnd - clipStart < 1.2) continue;
       clips.push({
         clipId: `${asset.id}:${index}:${window}`,
@@ -160,6 +225,21 @@ function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
         confidence,
         needsReview: false,
         evidenceBasis: 'visual_analysis',
+        boundaryConfidence,
+        cleanEntry,
+        cleanExit,
+        actionPeak: Number.isFinite(actionPeak) ? actionPeak : null,
+        ...(actionStart !== undefined && actionEnd !== undefined ? { actionStart, actionEnd } : {}),
+        ...(indexed ? {
+          role: indexed.role,
+          editorialTerms: [
+            ...(indexed.matchTags || []).filter(tag => tag !== indexed.role),
+            ...(indexed.editorial?.subjects || []),
+            ...(indexed.editorial?.actions || []),
+            ...(indexed.editorial?.environments || []),
+            ...(indexed.editorial?.shotLanguage || []),
+          ],
+        } : {}),
       });
     }
   }
@@ -294,7 +374,13 @@ export function buildSocialProductionPlan(input: {
     seen.add(key);
     uniqueAssets.push(asset);
   }
+  const taskAssociatedAssetCount = uniqueAssets.filter(hasTaskUploadAssociation).length;
   const associationSafe = isAssociationSafeBaseline(input.baseline)
+    // Two independently selected task assets are enough to authorize a
+    // generic edit even when the reference vocabulary does not match their
+    // visual-analysis wording. The clips retain their real observations and
+    // never inherit factual claims from the reference video.
+    || taskAssociatedAssetCount >= 2
     || (['system_theme_baseline', 'knowledge_fallback'].includes(input.baseline.source)
       && uniqueAssets.some(hasLocalTaskWindows));
   const clipRows = uniqueAssets.map(asset => {
@@ -327,7 +413,9 @@ export function buildSocialProductionPlan(input: {
 
   const relevance = new Map(clips.map(clip => [clip.clipId, Math.max(
     0,
-    ...input.baseline.scenes.map(scene => visualEvidenceScore(sceneIntent(scene), clip.observations)),
+    ...input.baseline.scenes.map(scene => visualEvidenceScore(sceneIntent(scene), [
+      ...clip.observations, ...(clip.editorialTerms || []),
+    ])),
   )]));
   const associatedAssetIds = new Set(uniqueAssets.filter(hasTaskUploadAssociation).map(asset => asset.id));
   const relevantClips = clips.filter(clip => associationSafe
@@ -374,14 +462,35 @@ export function buildSocialProductionPlan(input: {
     const ranked = remaining.map((clip, index) => ({
       clip,
       index,
-      semanticScore: associationSafe ? 0 : visualEvidenceScore(sceneIntent(scene), clip.observations),
-    })).sort((left, right) => associationSafe
+      semanticScore: associationSafe ? 0 : editorialEvidenceScore(
+        sceneIntent(scene), clip, clip.sourceDuration, clip.start, clip.end,
+      ),
+    })).filter(candidate => associationSafe || candidate.semanticScore >= 10).sort((left, right) => associationSafe
       ? left.clip.start - right.clip.start
       : right.semanticScore - left.semanticScore
         || right.clip.confidence - left.clip.confidence
         || right.clip.sourceDuration - left.clip.sourceDuration);
     const selected = ranked[0];
     if (!selected) return [];
+    const materialReview = buildMaterialSceneReview({
+      sceneId: scene.sceneId,
+      intent: sceneIntent(scene),
+      selectedClipId: selected.clip.clipId,
+      candidates: ranked.slice(0, 5).map(candidate => ({
+        type: candidate.clip.type,
+        assetId: candidate.clip.assetId,
+        clipId: candidate.clip.clipId,
+        sourceStart: candidate.clip.start,
+        sourceEnd: candidate.clip.end,
+        score: candidate.semanticScore,
+        analysisConfidence: candidate.clip.confidence,
+        boundaryConfidence: candidate.clip.boundaryConfidence ?? 0,
+        cleanEntry: candidate.clip.cleanEntry,
+        cleanExit: candidate.clip.cleanExit,
+        needsReview: candidate.clip.needsReview,
+        evidenceBasis: candidate.clip.evidenceBasis,
+      })),
+    });
     // Evidence-shot ids, rather than asset ids, define independence here.
     // Several trim alternatives from one analyzed shot share an id and are
     // removed together, while locally detected cuts in one complete upload
@@ -389,7 +498,7 @@ export function buildSocialProductionPlan(input: {
     for (let index = remaining.length - 1; index >= 0; index -= 1) {
       if (remaining[index]!.evidenceShotId === selected.clip.evidenceShotId) remaining.splice(index, 1);
     }
-    return [{ sceneIndex, scene, clip: selected.clip, semanticScore: selected.semanticScore }];
+    return [{ sceneIndex, scene, clip: selected.clip, semanticScore: selected.semanticScore, materialReview }];
   });
   const sourceClipSeconds = assignments.reduce((sum, item) => sum + item.clip.sourceDuration, 0);
   const dynamicSeconds = assignments.filter(item => item.clip.type === 'video')
@@ -426,6 +535,7 @@ export function buildSocialProductionPlan(input: {
       narration: compactNarration(item.scene.narration, seconds, input.baseline.language),
       clip: item.clip,
       semanticScore: item.semanticScore,
+      materialReview: item.materialReview,
     };
   });
   const selectedAssetIds = [...new Set(scenes.map(item => item.clip.assetId))];
@@ -455,6 +565,7 @@ export function buildSocialProductionPlan(input: {
         : `本次只使用 ${selectedAssetIds.length} 份素材中的 ${scenes.length} 个可信镜头，未选素材不会删除。`,
       narrationChanged ? '执行稿仅做删镜和压缩，未添加新的产品事实。' : '执行稿与锁定脚本一致。',
     ],
+    materialLearning: materialReviewBundle(scenes.flatMap(scene => scene.materialReview ? [scene.materialReview] : [])),
   };
 }
 

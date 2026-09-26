@@ -88,6 +88,32 @@ import {
 export { buildAuthoritativeSocialContentWorkflow, listSocialWeeklyPlans } from './socialContentTaskSupport.js';
 import { listSocialWeeklyPlans } from './socialContentTaskSupport.js';
 
+async function socialTaskSourcesEditable(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+}, task: StarterRecord): Promise<boolean> {
+  const status = socialText(task.status);
+  if (SOURCE_EDITABLE_STATES.has(status)) return true;
+  if (status !== 'asset_review') return false;
+  const artifacts = await input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, {
+    where: { task_id: input.taskId }, perPage: 500,
+  });
+  if (artifacts.totalItems !== artifacts.items.length) {
+    throw new SocialContentWorkflowError('social_content_task_children_truncated', 503);
+  }
+  return artifacts.items.every(item => ['changes_requested', 'superseded'].includes(socialText(item.status)));
+}
+
+async function socialTaskEditable(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+}, task: StarterRecord): Promise<boolean> {
+  if (TASK_EDITABLE_STATES.has(socialText(task.status))) return true;
+  return socialTaskSourcesEditable(input, task);
+}
+
 export async function createSocialContentTask(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -212,7 +238,7 @@ export async function updateSocialContentTask(input: {
         return { task: (await readSocialTaskDetail(input))! };
       }
       assertVersion(record, input.value.expectedVersion);
-      if (!TASK_EDITABLE_STATES.has(socialText(record.status))) {
+      if (!(await socialTaskEditable(input, record))) {
         throw new SocialContentWorkflowError('social_content_task_not_editable', 409);
       }
       const currentSummary = socialTaskSummary(record);
@@ -358,7 +384,7 @@ export async function addSocialTaskSource(input: {
         }
         return { source: socialTaskSource(existing), task: (await readSocialTaskDetail(input))! };
       }
-      if (!SOURCE_EDITABLE_STATES.has(socialText(task.status))) {
+      if (!await socialTaskSourcesEditable(input, task)) {
         throw new SocialContentWorkflowError('social_content_sources_not_editable', 409);
       }
       await assertSocialTaskChildCapacity({ ...input, kind: 'source' });
@@ -446,7 +472,7 @@ export async function removeSocialTaskSource(input: {
       const source = await sourceRecord();
       if (socialText(source.last_operation_id) !== operationId) {
         assertVersion(task, input.expectedTaskVersion);
-        if (!SOURCE_EDITABLE_STATES.has(socialText(task.status))) {
+        if (!await socialTaskSourcesEditable(input, task)) {
           throw new SocialContentWorkflowError('social_content_sources_not_editable', 409);
         }
         if (socialText(source.status) !== 'active') {

@@ -14,6 +14,7 @@ import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { fetchCloudMaterial } from '../lib/cloudMaterials.js';
 import { evidenceClips, observationStrings } from './sceneEvidence.js';
 import type { AssetCandidate } from './contentProduction.js';
+import { enrichMaterialSegmentsWithEditBoundaries } from '../lib/videoBoundaryAnalysis.js';
 
 export type MaterialAnalysis = { revision: string; duration: number; observations: string[]; segments: Array<Record<string, unknown>> };
 export function materialRevision(asset: AssetCandidate): string {
@@ -73,7 +74,14 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
     const mimeType = /\.png$/i.test(asset.localPath || asset.name) ? 'image/png' : /\.webp$/i.test(asset.localPath || asset.name) ? 'image/webp' : 'image/jpeg';
     const analyze = (process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').toLowerCase() === 'qwen' ? analyzeImagePostEvidenceWithQwen : analyzeImagePostEvidenceWithGemini;
     const result = await analyze({ images: [{ base64: bytes.toString('base64'), mimeType, imageIndex: 1 }] });
-    const observations = result.observedFacts.filter(fact => Number(fact.confidence) >= .65).flatMap(fact => [...fact.subjects, fact.scene, fact.composition]).filter(Boolean);
+    const observations = result.observedFacts
+      .filter(fact => Number(fact.confidence) >= .65)
+      .flatMap(fact => [
+        ...(Array.isArray(fact.subjects) ? fact.subjects : []),
+        fact.scene,
+        fact.composition,
+      ])
+      .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()));
     if (!observations.length) throw Error('production_input_required:图片没有足够可信的视觉观察，请补充清晰素材');
     return { revision, duration: 0, observations, segments: [] };
   }
@@ -89,12 +97,17 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
     // Time stays in original seconds. The high-resolution original remains the render source.
     let segments: Array<Record<string, unknown>>;
     if ((process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').trim().toLowerCase() === 'qwen') {
-      const frames = await extractQwenAnalysisFrames(proxy, 16, resolved.duration);
+      // Pay the visual-analysis cost once at ingestion. Short clips keep a small
+      // request; longer reels receive enough temporal samples to locate clean
+      // action boundaries instead of asking every production task to re-analyse.
+      const frameBudget = Math.max(18, Math.min(48, Math.ceil(resolved.duration * 2)));
+      const frames = await extractQwenAnalysisFrames(proxy, frameBudget, resolved.duration);
       const draft = await analyzeMaterialFramesWithQwen({frames,duration:resolved.duration});
       normalizeMaterialObservations(asset.id,resolved.duration,draft);
       const reviewed = await verifyMaterialFramesWithQwen({frames,duration:resolved.duration,draft});
       segments = normalizeMaterialObservations(asset.id,resolved.duration,reviewed);
     } else segments = productionAnalysisSegments(asset.id, resolved.duration, await analyzeMaterialVideo(proxy, fs.readFileSync(proxy), resolved.duration));
+    segments = await enrichMaterialSegmentsWithEditBoundaries({ inputPath: file, duration: resolved.duration, segments });
     if (!allowReview && !evidenceClips({ ...asset, duration: resolved.duration, segments }).length) throw Error('production_input_required:视频分析缺少已确认的可用片段，请复核素材分析');
     return { revision, duration: resolved.duration, segments, observations: segments.flatMap(observationStrings) };
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }

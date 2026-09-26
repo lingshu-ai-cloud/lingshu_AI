@@ -2,7 +2,7 @@ import { waitForMaterialAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { applySceneRepair, planSceneRepair } from './sceneRepair.js';
 import { analyzeProductionMaterial, applyMaterialAnalysis, materialRevision, type MaterialAnalysis } from './productionMaterialAnalysis.js';
-import { allocateEvidenceClips, evidenceClips, visualEvidenceScore } from './sceneEvidence.js';
+import { allocateEvidenceClips, evidenceClips, evidenceIntervalSupportsIntent } from './sceneEvidence.js';
 import { visualCoverageIssues, invalidateProductionArtifacts } from './productionPreflight.js';
 import { presenterApprovalForProject, presenterApprovalResumesQuality } from './presenterApprovalRecovery.js';
 import { finishContent } from './contentFinish.js';
@@ -37,13 +37,16 @@ import { notifyStarterReviewableContentProjects } from '../starter198/contentArt
 import { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js'; export { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js';
 import type { DirectorScriptContract, FrozenDirectorScript } from '../../src/lib/directorScript.js';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
+import { digitalEmployeeProductionGraph } from '../videoProduction/runtimeGraph.js';
+import { closedWorldNarrationLines, ensureStoredVoiceQuality, socialVideoEffectPlan } from './contentProductionCreative.js';
+import { aggregateNarrationStyleProfiles, deriveNarrationStyleProfile, narrationStyleInstruction, type NarrationStyleProfile } from './narrationStyle.js';
 import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
 export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
   composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
-export const CONTENT_PRODUCTION_SCHEMA_VERSION = 3;
+export const CONTENT_PRODUCTION_SCHEMA_VERSION = 4;
 export const CONTENT_PRODUCTION_MAX_CONCURRENCY = 2;
 
 export function expandContentOrdersByLanguage(
@@ -542,7 +545,7 @@ function productFacts(profile: EnterpriseProfile, config: DigitalEmployeeConfig,
   ].filter(Boolean).join('；')).join('\n').slice(0, 8_000);
 }
 
-function referenceStructure(record?: StoredRecord): { id: string; structure: unknown; observedFacts: string[]; hash: string } | null {
+function referenceStructure(record?: StoredRecord): { id: string; structure: unknown; observedFacts: string[]; narrationStyle: NarrationStyleProfile | null; hash: string } | null {
   if (!record) return null;
   const analysis = json<Record<string, unknown>>(record.aiAnalysis, {});
   const gemini = json<Record<string, unknown>>(analysis.gemini, {});
@@ -564,7 +567,8 @@ function referenceStructure(record?: StoredRecord): { id: string; structure: unk
     return Array.isArray(row.observedFacts) ? row.observedFacts.map(item => text(item, 200)).filter(Boolean) : [];
   });
   if (!structure.length) return null;
-  return { id: record.id, structure, observedFacts, hash: stableHash(structure) };
+  const narrationStyle = deriveNarrationStyleProfile(shots.map(shot => json<Record<string, unknown>>(shot, {})));
+  return { id: record.id, structure, observedFacts, narrationStyle, hash: stableHash({ structure, narrationStyle }) };
 }
 
 function evidenceAssetSnapshot(asset: AssetCandidate) {
@@ -631,7 +635,8 @@ export function automatedContentQualityNeedsRevalidation(automation: Record<stri
 }
 
 function stagePatch(automation: Record<string, unknown>, stage: ProductionStage, extra: Record<string, unknown> = {}) {
-  return { ...automation, stage, updatedAt: new Date().toISOString(), ...extra };
+  const updatedAt = new Date().toISOString();
+  return { ...automation, stage, updatedAt, ...digitalEmployeeProductionGraph({ automation, stage, extra, now: updatedAt }), ...extra };
 }
 
 function selectedAssets(spec: Record<string, unknown>, all: AssetCandidate[]): AssetCandidate[] {
@@ -722,7 +727,8 @@ export function bindVoiceCuesToScenes(
   lines: string[],
   cues: Array<{ start: number; end: number; text: string }>,
 ): Array<{ start: number; end: number; text: string }> | null {
-  const normalized = (value: string) => value.replace(/\s+/g, '');
+  const normalized = (value: string) => value.normalize('NFKC').toLocaleLowerCase()
+    .match(/[\p{L}\p{N}]+/gu)?.join('') || '';
   const groups: Array<{ start: number; end: number; text: string }> = [];
   let cueIndex = 0;
   for (const line of lines) {
@@ -893,13 +899,7 @@ export function deterministicClosedWorldStoryboard(input: {
   assets: AssetCandidate[];
 }): string {
   const facts = safeFactClauses(input.productFacts);
-  const spoken = [
-    facts[0] ? `已确认产品资料：${facts[0]}。` : '先看已上传素材中能够确认的实际内容。',
-    facts[1] ? `已确认产品资料：${facts[1]}。` : '本段仅展示已上传素材中可见的主体。',
-    facts[2] ? `已确认产品资料：${facts[2]}。` : '内容仅使用企业已提供的产品与素材信息。',
-    facts[3] ? `已确认产品资料：${facts[3]}。` : '具体规格与合作条件请以企业确认资料为准。',
-    '如需了解已确认的产品资料，请私信获取方案。',
-  ];
+  const spoken = closedWorldNarrationLines(facts);
   return spoken.map((line, index) => {
     const asset = input.assets[index % input.assets.length];
     const observation = asset?.observations.map(item => text(item, 180)).find(Boolean) || '';
@@ -914,16 +914,18 @@ type GeneratedScript = { script: string; source: 'llm' | 'deterministic_closed_w
 
 export async function generateScript(input: {
   route: ContentProductionRoute; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; profile: EnterpriseProfile; assets: AssetCandidate[]; reference?: StoredRecord;
-  productId?: string; platformBrief: string; contentOrder?: ContentProductionOrderInput;
+  productId?: string; platformBrief: string; contentOrder?: ContentProductionOrderInput; learnedNarrationStyle?: NarrationStyleProfile | null;
 }): Promise<GeneratedScript> {
   const facts = productFacts(input.profile, input.config, input.productId);
   const reference = input.route === 'clone' ? referenceStructure(input.reference) : null;
   const referenceSummary = reference ? JSON.stringify(reference.structure).slice(0, 8_000) : '';
+  const narrationStyle = reference?.narrationStyle || input.learnedNarrationStyle || null;
   const materialEvidence = input.assets.slice(0, 8).map(asset => `${asset.name}：${asset.observations.join('；')}`).join('\n');
   const brief = normalizeVideoPlan(input.contentOrder?.videoPlan || input.config.videoDefaults || {});
   const lines = await generateNarration({ facts, theme: input.contentOrder?.theme?.label || input.goal.objective, audience: brief.matrix?.audience || input.config.customerProfile,
     language: brief.language, duration: brief.duration, cta: input.contentOrder?.cta || '引导买家讨论当前问题，不承诺额外服务',
-    constraints: [...(input.contentOrder?.constraints || input.goal.constraints), ...(brief.reviewRequirements?.length ? ['第一段口播必须能在3秒内自然读完，与首镜钩子对应；其余段落展开解释。'] : []), ...(brief.presenter === 'heygen' ? [`必须恰好分为 ${brief.scenePlan?.length || 4} 段口播，对应用户分镜画面安排；数字人段简短，素材段展开解释。`] : [])], reference: referenceSummary });
+    constraints: [...(input.contentOrder?.constraints || input.goal.constraints), ...(brief.reviewRequirements?.length ? ['第一段口播必须能在3秒内自然读完，与首镜钩子对应；其余段落展开解释。'] : []), ...(brief.presenter === 'heygen' ? [`必须恰好分为 ${brief.scenePlan?.length || 4} 段口播，对应用户分镜画面安排；数字人段简短，素材段展开解释。`] : [])], reference: referenceSummary,
+    styleProfile: narrationStyleInstruction(narrationStyle) });
   if (brief.presenter === 'heygen' && brief.scenePlan?.length && lines.length !== brief.scenePlan.length) throw Error('口播段数与用户指定分镜数量不一致，请重新生成');
   const hookEnd = brief.reviewRequirements?.length ? 3 : 0;
   const step = hookEnd ? (brief.duration - hookEnd) / (lines.length - 1) : brief.duration / lines.length;
@@ -999,6 +1001,7 @@ export async function generateDirectorScriptContracts(input: { tenantId: string;
   ]);
   const allAssets = await collectAssets(input.tenantId, profile);
   const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
+  const learnedNarrationStyle = aggregateNarrationStyleProfiles(analyses.map(record => referenceStructure(record)?.narrationStyle || null));
   const generatedAt = input.now || new Date().toISOString();
   const results: ContentProductionOrderInput[] = [];
   for (const order of input.orders) {
@@ -1013,7 +1016,7 @@ export async function generateDirectorScriptContracts(input: { tenantId: string;
       if (process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK === 'true') {
         generated = { script: deterministicClosedWorldStoryboard({ productFacts: productFacts(profile, input.config, order.productId), assets }), source: 'deterministic_closed_world_fallback', degradedReason: '已启用编导脚本离线降级模式' };
       } else try {
-        generated = await generateScript({ route: order.route, config: input.config, goal: input.goal, profile, assets, reference, productId: order.productId, platformBrief: platformCreativeBrief(order.platform), contentOrder: directedOrder });
+        generated = await generateScript({ route: order.route, config: input.config, goal: input.goal, profile, assets, reference, productId: order.productId, platformBrief: platformCreativeBrief(order.platform), contentOrder: directedOrder, learnedNarrationStyle });
       } catch (error) {
         if (!isLlmUnavailableError(error)) throw error;
         generated = {
@@ -1099,8 +1102,13 @@ export async function advanceOneProject(input: {
       for (const [index, item] of plan.entries()) {
         const asset = assetsWithDuration.find(asset => asset.id === item.assetId);
         const start = Number((spec.sceneOverrides as any[])?.[index]?.trimStart || 0);
-        if (asset && !evidenceClips(asset).some(clip => start >= clip.start && (asset.type === 'image' || start + timings.sceneDurations[index] <= clip.end + .05)
-          && visualEvidenceScore(item.intent, clip.observations) > 0)) issues.push(`第 ${index + 1} 镜使用区间超出已确认的语义匹配片段，请重新匹配`);
+        if (asset && !evidenceClips(asset).some(clip => evidenceIntervalSupportsIntent(
+          item.intent,
+          clip,
+          start,
+          timings.sceneDurations[index],
+          asset.type === 'image',
+        ))) issues.push(`第 ${index + 1} 镜使用区间超出已确认的语义或安全裁切边界，请重新匹配`);
       }
       if (issues.length) {
         const attempts = Number(automation.autoTimingRematchAttempts || 0);
@@ -1194,6 +1202,7 @@ export async function advanceOneProject(input: {
       })() : await generateScript({
         route, config: input.config, goal: input.goal, profile: input.profile, assets: routeAssets, reference,
         productId: routePlan.productId, platformBrief: routePlan.platformBrief,
+        learnedNarrationStyle: aggregateNarrationStyleProfiles(input.analyses.map(record => referenceStructure(record)?.narrationStyle || null)),
         contentOrder: contentOrder && { ...contentOrder, constraints: [...(contentOrder.constraints || []), ...(automation.narrationFeedback ? [String(automation.narrationFeedback)] : [])] },
       });
       const script = generated.script;
@@ -1350,7 +1359,7 @@ export async function advanceOneProject(input: {
         alignedCuesByLang: { [brief.language]: paginateAlignedCues(voice.cues || [], duration) || [] }, subtitleAlignmentSource: voice.alignmentSource, subtitlesOn: true, subMode: 'target',
         sceneVoiceCuesByLang: { ...json<Record<string, unknown>>(spec.sceneVoiceCuesByLang, {}), [brief.language]: sceneVoiceCues },
         languageSceneBindings: (Array.isArray(spec.languageSceneBindings) ? spec.languageSceneBindings as Array<Record<string, unknown>> : []).map((binding, index) => ({ ...binding, cue: sceneVoiceCues[index] || null })),
-        automation: stagePatch(automation, usesDigitalPresenter(brief) ? 'heygen' : 'render', { blocker: '', voiceSource: voice.source, voiceLocalPath: voice.localPath, spokenText: spoken, narrationHash: stableHash(spoken), narrationReviewPassed: true }),
+        automation: stagePatch(automation, usesDigitalPresenter(brief) ? 'heygen' : 'render', { blocker: '', voiceSource: voice.source, voiceLocalPath: voice.localPath, voiceQuality: voice.qualityReport, spokenText: spoken, narrationHash: stableHash(spoken), narrationReviewPassed: true }),
       });
       return { changed: true, blocker: '' };
     }
@@ -1383,15 +1392,27 @@ export async function advanceOneProject(input: {
         const assetIndex = matching.plan.findIndex(item => item.sceneIndex === sceneIndex);
         return { source: choice.source, ...(assetIndex >= 0 ? { clip: { name: middleAssets[assetIndex].name, type: middleAssets[assetIndex].type, url: urls[assetIndex]!, ...coverage.segments[assetIndex] } } : {}) };
       }));
+      const effectPlan = socialVideoEffectPlan({
+        schemaVersion: Number(automation.schemaVersion || 0),
+        stored: spec.effectPlan,
+        scenes: scenes.map((scene, index) => ({
+        sceneId: `scene-${index + 1}`,
+        targetDuration: timing.sceneDurations[index],
+        purpose: sceneIntent(text(spec.script, 30_000), scene.start, scene.end),
+        targetVisual: sceneIntent(text(spec.script, 30_000), scene.start, scene.end),
+        pace: Number(json<Record<string, unknown>>(spec.productionDirection, {}).speed || 1) > 1.08 ? 'fast'
+          : Number(json<Record<string, unknown>>(spec.productionDirection, {}).speed || 1) < .92 ? 'slow' : 'medium',
+        })),
+      });
       const disclaimer = middleAssets.some(asset => /行业示意|industry illustration/i.test(asset.name + ' ' + asset.observations.join(' '))) ? 'Industry illustration' : '';
       const outputDir = path.resolve(process.cwd(), 'data', 'publishing-uploads', input.tenantId.replace(/[^\w.-]+/g, '-'));
       const result = await composite({ jobId: `de-${input.record.id}-v${Number(automation.contentVersion || 1)}`, requireVisualAssets: true, disclaimer,
         spec: { ratio: text(spec.ratio) || '9:16', resolution: (spec.exportSpec as any)?.resolution || '1080p', duration, platform: routePlan.platform, language: brief.language, bgmVol: musicVolume, voiceVol: 100 },
-        timeline, bgm: music, voiceover: { url: `data:${mimeFromFile(voicePath)};base64,${fs.readFileSync(voicePath).toString('base64')}` },
+        timeline, ...(effectPlan ? { effectPlan } : {}), bgm: music, voiceover: { url: `data:${mimeFromFile(voicePath)};base64,${fs.readFileSync(voicePath).toString('base64')}` },
         subtitles: { mode: 'target', cues: presenterCues, style: spec.subtitleStyle || {} },
       }, undefined, outputDir);
       if (!result.ok || !result.outputPath) return block('heygen', result.error || '数字人混剪合成失败');
-      await updateProject(input.record, { ...spec, duration, disclaimer, alignedCuesByLang: { [brief.language]: presenterCues }, subtitleAlignmentSource: spec.subtitleAlignmentSource === 'human_reviewed' ? 'human_reviewed' : 'heygen_audio', presenterMode: 'digital', selectedMaterialIds: [...new Set([job.outputMaterialId, ...middleAssets.map(asset => asset.id)])],
+      await updateProject(input.record, { ...spec, ...(effectPlan ? { effectPlan } : {}), duration, disclaimer, alignedCuesByLang: { [brief.language]: presenterCues }, subtitleAlignmentSource: spec.subtitleAlignmentSource === 'human_reviewed' ? 'human_reviewed' : 'heygen_audio', presenterMode: 'digital', selectedMaterialIds: [...new Set([job.outputMaterialId, ...middleAssets.map(asset => asset.id)])],
         presentationMode: brief.presenter,
         sceneSourcePlan: scenes.map((scene, index) => choices[index].source === 'avatar'
           ? { sceneIndex: index, ...scene, intent: '用户指定数字人镜头', assetId: job.outputMaterialId, score: 100, reasons: ['HeyGen 人物片段按原音频时间裁切，随完整成片人工验收'] }
@@ -1434,6 +1455,16 @@ export async function advanceOneProject(input: {
           ...(typeof sceneAssets[index]!.focusX === 'number' ? { focusX: sceneAssets[index]!.focusX } : {}),
           ...(typeof sceneAssets[index]!.focusY === 'number' ? { focusY: sceneAssets[index]!.focusY } : {}),
         })),
+        ...(() => {
+          const effectPlan = socialVideoEffectPlan({ schemaVersion: Number(automation.schemaVersion || 0), stored: spec.effectPlan, scenes: ranges.map((range, index) => ({
+          sceneId: `scene-${index + 1}`,
+          targetDuration: timing.sceneDurations[index],
+          purpose: sceneIntent(text(spec.script, 30_000), range.start, range.end),
+          targetVisual: sceneIntent(text(spec.script, 30_000), range.start, range.end),
+          pace: Number((spec.voiceStyle as Record<string, unknown> | undefined)?.speed || 1) > 1.08 ? 'fast' : 'medium',
+          })) });
+          return effectPlan ? { effectPlan } : {};
+        })(),
         voiceover: { voice: 'automation', url: `data:${mimeFromFile(voicePath)};base64,${fs.readFileSync(voicePath).toString('base64')}` },
         cover: { id: null, title: input.record.title || '', url: null }, bgm: music,
         subtitles: { mode: 'target', cues: json<Record<string, unknown>>(spec.alignedCuesByLang, {})[brief.language] || [], style: spec.subtitleStyle || {} },
@@ -1441,7 +1472,7 @@ export async function advanceOneProject(input: {
       const outputDir = path.resolve(process.cwd(), 'data', 'publishing-uploads', input.tenantId.replace(/[^\w.-]+/g, '-'));
       const result = await composite(manifest, undefined, outputDir);
       if (!result.ok || !result.outputPath || !fs.existsSync(result.outputPath)) return block('render', `本机渲染失败：${result.error || '未生成 MP4'}`);
-      await updateProject(input.record, { ...spec, disclaimer, duration: timing.duration, sourceSegments: sourceCoverage.segments, renderOutputPath: result.outputPath, activeStepId: 'preview', automation: stagePatch(automation, 'quality', { blocker: '', renderOutputPath: result.outputPath, renderedAt: new Date().toISOString(), renderMaterialRevision: materialRevisionHash }) });
+      await updateProject(input.record, { ...spec, ...('effectPlan' in manifest ? { effectPlan: manifest.effectPlan } : {}), disclaimer, duration: timing.duration, sourceSegments: sourceCoverage.segments, renderOutputPath: result.outputPath, activeStepId: 'preview', automation: stagePatch(automation, 'quality', { blocker: '', renderOutputPath: result.outputPath, renderedAt: new Date().toISOString(), renderMaterialRevision: materialRevisionHash }) });
       return { changed: true, blocker: '' };
     }
     if (stage === 'quality') {
@@ -1541,8 +1572,13 @@ export async function advanceOneProject(input: {
         if (usesDigitalPresenter(brief) && item.assetId === automation.heygenOutputMaterialId) return Boolean(automation.heygenApproved);
         const start = Number((spec.sceneOverrides as any[])?.[index]?.trimStart || 0);
         const duration = productionTiming(spec, ranges).sceneDurations[index];
-        return Boolean(asset && assetEligible(asset) && evidenceClips(asset).some(clip => start >= clip.start && (asset.type === 'image' || start + duration <= clip.end + .05)
-          && visualEvidenceScore(sceneIntent(text(spec.script, 30_000), ranges[index].start, ranges[index].end), clip.observations) > 0));
+        return Boolean(asset && assetEligible(asset) && evidenceClips(asset).some(clip => evidenceIntervalSupportsIntent(
+          sceneIntent(text(spec.script, 30_000), ranges[index].start, ranges[index].end),
+          clip,
+          start,
+          duration,
+          asset.type === 'image',
+        )));
       });
       const routeDifferentiation = pathDifference.pathDifference === true;
       const sceneDiversity = brief.presenter === 'avatar' || new Set(sourcePlan.map(item => item.assetId)).size >= 2 || visualQuality?.passed === true;
@@ -1550,6 +1586,8 @@ export async function advanceOneProject(input: {
       const subtitleSafe = subtitleCuesAreSafe(cues, Number(spec.duration || 20));
       const platformBriefApplied = Boolean(text(spec.platformBrief, 1_000) && text(routePlan.platformBrief, 1_000));
       const narrationApproved = automation.narrationReviewPassed === true && automation.narrationHash === stableHash(voiceoverText(text(spec.script, 30_000)));
+      const voiceQuality = await ensureStoredVoiceQuality({ stored: automation.voiceQuality,
+        voicePath: text(automation.voiceLocalPath, 2_000), expectedText: voiceoverText(text(spec.script, 30_000)), language: brief.language });
       const sceneAlignmentIssues = Number(automation.schemaVersion || 0) >= 3 ? languageSceneAlignmentIssues(spec) : [];
       const failures = [
         !stat || stat.size < 10_000 ? '成片文件不存在或文件异常' : '',
@@ -1558,6 +1596,7 @@ export async function advanceOneProject(input: {
         !Array.isArray(spec.selectedMaterialIds) || spec.selectedMaterialIds.length === 0 ? '未绑定真实素材' : '',
         !spec.voiceoverUrl ? '未生成配音' : '',
         !narrationApproved ? '最终口播尚未通过事实与完整性审核' : '',
+        voiceQuality.passed !== true ? `口播声音质检未通过：${voiceQuality.failures?.join('；') || '缺少响度、削波、静音和回听证据'}` : '',
         ...sceneAlignmentIssues,
         !spokenLanguageMatches(text(automation.spokenText, 30000), brief.language) || text(spec.lang) !== brief.language ? '最终语言与制作计划不符' : '',
         usesDigitalPresenter(brief) && !automation.heygenApproved ? '当前数字人成片尚未获得与本项目、配音及素材版本一致的人工确认' : '',
@@ -1600,12 +1639,12 @@ export async function advanceOneProject(input: {
       await updateProject(input.record, {
         ...spec, ...finished,
         automation: stagePatch(automation, 'completed', {
-          status: 'ready_for_approval', blocker: '', completedAt: new Date().toISOString(), approvalState: 'ready_for_approval',
+          status: 'ready_for_approval', blocker: '', completedAt: new Date().toISOString(), approvalState: 'ready_for_approval', voiceQuality,
           quality: {
             passed: true,
             ruleVersion: CONTENT_SCRIPT_QUALITY_RULE_VERSION,
             checks: {
-              renderedFile: true, visualContent: true, groundedScript: true, materialBound: true, voiceAndSubtitles: true,
+              renderedFile: true, visualContent: true, groundedScript: true, materialBound: true, voiceAndSubtitles: true, voiceQuality: true,
               semanticAlignment, routeDifferentiation, internalMarkerFree, subtitleSafe, platformBriefApplied,
               sceneDiversity,
             },
@@ -1766,6 +1805,7 @@ export async function advanceAutomatedContentProduction(input: {
         evidenceSnapshot: snapshot,
         automation: {
           schemaVersion: CONTENT_PRODUCTION_SCHEMA_VERSION, managedBy: 'digital_employee', route, slot: slot + 1,
+          productionGraphId: `digital-employee:${input.runId}:${input.taskId}:${slot + 1}`,
           stage: 'script', status: routePlan.gap ? 'blocked' : 'queued', referenceAnalysisId: referenceId,
           evidence, evidenceSnapshotHash: snapshot.hash, routePlan,
           ...(routePlan.gap ? { blocker: routePlan.gap, resumeStage: 'script', retryAfter: new Date(Date.now() + 15 * 60_000).toISOString() } : {}),

@@ -1,0 +1,14 @@
+{
+  "materialQueries": [
+    {
+      "queryId": "example-scene-1",
+      "candidates": [
+        { "candidateId": "clip-a", "predictedScore": 24.2, "relevance": 2 },
+        { "candidateId": "clip-b", "predictedScore": 19.8, "relevance": 1 },
+        { "candidateId": "clip-c", "predictedScore": 12.1, "relevance": 0 }
+      ]
+    }
+  ],
+  "voiceListeningSamples": [],
+  "marketingExperiments": []
+}

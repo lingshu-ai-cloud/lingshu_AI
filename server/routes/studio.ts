@@ -22,6 +22,7 @@ import { buildMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../
 import { normalizeVideoLanguage, VIDEO_LANGUAGES } from '../../shared/contracts/videoLanguages.js';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
+import { dashscopeCredentialConfigured, inspectGeneratedVoice, type VoiceQualityReport } from '../lib/voiceQuality.js';
 import { downloadHeygenSubtitles, heygenConfigured, heygenRequest, listHeygenAvatars, submitHeygenVideo, downloadHeygenOutput } from '../integrations/heygen.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
@@ -6063,7 +6064,9 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
   const tenantId = studioTenantContext.getStore();
   // Custom voice lifecycle is managed by the clone registry, not a text cache.
   if (!tenantId || voice.startsWith('custom:')) return generateTtsAudioUncached(spoken,voice,language,style);
-  const key = createHash('sha256').update(JSON.stringify([tenantId,spoken,voice,language,normalizeTtsStyle(style),process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd',process.env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`],minimaxVoiceFor(voice,language)])).digest('hex');
+  const providerPolicy = [process.env.TTS_PROVIDER_POLICY_VERSION || 'v1', process.env.TTS_PREFER_EXPRESSIVE_PROVIDER !== 'false',
+    dashscopeCredentialConfigured(), Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim())];
+  const key = createHash('sha256').update(JSON.stringify([tenantId,spoken,voice,language,normalizeTtsStyle(style),providerPolicy,process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd',process.env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`],minimaxVoiceFor(voice,language)])).digest('hex');
   const dir = tenantAssetDir(TTS_ROOT,tenantId);
   const cacheFile = path.join(dir,`sentence-${key}.json`);
   try {
@@ -6125,6 +6128,24 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
   }
   let aiError = '';
 
+  const expressiveMiniMax = process.env.TTS_PREFER_EXPRESSIVE_PROVIDER !== 'false'
+    && Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim())
+    && Boolean(style.preset || style.emotion || style.pauseStyle || style.pronunciations?.length);
+  const tryMinimax = async () => {
+    const minimaxVoiceId = minimaxVoiceFor(voice, language);
+    const minimax = await generateMinimaxTts(spoken, minimaxVoiceId, language, style);
+    return minimax ? { ok: true as const, ...minimax } : null;
+  };
+
+  if (expressiveMiniMax) {
+    try {
+      const minimax = await tryMinimax();
+      if (minimax) return minimax;
+    } catch (e: any) {
+      aiError = friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240);
+    }
+  }
+
   try {
     const qwen = await generateQwenTts(spoken, voice, language);
     if (qwen) return { ok: true, ...qwen };
@@ -6132,10 +6153,9 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
     aiError = friendlyTtsProviderError(e, 'DashScope 语音服务').slice(0, 240);
   }
 
-  try {
-    const minimaxVoiceId = minimaxVoiceFor(voice, language);
-    const minimax = await generateMinimaxTts(spoken, minimaxVoiceId, language, style);
-    if (minimax) return { ok: true, ...minimax };
+  if (!expressiveMiniMax) try {
+    const minimax = await tryMinimax();
+    if (minimax) return minimax;
   } catch (e: any) {
     aiError = [aiError, friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240)].filter(Boolean).join('；');
   }
@@ -6197,7 +6217,7 @@ function localTtsFile(url?: string): { bytes: Buffer; mimeType: string; filePath
 function studioAudioCapabilities() {
   const minimax = Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim());
   const xtts = Boolean((process.env.XTTS_BIN || process.env.COQUI_TTS_BIN || '').trim());
-  const qwen = Boolean(process.env.DASHSCOPE_API_KEY?.trim());
+  const qwen = dashscopeCredentialConfigured();
   return {
     languages: Object.entries(VIDEO_LANGUAGES).map(([code, label]) => ({ code, label, available: Boolean(minimax || (qwen && qwenTtsLanguageType(code)) || process.env[`PIPER_MODEL_${code.toUpperCase()}`]), reason: '需配置支持此语言的配音服务' })),
     customVoice: {
@@ -6217,8 +6237,8 @@ function studioAudioCapabilities() {
     subtitles: {
       automatic: true,
       audioTranscription: qwen,
-      wordAlignment: false,
-      fallback: 'proportional',
+      wordAlignment: minimax,
+      fallback: minimax ? 'provider_native_with_proportional_fallback' : 'proportional',
     },
   };
 }
@@ -6434,7 +6454,7 @@ export function splitStudioNarrationSentences(spoken: string): string[] {
 export async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
   style?: TtsStyleOptions;
-}): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string }> {
+}): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string; qualityReport?: VoiceQualityReport }> {
   return studioTenantContext.run(input.tenantId, async () => {
     const spoken = String(input.text || '').trim();
     if (!spoken) return { ok: false, error: '口播为空' };
@@ -6456,7 +6476,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
       if (!trustedProvider) return { ok: false, source: audio.source, error: audio.error || '当前只能使用本地兜底音色，不能作为正式成片配音；请检查语音服务配置' };
       const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
       const joined = path.join(dir, randomUUID() + '.wav');
-      await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + speed + ',apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', joined], 30000);
+      await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + speed + ',highpass=f=60,loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95,apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', joined], 30000);
       const duration = wavDurationFromBytes(fs.readFileSync(joined));
       if (!(duration > .15)) return { ok: false, error: '无法测量实际配音时长' };
       const spokenDuration = Math.max(.15, duration - .15);
@@ -6471,9 +6491,17 @@ export async function synthesizeStudioVoiceForAutomation(input: {
         cueCursor = end;
         return { start, end, text: line };
       });
+      const outputCues = audio.cues?.length ? audio.cues.map(cue => ({
+        ...cue,
+        start: Math.max(0, Math.min(spokenDuration, cue.start / speed)),
+        end: Math.max(0, Math.min(spokenDuration, cue.end / speed)),
+        ...(cue.words ? { words: cue.words.map(word => ({ ...word, start: word.start / speed, end: word.end / speed })) } : {}),
+      })).filter(cue => cue.text && cue.end > cue.start) : continuousCues;
       const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration }, input.tenantId);
-      fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues: continuousCues }));
-      return { ...result, localPath: joined, text: spoken, cues: continuousCues, source: audio.source, alignmentSource: 'synthesized_sentence_audio' };
+      const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
+      if (!qualityReport.passed) return { ok: false, source: audio.source, error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
+      fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues: outputCues }));
+      return { ...result, localPath: joined, text: spoken, cues: outputCues, source: audio.source, alignmentSource: audio.alignmentSource || 'synthesized_sentence_audio', qualityReport };
     }
     // Longer scripts retain independently measured sentence boundaries.
     for (const line of lines) {
@@ -6485,7 +6513,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
       providers.add(audio.source);
       const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
       const output = path.join(dir, randomUUID() + '.wav');
-      await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + speed + ',apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', output], 30000);
+      await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + speed + ',highpass=f=60,apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', output], 30000);
       const duration = wavDurationFromBytes(fs.readFileSync(output));
       if (!(duration > .15)) return { ok: false, error: '无法测量实际配音时长' };
       cues.push({ start: cursor, end: cursor + duration - .15, text: line });
@@ -6493,11 +6521,13 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     }
     const joined = path.join(dir, randomUUID() + '.wav');
     const inputs = files.flatMap(file => ['-i', file]);
-    await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', ...inputs, '-filter_complex', files.map((_,i) => '['+i+':a]').join('') + 'concat=n=' + files.length + ':v=0:a=1[out]', '-map', '[out]', '-c:a', 'pcm_s16le', joined], 60000);
+    await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', ...inputs, '-filter_complex', files.map((_,i) => '['+i+':a]').join('') + 'concat=n=' + files.length + ':v=0:a=1[joined];[joined]loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95[out]', '-map', '[out]', '-c:a', 'pcm_s16le', joined], 60000);
     const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration: cursor }, input.tenantId);
+    const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
+    if (!qualityReport.passed) return { ok: false, source: [...providers].join('+'), error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
     fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues }));
     for (const file of files) fs.unlinkSync(file);
-    return { ...result, localPath: joined, text: spoken, cues, source: [...providers].join('+'), alignmentSource: 'synthesized_sentence_audio' };
+    return { ...result, localPath: joined, text: spoken, cues, source: [...providers].join('+'), alignmentSource: 'synthesized_sentence_audio', qualityReport };
   });
 }
 

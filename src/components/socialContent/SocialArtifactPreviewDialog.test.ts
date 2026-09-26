@@ -3,7 +3,9 @@ import type { SocialContentArtifact } from '../../../shared/contracts/socialCont
 import {
   socialArtifactGenerationDisclosure,
   socialArtifactHasArchivedMedia,
+  socialArtifactMaterialReview,
   socialArtifactReadableCopy,
+  socialArtifactReleaseSummary,
 } from './SocialArtifactPreviewDialog.js';
 
 const artifact: SocialContentArtifact = {
@@ -29,6 +31,20 @@ assert.deepEqual(socialArtifactReadableCopy(artifact), { title: '新品短视频
 assert.doesNotMatch(JSON.stringify(socialArtifactReadableCopy(artifact)), /internalKey|do-not-render/);
 assert.equal(socialArtifactGenerationDisclosure(artifact).approvalAllowed, true, 'non-Studio artifacts retain the manual review path');
 
+const focused = socialArtifactMaterialReview({
+  ...artifact,
+  content: {
+    materialLearning: {
+      schemaVersion: 'material-match-review.v1',
+      scenes: [{ sceneId: 'scene-1', decision: 'human_review_required', reviewPriority: 'high',
+        selectedClipId: 'clip-1', reasonCodes: ['small_score_margin'],
+        candidates: [{ clipId: 'clip-1', sourceStart: 1, sourceEnd: 3 }] }],
+    },
+  },
+});
+assert.equal(focused[0]?.sceneId, 'scene-1');
+assert.match(focused[0]?.reasons.join('') || '', /首选与备选/);
+
 const verifiedStudioArtifact: SocialContentArtifact = {
   ...artifact,
   origin: 'manual',
@@ -48,6 +64,7 @@ assert.deepEqual(socialArtifactGenerationDisclosure(verifiedStudioArtifact), {
   verificationLabel: '质量验证通过 · 可确认',
   verified: true,
   approvalAllowed: true,
+  releaseState: 'ready_for_review',
 });
 assert.deepEqual(socialArtifactGenerationDisclosure({
   ...verifiedStudioArtifact,
@@ -57,6 +74,27 @@ assert.deepEqual(socialArtifactGenerationDisclosure({
   verificationLabel: '质量待验证 · 不可交付',
   verified: false,
   approvalAllowed: false,
+  releaseState: 'unverified',
 });
+
+const blockedGeneratedArtifact: SocialContentArtifact = {
+  ...artifact,
+  status: 'review_required',
+  content: {
+    workflowSchema: 'social-content.auto-production.v3',
+    delivery: { status: 'requires_revision' },
+    productionResult: { creativeReview: { approved: false } },
+    replicationEvaluation: {
+      status: 'failed',
+      viralFactorFidelity: { status: 'failed' },
+      identityReplacement: { status: 'failed' },
+    },
+  },
+};
+assert.equal(socialArtifactGenerationDisclosure(blockedGeneratedArtifact).approvalAllowed, false);
+assert.equal(socialArtifactReleaseSummary(blockedGeneratedArtifact).title, '不可发布 · 需要修改');
+assert.deepEqual(socialArtifactReleaseSummary(blockedGeneratedArtifact).issues, [
+  '爆款结构还原不足', '产品或人物替换未验证',
+]);
 
 console.log('social artifact preview tests passed');

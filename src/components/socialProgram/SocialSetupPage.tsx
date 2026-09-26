@@ -69,7 +69,7 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
   );
 
   return (
-    <SocialProgramPageFrame title="项目搭建" description="先建立社媒经营项目的事实边界，再进入对标、账号和计划阶段。">
+    <SocialProgramPageFrame title="项目方向" description="确认品牌、市场和经营路线。" currentPage="socialSetup" onNavigate={onNavigate}>
       {!activeProgram ? (
         <form onSubmit={submitCreate} className="rounded-xl border border-border bg-white p-5 sm:p-6">
           <h2 className="text-lg font-bold text-text-primary">创建真实经营项目</h2>
@@ -92,7 +92,7 @@ export default function SocialSetupPage({ onNavigate }: { onNavigate: (page: Pag
           <div className="mt-6 flex flex-wrap gap-2">
             <button type="button" onClick={() => void saveExisting(false)} disabled={mutating || !targetAudience.trim() || !platforms.length} className="btn-ghost inline-flex items-center gap-2 disabled:opacity-50"><Save size={15} />保存修改</button>
             {!activeProgram.readiness.foundationConfirmed && activeProgram.route === 'cold_start' && <button type="button" onClick={() => void saveExisting(true)} disabled={mutating || !targetAudience.trim() || !platforms.length} className="btn-primary inline-flex items-center gap-2 disabled:opacity-50"><CheckCircle2 size={15} />确认基础资料</button>}
-            <button type="button" onClick={() => onNavigate('socialAccounts')} className="btn-ghost inline-flex items-center gap-2">进入账号矩阵<ArrowRight size={15} /></button>
+            <button type="button" onClick={() => onNavigate('socialAccounts')} className="btn-primary inline-flex items-center gap-2">下一步：配置账号矩阵<ArrowRight size={15} /></button>
           </div>
         </section>
       )}

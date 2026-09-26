@@ -5,6 +5,7 @@ import type {
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import type { SocialProductionAsset, SocialProductionPlan } from './socialContentProductionPlan.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
+import { createIntentEffectPlan, type BeatGridEvidenceV1, type EffectPlanV1 } from '../../shared/contracts/effectPlan.js';
 import {
   SocialContentWorkflowError,
   socialJson,
@@ -29,6 +30,7 @@ export interface SocialDirectorBgmTrack {
     license: string;
     evidence: string;
   };
+  beatEvidence?: BeatGridEvidenceV1;
 }
 
 export interface SocialDirectorBgmSelection {
@@ -97,6 +99,16 @@ export interface StoredSocialDirectorPlan {
   };
   outputSpec: SocialDirectorOutputSpec;
   bgmSelection: SocialDirectorBgmSelection;
+  /** Explicitly versioned at the final Director review. Missing means a legacy
+   * plan and must remain effect-free on rerender. */
+  effectPlan?: EffectPlanV1;
+  collaboration?: {
+    schemaVersion: 'social-agent-collaboration.v1';
+    directorBrief: { id: string; version: string };
+    contentExecutionPlan: { id: string; version: string; selectedBy: 'content_agent' };
+    directorReview: { id: string; version: string; approvedBy: 'director_agent' };
+    finalSelection?: { hash: string; selectedBy: 'content_agent'; reviewedBy: 'director_agent' };
+  };
   materialSnapshot: Array<{
     assetId: string;
     sourceId: string;
@@ -182,6 +194,8 @@ export interface SocialDirectorContentHandoff {
   direction: StoredSocialDirectorPlan['direction'];
   outputSpec: SocialDirectorOutputSpec;
   bgmSelection: SocialDirectorBgmSelection;
+  effectPlan: EffectPlanV1 | null;
+  collaboration: StoredSocialDirectorPlan['collaboration'] | null;
   coverIntent: StoredSocialDirectorPlan['coverIntent'];
   scenes: Array<{
     sceneId: string;
@@ -338,8 +352,8 @@ export function assertDirectorPlanIntegrity(plan: StoredSocialDirectorPlan): voi
   }
 }
 
-/** Director Agent output: all creative decisions and source revisions are
- * locked before Content Agent can execute anything. */
+/** Final Director-approved lock: creative requirements originate in the
+ * DirectorBrief; concrete assets and trims originate in the Content Agent plan. */
 export function buildSocialDirectorPlan(input: {
   taskId: string;
   baseline: StoredSocialScriptBaseline;
@@ -351,6 +365,7 @@ export function buildSocialDirectorPlan(input: {
   formula?: InternalSocialContentFormula | null;
   createdAt: string;
   previous?: StoredSocialDirectorPlan | null;
+  collaboration?: StoredSocialDirectorPlan['collaboration'];
 }): StoredSocialDirectorPlan {
   if (!input.productionPlan.ok || input.productionPlan.scenes.length < 1) {
     throw new SocialContentWorkflowError('social_content_director_plan_material_not_ready', 409);
@@ -468,6 +483,17 @@ export function buildSocialDirectorPlan(input: {
     maximumDurationSeconds: roundSeconds(input.productionPlan.maxDuration),
     voiceVolume: 100,
   };
+  const effectPlan = input.previous && !input.previous.effectPlan ? undefined : createIntentEffectPlan(scenes.map(scene => ({
+    sceneId: scene.sceneId,
+    targetDuration: Math.max(.5, scene.shotPlan.sourceEnd - scene.shotPlan.sourceStart),
+    purpose: scene.script.shotFunction,
+    targetVisual: scene.script.subject,
+    action: scene.script.action,
+    caption: scene.caption,
+    music: direction.music.mood,
+    pace: direction.pace === 'balanced' ? 'medium' : direction.pace,
+    protectedVisual: true,
+  })), 1, 198, input.bgmSelection.primary.beatEvidence);
   return withDirectorPlanHash({
     schemaVersion: SOCIAL_DIRECTOR_PLAN_SCHEMA,
     directorPlanId,
@@ -500,6 +526,15 @@ export function buildSocialDirectorPlan(input: {
     direction,
     outputSpec,
     bgmSelection,
+    ...(effectPlan ? { effectPlan } : {}),
+    ...(input.collaboration ? { collaboration: {
+      ...structuredClone(input.collaboration),
+      finalSelection: {
+        hash: socialRequestHash(scenes.map(scene => ({ sceneId: scene.sceneId, shotPlan: scene.shotPlan }))),
+        selectedBy: 'content_agent',
+        reviewedBy: 'director_agent',
+      },
+    } } : {}),
     materialSnapshot: snapshot,
     scenes,
     coverIntent: {
@@ -712,6 +747,30 @@ export function parseStoredSocialDirectorPlan(value: unknown): StoredSocialDirec
       throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
     }
   }
+  const effectPlan = socialObject(row.effectPlan);
+  if (row.effectPlan !== undefined && (!effectPlan || Number(effectPlan.schemaVersion) !== 1
+    || !Array.isArray(socialJson(effectPlan.scenes))
+    || (socialJson(effectPlan.scenes) as unknown[]).some(value => {
+      const effectScene = socialObject(value);
+      return !effectScene || !scenesValue.some(scene => socialText(socialObject(scene)?.sceneId) === socialText(effectScene.sceneId));
+    }))) {
+    throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
+  }
+  const collaboration = socialObject(row.collaboration);
+  const finalSelection = socialObject(collaboration?.finalSelection);
+  if (row.collaboration !== undefined && (!collaboration
+    || socialText(collaboration.schemaVersion) !== 'social-agent-collaboration.v1'
+    || !socialText(socialObject(collaboration.directorBrief)?.id)
+    || !socialText(socialObject(collaboration.contentExecutionPlan)?.id)
+    || socialText(socialObject(collaboration.contentExecutionPlan)?.selectedBy) !== 'content_agent'
+    || !socialText(socialObject(collaboration.directorReview)?.id)
+    || socialText(socialObject(collaboration.directorReview)?.approvedBy) !== 'director_agent'
+    || (collaboration.finalSelection !== undefined && (!finalSelection
+      || !/^[a-f0-9]{64}$/i.test(socialText(finalSelection.hash))
+      || socialText(finalSelection.selectedBy) !== 'content_agent'
+      || socialText(finalSelection.reviewedBy) !== 'director_agent')))) {
+    throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
+  }
   const selectedAssetIds = stringArray(row.selectedAssetIds);
   const sceneAssetIds = scenesValue.map(value => socialText(socialObject(socialObject(value)?.shotPlan)?.assetId));
   const materialAssetIds = materialsValue.map(value => socialText(socialObject(value)?.assetId));
@@ -732,5 +791,6 @@ export {
   socialDirectorCoverTimestamp,
   socialDirectorRenderTimeline,
   socialDirectorSceneTimingCues,
+  socialDirectorVoiceAlignedCaptionCues,
   socialDirectorScriptText,
 } from './socialContentDirectorHandoff.js';

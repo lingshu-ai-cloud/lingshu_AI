@@ -7,7 +7,7 @@ import {
   Clapperboard, WandSparkles, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
-import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES, SOCIAL_PROGRAM_NAV_PAGES } from '../pageRegistry';
+import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
 import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } from '../lib/auth';
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
@@ -44,16 +44,9 @@ const SOCIAL_NAV: NavSection = {
   items: PRIMARY_SOCIAL_NAV_PAGES.map(id => navItem(id, SOCIAL_NAV_ICONS[id])),
 };
 
-const SOCIAL_PROGRAM_NAV_ICONS: Record<(typeof SOCIAL_PROGRAM_NAV_PAGES)[number], ReactNode> = {
-  socialWorkspace: <Target size={16} />,
-  socialSetup: <ListTree size={16} />,
-  socialAccounts: <Users size={16} />,
-  socialPlanning: <Clock size={16} />,
-};
-
 const SOCIAL_PROGRAM_NAV: NavSection = {
   label: '社媒矩阵经营',
-  items: SOCIAL_PROGRAM_NAV_PAGES.map(id => navItem(id, SOCIAL_PROGRAM_NAV_ICONS[id])),
+  items: [navItem('socialWorkspace', <Target size={16} />)],
 };
 
 const ADS_NAV: NavSection = {

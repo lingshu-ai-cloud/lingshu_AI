@@ -12,7 +12,7 @@ import { automationBgmAudio, automationBgmCatalog, readTenantEnterpriseProfile, 
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
-import { inspectTransientSocialContentFile, registerSocialContentFile, socialContentFileDownloadUrl, type SocialContentBackendFilePort } from './socialContentFiles.js';
+import { registerSocialContentFile, socialContentFileDownloadUrl, storeTransientSocialContentFile, type SocialContentBackendFilePort } from './socialContentFiles.js';
 import { materializeSocialContentCloudMaterial, socialContentCloudMaterialRecordId, type SocialContentCloudMaterialPort } from './socialContentMaterialAccess.js';
 import { withSocialContentRenderWorkspace } from './socialContentRenderWorkspace.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
@@ -48,16 +48,13 @@ import {
 import { createConfiguredSocialAiVisualAdapter } from './socialContentAiVisualAdapter.js';
 import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
-import { buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorSceneTimingCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
-import {
-  persistSocialDirectorPlanVersion,
-  resolveSocialDirectorArtifactLineage,
-} from './socialContentDirectorPlanVersions.js';
+import { buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
+import { latestSocialDirectorPlanVersion, persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
-
+import { socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
+import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as { composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }> };
-
 import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover } from './socialContentAutoProduction.js';
 import { AUTO_SCHEMA, analyzeProductionAssets, existingAssetSupplyAdapters, finishExecution, productionAdaptation, resolveLockedBgm, selectDirectorBgm, writeExecutionStage } from './socialContentAutoProduction.js';
 export interface SocialContentAutoProductionRuntime {
@@ -72,7 +69,6 @@ export interface SocialContentAutoProductionRuntime {
   evaluateReplication?: typeof evaluateSocialReplicationResult;
   backendFilePort?: SocialContentBackendFilePort;
 }
-
 export async function runSocialContentAutoProduction(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -206,7 +202,7 @@ export async function runSocialContentAutoProduction(input: {
   await writeExecutionStage({
     ...input,
     stage: 'director_planning',
-    message: '脚本来源已确认，编导 Agent 正在匹配真实素材并编排脚本、口播、字幕和镜头节奏。',
+    message: '编导 Agent 已锁定表达要求，内容 Agent 正在分析真实素材并提交逐镜执行选择。',
     extra: {
       baselineOrigin: initialBaseline.source,
       baselineVersion: initialBaseline.version,
@@ -214,7 +210,6 @@ export async function runSocialContentAutoProduction(input: {
       userTextUsage: initialBaseline.match?.userTextUsage ?? 'intent_only',
     },
   });
-
 	  await withSocialContentRenderWorkspace(async outputDir => {
 	  let activeBaseline = initialBaseline;
 	  const productionMode = detail.brief.productionMode ?? 'concept_preview';
@@ -298,13 +293,16 @@ export async function runSocialContentAutoProduction(input: {
   }
   let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
   if (!plan.ok) {
+    if (productionMode === 'social_ready' && rawAssets.length === 0 && !assetSupplyExecution) {
+      throw new Error('production_input_required:当前没有可用于正式成片的客户画面。请上传至少一段产品视频或三张产品图片；系统不会把说明卡片冒充正式成片。');
+    }
     const systemAssets = await systemThemeGraphicAssets({ outputDirectory: outputDir, baseline: activeBaseline });
     assets = [...assets, ...systemAssets];
     plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
     if (plan.ok) {
       plan.notes.push(productionMode === 'social_ready'
-        ? '客户素材不足，编导 Agent 已切换到零素材托管方案，使用可追溯的系统图形、口播和字幕完成正式制作。'
-        : '现有素材覆盖不足，编导 Agent 已使用平台安全主题图形完成预览版。');
+        ? '客户素材不足，内容 Agent 按已审核的零素材路线使用可追溯系统图形、口播和字幕完成正式制作。'
+        : '现有素材覆盖不足，内容 Agent 按编导真实性边界使用平台安全主题图形完成预览版。');
     }
   }
   plan.unusedAssets.push(...analyzed.failures.map(item => ({
@@ -318,10 +316,23 @@ export async function runSocialContentAutoProduction(input: {
       : '';
     throw new Error(`production_input_required:系统无法建立安全的零素材画面方案，请稍后自动重试。${failureSummary}`);
   }
+  const explanationOnlyRoute = assetSupplyExecution?.shots.length
+    && assetSupplyExecution.shots.every(shot => ['motion_graphics', 'verified_fact_card'].includes(shot.sourceStrategy));
+  if (productionMode === 'social_ready'
+    && detail.brief.creationMode === 'viral_replication'
+    && explanationOnlyRoute) {
+    throw new Error('production_input_required:当前方案只能生成说明卡片，无法达到爆款裂变的画面预期。请补充客户产品视频/图片，或明确改为“概念样片”后再生成。');
+  }
   if (assetSupplyExecution) plan = applyZeroAssetTruthSafeNarration(plan);
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);
-  const previousDirectorPlan = parseStoredSocialDirectorPlan(taskRecord.director_plan);
+  const taskDirectorPlan = parseStoredSocialDirectorPlan(taskRecord.director_plan);
+  const recoveredDirectorVersion = taskDirectorPlan ? null : await latestSocialDirectorPlanVersion({
+    repository: input.repository,
+    tenantId: input.tenantId,
+    taskId: input.taskId,
+  });
+  const previousDirectorPlan = taskDirectorPlan ?? recoveredDirectorVersion?.plan ?? null;
   if (previousDirectorPlan) {
     // One-time compatibility backfill for tasks created before the immutable
     // version collection existed. A mismatched historic baseline is recorded
@@ -361,6 +372,12 @@ export async function runSocialContentAutoProduction(input: {
     formula: directorFormula,
     createdAt: new Date().toISOString(),
     previous: previousDirectorPlan,
+    collaboration: {
+      schemaVersion: 'social-agent-collaboration.v1',
+      directorBrief: { id: agentWorkflow.directorBrief.directorBriefId, version: agentWorkflow.directorBrief.version },
+      contentExecutionPlan: { id: agentWorkflow.executionPlan.executionPlanId, version: agentWorkflow.executionPlan.version, selectedBy: 'content_agent' },
+      directorReview: { id: agentWorkflow.executionPlanReview.reviewId, version: agentWorkflow.executionPlanReview.version, approvedBy: 'director_agent' },
+    },
   });
   let persistedDirectorPlan = await persistSocialDirectorPlanVersion({
     repository: input.repository,
@@ -478,15 +495,15 @@ export async function runSocialContentAutoProduction(input: {
         });
       }
       if (!voice || !voice.localPath || !voice.cues?.length) throw new Error('口播执行状态异常');
-  const timeline = socialDirectorRenderTimeline(contentHandoff, duration);
   const adaptedScript = socialDirectorScriptText(contentHandoff, duration);
   const bgm = await (input.runtime?.resolveBgm ?? resolveLockedBgm)(input.tenantId, contentHandoff);
-  const captionCues = socialDirectorSceneTimingCues(contentHandoff, duration);
+  const captionCues = socialDirectorVoiceAlignedCaptionCues(contentHandoff, voice.cues, duration);
+  const timeline = socialDirectorRenderTimeline(contentHandoff, duration, captionCues);
   await writeExecutionStage({
     ...input,
     stage: 'rendering',
     message: '内容 Agent 正在自动剪辑、混音并烧录字幕。',
-    extra: { duration, sceneCount: timeline.length },
+    extra: { duration, sceneCount: timeline.length, voiceQuality: voice.qualityReport ?? null },
   });
   const result = await (input.runtime?.renderComposite ?? composite)({
     jobId: `social-${input.taskId}-${createHash('sha256').update(input.runId).digest('hex').slice(0, 12)}`,
@@ -501,6 +518,7 @@ export async function runSocialContentAutoProduction(input: {
       voiceVol: contentHandoff.outputSpec.voiceVolume,
     },
     timeline,
+    ...(contentHandoff.effectPlan ? { effectPlan: contentHandoff.effectPlan } : {}),
     voiceover: { url: voice.localPath },
     bgm,
     subtitles: {
@@ -538,14 +556,14 @@ export async function runSocialContentAutoProduction(input: {
     '-i', result.outputPath, '-map', '0:a:0', '-t', String(Math.min(2, duration)), '-f', 'null', '-',
   ]);
   if (!audio.ok) throw new Error('成片音轨无法解码，已停止提交验收');
-
   const coverPath = await (input.runtime?.createCover ?? createVideoCover)({
     videoPath: result.outputPath,
     outputDirectory: outputDir,
-    timestamp: socialDirectorCoverTimestamp(contentHandoff, duration),
+    timestamp: socialDirectorCoverTimestamp(contentHandoff, duration, captionCues),
   });
-  const stored = await inspectTransientSocialContentFile({
+  const stored = await storeTransientSocialContentFile({
     filePath: result.outputPath,
+    tenantId: input.tenantId,
     name: `${detail.brief.title || '社媒内容'}-成品.mp4`,
     mimeType: 'video/mp4',
   });
@@ -555,13 +573,14 @@ export async function runSocialContentAutoProduction(input: {
     userId: input.userId,
     taskId: input.taskId,
     usage: 'artifact_media',
-    idempotencyKey: `social-auto-file:${input.taskId}:${stored.sha256}`,
+    idempotencyKey: `social-auto-file:v2:${input.taskId}:${stored.sha256}:${stored.storageKind}`,
     stored,
-    transientPath: result.outputPath,
+	...(stored.storageKind === 'backend_file' ? { transientPath: result.outputPath } : {}),
 	backendFilePort: input.runtime?.backendFilePort,
   });
-  const storedCover = await inspectTransientSocialContentFile({
+  const storedCover = await storeTransientSocialContentFile({
     filePath: coverPath,
+    tenantId: input.tenantId,
     name: `${detail.brief.title || '社媒内容'}-封面.jpg`,
     mimeType: 'image/jpeg',
   });
@@ -571,9 +590,9 @@ export async function runSocialContentAutoProduction(input: {
     userId: input.userId,
     taskId: input.taskId,
     usage: 'artifact_media',
-    idempotencyKey: `social-auto-cover:${input.taskId}:${storedCover.sha256}`,
+    idempotencyKey: `social-auto-cover:v2:${input.taskId}:${storedCover.sha256}:${storedCover.storageKind}`,
     stored: storedCover,
-    transientPath: coverPath,
+	...(storedCover.storageKind === 'backend_file' ? { transientPath: coverPath } : {}),
 	backendFilePort: input.runtime?.backendFilePort,
   });
   await resolveSocialDirectorArtifactLineage({
@@ -617,12 +636,7 @@ export async function runSocialContentAutoProduction(input: {
     });
     replicationEvaluation = evaluated.evaluation;
   }
-  const creativeReviewFailures = [
-    ...(agentWorkflow.executionPlanReview.approved ? [] : ['内容执行方案未通过编导审核']),
-    ...(contentHandoff.scenes.length > 0 ? [] : ['成片没有可验收的镜头']),
-    ...(agentWorkflow.directorBrief.scenes.every(scene => scene.acceptanceCriteria.length > 0)
-      ? [] : ['存在没有可观察验收条件的分镜']),
-  ];
+  const creativeReviewFailures = socialProductionCollaborationFailures(agentWorkflow, contentHandoff);
   await writeExecutionStage({
     ...input,
     stage: 'creative_review',
@@ -645,6 +659,19 @@ export async function runSocialContentAutoProduction(input: {
   const evaluationFailures = replicationEvaluation?.status === 'passed'
     ? []
     : replicationEvaluation?.directorDecision.failedCriteria ?? [];
+  const plannedCostCny = +agentWorkflow.executionPlan.scenes
+    .reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2);
+  const selectedAssetIds = new Set(contentHandoff.scenes.map(scene => scene.source.assetId));
+  const recordedProviderCostCny = +assets
+    .filter(asset => selectedAssetIds.has(asset.id))
+    .flatMap(asset => asset.segments ?? [])
+    .reduce((sum, segment) => sum + Math.max(0, Number(segment.estimatedCostCny || 0)), 0)
+    .toFixed(2);
+  const deliverableStatus = productionMode === 'concept_preview'
+    ? 'concept_preview'
+    : replicationEvaluation && replicationEvaluation.status !== 'passed'
+      ? 'requires_revision'
+      : 'publish_candidate';
   const productionResult: SocialProductionResult = {
     productionResultId,
     version: detail.version,
@@ -655,13 +682,16 @@ export async function runSocialContentAutoProduction(input: {
     creativeReviewId: `creative_review_${socialRequestHash({ taskId: input.taskId, runId: input.runId, directorBriefId: agentWorkflow.directorBrief.directorBriefId }).slice(0, 20)}`,
     publishAssignmentId: null,
     status: 'asset_review',
-    sceneResults: agentWorkflow.executionPlan.scenes.map(scene => ({
-      sceneId: scene.sceneId,
-      idempotencyKey: scene.idempotencyKey,
-      sourceStrategy: scene.selectedSourceStrategy,
-      feasibility: scene.feasibility,
-      provenanceCandidateIds: scene.recommendedCandidateIds,
-    })),
+    sceneResults: contentHandoff.scenes.map(finalScene => {
+      const scene = socialProductionExecutionSceneForFinal(agentWorkflow, finalScene.sceneId)!;
+      return {
+        sceneId: scene.sceneId,
+        idempotencyKey: scene.idempotencyKey,
+        sourceStrategy: scene.selectedSourceStrategy,
+        feasibility: scene.feasibility,
+        provenanceCandidateIds: scene.recommendedCandidateIds,
+      };
+    }),
     technicalReview: { approved: true, checkedScenes: sceneQuality.checkedScenes, failures: [] },
     creativeReview: {
       approved: !replicationEvaluation || replicationEvaluation.status === 'passed',
@@ -691,7 +721,7 @@ export async function runSocialContentAutoProduction(input: {
         sourceKey: `social_task_auto:${input.taskId}`,
         contentType: 'short_video',
         mediaStorage: {
-          provider: 'pocketbase_file',
+          provider: stored.storageKind === 'object' ? 'object_storage' : 'pocketbase_file',
           video: {
             fileRef: file.fileRef,
             fileId: file.fileId,
@@ -727,6 +757,21 @@ export async function runSocialContentAutoProduction(input: {
         directorPlanReference: persistedDirectorPlan.reference,
         productionResult,
         ...(replicationEvaluation ? { replicationEvaluation } : {}),
+        costSummary: {
+          currency: 'CNY',
+          estimatedBeforeGenerationCny: plannedCostCny,
+          recordedProviderCostCny,
+          settlementStatus: 'recorded',
+          note: '实际费用只统计本次已记录的媒体供应商调用；存储、带宽和人工审核未计入。',
+        },
+        delivery: {
+          status: deliverableStatus,
+          label: deliverableStatus === 'publish_candidate'
+            ? '可进入人工发布确认'
+            : deliverableStatus === 'concept_preview'
+              ? '概念样片，不可直接发布'
+              : '需要修改后再发布',
+        },
         adaptedScript,
         scriptAdaptation: adaptation,
 	    ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
@@ -735,7 +780,13 @@ export async function runSocialContentAutoProduction(input: {
           source: voice.source || 'unknown',
           duration,
           cueCount: captionCues.length,
+          alignmentSource: voice.alignmentSource || 'unknown',
+          qualityReport: voice.qualityReport ?? null,
+          learningReadiness: voiceLearningReadiness({ technicalPassed: voice.qualityReport?.passed === true }),
         },
+        agentCollaboration: socialProductionCollaborationTrace(agentWorkflow, contentHandoff),
+        materialLearning: plan.materialLearning ?? null,
+        effectPlan: contentHandoff.effectPlan,
         render: {
           completed: true,
           materialSourceIds: [...new Set(contentHandoff.scenes.map(scene => scene.source.sourceId))],
@@ -744,8 +795,11 @@ export async function runSocialContentAutoProduction(input: {
           sourceClipSeconds: contentHandoff.scenes.reduce((sum, scene) => (
             sum + Math.max(0, scene.source.sourceEnd - scene.source.sourceStart)
           ), 0),
-          materialMatchConfidence: directorPlan.scenes.reduce((sum, scene) => (
+          materialAnalysisConfidence: directorPlan.scenes.reduce((sum, scene) => (
             sum + scene.shotPlan.confidence
+          ), 0) / Math.max(1, directorPlan.scenes.length),
+          materialMatchScore: directorPlan.scenes.reduce((sum, scene) => (
+            sum + scene.shotPlan.semanticScore
           ), 0) / Math.max(1, directorPlan.scenes.length),
           qualityPassed: true,
           qualityMetrics: quality.metrics,
@@ -762,7 +816,13 @@ export async function runSocialContentAutoProduction(input: {
           coverIntent: contentHandoff.coverIntent,
           degradation: adaptation.limitedMaterialFallback ? adaptation.notes : [],
         },
-        review: { state: 'requires_user_approval', automatedChecksPassed: true },
+        review: {
+          state: deliverableStatus === 'publish_candidate' ? 'requires_user_approval' : 'requires_revision',
+          deliverableStatus,
+          technicalChecksPassed: true,
+          creativeChecksPassed: !replicationEvaluation || replicationEvaluation.status === 'passed',
+          automatedChecksPassed: !replicationEvaluation || replicationEvaluation.status === 'passed',
+        },
         ...(revisionParent && reviewDirective ? {
           reviewRevision: {
             parentArtifactId: revisionParent.artifactId,
@@ -790,5 +850,4 @@ export async function runSocialContentAutoProduction(input: {
     }
   });
 }
-
 export const activeProductions = new Map<string, { runId: string; promise: Promise<void> }>();

@@ -19,6 +19,12 @@ assert.match(
   /showSocialContentPlanning = page === 'smartAssets'[\s\S]{0,260}!activeSocialContentTaskId[\s\S]*?<SocialContentPlanningPage[\s\S]*?: \([\s\S]*?<TrafficPage/,
   'the generic content-production entry must show theme planning before a concrete task opens Studio',
 );
+assert.match(traffic, /kickoff\.source === 'inspiration_analysis'[\s\S]*?contentCreationRequest:[\s\S]*?creationPath: 'viral_replication'/,
+  'an inspiration video must open the viral-replication task instead of dropping users on the generic content homepage');
+assert.match(traffic, /referenceLinks: referenceUrl \? \[referenceUrl\] : \[\]/,
+  'the inspiration handoff must preserve the selected reference URL');
+assert.match(app, /setSmartAssetsCreateRequest\(detail\.contentCreationRequest \|\| null\)/);
+assert.match(app, /initialCreateRequest=\{smartAssetsCreateRequest\}/);
 assert.match(
   traffic,
   /useSocialContentNavigation\(onNavigate, socialContentTaskId\)[\s\S]*?<AiCreateStudio[\s\S]*?socialContentTaskId=\{socialContentTaskId\}/,

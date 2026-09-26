@@ -25,7 +25,7 @@ import { buildDownloadedReferenceMaterial } from '../lib/downloadedReferenceMate
 import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedPublicVideoSource } from '../lib/publicVideoSourceSecurity.js';
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
-import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
 import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, hasCompleteVideoGeminiAnalysis, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from './videoAnalysisCodec.js';
 
 export const videosRouter = Router();
@@ -2181,6 +2181,7 @@ videosRouter.post('/:id/analysis-pause', async (req, res) => {
   // provider calls may finish remotely, but their result can no longer
   // overwrite this durable paused state.
   await store.update(COL, req.params.id, {
+    status: previous.gemini || previous.analysisQuality ? 'analyzed' as VideoStatus : 'failed' as VideoStatus,
     aiAnalysis: JSON.stringify({
       ...previous,
       analysisRunId: randomUUID(),
@@ -2953,7 +2954,7 @@ export async function repairMissingCrawledThumbnails(records: unknown[], limit =
 // 用户连重试都点不了。超时后主动释放，让它退回可重试状态。
 const EXACT_ANALYSIS_STALL_MS = Math.max(
   5 * 60_000,
-  Number(process.env.EXACT_ANALYSIS_STALL_MS || 30 * 60_000),
+  Number(process.env.EXACT_ANALYSIS_STALL_MS || 5 * 60_000),
 );
 
 // 卡住的记录是少数，但分布在整个库里，只扫第一页会漏。全量翻页，靠节流控制开销。
@@ -2961,7 +2962,7 @@ const lastStallSweepAt = new Map<string, number>();
 
 async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: string): Promise<number> {
   const now = Date.now();
-  const sweepKey = tenantId || '__global__';
+  const sweepKey = `${currentDataAuthority() || 'default'}:${tenantId || '__global__'}`;
   const lastSweep = lastStallSweepAt.get(sweepKey) || 0;
   if (!forceInterrupted && now - lastSweep < Math.max(60_000, Math.floor(EXACT_ANALYSIS_STALL_MS / 6))) return 0;
   lastStallSweepAt.set(sweepKey, now);
@@ -2998,17 +2999,32 @@ async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: 
     // processes. Only ownerless work can be released immediately on startup.
     if (!forceInterrupted && Number.isFinite(startedAt) && now - startedAt < EXACT_ANALYSIS_STALL_MS) continue;
     await store.update(COL, recordId, {
+      status: 'analyzed' as VideoStatus,
       aiAnalysis: JSON.stringify({
         ...analysis,
         requestedAnalysisMode: undefined,
         // 超时的升级不能冒充已完成的精确分析。
         analysisMode: analysis.analysisMode === 'exact' ? 'exact' : 'strategy',
+        geminiStatus: analysis.gemini ? 'analyzed' : 'video_failed',
         videoLevelFailureStatus: analysis.videoLevelFailureStatus || '全片精确分析超时/未完成',
         analysisError: analysis.analysisError || 'exact_analysis_stalled',
       }),
     });
     released += 1;
     console.warn(`[videos] exact analysis ${forceInterrupted ? 'interrupted by restart' : 'stalled'}, released for retry: ${recordId}`);
+  }
+  return released;
+}
+
+async function releaseStalledExactAnalysisAcrossAuthorities(forceInterrupted = false): Promise<number> {
+  let released = await releaseStalledExactAnalysis(forceInterrupted);
+  // Local demo accounts and PocketBase accounts can coexist in development.
+  // A process-level sweep has no request authority, so a healthy PocketBase
+  // connection used to make local JSON records invisible to recovery and left
+  // their UI permanently stuck on “分析中”. Sweep the explicitly enabled local
+  // authority as a second, isolated data source.
+  if (localFallbacksEnabled() && currentDataAuthority() !== 'local') {
+    released += await runWithDataAuthority('local', () => releaseStalledExactAnalysis(forceInterrupted));
   }
   return released;
 }
@@ -7720,14 +7736,14 @@ export function initCrawlerOpsWorker(): void {
   const workerFlag = process.env.CRAWLER_OPS_WORKER_ENABLED;
   const intervalMs = Math.max(5_000, Number(process.env.CRAWLER_OPS_WORKER_INTERVAL_MS || 30_000));
   if (!stalledExactSweepTimer) {
-    const sweep = () => void releaseStalledExactAnalysis().catch(error => {
+    const sweep = () => void releaseStalledExactAnalysisAcrossAuthorities().catch(error => {
       console.warn('[videos] stalled exact-analysis sweep failed:', error instanceof Error ? error.message : error);
     });
     stalledExactSweepTimer = setInterval(sweep, intervalMs);
     // Every requested exact analysis belongs to the previous process at this
     // point. Clear those locks now; waiting for the age threshold creates a
     // false permanent queue after deployments or crashes.
-    void releaseStalledExactAnalysis(true).catch(error => {
+    void releaseStalledExactAnalysisAcrossAuthorities(true).catch(error => {
       console.warn('[videos] interrupted exact-analysis recovery failed:', error instanceof Error ? error.message : error);
     });
     console.log(`[videos] stalled exact-analysis sweep enabled, interval=${intervalMs}ms`);

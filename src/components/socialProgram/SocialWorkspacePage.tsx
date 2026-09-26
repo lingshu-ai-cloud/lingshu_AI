@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, CheckCircle2, Circle, LayoutDashboard, ListChecks, Network, Users } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Circle, LayoutDashboard } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
 import { useSocialProgram } from '../../contexts/SocialProgramContext';
 import { socialProgramApi } from '../../lib/socialProgramApi';
@@ -56,7 +56,7 @@ export default function SocialWorkspacePage({ onNavigate }: { onNavigate: (page:
   useEffect(() => { void refreshPackage(); }, [refreshPackage]);
   if (!activeProgram) {
     return (
-      <SocialProgramPageFrame title="社媒经营工作台" description="把对标研究、账号矩阵、经营计划和内容生产放进同一个可追溯项目。">
+      <SocialProgramPageFrame title="执行与复盘" description="完成前三步后，在这里推进内容、发布和复盘。" currentPage="socialWorkspace" onNavigate={onNavigate}>
         <section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center">
           <LayoutDashboard size={32} className="mx-auto text-accent" />
           <h2 className="mt-4 text-lg font-bold text-text-primary">{loading ? '正在读取经营项目' : programs.length ? '请选择一个经营项目' : '还没有社媒经营项目'}</h2>
@@ -69,23 +69,19 @@ export default function SocialWorkspacePage({ onNavigate }: { onNavigate: (page:
 
   const readiness = Object.entries(activeProgram.readiness) as Array<[keyof typeof READINESS_LABELS, boolean]>;
   const completed = readiness.filter(([, ready]) => ready).length;
-  const cards: Array<{ page: Page; icon: typeof Network; title: string; description: string; value: string }> = [
-    { page: 'socialSetup', icon: ListChecks, title: '项目搭建', description: '经营路线、市场和基础资料', value: SOCIAL_STAGE_LABELS[activeProgram.stage] },
-    { page: 'socialAccounts', icon: Users, title: '自有账号矩阵', description: '账号角色、受众承诺与规则版本', value: accountsLoading ? '读取中' : `${accounts.length} 个真实账号定义` },
-    { page: 'socialPlanning', icon: Network, title: '月周经营计划', description: '目标、内容组合、实验变量与执行节奏', value: activeProgram.activeMonthlyPlanRef ? `月计划 v${activeProgram.activeMonthlyPlanRef.version}` : '尚无活动月计划' },
-  ];
+  const nextAction: { page: Page; label: string; detail: string } = !activeProgram.readiness.foundationConfirmed
+    ? { page: 'socialSetup', label: '下一步：确认项目方向', detail: '市场、受众与经营路线还没确认' }
+    : !accountsLoading && accounts.length === 0
+      ? { page: 'socialAccounts', label: '下一步：添加账号矩阵', detail: '至少定义一个真实执行账号' }
+      : !activeProgram.activeMonthlyPlanRef
+        ? { page: 'socialPlanning', label: '下一步：制定月周计划', detail: '为账号安排目标、节奏与预算' }
+        : { page: 'smartAssets', label: '下一步：制作本周内容', detail: `${accounts.length} 个账号已进入执行准备` };
 
   return (
-    <SocialProgramPageFrame title="社媒经营工作台" description="当前只展示服务端已保存的项目、账号和计划状态。">
-      <section className="grid gap-4 md:grid-cols-3">
-        {cards.map(({ page, icon: Icon, title, description, value }) => (
-          <button key={page} type="button" onClick={() => onNavigate(page)} className="rounded-xl border border-border bg-white p-5 text-left transition hover:border-accent">
-            <div className="flex items-center justify-between"><Icon size={20} className="text-accent" /><ArrowRight size={16} className="text-text-muted" /></div>
-            <h2 className="mt-5 text-base font-bold text-text-primary">{title}</h2>
-            <p className="mt-1 text-sm text-text-muted">{description}</p>
-            <p className="mt-4 text-sm font-semibold text-accent">{value}</p>
-          </button>
-        ))}
+    <SocialProgramPageFrame title="执行与复盘" description="看当前状态，只处理下一件最重要的事。" currentPage="socialWorkspace" onNavigate={onNavigate}>
+      <section className="flex flex-col gap-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div><p className="text-[11px] font-black text-emerald-700">当前项目 · {SOCIAL_STAGE_LABELS[activeProgram.stage]}</p><h2 className="mt-1 text-lg font-bold text-text-primary">{nextAction.detail}</h2><p className="mt-1 text-xs text-text-muted">系统只推荐一个主动作；其他步骤仍可从上方步骤条进入。</p></div>
+        <button type="button" onClick={() => onNavigate(nextAction.page)} className="btn-primary inline-flex shrink-0 items-center justify-center gap-2">{nextAction.label}<ArrowRight size={15} /></button>
       </section>
 
       <WeeklyOperatingWorkbench pkg={weeklyPackage} loading={packageLoading} error={packageError} selectedTaskId={linkedTaskId} onRefresh={() => void refreshPackage()} />

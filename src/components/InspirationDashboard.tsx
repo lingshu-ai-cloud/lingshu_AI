@@ -1,4 +1,3 @@
-import MaterialAnalysisStatus from './studio/MaterialAnalysisStatus';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -8,7 +7,7 @@ import {
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
   Lightbulb, Flame, BarChart2, ChevronRight, Film, Download,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
-  SlidersHorizontal, Eye, Package, ScanFace,
+  SlidersHorizontal, Package, ScanFace,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
@@ -264,7 +263,9 @@ function isDisplayableForFormat(video: TrendVideo, contentFormat: ContentFormat)
     && Boolean(sourceUrl)
     && !/\/(?:search|explore\/tags)\b/i.test(sourceUrl)
     && (video.platform !== 'instagram' || /\/p\//i.test(sourceUrl));
-  const hasRealSource = /^https?:\/\//i.test(sourceUrl) || video.id.startsWith('material-');
+  const hasRealSource = /^https?:\/\//i.test(sourceUrl)
+    || Boolean(video.videoUrl)
+    || video.id.startsWith('material-');
   return video.contentFormat === 'video'
     && hasRealSource
     && isDisplayableVideoAnalysis(video.aiAnalysis, video.status);
@@ -2476,6 +2477,7 @@ function DirectorVideoDetailPanel({
   onCreate,
   onRetry,
   onExactAnalysis,
+  onCancelAnalysis,
   analyzing,
   notice,
 }: {
@@ -2485,6 +2487,7 @@ function DirectorVideoDetailPanel({
   onCreate: () => void;
   onRetry: () => void;
   onExactAnalysis: () => void;
+  onCancelAnalysis: () => void;
   analyzing: boolean;
   notice?: string;
 }) {
@@ -2495,7 +2498,11 @@ function DirectorVideoDetailPanel({
   const imageEvidence = payload?.imageEvidence;
   const isImagePost = video.contentFormat === 'image';
   const imageEvidenceCount = imageEvidence?.observedFacts?.length || imageEvidence?.carouselFlow?.length || 0;
-  const pending = analyzing || payload?.requestedAnalysisMode === 'exact' || video.status === 'pending';
+  const terminalAnalysisState = Boolean(payload?.analysisError)
+    || ['paused', 'video_failed', 'failed'].includes(String(payload?.geminiStatus || ''));
+  const pending = analyzing
+    || payload?.requestedAnalysisMode === 'exact'
+    || (video.status === 'pending' && !terminalAnalysisState);
   const statusLabel = pending
     ? '编导 Agent 分析中'
     : isImagePost && imageEvidence
@@ -2613,14 +2620,16 @@ function DirectorVideoDetailPanel({
             <section className="mt-4 rounded-xl border border-dashed border-border bg-white px-6 py-12 text-center">
               {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
               <p className="mt-3 text-sm font-black text-text-primary">{statusLabel}</p>
-              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">完成后会展示前 10 秒原因、全片分镜、爆点评分、真实性边界和改编建议。</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '通常需要 1–3 分钟，可以先关闭此页；超过 5 分钟未完成会自动变为可重试。' : '完成后会展示前 10 秒原因、全片分镜、爆点评分、真实性边界和改编建议。'}</p>
             </section>
           )}
         </div>
 
         <footer className="shrink-0 border-t border-border bg-white px-5 py-4">
           <div className="flex flex-wrap items-center gap-2">
-            {!isImagePost && !exactQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={pending} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent disabled:opacity-50">{pending ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}全片精确分析</button>}
+            {!isImagePost && !exactQuality.ready && (pending
+              ? <button type="button" onClick={onCancelAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-amber-300 px-3 text-xs font-bold text-amber-700"><X size={13} />停止分析</button>
+              : <button type="button" onClick={onExactAnalysis} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent"><BarChart2 size={13} />全片精确分析</button>)}
             {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
             <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
             <button type="button" onClick={onCreate} disabled={!analysis && !imageEvidence} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />带分析进入内容制作</button>
@@ -2714,7 +2723,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [generatingNeedId, setGeneratingNeedId] = useState('');
   const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
-  const [classifyingMaterialId, setClassifyingMaterialId] = useState('');
   const [showAccountsModal, setShowAccountsModal] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
@@ -3148,23 +3156,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     window.setTimeout(() => uploadInputRef.current?.click(), 50);
   };
 
-  const classifyMaterial = async (material: Material) => {
-    if (classifyingMaterialId || material.type !== 'video') return;
-    setClassifyingMaterialId(material.id);
-    setMaterialMessage(`正在用千问识别「${material.name}」的行业、镜头功能和适用范围…`);
-    try {
-      const result = await studioApi.classifyMaterial(material.id);
-      if (!result.ok) throw new Error(result.error || '智能分类失败');
-      await refreshMaterials();
-      setMaterialMessage(`已完成智能分类：${material.name}`);
-    } catch (error) {
-      setMaterialMessage(error instanceof Error ? error.message : '智能分类失败');
-    } finally {
-      setClassifyingMaterialId('');
-      window.setTimeout(() => setMaterialMessage(''), 3500);
-    }
-  };
-
   const generateNeedMaterial = async (need: ShootingNeed) => {
     setGeneratingNeedId(need.id);
     setMaterialMessage(`正在生成“${need.title}”，通常需要几分钟；可以留在本页等待结果。`);
@@ -3370,7 +3361,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       return;
     }
     setAnalyzingVideoIds(ids => [...ids, video.id]);
-    setMaterialMessage(`已提交全片精确分析：${video.title}`);
+    setMaterialMessage(`正在全片精确分析，通常需要 1–3 分钟：${video.title}`);
     try {
       const response = await fetch(video.recordId
         ? `/api/overseas/videos/${video.recordId}/reanalyze`
@@ -3411,6 +3402,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const recordId = data.id || video.recordId;
       if (recordId) {
         void (async () => {
+          let completed = false;
           for (let attempt = 0; attempt < 90; attempt += 1) {
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             try {
@@ -3428,8 +3420,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               setCrawledVideos(items => items.map(applyLatest));
               setSelectedVideo(item => item ? applyLatest(item) : item);
               if (!latestAnalysis.requestedAnalysisMode) {
+                completed = true;
                 setMaterialMessage(latestAnalysis.analysisError
-                  ? `全片精确分析失败：${latestAnalysis.analysisError}`
+                  ? `全片精确分析未完成，可重新尝试。`
                   : '全片精确分析已完成。');
                 window.setTimeout(() => setMaterialMessage(''), 3500);
                 break;
@@ -3437,6 +3430,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             } catch {
               // A transient backend reload should not lose the visible queued state.
             }
+          }
+          if (!completed) {
+            setMaterialMessage('处理已超过 3 分钟，任务仍在后台。可以关闭此页；超过 5 分钟未完成会自动变为可重试。');
           }
         })();
       }
@@ -3453,6 +3449,30 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     } finally {
       setAnalyzingVideoIds(ids => ids.filter(id => id !== video.id));
       setTimeout(() => setMaterialMessage(''), 3500);
+    }
+  };
+
+  const cancelExactFullAnalysis = async (video: TrendVideo) => {
+    if (!video.recordId) return;
+    setMaterialMessage('正在停止本次精确分析…');
+    try {
+      const response = await fetch(`/api/overseas/videos/${video.recordId}/analysis-pause`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || '停止分析失败');
+      const markPaused = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
+        ...item,
+        status: item.aiAnalysis?.gemini || item.aiAnalysis?.analysisQuality ? 'analyzed' : 'failed',
+        aiAnalysis: { ...(item.aiAnalysis || {}), requestedAnalysisMode: undefined, geminiStatus: 'paused' },
+      };
+      setCrawledVideos(items => items.map(markPaused));
+      setSelectedVideo(item => item ? markPaused(item) : item);
+      setMaterialMessage('已停止。本次未产生的结果不会进入后续制作，可以重新分析。');
+      window.setTimeout(() => setMaterialMessage(''), 3500);
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '停止分析失败');
     }
   };
 
@@ -3983,12 +4003,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               </div>
 
               <MaterialLibraryStatus onRetry={refreshMaterials} />
-              {localMaterials.some(material => material.usage === 'reference_only') && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-xs text-sky-900">
-                  <span><strong>{localMaterials.filter(material => material.usage === 'reference_only').length}</strong> 条采集参考素材已显示；视频可直接预览，授权复核前不会进入商用生成链路。</span>
-                  <span className="font-bold">参考素材 ≠ 可商用素材</span>
-                </div>
-              )}
               <div className="grid grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5">
                 {materialsLoading ? (
                   <div className="col-span-full flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
@@ -4033,52 +4047,24 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ) : (
                         <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
                       )}
-                      <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] font-bold text-white">{material.type === 'video' ? '视频' : material.type === 'audio' ? '音频' : '图片'}</span>
                     </div>
                     <div className="flex flex-1 flex-col p-3">
                       <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
-                      <MaterialAnalysisStatus material={material} onRefresh={refreshMaterials} />
-                      <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || (material.duration > 0 ? `${material.duration}s` : '时长未知')}</p>
-                      {(material.sourceUrl || material.licenseName) && (
-                        <p className="mt-1 truncate text-[10px] text-text-muted">
-                          {material.licenseName ? `许可：${material.licenseName}` : '外部来源'}
-                          {material.sourceCreator ? ` · ${material.sourceCreator}` : ''}
-                          {material.sourceUrl && <> · <a href={material.sourceUrl} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()} className="font-semibold text-accent hover:underline">查看来源</a></>}
-                        </p>
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {material.usage === 'reference_only' && <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800">采集参考 · 仅供分析</span>}
-                        <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${material.productName ? 'bg-emerald-50 text-emerald-700' : isEnterpriseCommonMaterial(material) ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {material.productName ? `产品：${material.productName}` : isEnterpriseCommonMaterial(material) ? '企业通用素材' : '产品归属待确认'}
-                        </span>
-                        {[
-                          MATERIAL_SOURCE_LABELS[materialSourceOf(material)],
-                          material.industry ? MATERIAL_INDUSTRY_LABELS[material.industry] || material.industry : '',
-                          material.applicability ? MATERIAL_APPLICABILITY_LABELS[material.applicability] || material.applicability : '',
-                          ...String(material.shotFunction || '').split(',').slice(0, 2).map(value => MATERIAL_FUNCTION_LABELS[value] || value),
-                        ].filter(Boolean).map(label => <span key={label} className="rounded-md bg-accent-glow px-1.5 py-0.5 text-[10px] font-semibold text-accent">{label}</span>)}
-                        {!material.industry && !material.applicability && !material.shotFunction && material.type === 'video' && (
-                          <button type="button" disabled={Boolean(classifyingMaterialId)} onClick={() => void classifyMaterial(material)}
-                            className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-muted hover:bg-accent-glow hover:text-accent disabled:opacity-60">
-                            {classifyingMaterialId === material.id ? '分类中…' : '点击智能分类'}
-                          </button>
-                        )}
-                      </div>
-                      <div className="mt-auto flex items-center gap-2 border-t border-border pt-3">
-                        <button
+                      {(material.usage !== 'reference_only' || material.canManage) && <div className="mt-auto flex items-center gap-2 pt-3">
+                        {material.usage !== 'reference_only' && <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
-                          disabled={material.usage === 'reference_only' || material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
-                          title={material.usage === 'reference_only' ? '采集参考素材仅供分析，完成商业授权复核后才能用于生成' : material.type === 'image' || material.duration > 0 ? '把这条素材带入内容制作' : '当前素材缺少可用时长'}
+                          disabled={material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
+                          title={material.type === 'image' || material.duration > 0 ? '把这条素材带入内容制作' : '当前素材缺少可用时长'}
                           className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          {material.usage === 'reference_only' ? <><Eye size={14} />仅供分析</> : <><Sparkles size={14} />用此素材生成</>}
-                        </button>
+                          <Sparkles size={14} />用于创作
+                        </button>}
                         {material.canManage && <>
                           <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition hover:border-accent hover:text-accent"><Pencil size={14} /></button>
                           <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition hover:border-red-300 hover:text-red-600"><Trash2 size={14} /></button>
                         </>}
-                      </div>
+                      </div>}
                     </div>
                   </article>
                 ))}
@@ -4100,7 +4086,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 <div className="flex items-center justify-between gap-4 bg-surface px-4 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-bold text-text-primary">{previewMaterial.name}</p>
-                    <p className="text-[11px] text-text-muted">{previewMaterial.folder} · {previewMaterial.size || `${previewMaterial.duration}s`}</p>
                   </div>
                   <button type="button" data-modal-initial-focus aria-label="关闭视频预览" onClick={() => setPreviewMaterial(null)} className="rounded-md p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
                     <X size={18} />
@@ -4211,6 +4196,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             }}
             onRetry={() => void retryVideoPipeline(selectedVideo)}
             onExactAnalysis={() => void requestExactFullAnalysis(selectedVideo)}
+            onCancelAnalysis={() => void cancelExactFullAnalysis(selectedVideo)}
             analyzing={analyzingVideoIds.includes(selectedVideo.id)}
             notice={materialMessage}
           />

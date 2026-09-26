@@ -30,6 +30,7 @@ import SocialArtifactPreviewDialog from './SocialArtifactPreviewDialog';
 import SocialProductionProgressPanel from './SocialProductionProgressPanel';
 import SocialReplicationAnalysisPanel from './SocialReplicationAnalysisPanel';
 import SocialAgentWorkflowPanel from './SocialAgentWorkflowPanel';
+import SocialGenerationConfirmationCard from './SocialGenerationConfirmationCard';
 import SocialWeeklySummary from './SocialWeeklySummary';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, optionLabel, packageVersionLabel } from './socialContentUi';
@@ -93,6 +94,9 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   const managedWithoutShoot = workflowReady && (task.assetSupplyPlan?.overallFeasibility === 'full_fidelity'
     || task.assetSupplyPlan?.overallFeasibility === 'functional_equivalent');
   const canStart = task.readiness.complete && workflowReady;
+  const explicitReferenceCount = sources.filter(item => item.kind === 'reference_link').length;
+  const analyzedReferenceCount = task.referenceVideoAnalysis ? 1 : 0;
+  const handoffReferenceCount = task.agentWorkflow?.inspirationHandoffs.length ?? 0;
   const readinessTitle = !workflowReady
     ? task.agentWorkflow?.stage === 'needs_facts'
       ? '还需要最少必要事实'
@@ -111,7 +115,7 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
   const sourceStats = [
     { label: '客户素材', value: sources.filter(item => item.kind === 'material').length, icon: Image },
     { label: '企业资料', value: sources.filter(item => item.kind === 'knowledge').length, icon: FileText },
-    { label: '参考内容', value: sources.filter(item => item.kind === 'reference_link').length, icon: ExternalLink },
+    { label: '参考内容', value: Math.max(explicitReferenceCount, analyzedReferenceCount, handoffReferenceCount), icon: ExternalLink },
   ];
   return (
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
@@ -197,10 +201,12 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         onSelectTask={props.onSelectTask}
         onLoadMoreTasks={props.onLoadMoreTasks}
         onStart={props.onStart}
+        onPlanReview={() => document.getElementById('social-generation-confirmation')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
         onEdit={props.onEdit}
         onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
       />
       <div className="min-w-0 space-y-4">
+        <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />
         {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
         <div className={`grid gap-4 ${showDelivery ? 'xl:grid-cols-2' : ''}`}>
           <ReadinessPanel task={task} />

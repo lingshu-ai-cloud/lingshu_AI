@@ -8,12 +8,14 @@ import {
   socialDirectorCoverTimestamp,
   socialDirectorRenderTimeline,
   socialDirectorSceneTimingCues,
+  socialDirectorVoiceAlignedCaptionCues,
   socialDirectorScriptText,
   type SocialDirectorBgmSelection,
 } from './socialContentDirectorPlan.js';
 import { freezeSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { buildSocialProductionPlan } from './socialContentProductionPlan.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
+import { socialRequestHash } from './socialContentValidation.js';
 
 const createdAt = '2026-09-20T12:00:00.000Z';
 const formula: InternalSocialContentFormula = {
@@ -110,6 +112,12 @@ const buildPlan = (previous?: ReturnType<typeof buildSocialDirectorPlan>) => bui
   formula,
   createdAt,
   previous,
+  collaboration: {
+    schemaVersion: 'social-agent-collaboration.v1',
+    directorBrief: { id: 'brief-1', version: '7' },
+    contentExecutionPlan: { id: 'execution-1', version: '7', selectedBy: 'content_agent' },
+    directorReview: { id: 'review-1', version: '7', approvedBy: 'director_agent' },
+  },
 });
 const directorPlan = buildPlan();
 assert.equal(directorPlan.status, 'ready');
@@ -125,6 +133,10 @@ assert.equal(directorPlan.bgmSelection.primary.trackId, 'builtin-mixkit-close-up
 assert.equal(directorPlan.bgmSelection.fallbacks[0]?.trackId, 'builtin-tech-pulse');
 assert.equal(directorPlan.bgmSelection.volume, 16, 'formula-owned director volume is locked');
 assert.equal(directorPlan.coverIntent.assetId, 'material-one');
+assert.equal(directorPlan.effectPlan?.schemaVersion, 1);
+assert.equal(directorPlan.effectPlan?.scenes[0]?.color, 'original', 'real product colors remain protected');
+assert.equal(directorPlan.collaboration?.contentExecutionPlan.selectedBy, 'content_agent');
+assert.match(directorPlan.collaboration?.finalSelection?.hash ?? '', /^[a-f0-9]{64}$/);
 assert.equal(directorPlan.contentAgentHandoff.scriptLocked, true);
 assert.equal(directorPlan.scriptSource.referenceSource?.sourceId, 'socialsrc_exact_reference');
 assert.deepEqual(directorPlan.contentAgentHandoff.forbiddenActions, [
@@ -159,13 +171,28 @@ assert.equal(handoff.narration, directorPlan.scenes.map(scene => scene.voiceover
 assert.deepEqual(handoff.scenes.map(item => item.caption), directorPlan.scenes.map(scene => scene.caption));
 assert.equal(handoff.outputSpec.aspectRatio, directorPlan.outputSpec.aspectRatio);
 assert.equal(handoff.bgmSelection.primary.trackId, directorPlan.bgmSelection.primary.trackId);
+assert.deepEqual(handoff.effectPlan, directorPlan.effectPlan);
+assert.equal(handoff.collaboration?.directorReview.approvedBy, 'director_agent');
 assert.equal(handoff.scenes[0]?.source.renderUrl, asset.url);
 assert.equal(Object.prototype.hasOwnProperty.call(handoff, 'prompt'), false,
   'Content Agent receives no prompt or rewrite surface');
+const { effectPlan: _effectPlan, lineageHash: _legacyHash, ...legacyPayload } = directorPlan;
+const legacyPlan = { ...legacyPayload, lineageHash: socialRequestHash(legacyPayload) };
+const parsedLegacyPlan = parseStoredSocialDirectorPlan(legacyPlan)!;
+assert.equal(socialDirectorContentHandoff(parsedLegacyPlan).effectPlan, null,
+  'historic locked plans without an explicit effect plan remain effect-free');
+assert.equal(buildPlan(parsedLegacyPlan).effectPlan, undefined,
+  'a legacy task revision must not silently opt into new effects');
 const executionDuration = handoff.outputSpec.maximumDurationSeconds;
 const cues = socialDirectorSceneTimingCues(handoff, executionDuration);
+const voiceAlignedCues = socialDirectorVoiceAlignedCaptionCues(handoff, [
+  { start: 0.1, end: 1.1, text: directorPlan.scenes[0]!.voiceover },
+  { start: 1.3, end: 3.8, text: directorPlan.scenes.slice(1).map(scene => scene.voiceover).join('') },
+], 4);
 const timeline = socialDirectorRenderTimeline(handoff, executionDuration);
 assert.equal(cues.length, directorPlan.scenes.length);
+assert.equal(voiceAlignedCues[0]?.start, 0.1, 'captions should follow measured voice timing');
+assert.equal(voiceAlignedCues.at(-1)?.end, 3.8);
 assert.equal(timeline.length, directorPlan.scenes.length);
 assert.ok(socialDirectorCoverTimestamp(handoff, executionDuration) > 0);
 assert.match(socialDirectorScriptText(handoff, executionDuration), /已锁定片段/);

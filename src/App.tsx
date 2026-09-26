@@ -20,6 +20,7 @@ import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorks
 import { PAGE_REGISTRY, SOCIAL_PROGRAM_NAV_PAGES, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
+import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, loadTrafficEntryView, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
@@ -168,6 +169,7 @@ export default function App() {
     const taskId = String(detail.workflowTaskId || '');
     return runId && taskId || detail.businessRef?.entityId ? { runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId, contentId: detail.businessRef?.contentId, referenceId: detail.businessRef?.referenceId } : null;
   });
+  const [smartAssetsCreateRequest, setSmartAssetsCreateRequest] = useState<SocialContentCreateRequest | null>(null);
 
   useEffect(() => {
     if (page === 'smartAssets' && (
@@ -351,6 +353,7 @@ export default function App() {
     activeIdRef.current = null; setActiveConvId(null);
     if (next === 'smartAssets') {
       setSmartAssetsWorkflowContext(null);
+      setSmartAssetsCreateRequest(null);
       setSmartAssetsView('create');
       try {
         if (localStorage.getItem('ow_video_kickoff') || localStorage.getItem('ow_seedance_kickoff')) {
@@ -395,6 +398,7 @@ export default function App() {
         socialContentTaskId?: string;
         socialContentPage?: string;
         businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
+        contentCreationRequest?: SocialContentCreateRequest;
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
@@ -414,6 +418,7 @@ export default function App() {
       }
       if (nextPage === 'smartAssets') {
         setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
+        setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -670,6 +675,7 @@ export default function App() {
                 <SocialContentPlanningPage
                   onNavigate={handleNavigate}
                   onNavigateWithTask={handleSocialContentNavigate}
+                  initialCreateRequest={smartAssetsCreateRequest}
                 />
               ) : (
                 <TrafficPage

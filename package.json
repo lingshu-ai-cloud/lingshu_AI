@@ -14,6 +14,7 @@
     "build:account-hub": "vite build --config apps/account-hub/vite.config.ts",
     "check:vendored-dependencies": "node scripts/check-vendored-dependencies.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",
+    "quality:social-video-eval": "tsx scripts/evaluate-social-video-quality.ts",
     "check:container-contract": "node scripts/check-container-contract.mjs",
     "capacity:smoke": "node scripts/capacity-acceptance.mjs",
     "capacity:readonly-1000": "node scripts/capacity-acceptance.mjs --profile public-read-1000-v1",

@@ -53,6 +53,7 @@ import {
 import type { SocialContentAccessResolver } from './socialContentAccess.js';
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { startSocialContentTask } from './socialContentTasks.js';
+import { materialDecisionFeedback } from '../videoProduction/materialQualityLearning.js';
 
 import {
   MAX_SOCIAL_DELIVERY_MANIFEST_BYTES,
@@ -251,10 +252,15 @@ export async function decideSocialContentArtifact(input: {
         await assertStudioSocialArtifactGeneration(input.tenantId, socialText(artifact.artifact_kind), artifact.content);
       }
       const timestamp = (input.now ?? new Date()).toISOString();
+      const qualityFeedback = materialDecisionFeedback({
+        artifactContent: socialJson(artifact.content), decision: input.value.decision,
+        note: input.value.note, decidedAt: timestamp,
+      });
       await input.repository.update(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, artifact.id, {
         status: input.value.decision,
         version: nextVersion(artifact.version, 'social_artifact_record_invalid'),
         decision_note: input.value.note ?? '',
+        ...(qualityFeedback ? { quality_feedback: qualityFeedback } : {}),
         last_operation_id: operationId,
         updated_by: input.userId,
         updated_at: timestamp,
@@ -340,10 +346,15 @@ export async function decideSocialContentArtifactBatch(input: {
       const timestamp = (input.now ?? new Date()).toISOString();
       for (const record of records) {
         if (socialText(record.last_operation_id) === operationId) continue;
+        const qualityFeedback = materialDecisionFeedback({
+          artifactContent: socialJson(record.content), decision: input.value.decision,
+          note: input.value.note, decidedAt: timestamp,
+        });
         await input.repository.update(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, record.id, {
           status: input.value.decision,
           version: nextVersion(record.version, 'social_artifact_record_invalid'),
           decision_note: input.value.note ?? '',
+          ...(qualityFeedback ? { quality_feedback: qualityFeedback } : {}),
           last_operation_id: operationId,
           updated_by: input.userId,
           updated_at: timestamp,

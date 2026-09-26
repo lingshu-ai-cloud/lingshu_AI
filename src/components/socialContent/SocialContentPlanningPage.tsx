@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Page } from '../../App';
 import SocialContentWorkspace, { type SocialContentCreateRequest } from './SocialContentWorkspace';
 import SocialContentLanding, { type SocialContentLaunchOptions } from './SocialContentLanding';
@@ -6,11 +6,17 @@ import SocialContentLanding, { type SocialContentLaunchOptions } from './SocialC
 export default function SocialContentPlanningPage({
   onNavigate,
   onNavigateWithTask,
+  initialCreateRequest,
 }: {
   onNavigate: (page: Page) => void;
   onNavigateWithTask: (page: Page, taskId: string) => void;
+  initialCreateRequest?: SocialContentCreateRequest | null;
 }) {
-  const [createRequest, setCreateRequest] = useState<SocialContentCreateRequest | null>(null);
+  const [createRequest, setCreateRequest] = useState<SocialContentCreateRequest | null>(initialCreateRequest || null);
+
+  useEffect(() => {
+    if (initialCreateRequest) setCreateRequest(initialCreateRequest);
+  }, [initialCreateRequest]);
 
   const startCreation = (options: SocialContentLaunchOptions) => {
     setCreateRequest({

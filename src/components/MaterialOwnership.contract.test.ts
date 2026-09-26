@@ -65,9 +65,11 @@ assert.match(inspirationSource, /manageTarget\.kind === 'material' && manageProd
 assert.doesNotMatch(inspirationSource, /通用素材 \/ 未关联产品/, '企业通用与未确认归属不得再混成一个选项');
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
-assert.match(inspirationSource, /material\.type === 'audio' \? '音频'/, '音频素材不得继续误标为图片');
+assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
 assert.match(inspirationSource, /studioApi\.listMaterials\('all'\)/, '我的素材必须展示账号下可编辑素材和采集参考素材');
-assert.match(inspirationSource, /material\.usage === 'reference_only'/, '采集参考素材必须保留禁止进入商用生成链路的边界');
+assert.match(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '采集参考素材必须在行为层保留禁止进入商用生成链路的边界');
+assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
+assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素材 ≠ 可商用素材|产品归属待确认|点击智能分类/, '我的素材卡片不得展示内部用途、归属和分类标注');
 assert.match(inspirationSource, /grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5/, '我的素材卡片密度必须与灵感卡片保持一致');
 
 console.log('material ownership frontend contracts passed');

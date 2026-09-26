@@ -10,7 +10,13 @@ import type {
   SocialProductionResult,
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
+import {
+  advanceVideoProductionGraph,
+  parseVideoProductionGraph,
+  productionNodeForRuntimeStage,
+} from '../../shared/contracts/videoProductionGraph.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
+import { analyzeAudioBeatGrid } from '../lib/audioBeatAnalysis.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import {
@@ -167,11 +173,14 @@ export async function selectDirectorBgm(input: {
   }
   if (primaryIndex < 0) throw new Error('自动配乐曲库中的授权文件均不可用，请稍后重试');
   const ordered = [ranked[primaryIndex]!, ...ranked.filter((_, index) => index !== primaryIndex)].slice(0, 3);
-  const locked = ordered.map(track => ({
+  const primaryAudio = await automationBgmAudio(input.tenantId, ordered[0]!.id);
+  const beatEvidence = await analyzeAudioBeatGrid(primaryAudio).catch(() => null);
+  const locked = ordered.map((track, index) => ({
     trackId: track.id,
     name: track.name,
     mood: track.mood,
     authorization: bgmAuthorization(track.id),
+    ...(index === 0 && beatEvidence ? { beatEvidence } : {}),
   }));
   return {
     primary: locked[0]!,
@@ -189,6 +198,9 @@ export async function resolveLockedBgm(
   for (const track of ordered) {
     if (track.authorization.status !== 'authorized') continue;
     try {
+      if (handoff.effectPlan?.beatSync && track.trackId !== handoff.bgmSelection.primary.trackId) {
+        throw new Error('beat_synced_primary_bgm_unavailable');
+      }
       return { id: track.trackId, url: await automationBgmAudio(tenantId, track.trackId) };
     } catch { /* Execute the Director Agent's pre-authorized fallback order. */ }
   }
@@ -226,6 +238,20 @@ export async function writeExecutionStage(input: {
       .slice(-11)
     : [];
   const updatedAt = new Date().toISOString();
+  const terminal = input.stage === 'review_ready' && input.status === 'completed';
+  const blocked = input.status === 'waiting_external';
+  const previousGraph = parseVideoProductionGraph(previousProduction.productionGraph);
+  const productionGraph = advanceVideoProductionGraph({
+    graph: previousGraph,
+    graphId: `starter198:${input.runId}`,
+    runtimeOrigin: 'starter198',
+    activeNode: blocked && ['waiting_for_user_input', 'automatic_recovery_exhausted'].includes(input.stage)
+      ? previousGraph?.activeNode ?? 'brief' : productionNodeForRuntimeStage('starter198', input.stage),
+    status: terminal ? 'completed' : blocked ? 'blocked' : 'running',
+    blocker: blocked ? input.message : null,
+    evidenceRefs: [socialText(input.extra?.artifactId), socialText(input.extra?.directorPlanHash)].filter(Boolean),
+    now: updatedAt,
+  });
   await input.repository.update(STARTER_COLLECTIONS.tasks, input.tenantId, task.id, {
     status: input.status ?? 'running',
     output: {
@@ -236,6 +262,7 @@ export async function writeExecutionStage(input: {
         stage: input.stage,
         message: input.message,
         updatedAt,
+        productionGraph,
         stageHistory: [
           ...previousHistory,
           { stage: input.stage, message: input.message, at: updatedAt },

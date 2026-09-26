@@ -100,7 +100,7 @@ export async function reconcileSocialContentTask(input: {
   const [
     coverage,
     sourceRows,
-    artifactCount,
+    artifactRows,
     approvedArtifactCount,
     deliveryPackageCount,
     publicationCount,
@@ -110,7 +110,9 @@ export async function reconcileSocialContentTask(input: {
     input.repository.list(STARTER_COLLECTIONS.socialTaskSources, input.tenantId, {
       where: { ...where, status: 'active' }, sort: 'created_at', perPage: 500,
     }),
-    count({ ...input, collection: STARTER_COLLECTIONS.socialContentArtifacts, where }),
+    input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, {
+      where, sort: 'created_at', perPage: 500,
+    }),
     count({ ...input, collection: STARTER_COLLECTIONS.socialContentArtifacts, where: { ...where, status: 'approved' } }),
     count({ ...input, collection: STARTER_COLLECTIONS.socialDeliveryPackages, where }),
     count({ ...input, collection: STARTER_COLLECTIONS.socialPublications, where }),
@@ -120,6 +122,13 @@ export async function reconcileSocialContentTask(input: {
   if (sourceRows.totalItems !== sourceRows.items.length) {
     throw new SocialContentWorkflowError('social_content_task_children_truncated', 503);
   }
+  if (artifactRows.totalItems !== artifactRows.items.length) {
+    throw new SocialContentWorkflowError('social_content_task_children_truncated', 503);
+  }
+  const artifactCount = artifactRows.totalItems;
+  const actionableArtifactCount = artifactRows.items.filter(item => (
+    !['changes_requested', 'superseded'].includes(socialText(item.status))
+  )).length;
   const currentRequirements = parseStoredMaterialRequirements(task.material_requirements);
   const advisoryRequirements = advisoryMaterialRequirements(currentRequirements);
   const recalculatedRequirements = advisoryRequirements.length
@@ -152,7 +161,7 @@ export async function reconcileSocialContentTask(input: {
     let candidate = input.preferredStatus;
     if (publicationCount > 0) candidate = 'awaiting_metrics';
     else if (deliveryPackageCount > 0) candidate = 'delivered';
-    else if (artifactCount > 0) candidate = 'asset_review';
+    else if (actionableArtifactCount > 0) candidate = 'asset_review';
     else if (readiness.complete && ['draft', 'needs_input'].includes(status)) candidate = 'plan_review';
     if (candidate) status = laterStatus(status, candidate);
   }

@@ -45,13 +45,15 @@ export default function SocialAccountsPage({ onNavigate }: { onNavigate: (page: 
   };
 
   if (!activeProgram) {
-    return <SocialProgramPageFrame title="自有账号矩阵" description="定义每个真实账号的业务角色、受众和内容承诺。"><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><Users size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">前往项目搭建</button></section></SocialProgramPageFrame>;
+    return <SocialProgramPageFrame title="账号矩阵" description="为真实账号分配职责。" currentPage="socialAccounts" onNavigate={onNavigate}><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><Users size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">上一步：项目方向</button></section></SocialProgramPageFrame>;
   }
 
   return (
     <SocialProgramPageFrame
       title="自有账号矩阵"
       description="账号定义与平台授权分开保存；这里不会把候选平台伪装成已连接账号。"
+      currentPage="socialAccounts"
+      onNavigate={onNavigate}
       action={<button type="button" onClick={() => setShowCreate(value => !value)} className="btn-primary inline-flex items-center gap-2"><Plus size={15} />新增账号</button>}
     >
       {accountsError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{accountsError} <button type="button" className="ml-2 underline" onClick={() => void refreshAccounts()}>重试</button></div>}
@@ -86,7 +88,7 @@ export default function SocialAccountsPage({ onNavigate }: { onNavigate: (page: 
         )}
         <div className="mt-5 flex flex-wrap gap-2">
           {activeProgram.route === 'account_repair' && !activeProgram.readiness.accountImportConfirmed && accounts.length > 0 && <button type="button" onClick={() => void confirmAccountImport()} disabled={mutating} className="btn-primary inline-flex items-center gap-2"><CheckCircle2 size={15} />确认账号录入完成</button>}
-          <button type="button" onClick={() => onNavigate('socialPlanning')} className="btn-ghost inline-flex items-center gap-2">查看计划前置条件<ArrowRight size={15} /></button>
+          <button type="button" onClick={() => onNavigate('socialPlanning')} className="btn-primary inline-flex items-center gap-2">下一步：制定月周计划<ArrowRight size={15} /></button>
         </div>
       </section>
     </SocialProgramPageFrame>

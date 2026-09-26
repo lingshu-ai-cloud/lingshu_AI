@@ -86,6 +86,7 @@ import {
   resolveSocialDirectorArtifactLineage,
 } from './socialContentDirectorPlanVersions.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
+import { buildMaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
@@ -200,6 +201,7 @@ export async function taskProductionAssets(input: {
       segments: Array.isArray(record.segments)
         ? record.segments.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
         : [],
+      ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis } : {}),
       selectionOrigin: candidate.origin,
     });
   }
@@ -379,7 +381,14 @@ export async function analyzeProductionAssets(input: {
   const failures: Array<{ assetId: string; assetName: string; reason: string }> = [];
   for (const asset of input.assets) {
     if (asset.visualObservations.length || asset.segments.length) {
-      assets.push(asset);
+      assets.push({ ...asset, scriptAnalysis: asset.scriptAnalysis || buildMaterialScriptAnalysis({
+        materialId: asset.id,
+        name: asset.name,
+        sourceRevision: asset.contentHash || createHash('sha256').update(JSON.stringify([asset.id, asset.duration, asset.segments, asset.visualObservations])).digest('hex'),
+        duration: asset.duration,
+        segments: asset.segments,
+        visualObservations: asset.visualObservations,
+      }) });
       continue;
     }
     try {
@@ -396,6 +405,10 @@ export async function analyzeProductionAssets(input: {
         duration: analyzed.duration || asset.duration,
         visualObservations: analyzed.observations,
         segments: analyzed.segments,
+        scriptAnalysis: buildMaterialScriptAnalysis({
+          materialId: asset.id, name: asset.name, sourceRevision: analyzed.revision,
+          duration: analyzed.duration, segments: analyzed.segments, visualObservations: analyzed.observations,
+        }),
       });
     } catch (error) {
       const rawReason = String(error instanceof Error ? error.message : error || '素材分析失败');

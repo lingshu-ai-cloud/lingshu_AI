@@ -316,6 +316,49 @@ export default function TrafficPage({
   }, [pageTitle, showModeTabs, viewMode]);
 
   const handleEnterWorkflow = (payload: unknown) => {
+    const kickoff = payload as {
+      source?: string;
+      productInfo?: string;
+      video?: {
+        id?: string;
+        title?: string;
+        platform?: string;
+        thumbnail?: string;
+        sourceUrl?: string;
+        videoUrl?: string;
+        contentFormat?: string;
+      };
+    };
+    if (kickoff.source === 'inspiration_analysis' && kickoff.video?.contentFormat !== 'image') {
+      const referenceUrl = kickoff.video?.sourceUrl || kickoff.video?.videoUrl || '';
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+        detail: {
+          page: 'smartAssets',
+          view: 'create',
+          contentCreationRequest: {
+            requestId: Date.now(),
+            themeId: 'product_value',
+            mode: 'instant',
+            creationPath: 'viral_replication',
+            materialInput: referenceUrl ? 'limited' : 'none',
+            managedMode: 'one_click_managed',
+            prefill: {
+              title: `${kickoff.video?.title || '灵感视频'} · 爆款裂变`,
+              topic: kickoff.video?.title || '',
+              productName: String(kickoff.productInfo || '').trim().slice(0, 160),
+              referenceLinks: referenceUrl ? [referenceUrl] : [],
+              platforms: kickoff.video?.platform ? [kickoff.video.platform] : undefined,
+            },
+            sourceContext: {
+              originLabel: '来自灵感中心',
+              referenceTitle: kickoff.video?.title || '已选参考视频',
+              referenceThumbnail: kickoff.video?.thumbnail,
+            },
+          },
+        },
+      }));
+      return;
+    }
     try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
     const targetPage = resolveWorkflowNavigationPage(initialView, showModeTabs);
     if (targetPage) {

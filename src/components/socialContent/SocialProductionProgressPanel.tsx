@@ -36,6 +36,7 @@ interface SocialProductionProgressPanelProps {
   onSelectTask?: (taskId: string) => void;
   onLoadMoreTasks?: () => void;
   onStart?: () => void;
+  onPlanReview?: () => void;
   onEdit?: () => void;
   onReview?: () => void;
 }
@@ -48,6 +49,23 @@ const CONTENT_COMPLETE_STATUSES = new Set<SocialContentTaskStatus>(['asset_revie
 
 function isTaskDetail(task: TaskListItem): task is SocialContentTaskDetail {
   return 'artifacts' in task;
+}
+
+function contentReleaseBlocked(task: TaskListItem): boolean {
+  if (!isTaskDetail(task)) return false;
+  const evaluation = task.agentWorkflow?.replicationEvaluation;
+  return Boolean(evaluation && evaluation.status !== 'passed');
+}
+
+function workflowInterruption(task: TaskListItem): string | null {
+  if (!isTaskDetail(task)) return null;
+  const stage = task.agentWorkflow?.stage;
+  if (stage === 'needs_facts') return '缺少可核验的产品事实，请补充资料后继续';
+  if (stage === 'needs_rights') return '素材使用权尚未确认，请确认后继续';
+  if (stage === 'needs_budget') return '预计费用超出预算，请调整方案后继续';
+  if (stage === 'goal_degraded') return '当前方案会降低成片目标，请补充素材或改为概念样片';
+  if (stage === 'failed_recoverable') return '本次制作未完成；请查看原因并补充素材后继续';
+  return null;
 }
 
 function taskCounts(task: TaskListItem): { generated: number; pendingReview: number } {
@@ -78,14 +96,22 @@ function canProduceWithoutCustomerShoot(task: TaskListItem): boolean {
 }
 
 function automaticStep(task: TaskListItem): string {
+  const interruption = workflowInterruption(task);
+  if (interruption) return interruption;
   if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜方案已确认可完整或等价实现，确认事实后即可自动制作';
   if (task.status === 'draft' || task.status === 'needs_input') return '等待必要资料确认';
   if (task.status === 'plan_review') return '确认任务后，编导 Agent 会先完成导演方案';
   if (task.status === 'producing' && !directorPlanComplete(task)) return '编导 Agent 正在整理脚本、口播、字幕与镜头节奏';
   if (task.status === 'producing') return '内容 Agent 正按编导方案生成配音、字幕并剪辑视频';
   if (task.status === 'attention') return '系统正在自动切换可用模型或素材来源；如需确认产品事实或版权，会单独列出';
-  if (task.status === 'paused') return '自动处理暂时中断，现有导演方案、素材和生成结果均已保留';
-  if (task.status === 'asset_review') return '视频、口播和字幕已经生成，等待你审核';
+  if (task.status === 'paused') {
+    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'needs_facts') return '缺少可核验的产品事实，请补充资料后继续';
+    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'needs_rights') return '素材使用权尚未确认，请确认后继续';
+    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'needs_budget') return '预计费用超出预算，请调整方案后继续';
+    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'goal_degraded') return '当前只能降低目标，需要你确认生成概念样片还是补充素材';
+    return '自动处理遇到可恢复问题，现有方案和素材已保留';
+  }
+  if (task.status === 'asset_review') return contentReleaseBlocked(task) ? '视频已生成，但内容检查未通过，需要修改' : '视频、口播和字幕已经生成，等待你审核';
   if (task.status === 'packaging') return '正在整理视频、封面、文案和发布包';
   if (task.status === 'delivered' || task.status === 'awaiting_publish') return '成品与发布包已经准备完成';
   if (task.status === 'awaiting_metrics') return '等待发布数据回收';
@@ -94,6 +120,8 @@ function automaticStep(task: TaskListItem): string {
 
 function compactHeadline(task: SocialContentTaskDetail): string {
   const counts = taskCounts(task);
+  if (workflowInterruption(task)) return '制作遇到问题，已有资料和进度均已保留';
+  if ((counts.pendingReview > 0 || task.status === 'asset_review') && contentReleaseBlocked(task)) return '成片需要修改，当前不可发布';
   if (counts.pendingReview > 0 || task.status === 'asset_review') return '内容已经生成，等待你审核';
   if (COMPLETE_STATUSES.has(task.status)) return '本轮内容已经制作完成';
   if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜托管方案已就绪，可以开始自动制作';
@@ -105,10 +133,12 @@ function compactHeadline(task: SocialContentTaskDetail): string {
 }
 
 function activeAgentLabel(task: TaskListItem): string {
+  if (workflowInterruption(task)) return '需要处理';
   if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return '等待开始';
   if (task.directorPlan?.status === 'blocked') return '编导 Agent 自动修复中';
   if (!directorPlanComplete(task)) return '编导 Agent 策划中';
   if (!CONTENT_COMPLETE_STATUSES.has(task.status)) return '内容 Agent 制作中';
+  if (contentReleaseBlocked(task)) return '成片需要修改';
   return socialContentStatusLabel(task.status);
 }
 
@@ -236,6 +266,7 @@ export default function SocialProductionProgressPanel({
   onSelectTask,
   onLoadMoreTasks,
   onStart,
+  onPlanReview,
   onEdit,
   onReview,
 }: SocialProductionProgressPanelProps) {
@@ -283,11 +314,15 @@ export default function SocialProductionProgressPanel({
   };
 
   const currentAction = (() => {
+    if (workflowInterruption(task)) {
+      return onEdit ? { label: '查看原因并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
+    }
     if (task.status === 'draft' || task.status === 'needs_input') {
       return onEdit ? { label: canProduceWithoutCustomerShoot(task) ? '确认任务信息' : '补充任务资料', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'plan_review') {
-      return onStart ? { label: '确认并开始自动制作', icon: <Bot size={14} />, action: onStart } : null;
+      const estimate = task.agentWorkflow?.executionPlan.estimatedTotalCostCny;
+      return onPlanReview ? { label: typeof estimate === 'number' ? `查看费用与效果 · 预计 ¥${estimate.toFixed(2)}` : '查看费用与效果', icon: <Bot size={14} />, action: onPlanReview } : null;
     }
     if (task.status === 'attention') {
       return onEdit ? { label: '查看需确认事项', icon: <ChevronRight size={14} />, action: onEdit } : null;
@@ -296,6 +331,9 @@ export default function SocialProductionProgressPanel({
       return onStart ? { label: '继续自动处理', icon: <RotateCcw size={14} />, action: onStart } : null;
     }
     if (task.status === 'asset_review') {
+      if (contentReleaseBlocked(task)) {
+        return onEdit ? { label: '继续修改并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
+      }
       return onReview ? { label: '审核生成结果', icon: <CheckCircle2 size={14} />, action: onReview } : null;
     }
     return null;

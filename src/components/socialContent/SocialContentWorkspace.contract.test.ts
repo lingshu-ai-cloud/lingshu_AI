@@ -19,6 +19,7 @@ const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', impo
 const landing = fs.readFileSync(new URL('./SocialContentLanding.tsx', import.meta.url), 'utf8');
 const themeCards = fs.readFileSync(new URL('./SocialThemeCards.tsx', import.meta.url), 'utf8');
 const agentWorkflowPanel = fs.readFileSync(new URL('./SocialAgentWorkflowPanel.tsx', import.meta.url), 'utf8');
+const generationConfirmation = fs.readFileSync(new URL('./SocialGenerationConfirmationCard.tsx', import.meta.url), 'utf8');
 
 assert.match(api, /\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/files\?\$\{query\}/);
 assert.match(api, /body: file/);
@@ -62,8 +63,8 @@ assert.match(workspace, /hasMoreTasks=\{state\.workspace\.taskList\.page < state
 assert.match(workspace, /onLoadMoreTasks=\{\(\) => void state\.loadMoreTasks\(\)\}/);
 assert.match(editor, /existingMaterialLabels/);
 assert.match(editor, /\$\{pendingCount\} 项待新增/);
-assert.match(editor, /编导 Agent 会自动准备脚本、口播、字幕与镜头节奏/);
-assert.match(editor, /你无需逐项填写，只需审核成品/);
+assert.match(editor, /保存后先生成分镜、费用与效果预判/);
+assert.match(editor, /不会直接开始成片生成/);
 assert.match(editor, /const STEPS = \['内容目标', '准备素材', '确认生成'\]/);
 assert.match(planning, /defaultCreateMode="instant"/);
 assert.match(starterWorkspace, /defaultCreateMode="weekly"/);
@@ -137,9 +138,13 @@ assert.doesNotMatch(productionProgress, /style=\{\{\s*width|\d+%/, 'production p
 assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|请继续完成脚本|进入内容创作|Studio|旧路线/);
 assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
   'production status must not send the user into the old production route');
-for (const action of ['确认并开始自动制作', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
+for (const action of ['查看费用与效果', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
 assert.match(editor, /不会伪造/);
-assert.match(editor, /一键托管生成/);
+assert.match(editor, /保存并查看费用与效果/);
+assert.match(editor, /onClick=\{\(\) => void submit\(false\)\}/,
+  'new and resumed tasks must stop at the fee-and-effect confirmation before execution');
+assert.doesNotMatch(editor, /submit\(task\?\.status === 'paused'\)/,
+  'resuming a paused task must not bypass the fee-and-effect confirmation');
 assert.match(editor, /下一步：确认素材情况/);
 assert.match(editor, /draft\.materialInput === 'none'/,
   'zero-asset managed creation must remain a first-class non-blocking path');
@@ -157,13 +162,21 @@ for (const detail of ['经营 Agent', '编导 Agent', '内容 Agent', 'DirectorB
 for (const field of ['weeklyPackage', 'adHocBusinessContext', 'directorBrief', 'executionPlan', 'executionPlanReview', 'precisionIntervals', 'overallConfidence']) {
   assert.match(agentWorkflowPanel, new RegExp(field));
 }
+for (const detail of ['这次会产出', '预计费用', '效果预判', '低成本分镜预演', '不是实际生成关键帧', '确认方案并开始生成']) {
+  assert.match(generationConfirmation, new RegExp(detail));
+}
+for (const field of ['estimatedTotalCostCny', 'estimatedSuccessRate', 'budgetLimitCny', 'executionPlanReview']) {
+  assert.match(generationConfirmation, new RegExp(field));
+}
 assert.match(productionProgress, /内容 Agent 正按编导方案生成配音、字幕并剪辑视频/);
 assert.match(productionProgress, /补充任务资料/);
 assert.doesNotMatch(editor + landing + overview, /配置爆款公式|填写脚本|填写口播|填写字幕/,
   'customers must not be asked to configure formulas or author production components');
 assert.match(preview, /fetchArtifactMedia\(artifact\.taskId, artifact\.artifactId/);
-assert.match(preview, /自动质检已通过/);
-for (const check of ['真实任务素材已用于剪辑', '逐镜检查通过', '口播音轨可正常播放', '字幕已按口播时间轴生成']) {
+assert.match(preview, /技术质检已通过/);
+assert.match(preview, /不可发布 · 需要修改/);
+assert.match(preview, /本次已记录/);
+for (const check of ['客户素材已用于剪辑', '逐镜检查通过', '口播音轨可正常播放', '字幕已按口播时间轴生成']) {
   assert.match(preview, new RegExp(check));
 }
 assert.doesNotMatch(preview, /(?:href|src)=\{artifact\.resourceRef\}/);

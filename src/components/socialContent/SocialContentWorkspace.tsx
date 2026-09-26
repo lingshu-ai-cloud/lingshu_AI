@@ -13,6 +13,7 @@ import { attachSocialContentNavigationState } from '../../lib/socialContentConte
 import {
   socialContentCanRegisterPublication,
   type SocialContentCreationPath,
+  type SocialContentDraft,
   type SocialContentMaterialInput,
 } from '../../lib/socialContentModel';
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
@@ -28,7 +29,15 @@ interface EditorSession {
   initialCreationPath?: SocialContentCreationPath;
   initialMaterialInput?: SocialContentMaterialInput;
   initialManagedMode?: 'one_click_managed';
+  initialDraftPatch?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productName' | 'referenceLinks' | 'platforms'>>;
+  sourceContext?: SocialContentSourceContext;
   lockMode?: boolean;
+}
+
+export interface SocialContentSourceContext {
+  originLabel: string;
+  referenceTitle: string;
+  referenceThumbnail?: string;
 }
 
 export interface SocialContentCreateRequest {
@@ -38,6 +47,8 @@ export interface SocialContentCreateRequest {
   creationPath?: SocialContentCreationPath;
   materialInput?: SocialContentMaterialInput;
   managedMode?: 'one_click_managed';
+  prefill?: Partial<Pick<SocialContentDraft, 'title' | 'topic' | 'productName' | 'referenceLinks' | 'platforms'>>;
+  sourceContext?: SocialContentSourceContext;
 }
 
 function editorAttemptId(): string {
@@ -88,6 +99,8 @@ export default function SocialContentWorkspace({
       initialCreationPath: createRequest.creationPath,
       initialMaterialInput: createRequest.materialInput,
       initialManagedMode: createRequest.managedMode,
+      initialDraftPatch: createRequest.prefill,
+      sourceContext: createRequest.sourceContext,
       lockMode: Boolean(createRequest.mode || defaultCreateMode),
     });
   }, [createRequest, defaultCreateMode]);
@@ -195,6 +208,8 @@ export default function SocialContentWorkspace({
         initialCreationPath={editor?.initialCreationPath}
         initialMaterialInput={editor?.initialMaterialInput}
         initialManagedMode={editor?.initialManagedMode}
+        initialDraftPatch={editor?.initialDraftPatch}
+        sourceContext={editor?.sourceContext}
         lockMode={editor?.lockMode}
         catalog={state.workspace.catalog}
         busy={state.busy}

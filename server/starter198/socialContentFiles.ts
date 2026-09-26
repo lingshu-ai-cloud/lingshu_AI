@@ -364,6 +364,48 @@ export async function inspectTransientSocialContentFile(input: {
   };
 }
 
+/**
+ * Persist a renderer-owned output using the same tenant-private object store as
+ * ordinary task uploads. Local development's object-store driver writes to
+ * disk; production uses the configured remote object store. When no object
+ * store is available, the caller can still attach the inspected transient file
+ * to the backend record field.
+ */
+export async function storeTransientSocialContentFile(input: {
+  filePath: string;
+  tenantId: string;
+  name: string;
+  mimeType: string;
+  maximumBytes?: number;
+}): Promise<StoredSocialContentFile> {
+  const inspected = await inspectTransientSocialContentFile(input);
+  if (!objectStorageEnabled()) return inspected;
+
+  const storageKey = tenantPrivateObjectKey(
+    'social-content-sources',
+    input.tenantId,
+    inspected.storageKey,
+  );
+  const current = await objectStorageHead(storageKey);
+  if (!current
+    || current.size !== inspected.byteSize
+    || current.contentType !== inspected.mimeType) {
+    await objectStorageUploadFile({
+      key: storageKey,
+      filePath: input.filePath,
+      contentType: inspected.mimeType,
+      contentLength: inspected.byteSize,
+    });
+  }
+  const verified = await objectStorageHead(storageKey);
+  if (!verified
+    || verified.size !== inspected.byteSize
+    || verified.contentType !== inspected.mimeType) {
+    throw new SocialContentWorkflowError('social_content_file_storage_unavailable', 503);
+  }
+  return { ...inspected, storageKind: 'object', storageKey };
+}
+
 function creativeMaterialType(mimeType: string): 'video' | 'image' | 'audio' | null {
   if (mimeType.startsWith('video/')) return 'video';
   if (mimeType.startsWith('image/')) return 'image';
@@ -490,6 +532,24 @@ function backendFilename(record: StarterRecord): string {
   return socialText(record.storage_kind) === 'backend_file' ? socialText(record.storage_key) : '';
 }
 
+async function recoverPendingSocialContentFile(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  record: StarterRecord;
+  stored: StoredSocialContentFile;
+}): Promise<void> {
+  if (socialText(input.record.storage_kind) !== 'backend_pending'
+    || input.stored.storageKind === 'backend_file') return;
+  await input.repository.update(
+    STARTER_COLLECTIONS.socialContentFiles,
+    input.tenantId,
+    input.record.id,
+    { storage_kind: input.stored.storageKind, storage_key: input.stored.storageKey },
+  );
+  input.record.storage_kind = input.stored.storageKind;
+  input.record.storage_key = input.stored.storageKey;
+}
+
 async function assertBackendPayload(input: {
   record: StarterRecord;
   stored: StoredSocialContentFile;
@@ -614,6 +674,13 @@ export async function registerSocialContentFile(input: {
             transientPath: input.transientPath!,
             backendFilePort,
           });
+        } else {
+          await recoverPendingSocialContentFile({
+            repository: input.repository,
+            tenantId: input.tenantId,
+            record: existing.items[0],
+            stored: input.stored,
+          });
         }
         return { file: socialContentFileView(existing.items[0]) };
       }
@@ -627,6 +694,13 @@ export async function registerSocialContentFile(input: {
             stored: input.stored,
             transientPath: input.transientPath!,
             backendFilePort,
+          });
+        } else {
+          await recoverPendingSocialContentFile({
+            repository: input.repository,
+            tenantId: input.tenantId,
+            record: duplicate,
+            stored: input.stored,
           });
         }
         return { file: socialContentFileView(duplicate) };

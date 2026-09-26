@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { AlertTriangle, CalendarRange, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarRange, CheckCircle2, Loader2 } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
 import { monthlyPlanActivationIssues, type SocialMonthlyPlan } from '../../../shared/contracts/socialProgram';
 import { useSocialProgram } from '../../contexts/SocialProgramContext';
@@ -98,11 +98,11 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
   };
 
   if (!activeProgram) {
-    return <SocialProgramPageFrame title="月周经营计划" description="把账号定位转成可执行、可复盘的月计划和周内容任务。"><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><CalendarRange size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">前往项目搭建</button></section></SocialProgramPageFrame>;
+    return <SocialProgramPageFrame title="月周计划" description="把账号方向变成执行节奏。" currentPage="socialPlanning" onNavigate={onNavigate}><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><CalendarRange size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">上一步：项目方向</button></section></SocialProgramPageFrame>;
   }
 
   return (
-    <SocialProgramPageFrame title="月周经营计划" description="计划激活遵循服务端前置条件；缺少对标、获客路径或账号规则时不会绕过门槛。">
+    <SocialProgramPageFrame title="月周计划" description="确认本月目标、执行账号与每周节奏。" currentPage="socialPlanning" onNavigate={onNavigate}>
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-white p-5 sm:p-6"><h2 className="text-lg font-bold">当前计划状态</h2><dl className="mt-5 grid gap-4 text-sm"><div><dt className="text-text-muted">活动月计划</dt><dd className="mt-1 font-semibold text-text-primary">{activeProgram.activeMonthlyPlanRef ? `${activeProgram.activeMonthlyPlanRef.id} · v${activeProgram.activeMonthlyPlanRef.version}` : '尚无'}</dd></div><div><dt className="text-text-muted">活动周计划</dt><dd className="mt-1 font-semibold text-text-primary">{activeProgram.activeWeeklyPlanRef ? `${activeProgram.activeWeeklyPlanRef.id} · v${activeProgram.activeWeeklyPlanRef.version}` : '尚无'}</dd></div></dl></div>
         <div className="rounded-xl border border-border bg-white p-5 sm:p-6"><h2 className="text-lg font-bold">月计划激活门槛</h2>{activationIssues.length ? <ul className="mt-4 space-y-2">{activationIssues.map(issue => <li key={issue.code} className="flex items-start gap-2 text-sm text-amber-800"><AlertTriangle size={15} className="mt-0.5 shrink-0" />{issue.message}</li>)}</ul> : <p className="mt-4 flex items-center gap-2 text-sm font-semibold text-accent"><CheckCircle2 size={16} />服务端前置条件已满足，可提交活动月计划。</p>}</div>
@@ -123,12 +123,13 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
           <button type="submit" value="draft" disabled={mutating || !selectedAccounts.length || !objective.trim() || !successCriteria.trim()} className="btn-ghost inline-flex items-center gap-2 disabled:opacity-50">{mutating ? <Loader2 size={15} className="animate-spin" /> : null}保存草稿</button>
           <button type="submit" value="activate" disabled={mutating || activationIssues.length > 0 || !selectedAccounts.length || !objective.trim() || !successCriteria.trim()} className="btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50">{mutating ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}保存并激活</button>
           <button type="button" onClick={() => onNavigate('socialAccounts')} className="btn-ghost">返回账号矩阵</button>
+          <button type="button" onClick={() => onNavigate('socialWorkspace')} className="btn-primary inline-flex items-center gap-2">下一步：执行与复盘<ArrowRight size={15} /></button>
         </div>
       </form>
 
-      <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
-        <h2 className="text-lg font-bold">服务端经营编排</h2>
-        <p className="mt-1 text-sm text-text-muted">这里只保存预算和承接上限等原始约束；就绪、产能分配和自动化门槛由服务端重新计算。</p>
+      <details className="rounded-xl border border-border bg-white p-5 sm:p-6">
+        <summary className="cursor-pointer list-none text-sm font-bold text-text-secondary">高级经营约束 <span className="ml-2 text-xs font-medium text-text-muted">预算、产能与自动化边界</span></summary>
+        <p className="mt-3 text-sm text-text-muted">仅在需要精细控制预算和承接上限时调整。</p>
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           {Object.entries(limits).map(([key, value]) => <label key={key} className="space-y-1 text-xs font-medium text-text-secondary">{key}<input type="number" min="0" step="any" value={value} onChange={event => setLimits(current => ({ ...current, [key]: Number(event.target.value) }))} className="ui-field" /></label>)}
           <label className="space-y-1 text-xs font-medium text-text-secondary">周起始日<input type="date" value={weekStart} onChange={event => setWeekStart(event.target.value)} className="ui-field" /></label>
@@ -136,7 +137,7 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
         {operatingError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{operatingError}</p>}
         <div className="mt-5 flex flex-wrap gap-2"><button type="button" onClick={() => void saveConstraints()} disabled={operatingBusy || !accounts.length} className="btn-ghost">保存容量事实</button><button type="button" onClick={() => void resolveOperatingPlan()} disabled={operatingBusy || !constraints} className="btn-primary">{operatingBusy ? '编排中…' : '生成权威规划快照'}</button></div>
         {resolution && <div className="mt-5 rounded-lg bg-surface-2 p-4 text-sm"><p className="font-bold">快照 v{resolution.snapshot.version} · {resolution.snapshot.status}</p><p className="mt-2 text-text-secondary">目标 {resolution.goal.status} · 产能 {resolution.capacityPlan.status} / {resolution.capacityPlan.publicationQuota} 条 · 自动化 {resolution.automationPolicy.status} · 参考模式 {resolution.referenceMode.status}</p><p className="mt-2 break-all text-xs text-text-muted">周包应引用 operating_authority_snapshot:{resolution.snapshot.snapshotId}:v{resolution.snapshot.version}</p>{resolution.snapshot.invalidations.length > 0 && <p className="mt-2 text-amber-800">需处理 {resolution.snapshot.invalidations.length} 条旧快照/周包失效信息。</p>}</div>}
-      </section>
+      </details>
 
       <section className="rounded-xl border border-dashed border-border-bright bg-white p-5 sm:p-6"><h2 className="text-lg font-bold">周计划</h2><p className="mt-2 text-sm leading-6 text-text-muted">周内容任务必须绑定当前活动月计划、真实账号、CTA、产品营销档案和事实来源。当前页面不会在这些输入缺失时生成占位任务；周计划编辑器将在后续里程碑接入。</p></section>
     </SocialProgramPageFrame>

@@ -235,7 +235,7 @@ export interface StudioAudioCapabilities {
     automatic: boolean;
     audioTranscription: boolean;
     wordAlignment: boolean;
-    fallback: 'proportional';
+    fallback: 'proportional' | 'provider_native_with_proportional_fallback';
   };
 }
 export interface SubtitleSpec {

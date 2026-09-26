@@ -44,7 +44,7 @@ try {
     sceneSourcePlan:['a','b','a'].map((assetId,sceneIndex)=>({sceneIndex,assetId,start:sceneIndex*4,end:(sceneIndex+1)*4,sourceStart:0,intent:'画面：彩色条纹',observations:['彩色条纹'],score:10,reasons:['彩色条纹']})),
     sceneOverrides:[0,1,2].map(()=>({trimStart:0})),selectedMaterialIds:['a','b'],materialInfos:infos,
     alignedCuesByLang:{en:lines.map((text,i)=>({start:i*4,end:(i+1)*4,text}))},renderOutputPath:initial,
-    automation:{managedBy:'digital_employee',route:'product',stage:'quality',contentVersion:1,renderOutputPath:initial,voiceLocalPath:voice,narrationReviewPassed:true,narrationHash:hash(spoken),spokenText:spoken,pathDifferenceCheck:{pathDifference:true},
+    automation:{managedBy:'digital_employee',route:'product',stage:'quality',contentVersion:1,renderOutputPath:initial,voiceLocalPath:voice,narrationReviewPassed:true,narrationHash:hash(spoken),voiceQuality:{passed:true,failures:[]},spokenText:spoken,pathDifferenceCheck:{pathDifference:true},
       routePlan:{route:'product',productId:'display',assetIds:['a','b','c'],platform:'facebook',platformBrief},
       renderMaterialRevision:hash(assets.map(asset=>[asset.id,materialRevision(asset)]).sort())}};
   const record:any={id:'isolated-project',tenant_id:'isolated-tenant',title:'图案展示',spec};
