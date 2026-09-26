@@ -3,6 +3,7 @@ import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
 import { createSocialProgramService, SocialProgramError } from '../socialPrograms/service.js';
+import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -12,6 +13,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const router = Router();
   if (authenticate) router.use(requireAuth, enforceSupportSessionReadOnly);
   const service = createSocialProgramService(dataStore);
+  const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
 
   router.get('/', asyncRoute(async (_req, res) => {
     const { tenantId } = res.locals as AuthLocals;
@@ -64,6 +66,54 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     const { tenantId, userId } = res.locals as AuthLocals;
     const item = await service.saveWeeklyPlan(tenantId, userId, String(req.params.programId || ''), req.body || {});
     res.status(201).json({ item });
+  }));
+
+  router.get('/:programId/operating-packages', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const items = await weeklyPackages.list(
+      tenantId,
+      String(req.params.programId || ''),
+      typeof req.query.weekStart === 'string' ? req.query.weekStart : undefined,
+    );
+    res.json({ items });
+  }));
+
+  router.post('/:programId/operating-packages', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.create(tenantId, userId, String(req.params.programId || ''), req.body || {});
+    res.status(201).json({ item });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId', asyncRoute(async (req, res) => {
+    const { tenantId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.get(
+      tenantId, String(req.params.programId || ''), String(req.params.packageId || ''),
+    );
+    res.json({ item });
+  }));
+
+  router.put('/:programId/operating-packages/:packageId', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.revise(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    res.status(201).json({ item });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/activate', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.activate(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    res.json({ item });
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/retire', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.retire(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    res.json({ item });
   }));
 
   router.use(((error, _req, res, next) => {

@@ -48,8 +48,92 @@ export interface SocialProgram {
   productMarketingProfileRefs: VersionedSocialRef[];
   activeMonthlyPlanRef: VersionedSocialRef | null;
   activeWeeklyPlanRef: VersionedSocialRef | null;
+  activeWeeklyOperatingPackageRef: VersionedSocialRef | null;
   version: number;
   status: 'active' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const WEEKLY_OPERATING_WORKFLOW_KINDS = [
+  'readiness',
+  'discovery',
+  'directing',
+  'content',
+  'publishing',
+  'engagement',
+  'review',
+] as const;
+export type WeeklyOperatingWorkflowKind = typeof WEEKLY_OPERATING_WORKFLOW_KINDS[number];
+
+export const WEEKLY_OPERATING_PACKAGE_STATUSES = ['draft', 'active', 'superseded', 'retired'] as const;
+export type WeeklyOperatingPackageStatus = typeof WEEKLY_OPERATING_PACKAGE_STATUSES[number];
+export type WeeklyOperatingWorkflowStatus = 'planned' | 'blocked' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface WeeklyOperatingWorkflow {
+  kind: WeeklyOperatingWorkflowKind;
+  status: WeeklyOperatingWorkflowStatus;
+  taskRefs: VersionedSocialRef[];
+  blockingReasons: string[];
+}
+
+export interface SocialWeeklyPublicationTask {
+  publicationTaskId: string;
+  motherContentId: string;
+  adaptationOfPublicationTaskId: string | null;
+  platform: Extract<SocialPlatform, 'tiktok' | 'facebook' | 'instagram' | 'youtube'>;
+  accountId: string;
+  accountPositioning: string | null;
+  businessProposition: string | null;
+  cta: string | null;
+  factRefs: VersionedSocialRef[];
+  metricTargets: string[];
+  publishWindow: string | null;
+  status: 'planned' | 'blocked' | 'ready' | 'published' | 'cancelled';
+}
+
+export interface SocialWeeklyContentPackage {
+  contentPackageId: string;
+  operatingPackageId: string;
+  version: number;
+  status: WeeklyOperatingPackageStatus;
+  originalContentTarget: number;
+  adaptationVersionTarget: number;
+  publicationTaskTarget: number;
+  publicationTasks: SocialWeeklyPublicationTask[];
+  weeklyBudgetCny: number | null;
+  perItemBudgetCny: number | null;
+  capacityNotes: string[];
+  authorization: {
+    mode: 'each' | 'bounded';
+    accountIds: string[];
+    maxPublishItems: number;
+    weekStart: string;
+    weekEnd: string;
+    allowRealPublishing: boolean;
+    authorizedBy: string | null;
+    authorizedAt: string | null;
+    revokedBy: string | null;
+    revokedAt: string | null;
+  };
+}
+
+export interface WeeklyOperatingPackage {
+  packageId: string;
+  programId: string;
+  version: number;
+  status: WeeklyOperatingPackageStatus;
+  weekStart: string;
+  weekEnd: string;
+  objective: string;
+  enterpriseProfileRef: VersionedSocialRef | null;
+  monthlyPlanRef: VersionedSocialRef | null;
+  workflows: WeeklyOperatingWorkflow[];
+  socialContentPackage: SocialWeeklyContentPackage;
+  successCriteria: string[];
+  changeReason: string | null;
+  previousVersion: number | null;
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
 }
