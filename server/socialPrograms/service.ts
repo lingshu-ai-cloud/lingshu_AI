@@ -123,6 +123,7 @@ export function createSocialProgramService(dataStore: DataStore) {
         stage: deriveSocialProgramStage(route, readiness), readiness,
         enterpriseProfileRef: null, productMarketingProfileRefs: [],
         activeMonthlyPlanRef: null, activeWeeklyPlanRef: null,
+        activeWeeklyOperatingPackageRef: null,
         version: 1, status: 'active', createdAt: at, updatedAt: at,
       };
       const saved = await dataStore.create<ProgramRow>(PROGRAMS, {
