@@ -151,6 +151,80 @@ export async function createAgentAdjustmentNotification(input: {
   return createAgentNotification(input);
 }
 
+/**
+ * Narrow, presentation-only event contract shared by domain producers.
+ *
+ * Producers remain responsible for deciding that a scope, package, business
+ * fact, authorization or review changed.  This consumer deliberately does no
+ * domain calculation: it only turns an already-decided event into one durable
+ * notification and a precise workbench link.  T7 can therefore publish review
+ * events without coupling its promotion/review rules to notifications.
+ */
+export type AgentNotificationDomainEvent = {
+  eventId: string;
+  kind:
+    | 'scope.changed'
+    | 'weekly_package.adjusted'
+    | 'business_information.changed'
+    | 'authorization.required'
+    | 'review.updated';
+  tenantId: string;
+  programId: string;
+  packageId?: string | null;
+  packageVersion?: number | null;
+  taskId?: string | null;
+  entityId: string;
+  title: string;
+  summary: string;
+  sourceAgent: string;
+  changes: AgentNotificationChange[];
+  occurredAt: string;
+};
+
+const DOMAIN_NOTIFICATION_TYPE: Record<AgentNotificationDomainEvent['kind'], AgentNotificationType> = {
+  'scope.changed': 'scope_changed',
+  'weekly_package.adjusted': 'weekly_package_adjusted',
+  'business_information.changed': 'critical_business_change',
+  'authorization.required': 'authorization_required',
+  // The public notification taxonomy remains frozen while T7 is parallel.
+  // Review is a weekly-package lifecycle update, not a second review model.
+  'review.updated': 'weekly_package_adjusted',
+};
+
+function workbenchHref(event: AgentNotificationDomainEvent): string {
+  const query = new URLSearchParams({ page: event.kind === 'scope.changed' ? 'socialInspiration' : 'socialWorkspace', programId: clean(event.programId, 180) });
+  if (event.packageId) query.set('packageId', clean(event.packageId, 180));
+  if (Number.isInteger(event.packageVersion) && Number(event.packageVersion) > 0) query.set('version', String(event.packageVersion));
+  if (event.taskId) query.set('taskId', clean(event.taskId, 180));
+  return `/?${query.toString()}`;
+}
+
+export async function consumeAgentNotificationDomainEvent(event: AgentNotificationDomainEvent) {
+  const eventId = clean(event.eventId, 180);
+  const programId = clean(event.programId, 180);
+  const occurredAt = Date.parse(event.occurredAt);
+  if (!eventId || !programId || !Number.isFinite(occurredAt)) {
+    throw new AgentNotificationError('invalid_notification_domain_event');
+  }
+  return createAgentAdjustmentNotification({
+    tenantId: event.tenantId,
+    eventKey: `domain:${event.kind}:${eventId}`,
+    type: DOMAIN_NOTIFICATION_TYPE[event.kind],
+    severity: event.kind === 'business_information.changed' || event.kind === 'authorization.required' ? 'critical' : 'info',
+    title: event.title,
+    summary: event.summary,
+    sourceAgent: event.sourceAgent,
+    entityType: event.kind === 'scope.changed' ? 'discovery_scope' : event.kind === 'review.updated' ? 'weekly_review' : 'weekly_operating_package',
+    entityId: event.entityId,
+    changes: event.changes,
+    action: {
+      label: event.kind === 'scope.changed' ? '查看发现范围' : event.kind === 'authorization.required' ? '处理授权' : event.kind === 'review.updated' ? '查看复盘任务' : '查看周工作台',
+      page: event.kind === 'scope.changed' ? 'socialInspiration' : 'socialWorkspace',
+      href: workbenchHref(event),
+    },
+  });
+}
+
 async function listTenantRecords(tenantId: string): Promise<StoredNotification[]> {
   const records: StoredNotification[] = [];
   for (let page = 1; page <= 100; page += 1) {

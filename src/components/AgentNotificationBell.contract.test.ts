@@ -10,5 +10,6 @@ assert.match(source, /setInterval\([\s\S]{0,180}10_000/, 'the feed must refresh 
 assert.match(source, /agentNotificationsApi\.read\(item\.id\)/, 'opening a notification must persist read state');
 assert.match(source, /agentNotificationsApi\.readAll/, 'users must be able to mark the feed read');
 assert.match(source, /item\.changes\.slice/, 'critical field differences must be visible in the dropdown');
+assert.match(source, /item\.action\?\.href\?\.startsWith\('\/'\)/, 'notification actions must preserve precise object deep links');
 
 console.log('agent notification bell contract tests passed');

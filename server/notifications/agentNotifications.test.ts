@@ -13,6 +13,7 @@ const {
   AgentNotificationError,
   createAgentNotification,
   createAgentAdjustmentNotification,
+  consumeAgentNotificationDomainEvent,
   listAgentNotifications,
   markAgentNotificationRead,
   markAllAgentNotificationsRead,
@@ -55,6 +56,19 @@ try {
   const storedReads = JSON.parse(readFileSync(path.join(directory, 'agent_notification_reads.json'), 'utf8')) as Array<Record<string, unknown>>;
   assert.equal('read_by' in storedNotifications[0], false, 'notification rows must not contain a concurrently overwritten user map');
   assert.equal(storedReads.length, 3, 'each user/notification read state must be an independent durable object');
+
+  const domainEvent = {
+    eventId: 'review-event-1', kind: 'review.updated' as const, tenantId: 'tenant-a', programId: 'program-1',
+    packageId: 'package-1', packageVersion: 3, taskId: 'task-review', entityId: 'review-1',
+    title: '周复盘已更新', summary: '复盘状态由后端权威对象更新。', sourceAgent: '经营Agent',
+    changes: [{ field: 'status', label: '复盘状态', before: 'in_progress', after: 'completed' }], occurredAt: new Date().toISOString(),
+  };
+  const reviewCreated = await consumeAgentNotificationDomainEvent(domainEvent);
+  const reviewReplay = await consumeAgentNotificationDomainEvent(domainEvent);
+  assert.equal(reviewCreated.created, true);
+  assert.equal(reviewReplay.created, false, 'domain event replay must be idempotent');
+  assert.equal(reviewCreated.notification.action?.href, '/?page=socialWorkspace&programId=program-1&packageId=package-1&version=3&taskId=task-review');
+  assert.equal((await listAgentNotifications('tenant-b', 'user-a')).items.length, 0, 'domain events must retain tenant isolation');
 
   await assert.rejects(() => createAgentAdjustmentNotification({
     tenantId: 'tenant-a', eventKey: 'scope:empty', type: 'scope_changed',

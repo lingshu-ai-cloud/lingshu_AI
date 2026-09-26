@@ -53,9 +53,13 @@ export default function AgentNotificationBell({ onNavigate }: { onNavigate: (pag
 
   const openAction = (item: AgentNotification) => {
     void markRead(item);
+    if (item.action?.href?.startsWith('/')) {
+      window.location.assign(item.action.href);
+      setOpen(false);
+      return;
+    }
     const page = item.action?.page;
     if (page && Object.hasOwn(PAGE_REGISTRY, page)) onNavigate(page as Page);
-    else if (item.action?.href?.startsWith('/')) window.location.assign(item.action.href);
     setOpen(false);
   };
 
@@ -104,4 +108,3 @@ export default function AgentNotificationBell({ onNavigate }: { onNavigate: (pag
     </div>
   );
 }
-
