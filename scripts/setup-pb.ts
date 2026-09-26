@@ -30,6 +30,33 @@ type CollectionSpec = { name: string; fields: Field[]; indexes?: string[] };
 /** Legacy repair definitions, derived from what the route handlers write/read. */
 const COLLECTIONS: CollectionSpec[] = [
   {
+    name: 'social_operating_constraints',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'program_id', type: 'text', required: true },
+      { name: 'constraints_id', type: 'text', required: true }, { name: 'version', type: 'number', required: true, onlyInt: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 8388608 }, { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_operating_constraints_version ON social_operating_constraints (tenant_id, program_id, constraints_id, version)',
+      'CREATE INDEX idx_social_operating_constraints_latest ON social_operating_constraints (tenant_id, program_id, version)',
+    ],
+  },
+  {
+    name: 'social_operating_authority_snapshots',
+    fields: [
+      { name: 'tenant_id', type: 'text', required: true }, { name: 'program_id', type: 'text', required: true },
+      { name: 'snapshot_id', type: 'text', required: true }, { name: 'version', type: 'number', required: true, onlyInt: true },
+      { name: 'status', type: 'text', required: true }, { name: 'input_fingerprint', type: 'text', required: true },
+      { name: 'payload', type: 'json', required: true, maxSize: 8388608 }, { name: 'created_by', type: 'text', required: true },
+      { name: 'created_at', type: 'text', required: true },
+    ],
+    indexes: [
+      'CREATE UNIQUE INDEX idx_social_operating_snapshot_version ON social_operating_authority_snapshots (tenant_id, program_id, snapshot_id, version)',
+      'CREATE INDEX idx_social_operating_snapshot_latest ON social_operating_authority_snapshots (tenant_id, program_id, version)',
+    ],
+  },
+  {
     name: 'social_discovery_scopes',
     fields: [
       { name: 'tenant_id', type: 'text', required: true },

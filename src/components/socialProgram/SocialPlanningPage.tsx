@@ -3,6 +3,8 @@ import { AlertTriangle, CalendarRange, CheckCircle2, Loader2 } from 'lucide-reac
 import type { Page } from '../../pageRegistry';
 import { monthlyPlanActivationIssues, type SocialMonthlyPlan } from '../../../shared/contracts/socialProgram';
 import { useSocialProgram } from '../../contexts/SocialProgramContext';
+import { socialProgramApi } from '../../lib/socialProgramApi';
+import type { OperatingPlanningResolution, SocialOperatingConstraints } from '../../../shared/contracts/socialOperatingDecision';
 import SocialProgramPageFrame from './SocialProgramPageFrame';
 
 const currentMonth = () => new Date().toISOString().slice(0, 7);
@@ -15,12 +17,51 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [lastSaved, setLastSaved] = useState<SocialMonthlyPlan | null>(null);
   const [notice, setNotice] = useState('');
+  const [constraints, setConstraints] = useState<SocialOperatingConstraints | null>(null);
+  const [operatingBusy, setOperatingBusy] = useState(false);
+  const [operatingError, setOperatingError] = useState('');
+  const [resolution, setResolution] = useState<OperatingPlanningResolution | null>(null);
+  const [weekStart, setWeekStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [limits, setLimits] = useState({ weeklyBudgetCny: 1000, costPerOriginalCny: 50, costPerAdaptationCny: 20, materialUnitsPerOriginal: 1, productionItemsPerDay: 5, interactionItemsPerWeek: 260, salesLeadsPerWeek: 52, expectedInteractionsPerPublication: 10, expectedLeadsPerPublication: 2 });
 
   useEffect(() => {
     setSelectedAccounts([]);
     setLastSaved(null);
     setNotice('');
+    setResolution(null);
+    setOperatingError('');
   }, [activeProgram?.programId]);
+
+  useEffect(() => {
+    if (!activeProgram) { setConstraints(null); return; }
+    void socialProgramApi.getOperatingConstraints(activeProgram.programId).then(item => {
+      setConstraints(item);
+      if (item) setLimits({ weeklyBudgetCny: item.weeklyBudgetCny, costPerOriginalCny: item.costPerOriginalCny, costPerAdaptationCny: item.costPerAdaptationCny, materialUnitsPerOriginal: item.materialUnitsPerOriginal, productionItemsPerDay: item.productionItemsPerDay, interactionItemsPerWeek: item.interactionItemsPerWeek, salesLeadsPerWeek: item.salesLeadsPerWeek, expectedInteractionsPerPublication: item.expectedInteractionsPerPublication, expectedLeadsPerPublication: item.expectedLeadsPerPublication });
+    }).catch(error => setOperatingError(error instanceof Error ? error.message : '经营约束读取失败。'));
+  }, [activeProgram?.programId]);
+
+  const saveConstraints = async () => {
+    if (!activeProgram) return;
+    setOperatingBusy(true); setOperatingError('');
+    try {
+      const item = await socialProgramApi.saveOperatingConstraints(activeProgram.programId, {
+        ...limits, expectedVersion: constraints?.version ?? 0,
+        accountWeeklyPublicationCapacity: Object.fromEntries(accounts.map(account => [account.accountId, 5])),
+      });
+      setConstraints(item); setNotice('经营约束已保存为服务端版本化事实。');
+    } catch (error) { setOperatingError(error instanceof Error ? error.message : '经营约束保存失败。'); }
+    finally { setOperatingBusy(false); }
+  };
+
+  const resolveOperatingPlan = async () => {
+    if (!activeProgram) return;
+    setOperatingBusy(true); setOperatingError('');
+    try {
+      const result = await socialProgramApi.resolveOperatingPlan(activeProgram.programId, { weekStart, ...(resolution ? { expectedSnapshotVersion: resolution.snapshot.version } : {}), requestedReferenceMode: 'auto' });
+      setResolution(result.item); setNotice('已从企业事实、真实账号、转化入口和能力状态生成权威快照。');
+    } catch (error) { setOperatingError(error instanceof Error ? error.message : '经营编排失败。'); }
+    finally { setOperatingBusy(false); }
+  };
 
   const activationIssues = useMemo(() => activeProgram ? monthlyPlanActivationIssues(activeProgram) : [], [activeProgram]);
   const toggleAccount = (accountId: string) => setSelectedAccounts(current => current.includes(accountId)
@@ -84,6 +125,18 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
           <button type="button" onClick={() => onNavigate('socialAccounts')} className="btn-ghost">返回账号矩阵</button>
         </div>
       </form>
+
+      <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
+        <h2 className="text-lg font-bold">服务端经营编排</h2>
+        <p className="mt-1 text-sm text-text-muted">这里只保存预算和承接上限等原始约束；就绪、产能分配和自动化门槛由服务端重新计算。</p>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {Object.entries(limits).map(([key, value]) => <label key={key} className="space-y-1 text-xs font-medium text-text-secondary">{key}<input type="number" min="0" step="any" value={value} onChange={event => setLimits(current => ({ ...current, [key]: Number(event.target.value) }))} className="ui-field" /></label>)}
+          <label className="space-y-1 text-xs font-medium text-text-secondary">周起始日<input type="date" value={weekStart} onChange={event => setWeekStart(event.target.value)} className="ui-field" /></label>
+        </div>
+        {operatingError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{operatingError}</p>}
+        <div className="mt-5 flex flex-wrap gap-2"><button type="button" onClick={() => void saveConstraints()} disabled={operatingBusy || !accounts.length} className="btn-ghost">保存容量事实</button><button type="button" onClick={() => void resolveOperatingPlan()} disabled={operatingBusy || !constraints} className="btn-primary">{operatingBusy ? '编排中…' : '生成权威规划快照'}</button></div>
+        {resolution && <div className="mt-5 rounded-lg bg-surface-2 p-4 text-sm"><p className="font-bold">快照 v{resolution.snapshot.version} · {resolution.snapshot.status}</p><p className="mt-2 text-text-secondary">目标 {resolution.goal.status} · 产能 {resolution.capacityPlan.status} / {resolution.capacityPlan.publicationQuota} 条 · 自动化 {resolution.automationPolicy.status} · 参考模式 {resolution.referenceMode.status}</p><p className="mt-2 break-all text-xs text-text-muted">周包应引用 operating_authority_snapshot:{resolution.snapshot.snapshotId}:v{resolution.snapshot.version}</p>{resolution.snapshot.invalidations.length > 0 && <p className="mt-2 text-amber-800">需处理 {resolution.snapshot.invalidations.length} 条旧快照/周包失效信息。</p>}</div>}
+      </section>
 
       <section className="rounded-xl border border-dashed border-border-bright bg-white p-5 sm:p-6"><h2 className="text-lg font-bold">周计划</h2><p className="mt-2 text-sm leading-6 text-text-muted">周内容任务必须绑定当前活动月计划、真实账号、CTA、产品营销档案和事实来源。当前页面不会在这些输入缺失时生成占位任务；周计划编辑器将在后续里程碑接入。</p></section>
     </SocialProgramPageFrame>

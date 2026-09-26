@@ -447,6 +447,8 @@ function packageFromInput(args: {
     planningBlockers: workflow.blockers,
     capacityPlanRef: capacity?.ref ?? null,
     automationPolicyRef: policy?.ref ?? null,
+    operatingDecisionSnapshotRef: versionedRef(args.input.operatingDecisionSnapshotRef),
+    referenceModeRef: versionedRef(args.input.referenceModeRef),
     discoveryBudgetCny: finiteBudget(args.input.discoveryBudgetCny),
     socialContentPackage: contentPackage,
     successCriteria: uniqueText(args.input.successCriteria),
@@ -564,6 +566,59 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     return { input: { ...input, businessContentGoal: goal, capacityPlan: capacity, automationPolicy: policy }, goal, capacity, policy };
   }
 
+  async function withAuthoritativeDecisions(
+    tenantId: string,
+    programId: string,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (input.businessContentGoal || input.capacityPlan || input.automationPolicy) {
+      throw new SocialProgramError('client_authority_forbidden', 400, '周包不接受客户端提交的目标、容量或自动化结果。');
+    }
+    const snapshotRef = versionedRef(input.operatingDecisionSnapshotRef);
+    if (!snapshotRef) return input;
+    if (snapshotRef.type !== 'operating_authority_snapshot') throw new SocialProgramError('operating_snapshot_ref_invalid', 400, '经营编排快照引用类型无效。');
+    const snapshot = await operatingRepository.getSnapshot(tenantId, programId, snapshotRef.id, snapshotRef.version);
+    if (!snapshot) throw new SocialProgramError('operating_snapshot_not_found', 404, '经营编排快照不存在。');
+    if (snapshot.status === 'blocked') throw new SocialProgramError('operating_snapshot_blocked', 409, '经营编排快照尚未就绪，不能生成权威周包。');
+    const goalRef = snapshot.businessContentGoalRef;
+    const goal = await operatingRepository.getGoal(tenantId, programId, goalRef.id, goalRef.version);
+    if (!goal) throw new SocialProgramError('business_goal_not_found', 404, '经营目标不存在。');
+    const [capacityDecision, policyDecision] = await Promise.all([
+      operatingRepository.getOperatingDecision<CapacityPlan>(tenantId, programId, snapshot.capacityPlanRef.id),
+      operatingRepository.getOperatingDecision<AutomationPolicyResolution>(tenantId, programId, snapshot.automationPolicyRef.id),
+    ]);
+    if (!capacityDecision || !policyDecision) throw new SocialProgramError('operating_decision_missing', 503, '经营编排快照缺少决策记录。');
+    const capacity: WeeklyCapacitySnapshot = {
+      ref: snapshot.capacityPlanRef,
+      status: capacityDecision.output.status === 'blocked' ? 'blocked' : 'ready',
+      originalContentTarget: capacityDecision.output.originalContentQuota,
+      accountPlans: capacityDecision.output.accountQuotas.filter(item => item.publicationQuota > 0).map(item => ({ accountId: item.accountId, publicationCount: item.publicationQuota })),
+      productionBudgetCny: goal.weeklyBudgetCny,
+      blockers: capacityDecision.blockers.map(item => item.code),
+    };
+    const policy: WeeklyAutomationPolicySnapshot = {
+      ref: snapshot.automationPolicyRef,
+      status: policyDecision.output.status === 'blocked' ? 'blocked' : 'ready',
+      blockers: policyDecision.blockers.map(item => item.code),
+    };
+    return {
+      ...input,
+      // These allocation fields are projections of the persisted resolver
+      // output. Never let same-request values shadow the authority snapshot.
+      accountPlans: undefined,
+      originalContentTarget: undefined,
+      weeklyBudgetCny: undefined,
+      enterpriseProfileRef: snapshot.enterprise.ref,
+      businessContentGoalRef: goalRef,
+      capacityPlanRef: snapshot.capacityPlanRef,
+      automationPolicyRef: snapshot.automationPolicyRef,
+      businessContentGoal: goal,
+      capacityPlan: capacity,
+      automationPolicy: policy,
+      referenceModeRef: snapshot.referenceModeRef,
+    };
+  }
+
   return {
     async list(tenantId: string, programId: string, weekStart?: string): Promise<WeeklyOperatingPackage[]> {
       await programRow(dataStore, tenantId, programId);
@@ -584,6 +639,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       rejectClientAuthorityObjects(input);
       const program = await programRow(dataStore, tenantId, programId);
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
+      input = await withAuthoritativeDecisions(tenantId, programId, input);
       input = (await withAuthoritativePlanning(tenantId, programId, input)).input;
       const item = packageFromInput({
         input, programId, userId, accounts, program: program.payload,
@@ -612,6 +668,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         businessContentGoalRef: current.payload.businessContentGoalRef,
         capacityPlanRef: current.payload.capacityPlanRef,
         automationPolicyRef: current.payload.automationPolicyRef,
+        operatingDecisionSnapshotRef: current.payload.operatingDecisionSnapshotRef,
+        referenceModeRef: current.payload.referenceModeRef,
         originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
         weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,
         perItemBudgetCny: current.payload.socialContentPackage.perItemBudgetCny,
@@ -627,7 +685,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         }, []),
         ...input,
       };
-      const resolved = await withAuthoritativePlanning(tenantId, programId, merged);
+      const orchestrated = await withAuthoritativeDecisions(tenantId, programId, merged);
+      const resolved = await withAuthoritativePlanning(tenantId, programId, orchestrated);
       const item = packageFromInput({
         input: resolved.input, programId, userId, accounts, program: program.payload,
         packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,

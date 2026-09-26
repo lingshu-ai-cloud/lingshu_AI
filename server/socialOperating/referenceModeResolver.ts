@@ -31,11 +31,13 @@ export function resolveReferenceMode(input: ReferenceModeInput, options: Operati
   if (input.goal.status !== 'ready') blockers.push({ code: 'business_goal_not_ready', field: 'goal.status', message: '经营目标未就绪。', recoverable: true });
   if (!['ordinary_inspiration', 'high_fidelity', 'auto'].includes(input.requestedMode)) blockers.push({ code: 'invalid_or_unknown_input', field: 'requestedMode', message: '未知参考模式，已失败关闭。', recoverable: true });
   if (input.productionCapability !== 'available') blockers.push({ code: 'capability_unavailable', field: 'productionCapability', message: '生产能力不可用或状态未知。', recoverable: true });
-  if (input.referenceRights !== 'authorized') blockers.push({ code: 'rights_insufficient', field: 'referenceRights', message: '参考内容权利不足或未知。', recoverable: true });
   if (input.estimatedCostCny === null || input.remainingBudgetCny === null || !Number.isFinite(input.estimatedCostCny) || !Number.isFinite(input.remainingBudgetCny) || input.estimatedCostCny < 0 || input.remainingBudgetCny < 0) {
     blockers.push({ code: 'invalid_or_unknown_input', field: 'budget', message: '成本或剩余预算未知/无效。', recoverable: true });
   } else if (input.estimatedCostCny > input.remainingBudgetCny) blockers.push({ code: 'budget_exceeded', field: 'remainingBudgetCny', message: '参考生产成本超过剩余预算。', recoverable: true });
   const wantsHighFidelity = input.requestedMode === 'high_fidelity' || (input.requestedMode === 'auto' && input.exactAnalysis === 'available');
+  if ((wantsHighFidelity && input.referenceRights !== 'authorized') || (!wantsHighFidelity && input.referenceRights === 'unknown')) {
+    blockers.push({ code: 'rights_insufficient', field: 'referenceRights', message: '参考内容权利不足或未知。', recoverable: true });
+  }
   if (wantsHighFidelity && input.exactAnalysis !== 'available') blockers.push({ code: 'exact_analysis_required', field: 'exactAnalysis', message: '高保真模式必须有可用的精确分析。', recoverable: true });
   const degraded = !blockers.length && input.requestedMode === 'auto' && input.exactAnalysis !== 'available';
   const productMode = blockers.length ? null : wantsHighFidelity ? 'high_fidelity' : 'ordinary_inspiration';

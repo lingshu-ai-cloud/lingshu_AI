@@ -126,3 +126,95 @@ export interface EnterpriseOperatingChange {
   previous: EnterpriseOperatingInput;
   next: EnterpriseOperatingInput;
 }
+
+export type OperatingCapabilityKey = 'studio.production' | 'publishing.calendar' | 'customer.attribution';
+export type OperatingCapabilityState = 'available' | 'unavailable' | 'unknown';
+
+/**
+ * Operator-maintained numeric constraints. These are facts/limits, not planner
+ * results: callers cannot submit readiness, a capacity result, or an automation
+ * policy through this contract.
+ */
+export interface SocialOperatingConstraints {
+  constraintsId: string;
+  programId: string;
+  version: number;
+  weeklyBudgetCny: number;
+  costPerOriginalCny: number;
+  costPerAdaptationCny: number;
+  materialUnitsPerOriginal: number;
+  productionItemsPerDay: number;
+  interactionItemsPerWeek: number;
+  salesLeadsPerWeek: number;
+  expectedInteractionsPerPublication: number;
+  expectedLeadsPerPublication: number;
+  accountWeeklyPublicationCapacity: Record<string, number>;
+  sourceRefs: VersionedSocialRef[];
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface OperatingAuthoritySnapshot {
+  snapshotId: string;
+  programId: string;
+  version: number;
+  status: 'ready' | 'degraded' | 'blocked';
+  programRef: VersionedSocialRef;
+  enterprise: EnterpriseOperatingInput;
+  accountRefs: VersionedSocialRef[];
+  conversionRouteRefs: VersionedSocialRef[];
+  constraintsRef: VersionedSocialRef | null;
+  capabilityStates: Record<OperatingCapabilityKey, OperatingCapabilityState>;
+  capabilitySourceRefs: Record<OperatingCapabilityKey, VersionedSocialRef[]>;
+  businessContentGoalRef: VersionedSocialRef;
+  capacityPlanRef: VersionedSocialRef;
+  automationPolicyRef: VersionedSocialRef;
+  referenceModeRef: VersionedSocialRef;
+  decisionRefs: VersionedSocialRef[];
+  impacts: DecisionImpact[];
+  invalidations: Array<{
+    ref: VersionedSocialRef;
+    reason: string;
+    handling: 'new_work_only' | 'review_required';
+  }>;
+  inputFingerprint: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface OperatingPlanningRequest {
+  weekStart: string;
+  desiredOriginalContents?: number;
+  desiredAdaptations?: number;
+  referenceSelectionRef?: VersionedSocialRef | null;
+  requestedReferenceMode?: 'ordinary_inspiration' | 'high_fidelity' | 'auto';
+  expectedSnapshotVersion?: number;
+}
+
+export interface OperatingPlanningResolution {
+  snapshot: OperatingAuthoritySnapshot;
+  goal: BusinessContentGoal;
+  capacityPlan: {
+    status: 'ready' | 'degraded' | 'blocked';
+    originalContentQuota: number;
+    adaptationQuota: number;
+    publicationQuota: number;
+    accountQuotas: Array<{ accountId: string; publicationQuota: number }>;
+    estimatedCostCny: number;
+    limitingFactors: string[];
+  };
+  automationPolicy: {
+    status: 'allowed' | 'approval_required' | 'blocked';
+    mode: 'suggest' | 'collaborate' | 'managed' | null;
+    action: 'draft';
+    humanGate: 'none' | 'review' | 'approve_each' | 'bounded_authorization' | 'human_only' | 'blocked';
+    automaticExecutionAllowed: boolean;
+    authorizationIssue: string | null;
+  };
+  referenceMode: {
+    status: 'ready' | 'degraded' | 'blocked';
+    mode: 'multi_source_hybrid' | 'single_source_fidelity' | 'account_format_series' | null;
+    productMode: 'ordinary_inspiration' | 'high_fidelity' | null;
+    mayEnterProduction: boolean;
+  };
+}

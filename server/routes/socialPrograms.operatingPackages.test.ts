@@ -89,6 +89,27 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/overseas/social-programs/${program.programId}`;
 
+  const emptyConstraints = await fetch(`${base}/operating-constraints`);
+  assert.equal(emptyConstraints.status, 200);
+  assert.equal((await emptyConstraints.json()).item, null);
+  const savedConstraints = await fetch(`${base}/operating-constraints`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      expectedVersion: 0, weeklyBudgetCny: 1000, costPerOriginalCny: 50, costPerAdaptationCny: 20,
+      materialUnitsPerOriginal: 1, productionItemsPerDay: 5, interactionItemsPerWeek: 100,
+      salesLeadsPerWeek: 20, expectedInteractionsPerPublication: 5, expectedLeadsPerPublication: 1,
+      accountWeeklyPublicationCapacity: {}, ready: true, policy: { automaticExecutionAllowed: true },
+    }),
+  });
+  assert.equal(savedConstraints.status, 201);
+  const resolvedResponse = await fetch(`${base}/operating-plan/resolve`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ weekStart: '2026-10-05', ready: true, capacityPlan: { publicationQuota: 999 }, automationPolicy: { automaticExecutionAllowed: true } }),
+  });
+  assert.equal(resolvedResponse.status, 201);
+  const resolved = await resolvedResponse.json();
+  assert.equal(resolved.item.snapshot.status, 'blocked', 'missing server authorities must fail closed despite forged client readiness');
+  assert.deepEqual(Object.keys(resolved.weeklyAuthority), ['operatingDecisionSnapshotRef']);
+
   const createdResponse = await fetch(`${base}/operating-packages`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ weekStart: '2026-10-05', objective: '路由闭环', successCriteria: ['接口可用'] }),

@@ -167,6 +167,8 @@ export interface WeeklyOperatingPackage {
   planningBlockers: string[];
   capacityPlanRef: VersionedSocialRef | null;
   automationPolicyRef: VersionedSocialRef | null;
+  operatingDecisionSnapshotRef?: VersionedSocialRef | null;
+  referenceModeRef?: VersionedSocialRef | null;
   discoveryBudgetCny: number | null;
   socialContentPackage: SocialWeeklyContentPackage;
   successCriteria: string[];
