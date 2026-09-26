@@ -910,6 +910,14 @@ export function deterministicClosedWorldStoryboard(input: {
   }).join('\n\n');
 }
 
+export function directorVisualEvidence(assets: AssetCandidate[]): string {
+  return assets.slice(0, 8).map(asset => {
+    const clips = evidenceClips(asset);
+    const windows = clips.slice(0, 12).map(clip => `${clip.start.toFixed(2)}–${Number.isFinite(clip.end) ? clip.end.toFixed(2) : '静态'} 秒：${clip.observations.join('；')}`).join(' | ');
+    return `${asset.name}（${asset.type}；原片 ${asset.duration.toFixed(2)} 秒；可用证据片段 ${clips.length}）：${windows || '尚无通过复核的视觉片段，不可据此编写具体画面'}`;
+  }).join('\n');
+}
+
 type GeneratedScript = { script: string; source: 'llm' | 'deterministic_closed_world_fallback'; degradedReason: string };
 
 export async function generateScript(input: {
@@ -919,7 +927,7 @@ export async function generateScript(input: {
   const facts = productFacts(input.profile, input.config, input.productId);
   const reference = input.route === 'clone' ? referenceStructure(input.reference) : null;
   const referenceSummary = reference ? JSON.stringify(reference.structure).slice(0, 8_000) : '';
-  const materialEvidence = input.assets.slice(0, 8).map(asset => `${asset.name}：${asset.observations.join('；')}`).join('\n');
+  const materialEvidence = directorVisualEvidence(input.assets);
   const brief = normalizeVideoPlan(input.contentOrder?.videoPlan || input.config.videoDefaults || {});
   const lines = await generateNarration({ facts, theme: input.contentOrder?.theme?.label || input.goal.objective, audience: brief.matrix?.audience || input.config.customerProfile,
     language: brief.language, duration: brief.duration, cta: input.contentOrder?.cta || '引导买家讨论当前问题，不承诺额外服务',
@@ -957,6 +965,7 @@ ${scriptCreativeModeRule(input.route)}
 3. 不知道素材具体画面时，保守写“展示已上传产品素材中的实际可见主体”，不得自行补出旋转瓶身、扫码、标签特写、邮件界面等动作。
 4. 产品资料中的文本事实不等于素材中肉眼可见；台词可引用已确认事实，但画面仍只能写素材观察已确认的内容。
 5. 展示设备视频不证明性能或兼容性通过测试；产品事实未明确验证时，不得使用“已验证兼容”“兼容性已验证”等结论，应邀请工程师按具体需求核实。
+6. 每个视频片段只能按其实际时间范围使用一次，不能把同一短片重复描述成不同动作；分镜累计时长超过可用片段总长时，应在画面写“待补拍真实素材”，不得虚构长镜头。静态图片只有在明确进入制作素材池时才可持续展示。
 
 ${usesDigitalPresenter(brief) ? `成片画面安排：${presentationScenes(brief, lines.length).map((scene, i) => `第${i + 1}镜：${scene.source === 'avatar' ? '数字人面对镜头口播，不插入产品实拍' : `产品素材 ${scene.materialId ? input.assets.find(asset => asset.id === scene.materialId)?.name || '指定素材缺失' : '按已选素材事实匹配'}`}`).join('；')}。逐镜遵守，不增加或替换画面来源。素材段沿用同一数字人声音作为画外音。` : '成片画面全部使用已授权产品素材，不出现生成的数字人。'}
 口播已经确认，不得改写、翻译或删减。恰好 ${lines.length} 段，时间线从 0 到 ${brief.duration} 秒连续。逐段口播与时间：

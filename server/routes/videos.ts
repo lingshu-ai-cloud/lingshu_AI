@@ -4887,14 +4887,14 @@ async function downloadTikTokVideoViaApify(sourceUrl: string, tenantId?: string,
     shouldDownloadMusicCovers: false,
     shouldDownloadMusic: false,
   };
-  const runUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?clean=true&token=${encodeURIComponent(token)}`;
+  const runUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?clean=true`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(budget.remaining(), Number(process.env.APIFY_VIDEO_TIMEOUT_MS || 180_000)));
   try {
     const r = await fetch(runUrl, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(input),
     });
     const text = await r.text();
@@ -4937,7 +4937,9 @@ async function downloadYouTubeVideoViaApify(sourceUrl: string, tenantId?: string
   }, Math.min(budget.remaining(), Number(process.env.APIFY_YOUTUBE_VIDEO_TIMEOUT_MS || 300_000)), 'YouTube video');
   const videoUrl = String(rows[0]?.downloadedFileUrl || '').trim();
   if (!videoUrl) throw new Error('Apify did not return a downloaded YouTube video URL');
-  const videoRes = await fetch(`${videoUrl}${videoUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`, {
+  const videoHost = new URL(videoUrl).hostname.toLowerCase();
+  const videoRes = await fetch(videoUrl, {
+    headers: videoHost === 'api.apify.com' || videoHost === 'api.apifyusercontent.com' ? { Authorization: `Bearer ${token}` } : undefined,
     signal: AbortSignal.timeout(Math.min(budget.remaining(), Number(process.env.APIFY_YOUTUBE_FILE_TIMEOUT_MS || 120_000))),
   });
   if (!videoRes.ok) throw new Error(`Apify YouTube video download HTTP ${videoRes.status}`);
@@ -5047,10 +5049,10 @@ async function runApifyActorDatasetItems(actor: string, input: Record<string, un
   const token = process.env.APIFY_TOKEN?.trim();
   if (!token) throw new Error('APIFY_TOKEN is not configured');
   const deadline = Date.now() + Math.max(1, timeoutMs);
-  const startUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/runs?token=${encodeURIComponent(token)}`;
+  const startUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/runs`;
   const start = await apifyJsonRequest(startUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
   }, deadline, `${label} start`);
   const startRecord = asRecord(start);
@@ -5065,8 +5067,8 @@ async function runApifyActorDatasetItems(actor: string, input: Record<string, un
     if (Date.now() >= deadline) throw new Error(`Apify ${label} timed out while waiting for run ${runId}`);
     await delay(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())));
     const current = await apifyJsonRequest(
-      `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
-      { method: 'GET' },
+      `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}`,
+      { method: 'GET', headers: { Authorization: `Bearer ${token}` } },
       deadline,
       `${label} poll`,
     );
@@ -5077,8 +5079,8 @@ async function runApifyActorDatasetItems(actor: string, input: Record<string, un
   if (status !== 'SUCCEEDED') throw new Error(`Apify ${label} run ${runId} ended with status ${status}`);
 
   const items = await apifyJsonRequest(
-    `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?clean=true&token=${encodeURIComponent(token)}`,
-    { method: 'GET' },
+    `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?clean=true`,
+    { method: 'GET', headers: { Authorization: `Bearer ${token}` } },
     deadline,
     `${label} dataset`,
   );

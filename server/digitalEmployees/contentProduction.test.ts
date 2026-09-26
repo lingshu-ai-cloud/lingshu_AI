@@ -14,6 +14,7 @@ import {
   listTenantContentProjects,
   contentProjectBlockIsSemanticallyUnchanged,
   deterministicClosedWorldStoryboard,
+  directorVisualEvidence,
   buildRouteSourcePlans,
   containsInternalContentMarker,
   contentFingerprint,
@@ -77,6 +78,14 @@ const asset = (partial: Partial<AssetCandidate> & Pick<AssetCandidate, 'id' | 'n
   authorization: { status: 'owned', scope: 'tenant', evidence: '当前租户上传' }, synthetic: false, tags: [], source: 'enterprise_product',
   ...partial,
 });
+const shortVideo = asset({ id: 'short-nail-drill', name: '授权美甲打磨机录屏', type: 'video', duration: 4.85,
+  segments: [{ start: 0, end: 2.5, confidence: 0.92, needsReview: false, observedFacts: ['人物在工厂画面中'] },
+    { start: 3, end: 4, confidence: 0.9, needsReview: false, observedFacts: ['可见手持打磨笔'] },
+    { start: 4, end: 4.7, confidence: 0.4, needsReview: true, observedFacts: ['未经确认的细节'] }],
+});
+assert.match(directorVisualEvidence([shortVideo]), /0\.00–2\.50 秒：人物在工厂画面中/);
+assert.match(directorVisualEvidence([shortVideo]), /3\.00–4\.00 秒：可见手持打磨笔/);
+assert.doesNotMatch(directorVisualEvidence([shortVideo]), /未经确认的细节/);
 
 const balanced = allocateBalancedContentRoutes({
   count: 6,
