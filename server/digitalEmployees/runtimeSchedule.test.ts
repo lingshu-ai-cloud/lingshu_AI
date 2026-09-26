@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, reviewScheduleFromCadence, socialScheduleFromCadence } from './runtimeSchedule.js';
+import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, reviewScheduleFromCadence, socialKeywordsFromCadence, socialScheduleFromCadence } from './runtimeSchedule.js';
 
 const social = socialScheduleFromCadence('YouTube、TikTok、Instagram、Facebook；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天');
 assert.equal(social.cronExpr, '0 9 * * *');
@@ -8,6 +8,8 @@ assert.deepEqual(social.platforms, ['youtube', 'tiktok', 'instagram', 'facebook'
 assert.equal(social.limit, 20);
 assert.equal(social.dateWindowDays, 7);
 assert.equal(social.dedupeWindowDays, 30);
+assert.equal(socialKeywordsFromCadence('TikTok；公开行业关键词：nail drill、electric nail file；近 7 天', '旧产品'), 'nail drill、electric nail file');
+assert.equal(socialKeywordsFromCadence('TikTok；近 7 天', '美甲打磨机'), '美甲打磨机');
 
 const weekdaySocial = socialScheduleFromCadence('工作日 08:15，Instagram，每次最多 12 条，回看 3 天');
 assert.equal(weekdaySocial.cronExpr, '15 8 * * *');

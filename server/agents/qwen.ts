@@ -395,6 +395,14 @@ Schema:
 }
 
 /** Small, grounded contract for reusable footage, independent of viral-reference scoring. */
+export function parseMaterialFramesJson(raw: string): { segments: unknown[] } {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { throw Error('素材分析返回格式无效，请重试'); }
+  const segments = Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as { segments?: unknown }).segments : undefined;
+  if (!Array.isArray(segments)) throw Error('素材分析没有返回可用时间区间');
+  return { segments };
+}
 export async function analyzeMaterialFramesWithQwen(opts: {
   frames: Array<{ base64: string; mimeType: string; timeLabel: string }>; duration: number;
 }): Promise<unknown> {
@@ -411,7 +419,7 @@ export async function analyzeMaterialFramesWithQwen(opts: {
   }, {signal: AbortSignal.timeout(120000), maxRetries:0});
   if (completion.choices[0]?.finish_reason === 'length') throw Error('素材分析输出被截断，请分段分析');
   const raw = completion.choices[0]?.message?.content || '';
-  try { return JSON.parse(raw); } catch { throw Error('素材分析返回格式无效，请重试'); }
+  return parseMaterialFramesJson(raw);
 }
 
 export async function verifyMaterialFramesWithQwen(opts: {
@@ -424,5 +432,5 @@ export async function verifyMaterialFramesWithQwen(opts: {
     response_format:{type:'json_object'},max_tokens:2400,
   },{signal:AbortSignal.timeout(120000),maxRetries:0});
   if(completion.choices[0]?.finish_reason==='length') throw Error('素材事实复核被截断，请重试');
-  try { return JSON.parse(completion.choices[0]?.message?.content || ''); } catch {throw Error('素材事实复核格式无效');}
+  return parseMaterialFramesJson(completion.choices[0]?.message?.content || '');
 }

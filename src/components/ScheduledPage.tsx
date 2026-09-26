@@ -781,6 +781,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       ...task.config,
       ...patch,
       keywords: (patch.keywords ?? task.config.keywords ?? task.config.keyword ?? '').trim(),
+      keywordInput: keywordPatchProvided ? String(patch.keywords || '').trim() : (task.config.keywordInput || ''),
       keywordSource: keywordPatchProvided
         ? (String(patch.keywords || '').trim() ? 'explicit' : 'business_profile')
         : (task.config.keywordSource || 'business_profile'),

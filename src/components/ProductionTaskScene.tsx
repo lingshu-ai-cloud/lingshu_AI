@@ -46,12 +46,13 @@ function ProgressIcon({ state }: { state: ProgressState }) {
 }
 
 /** The same production scene is rendered in Content Creation and Smart Operations. */
-export default function ProductionTaskScene({ runId, taskId, embedded = false }: {
+export default function ProductionTaskScene({ runId, taskId, embedded = false, onOpenDraft }: {
   runId: string;
   taskId: string;
   initialExpanded?: boolean;
   directorContext?: { taskKey?: string; entityId?: string; contentId?: string; referenceId?: string };
   embedded?: boolean;
+  onOpenDraft?: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState('');
@@ -102,7 +103,7 @@ export default function ProductionTaskScene({ runId, taskId, embedded = false }:
         <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-black">{selected.label}</p><p className="mt-1 text-xs text-text-muted">只展示与成片直接相关的进度</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-bold text-text-secondary">{selectedState === 'complete' ? '已完成' : selectedState === 'current' ? '生成中' : selectedState === 'failed' ? '需重试' : '等待中'}</span></div>
         <ol className="mt-5 space-y-3">{progress.map(item => <li key={item.id} className="rounded-xl border border-border p-3"><div className="flex items-center gap-2"><ProgressIcon state={item.state}/><p className="text-xs font-black">{item.label}</p><span className="ml-auto text-[10px] text-text-muted">{item.state === 'complete' ? '完成' : item.state === 'current' ? '生成中' : item.state === 'failed' ? '失败' : '等待'}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{item.detail}</p></li>)}</ol>
         {task?.blocker_reason && <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{task.blocker_reason}</p>}
-        {task?.blocker_reason && snapshot?.stage !== 'cancelled' && snapshot?.link?.page === 'smartAssets' && <button type="button" onClick={() => dispatchDigitalEmployeeDeepLink(snapshot.link!)} className="mt-3 w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-xs font-bold text-white">打开关联内容草稿，确认或替换分镜素材</button>}
+        {task?.blocker_reason && snapshot?.stage !== 'cancelled' && snapshot?.link?.page === 'smartAssets' && <button type="button" onClick={onOpenDraft || (() => dispatchDigitalEmployeeDeepLink(snapshot.link!))} className="mt-3 w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-xs font-bold text-white">打开关联内容草稿，确认或替换分镜素材</button>}
         {error && <p role="alert" className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">{error}</p>}
         <div className="mt-5 flex items-center gap-2 rounded-xl bg-surface-2 p-3 text-xs text-text-secondary"><Volume2 size={15}/><span>脚本、字幕和口播会随任务自动更新。</span></div>
       </aside>

@@ -3913,14 +3913,14 @@ async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', d
   // Fetch a small candidate window so a video-only task with limit=1 does not
   // persist the first slideshow and then fail forever in the video downloader.
   const input = buildApifyTikTokInput(keyword, Math.max(limit * 5, 5), dateFrom, dateTo);
-  const runUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?clean=true&token=${encodeURIComponent(token)}`;
+  const runUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?clean=true`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Number(process.env.APIFY_TIMEOUT_MS || 120_000));
   try {
     const r = await fetch(runUrl, {
       method: 'POST',
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(input),
     });
     const text = await r.text();
@@ -3936,7 +3936,7 @@ async function crawlTikTokApify(keyword: string, limit: number, dateFrom = '', d
   }
 }
 
-function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', dateTo = ''): Record<string, unknown> {
+export function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', dateTo = ''): Record<string, unknown> {
   const raw = keyword.trim();
   const account = tiktokUsername(raw);
   const videoId = tiktokVideoId(raw);
@@ -3955,8 +3955,11 @@ function buildApifyTikTokInput(keyword: string, limit: number, dateFrom = '', da
     input.postURLs = [raw];
   } else if (account) {
     input.profiles = [account];
-  } else {
+  } else if (raw.startsWith('#')) {
     input.hashtags = [cleanKeyword];
+  } else {
+    input.searchQueries = [cleanKeyword];
+    input.searchSection = '/video';
   }
   if (hasDateRange(dateFrom, dateTo)) {
     input.oldestPostDate = dateFrom || undefined;

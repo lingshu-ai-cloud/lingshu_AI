@@ -1540,6 +1540,11 @@ schedulerRouter.put('/:id', (req: Request, res: Response) => {
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const nextIsCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(nextTaskType);
   const mergedConfig = { ...current.config, ...(req.body.config ?? {}) };
+  if (nextTaskType === 'video_keyword_crawl' && req.body.config?.keywords !== undefined
+    && req.body.config.keywordSource === 'explicit'
+    && String(req.body.config.keywords).trim() !== String(current.config.keywords || '').trim()) {
+    mergedConfig.keywordInput = String(req.body.config.keywords).trim();
+  }
   if (['video_keyword_crawl', 'image_post_crawl'].includes(nextTaskType)) {
     const platform = resolveCrawlerPlatform(mergedConfig.platforms, current.config.platforms || 'youtube');
     const keywordReview = normalizeKeywordInput(String(mergedConfig.keywords || mergedConfig.keyword || ''), platform as KeywordPlatform);

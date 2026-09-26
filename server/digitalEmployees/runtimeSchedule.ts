@@ -60,6 +60,11 @@ export function socialScheduleFromCadence(value: string): SocialCadenceSchedule 
   return socialScheduleFromPolicy(parseSocialCadence(value));
 }
 
+export function socialKeywordsFromCadence(value: string, fallback: string): string {
+  const explicit = value.match(/(?:^|[；;\n])\s*(?:公开行业)?关键词\s*[:：]\s*([^；;\n]+)/)?.[1]?.trim();
+  return explicit || fallback;
+}
+
 export function reviewScheduleFromPolicy(policy: ReviewCadencePolicy): ReviewCadenceSchedule | null {
   if (!/(?:周|星期)[一二三四五六日天]/.test(policy.raw) && !/每天|每日/.test(policy.raw)) return null;
   const { hour, minute } = timeParts(policy.time, { hour: 17, minute: 30 });

@@ -54,7 +54,7 @@ import {
   type VisibleDigitalEmployeeAgentRole as VisibleAgentRole,
 } from '../digitalEmployees/agentRoles.js';
 import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type PublishingApprovalPackage } from '../digitalEmployees/publishingExecution.js';
-import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
+import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialKeywordsFromCadence, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
 import {
@@ -344,12 +344,22 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
     await store.update(COLLECTION.contentBatchPlans, existing.id, patch);
     return { record: { ...existing, ...patch }, created: false, draft: effectiveDraft };
   }
-  const record = await requiredCreate<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, {
-    tenant_id: input.tenantId, goal_id: input.goal.id, plan_id: input.run.plan_id, run_id: input.run.id, task_id: input.task.id,
-    status: effectiveDraft.status, orders: effectiveDraft.orders, routing: { blocker: effectiveDraft.blocker, coverage: effectiveDraft.coverage, eligibleRoutes: effectiveDraft.eligibleRoutes, disabledRoutes: effectiveDraft.disabledRoutes },
-    config_version: Number(planBody.configVersion || 1), policy_version: String(planBody.policyVersion || 'unknown'), facts_version: String(knowledgeBinding.factsVersion || 'unknown'),
-    created_at: now, updated_at: now,
-  });
+  let record: ContentBatchPlanRecord;
+  try {
+    record = await requiredCreate<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, {
+      tenant_id: input.tenantId, goal_id: input.goal.id, plan_id: input.run.plan_id, run_id: input.run.id, task_id: input.task.id,
+      status: effectiveDraft.status, orders: effectiveDraft.orders, routing: { blocker: effectiveDraft.blocker, coverage: effectiveDraft.coverage, eligibleRoutes: effectiveDraft.eligibleRoutes, disabledRoutes: effectiveDraft.disabledRoutes },
+      config_version: Number(planBody.configVersion || 1), policy_version: String(planBody.policyVersion || 'unknown'), facts_version: String(knowledgeBinding.factsVersion || 'unknown'),
+      created_at: now, updated_at: now,
+    });
+  } catch (error) {
+    // The HTTP start path and the runtime worker may prepare this task at once.
+    // Keep the record that won the tenant/task uniqueness race.
+    if (!/validation_not_unique/.test(String(error))) throw error;
+    const winner = await first<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { tenant_id: input.tenantId, task_id: input.task.id });
+    if (!winner || winner.run_id !== input.run.id || winner.status !== 'planned') throw error;
+    return { record: winner, created: false, draft: effectiveDraft };
+  }
   return { record, created: true, draft: effectiveDraft };
 }
 
@@ -1220,7 +1230,7 @@ async function prepareObserveBusinessResource(input: {
     const schedule = socialScheduleFromCadence(input.config.socialCadence);
     const ensured = ensureDigitalEmployeeSocialCollectionTask({ tenantId: input.tenantId,
       workflowRunId: input.run.id, workflowTaskId: input.task.id,
-      keywords: input.config.focusProducts || goalInput(input.goal).scope || input.config.primaryBusiness,
+      keywords: socialKeywordsFromCadence(input.config.socialCadence, input.config.focusProducts || goalInput(input.goal).scope || input.config.primaryBusiness),
       ...schedule });
     const refs = [{ type: 'scheduled_task', id: ensured.task.id, taskType: ensured.task.taskType, cronExpr: ensured.task.cronExpr }];
     await store.update(COLLECTION.tasks, input.task.id, { business_refs: refs, updated_at: new Date().toISOString() });
@@ -1255,7 +1265,7 @@ async function prepareObserveBusinessResourceDirect(input: {
       tenantId,
       workflowRunId: run.id,
       workflowTaskId: task.id,
-      keywords: config.focusProducts || goalInput(goal).scope || config.primaryBusiness,
+      keywords: socialKeywordsFromCadence(config.socialCadence, config.focusProducts || goalInput(goal).scope || config.primaryBusiness),
       cronExpr: collectionSchedule.cronExpr,
       cronLabel: collectionSchedule.cronLabel,
       platforms: collectionSchedule.platforms,

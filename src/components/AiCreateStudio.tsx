@@ -3081,6 +3081,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     },
   });
   const [showProjects, setShowProjects] = useState(false);
+  const [showLinkedEditor, setShowLinkedEditor] = useState(false);
   const [workflowProjectSelectionPending, setWorkflowProjectSelectionPending] = useState(
     () => ['content_production', 'content_quality_gate'].includes(workflowContext?.taskKey || ''),
   );
@@ -12168,7 +12169,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     </section>
   ) : null;
 
-  const linkedProductionContext = !agentProduction.active
+  const linkedProductionContext = !agentProduction.active && !showLinkedEditor
     ? workflowContext?.runId && workflowContext.taskId
       ? workflowContext
       : projectWorkflowContext?.runId && projectWorkflowContext.taskId
@@ -12178,7 +12179,8 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
 
   return (
     <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {linkedProductionContext && <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} /></div>}
+      {linkedProductionContext && <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} onOpenDraft={() => setShowLinkedEditor(true)} /></div>}
+      {showLinkedEditor && projectId && <button type="button" className="mx-4 mt-3 shrink-0 self-start rounded-lg border border-border px-3 py-2 text-xs font-bold" onClick={() => setShowLinkedEditor(false)}>返回内容生产现场</button>}
       {!linkedProductionContext && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
       {!linkedProductionContext && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {!linkedProductionContext && modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
