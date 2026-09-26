@@ -6,6 +6,7 @@ import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
 } from '../runtime/durableLease.js';
+import type { VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 
 export type StarterPublishingPlatform = 'facebook' | 'instagram' | 'tiktok' | 'youtube';
 export type PublicationPackageStatus =
@@ -45,6 +46,22 @@ export interface StarterPublicationPackage {
   generatedAt: string;
   status: PublicationPackageStatus;
   workflowBinding?: StarterPublicationWorkflowBinding;
+  operatingLineage?: StarterPublicationOperatingLineage;
+}
+
+export interface StarterPublicationOperatingLineage {
+  assignmentId: string;
+  assignmentHash: string;
+  programRef: VersionedSocialRef;
+  operatingPackageRef: VersionedSocialRef;
+  contentPackageRef: VersionedSocialRef;
+  weeklyPublicationTaskRef: VersionedSocialRef;
+  publishingWorkflowTaskRef: VersionedSocialRef;
+  businessGoalRef: VersionedSocialRef | null;
+  enterpriseProfileRef: VersionedSocialRef | null;
+  factRefs: VersionedSocialRef[];
+  productionResultRef: VersionedSocialRef;
+  upstreamRefs: VersionedSocialRef[];
 }
 
 export interface StarterPublicationWorkflowBinding {
@@ -117,7 +134,7 @@ function sha256(value: unknown): string {
 
 function packageBusinessSubject(input: Pick<
   StarterPublicationPackage,
-  'tenantId' | 'contentId' | 'contentVersion' | 'contentHash' | 'platform' | 'copy' | 'assets' | 'inquiryUrl' | 'workflowBinding'
+  'tenantId' | 'contentId' | 'contentVersion' | 'contentHash' | 'platform' | 'copy' | 'assets' | 'inquiryUrl' | 'workflowBinding' | 'operatingLineage'
 >): Record<string, unknown> {
   return {
     tenantId: input.tenantId,
@@ -129,6 +146,7 @@ function packageBusinessSubject(input: Pick<
     assets: input.assets,
     ...(input.inquiryUrl ? { inquiryUrl: input.inquiryUrl } : {}),
     ...(input.workflowBinding ? { workflowBinding: input.workflowBinding } : {}),
+    ...(input.operatingLineage ? { operatingLineage: input.operatingLineage } : {}),
   };
 }
 
@@ -203,6 +221,7 @@ export interface BuildStarterPublicationPackageInput {
   assets: PublicationPackageAsset[];
   inquiryUrl?: string;
   workflowBinding?: StarterPublicationWorkflowBinding;
+  operatingLineage?: StarterPublicationOperatingLineage;
   idempotencyKey: string;
   now?: Date;
 }
@@ -228,6 +247,7 @@ export function buildStarterPublicationPackage(input: BuildStarterPublicationPac
       downloadUrl: text(asset.downloadUrl),
       contentHash: text(asset.contentHash).toLowerCase(),
     })),
+    ...(input.operatingLineage ? { operatingLineage: input.operatingLineage } : {}),
     ...(text(input.inquiryUrl) ? { inquiryUrl: text(input.inquiryUrl) } : {}),
     ...(input.workflowBinding ? { workflowBinding: {
       schemaVersion: input.workflowBinding.schemaVersion,
@@ -487,6 +507,7 @@ function packageFromRecord(record: StoredPublicationPackage): StarterPublication
         assets: manifest.assets,
         ...(manifest.inquiryUrl ? { inquiryUrl: manifest.inquiryUrl } : {}),
         ...(manifest.workflowBinding ? { workflowBinding: manifest.workflowBinding } : {}),
+        ...(manifest.operatingLineage ? { operatingLineage: manifest.operatingLineage } : {}),
         idempotencyKey: record.idempotency_key,
         now: new Date(manifest.generatedAt),
       });
