@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { buildPresetVideoPlans, WEEKLY_TASK_PACKAGE_PRESETS } from './weeklyTaskPackagePresets.js';
 
 assert.deepEqual(WEEKLY_TASK_PACKAGE_PRESETS.map(item => item.label), [
+  '内容起步验证',
   'B2B 从零起步',
   'B2B 已有基础',
   '品牌影响',

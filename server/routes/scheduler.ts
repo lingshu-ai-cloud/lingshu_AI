@@ -1307,6 +1307,20 @@ function scheduleTask(task: ScheduledTask) {
   activeJobs.set(task.id, job);
 }
 
+export function stopScheduledTasksInMemory(taskIds: string[]): void {
+  if (!taskIds.length) return;
+  const ids = new Set(taskIds);
+  const tasks = load();
+  let changed = false;
+  for (const task of tasks) {
+    if (!ids.has(task.id) || !task.enabled) continue;
+    task.enabled = false;
+    scheduleTask(task);
+    changed = true;
+  }
+  if (changed) save(tasks);
+}
+
 export function ensureDigitalEmployeeSocialCollectionTask(input: {
   tenantId: string;
   workflowRunId: string;

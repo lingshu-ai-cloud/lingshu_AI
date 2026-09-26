@@ -1,6 +1,6 @@
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 
-export type WeeklyTaskPackagePresetId = 'b2b_starting' | 'b2b_growing' | 'brand_authority' | 'dtc_sales';
+export type WeeklyTaskPackagePresetId = 'content_starting' | 'b2b_starting' | 'b2b_growing' | 'brand_authority' | 'dtc_sales';
 export type WeeklyTaskPackagePlatform = VideoCreationPlan['platform'];
 
 export interface WeeklyTaskPackagePreset {
@@ -19,6 +19,20 @@ export interface WeeklyTaskPackagePreset {
 }
 
 export const WEEKLY_TASK_PACKAGE_PRESETS: WeeklyTaskPackagePreset[] = [
+  {
+    id: 'content_starting',
+    label: '内容起步验证',
+    shortLabel: '起步验证',
+    description: '用已确认的产品事实和授权素材，先验证少量可审核的内容方向。',
+    primaryPlatform: 'youtube',
+    platforms: ['youtube', 'tiktok', 'instagram', 'facebook'],
+    weeklyOutput: 2,
+    frequency: '先完成 2 条内容草案，再按账号就绪情况安排发布',
+    accountRoles: '制作阶段不要求绑定发布账号',
+    themes: ['真实使用场景：展示产品实际用途', '常见问题：只回答已有事实和素材支持的问题'],
+    metric: 'approved_content_packages',
+    objective: '完成首轮内容方向验证，形成可审核的内容包',
+  },
   {
     id: 'b2b_starting',
     label: 'B2B 从零起步',
@@ -95,8 +109,8 @@ export function buildPresetVideoPlans(input: {
     : platforms[0]!;
   return input.preset.themes.slice(0, input.preset.weeklyOutput).map((theme, index) => normalizeVideoPlan({
     ...input.defaults,
-    route: 'product',
-    presenter: 'material',
+    route: input.defaults?.route || 'product',
+    presenter: input.defaults?.presenter || 'material',
     productName: input.productName,
     platform: index === 0 ? primaryPlatform : platforms[index % platforms.length]!,
     theme: focus ? `${theme}；本周重点：${focus}` : theme,

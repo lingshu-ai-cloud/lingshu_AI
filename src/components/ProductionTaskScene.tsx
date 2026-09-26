@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Circle, Film, Loader2, RotateCcw, Volume2 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { requestProductionBack } from '../lib/productionNavigation';
-import type { RunEvent } from '../lib/digitalEmployees';
+import { dispatchDigitalEmployeeDeepLink, type DigitalEmployeeDeepLink, type RunEvent } from '../lib/digitalEmployees';
 
 const statuses: Record<string, string> = {
   pending: '等待开始', running: '制作中', planning: '准备中', waiting_external: '等待生成结果',
@@ -12,7 +12,7 @@ const statuses: Record<string, string> = {
 
 const stages = ['script', 'material_match', 'voice_subtitles', 'heygen', 'render', 'quality', 'completed'] as const;
 type Stage = typeof stages[number];
-type Snapshot = { task: { id: string; task_key?: string; title: string; status: string; blocker_reason?: string; output?: Record<string, unknown> }; stage?: string; events: RunEvent[] };
+type Snapshot = { link?: DigitalEmployeeDeepLink; task: { id: string; task_key?: string; title: string; status: string; blocker_reason?: string; output?: Record<string, unknown> }; stage?: string; events: RunEvent[] };
 type ProgressState = 'complete' | 'current' | 'pending' | 'failed';
 
 const agentSteps = [
@@ -102,6 +102,7 @@ export default function ProductionTaskScene({ runId, taskId, embedded = false }:
         <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-black">{selected.label}</p><p className="mt-1 text-xs text-text-muted">只展示与成片直接相关的进度</p></div><span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-bold text-text-secondary">{selectedState === 'complete' ? '已完成' : selectedState === 'current' ? '生成中' : selectedState === 'failed' ? '需重试' : '等待中'}</span></div>
         <ol className="mt-5 space-y-3">{progress.map(item => <li key={item.id} className="rounded-xl border border-border p-3"><div className="flex items-center gap-2"><ProgressIcon state={item.state}/><p className="text-xs font-black">{item.label}</p><span className="ml-auto text-[10px] text-text-muted">{item.state === 'complete' ? '完成' : item.state === 'current' ? '生成中' : item.state === 'failed' ? '失败' : '等待'}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{item.detail}</p></li>)}</ol>
         {task?.blocker_reason && <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">{task.blocker_reason}</p>}
+        {task?.blocker_reason && snapshot?.stage !== 'cancelled' && snapshot?.link?.page === 'smartAssets' && <button type="button" onClick={() => dispatchDigitalEmployeeDeepLink(snapshot.link!)} className="mt-3 w-full rounded-xl bg-emerald-700 px-3 py-2.5 text-xs font-bold text-white">打开关联内容草稿，确认或替换分镜素材</button>}
         {error && <p role="alert" className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">{error}</p>}
         <div className="mt-5 flex items-center gap-2 rounded-xl bg-surface-2 p-3 text-xs text-text-secondary"><Volume2 size={15}/><span>脚本、字幕和口播会随任务自动更新。</span></div>
       </aside>

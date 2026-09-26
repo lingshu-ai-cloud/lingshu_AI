@@ -19,7 +19,7 @@ import { invalidatePublishingApprovalForProject, invalidatePublishingAuthorizati
 import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/contentAcceptance.js';
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { agentBrowserSessions, browserExecutionEnabled, type BrowserScope, type BrowserProductionTarget } from '../digitalEmployees/browserSessions.js';
@@ -31,7 +31,7 @@ import { signAssetUrl } from '../lib/assetAccess.js';
 import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers: typeof defaultGetWhatsAppCustomers = (tenantId) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
-import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
+import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow, stopScheduledTasksInMemory } from './scheduler.js';
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
@@ -92,6 +92,8 @@ import {
 } from '../digitalEmployees/domain.js';
 
 export const digitalEmployeesRouter = Router();
+const catchAsync = (handler: (req: Request, res: Response) => Promise<unknown>) =>
+  (req: Request, res: Response, next: NextFunction): void => { void handler(req, res).catch(next); };
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
@@ -2183,12 +2185,12 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   res.json(proposal);
 });
 
-digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
+digitalEmployeesRouter.put('/goals/:goalId/package', catchAsync(async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
     if (!goal) { res.status(404).json({ error: 'goal_not_found' }); return; }
-    const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
+    const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at');
     if (goal.status !== 'draft' || run) { res.status(409).json({ error: 'package_locked', message: '计划已启动，请在执行任务中处理调整。' }); return; }
     const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
     if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
@@ -2218,7 +2220,7 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
     res.json(await buildOverview(tenantId, goal.id));
   });
-});
+}));
 
 digitalEmployeesRouter.post('/goals', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
@@ -2401,12 +2403,12 @@ async function approveGoalForReview(tenantId: string, userId: string, goalId: st
   return { status: 200, body: await buildOverview(tenantId, goal.id) };
   });
 }
-digitalEmployeesRouter.post('/goals/:goalId/approve', async (req, res) => {
+digitalEmployeesRouter.post('/goals/:goalId/approve', catchAsync(async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const result = await approveGoalForReview(tenantId, userId, req.params.goalId, req.body?.packageRevision, members);
   res.status(result.status).json(result.body);
-});
+}));
 
 digitalEmployeesRouter.post('/runs/:runId/tasks/:taskId/link-project', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
@@ -3464,7 +3466,7 @@ digitalEmployeesRouter.post('/runs/:runId/resume', async (req, res) => {
 async function cancelDigitalEmployeeRunRoute(req: Request, res: Response): Promise<void> {
   const { tenantId, userId } = res.locals as AuthLocals;
   try {
-    await cancelDigitalEmployeeRunApplication({ tenantId, userId, runId: req.params.runId, reason: String(req.body?.reason || '') });
+    await cancelDigitalEmployeeRunApplication({ tenantId, userId, runId: req.params.runId, reason: String(req.body?.reason || ''), stopScheduledTasks: stopScheduledTasksInMemory });
   } catch (error) {
     if (error && typeof error === 'object' && 'status' in error && 'code' in error) {
       res.status(Number(error.status)).json({ error: String(error.code) });
@@ -3559,4 +3561,10 @@ digitalEmployeesRouter.post('/review-todos/dispatch', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   try { res.json(await reviewTodoService.dispatch(tenantId, userId, String(req.body.week || ''), allocateReviewTodos, Number(req.body.revision))); }
   catch (error) { res.status(409).json({ error: (error as Error).message }); }
+});
+
+digitalEmployeesRouter.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) { next(error); return; }
+  console.error('[digital-employees] request failed:', error);
+  res.status(503).json({ error: 'digital_employee_request_failed', message: '数字员工暂时无法完成请求，请查看服务日志后重试。' });
 });

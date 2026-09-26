@@ -110,6 +110,7 @@
     "verify:whatsapp-real-send": "tsx scripts/verify-whatsapp-real-send.ts",
     "verify:digital-employee-e2e": "tsx scripts/verify-digital-employee-e2e.ts",
     "check:digital-employee-migrations": "tsx scripts/check-digital-employee-migrations.ts",
+    "check:digital-employee-pb-schema": "tsx scripts/check-digital-employee-pb-schema.ts",
     "test:migration-guard": "tsx server/digitalEmployees/migrationReleasePreflight.test.ts",
     "test:delivery-chain": "tsx server/digitalEmployees/deliveryResources.test.ts && tsx src/lib/deliveryNavigation.test.ts && tsx server/digitalEmployees/e2eInputPreflight.test.ts && tsx src/components/AiCreateStudio.voiceoverFreeze.test.ts",
     "test:digital-employee-release": "pnpm run test:migration-guard && tsx server/digitalEmployees/runControl.test.ts",

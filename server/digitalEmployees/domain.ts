@@ -286,8 +286,8 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     },
     {
       key: 'scheduled_source_collection',
-      title: '编导采集平台热点与对标',
-      description: `编导 Agent 调用采集能力，为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，过程结果同步到灵感中心，节奏为：${config.socialCadence}。`,
+      title: '编导建立采集计划并启动首轮采集',
+      description: `编导 Agent 为 ${contentPlatformNames} 配置关键词、对标账号和采集范围，并提交首轮采集；真实视频入库与分析结果需在灵感中心另行核验。节奏为：${config.socialCadence}。`,
       agentRole: 'director', backgroundCapability: 'channel', kind: 'activation', sequence: 3, priority: 'high', requiresApproval: false, dependsOn: ['goal_decomposition'], expectedMinutes: 4,
       businessDomain: 'content', capabilityKey: 'scheduler.social_collection', destination: 'scheduled', statusSource: 'scheduled_tasks + crawl_jobs', executionMode: 'observe', externalEffect: 'schedule',
     },

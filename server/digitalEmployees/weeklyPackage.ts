@@ -21,7 +21,7 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   const publishAccountCount = config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length;
   const defaultPublishActions = contentCount * Math.max(1, publishAccountCount);
   return { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
-    directorPlan: defaultDirectorPlan(contentCount),
+    directorPlan: defaultDirectorPlan(contentCount, config.enabledWorkflows.includes('content_publish') ? contentCount : 0),
     // Approving the weekly package is the single human authorization event.
     // Every actual publish still has to pass the frozen account/week/count/hash
     // boundary and the existing quality, connection and receipt safeguards.

@@ -6,6 +6,9 @@ import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
 const pack = recommendPackage(goal, config);
+const makingOnly = recommendPackage(goal, { ...config, enabledWorkflows: config.enabledWorkflows.filter(item => item !== 'content_publish') });
+assert.equal(makingOnly.directorPlan?.publishTarget, 0, 'a content-only week must not claim a publishing target');
+assert.equal(validatePackage(makingOnly, goal).some(issue => issue.includes('发布次数目标')), false);
 assert.equal(pack.authorization.mode, 'bounded', 'weekly package approval is the default bounded publish authorization');
 assert.equal(pack.authorization.maxPublishItems, 1);
 const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({

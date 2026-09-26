@@ -280,6 +280,18 @@ try {
   assert.deepEqual(packageTask.output, { marker: 'package-before-cancelling' }, 'package task remains untouched after cancellation starts');
   assert.deepEqual(evidenceTask.output, { marker: 'evidence-before-cancelling' }, 'evidence task remains untouched after cancellation starts');
 
+  const packageCountBeforeMissingRoot = rows.get(STARTER_COLLECTIONS.publicationPackages)?.length ?? 0;
+  await assert.rejects(() => readCanonicalStarterContentArtifact({
+    tenantId,
+    runId,
+    contentId: 'project-worker',
+    dataStore,
+    publishingRoot: path.join(root, 'missing-publishing-root'),
+  }), (error: unknown) => error instanceof StarterPublicationPackageWorkerError
+    && error.code === 'starter_publication_asset_unavailable');
+  assert.equal(rows.get(STARTER_COLLECTIONS.publicationPackages)?.length, packageCountBeforeMissingRoot,
+    'a missing durable asset root fails closed without manufacturing a package');
+
   // Hold the worker after its first run-state read and race a real cancellation.
   // Both paths share withDigitalEmployeeRunLock, so cancellation must wait for
   // projection and then win last; without the shared lock the worker revives the
@@ -332,7 +344,6 @@ try {
   assert.equal(run.current_controller, 'human');
   assert.notEqual(run.status, 'waiting_human');
 
-  const packageCountBeforeMissingRoot = rows.get(STARTER_COLLECTIONS.publicationPackages)?.length ?? 0;
   await assert.rejects(() => readCanonicalStarterContentArtifact({
     tenantId,
     runId,
@@ -340,11 +351,11 @@ try {
     dataStore,
     publishingRoot: path.join(root, 'missing-publishing-root'),
   }), (error: unknown) => error instanceof StarterPublicationPackageWorkerError
-    && error.code === 'starter_publication_asset_unavailable');
+    && error.code === 'starter_publication_content_not_canonical');
   assert.equal(
     rows.get(STARTER_COLLECTIONS.publicationPackages)?.length,
     packageCountBeforeMissingRoot,
-    'a missing durable asset root fails closed without manufacturing a package',
+    'a cancelled source project cannot manufacture a package',
   );
 } finally {
   await rm(root, { recursive: true, force: true });

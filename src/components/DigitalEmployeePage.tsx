@@ -1367,12 +1367,14 @@ function GoalPanel({
   const initialPlatforms = contentPlatform !== "all" && configuredPlatforms.includes(contentPlatform)
     ? [contentPlatform]
     : config.enabledWorkflows.includes("content_publish") ? configuredPlatforms : [configuredPlatforms[0]];
-  const initialPresetId: WeeklyTaskPackagePresetId = config.operatingMaturity === 'starting' ? 'b2b_starting' : 'b2b_growing';
+  const initialPresetId: WeeklyTaskPackagePresetId = config.operatingMaturity === 'starting' ? 'content_starting' : 'brand_authority';
   const initialPreset = weeklyTaskPackagePreset(initialPresetId);
   const presetPlatforms = (presetId: WeeklyTaskPackagePresetId) => {
     const preset = weeklyTaskPackagePreset(presetId);
     const available = preset.platforms.filter(platform => configuredPlatforms.includes(platform));
-    return available.length ? available : initialPlatforms;
+    return config.enabledWorkflows.includes('content_publish') && config.publishingTargets.length
+      ? (available.length ? available : initialPlatforms)
+      : [available[0] || initialPlatforms[0]];
   };
   const initialPresetPlatforms = presetPlatforms(initialPresetId);
   const initialProduct = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
@@ -1421,7 +1423,7 @@ function GoalPanel({
       ...current,
       title: `${preset.label}周任务包`,
       objective: preset.objective,
-      metric: preset.metric,
+      metric: !config.enabledWorkflows.includes('content_publish') && preset.metric === 'published_posts' ? 'approved_content_packages' : preset.metric,
       target: preset.weeklyOutput,
       unit: '条',
       contentPlatforms: platforms,
@@ -1785,10 +1787,11 @@ function TodayNextAction({
   onOpenExecution: (taskId?: string) => void;
   onOpenReview: () => void;
 }) {
-  const blockedTask = data.tasks.find(
+  const stopped = Boolean(data.run && ["succeeded", "failed", "cancelled"].includes(data.run.status));
+  const blockedTask = stopped ? undefined : data.tasks.find(
     (task) => taskNeedsAttention(task),
   );
-  const pendingApprovals = data.approvals.filter((item) => item.status === "pending");
+  const pendingApprovals = stopped ? [] : data.approvals.filter((item) => item.status === "pending");
   const pendingApproval = pendingApprovals[0];
   const approvalTask = data.tasks.find((task) => task.id === pendingApproval?.task_id);
   const activeTask = data.tasks.find((task) =>
@@ -1875,10 +1878,11 @@ function TodayFocusPanel({ data, onOpenExecution, onReviewPlan }: {
   onOpenExecution: (taskId?: string) => void;
   onReviewPlan: () => void;
 }) {
-  const blockedTask = data.tasks.find(
+  const stopped = Boolean(data.run && ["succeeded", "failed", "cancelled"].includes(data.run.status));
+  const blockedTask = stopped ? undefined : data.tasks.find(
     (task) => taskNeedsAttention(task),
   );
-  const pendingApprovals = data.approvals.filter((item) => item.status === "pending");
+  const pendingApprovals = stopped ? [] : data.approvals.filter((item) => item.status === "pending");
   const completed = data.tasks.filter((task) => task.status === "succeeded").length;
   const progress = data.tasks.length
     ? Math.round((completed / data.tasks.length) * 100)
@@ -3133,14 +3137,14 @@ function NextActionBanner({
   onLive: () => void;
   onReview: () => void;
 }) {
-  const blocked = data.tasks.find(
-    (task) => taskNeedsAttention(task),
-  );
-  const pendingApproval = data.approvals.some(
-    (item) => item.status === "pending",
-  );
   const terminalRun = Boolean(
     data.run && ["succeeded", "failed", "cancelled"].includes(data.run.status),
+  );
+  const blocked = terminalRun ? undefined : data.tasks.find(
+    (task) => taskNeedsAttention(task),
+  );
+  const pendingApproval = !terminalRun && data.approvals.some(
+    (item) => item.status === "pending",
   );
   const state = !data.goal
     ? {
@@ -4259,12 +4263,14 @@ export default function DigitalEmployeePage({
                           </button>
                         ) : (
                           <button
+                            disabled={Boolean(busy) || !["running", "waiting_external", "waiting_approval"].includes(data.run.status)}
+                            title={data.run.status === "waiting_human" ? "当前已等待人工处理，请先完成或纠偏阻塞任务" : undefined}
                             onClick={() =>
                               void act("pause", () =>
                                 digitalEmployeeApi.pauseRun(data.run!.id),
                               )
                             }
-                            className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold"
+                            className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             暂停
                           </button>

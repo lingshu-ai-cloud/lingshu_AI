@@ -995,7 +995,7 @@ ${lines.map((line, index) => `[${(hookEnd ? index === 0 ? 0 : hookEnd + (index -
 export async function generateDirectorScriptContracts(input: { tenantId: string; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; orders: ContentProductionOrderInput[]; now?: string }): Promise<ContentProductionOrderInput[]> {
   const [profile, analysesResult] = await Promise.all([
     readTenantEnterpriseProfile(input.tenantId),
-    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
+    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-crawledAt', perPage: 500 }),
   ]);
   const allAssets = await collectAssets(input.tenantId, profile);
   const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
@@ -1669,7 +1669,7 @@ export async function advanceAutomatedContentProduction(input: {
 }): Promise<ContentProductionAdvanceResult> {
   const [profile, analysesResult, existingProjects] = await Promise.all([
     readTenantEnterpriseProfile(input.tenantId),
-    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
+    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-crawledAt', perPage: 500 }),
     listTenantContentProjects(input.tenantId),
   ]);
   const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
