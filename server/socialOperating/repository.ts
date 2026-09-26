@@ -127,12 +127,6 @@ export function createSocialOperatingRepository(dataStore: DataStore) {
       });
       if (!saved) throw new Error('operating_decision_storage_unavailable');
     },
-    async getOperatingDecision<T>(tenantId: string, programId: string, decisionId: string): Promise<OperatingDecisionRecord<T> | null> {
-      const result = await dataStore.list<{ payload: OperatingDecisionRecord<T> }>(DECISIONS, {
-        where: { tenant_id: tenantId, program_id: programId, decision_id: decisionId }, page: 1, perPage: 1,
-      });
-      return result.items[0]?.payload ?? null;
-    },
     async latestSnapshot(tenantId: string, programId: string): Promise<OperatingAuthoritySnapshot | null> {
       const result = await dataStore.list<SnapshotRow>('social_operating_authority_snapshots', {
         where: { tenant_id: tenantId, program_id: programId }, sort: '-version', page: 1, perPage: 1,

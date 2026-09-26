@@ -11,8 +11,8 @@ migrate((app) => {
     listRule: null,
     viewRule: null,
     createRule: null,
-    updateRule: "@request.auth.id != '' && false",
-    deleteRule: "@request.auth.id != '' && false",
+    updateRule: null,
+    deleteRule: null,
     fields: [
       {
         name: "id", type: "text", system: true, required: true, primaryKey: true,

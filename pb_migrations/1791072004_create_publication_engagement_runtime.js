@@ -10,7 +10,7 @@ migrate((app) => {
   const json = (name, required = false, maxSize = 4194304) => ({ name, type: "json", required, maxSize })
   const collection = (name, fields, indexes) => new Collection({
     name, type: "base", system: false, listRule: null, viewRule: null,
-    createRule: null, updateRule: null, deleteRule: "@request.auth.id != '' && false",
+    createRule: null, updateRule: null, deleteRule: null,
     fields: [id(), ...fields], indexes
   })
 

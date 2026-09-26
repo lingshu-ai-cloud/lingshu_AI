@@ -9,7 +9,7 @@ migrate((app) => {
   const json = (name, required = false) => ({ name, type: "json", required, maxSize: 8388608 })
   const immutable = (name, fields, indexes) => new Collection({
     name, type: "base", system: false, listRule: null, viewRule: null, createRule: null,
-    updateRule: "@request.auth.id != '' && false", deleteRule: "@request.auth.id != '' && false",
+    updateRule: null, deleteRule: null,
     fields: [id(), ...fields], indexes
   })
 

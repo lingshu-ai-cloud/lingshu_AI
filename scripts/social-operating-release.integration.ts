@@ -156,7 +156,9 @@ async function migrationDrill(): Promise<{ instance: RunningPocketBase; dataDir:
   assert.equal((await sentinelResponse.json() as { totalItems: number }).totalItems, 1, 'upgrade must preserve existing business rows');
   await stopPocketBase(instance);
 
-  runPb(['migrate', 'down', '3', `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
+  const postBaselineCount = fs.readdirSync(migrationsDir)
+    .filter(name => name.endsWith('.js') && name >= '1790985600').length;
+  runPb(['migrate', 'down', String(postBaselineCount), `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
   // Serve against the baseline migration directory so PocketBase cannot
   // immediately reapply the just-reverted forward migrations on startup.
   instance = await startPocketBase(dataDir, baselineMigrations, false);

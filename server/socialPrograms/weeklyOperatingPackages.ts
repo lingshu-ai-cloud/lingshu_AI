@@ -551,7 +551,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       accountPlans: capacityDecision.output.accountQuotas.filter(item => item.publicationQuota > 0).map(item => ({
         accountId: item.accountId, publicationCount: item.publicationQuota,
       })),
-      productionBudgetCny: capacityDecision.output.estimatedCostCny,
+      productionBudgetCny: input.operatingDecisionSnapshotRef ? goal?.weeklyBudgetCny ?? capacityDecision.output.estimatedCostCny : capacityDecision.output.estimatedCostCny,
       blockers: capacityDecision.blockers.map(item => item.code),
     } : null;
 
@@ -747,7 +747,6 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
       input = await withAuthoritativeDecisions(tenantId, programId, input);
       input = (await withAuthoritativePlanning(tenantId, programId, input)).input;
-      input = await withAuthoritativeGoal(tenantId, programId, input);
       input = await withPromotionQuota(tenantId, programId, input);
       const item = packageFromInput({
         input, programId, userId, accounts, program: program.payload,
@@ -759,12 +758,12 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const saved = await savePackage(dataStore, tenantId, item);
       try {
         const tasks = await materializeWeeklyExecutionTasks(dataStore, tenantId, item);
+        await enqueuePackageChange({ tenantId, item, operation: 'created' });
         return projectWeeklyExecution(item, tasks, item.updatedAt);
       } catch (error) {
         await dataStore.delete(PACKAGES, saved.id);
         throw error;
       }
-      input = await withPromotionQuota(tenantId, programId, input);
     },
 
     async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
@@ -803,8 +802,9 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       };
       const orchestrated = await withAuthoritativeDecisions(tenantId, programId, merged);
       const resolved = await withAuthoritativePlanning(tenantId, programId, orchestrated);
+      const resolvedWithQuota = await withPromotionQuota(tenantId, programId, resolved.input);
       const item = packageFromInput({
-        input: resolved.input, programId, userId, accounts, program: program.payload,
+        input: resolvedWithQuota, programId, userId, accounts, program: program.payload,
         packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
         version: current.payload.version + 1, previousVersion: current.payload.version,
         previousPackage: projectedCurrent,
@@ -820,7 +820,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         await dataStore.delete(PACKAGES, saved.id);
         throw error;
       }
-        promotionQuotaRef: current.payload.promotionQuotaRef,
+      await enqueuePackageChange({ tenantId, item, operation: 'revised', before: current.payload });
       if (current.payload.socialContentPackage.authorization.allowRealPublishing) {
         const timestamp = at();
         const invalidated: WeeklyOperatingPackage = {
@@ -955,6 +955,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         );
       }
       const tasks = await activateWeeklyExecutionTasks(dataStore, tenantId, activated, activated.updatedAt);
+      await enqueuePackageChange({ tenantId, item: activated, operation: 'activated', before: current.payload, authorizationRequired: input.authorizePublishing !== true });
       return projectWeeklyExecution(activated, tasks, activated.updatedAt);
     },
 
@@ -1026,8 +1027,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const tasks = await cancelWeeklyExecutionTasks(
         dataStore, tenantId, programId, packageId, retired.version, `package_retired:${userId}`, timestamp,
       );
+      await enqueuePackageChange({ tenantId, item: retired, operation: 'retired', before: current?.payload });
       return projectWeeklyExecution(retired, tasks, timestamp);
-      await enqueuePackageChange({ tenantId, item, operation: 'revised', before: current.payload });
     },
 
     async applyWorkflowEvent(

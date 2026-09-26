@@ -18,7 +18,7 @@ class FakeApp {
   findCollectionByNameOrId(name: string) { const collection = this.collections.get(name); if (!collection) throw new Error(`missing:${name}`); return collection; }
 }
 
-const source = fs.readFileSync('pb_migrations/1791072000_create_social_operating_orchestration.js', 'utf8');
+const source = fs.readFileSync('pb_migrations/1791072001_create_social_operating_orchestration.js', 'utf8');
 vm.runInNewContext(source, { Collection, migrate: (up: typeof forward, down: typeof backward) => { forward = up; backward = down; } });
 assert.ok(forward && backward);
 const app = new FakeApp();

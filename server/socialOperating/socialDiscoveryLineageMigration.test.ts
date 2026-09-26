@@ -23,7 +23,7 @@ class FakeApp {
 
 let up: ((app: FakeApp) => unknown) | undefined;
 let down: ((app: FakeApp) => unknown) | undefined;
-const source = fs.readFileSync('pb_migrations/1791072000_harden_social_discovery_lineage.js', 'utf8');
+const source = fs.readFileSync('pb_migrations/1791072003_harden_social_discovery_lineage.js', 'utf8');
 vm.runInNewContext(source, { Field, migrate: (forward: typeof up, backward: typeof down) => { up = forward; down = backward; } });
 assert.ok(up && down);
 const app = new FakeApp();

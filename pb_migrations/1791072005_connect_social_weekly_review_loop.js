@@ -4,12 +4,12 @@
 // frozen snapshots stay readable; every new worker write supplies them.
 migrate((app) => {
   const addText = (collection, name, id) => {
-    try { collection.fields.getByName(name) } catch {
+    if (!collection.fields.getByName(name)) {
       collection.fields.addAt(collection.fields.length, new Field({ id, name, type: "text", required: false }))
     }
   }
   const addNumber = (collection, name, id) => {
-    try { collection.fields.getByName(name) } catch {
+    if (!collection.fields.getByName(name)) {
       collection.fields.addAt(collection.fields.length, new Field({ id, name, type: "number", required: false, onlyInt: true, min: 0 }))
     }
   }
@@ -46,7 +46,7 @@ migrate((app) => {
       { name: "payload_digest", type: "text", required: true },
       { name: "payload", type: "json", required: true, maxSize: 1048576 },
       { name: "status", type: "text", required: true },
-      { name: "attempts", type: "number", required: true, onlyInt: true, min: 0 },
+      { name: "attempts", type: "number", required: false, onlyInt: true, min: 0 },
       { name: "available_at", type: "text", required: true },
       { name: "claim_token", type: "text" },
       { name: "claimed_until", type: "text" },

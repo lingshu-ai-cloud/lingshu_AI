@@ -6,6 +6,7 @@ import { createSocialWeeklyExecutionWorker } from '../runtime/socialWeeklyExecut
 import { createSocialProgramService } from './service.js';
 import { createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
+import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
 function memoryStore(): DataStore {
   const rows = new Map<string, Record_[]>();
@@ -71,21 +72,39 @@ async function fixture() {
     platform: 'tiktok', displayName: 'main', businessRole: '主账号', audiencePromise: '采购', contentPromise: '工厂证据',
   });
   const fact = { type: 'fact', id: 'fact-1', version: 1 };
+  const repository = createSocialOperatingRepository(dataStore);
+  const goalRef = { type: 'business_content_goal', id: 'goal-1', version: 1 };
   const goal = {
-    goalId: 'goal-1', programId: program.programId, version: 4, objective: '获得询盘', blockers: [],
-  };
+    goalId: goalRef.id, programId: program.programId, version: 1, status: 'ready', objective: '获得询盘',
+    products: ['工厂'], markets: ['北美'], audiences: ['采购'], languages: ['en'], accountBoundaries: [],
+    conversionRouteIds: ['route-1'], publicFactRefs: [fact], prohibitedClaims: [], weeklyBudgetCny: 200,
+    evidence: [], blockers: [], inputRefs: [], inputFingerprint: 'goal-fp', ruleVersion: 'business-content-goal/1.0.0',
+    decisionRecordRef: { type: 'decision_record', id: 'goal-decision-1', version: 1 }, createdBy: 'owner', createdAt: '2026-10-01T00:00:00Z',
+  } as any;
+  await repository.save('tenant-a', goal, {
+    decisionId: 'goal-decision-1', decisionType: 'business_content_goal', subjectRef: goalRef, version: 1,
+    outcome: 'accepted', ruleVersion: 'business-content-goal/1.0.0', inputRefs: [], inputFingerprint: 'goal-fp',
+    evidence: [], blockers: [], impacts: [], output: goalRef, operator: { type: 'agent', id: 'owner' }, decidedAt: goal.createdAt,
+  } as any);
+  const capacityRef = { type: 'capacity_plan', id: 'capacity-1', version: 1 };
+  await repository.saveDecision('tenant-a', program.programId, {
+    decisionId: capacityRef.id, decisionType: 'capacity_plan', subjectRef: goalRef, version: 1, outcome: 'accepted',
+    ruleVersion: 'capacity-planner/1.0.0', inputRefs: [goalRef], inputFingerprint: 'capacity-fp', evidence: [], blockers: [],
+    output: { status: 'ready', originalContentQuota: 1, adaptationQuota: 1, publicationQuota: 2,
+      accountQuotas: [{ accountId: account.accountId, publicationQuota: 2 }], estimatedCostCny: 200, limitingFactors: [] },
+    operator: { type: 'agent', id: 'owner' }, decidedAt: goal.createdAt,
+  } as any);
+  const policyRef = { type: 'automation_policy', id: 'policy-1', version: 1 };
+  await repository.saveDecision('tenant-a', program.programId, {
+    decisionId: policyRef.id, decisionType: 'automation_policy', subjectRef: goalRef, version: 1, outcome: 'accepted',
+    ruleVersion: 'automation-policy/1.0.0', inputRefs: [goalRef], inputFingerprint: 'policy-fp', evidence: [], blockers: [],
+    output: { status: 'allowed', mode: 'managed', action: 'draft', humanGate: 'none', automaticExecutionAllowed: true, authorizationIssue: null },
+    operator: { type: 'agent', id: 'owner' }, decidedAt: goal.createdAt,
+  } as any);
   const draft = await packages.create('tenant-a', 'owner', program.programId, {
     weekStart: '2026-10-05', objective: '获得询盘', successCriteria: ['两条发布任务完成'],
     accountPlans: [{ accountId: account.accountId, publicationCount: 2 }], originalContentTarget: 1,
-    businessContentGoal: goal,
-    capacityPlan: {
-      ref: { type: 'weekly_capacity_plan', id: 'capacity-1', version: 2 }, status: 'ready',
-      originalContentTarget: 1, accountPlans: [{ accountId: account.accountId, publicationCount: 2 }],
-      productionBudgetCny: 200, blockers: [],
-    },
-    automationPolicy: {
-      ref: { type: 'weekly_automation_policy', id: 'policy-1', version: 3 }, status: 'ready', blockers: [],
-    },
+    businessContentGoalRef: goalRef, capacityPlanRef: capacityRef, automationPolicyRef: policyRef,
     discoveryBudgetCny: 20, weeklyBudgetCny: 200,
     publicationTasks: [0, 1].map(index => ({
       accountId: account.accountId,

@@ -91,7 +91,7 @@ test('formal orchestration reads server authorities, persists decisions, and hyd
   await assert.rejects(weekly.create('tenant-a', 'owner-a', 'program-a', {
     weekStart: '2026-10-05', objective: 'forged', successCriteria: ['x'],
     capacityPlan: { status: 'ready', originalContentTarget: 99 },
-  }), (error: unknown) => (error as { code?: string }).code === 'client_authority_forbidden');
+  }), (error: unknown) => (error as { code?: string }).code === 'authoritative_object_injection_forbidden');
 });
 
 test('enterprise changes create impact analysis and explicit stale snapshot/package notices', async () => {
