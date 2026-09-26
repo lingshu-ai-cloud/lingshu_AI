@@ -30,6 +30,8 @@ export const STARTER_COLLECTIONS = {
   socialContentFiles: 'starter_social_content_files',
   socialWorkPackageVersions: 'starter_social_work_package_versions',
   socialDirectorPlanVersions: 'starter_social_director_plan_versions',
+  socialProductionHandoffs: 'starter_social_production_handoffs',
+  socialProductionReceipts: 'starter_social_production_receipts',
   socialContentArtifacts: 'starter_social_content_artifacts',
   socialDeliveryPackages: 'starter_social_delivery_packages',
   socialPublications: 'starter_social_publications',
