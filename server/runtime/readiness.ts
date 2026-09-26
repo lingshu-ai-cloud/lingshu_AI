@@ -3,6 +3,12 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { getPbUrl, pbListStrict } from '../storage/pb.js';
 import { processRoleStartsBackgroundJobs, type ProcessRole } from './processRole.js';
+import {
+  assertSocialOperatingCollections,
+  inspectSocialOperatingSignals,
+  type SocialOperatingSignals,
+} from './socialOperatingObservability.js';
+import type { BackgroundJobRuntimeState } from './workerHeartbeat.js';
 
 export type RuntimeCapability =
   | 'text_generation'
@@ -266,12 +272,15 @@ export async function runtimeReadiness(input: {
   startupIssues?: string[];
   checkPocketBase?: () => Promise<void>;
   checkDigitalHumanQuality?: () => Promise<DigitalHumanQualityRuntimeReadiness>;
+  checkSocialOperating?: () => Promise<SocialOperatingSignals>;
+  localWorker?: BackgroundJobRuntimeState;
 }) {
   const capabilities = runtimeCapabilities(input.role);
   const quality = await (input.checkDigitalHumanQuality || (() => digitalHumanQualityRuntimeReadiness()))();
   capabilities.digital_human_quality = quality.localVisual;
   capabilities.digital_human_auto_release = quality.autoRelease;
   const issues = [...(input.startupIssues || []), ...requiredCapabilityIssues(capabilities)];
+  let socialOperating: SocialOperatingSignals | null = null;
   try {
     if (input.checkPocketBase) {
       await input.checkPocketBase();
@@ -281,15 +290,30 @@ export async function runtimeReadiness(input: {
       // This collection is the product entitlement authority and proves the
       // starter migration set has reached the connected database.
       await pbListStrict('starter_198_access', { page: 1, perPage: 1 });
+      await assertSocialOperatingCollections();
     }
   } catch (error) {
     issues.push(`pocketbase_unavailable_or_unmigrated:${error instanceof Error ? error.message : 'unknown'}`);
+  }
+  try {
+    // Focused unit tests that inject only the dependency probe retain their
+    // narrow contract. Production probes always include worker and queue state.
+    if (input.checkSocialOperating) socialOperating = await input.checkSocialOperating();
+    else if (!input.checkPocketBase) socialOperating = await inspectSocialOperatingSignals({
+      role: input.role, localWorker: input.localWorker,
+    });
+    if (socialOperating && !socialOperating.worker.ready) {
+      issues.push(`social_operating_worker_unready:${socialOperating.worker.source}:${socialOperating.worker.state}`);
+    }
+  } catch (error) {
+    issues.push(`social_operating_observability_unavailable:${error instanceof Error ? error.message : 'unknown'}`);
   }
   return {
     status: issues.length ? 'degraded' as const : 'ready' as const,
     role: input.role,
     capabilities,
     digitalHumanQuality: quality,
+    socialOperating,
     issues,
   };
 }
@@ -310,6 +334,8 @@ export function createRuntimeReadinessProbe(input: {
   startupIssues?: string[];
   checkPocketBase?: () => Promise<void>;
   checkDigitalHumanQuality?: () => Promise<DigitalHumanQualityRuntimeReadiness>;
+  checkSocialOperating?: () => Promise<SocialOperatingSignals>;
+  localWorker?: BackgroundJobRuntimeState;
   now?: () => number;
 }) {
   type Report = Awaited<ReturnType<typeof runtimeReadiness>>;

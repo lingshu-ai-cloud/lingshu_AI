@@ -27,7 +27,7 @@ jobs:
   verify:
     name: Verify source
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
     steps:
@@ -73,21 +73,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Type-check
-        run: pnpm run lint
-
-      - name: Test
+      - name: Install pinned PocketBase for release gate
         run: |
           set -euo pipefail
-          if node -e "const p=require('./package.json'); process.exit(p.scripts?.test ? 0 : 1)"; then
-            pnpm test
-          else
-            echo "This historical source does not define a test script."
-            echo "Type-check, production build, and container-level smoke checks remain mandatory."
-          fi
+          archive="$RUNNER_TEMP/pocketbase.zip"
+          install_dir="$RUNNER_TEMP/pocketbase"
+          mkdir -p "$install_dir"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/pocketbase/pocketbase/releases/download/v0.39.5/pocketbase_0.39.5_linux_amd64.zip"
+          unzip -q "$archive" -d "$install_dir"
+          chmod +x "$install_dir/pocketbase"
+          echo "PB_BIN=$install_dir/pocketbase" >> "$GITHUB_ENV"
 
-      - name: Build application
-        run: pnpm run build
+      - name: Run the single quality gate
+        run: pnpm run quality
 
   publish:
     name: Publish ${{ matrix.name }} image

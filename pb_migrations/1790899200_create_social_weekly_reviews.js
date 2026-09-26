@@ -4,7 +4,7 @@ migrate((app) => {
   const text = (name, required = false) => ({ name, type: "text", required, max: 0 })
   const json = (name, required = false) => ({ name, type: "json", required, maxSize: 4194304 })
   const number = (name, required = false) => ({ name, type: "number", required, onlyInt: true })
-  const immutable = (name, fields, indexes) => new Collection({ name, type: "base", system: false, listRule: null, viewRule: null, createRule: null, updateRule: "@request.auth.id != '' && false", deleteRule: "@request.auth.id != '' && false", fields: [id(), ...fields], indexes })
+  const immutable = (name, fields, indexes) => new Collection({ name, type: "base", system: false, listRule: null, viewRule: null, createRule: null, updateRule: null, deleteRule: null, fields: [id(), ...fields], indexes })
   app.save(immutable("social_weekly_review_snapshots", [text("tenant_id", true), text("week_ref", true), text("snapshot_id", true), text("window_ends_at", true), text("source_digest", true), json("snapshot", true), text("frozen_at", true), text("frozen_by", true)], [
     "CREATE UNIQUE INDEX idx_social_weekly_review_week ON social_weekly_review_snapshots (tenant_id, week_ref)",
     "CREATE UNIQUE INDEX idx_social_weekly_review_id ON social_weekly_review_snapshots (tenant_id, snapshot_id)"

@@ -242,7 +242,7 @@ app.use('/api/overseas/platform-ads', platformAdImportsRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 
-if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs();
+if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs(processRole);
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');

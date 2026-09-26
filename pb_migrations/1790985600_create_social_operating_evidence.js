@@ -10,7 +10,7 @@ migrate((app) => {
   const json = (name, required = false) => ({ name, type: "json", required, maxSize: 8388608 })
   const immutable = (name, fields, indexes) => new Collection({
     name, type: "base", system: false, listRule: null, viewRule: null, createRule: null,
-    updateRule: "@request.auth.id != '' && false", deleteRule: "@request.auth.id != '' && false",
+    updateRule: null, deleteRule: null,
     fields: [id(), ...fields], indexes
   })
 
@@ -48,10 +48,10 @@ migrate((app) => {
   ]))
   return app.save(new Collection({
     name: "social_discovery_gap_tasks", type: "base", system: false, listRule: null, viewRule: null,
-    createRule: null, updateRule: null, deleteRule: "@request.auth.id != '' && false",
+    createRule: null, updateRule: null, deleteRule: null,
     fields: [id(), text("tenant_id", true), text("gapTaskId", true), text("upstreamTaskRef", true),
-      text("status", true), text("stopReason"), decimal("budgetLimitCny", true), decimal("spentCny", true),
-      json("runRefs", true), json("selectedEvidenceRefs", true), text("productionGap", true), text("createdAt", true), text("updatedAt", true)],
+      text("status", true), text("stopReason"), decimal("budgetLimitCny"), decimal("spentCny"),
+      json("runRefs"), json("selectedEvidenceRefs"), text("productionGap", true), text("createdAt", true), text("updatedAt", true)],
     indexes: [
       "CREATE UNIQUE INDEX idx_social_discovery_gap_task ON social_discovery_gap_tasks (tenant_id, gapTaskId)",
       "CREATE INDEX idx_social_discovery_gap_upstream ON social_discovery_gap_tasks (tenant_id, upstreamTaskRef, status)"

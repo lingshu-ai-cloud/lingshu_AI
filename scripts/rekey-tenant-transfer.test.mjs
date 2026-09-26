@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const rekeyScript = fileURLToPath(new URL('./rekey-tenant-transfer.mjs', import.meta.url));
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-transfer-rekey-'));
 const recordsFile = path.join(temporary, 'records.json');
@@ -43,7 +46,7 @@ fs.writeFileSync(manifestFile, JSON.stringify({ schemaVersion: 1, files: {
   'records.json': crypto.createHash('sha256').update(fs.readFileSync(recordsFile)).digest('hex'),
 } }));
 
-const result = spawnSync(process.execPath, [new URL('./rekey-tenant-transfer.mjs', import.meta.url).pathname, temporary], {
+const result = spawnSync(process.execPath, [rekeyScript, temporary], {
   input: `${sourceSecret}\n${targetSecret}\n`, encoding: 'utf8',
 });
 assert.equal(result.status, 0, result.stderr);
@@ -60,7 +63,7 @@ assert.equal(manifest.files['records.json'], crypto.createHash('sha256').update(
 const badPackage = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-transfer-rekey-bad-'));
 fs.writeFileSync(path.join(badPackage, 'records.json'), JSON.stringify(payload));
 fs.writeFileSync(path.join(badPackage, 'SHA256SUMS.json'), JSON.stringify({ schemaVersion: 1, files: { 'records.json': 'bad' } }));
-const bad = spawnSync(process.execPath, [new URL('./rekey-tenant-transfer.mjs', import.meta.url).pathname, badPackage], {
+const bad = spawnSync(process.execPath, [rekeyScript, badPackage], {
   input: `${sourceSecret}\n${targetSecret}\n`, encoding: 'utf8',
 });
 assert.notEqual(bad.status, 0);

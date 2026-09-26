@@ -137,6 +137,34 @@ try {
   assert.equal(degraded.status, 'degraded');
   assert.deepEqual(degraded.issues, ['schema_bootstrap_failed', 'pocketbase_unavailable_or_unmigrated:offline']);
 
+  const workerMissing = await runtimeReadiness({
+    role: 'web',
+    checkPocketBase: async () => {},
+    checkSocialOperating: async () => ({
+      queueBacklog: { count: 3, oldestAt: '2026-09-26T00:00:00.000Z' },
+      unknownReceipts: { count: 1 },
+      exhaustedBudgets: { count: 1 },
+      invalidAuthorizations: { count: 1 },
+      worker: { ready: false, source: 'heartbeat', state: 'missing', lastSeenAt: null },
+    }),
+  });
+  assert.equal(workerMissing.status, 'degraded');
+  assert.deepEqual(workerMissing.issues, ['social_operating_worker_unready:heartbeat:missing']);
+  assert.equal(workerMissing.socialOperating?.queueBacklog.count, 3);
+
+  const workerReady = await runtimeReadiness({
+    role: 'all',
+    checkPocketBase: async () => {},
+    checkSocialOperating: async () => ({
+      queueBacklog: { count: 0, oldestAt: null },
+      unknownReceipts: { count: 0 },
+      exhaustedBudgets: { count: 0 },
+      invalidAuthorizations: { count: 0 },
+      worker: { ready: true, source: 'local', state: 'ready', lastSeenAt: '2026-09-26T00:00:00.000Z' },
+    }),
+  });
+  assert.equal(workerReady.status, 'ready');
+
   process.env.READINESS_CACHE_TTL_MS = '250';
   assert.equal(readinessCacheTtlMs(), 250);
   let now = 1_000;
