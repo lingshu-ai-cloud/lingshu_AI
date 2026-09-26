@@ -104,13 +104,22 @@ export async function executeApprovedDiscoveryRun(input: {
       try {
         const dateTo = new Date().toISOString().slice(0, 10);
         const dateFrom = new Date(Date.now() - brief.lookbackDays * 86_400_000).toISOString().slice(0, 10);
-        const result = await crawlVideosForTenant({ tenantId: input.tenantId, platform: target.platform, mode: mode === 'account' ? 'account' : 'keyword', ...(mode === 'account' ? { accountUrl: target.ref, accountName: target.ref } : { keyword: target.ref }), limit: perSourceLimit, dateFrom, dateTo });
+        const result = await crawlVideosForTenant({
+          tenantId: input.tenantId,
+          platform: target.platform,
+          mode: mode === 'account' ? 'account' : 'keyword',
+          ...(mode === 'account' ? { accountUrl: target.ref, accountName: target.ref } : { keyword: target.ref }),
+          limit: perSourceLimit,
+          dateFrom,
+          dateTo,
+          discoveryContext: { runId, scopeId: scope.id, scopeVersion: scope.version, mode, queryRef: target.ref },
+        });
         stats.fetched += Number(result.total || 0);
         stats.accepted += Number(result.imported || 0);
         stats.deduplicated += Number(result.skippedExisting || 0);
         if (mode === 'momentum') stats.momentumCandidates += Number(result.imported || 0);
         remaining -= perSourceLimit;
-        if ('jobId' in result && result.jobId) sourceRunRefs.push(String(result.jobId));
+        sourceRunRefs.push(`${mode}:${target.platform}:${result.source}`);
       } catch (cause) {
         stats.failed += 1;
         error = cause instanceof Error ? cause.message : '采集来源失败';

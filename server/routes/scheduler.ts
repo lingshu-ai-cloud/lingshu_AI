@@ -1341,6 +1341,29 @@ export function ensureSocialDiscoveryCollectionTask(input: {
   return { task, created: !existing, updated: Boolean(existing) };
 }
 
+/** Backfill managed schedules for approved scopes created before scheduler wiring existed. */
+export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number> {
+  let page = 1;
+  let reconciled = 0;
+  while (page <= 50) {
+    const result = await store.list<Record<string, any>>('social_discovery_scopes', {
+      where: { status: 'active' }, sort: 'created_at', page, perPage: 100,
+    });
+    for (const scope of result.items) {
+      const tenantId = String(scope.tenant_id || '').trim();
+      const version = Number(scope.version || 0);
+      const payload = scope.payload && typeof scope.payload === 'object' ? scope.payload as Record<string, any> : {};
+      const approval = payload.approval && typeof payload.approval === 'object' ? payload.approval as Record<string, any> : {};
+      if (!tenantId || !scope.id || !version || approval.status !== 'approved' || Number(approval.scopeVersion || 0) !== version) continue;
+      ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: version });
+      reconciled += 1;
+    }
+    if (page >= result.totalPages || result.items.length < 100) break;
+    page += 1;
+  }
+  return reconciled;
+}
+
 async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'catch-up' | 'manual'): Promise<string> {
   if (runningTaskIds.has(task.id)) return '任务正在执行，请稍后查看结果。';
   runningTaskIds.add(task.id);
@@ -1505,7 +1528,10 @@ export function ensureDigitalEmployeeSocialCollectionTask(input: {
 
 // Boot: restore active tasks
 export async function initScheduler() {
-  const tasks = (await hydrateTasksFromPocketBase()).filter(t => t.enabled && t.tenantId);
+  await hydrateTasksFromPocketBase();
+  try { await reconcileSocialDiscoveryCollectionTasks(); }
+  catch (error) { console.warn('[scheduler] discovery schedule reconciliation skipped:', error instanceof Error ? error.message : error); }
+  const tasks = load().filter(t => t.enabled && t.tenantId);
   tasks.forEach(scheduleTask);
   for (const task of tasks) {
     const missedAt = latestMissedRun(task);
