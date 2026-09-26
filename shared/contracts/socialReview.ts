@@ -1,0 +1,87 @@
+import type { MetricValues } from '../../server/socialMetrics/aggregation.js';
+
+export type ReviewAvailability = 'available' | 'unknown' | 'unavailable';
+export type ReviewEvidenceKind = 'external_reference' | 'owned_content_result';
+export type PromotionAction = 'observe' | 'retest' | 'scale';
+
+export interface ReviewWindow { startsAt: string; endsAt: string; frozenAt: string }
+export interface ReviewMetric {
+  value: number | null;
+  availability: ReviewAvailability;
+  reason?: 'not_returned' | 'source_unavailable' | 'baseline_missing';
+}
+export interface ReviewContentInput {
+  businessDirection: string;
+  platform: string;
+  accountId: string;
+  contentId: string;
+  evidenceKind: ReviewEvidenceKind;
+  publicationReceiptRefs?: string[];
+  attributionStatus?: 'attributed' | 'unknown' | 'unavailable';
+  confounders?: string[];
+  baseline?: MetricValues;
+}
+export interface ReviewContentAggregate extends ReviewContentInput {
+  metrics: Partial<Record<keyof MetricValues, ReviewMetric>>;
+  metricSnapshotRefs: string[];
+}
+export interface ReviewAggregate {
+  key: string;
+  evidenceKinds: ReviewEvidenceKind[];
+  contentCount: number;
+  metrics: Partial<Record<keyof MetricValues, ReviewMetric>>;
+}
+export interface SampleSufficiency {
+  status: 'sufficient' | 'insufficient' | 'unavailable';
+  ownedContentCount: number;
+  attributableContentCount: number;
+  minimumOwnedContent: number;
+  reasons: string[];
+}
+export interface MaintenanceEffort {
+  minutes: number | null;
+  availability: ReviewAvailability;
+  entryRefs: string[];
+}
+export interface FrozenWeeklyReview {
+  snapshotId: string;
+  version: 1;
+  tenantId: string;
+  weekRef: string;
+  window: ReviewWindow;
+  contents: ReviewContentAggregate[];
+  byBusinessDirection: ReviewAggregate[];
+  byAccount: ReviewAggregate[];
+  maintenanceEffort: MaintenanceEffort;
+  sampleSufficiency: SampleSufficiency;
+  evidenceBoundary: { externalReferenceContentIds: string[]; ownedContentIds: string[] };
+  sourceDigest: string;
+}
+
+export interface PerformanceEvaluation {
+  contentId: string;
+  action: PromotionAction;
+  score: number | null;
+  attributable: boolean;
+  sufficient: boolean;
+  evidenceRefs: string[];
+  boundaries: string[];
+  reasons: string[];
+}
+export interface WeeklyPromotionDecision {
+  decisionId: string;
+  snapshotId: string;
+  contentId: string;
+  action: PromotionAction;
+  evidenceRefs: string[];
+  reasons: string[];
+  boundaries: string[];
+}
+export interface VersionedQuotaReference {
+  quotaId: string;
+  version: number;
+  sourceSnapshotId: string;
+  previousQuotaRef?: string;
+  allocations: Array<{ businessDirection: string; accountId: string; action: PromotionAction; contentCount: number; sourceDecisionIds: string[] }>;
+  stopConditions: string[];
+}
