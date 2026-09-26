@@ -18,9 +18,14 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
     ...(template.id === 'production' ? { videoPlans: goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
   }));
   const contentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
+  const publishAccountCount = config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length;
+  const defaultPublishActions = contentCount * Math.max(1, publishAccountCount);
   return { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     directorPlan: defaultDirectorPlan(contentCount),
-    authorization: { mode: 'each', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: 1, customerIds: [], maxCustomerMessages: 1 } };
+    // Approving the weekly package is the single human authorization event.
+    // Every actual publish still has to pass the frozen account/week/count/hash
+    // boundary and the existing quality, connection and receipt safeguards.
+    authorization: { mode: 'bounded', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: Math.max(1, defaultPublishActions), customerIds: [], maxCustomerMessages: 1 } };
 }
 
 export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {

@@ -22,6 +22,7 @@ import {
   verifyFrozenPublishSourceClaim,
   type FrozenPublishSourceClaim,
 } from './publishSourceClaim.js';
+import { boundedAuthorizationIssue, type BoundedPublishingAuthorizationSnapshot } from '../digitalEmployees/publishingExecution.js';
 
 type LegacyEffectExecutor = <T>(tenantId: string, effect: () => Promise<T>) => Promise<T>;
 export interface ScheduledPublishLeaseGuard {
@@ -104,6 +105,15 @@ export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean 
   // provider receipt exists, status recovery/local finalization is read-only
   // with respect to external delivery and must remain recoverable.
   if (text(stats.workflowRunId) && !continuingExistingDelivery && stats.realPublishingAuthorized !== true) return false;
+  if (text(stats.workflowRunId) && !continuingExistingDelivery && text(stats.authorizationMode) === 'bounded') {
+    const accounts = Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(String).filter(Boolean) : [];
+    const snapshot = stats.boundedAuthorization as BoundedPublishingAuthorizationSnapshot | undefined;
+    if (!accounts.length || accounts.some(accountId => boundedAuthorizationIssue(snapshot, {
+      accountId,
+      platform: text(post.platform) as PublishPlatform,
+      scheduledAt: text(post.published_at),
+    }))) return false;
+  }
   const scheduledAt = Date.parse(text(post.published_at));
   if (!Number.isFinite(scheduledAt) || scheduledAt > now) return false;
   if (Object.values(resultMap(stats)).some(result => result.status === 'unknown')) return false;
