@@ -51,9 +51,18 @@ export function buildWeeklyWorkflow(input: WeeklyPlannerInput): {
   const goalRef = input.businessGoal ? [{ type: 'business_content_goal', id: input.businessGoal.goalId, version: input.businessGoal.version }] : [];
   const publicationRefs = input.publicationTasks.map(item => ({ type: 'weekly_publication_task', id: item.publicationTaskId, version: input.version }));
   const blockers = [
-    ...(!input.businessGoal ? ['business_goal_unavailable'] : input.businessGoal.blockers.map(item => `g2:${item.code}`)),
-    ...(!input.capacity ? ['capacity_plan_unavailable'] : input.capacity.blockers.map(item => `capacity:${item}`)),
-    ...(!input.automationPolicy ? ['automation_policy_unavailable'] : input.automationPolicy.blockers.map(item => `policy:${item}`)),
+    ...(!input.businessGoal ? ['business_goal_unavailable'] : [
+      ...(input.businessGoal.status === 'blocked' && !input.businessGoal.blockers.length ? ['g2:business_goal_blocked'] : []),
+      ...input.businessGoal.blockers.map(item => `g2:${item.code}`),
+    ]),
+    ...(!input.capacity ? ['capacity_plan_unavailable'] : [
+      ...(input.capacity.status === 'blocked' && !input.capacity.blockers.length ? ['capacity:decision_blocked'] : []),
+      ...input.capacity.blockers.map(item => `capacity:${item}`),
+    ]),
+    ...(!input.automationPolicy ? ['automation_policy_unavailable'] : [
+      ...(input.automationPolicy.status === 'blocked' && !input.automationPolicy.blockers.length ? ['policy:decision_blocked'] : []),
+      ...input.automationPolicy.blockers.map(item => `policy:${item}`),
+    ]),
     ...input.publicationTasks.flatMap(item => [
       !item.businessProposition ? `g2:${item.publicationTaskId}:business_proposition_required` : null,
       !item.cta ? `g2:${item.publicationTaskId}:cta_required` : null,

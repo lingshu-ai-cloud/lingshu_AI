@@ -1,11 +1,23 @@
 import type { BusinessContentGoal, DecisionRecord } from '../../shared/contracts/socialOperatingDecision.js';
 import type { DataStore } from '../storage/datastore.js';
+import type { OperatingDecisionRecord } from './capacityPlanner.js';
 
 const GOALS = 'social_business_content_goals';
 const DECISIONS = 'social_operating_decisions';
 
 type GoalRow = { id: string; tenant_id: string; program_id: string; goal_id: string; version: number; input_fingerprint: string; payload: BusinessContentGoal };
-type DecisionRow = { id: string; tenant_id: string; program_id: string; decision_id: string; payload: DecisionRecord };
+type StoredDecision = DecisionRecord | OperatingDecisionRecord<unknown>;
+type DecisionRow = { id: string; tenant_id: string; program_id: string; decision_id: string; payload: StoredDecision };
+
+const stable = (value: unknown): string => Array.isArray(value)
+  ? `[${value.map(stable).join(',')}]`
+  : value && typeof value === 'object'
+    ? `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(',')}}`
+    : JSON.stringify(value);
+
+function same(left: unknown, right: unknown): boolean {
+  return stable(left) === stable(right);
+}
 
 export function createSocialOperatingRepository(dataStore: DataStore) {
   return {
@@ -19,22 +31,78 @@ export function createSocialOperatingRepository(dataStore: DataStore) {
       const result = await dataStore.list<GoalRow>(GOALS, { where, sort: '-version', page: 1, perPage: 1 });
       return result.items[0]?.payload ?? null;
     },
+    async saveDecision(tenantId: string, programId: string, decision: StoredDecision): Promise<{ created: boolean }> {
+      const read = async () => {
+        const result = await dataStore.list<DecisionRow>(DECISIONS, {
+          where: { tenant_id: tenantId, program_id: programId, decision_id: decision.decisionId }, page: 1, perPage: 1,
+        });
+        return result.items[0] ?? null;
+      };
+      const existing = await read();
+      if (existing) {
+        if (!same(existing.payload, decision)) throw new Error('decision_record_conflict');
+        return { created: false };
+      }
+      try {
+        const stored = await dataStore.create<DecisionRow>(DECISIONS, {
+          tenant_id: tenantId, program_id: programId, decision_id: decision.decisionId,
+          subject_id: decision.subjectRef.id, subject_version: decision.subjectRef.version, outcome: decision.outcome,
+          input_fingerprint: decision.inputFingerprint, payload: decision, decided_at: decision.decidedAt,
+        });
+        if (stored) return { created: true };
+      } catch {
+        // A concurrent writer may have won the immutable unique key. Re-read
+        // before classifying this as unavailable.
+      }
+      const raced = await read();
+      if (raced) {
+        if (!same(raced.payload, decision)) throw new Error('decision_record_conflict');
+        return { created: false };
+      }
+      throw new Error('decision_record_storage_unavailable');
+    },
     async save(tenantId: string, goal: BusinessContentGoal, decision: DecisionRecord): Promise<void> {
-      const storedDecision = await dataStore.create<DecisionRow>(DECISIONS, {
-        tenant_id: tenantId, program_id: goal.programId, decision_id: decision.decisionId,
-        subject_id: goal.goalId, subject_version: goal.version, outcome: decision.outcome,
-        input_fingerprint: decision.inputFingerprint, payload: decision, decided_at: decision.decidedAt,
-      });
-      if (!storedDecision) throw new Error('decision_record_storage_unavailable');
-      const storedGoal = await dataStore.create<GoalRow>(GOALS, {
-        tenant_id: tenantId, program_id: goal.programId, goal_id: goal.goalId, version: goal.version,
-        input_fingerprint: goal.inputFingerprint, status: goal.status, payload: goal, created_at: goal.createdAt,
-      });
-      if (!storedGoal) throw new Error('business_goal_storage_unavailable');
+      // Decision first is intentional: a visible goal must never point at a
+      // decision that has not committed. Both writes are idempotent, so a
+      // retry resumes after either interruption point.
+      await this.saveDecision(tenantId, goal.programId, decision);
+      const readGoal = async () => {
+        const result = await dataStore.list<GoalRow>(GOALS, {
+          where: { tenant_id: tenantId, program_id: goal.programId, goal_id: goal.goalId, version: goal.version },
+          page: 1, perPage: 1,
+        });
+        return result.items[0] ?? null;
+      };
+      const existing = await readGoal();
+      if (existing) {
+        if (!same(existing.payload, goal)) throw new Error('business_goal_version_conflict');
+        return;
+      }
+      try {
+        const storedGoal = await dataStore.create<GoalRow>(GOALS, {
+          tenant_id: tenantId, program_id: goal.programId, goal_id: goal.goalId, version: goal.version,
+          input_fingerprint: goal.inputFingerprint, status: goal.status, payload: goal, created_at: goal.createdAt,
+        });
+        if (storedGoal) return;
+      } catch {
+        // Resolve immutable-key races by reading the committed value.
+      }
+      const raced = await readGoal();
+      if (raced) {
+        if (!same(raced.payload, goal)) throw new Error('business_goal_version_conflict');
+        return;
+      }
+      throw new Error('business_goal_storage_unavailable');
     },
     async getDecision(tenantId: string, programId: string, decisionId: string): Promise<DecisionRecord | null> {
       const result = await dataStore.list<DecisionRow>(DECISIONS, { where: { tenant_id: tenantId, program_id: programId, decision_id: decisionId }, page: 1, perPage: 1 });
-      return result.items[0]?.payload ?? null;
+      const payload = result.items[0]?.payload;
+      return payload?.decisionType === 'business_content_goal' ? payload as DecisionRecord : null;
+    },
+    async getOperatingDecision<T>(tenantId: string, programId: string, decisionId: string): Promise<OperatingDecisionRecord<T> | null> {
+      const result = await dataStore.list<DecisionRow>(DECISIONS, { where: { tenant_id: tenantId, program_id: programId, decision_id: decisionId }, page: 1, perPage: 1 });
+      const payload = result.items[0]?.payload;
+      return payload && payload.decisionType !== 'business_content_goal' ? payload as OperatingDecisionRecord<T> : null;
     },
   };
 }

@@ -161,6 +161,8 @@ export interface WeeklyOperatingPackage {
   workflows: WeeklyOperatingWorkflow[];
   workflowTasks: WeeklyWorkflowTask[];
   appliedWorkflowEvents: WeeklyWorkflowEvent[];
+  /** Independent append-only workflow stream version; absent only on legacy rows. */
+  workflowStateVersion?: number;
   taskVersionMappings: WeeklyTaskVersionMapping[];
   planningBlockers: string[];
   capacityPlanRef: VersionedSocialRef | null;

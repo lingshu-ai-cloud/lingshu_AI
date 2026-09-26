@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { buildFrozenWeeklyReview } from './service.js';
+import test from 'node:test';
+import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
+import { buildFrozenWeeklyReview, savePromotionLoop } from './service.js';
 import { PerformanceEvaluator } from './performanceEvaluator.js';
 import { PromotionAllocator } from './promotionAllocator.js';
 
@@ -48,5 +50,45 @@ assert.equal(second.quota.previousQuotaRef, `${first.quota.quotaId}:v1`);
 assert.equal(second.quota.sourceSnapshotId, snapshot.snapshotId, 'next-week quota remains consumable by versioned snapshot reference');
 const insufficient = { ...snapshot, sampleSufficiency: { ...snapshot.sampleSufficiency, status: 'insufficient' as const, reasons: ['owned_content_sample_too_small'] } };
 assert.equal(new PromotionAllocator().allocate(insufficient).decisions[0].action, 'observe', 'weekly sample gate blocks otherwise strong content');
+
+test('promotion persistence resumes after interruption between decisions and quota commit', async () => {
+  const rows = new Map<string, Record_[]>();
+  let sequence = 0;
+  let failQuotaOnce = true;
+  let decisionCreates = 0;
+  const dataStore: DataStore = {
+    async getById<T>(collection: string, id: string) { return structuredClone(rows.get(collection)?.find(row => row.id === id) ?? null) as T | null; },
+    async create<T>(collection: string, data: Record<string, unknown>) {
+      if (collection === 'social_weekly_promotion_decisions') decisionCreates += 1;
+      if (collection === 'social_weekly_quota_references' && failQuotaOnce) {
+        failQuotaOnce = false;
+        return null;
+      }
+      const row = { id: `row-${++sequence}`, ...structuredClone(data) } as Record_;
+      rows.set(collection, [...(rows.get(collection) ?? []), row]);
+      return structuredClone(row) as T;
+    },
+    async update() { return false; },
+    async delete() { return false; },
+    async list<T>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
+      const items = (rows.get(collection) ?? []).filter(row => Object.entries(query.where ?? {}).every(([key, value]) => row[key] === value));
+      return { items: structuredClone(items) as T[], totalItems: items.length, totalPages: 1, page: 1, perPage: query.perPage ?? 30 };
+    },
+  };
+  const allocation = new PromotionAllocator().allocate(snapshot);
+  await dataStore.create('social_weekly_review_snapshots', {
+    tenant_id: snapshot.tenantId, week_ref: snapshot.weekRef, snapshot_id: snapshot.snapshotId,
+    source_digest: snapshot.sourceDigest, snapshot,
+  });
+  await assert.rejects(
+    savePromotionLoop({ tenantId: 'tenant-a', snapshot, ...allocation }, dataStore),
+    /promotion_quota_write_unavailable/,
+  );
+  const recovered = await savePromotionLoop({ tenantId: 'tenant-a', snapshot, ...allocation }, dataStore);
+  assert.equal(recovered.repeated, false);
+  assert.equal(decisionCreates, allocation.decisions.length, 'retry reuses decisions committed before interruption');
+  const replay = await savePromotionLoop({ tenantId: 'tenant-a', snapshot, ...allocation }, dataStore);
+  assert.equal(replay.repeated, true);
+});
 
 console.log('social review and promotion loop passed');

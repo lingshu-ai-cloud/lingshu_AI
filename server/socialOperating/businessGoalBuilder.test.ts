@@ -129,3 +129,31 @@ test('service persists immutable versions, replays identical input, isolates ten
   assert.equal((await service.getGoal('tenant-a', 'program-a', first.goal.goalId, 1)).version, 1);
   assert.equal((await service.getDecision('tenant-a', 'program-a', second.decision.decisionId)).subjectRef.version, 2);
 });
+
+test('business goal persistence resumes after interruption between decision and goal writes', async () => {
+  const base = memoryStore();
+  let failGoalOnce = true;
+  let decisionCreates = 0;
+  const faultStore: DataStore = {
+    ...base,
+    async create<T>(collection: string, data: Record<string, unknown>) {
+      if (collection === 'social_operating_decisions') decisionCreates += 1;
+      if (collection === 'social_business_content_goals' && failGoalOnce) {
+        failGoalOnce = false;
+        return null;
+      }
+      return base.create<T>(collection, data);
+    },
+  };
+  let clockTick = 0;
+  const service = createSocialOperatingDecisionService(faultStore, () => `2026-09-26T00:00:0${clockTick++}.000Z`);
+  await assert.rejects(
+    service.buildAndSave({ tenantId: 'tenant-a', operator: options.operator, input: fixture(), expectedVersion: 0 }),
+    /business_goal_storage_unavailable/,
+  );
+  const recovered = await service.buildAndSave({ tenantId: 'tenant-a', operator: options.operator, input: fixture(), expectedVersion: 0 });
+  assert.equal(recovered.created, true);
+  assert.equal(recovered.goal.version, 1);
+  assert.equal(decisionCreates, 1, 'retry reuses the already committed immutable decision');
+  assert.deepEqual((await service.getDecision('tenant-a', 'program-a', recovered.decision.decisionId)), recovered.decision);
+});

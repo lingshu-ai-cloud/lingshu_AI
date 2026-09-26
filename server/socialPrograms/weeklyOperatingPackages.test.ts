@@ -5,6 +5,7 @@ import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datas
 import { WEEKLY_OPERATING_WORKFLOW_KINDS } from '../../shared/contracts/socialProgram.js';
 import { createSocialProgramService, SocialProgramError } from './service.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
+import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 
 function memoryStore(): DataStore {
   const rows = new Map<string, Array<Record_>>();
@@ -80,6 +81,59 @@ async function fixture() {
   return { dataStore, programs, packages, program, accountIds };
 }
 
+async function authoritativeInput(
+  dataStore: DataStore,
+  programId: string,
+  accountIds: Record<string, string[]>,
+): Promise<Record<string, unknown>> {
+  const repository = createSocialOperatingRepository(dataStore);
+  const goalRef = { type: 'business_content_goal', id: `goal-${programId}`, version: 1 };
+  const goal = {
+    goalId: goalRef.id, programId, version: 1, status: 'ready', objective: '获取可资格确认的采购咨询',
+    products: ['精华'], markets: ['北美'], audiences: ['品牌采购'], languages: ['en'],
+    accountBoundaries: [], conversionRouteIds: ['route-1'], publicFactRefs: [{ type: 'enterprise_fact', id: 'fact-1', version: 1 }],
+    prohibitedClaims: [], weeklyBudgetCny: 2600, evidence: [], blockers: [], inputRefs: [], inputFingerprint: `goal-fp-${programId}`,
+    ruleVersion: 'business-content-goal/1.0.0', decisionRecordRef: { type: 'decision_record', id: `goal-decision-${programId}`, version: 1 },
+    createdBy: 'operating-agent', createdAt: '2026-10-01T00:00:00.000Z',
+  } as any;
+  const goalDecision = {
+    decisionId: `goal-decision-${programId}`, decisionType: 'business_content_goal', subjectRef: goalRef, version: 1,
+    outcome: 'accepted', ruleVersion: 'business-content-goal/1.0.0', inputRefs: [], inputFingerprint: goal.inputFingerprint,
+    evidence: [], blockers: [], impacts: [], output: goalRef, operator: { type: 'agent', id: 'operating-agent' }, decidedAt: goal.createdAt,
+  } as any;
+  await repository.save('tenant-a', goal, goalDecision);
+  const quotas = [
+    ...accountIds.tiktok!.map(accountId => ({ accountId, publicationQuota: 5 })),
+    ...accountIds.facebook!.map(accountId => ({ accountId, publicationQuota: 5 })),
+    ...accountIds.instagram!.map(accountId => ({ accountId, publicationQuota: 3 })),
+    ...accountIds.youtube!.map(accountId => ({ accountId, publicationQuota: 3 })),
+  ];
+  const capacityRef = { type: 'capacity_plan', id: `capacity-${programId}`, version: 1 };
+  await repository.saveDecision('tenant-a', programId, {
+    decisionId: capacityRef.id, decisionType: 'capacity_plan', subjectRef: goalRef, version: 1, outcome: 'accepted',
+    ruleVersion: 'capacity-planner/1.0.0', inputRefs: [goalRef], inputFingerprint: `capacity-fp-${programId}`,
+    evidence: [], blockers: [], output: { status: 'ready', originalContentQuota: 10, adaptationQuota: 16, publicationQuota: 26, accountQuotas: quotas, estimatedCostCny: 2600, limitingFactors: [] },
+    operator: { type: 'agent', id: 'capacity-agent' }, decidedAt: '2026-10-01T00:01:00.000Z',
+  });
+  const policyRef = { type: 'automation_policy', id: `policy-${programId}`, version: 1 };
+  await repository.saveDecision('tenant-a', programId, {
+    decisionId: policyRef.id, decisionType: 'automation_policy', subjectRef: goalRef, version: 1, outcome: 'accepted',
+    ruleVersion: 'automation-policy/1.0.0', inputRefs: [goalRef], inputFingerprint: `policy-fp-${programId}`,
+    evidence: [], blockers: [], output: { status: 'allowed', mode: 'managed', action: 'draft', humanGate: 'none', automaticExecutionAllowed: true, authorizationIssue: null },
+    operator: { type: 'agent', id: 'policy-agent' }, decidedAt: '2026-10-01T00:02:00.000Z',
+  });
+  return {
+    businessContentGoalRef: goalRef,
+    capacityPlanRef: capacityRef,
+    automationPolicyRef: policyRef,
+    publicationTasks: Array.from({ length: 26 }, (_, index) => ({
+      businessProposition: `业务主张-${index + 1}`, cta: '查看产品页',
+      factRefs: [{ type: 'enterprise_fact', id: 'fact-1', version: 1 }],
+      metricTargets: ['qualified_inquiry'], publishWindow: '2026-10-05/2026-10-11',
+    })),
+  };
+}
+
 test('weekly operating package: default six-account cadence creates seven workflows and 26 publication tasks', async () => {
   const { packages, program } = await fixture();
   const item = await packages.create('tenant-a', 'owner', program.programId, {
@@ -145,23 +199,36 @@ test('weekly operating package: user cadence creates an immutable revision and e
 });
 
 test('weekly operating package: workflow event replay is idempotent and blocking stays on dependants', async () => {
-  const { packages, program } = await fixture();
+  const { dataStore, packages, program, accountIds } = await fixture();
+  const authority = await authoritativeInput(dataStore, program.programId, accountIds);
   const item = await packages.create('tenant-a', 'owner', program.programId, {
-    weekStart: '2026-10-05', objective: '状态机', successCriteria: ['可重放'],
+    ...authority, weekStart: '2026-10-05', objective: '状态机', successCriteria: ['可重放'],
   });
   const readiness = item.workflowTasks.find(task => task.kind === 'readiness')!;
-  const event = { eventId: 'evt-1', taskId: readiness.taskId, type: 'unblock' as const, occurredAt: '2026-10-01T00:00:00.000Z' };
-  const once = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, { expectedVersion: 1, event });
-  const replay = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, { expectedVersion: 1, event });
+  const event = { eventId: 'evt-1', taskId: readiness.taskId, type: 'start' as const, occurredAt: '2026-10-01T00:00:00.000Z' };
+  const once = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, { expectedVersion: 1, expectedStateVersion: 0, event });
+  const replay = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, { expectedVersion: 1, expectedStateVersion: 0, event });
   assert.equal(replay.appliedWorkflowEvents.length, 1);
+  assert.equal(replay.workflowStateVersion, 1);
   assert.deepEqual(replay, once);
-  const discovery = replay.workflowTasks.find(task => task.kind === 'discovery')!;
-  const blocked = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, {
-    expectedVersion: 1,
-    event: { eventId: 'evt-2', taskId: discovery.taskId, type: 'block', reason: 'discovery_provider_unavailable', occurredAt: '2026-10-01T00:01:00.000Z' },
+  const completed = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, {
+    expectedVersion: 1, expectedStateVersion: 1,
+    event: { eventId: 'evt-2', taskId: readiness.taskId, type: 'complete', occurredAt: '2026-10-01T00:00:30.000Z' },
   });
-  assert.equal(blocked.workflowTasks.find(task => task.kind === 'readiness')!.status, 'planned');
+  const discovery = completed.workflowTasks.find(task => task.kind === 'discovery')!;
+  const blocked = await packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, {
+    expectedVersion: 1, expectedStateVersion: 2,
+    event: { eventId: 'evt-3', taskId: discovery.taskId, type: 'block', reason: 'discovery_provider_unavailable', occurredAt: '2026-10-01T00:01:00.000Z' },
+  });
+  assert.equal(blocked.workflowTasks.find(task => task.kind === 'readiness')!.status, 'completed');
   assert.equal(blocked.workflowTasks.find(task => task.kind === 'directing')!.status, 'blocked');
+  await assert.rejects(
+    packages.applyWorkflowEvent('tenant-a', 'owner', program.programId, item.packageId, {
+      expectedVersion: 1, expectedStateVersion: 3,
+      event: { eventId: 'evt-4', taskId: discovery.taskId, type: 'unblock', occurredAt: '2026-10-01T00:02:00.000Z' },
+    }),
+    (error: unknown) => error instanceof SocialProgramError && error.code === 'workflow_unblock_authority_required',
+  );
 });
 
 test('weekly operating package: discovery and production budgets remain independent', async () => {
@@ -204,11 +271,18 @@ test('weekly operating package: invalid calendar dates are rejected', async () =
 });
 
 test('weekly operating package: activation updates package status and versioned program reference', async () => {
-  const { packages, programs, program } = await fixture();
+  const { dataStore, packages, programs, program, accountIds } = await fixture();
+  const authority = await authoritativeInput(dataStore, program.programId, accountIds);
   const draft = await packages.create('tenant-a', 'owner', program.programId, {
-    weekStart: '2026-10-05', objective: '活动周包', successCriteria: ['有界授权'],
+    ...authority, weekStart: '2026-10-05', objective: '活动周包', successCriteria: ['有界授权'],
     authorizationMode: 'bounded', allowRealPublishing: false,
+    originalContentTarget: 1,
+    weeklyBudgetCny: 1,
+    accountPlans: [{ accountId: accountIds.tiktok![0], publicationCount: 1 }],
   });
+  assert.equal(draft.socialContentPackage.originalContentTarget, 10, '客户端不得覆盖权威容量目标');
+  assert.equal(draft.socialContentPackage.publicationTaskTarget, 26);
+  assert.equal(draft.socialContentPackage.weeklyBudgetCny, 2600);
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
@@ -225,9 +299,10 @@ test('weekly operating package: activation updates package status and versioned 
 });
 
 test('weekly operating package: explicit activation authorizes only the frozen bounded content version', async () => {
-  const { packages, programs, program } = await fixture();
+  const { dataStore, packages, programs, program, accountIds } = await fixture();
+  const authority = await authoritativeInput(dataStore, program.programId, accountIds);
   const draft = await packages.create('tenant-a', 'owner', program.programId, {
-    weekStart: '2026-10-05', objective: '包级授权', successCriteria: ['受限账号和数量'],
+    ...authority, weekStart: '2026-10-05', objective: '包级授权', successCriteria: ['受限账号和数量'],
     allowRealPublishing: true,
   });
   assert.equal(draft.socialContentPackage.authorization.allowRealPublishing, false, '草稿输入不得隐式开启发布');
@@ -253,9 +328,10 @@ test('weekly operating package: explicit activation authorizes only the frozen b
 });
 
 test('weekly operating package: retiring an active version revokes publishing and clears the program reference', async () => {
-  const { packages, programs, program } = await fixture();
+  const { dataStore, packages, programs, program, accountIds } = await fixture();
+  const authority = await authoritativeInput(dataStore, program.programId, accountIds);
   const draft = await packages.create('tenant-a', 'owner', program.programId, {
-    weekStart: '2026-10-05', objective: '可撤回周包', successCriteria: ['撤回后停止发布'],
+    ...authority, weekStart: '2026-10-05', objective: '可撤回周包', successCriteria: ['撤回后停止发布'],
   });
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1, authorizePublishing: true,
@@ -296,6 +372,88 @@ test('weekly operating package: default cadence reports a missing account matrix
   );
 });
 
+test('weekly operating package: activation fails closed on planning and G2 blockers', async () => {
+  const { packages, program } = await fixture();
+  const draft = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '不完整草稿', successCriteria: ['不得激活'],
+  });
+  await assert.rejects(
+    packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
+      expectedVersion: 1, expectedProgramVersion: 1,
+    }),
+    (error: unknown) => error instanceof SocialProgramError
+      && error.code === 'weekly_operating_package_activation_blocked'
+      && /g2:/.test(error.message),
+  );
+});
+
+test('weekly operating package: clients cannot inject authoritative planning objects', async () => {
+  const { packages, program } = await fixture();
+  await assert.rejects(
+    packages.create('tenant-a', 'owner', program.programId, {
+      weekStart: '2026-10-05', objective: '伪造决策', successCriteria: ['应被拒绝'],
+      businessContentGoal: { status: 'ready', blockers: [] },
+      capacityPlan: { status: 'ready', blockers: [], accountPlans: [] },
+      automationPolicy: { status: 'ready', blockers: [] },
+    }),
+    (error: unknown) => error instanceof SocialProgramError && error.code === 'authoritative_object_injection_forbidden',
+  );
+});
+
+test('weekly workflow event stream serializes concurrent writers and recovers after a failed append', async () => {
+  const { dataStore, packages, program, accountIds } = await fixture();
+  const authority = await authoritativeInput(dataStore, program.programId, accountIds);
+  const draft = await packages.create('tenant-a', 'owner', program.programId, {
+    ...authority, weekStart: '2026-10-05', objective: '并发状态', successCriteria: ['CAS'],
+  });
+  const readiness = draft.workflowTasks.find(task => task.kind === 'readiness')!;
+  const results = await Promise.allSettled([
+    packages.applyWorkflowEvent('tenant-a', 'owner-a', program.programId, draft.packageId, {
+      expectedVersion: 1, expectedStateVersion: 0,
+      event: { eventId: 'concurrent-start', taskId: readiness.taskId, type: 'start', occurredAt: '2026-10-01T00:00:00.000Z' },
+    }),
+    packages.applyWorkflowEvent('tenant-a', 'owner-b', program.programId, draft.packageId, {
+      expectedVersion: 1, expectedStateVersion: 0,
+      event: { eventId: 'concurrent-block', taskId: readiness.taskId, type: 'block', reason: 'transient', occurredAt: '2026-10-01T00:00:01.000Z' },
+    }),
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  const rejected = results.find(result => result.status === 'rejected') as PromiseRejectedResult;
+  assert.ok(rejected.reason instanceof SocialProgramError);
+  assert.equal(rejected.reason.code, 'workflow_state_version_conflict');
+  const recovered = await createWeeklyOperatingPackageService(dataStore).get('tenant-a', program.programId, draft.packageId);
+  assert.equal(recovered.workflowStateVersion, 1);
+  assert.equal(recovered.appliedWorkflowEvents.length, 1);
+
+  let failNextEvent = true;
+  const faultStore: DataStore = {
+    ...dataStore,
+    async create<T>(collection: string, data: Record<string, unknown>) {
+      if (collection === 'social_weekly_workflow_events' && failNextEvent) {
+        failNextEvent = false;
+        return null;
+      }
+      return dataStore.create<T>(collection, data);
+    },
+  };
+  const faultService = createWeeklyOperatingPackageService(faultStore);
+  const current = await faultService.get('tenant-a', program.programId, draft.packageId);
+  const currentReadiness = current.workflowTasks.find(task => task.kind === 'readiness')!;
+  const nextType = currentReadiness.status === 'in_progress' ? 'complete' as const : 'start' as const;
+  await assert.rejects(
+    faultService.applyWorkflowEvent('tenant-a', 'owner', program.programId, draft.packageId, {
+      expectedVersion: 1, expectedStateVersion: 1,
+      event: { eventId: 'recoverable-event', taskId: readiness.taskId, type: nextType, occurredAt: '2026-10-01T00:02:00.000Z' },
+    }),
+    (error: unknown) => error instanceof SocialProgramError && error.code === 'workflow_event_storage_unavailable',
+  );
+  const retried = await faultService.applyWorkflowEvent('tenant-a', 'owner', program.programId, draft.packageId, {
+    expectedVersion: 1, expectedStateVersion: 1,
+    event: { eventId: 'recoverable-event', taskId: readiness.taskId, type: nextType, occurredAt: '2026-10-01T00:02:00.000Z' },
+  });
+  assert.equal(retried.workflowStateVersion, 2);
+});
+
 test('weekly operating package migration defines immutable versions and one active package per program week', () => {
   const migration = readFileSync('pb_migrations/1790726400_create_weekly_operating_packages.js', 'utf8');
   assert.match(migration, /idx_weekly_operating_package_version/);
@@ -303,4 +461,8 @@ test('weekly operating package migration defines immutable versions and one acti
   assert.match(migration, /WHERE status = 'active'/);
   assert.match(migration, /updated_by/);
   assert.match(migration, /updated_at/);
+  const eventsMigration = readFileSync('pb_migrations/1791072000_create_social_weekly_workflow_events.js', 'utf8');
+  assert.match(eventsMigration, /UNIQUE INDEX idx_social_weekly_workflow_event_id/);
+  assert.match(eventsMigration, /UNIQUE INDEX idx_social_weekly_workflow_state_version/);
+  assert.match(eventsMigration, /updateRule: "@request\.auth\.id != '' && false"/);
 });

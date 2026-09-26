@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
   type OwnedSocialAccount,
@@ -14,10 +14,14 @@ import { SocialProgramError } from './service.js';
 import { buildWeeklyWorkflow, type WeeklyAutomationPolicySnapshot, type WeeklyCapacitySnapshot } from './weeklyPlanner.js';
 import { applyWorkflowEvent } from './workflowState.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
+import type { CapacityPlan } from '../socialOperating/capacityPlanner.js';
+import type { AutomationPolicyResolution } from '../socialOperating/automationPolicyResolver.js';
 
 const PACKAGES = 'social_weekly_operating_packages';
 const PROGRAMS = 'social_programs';
 const ACCOUNTS = 'social_owned_accounts';
+const WORKFLOW_EVENTS = 'social_weekly_workflow_events';
+const workflowMutationTails = new Map<string, Promise<void>>();
 const SUPPORTED_PLATFORMS = ['tiktok', 'facebook', 'instagram', 'youtube'] as const;
 type SupportedPlatform = typeof SUPPORTED_PLATFORMS[number];
 
@@ -34,6 +38,17 @@ type PackageRow = {
 };
 type ProgramRow = { id: string; tenant_id: string; program_id: string; payload: Record<string, unknown> };
 type AccountRow = { id: string; tenant_id: string; program_id: string; payload: OwnedSocialAccount };
+type WorkflowEventRow = {
+  id: string;
+  tenant_id: string;
+  program_id: string;
+  package_id: string;
+  package_version: number;
+  event_id: string;
+  state_version: number;
+  event_digest: string;
+  event: WeeklyWorkflowEvent;
+};
 
 export interface WeeklyPublishingAccountPlan {
   accountId: string;
@@ -54,6 +69,27 @@ const uniqueText = (value: unknown, max = 30) => Array.isArray(value)
   ? [...new Set(value.map(item => text(item, 240)).filter(Boolean))].slice(0, max)
   : [];
 const at = () => new Date().toISOString();
+const stable = (value: unknown): string => Array.isArray(value)
+  ? `[${value.map(stable).join(',')}]`
+  : value && typeof value === 'object'
+    ? `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(',')}}`
+    : JSON.stringify(value);
+const eventDigest = (event: WeeklyWorkflowEvent) => createHash('sha256').update(stable(event)).digest('hex');
+
+async function serializeWorkflowMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  const prior = workflowMutationTails.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  const tail = prior.then(() => current);
+  workflowMutationTails.set(key, tail);
+  await prior;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (workflowMutationTails.get(key) === tail) workflowMutationTails.delete(key);
+  }
+}
 
 function finiteBudget(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -95,7 +131,9 @@ function versionedRef(value: unknown): VersionedSocialRef | null {
 function businessGoal(value: unknown, programId: string): BusinessContentGoal | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const goal = value as BusinessContentGoal;
-  return goal.programId === programId && goal.goalId && Number.isSafeInteger(goal.version) ? goal : null;
+  return goal.programId === programId && goal.goalId && Number.isSafeInteger(goal.version) && goal.version > 0
+    && (goal.status === 'ready' || goal.status === 'blocked') && Array.isArray(goal.blockers)
+    ? goal : null;
 }
 
 function capacitySnapshot(value: unknown): WeeklyCapacitySnapshot | null {
@@ -109,6 +147,26 @@ function policySnapshot(value: unknown): WeeklyAutomationPolicySnapshot | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const item = value as WeeklyAutomationPolicySnapshot;
   return versionedRef(item.ref) && (item.status === 'ready' || item.status === 'blocked') ? item : null;
+}
+
+function validCapacityPlan(value: unknown): value is CapacityPlan {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const plan = value as CapacityPlan;
+  if (!['ready', 'degraded', 'blocked'].includes(plan.status) || !Array.isArray(plan.accountQuotas) || !Array.isArray(plan.limitingFactors)) return false;
+  const integers = [plan.originalContentQuota, plan.adaptationQuota, plan.publicationQuota];
+  if (integers.some(item => !Number.isSafeInteger(item) || item < 0)) return false;
+  if (!Number.isFinite(plan.estimatedCostCny) || plan.estimatedCostCny < 0) return false;
+  if (plan.originalContentQuota + plan.adaptationQuota !== plan.publicationQuota) return false;
+  if (plan.accountQuotas.some(item => !text(item.accountId, 160) || !Number.isSafeInteger(item.publicationQuota) || item.publicationQuota < 0)) return false;
+  return plan.accountQuotas.reduce((sum, item) => sum + item.publicationQuota, 0) === plan.publicationQuota;
+}
+
+function validAutomationPolicy(value: unknown): value is AutomationPolicyResolution {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const policy = value as AutomationPolicyResolution;
+  return ['allowed', 'approval_required', 'blocked'].includes(policy.status)
+    && ['read', 'analyze', 'draft', 'change_scope', 'spend', 'publish', 'customer_send', 'commercial_commitment'].includes(policy.action)
+    && typeof policy.automaticExecutionAllowed === 'boolean';
 }
 
 async function programRow(dataStore: DataStore, tenantId: string, programId: string): Promise<ProgramRow> {
@@ -250,6 +308,56 @@ async function latestPackageRow(
   return result.items[0] ?? null;
 }
 
+async function workflowEventRows(
+  dataStore: DataStore,
+  tenantId: string,
+  programId: string,
+  packageId: string,
+  packageVersion: number,
+): Promise<WorkflowEventRow[]> {
+  const items: WorkflowEventRow[] = [];
+  let page = 1;
+  while (true) {
+    const result = await dataStore.list<WorkflowEventRow>(WORKFLOW_EVENTS, {
+      where: { tenant_id: tenantId, program_id: programId, package_id: packageId, package_version: packageVersion },
+      sort: 'state_version', page, perPage: 200,
+    });
+    items.push(...result.items);
+    if (page >= result.totalPages || !result.items.length) return items;
+    page += 1;
+  }
+}
+
+async function projectWorkflowState(
+  dataStore: DataStore,
+  tenantId: string,
+  row: PackageRow,
+): Promise<WeeklyOperatingPackage> {
+  let projected: WeeklyOperatingPackage = {
+    ...row.payload,
+    workflowStateVersion: row.payload.workflowStateVersion ?? row.payload.appliedWorkflowEvents.length,
+  };
+  let expectedStateVersion: number = row.payload.workflowStateVersion ?? row.payload.appliedWorkflowEvents.length;
+  const persisted = await workflowEventRows(dataStore, tenantId, row.program_id, row.package_id, row.version);
+  for (const stored of persisted) {
+    const embedded = projected.appliedWorkflowEvents.find(item => item.eventId === stored.event_id);
+    if (embedded) {
+      if (eventDigest(embedded) !== stored.event_digest) {
+        throw new SocialProgramError('workflow_event_conflict', 409, '已持久化工作流事件与包内历史冲突。');
+      }
+      expectedStateVersion = Math.max(expectedStateVersion, stored.state_version);
+      continue;
+    }
+    if (stored.state_version !== expectedStateVersion + 1) {
+      throw new SocialProgramError('workflow_event_stream_incomplete', 503, '工作流事件序列不连续，暂停推进。');
+    }
+    projected = applyWorkflowEvent(projected, stored.event, { authoritativeUnblockVerified: true });
+    expectedStateVersion = stored.state_version;
+    projected.workflowStateVersion = expectedStateVersion;
+  }
+  return projected;
+}
+
 function requireExpectedVersion(actual: number, expected: unknown): void {
   const parsed = Number(expected);
   if (!Number.isSafeInteger(parsed) || parsed < 1) {
@@ -275,12 +383,13 @@ function packageFromInput(args: {
   const policy = policySnapshot(args.input.automationPolicy);
   const goal = businessGoal(args.input.businessContentGoal, args.programId);
   const capacityAccountPlans = capacity?.status === 'ready' ? capacity.accountPlans : undefined;
-  const plans = (args.input.accountPlans ?? capacityAccountPlans) === undefined
+  const proposedAccountPlans = capacityAccountPlans ?? args.input.accountPlans;
+  const plans = proposedAccountPlans === undefined
     ? defaultAccountPlans(args.accounts)
-    : customAccountPlans(args.input.accountPlans ?? capacityAccountPlans, args.accounts);
+    : customAccountPlans(proposedAccountPlans, args.accounts);
   const publicationTaskTarget = plans.reduce((sum, plan) => sum + plan.publicationCount, 0);
   if (publicationTaskTarget > 100) throw new SocialProgramError('publication_target_too_large', 400, '单周发布任务不能超过 100 条。');
-  const originalContentTarget = positiveInteger(args.input.originalContentTarget ?? capacity?.originalContentTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
+  const originalContentTarget = positiveInteger(capacity?.status === 'ready' ? capacity.originalContentTarget : args.input.originalContentTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
   const tasks = publicationTasks(plans, originalContentTarget, args.input);
   const status = 'draft' as const;
   const timestamp = at();
@@ -293,7 +402,7 @@ function packageFromInput(args: {
     adaptationVersionTarget: publicationTaskTarget - originalContentTarget,
     publicationTaskTarget,
     publicationTasks: tasks,
-    weeklyBudgetCny: finiteBudget(args.input.weeklyBudgetCny ?? capacity?.productionBudgetCny),
+    weeklyBudgetCny: finiteBudget(capacity?.status === 'ready' ? capacity.productionBudgetCny : args.input.weeklyBudgetCny),
     perItemBudgetCny: finiteBudget(args.input.perItemBudgetCny),
     capacityNotes: uniqueText(args.input.capacityNotes),
     authorization: {
@@ -333,6 +442,7 @@ function packageFromInput(args: {
     workflows: workflow.workflows,
     workflowTasks: workflow.tasks,
     appliedWorkflowEvents: [],
+    workflowStateVersion: 0,
     taskVersionMappings: workflow.mappings,
     planningBlockers: workflow.blockers,
     capacityPlanRef: capacity?.ref ?? null,
@@ -367,19 +477,91 @@ async function savePackage(dataStore: DataStore, tenantId: string, item: WeeklyO
 export function createWeeklyOperatingPackageService(dataStore: DataStore) {
   const operatingRepository = createSocialOperatingRepository(dataStore);
 
-  async function withAuthoritativeGoal(
+  function rejectClientAuthorityObjects(input: Record<string, unknown>): void {
+    for (const field of ['businessContentGoal', 'capacityPlan', 'automationPolicy']) {
+      if (Object.prototype.hasOwnProperty.call(input, field)) {
+        throw new SocialProgramError('authoritative_object_injection_forbidden', 400, `不得直接提交权威对象 ${field}，请仅提交版本引用。`);
+      }
+    }
+  }
+
+  async function withAuthoritativePlanning(
     tenantId: string,
     programId: string,
     input: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    const ref = versionedRef(input.businessContentGoalRef);
-    if (!ref) return input;
-    if (ref.type !== 'business_content_goal') {
+  ): Promise<{
+    input: Record<string, unknown>;
+    goal: BusinessContentGoal | null;
+    capacity: WeeklyCapacitySnapshot | null;
+    policy: WeeklyAutomationPolicySnapshot | null;
+  }> {
+    const goalRef = versionedRef(input.businessContentGoalRef);
+    if (input.businessContentGoalRef != null && !goalRef) {
+      throw new SocialProgramError('business_goal_ref_invalid', 400, '经营目标引用无效。');
+    }
+    if (goalRef && goalRef.type !== 'business_content_goal') {
       throw new SocialProgramError('business_goal_ref_invalid', 400, '经营目标引用类型无效。');
     }
-    const goal = await operatingRepository.getGoal(tenantId, programId, ref.id, ref.version);
-    if (!goal) throw new SocialProgramError('business_goal_not_found', 404, '经营目标不存在。');
-    return { ...input, businessContentGoal: goal };
+    const storedGoal = goalRef ? await operatingRepository.getGoal(tenantId, programId, goalRef.id, goalRef.version) : null;
+    if (goalRef && !storedGoal) throw new SocialProgramError('business_goal_not_found', 404, '经营目标不存在。');
+    const goal = businessGoal(storedGoal, programId);
+    if (storedGoal && !goal) throw new SocialProgramError('business_goal_corrupt', 409, '权威经营目标数据不完整，已失败关闭。');
+
+    const capacityRef = versionedRef(input.capacityPlanRef);
+    if (input.capacityPlanRef != null && !capacityRef) {
+      throw new SocialProgramError('capacity_plan_ref_invalid', 400, '容量决策引用无效。');
+    }
+    if (capacityRef && capacityRef.type !== 'capacity_plan') {
+      throw new SocialProgramError('capacity_plan_ref_invalid', 400, '容量决策引用类型无效。');
+    }
+    const capacityDecision = capacityRef
+      ? await operatingRepository.getOperatingDecision<CapacityPlan>(tenantId, programId, capacityRef.id)
+      : null;
+    if (capacityRef && (!capacityDecision || capacityDecision.decisionType !== 'capacity_plan' || capacityDecision.version !== capacityRef.version)) {
+      throw new SocialProgramError('capacity_plan_not_found', 404, '权威容量决策不存在。');
+    }
+    if (capacityDecision && (!Array.isArray(capacityDecision.blockers) || !validCapacityPlan(capacityDecision.output))) {
+      throw new SocialProgramError('capacity_plan_corrupt', 409, '权威容量决策数据不完整，已失败关闭。');
+    }
+    if (capacityDecision && (!goalRef || stable(capacityDecision.subjectRef) !== stable(goalRef))) {
+      throw new SocialProgramError('capacity_plan_lineage_invalid', 409, '容量决策与当前经营目标版本不一致。');
+    }
+    const capacity: WeeklyCapacitySnapshot | null = capacityDecision && capacityRef ? {
+      ref: capacityRef,
+      status: capacityDecision.outcome === 'blocked' || capacityDecision.output.status === 'blocked' ? 'blocked' : 'ready',
+      originalContentTarget: capacityDecision.output.originalContentQuota,
+      accountPlans: capacityDecision.output.accountQuotas.filter(item => item.publicationQuota > 0).map(item => ({
+        accountId: item.accountId, publicationCount: item.publicationQuota,
+      })),
+      productionBudgetCny: capacityDecision.output.estimatedCostCny,
+      blockers: capacityDecision.blockers.map(item => item.code),
+    } : null;
+
+    const policyRef = versionedRef(input.automationPolicyRef);
+    if (input.automationPolicyRef != null && !policyRef) {
+      throw new SocialProgramError('automation_policy_ref_invalid', 400, '自动化决策引用无效。');
+    }
+    if (policyRef && policyRef.type !== 'automation_policy') {
+      throw new SocialProgramError('automation_policy_ref_invalid', 400, '自动化决策引用类型无效。');
+    }
+    const policyDecision = policyRef
+      ? await operatingRepository.getOperatingDecision<AutomationPolicyResolution>(tenantId, programId, policyRef.id)
+      : null;
+    if (policyRef && (!policyDecision || policyDecision.decisionType !== 'automation_policy' || policyDecision.version !== policyRef.version)) {
+      throw new SocialProgramError('automation_policy_not_found', 404, '权威自动化决策不存在。');
+    }
+    if (policyDecision && (!Array.isArray(policyDecision.blockers) || !validAutomationPolicy(policyDecision.output))) {
+      throw new SocialProgramError('automation_policy_corrupt', 409, '权威自动化决策数据不完整，已失败关闭。');
+    }
+    if (policyDecision && (!goalRef || stable(policyDecision.subjectRef) !== stable(goalRef))) {
+      throw new SocialProgramError('automation_policy_lineage_invalid', 409, '自动化决策与当前经营目标版本不一致。');
+    }
+    const policy: WeeklyAutomationPolicySnapshot | null = policyDecision && policyRef ? {
+      ref: policyRef,
+      status: policyDecision.outcome === 'blocked' || policyDecision.output.status === 'blocked' ? 'blocked' : 'ready',
+      blockers: policyDecision.blockers.map(item => item.code),
+    } : null;
+    return { input: { ...input, businessContentGoal: goal, capacityPlan: capacity, automationPolicy: policy }, goal, capacity, policy };
   }
 
   return {
@@ -388,20 +570,21 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const where: Record<string, string> = { tenant_id: tenantId, program_id: programId };
       if (weekStart) where.week_start = dateOnly(weekStart, 'week_start_invalid');
       const result = await dataStore.list<PackageRow>(PACKAGES, { where, sort: '-version', page: 1, perPage: 300 });
-      return result.items.map(row => row.payload);
+      return Promise.all(result.items.map(row => projectWorkflowState(dataStore, tenantId, row)));
     },
 
     async get(tenantId: string, programId: string, packageId: string): Promise<WeeklyOperatingPackage> {
       await programRow(dataStore, tenantId, programId);
       const row = await latestPackageRow(dataStore, tenantId, programId, packageId);
       if (!row) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      return row.payload;
+      return projectWorkflowState(dataStore, tenantId, row);
     },
 
     async create(tenantId: string, userId: string, programId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+      rejectClientAuthorityObjects(input);
       const program = await programRow(dataStore, tenantId, programId);
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
-      input = await withAuthoritativeGoal(tenantId, programId, input);
+      input = (await withAuthoritativePlanning(tenantId, programId, input)).input;
       const item = packageFromInput({
         input, programId, userId, accounts, program: program.payload,
         packageId: randomUUID(), contentPackageId: randomUUID(), version: 1, previousVersion: null,
@@ -414,9 +597,11 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     },
 
     async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+      rejectClientAuthorityObjects(input);
       const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
       if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
       requireExpectedVersion(current.payload.version, input.expectedVersion);
+      const projectedCurrent = await projectWorkflowState(dataStore, tenantId, current);
       const program = await programRow(dataStore, tenantId, programId);
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
       const merged = {
@@ -425,6 +610,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         enterpriseProfileRef: current.payload.enterpriseProfileRef,
         monthlyPlanRef: current.payload.monthlyPlanRef,
         businessContentGoalRef: current.payload.businessContentGoalRef,
+        capacityPlanRef: current.payload.capacityPlanRef,
+        automationPolicyRef: current.payload.automationPolicyRef,
         originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
         weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,
         perItemBudgetCny: current.payload.socialContentPackage.perItemBudgetCny,
@@ -440,12 +627,12 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         }, []),
         ...input,
       };
-      const resolved = await withAuthoritativeGoal(tenantId, programId, merged);
+      const resolved = await withAuthoritativePlanning(tenantId, programId, merged);
       const item = packageFromInput({
-        input: resolved, programId, userId, accounts, program: program.payload,
+        input: resolved.input, programId, userId, accounts, program: program.payload,
         packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
         version: current.payload.version + 1, previousVersion: current.payload.version,
-        previousPackage: current.payload,
+        previousPackage: projectedCurrent,
       });
       if (!item.objective || !item.successCriteria.length) {
         throw new SocialProgramError('weekly_operating_package_incomplete', 400, '周任务包必须包含经营目标和成功标准。');
@@ -484,6 +671,35 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
       requireExpectedVersion(current.payload.version, input.expectedVersion);
       if (current.payload.status !== 'draft') throw new SocialProgramError('weekly_operating_package_not_draft', 409, '只能激活草稿版本。');
+      const projectedCurrent = await projectWorkflowState(dataStore, tenantId, current);
+      const authority = await withAuthoritativePlanning(tenantId, programId, {
+        businessContentGoalRef: current.payload.businessContentGoalRef,
+        capacityPlanRef: current.payload.capacityPlanRef,
+        automationPolicyRef: current.payload.automationPolicyRef,
+      });
+      const checked = buildWeeklyWorkflow({
+        packageId: current.payload.packageId,
+        version: current.payload.version,
+        businessGoal: authority.goal,
+        capacity: authority.capacity,
+        automationPolicy: authority.policy,
+        publicationTasks: current.payload.socialContentPackage.publicationTasks,
+        discoveryBudgetCny: current.payload.discoveryBudgetCny,
+      });
+      const activationBlockers = [...new Set([
+        ...current.payload.planningBlockers,
+        ...checked.blockers,
+        ...projectedCurrent.workflowTasks.flatMap(task => task.status === 'blocked'
+          ? [...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `upstream:${id}`)]
+          : []),
+      ])];
+      if (activationBlockers.length) {
+        throw new SocialProgramError(
+          'weekly_operating_package_activation_blocked',
+          409,
+          `周任务包尚有未解决的规划/G2 缺项：${activationBlockers.join('、')}`,
+        );
+      }
       const program = await programRow(dataStore, tenantId, programId);
       const expectedProgramVersion = Number(input.expectedProgramVersion);
       const actualProgramVersion = Number(program.payload.version);
@@ -506,7 +722,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         supersededRows.push(active);
       }
       const activated: WeeklyOperatingPackage = {
-        ...current.payload,
+        ...projectedCurrent,
         status: 'active',
         socialContentPackage: {
           ...current.payload.socialContentPackage,
@@ -627,19 +843,92 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       packageId: string,
       input: Record<string, unknown>,
     ): Promise<WeeklyOperatingPackage> {
-      const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
-      if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
-      requireExpectedVersion(current.payload.version, input.expectedVersion);
       const event = input.event as WeeklyWorkflowEvent | undefined;
-      if (!event?.eventId || !event.taskId || !event.type || !event.occurredAt) {
+      if (!event?.eventId || !event.taskId || !['start', 'complete', 'block', 'unblock', 'cancel'].includes(event.type) || !event.occurredAt || !Number.isFinite(Date.parse(event.occurredAt))) {
         throw new SocialProgramError('workflow_event_invalid', 400, '工作流事件字段不完整。');
       }
-      const updated = applyWorkflowEvent(current.payload, event);
-      if (updated === current.payload) return current.payload;
-      if (!await dataStore.update(PACKAGES, current.id, { payload: updated, updated_by: userId, updated_at: updated.updatedAt })) {
-        throw new SocialProgramError('weekly_operating_package_storage_unavailable', 503, '工作流状态暂时无法保存。');
-      }
-      return updated;
+      return serializeWorkflowMutation(`${tenantId}:${programId}:${packageId}`, async () => {
+        const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
+        if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+        requireExpectedVersion(current.payload.version, input.expectedVersion);
+        const projected = await projectWorkflowState(dataStore, tenantId, current);
+        const prior = projected.appliedWorkflowEvents.find(item => item.eventId === event.eventId);
+        if (prior) {
+          if (eventDigest(prior) !== eventDigest(event)) {
+            throw new SocialProgramError('workflow_event_conflict', 409, '同一事件 ID 不得承载不同内容。');
+          }
+          return projected;
+        }
+        const expectedStateVersion = Number(input.expectedStateVersion);
+        if (!Number.isSafeInteger(expectedStateVersion) || expectedStateVersion < 0) {
+          throw new SocialProgramError('expected_state_version_required', 400, '工作流写入必须提供 expectedStateVersion。');
+        }
+        if (expectedStateVersion !== projected.workflowStateVersion) {
+          throw new SocialProgramError('workflow_state_version_conflict', 409, `工作流状态已更新，当前版本为 ${projected.workflowStateVersion}。`);
+        }
+        const lastEvent = projected.appliedWorkflowEvents.at(-1);
+        if (lastEvent && Date.parse(event.occurredAt) < Date.parse(lastEvent.occurredAt)) {
+          throw new SocialProgramError('workflow_event_time_conflict', 409, '工作流事件时间不得早于已提交的最新事件。');
+        }
+        if (event.type === 'unblock') {
+          const target = projected.workflowTasks.find(task => task.taskId === event.taskId);
+          if (!target) throw new SocialProgramError('workflow_task_not_found', 404, '周工作流任务不存在。');
+          if (target.kind !== 'readiness' || target.ownBlockingReasons.some(reason => !current.payload.planningBlockers.includes(reason))) {
+            throw new SocialProgramError('workflow_unblock_authority_required', 409, '缺少可由服务端复核的权威事实，不得仅凭客户端事件解除阻塞。');
+          }
+          const authority = await withAuthoritativePlanning(tenantId, programId, {
+            businessContentGoalRef: current.payload.businessContentGoalRef,
+            capacityPlanRef: current.payload.capacityPlanRef,
+            automationPolicyRef: current.payload.automationPolicyRef,
+          });
+          const checked = buildWeeklyWorkflow({
+            packageId: current.payload.packageId,
+            version: current.payload.version,
+            businessGoal: authority.goal,
+            capacity: authority.capacity,
+            automationPolicy: authority.policy,
+            publicationTasks: current.payload.socialContentPackage.publicationTasks,
+            discoveryBudgetCny: current.payload.discoveryBudgetCny,
+          });
+          if (checked.blockers.length) {
+            throw new SocialProgramError('workflow_unblock_recheck_failed', 409, `权威事实复核未通过：${checked.blockers.join('、')}`);
+          }
+        }
+        const updated = applyWorkflowEvent(projected, event, { authoritativeUnblockVerified: true });
+        const nextStateVersion = projected.workflowStateVersion + 1;
+        const digest = eventDigest(event);
+        let saved = false;
+        try {
+          saved = Boolean(await dataStore.create<WorkflowEventRow>(WORKFLOW_EVENTS, {
+            tenant_id: tenantId,
+            program_id: programId,
+            package_id: packageId,
+            package_version: current.payload.version,
+            event_id: event.eventId,
+            state_version: nextStateVersion,
+            event_digest: digest,
+            event,
+            created_by: userId,
+            created_at: at(),
+          }));
+        } catch {
+          saved = false;
+        }
+        if (!saved) {
+          const rows = await workflowEventRows(dataStore, tenantId, programId, packageId, current.payload.version);
+          const replay = rows.find(row => row.event_id === event.eventId);
+          if (replay) {
+            if (replay.event_digest !== digest) throw new SocialProgramError('workflow_event_conflict', 409, '同一事件 ID 不得承载不同内容。');
+            return projectWorkflowState(dataStore, tenantId, current);
+          }
+          const latest = await projectWorkflowState(dataStore, tenantId, current);
+          if (latest.workflowStateVersion !== expectedStateVersion) {
+            throw new SocialProgramError('workflow_state_version_conflict', 409, `工作流状态已更新，当前版本为 ${latest.workflowStateVersion}。`);
+          }
+          throw new SocialProgramError('workflow_event_storage_unavailable', 503, '工作流事件暂时无法保存。');
+        }
+        return { ...updated, workflowStateVersion: nextStateVersion };
+      });
     },
   };
 }

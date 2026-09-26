@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { MetricSnapshot, SocialMetricKey } from '../socialMetrics/aggregation.js';
 import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
 import { store } from '../storage/index.js';
+import type { DataStore } from '../storage/datastore.js';
 import { createCreativeLearning } from '../socialEngagement/writeback.js';
 import type { FrozenWeeklyReview, ReviewAggregate, ReviewAvailability, ReviewContentAggregate, ReviewContentInput, ReviewMetric } from '../../shared/contracts/socialReview.js';
 
@@ -96,16 +97,27 @@ export function buildFrozenWeeklyReview(input: FreezeWeeklyReviewInput): FrozenW
   };
 }
 
-export async function freezeWeeklyReview(input: FreezeWeeklyReviewInput): Promise<{ snapshot: FrozenWeeklyReview; repeated: boolean }> {
+export async function freezeWeeklyReview(input: FreezeWeeklyReviewInput, dataStore: DataStore = store): Promise<{ snapshot: FrozenWeeklyReview; repeated: boolean }> {
   const snapshot = buildFrozenWeeklyReview(input);
-  const rows = await store.list<any>(WEEKLY_REVIEWS, { where: { tenant_id: input.tenantId, week_ref: input.weekRef }, perPage: 2 });
+  const read = () => dataStore.list<any>(WEEKLY_REVIEWS, { where: { tenant_id: input.tenantId, week_ref: input.weekRef }, perPage: 2 });
+  const rows = await read();
   const existing = rows.items[0];
   if (existing) {
     if (existing.source_digest !== snapshot.sourceDigest) throw Error('weekly_review_already_frozen');
     return { snapshot: existing.snapshot as FrozenWeeklyReview, repeated: true };
   }
-  const saved = await store.create(WEEKLY_REVIEWS, { tenant_id: input.tenantId, week_ref: input.weekRef, snapshot_id: snapshot.snapshotId, window_ends_at: snapshot.window.endsAt, source_digest: snapshot.sourceDigest, snapshot, frozen_at: snapshot.window.frozenAt, frozen_by: input.actorId });
-  if (!saved) throw Error('weekly_review_freeze_unavailable');
+  let saved = null;
+  try {
+    saved = await dataStore.create(WEEKLY_REVIEWS, { tenant_id: input.tenantId, week_ref: input.weekRef, snapshot_id: snapshot.snapshotId, window_ends_at: snapshot.window.endsAt, source_digest: snapshot.sourceDigest, snapshot, frozen_at: snapshot.window.frozenAt, frozen_by: input.actorId });
+  } catch {
+    saved = null;
+  }
+  if (!saved) {
+    const raced = (await read()).items[0];
+    if (raced?.source_digest === snapshot.sourceDigest) return { snapshot: raced.snapshot as FrozenWeeklyReview, repeated: true };
+    if (raced) throw Error('weekly_review_already_frozen');
+    throw Error('weekly_review_freeze_unavailable');
+  }
   return { snapshot, repeated: false };
 }
 
@@ -121,17 +133,63 @@ export async function generateWeeklyCreativeLearnings(snapshot: FrozenWeeklyRevi
   return results;
 }
 
-export async function savePromotionLoop(input: { tenantId: string; snapshot: FrozenWeeklyReview; decisions: import('../../shared/contracts/socialReview.js').WeeklyPromotionDecision[]; quota: import('../../shared/contracts/socialReview.js').VersionedQuotaReference }) {
+export async function savePromotionLoop(
+  input: { tenantId: string; snapshot: FrozenWeeklyReview; decisions: import('../../shared/contracts/socialReview.js').WeeklyPromotionDecision[]; quota: import('../../shared/contracts/socialReview.js').VersionedQuotaReference },
+  dataStore: DataStore = store,
+) {
   if (input.snapshot.tenantId !== input.tenantId || input.quota.sourceSnapshotId !== input.snapshot.snapshotId) throw Error('promotion_lineage_invalid');
-  const existing = await store.list<any>(QUOTA_REFERENCES, { where: { tenant_id: input.tenantId, quota_id: input.quota.quotaId, version: input.quota.version }, perPage: 1 });
-  if (existing.items[0]) {
-    if (existing.items[0].payload_digest !== digest(input.quota)) throw Error('promotion_quota_version_conflict');
-    return { decisions: input.decisions, quota: input.quota, repeated: true };
+  const frozen = await dataStore.list<any>(WEEKLY_REVIEWS, {
+    where: { tenant_id: input.tenantId, snapshot_id: input.snapshot.snapshotId }, perPage: 1,
+  });
+  const frozenRow = frozen.items[0];
+  if (!frozenRow) throw Error('promotion_snapshot_not_frozen');
+  if (frozenRow.source_digest !== input.snapshot.sourceDigest || digest(frozenRow.snapshot) !== digest(input.snapshot)) {
+    throw Error('promotion_snapshot_conflict');
+  }
+  const decisionIds = new Set(input.decisions.map(decision => decision.decisionId));
+  if (input.quota.allocations.some(allocation => allocation.sourceDecisionIds.some(id => !decisionIds.has(id)))) {
+    throw Error('promotion_lineage_invalid');
   }
   for (const decision of input.decisions) {
     if (decision.snapshotId !== input.snapshot.snapshotId) throw Error('promotion_lineage_invalid');
-    if (!await store.create(PROMOTION_DECISIONS, { tenant_id: input.tenantId, decision_id: decision.decisionId, snapshot_id: decision.snapshotId, content_id: decision.contentId, action: decision.action, decision, created_at: input.snapshot.window.frozenAt })) throw Error('promotion_decision_write_unavailable');
+    const readDecision = () => dataStore.list<any>(PROMOTION_DECISIONS, {
+      where: { tenant_id: input.tenantId, decision_id: decision.decisionId }, perPage: 1,
+    });
+    const existingDecision = (await readDecision()).items[0];
+    if (existingDecision) {
+      if (digest(existingDecision.decision) !== digest(decision)) throw Error('promotion_decision_conflict');
+      continue;
+    }
+    let saved = null;
+    try {
+      saved = await dataStore.create(PROMOTION_DECISIONS, { tenant_id: input.tenantId, decision_id: decision.decisionId, snapshot_id: decision.snapshotId, content_id: decision.contentId, action: decision.action, decision, created_at: input.snapshot.window.frozenAt });
+    } catch {
+      saved = null;
+    }
+    if (!saved) {
+      const raced = (await readDecision()).items[0];
+      if (!raced) throw Error('promotion_decision_write_unavailable');
+      if (digest(raced.decision) !== digest(decision)) throw Error('promotion_decision_conflict');
+    }
   }
-  if (!await store.create(QUOTA_REFERENCES, { tenant_id: input.tenantId, quota_id: input.quota.quotaId, version: input.quota.version, snapshot_id: input.snapshot.snapshotId, payload_digest: digest(input.quota), quota: input.quota, created_at: input.snapshot.window.frozenAt })) throw Error('promotion_quota_write_unavailable');
+  const quotaDigest = digest(input.quota);
+  const readQuota = () => dataStore.list<any>(QUOTA_REFERENCES, { where: { tenant_id: input.tenantId, quota_id: input.quota.quotaId, version: input.quota.version }, perPage: 1 });
+  const existing = (await readQuota()).items[0];
+  if (existing) {
+    if (existing.payload_digest !== quotaDigest) throw Error('promotion_quota_version_conflict');
+    return { decisions: input.decisions, quota: input.quota, repeated: true };
+  }
+  let savedQuota = null;
+  try {
+    savedQuota = await dataStore.create(QUOTA_REFERENCES, { tenant_id: input.tenantId, quota_id: input.quota.quotaId, version: input.quota.version, snapshot_id: input.snapshot.snapshotId, payload_digest: quotaDigest, quota: input.quota, created_at: input.snapshot.window.frozenAt });
+  } catch {
+    savedQuota = null;
+  }
+  if (!savedQuota) {
+    const raced = (await readQuota()).items[0];
+    if (!raced) throw Error('promotion_quota_write_unavailable');
+    if (raced.payload_digest !== quotaDigest) throw Error('promotion_quota_version_conflict');
+    return { decisions: input.decisions, quota: input.quota, repeated: true };
+  }
   return { decisions: input.decisions, quota: input.quota, repeated: false };
 }

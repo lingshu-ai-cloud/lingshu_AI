@@ -39,7 +39,11 @@ function recompute(tasks: WeeklyWorkflowTask[]): WeeklyWorkflowTask[] {
   });
 }
 
-export function applyWorkflowEvent(pkg: WeeklyOperatingPackage, event: WeeklyWorkflowEvent): WeeklyOperatingPackage {
+export function applyWorkflowEvent(
+  pkg: WeeklyOperatingPackage,
+  event: WeeklyWorkflowEvent,
+  options: { authoritativeUnblockVerified?: boolean } = {},
+): WeeklyOperatingPackage {
   const prior = pkg.appliedWorkflowEvents.find(item => item.eventId === event.eventId);
   if (prior) {
     if (JSON.stringify(prior) !== JSON.stringify(event)) {
@@ -58,6 +62,9 @@ export function applyWorkflowEvent(pkg: WeeklyOperatingPackage, event: WeeklyWor
   if (!nextStatus) throw new SocialProgramError('workflow_transition_invalid', 409, `任务不能从 ${target.status} 执行 ${event.type}。`);
   if (event.type === 'block' && !event.reason?.trim()) {
     throw new SocialProgramError('workflow_block_reason_required', 400, '阻塞事件必须提供原因。');
+  }
+  if (event.type === 'unblock' && options.authoritativeUnblockVerified !== true) {
+    throw new SocialProgramError('workflow_unblock_authority_required', 409, '解除阻塞必须先由服务端复核权威事实。');
   }
   let tasks = pkg.workflowTasks.map(task => task.taskId !== event.taskId ? task : {
     ...task,

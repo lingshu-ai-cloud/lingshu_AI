@@ -105,12 +105,12 @@ test('social program routes expose the weekly operating package lifecycle', asyn
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: 1, authorizePublishing: true }),
   });
-  assert.equal(activatedResponse.status, 200);
-  assert.equal((await activatedResponse.json()).item.socialContentPackage.authorization.allowRealPublishing, true);
+  assert.equal(activatedResponse.status, 409);
+  assert.equal((await activatedResponse.json()).error, 'weekly_operating_package_activation_blocked');
 
   const retiredResponse = await fetch(`${base}/operating-packages/${created.packageId}/retire`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: 2 }),
+    body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: 1 }),
   });
   assert.equal(retiredResponse.status, 200);
   const retired = (await retiredResponse.json()).item;

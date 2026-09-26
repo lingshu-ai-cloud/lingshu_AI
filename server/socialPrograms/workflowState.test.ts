@@ -31,3 +31,13 @@ test('workflow state: a task cannot start before all dependencies complete', () 
     /上游任务尚未完成/,
   );
 });
+
+test('workflow state: unblock cannot bypass authoritative server verification', () => {
+  const built = buildWeeklyWorkflow({ packageId: 'pkg', version: 1, businessGoal: null, capacity: null, automationPolicy: null, publicationTasks: [], discoveryBudgetCny: null });
+  const readiness = built.tasks.find(task => task.kind === 'readiness')!;
+  const pkg = { workflows: built.workflows, workflowTasks: built.tasks, appliedWorkflowEvents: [], updatedAt: 'before' } as unknown as WeeklyOperatingPackage;
+  assert.throws(
+    () => applyWorkflowEvent(pkg, { eventId: 'unsafe-unblock', taskId: readiness.taskId, type: 'unblock', occurredAt: 'after' }),
+    /权威事实/,
+  );
+});
