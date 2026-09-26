@@ -39,9 +39,9 @@ test('isolated Mock tenant completes the Gap-V1 weekly loop with replay-safe bou
   const selector = new ReferenceSelector();
   const empty = selector.select({ candidates: [], requireProductionReady: true });
   assert.equal(empty.status, 'needs_collection', 'inventory is checked before replenishment');
-  const gap = advanceProductionGapTask({ task: { gapTaskId: 'gap-a', tenantId, upstreamTaskRef: 'weekly-task-a', productionGap: 'opening proof', status: 'collecting', budgetLimitCny: 20, spentCny: 0, runRefs: [], selectedEvidenceRefs: [], stopReason: null, createdAt: now, updatedAt: now }, selection: selector.select({ candidates: [{ candidateId: 'video-a', evidenceId: 'evidence-a', evidenceVersion: 1, readiness: 'production_reference', taskRelevance: .9, transferability: .8, rightsClear: true, sceneIds: ['opening'], sourceRef: 'platform:video-a' }], requireProductionReady: true }), addedCostCny: 4, runRef: 'run-a' });
-  assert.equal(gap.status, 'resumed');
-  assert.equal(gap.spentCny, 4);
+  const gap = advanceProductionGapTask({ task: { gapTaskId: 'gap-a', tenantId, upstreamTaskRef: 'weekly-task-a', taskGap: { description: 'opening proof', requiredSceneIds: ['opening'], minimumReferences: 1, requiredReadiness: 'production_reference', requestedModes: ['momentum'] }, budget: { currency: 'CNY', limitCny: 20, spentCny: 0 }, status: 'collecting', attemptCount: 0, lastError: null, lastAttemptAt: null, runRefs: [], selectedEvidenceRefs: [], referenceSelectionRef: null, stopReason: null, createdAt: now, updatedAt: now }, selection: selector.select({ candidates: [{ candidateId: 'video-a', evidenceId: 'evidence-a', evidenceVersion: 1, readiness: 'production_reference', taskRelevance: .9, transferability: .8, rightsClear: true, sceneIds: ['opening'], sourceRef: 'platform:video-a' }], requireProductionReady: true }), addedCostCny: 4, runRef: 'run-a', selectionSource: 'collection' });
+  assert.equal(gap.status, 'ready_to_resume');
+  assert.equal(gap.budget.spentCny, 4);
 
   const stages = ['configuration', 'business_goal', 'weekly_package', 'inventory_replenishment', 'candidate_evidence', 'handoff_brief', 'production_result', 'mock_publish', 'platform_receipt', 'interaction', 'sales_confirmation', 'frozen_review', 'next_week_decision', 'notification'] as const;
   const events = new Map<string, { tenantId: string; stage: typeof stages[number]; availability: 'available' | 'unknown' | 'unavailable' }>();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { SocialInspirationCollectionRun } from '../../shared/contracts/socialContentWorkflow.js';
-import { advanceProductionGapTask, ReferenceSelector, type ProductionGapTask } from './orchestration.js';
+import { advanceProductionGapTask, createProductionGapTask, ReferenceSelector, type ProductionGapTask } from './orchestration.js';
 import { assessAccountRelativeMomentum, buildCandidateG1, evaluateInnovationGate, planRollingSevenDayQuotas, recommendAccountTracking } from './qualityOrchestration.js';
 
 const now = new Date('2026-09-26T12:00:00.000Z');
@@ -39,9 +39,12 @@ assert.equal(noSource.status, 'needs_collection', '无来源的条目不能成�
 const selected = selector.select({ candidates: [{ candidateId: 'c', evidenceId: 'e', evidenceVersion: 2, readiness: 'production_reference', taskRelevance: 1, transferability: 0.8, rightsClear: true, sceneIds: ['scene'], sourceRef: 'https://example.com/v' }], requiredSceneIds: ['scene'] });
 assert.equal(selected.status, 'selected');
 
-const task: ProductionGapTask = { gapTaskId: 'gap', tenantId: 't', upstreamTaskRef: 'weekly-task', productionGap: 'proof', status: 'collecting', budgetLimitCny: 5, spentCny: 0, runRefs: [], selectedEvidenceRefs: [], stopReason: null, createdAt: now.toISOString(), updatedAt: now.toISOString() };
+const task: ProductionGapTask = { gapTaskId: 'gap', tenantId: 't', upstreamTaskRef: 'weekly-task', taskGap: { description: 'proof', requiredSceneIds: ['scene'], minimumReferences: 1, requiredReadiness: 'production_reference', requestedModes: ['momentum'] }, budget: { currency: 'CNY', limitCny: 5, spentCny: 0 }, status: 'collecting', attemptCount: 0, lastError: null, lastAttemptAt: null, runRefs: [], selectedEvidenceRefs: [], referenceSelectionRef: null, stopReason: null, createdAt: now.toISOString(), updatedAt: now.toISOString() };
+const createdTask = createProductionGapTask({ tenantId: 't', upstreamTaskRef: 'weekly-task', description: 'proof', requiredSceneIds: ['scene'], budgetLimitCny: 5, now });
+assert.equal(createdTask.taskGap.description, 'proof');
+assert.equal(createdTask.budget.limitCny, 5);
 assert.equal(advanceProductionGapTask({ task, selection: noSource, addedCostCny: 5, runRef: 'run-1', now }).stopReason, 'budget_exhausted');
-assert.equal(advanceProductionGapTask({ task, selection: selected, now }).status, 'resumed');
+assert.equal(advanceProductionGapTask({ task, selection: selected, now }).status, 'ready_to_resume');
 const promotion = recommendAccountTracking({ evidenceVideoIds: ['v1', 'v2', 'v3'], consecutiveQualifiedWindows: 2 });
 assert.equal(promotion.resultingStatus, 'trial');
 assert.equal(promotion.businessConfirmationRequired, true);

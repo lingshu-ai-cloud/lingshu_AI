@@ -784,6 +784,13 @@ export interface SocialInspirationCollectionRun {
   triggerType: 'scheduled' | 'manual' | 'production_gap';
   scopeSnapshot: SocialDiscoveryBrief;
   modeStats: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModeRunStats>>;
+  /** Qualified worker outcomes. Imported crawler rows are never authority. */
+  evidenceOutcomes?: Partial<Record<SocialDiscoveryMode, {
+    acceptedCandidateIds: string[];
+    acceptedEvidenceRefs: string[];
+    suggestionCandidateIds: string[];
+    failedCandidateIds: string[];
+  }>>;
   sourceRunRefs: string[];
   queryBasis: Partial<Record<SocialDiscoveryMode, string[]>>;
   market: string;
@@ -792,6 +799,39 @@ export interface SocialInspirationCollectionRun {
   startedAt: string;
   finishedAt: string | null;
   error: string | null;
+}
+
+export interface SocialProductionGapRequirement {
+  description: string;
+  requiredSceneIds: string[];
+  minimumReferences: number;
+  requiredReadiness: SocialInspirationReadiness;
+  requestedModes: SocialDiscoveryMode[];
+}
+
+export interface SocialProductionGapBudget {
+  currency: 'CNY';
+  limitCny: number;
+  spentCny: number;
+}
+
+/** Durable T4 request. The originating weekly task remains the return address. */
+export interface SocialProductionGapTask {
+  gapTaskId: string;
+  tenantId: string;
+  upstreamTaskRef: string;
+  taskGap: SocialProductionGapRequirement;
+  budget: SocialProductionGapBudget;
+  status: 'collecting' | 'ready_to_resume' | 'resumed' | 'blocked';
+  attemptCount: number;
+  lastError: string | null;
+  lastAttemptAt: string | null;
+  runRefs: string[];
+  selectedEvidenceRefs: string[];
+  referenceSelectionRef: { selectionId: string; version: number } | null;
+  stopReason: 'inventory_covered' | 'evidence_satisfied' | 'budget_exhausted' | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SocialDiscoverySummary {

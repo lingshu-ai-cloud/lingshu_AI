@@ -100,5 +100,6 @@
     "1791072000_create_social_operating_orchestration.js": "d28bad4dbbc32e93cbbf7af815ba440e74f15fccbf0fafbb341bf15cd5ae3afc",
     "1791072000_create_social_weekly_execution_tasks.js": "805b800220d279c35456d69cae61f14a703353b7acc3b271a3491e7daa4fc329",
     "1791072000_create_social_weekly_workflow_events.js": "47fb81e071cade94f8ea060d016309b972f1d29bebff2921ae0d6c0c21f5c625"
+    "1791072000_harden_social_discovery_lineage.js": "06f2b7d6baa1c6a6a460005c1a31e04ba215d73925314adc93f85649fe112871"
   }
 }

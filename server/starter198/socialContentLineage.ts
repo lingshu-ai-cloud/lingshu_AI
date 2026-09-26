@@ -7,7 +7,7 @@ import type { VersionedSocialRef } from '../../shared/contracts/socialProgram.js
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { socialJson, socialObject, socialRequestHash, socialText } from './socialContentValidation.js';
 
-export type SocialProductionReturnReason = 'asset_missing' | 'continuity' | 'dialogue' | 'goal_degraded';
+export type SocialProductionReturnReason = 'asset_missing' | 'continuity' | 'dialogue' | 'goal_degraded' | 'production_failed' | 'partial_rework';
 
 export interface SocialContentAuthorityLineage {
   schemaVersion: 'social-content-authority-lineage.v1';
@@ -41,10 +41,14 @@ export interface SocialContentReturnQueueItem {
   lineageId: string;
   lineageVersion: string;
   weeklyTaskRef: VersionedSocialRef;
+  returnToTaskRef: VersionedSocialRef;
+  productionResultRef: VersionedSocialRef | null;
   sceneId: string | null;
+  affectedSceneIds: string[];
+  failureScope: 'full_task' | 'scene';
   reason: SocialProductionReturnReason;
   destination: 'reshoot_queue' | 'weekly_task';
-  action: 'supply_asset' | 'repair_continuity' | 'rewrite_dialogue' | 'replan_goal';
+  action: 'supply_asset' | 'repair_continuity' | 'rewrite_dialogue' | 'replan_goal' | 'retry_production' | 'retry_scenes';
   status: 'pending';
   createdAt: string;
 }
@@ -178,18 +182,25 @@ export async function persistAuthoritativeContentBundle(input: {
 }
 
 export function routeProductionReturn(input: {
-  lineage: SocialContentAuthorityLineage; reason: SocialProductionReturnReason; sceneId?: string | null; now?: Date;
+  lineage: SocialContentAuthorityLineage; reason: SocialProductionReturnReason; sceneId?: string | null;
+  affectedSceneIds?: string[]; productionResultRef?: VersionedSocialRef | null; now?: Date;
 }): SocialContentReturnQueueItem {
   assertLineage(input.lineage);
   const route = {
     asset_missing: ['reshoot_queue', 'supply_asset'], continuity: ['reshoot_queue', 'repair_continuity'],
     dialogue: ['weekly_task', 'rewrite_dialogue'], goal_degraded: ['weekly_task', 'replan_goal'],
+    production_failed: ['weekly_task', 'retry_production'], partial_rework: ['reshoot_queue', 'retry_scenes'],
   }[input.reason] as [SocialContentReturnQueueItem['destination'], SocialContentReturnQueueItem['action']];
   const sceneId = input.sceneId ?? null;
+  const affectedSceneIds = [...new Set([...(input.affectedSceneIds ?? []), ...(sceneId ? [sceneId] : [])])];
+  const failureScope = input.reason === 'production_failed' || !affectedSceneIds.length ? 'full_task' as const : 'scene' as const;
+  if (input.reason === 'partial_rework' && !affectedSceneIds.length) throw new Error('social_content_partial_rework_scene_required');
+  const productionResultRef = input.productionResultRef ?? input.lineage.productionResultRef;
   return {
-    queueItemId: `content_return_${socialRequestHash({ lineageId: input.lineage.lineageId, version: input.lineage.version, reason: input.reason, sceneId }).slice(0, 20)}`,
+    queueItemId: `content_return_${socialRequestHash({ lineageId: input.lineage.lineageId, version: input.lineage.version, reason: input.reason, affectedSceneIds, productionResultRef }).slice(0, 20)}`,
     lineageId: input.lineage.lineageId, lineageVersion: input.lineage.version,
-    weeklyTaskRef: input.lineage.weeklyTaskRef, sceneId, reason: input.reason,
+    weeklyTaskRef: input.lineage.weeklyTaskRef, returnToTaskRef: input.lineage.weeklyTaskRef,
+    productionResultRef: productionResultRef ?? null, sceneId, affectedSceneIds, failureScope, reason: input.reason,
     destination: route[0], action: route[1], status: 'pending', createdAt: (input.now ?? new Date()).toISOString(),
   };
 }
@@ -200,7 +211,9 @@ export async function persistProductionReturn(repository: Starter198Repository, 
   if (existing.items[0]) return existing.items[0];
   return repository.create(STARTER_COLLECTIONS.socialContentReworkQueue, tenantId, {
     queue_item_id: item.queueItemId, weekly_task_id: item.weeklyTaskRef.id, destination: item.destination,
-    reason: item.reason, status: item.status, payload: item, created_at: item.createdAt,
+    weekly_task_version: item.weeklyTaskRef.version, lineage_id: item.lineageId, lineage_version: item.lineageVersion,
+    production_result_id: item.productionResultRef?.id ?? '', scene_id: item.sceneId ?? '', action: item.action,
+    failure_scope: item.failureScope, reason: item.reason, status: item.status, payload: item, created_at: item.createdAt,
   });
 }
 

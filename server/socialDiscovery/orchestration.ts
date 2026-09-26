@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { store } from '../storage/index.js';
 import { evaluateSocialCandidateEvidence } from '../../shared/socialInspirationStrategy.js';
-import type { SocialCandidateEvidence, SocialDiscoveryPath } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialCandidateEvidence, SocialDiscoveryPath, SocialProductionGapTask } from '../../shared/contracts/socialContentWorkflow.js';
 import { assessAccountRelativeMomentum, buildCandidateG1, type CandidateG1, type PerformanceSnapshot, type VersionedCandidateEvidence } from './qualityOrchestration.js';
 
 export const CANDIDATE_EVIDENCE_COLLECTION = 'social_candidate_evidence';
@@ -134,6 +134,9 @@ export async function persistReferenceSelection(input: {
     where: { tenant_id: input.tenantId, upstreamTaskRef: input.upstreamTaskRef }, sort: '-version', page: 1, perPage: 1,
   });
   const latest = existing.items[0];
+  if (latest && fingerprint({
+    status: latest.status, selected: latest.selected, reason: latest.reason, evidenceVersionRefs: latest.evidenceVersionRefs,
+  }) === fingerprint(input.selection)) return latest;
   const version = (latest?.version ?? 0) + 1;
   const value: VersionedReferenceSelection = {
     ...input.selection,
@@ -149,19 +152,42 @@ export async function persistReferenceSelection(input: {
   return value;
 }
 
-export interface ProductionGapTask {
-  gapTaskId: string;
+export type ProductionGapTask = SocialProductionGapTask;
+
+export function createProductionGapTask(input: {
   tenantId: string;
   upstreamTaskRef: string;
-  productionGap: string;
-  status: 'collecting' | 'resumed' | 'blocked';
+  description: string;
+  requiredSceneIds?: string[];
+  minimumReferences?: number;
+  requiredReadiness?: ProductionGapTask['taskGap']['requiredReadiness'];
+  requestedModes?: ProductionGapTask['taskGap']['requestedModes'];
   budgetLimitCny: number;
-  spentCny: number;
-  runRefs: string[];
-  selectedEvidenceRefs: string[];
-  stopReason: 'inventory_covered' | 'evidence_satisfied' | 'budget_exhausted' | null;
-  createdAt: string;
-  updatedAt: string;
+  now?: Date;
+}): ProductionGapTask {
+  const createdAt = (input.now ?? new Date()).toISOString();
+  const requestedModes: ProductionGapTask['taskGap']['requestedModes'] = input.requestedModes?.length
+    ? [...new Set(input.requestedModes)]
+    : ['momentum', 'account', 'innovation'];
+  const taskGap = {
+    description: input.description.trim(),
+    requiredSceneIds: [...new Set(input.requiredSceneIds?.filter(Boolean) ?? [])],
+    minimumReferences: Math.max(1, Math.floor(input.minimumReferences ?? 1)),
+    requiredReadiness: input.requiredReadiness ?? 'production_reference' as const,
+    requestedModes,
+  };
+  if (!taskGap.description) throw new Error('production_gap_description_required');
+  const limitCny = Math.max(0, Number(input.budgetLimitCny) || 0);
+  return {
+    gapTaskId: `discovery_gap_${fingerprint({ tenantId: input.tenantId, upstreamTaskRef: input.upstreamTaskRef, taskGap, limitCny }).slice(0, 20)}`,
+    tenantId: input.tenantId,
+    upstreamTaskRef: input.upstreamTaskRef,
+    taskGap,
+    budget: { currency: 'CNY', limitCny, spentCny: 0 },
+    status: 'collecting', attemptCount: 0, lastError: null, lastAttemptAt: null,
+    runRefs: [], selectedEvidenceRefs: [], referenceSelectionRef: null, stopReason: null,
+    createdAt, updatedAt: createdAt,
+  };
 }
 
 export function advanceProductionGapTask(input: {
@@ -169,23 +195,52 @@ export function advanceProductionGapTask(input: {
   selection: ReferenceSelection;
   addedCostCny?: number | null;
   runRef?: string;
+  referenceSelectionRef?: ProductionGapTask['referenceSelectionRef'];
+  selectionSource?: 'inventory' | 'collection';
   now?: Date;
 }): ProductionGapTask {
   if (input.task.status !== 'collecting') return input.task;
-  const spentCny = input.task.spentCny + Math.max(0, input.addedCostCny ?? 0);
+  const spentCny = Math.min(input.task.budget.limitCny, input.task.budget.spentCny + Math.max(0, input.addedCostCny ?? 0));
   const runRefs = input.runRef ? [...new Set([...input.task.runRefs, input.runRef])] : input.task.runRefs;
   const updatedAt = (input.now ?? new Date()).toISOString();
   if (input.selection.status === 'selected') return {
-    ...input.task, spentCny, runRefs, status: 'resumed', stopReason: input.task.runRefs.length ? 'evidence_satisfied' : 'inventory_covered',
-    selectedEvidenceRefs: input.selection.evidenceVersionRefs, updatedAt,
+    ...input.task, budget: { ...input.task.budget, spentCny }, runRefs, status: 'ready_to_resume',
+    stopReason: input.selectionSource === 'collection' || input.runRef ? 'evidence_satisfied' : 'inventory_covered',
+    selectedEvidenceRefs: input.selection.evidenceVersionRefs,
+    referenceSelectionRef: input.referenceSelectionRef ?? input.task.referenceSelectionRef,
+    lastError: null, updatedAt,
   };
-  if (spentCny >= input.task.budgetLimitCny) return { ...input.task, spentCny, runRefs, status: 'blocked', stopReason: 'budget_exhausted', updatedAt };
-  return { ...input.task, spentCny, runRefs, updatedAt };
+  if (spentCny >= input.task.budget.limitCny) return {
+    ...input.task, budget: { ...input.task.budget, spentCny }, runRefs, status: 'blocked', stopReason: 'budget_exhausted', updatedAt,
+  };
+  return { ...input.task, budget: { ...input.task.budget, spentCny }, runRefs, updatedAt };
+}
+
+export function recordProductionGapAttempt(task: ProductionGapTask, error: unknown, now = new Date()): ProductionGapTask {
+  return {
+    ...task,
+    attemptCount: task.attemptCount + 1,
+    lastAttemptAt: now.toISOString(),
+    lastError: error instanceof Error ? error.message : String(error || 'production_gap_attempt_failed'),
+    updatedAt: now.toISOString(),
+  };
+}
+
+export function completeProductionGapResume(task: ProductionGapTask, now = new Date()): ProductionGapTask {
+  if (task.status !== 'ready_to_resume') return task;
+  return { ...task, status: 'resumed', lastError: null, updatedAt: now.toISOString() };
 }
 
 export async function saveProductionGapTask(task: ProductionGapTask): Promise<void> {
   const existing = await store.list<{ id: string }>(DISCOVERY_GAP_TASK_COLLECTION, { where: { tenant_id: task.tenantId, gapTaskId: task.gapTaskId }, page: 1, perPage: 1 });
-  const payload = { ...task, tenant_id: task.tenantId };
+  const payload = {
+    ...task,
+    // Compatibility projections for rows created before the authoritative gap contract.
+    productionGap: task.taskGap.description,
+    budgetLimitCny: task.budget.limitCny,
+    spentCny: task.budget.spentCny,
+    tenant_id: task.tenantId,
+  };
   const saved = existing.items[0] ? await store.update(DISCOVERY_GAP_TASK_COLLECTION, existing.items[0].id, payload) : await store.create(DISCOVERY_GAP_TASK_COLLECTION, payload);
   if (!saved) throw new Error('production_gap_task_storage_unavailable');
 }

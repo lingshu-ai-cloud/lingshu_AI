@@ -15,9 +15,16 @@ export interface CandidateEvidenceWorkResult {
  * Persists evidence after collection. Innovation candidates that miss their
  * evidence gate remain suggestions and never fill an accepted quota.
  */
-export async function runCandidateEvidenceWorker(items: CandidateEvidenceWorkItem[]): Promise<CandidateEvidenceWorkResult> {
+export async function runCandidateEvidenceWorker(
+  items: CandidateEvidenceWorkItem[],
+  persist: typeof persistCandidateEvidence = persistCandidateEvidence,
+): Promise<CandidateEvidenceWorkResult> {
   const result: CandidateEvidenceWorkResult = { accepted: [], suggestions: [], failed: [] };
   for (const item of items) {
+    if (!item.evidenceRefs?.length || !item.g1.sourceUrl || item.g1.sourceUrl === 'unknown') {
+      result.suggestions.push({ candidateId: item.candidateId, reasons: ['候选缺少可追溯来源或证据引用'] });
+      continue;
+    }
     if (item.discoveryPath.includes('innovation')) {
       if (!item.innovationEvidence) {
         result.suggestions.push({ candidateId: item.candidateId, reasons: ['创新候选缺少门槛证据'] });
@@ -30,7 +37,7 @@ export async function runCandidateEvidenceWorker(items: CandidateEvidenceWorkIte
       }
     }
     try {
-      result.accepted.push(await persistCandidateEvidence(item));
+      result.accepted.push(await persist(item));
     } catch (cause) {
       result.failed.push({ candidateId: item.candidateId, error: cause instanceof Error ? cause.message : 'candidate_evidence_failed' });
     }

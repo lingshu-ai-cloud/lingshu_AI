@@ -2,6 +2,10 @@ import { store } from '../storage/index.js';
 import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
 import { planRollingSevenDayQuotas } from './qualityOrchestration.js';
+import { runCandidateEvidenceWorker, type CandidateEvidenceWorkResult } from './candidateEvidenceWorker.js';
+import { createR3CandidateEvidenceAdapter, type R3CandidateEvidenceAdapter } from './r3CandidateEvidenceAdapter.js';
+import type { CrawlVideosInput, CrawlVideosResult } from '../routes/videos.js';
+import type { DataStore } from '../storage/datastore.js';
 import type {
   SocialCrawlStrategy,
   SocialDiscoveryBrief,
@@ -14,6 +18,20 @@ type SocialDiscoveryBriefWithQuality = SocialDiscoveryBrief & { innovationExperi
 
 export const DISCOVERY_SCOPE_COLLECTION = 'social_discovery_scopes';
 export const DISCOVERY_RUN_COLLECTION = 'social_discovery_runs';
+
+export interface ApprovedDiscoveryRunDependencies {
+  dataStore: DataStore;
+  crawl(input: CrawlVideosInput): Promise<CrawlVideosResult>;
+  candidateEvidenceAdapter: R3CandidateEvidenceAdapter;
+  runCandidateEvidence(items: Parameters<typeof runCandidateEvidenceWorker>[0]): Promise<CandidateEvidenceWorkResult>;
+}
+
+const defaultDependencies: ApprovedDiscoveryRunDependencies = {
+  dataStore: store,
+  crawl: crawlVideosForTenant,
+  candidateEvidenceAdapter: createR3CandidateEvidenceAdapter(),
+  runCandidateEvidence: runCandidateEvidenceWorker,
+};
 
 export type DiscoveryScopeRecord = {
   id: string;
@@ -53,8 +71,18 @@ export async function executeApprovedDiscoveryRun(input: {
   requestedModes?: SocialDiscoveryMode[];
   expectedScopeId?: string;
   expectedScopeVersion?: number;
-}): Promise<{ run?: SocialInspirationCollectionRun; skipped?: true; reason?: string; nextRunAt?: string | null }> {
-  const scope = await loadActiveDiscoveryScope(input.tenantId);
+  productionGapContext?: {
+    gapTaskId: string;
+    upstreamTaskRef: string;
+    description: string;
+    remainingBudgetCny: number;
+  };
+}, dependencies: ApprovedDiscoveryRunDependencies = defaultDependencies): Promise<{ run?: SocialInspirationCollectionRun; skipped?: true; reason?: string; nextRunAt?: string | null }> {
+  if (input.triggerType === 'production_gap' && !input.productionGapContext) throw new Error('production_gap_context_required');
+  const scopeResult = await dependencies.dataStore.list<DiscoveryScopeRecord>(DISCOVERY_SCOPE_COLLECTION, {
+    where: { tenant_id: input.tenantId, status: 'active' }, sort: '-updated_at', page: 1, perPage: 1,
+  });
+  const scope = scopeResult.items[0] ?? null;
   if (!scope) throw new Error('discovery_scope_not_found');
   if (input.expectedScopeId && input.expectedScopeId !== scope.id) return { skipped: true, reason: 'discovery_scope_superseded' };
   if (input.expectedScopeVersion && input.expectedScopeVersion !== scope.version) return { skipped: true, reason: 'discovery_scope_version_superseded' };
@@ -63,7 +91,11 @@ export async function executeApprovedDiscoveryRun(input: {
   }
 
   const brief = structuredClone(scope.payload.discoveryBrief);
-  const previousRuns = (await store.list<SocialInspirationCollectionRun>(DISCOVERY_RUN_COLLECTION, {
+  if (input.productionGapContext) {
+    brief.productionGap = input.productionGapContext.description;
+    brief.budgetLimitCny = Math.max(0, input.productionGapContext.remainingBudgetCny);
+  }
+  const previousRuns = (await dependencies.dataStore.list<SocialInspirationCollectionRun>(DISCOVERY_RUN_COLLECTION, {
       where: { tenant_id: input.tenantId, keywordSetId: brief.keywordSetId }, sort: '-startedAt', page: 1, perPage: 200,
     })).items;
   const candidates = input.triggerType === 'scheduled'
@@ -88,13 +120,14 @@ export async function executeApprovedDiscoveryRun(input: {
   const initial: SocialInspirationCollectionRun & { tenant_id: string } = {
     tenant_id: input.tenantId, runId, planId: brief.discoveryBriefId, keywordSetId: brief.keywordSetId, keywordSetVersion: brief.keywordSetVersion,
     discoveryScopeId: scope.id, discoveryScopeVersion: scope.version, status: 'running', triggerType: input.triggerType,
-    scopeSnapshot: brief, modeStats: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
+    scopeSnapshot: brief, modeStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
     stopReason: null, startedAt, finishedAt: null, error: null,
   };
-  const created = await store.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, { ...initial });
+  const created = await dependencies.dataStore.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, { ...initial });
   if (!created) throw new Error('discovery_run_storage_unavailable');
 
   const modeStats: SocialInspirationCollectionRun['modeStats'] = {};
+  const evidenceOutcomes: NonNullable<SocialInspirationCollectionRun['evidenceOutcomes']> = {};
   const sourceRunRefs: string[] = [];
   let error: string | null = null;
   for (const mode of requestedModes) {
@@ -110,6 +143,12 @@ export async function executeApprovedDiscoveryRun(input: {
     let remaining = input.triggerType === 'production_gap'
       ? policy.resultLimit
       : Math.min(policy.resultLimit, quotaPlan.remainingByMode[mode]);
+    const alreadyAccepted = new Set(quotaPlan.acceptedCandidateIdsByMode[mode]);
+    const acceptedCandidateIds = new Set<string>();
+    const acceptedEvidenceRefs = new Set<string>();
+    const suggestionCandidateIds = new Set<string>();
+    const failedCandidateIds = new Set<string>();
+    const momentumCandidateIds = new Set<string>();
     for (const [index, target] of targets.entries()) {
       if (remaining <= 0) break;
       const perSourceLimit = Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index)));
@@ -117,7 +156,7 @@ export async function executeApprovedDiscoveryRun(input: {
       try {
         const dateTo = new Date().toISOString().slice(0, 10);
         const dateFrom = new Date(Date.now() - brief.lookbackDays * 86_400_000).toISOString().slice(0, 10);
-        const result = await crawlVideosForTenant({
+        const result = await dependencies.crawl({
           tenantId: input.tenantId,
           platform: target.platform,
           mode: mode === 'account' ? 'account' : 'keyword',
@@ -128,28 +167,51 @@ export async function executeApprovedDiscoveryRun(input: {
           discoveryContext: { runId, scopeId: scope.id, scopeVersion: scope.version, mode, queryRef: target.ref },
         });
         stats.fetched += Number(result.total || 0);
-        stats.accepted += Number(result.imported || 0);
         stats.deduplicated += Number(result.skippedExisting || 0);
-        if (mode === 'momentum') stats.momentumCandidates += Number(result.imported || 0);
-        remaining -= perSourceLimit;
+        const workItems = await dependencies.candidateEvidenceAdapter.toEvidenceWorkItems({
+          tenantId: input.tenantId, runId, scopeId: scope.id, scopeVersion: scope.version,
+          mode, queryRef: target.ref, result, observedAt: new Date().toISOString(),
+        });
+        const evidenceResult = await dependencies.runCandidateEvidence(workItems);
+        for (const item of evidenceResult.accepted) {
+          acceptedCandidateIds.add(item.candidateId);
+          acceptedEvidenceRefs.add(`${item.evidenceId}@${item.version}`);
+        }
+        evidenceResult.suggestions.forEach(item => suggestionCandidateIds.add(item.candidateId));
+        evidenceResult.failed.forEach(item => failedCandidateIds.add(item.candidateId));
+        stats.failed += evidenceResult.failed.length;
+        if (mode === 'momentum') evidenceResult.accepted
+          .filter(item => item.evidence.momentum.level !== 'unknown')
+          .forEach(item => momentumCandidateIds.add(item.candidateId));
+        const newlyQualified = evidenceResult.accepted
+          .filter(item => !alreadyAccepted.has(item.candidateId))
+          .filter((item, itemIndex, values) => values.findIndex(value => value.candidateId === item.candidateId) === itemIndex).length;
+        evidenceResult.accepted.forEach(item => alreadyAccepted.add(item.candidateId));
+        remaining = Math.max(0, remaining - newlyQualified);
         sourceRunRefs.push(`${mode}:${target.platform}:${result.source}`);
       } catch (cause) {
         stats.failed += 1;
         error = cause instanceof Error ? cause.message : '采集来源失败';
       }
     }
+    stats.accepted = acceptedCandidateIds.size;
+    stats.momentumCandidates = momentumCandidateIds.size;
     stats.effectiveRate = stats.fetched > 0 ? stats.accepted / stats.fetched : null;
     modeStats[mode] = stats;
+    evidenceOutcomes[mode] = {
+      acceptedCandidateIds: [...acceptedCandidateIds], acceptedEvidenceRefs: [...acceptedEvidenceRefs],
+      suggestionCandidateIds: [...suggestionCandidateIds], failedCandidateIds: [...failedCandidateIds],
+    };
   }
   const failed = Object.values(modeStats).reduce((sum, item) => sum + (item?.failed || 0), 0);
   const accepted = Object.values(modeStats).reduce((sum, item) => sum + (item?.accepted || 0), 0);
   const status = failed ? (accepted ? 'partial' as const : 'failed' as const) : accepted ? 'succeeded' as const : 'stopped' as const;
   const finishedAt = new Date().toISOString();
   const run: SocialInspirationCollectionRun = {
-    ...initial, status, modeStats, sourceRunRefs,
+    ...initial, status, modeStats, evidenceOutcomes, sourceRunRefs,
     stopReason: status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error,
   };
-  const saved = await store.update(DISCOVERY_RUN_COLLECTION, created.id, { status, modeStats, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
+  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, modeStats, evidenceOutcomes, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
   if (!saved) throw new Error('discovery_run_storage_unavailable');
   return { run };
 }

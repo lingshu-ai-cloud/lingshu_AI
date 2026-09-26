@@ -14,6 +14,7 @@ import {
   routeProductionReturn,
 } from './socialContentLineage.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
+import { persistSocialDiscoveryDirectorAuthority } from './socialDiscoveryAuthorityAdapter.js';
 
 const fact = { type: 'enterprise_fact', id: 'fact-1', version: 3 };
 const workflowTask = { taskId: 'weekly-content-1', kind: 'content', taskRef: { type: 'weekly_workflow_task', id: 'weekly-content-1', version: 1 }, dependsOnTaskIds: [], subjectRefs: [{ type: 'weekly_publication_task', id: 'publication-1', version: 4 }], status: 'planned', ownBlockingReasons: [], inheritedBlockingTaskIds: [], carriedFromTaskId: null } as const;
@@ -97,6 +98,31 @@ test('persists independent versions, preserves full lineage and invalidates only
   assert.deepEqual(invalidated.invalidation.affectedSceneIds, ['scene-1']);
 });
 
+test('R3 adapter persists selection before independent Handoff and DirectorBrief authority', async () => {
+  const input = workflowInput(['candidate-1', 'candidate-2']);
+  const { referenceSelection: _referenceSelection, ...workflow } = input;
+  const repository = new MemoryRepository();
+  let selectionPersisted = false;
+  const result = await persistSocialDiscoveryDirectorAuthority({
+    ...workflow,
+    tenantId: 'tenant-1',
+    selection: input.referenceSelection,
+    now: new Date('2026-09-26T02:00:00.000Z'),
+  }, {
+    repository,
+    async persistSelection(value) {
+      selectionPersisted = true;
+      return { ...value.selection, selectionId: 'selection-authority-1', version: 1, tenantId: value.tenantId, upstreamTaskRef: value.upstreamTaskRef, createdAt: '2026-09-26T02:00:00.000Z', supersedesSelectionId: null };
+    },
+  });
+  assert.equal(selectionPersisted, true);
+  assert.equal(repository.rows.get(STARTER_COLLECTIONS.socialInspirationHandoffVersions)?.length, 2);
+  assert.equal(repository.rows.get(STARTER_COLLECTIONS.socialDirectorBriefVersions)?.length, 1);
+  assert.equal(result.event.originalTaskRef.id, workflowTask.taskId);
+  assert.equal(result.event.referenceSelectionRef.id, 'selection-authority-1');
+  assert.deepEqual(result.event.candidateEvidenceRefs.map(item => item.id), ['evidence-candidate-1', 'evidence-candidate-2']);
+});
+
 test('routes production reasons back to weekly work or the reshoot queue idempotently', async () => {
   const workflow = buildAuthoritativeSocialContentWorkflow(workflowInput(['candidate-1']));
   const lineage = buildSocialContentAuthorityLineage({ version: '1', programRef: { type: 'social_program', id: 'program-1', version: 2 }, packageRef: { type: 'weekly_operating_package', id: 'package-1', version: 4 }, weeklyTaskRef: workflowTask.taskRef, publicationTaskRef: { type: 'weekly_publication_task', id: 'publication-1', version: 4 }, businessGoalRef: weeklyPackage.businessContentGoalRef!, enterpriseProfileRef: weeklyPackage.enterpriseProfileRef!, enterpriseFactRefs: [fact], referenceSelectionRef: { type: 'reference_selection', id: 'selection-1', version: 1 }, candidateEvidenceRefs: [{ type: 'candidate_evidence', id: 'evidence-candidate-1', version: 2 }], inspirationHandoffs: workflow.inspirationHandoffs, directorBrief: workflow.directorBrief });
@@ -104,4 +130,12 @@ test('routes production reasons back to weekly work or the reshoot queue idempot
   const repository = new MemoryRepository(); const item = routeProductionReturn({ lineage, reason: 'asset_missing', sceneId: 'scene-1' });
   await persistProductionReturn(repository, 'tenant-1', item); await persistProductionReturn(repository, 'tenant-1', item);
   assert.equal(repository.rows.get(STARTER_COLLECTIONS.socialContentReworkQueue)?.length, 1);
+  const failed = routeProductionReturn({ lineage, reason: 'production_failed', productionResultRef: { type: 'production_result', id: 'result-1', version: 2 } });
+  assert.equal(failed.destination, 'weekly_task');
+  assert.deepEqual(failed.returnToTaskRef, workflowTask.taskRef);
+  const partial = routeProductionReturn({ lineage, reason: 'partial_rework', affectedSceneIds: ['scene-1'], productionResultRef: { type: 'production_result', id: 'result-1', version: 2 } });
+  assert.equal(partial.destination, 'reshoot_queue');
+  assert.deepEqual(partial.affectedSceneIds, ['scene-1']);
+  assert.deepEqual(partial.returnToTaskRef, workflowTask.taskRef);
+  assert.throws(() => routeProductionReturn({ lineage, reason: 'partial_rework' }), /partial_rework_scene_required/);
 });

@@ -295,9 +295,10 @@ socialDiscoveryRouter.post('/runs', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const body = (req.body || {}) as { discoveryModes?: unknown; triggerType?: unknown };
   if (body.triggerType === 'scheduled') return void res.status(403).json({ error: 'scheduled_trigger_internal_only' });
+  if (body.triggerType === 'production_gap') return void res.status(403).json({ error: 'production_gap_trigger_internal_only' });
   try {
     const requestedModes = Array.isArray(body.discoveryModes) ? discoveryModes(body.discoveryModes) : undefined;
-    const result = await executeApprovedDiscoveryRun({ tenantId, triggerType: body.triggerType === 'production_gap' ? 'production_gap' : 'manual', requestedModes });
+    const result = await executeApprovedDiscoveryRun({ tenantId, triggerType: 'manual', requestedModes });
     res.status(result.run ? 201 : 200).json(result);
   } catch (error) {
     const code = error instanceof Error ? error.message : 'discovery_run_failed';

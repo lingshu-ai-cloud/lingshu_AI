@@ -14,6 +14,7 @@ export interface DiscoveryQuotaPlan {
   remainingByMode: Record<SocialDiscoveryMode, number>;
   targetByMode: Record<SocialDiscoveryMode, number>;
   innovationExperimentShare: number;
+  acceptedCandidateIdsByMode: Record<SocialDiscoveryMode, string[]>;
 }
 
 const MODES: SocialDiscoveryMode[] = ['momentum', 'account', 'innovation'];
@@ -43,17 +44,26 @@ export function planRollingSevenDayQuotas(
   };
   const windowStartMs = now.getTime() - 7 * 86_400_000;
   const accepted = { momentum: 0, account: 0, innovation: 0 };
+  const acceptedIds: Record<SocialDiscoveryMode, Set<string>> = {
+    momentum: new Set(), account: new Set(), innovation: new Set(),
+  };
   for (const run of runs) {
     const timestamp = Date.parse(run.finishedAt || run.startedAt);
     if (!Number.isFinite(timestamp) || timestamp < windowStartMs || timestamp > now.getTime()) continue;
-    for (const mode of MODES) accepted[mode] += boundedInteger(run.modeStats[mode]?.accepted ?? 0);
+    for (const mode of MODES) {
+      const ids = run.evidenceOutcomes?.[mode]?.acceptedCandidateIds;
+      if (ids) ids.filter(Boolean).forEach(id => acceptedIds[mode].add(id));
+      else accepted[mode] += boundedInteger(run.modeStats[mode]?.accepted ?? 0);
+    }
   }
+  for (const mode of MODES) accepted[mode] += acceptedIds[mode].size;
   return {
     windowStartedAt: new Date(windowStartMs).toISOString(),
     acceptedByMode: accepted,
     targetByMode: targets,
     remainingByMode: Object.fromEntries(MODES.map(mode => [mode, Math.max(0, targets[mode] - accepted[mode])])) as Record<SocialDiscoveryMode, number>,
     innovationExperimentShare: policy.innovationShare,
+    acceptedCandidateIdsByMode: Object.fromEntries(MODES.map(mode => [mode, [...acceptedIds[mode]]])) as Record<SocialDiscoveryMode, string[]>,
   };
 }
 

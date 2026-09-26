@@ -17,6 +17,7 @@ assert.doesNotMatch(scheduler, /managedBy: 'social_discovery_scope'[\s\S]{0,200}
 assert.match(service, /dueDiscoveryModes\(brief, previousRuns\)/, '定时触发必须仅执行到期供给');
 assert.match(service, /approval\?\.status !== 'approved'/, '未经批准的长期范围不得执行');
 assert.match(route, /scheduled_trigger_internal_only/, '客户端不得伪造 scheduled 触发');
+assert.match(route, /production_gap_trigger_internal_only/, 'production gap 只能由持久化 gap worker 触发');
 assert.match(route, /body\.decision === 'track' \? 'trial'/, '编导推荐 track 不能直接晋级');
 assert.match(route, /approved \? 'tracked'/, '只有经营 Agent 确认后才能晋级 tracked');
 assert.match(service, /mode === 'innovation' && brief\.productionGap/, '创新参考必须能从生产缺口建立采集输入');
