@@ -18,8 +18,9 @@ import {
   readSocialProductionState,
 } from './socialContentProductionHandoff.js';
 
+const analysisVersion = '3';
 const analysis: SocialReferenceVideoAnalysis = {
-  analysisId: 'analysis-v3', version: '3', referenceSourceId: 'captured-video-1', status: 'ready', durationSeconds: 6,
+  analysisId: 'analysis-v3', version: analysisVersion, referenceSourceId: 'captured-video-1', status: 'ready', durationSeconds: 6,
   coverage: { fullDurationSeconds: 6, precisionIntervals: [{ startSeconds: 0, endSeconds: 6, level: 'L3' }], gaps: [], overallConfidence: 0.92, fullTimelineCovered: true },
   shots: [
     { shotId: 'reference-hook', startSeconds: 0, endSeconds: 3, visualDescription: '产品进入画面', spokenText: null, captionText: null, audioDescription: '起音', rhythmDescription: '快速', purpose: 'hook', tags: { sceneTypes: [], subjects: [], subjectRelations: [], cameraLanguage: [], contentFunctions: [], soundTypes: [], onScreenInformation: [], truthRequirements: [], suggestedProductionMethods: [] }, fidelityPoints: ['结果先行'], mustDifferPoints: ['替换产品'] },
@@ -41,7 +42,7 @@ const scene = (sceneId: string, order: number, referenceShotId: string, purpose:
 
 const brief: SocialDirectorBrief = {
   directorBriefId: 'brief-v3', version: '3', status: 'ready', source: { weeklyPackageId: 'weekly-v3', adHocBusinessContextId: null },
-  referenceAnalysis: { analysisId: analysis.analysisId, version: analysis.version, fullDurationSeconds: 6, precisionIntervals: analysis.coverage!.precisionIntervals, gaps: [], overallConfidence: 0.92 },
+  referenceAnalysis: { analysisId: analysis.analysisId, version: analysisVersion, fullDurationSeconds: 6, precisionIntervals: analysis.coverage!.precisionIntervals, gaps: [], overallConfidence: 0.92 },
   topic: '新品演示', audience: '采购商', platforms: ['tiktok'], accountRefs: ['account-playbook:v3'], creativeIntent: '展示差异', narrativeStructure: ['hook', 'cta'], rhythm: '快到稳', primaryHookId: null,
   coreSellingPoints: ['可验证参数'], callToAction: '询盘', totalDurationSeconds: 6, aspectRatio: '9:16', languages: ['zh'], brandRequirements: [], factSourceRefs: ['knowledge:1'], rightsConstraints: ['不使用原视频'],
   referenceEvidence: [{ analysisId: analysis.analysisId, referenceShotId: 'reference-hook', transferable: ['节奏'], mustReplace: ['产品'] }], budgetCny: 10, dueAt: null,
@@ -119,6 +120,8 @@ test('freezes collected-video lineage, DirectorBrief and per-shot Content Agent 
   assert.equal(handoff.variantDifference.hypothesis, '新开场提高停留');
   assert.throws(() => buildSocialProductionHandoff({ taskId: 'task', version: '4', sourceAnalysis: analysis, directorBrief: brief, executionPlan, executionPlanReview,
     variantDifference: { variantId: 'bad', baselineVariantId: null, changedSceneIds: [], dimensions: [], hypothesis: '', unchangedConstraints: [], surfaceHashes } }), /variant_difference_required/);
+  assert.throws(() => buildSocialProductionHandoff({ taskId: 'task', version: '4', sourceAnalysis: { ...analysis, version: undefined }, directorBrief: brief, executionPlan, executionPlanReview,
+    variantDifference: { variantId: 'variant-b', baselineVariantId: 'variant-a', changedSceneIds: ['scene-hook'], dimensions: ['hook'], hypothesis: '新开场提高停留', unchangedConstraints: ['产品事实', 'CTA'], surfaceHashes } }), /source_analysis_version_required/);
 });
 
 test('requires append-only G4 technical receipts, Director G5 and business G6 preflight', async () => {

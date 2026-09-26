@@ -167,13 +167,14 @@ export function buildSocialProductionHandoff(input: {
   const { sourceAnalysis, directorBrief, executionPlan, executionPlanReview } = input;
   const taskId = id(input.taskId);
   const version = id(input.version);
+  const sourceAnalysisVersion = socialText(sourceAnalysis.version);
+  if (!sourceAnalysisVersion) fail('social_production_handoff_source_analysis_version_required');
   if (sourceAnalysis.status !== 'ready' || sourceAnalysis.coverage?.fullTimelineCovered !== true) {
     fail('social_production_handoff_source_analysis_not_ready');
   }
   if (directorBrief.status !== 'ready'
-    || !sourceAnalysis.version
     || directorBrief.referenceAnalysis?.analysisId !== sourceAnalysis.analysisId
-    || directorBrief.referenceAnalysis.version !== sourceAnalysis.version
+    || directorBrief.referenceAnalysis.version !== sourceAnalysisVersion
     || socialRequestHash({
       fullDurationSeconds: directorBrief.referenceAnalysis.fullDurationSeconds,
       precisionIntervals: directorBrief.referenceAnalysis.precisionIntervals,
@@ -260,7 +261,7 @@ export function buildSocialProductionHandoff(input: {
       directorBriefRef: { id: directorBrief.directorBriefId, version: directorBrief.version },
       sourceAnalysisRef: referenceShot ? {
         analysisId: sourceAnalysis.analysisId,
-        version: sourceAnalysis.version,
+        version: sourceAnalysisVersion,
         referenceSourceId: sourceAnalysis.referenceSourceId,
         referenceShotId: referenceShot.shotId,
         startSeconds: referenceShot.startSeconds,
@@ -285,7 +286,7 @@ export function buildSocialProductionHandoff(input: {
     status: 'locked',
     sourceAnalysis: {
       analysisId: sourceAnalysis.analysisId,
-      version: sourceAnalysis.version,
+      version: sourceAnalysisVersion,
       referenceSourceId: sourceAnalysis.referenceSourceId,
       coverageHash: socialRequestHash(sourceAnalysis.coverage),
     },
