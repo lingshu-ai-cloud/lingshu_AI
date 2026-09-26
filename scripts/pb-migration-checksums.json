@@ -95,6 +95,7 @@
     "1790726401_create_agent_notification_reads.js": "5d3800e6c33b5740775a99fa353ae13109a7502fdc85ee3cdae1ffa191d2145a",
     "1790726401_make_social_qualification_append_only.js": "4aa8f385408951a6d9b3c10f82d4a3ed7c1bb2461d45c87f55aabec8393ba8b8",
     "1790812800_create_social_content_authority_lineage.js": "c71a84ecc44938d33ebff2ae3895aabd992d774e5c8e47b4640b435da99c63dc",
-    "1790899200_create_social_weekly_reviews.js": "1806d2a05adcadbf5e043169509abc1602aae6ae11d9e3b15ab07c09b85d0a99"
+    "1790899200_create_social_weekly_reviews.js": "1806d2a05adcadbf5e043169509abc1602aae6ae11d9e3b15ab07c09b85d0a99",
+    "1790985600_create_social_operating_evidence.js": "17d77979799b7924748962b37e7222be19daa841dbe3b57deb8cb59b367628f7"
   }
 }
