@@ -33,6 +33,7 @@ data/bgm.json
 data/tts/
 data/covers/
 data/analysis-temp/
+data/analysis-locks/
 data/qwen-reanalysis-original.json
 data/studio-variation-batches.json
 data/studio-video-versions.json
