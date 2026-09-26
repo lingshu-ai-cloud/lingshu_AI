@@ -116,6 +116,14 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     res.json({ item });
   }));
 
+  router.post('/:programId/operating-packages/:packageId/workflow-events', asyncRoute(async (req, res) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const item = await weeklyPackages.applyWorkflowEvent(
+      tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
+    );
+    res.json({ item });
+  }));
+
   router.use(((error, _req, res, next) => {
     if (!(error instanceof SocialProgramError)) {
       next(error);
