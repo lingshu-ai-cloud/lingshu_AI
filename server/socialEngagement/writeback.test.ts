@@ -31,6 +31,7 @@ assert.match(routeSource, /interaction_writeback_forbidden/, 'interaction ingest
 
 try {
   assert.throws(() => normalizeInteractionWriteback({ kind: 'comment', platform: 'youtube', providerEventId: 'c1', accountId: 'a1', body: 'Price?', occurredAt: '2026-09-26T00:00:00Z' }), /comment_content_required/);
+  assert.throws(() => normalizeInteractionWriteback({ kind: 'comment', platform: 'youtube', providerEventId: 'c0', contentId: 'video-1', body: 'Price?', occurredAt: '2026-09-26T00:00:00Z' }), /comment_account_required/);
 
   const comment = await writebackInteraction('tenant-a', { kind: 'comment', platform: 'youtube', providerEventId: 'c1', accountId: 'a1', contentId: 'video-1', body: 'Price?', occurredAt: '2026-09-26T00:00:00Z' });
   assert.equal(comment.item.source_confidence, 'confirmed');
@@ -41,6 +42,9 @@ try {
   const inquiry = await writebackInteraction('tenant-a', { kind: 'inquiry', platform: 'whatsapp', providerEventId: 'm1', accountId: 'wa-business-1', body: 'Need 1000 custom bottles for UAE', occurredAt: '2026-09-26T01:00:00Z' });
   assert.equal(inquiry.item.contentId, undefined, 'an inquiry is retained without invented content attribution');
   assert.equal(inquiry.item.source_confidence, 'unknown');
+  const unattributedDm = await writebackInteraction('tenant-a', { kind: 'direct_message', platform: 'instagram', providerEventId: 'dm-1', body: 'Please send a catalog', occurredAt: '2026-09-26T01:05:00Z' });
+  assert.equal(unattributedDm.item.accountId, 'unknown', 'unattributed DMs are retained rather than discarded');
+  assert.equal(unattributedDm.item.source_confidence, 'unknown');
   await assert.rejects(confirmSalesQualification({ tenantId: 'tenant-a', interactionId: inquiry.item.id, status: 'qualified', authority: 'agent' as any, actorId: 'u1', reason: 'BANT looks high' }), /qualification_authority_required/);
   await assert.rejects(confirmSalesQualification({ tenantId: 'tenant-a', interactionId: inquiry.item.id, status: 'candidate' as any, authority: 'sales', actorId: 'u1', reason: 'Not a final decision' }), /qualification_status_required/);
   const qualified = await confirmSalesQualification({ tenantId: 'tenant-a', interactionId: inquiry.item.id, status: 'qualified', authority: 'sales', actorId: 'sales-1', reason: 'Sales verified buyer, quantity and destination' });

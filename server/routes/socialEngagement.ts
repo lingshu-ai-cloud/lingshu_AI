@@ -8,6 +8,7 @@ import { store } from '../storage/index.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { confirmSalesQualification, createCreativeLearning, listCreativeLearnings, listInteractionWritebacks, writebackInteraction } from '../socialEngagement/writeback.js';
+import { declaredEngagementCapabilities } from '../socialEngagement/ingestion.js';
 
 export const socialEngagementRouter = Router();
 socialEngagementRouter.use(requireAuth);
@@ -252,6 +253,13 @@ socialEngagementRouter.get('/interactions', async (req, res) => {
   res.json({ items, total: items.length });
 });
 
+socialEngagementRouter.get('/ingestion-capabilities', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const youtube = (await store.list<any>('youtube_accounts', { where: { tenantId, status: 'connected' }, perPage: 1 }).catch(() => ({ items: [] } as any))).items;
+  const social = (await store.list<any>('social_accounts', { where: { tenantId, status: 'connected' }, perPage: 50 }).catch(() => ({ items: [] } as any))).items;
+  res.json({ items: declaredEngagementCapabilities([...youtube.map(() => 'youtube'), ...social.map((item: any) => String(item.platform))]) });
+});
+
 socialEngagementRouter.get('/creative-learnings', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const items = await listCreativeLearnings(tenantId);
@@ -267,7 +275,7 @@ socialEngagementRouter.post('/interactions/writeback', async (req, res) => {
     res.status(result.repeated ? 200 : 201).json(result);
   } catch (error) {
     const code = error instanceof Error ? error.message : 'interaction_writeback_failed';
-    res.status(code === 'comment_content_required' || code === 'interaction_fields_required' || code === 'invalid_interaction_kind' ? 400 : 503).json({ error: code });
+    res.status(code === 'comment_content_required' || code === 'comment_account_required' || code === 'interaction_fields_required' || code === 'invalid_interaction_kind' ? 400 : 503).json({ error: code });
   }
 });
 

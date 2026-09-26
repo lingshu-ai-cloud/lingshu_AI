@@ -4,6 +4,7 @@ import type { MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
 import { createTrackedPostDraft } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 import type { PublishingPlatform, PublishingTarget } from './domain.js';
+import type { SocialWeeklyPublicationTask, VersionedSocialRef, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { runExternalActionBlockedReason, withDigitalEmployeeRunLock } from './runControl.js';
 import {
   currentPublishableVideoPaths,
@@ -60,6 +61,93 @@ export type BoundedPublishingAuthorizationInput = Omit<BoundedPublishingAuthoriz
 
 const text = (value: unknown): string => String(value ?? '').trim();
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+/**
+ * The intentionally narrow hand-off from T5. Publishing consumes only a
+ * frozen, accepted artifact; it neither reconstructs nor copies production.
+ */
+export interface PublishableProductionResult {
+  productionResultId: string;
+  contentId: string;
+  contentVersion: string;
+  contentHash: string;
+  title: string;
+  body: string;
+  hashtags?: string[];
+  assets: Array<{ kind: 'video' | 'image' | 'cover' | 'subtitle' | 'document'; fileName: string; downloadUrl: string; contentHash: string }>;
+  sourceRefs: VersionedSocialRef[];
+  acceptedAt: string;
+}
+
+export interface PublicationAssignmentLineage {
+  programRef: VersionedSocialRef;
+  operatingPackageRef: VersionedSocialRef;
+  contentPackageRef: VersionedSocialRef;
+  weeklyPublicationTaskRef: VersionedSocialRef;
+  publishingWorkflowTaskRef: VersionedSocialRef;
+  businessGoalRef: VersionedSocialRef | null;
+  enterpriseProfileRef: VersionedSocialRef | null;
+  factRefs: VersionedSocialRef[];
+  productionResultRef: VersionedSocialRef;
+  upstreamRefs: VersionedSocialRef[];
+}
+
+export interface PublicationAssignment {
+  schemaVersion: 'publication-assignment.v1';
+  assignmentId: string;
+  tenantId: string;
+  publicationTaskId: string;
+  accountId: string;
+  platform: PublishingPlatform;
+  publishWindow: string;
+  packageId: string;
+  packageIdempotencyKey: string;
+  lineage: PublicationAssignmentLineage;
+  assignmentHash: string;
+}
+
+const stableRef = (ref: VersionedSocialRef): VersionedSocialRef => ({ type: text(ref.type), id: text(ref.id), version: Number(ref.version) });
+const stableRefs = (refs: VersionedSocialRef[]) => refs.map(stableRef).sort((a, b) => `${a.type}:${a.id}:${a.version}`.localeCompare(`${b.type}:${b.id}:${b.version}`));
+const stableDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+/** Deterministically maps one authoritative weekly item and one future production result. */
+export function buildPublicationAssignment(input: {
+  tenantId: string;
+  operatingPackage: WeeklyOperatingPackage;
+  publicationTask: SocialWeeklyPublicationTask;
+  productionResult: PublishableProductionResult;
+}): PublicationAssignment {
+  const { operatingPackage: weekly, publicationTask: task, productionResult: result } = input;
+  const workflow = weekly.workflowTasks.find(item => item.kind === 'publishing');
+  if (!workflow) throw new Error('publishing_workflow_task_required');
+  if (!weekly.socialContentPackage.publicationTasks.some(item => item.publicationTaskId === task.publicationTaskId)) throw new Error('publication_task_outside_package');
+  if (task.status === 'cancelled') throw new Error('publication_task_cancelled');
+  if (!task.publishWindow) throw new Error('publication_publish_window_required');
+  if (!result.productionResultId || !result.contentId || !/^[a-f0-9]{32,128}$/i.test(result.contentHash)) throw new Error('production_result_invalid');
+  const lineage: PublicationAssignmentLineage = {
+    programRef: { type: 'social_program', id: weekly.programId, version: 1 },
+    operatingPackageRef: { type: 'weekly_operating_package', id: weekly.packageId, version: weekly.version },
+    contentPackageRef: { type: 'social_weekly_content_package', id: weekly.socialContentPackage.contentPackageId, version: weekly.socialContentPackage.version },
+    weeklyPublicationTaskRef: { type: 'weekly_publication_task', id: task.publicationTaskId, version: weekly.version },
+    publishingWorkflowTaskRef: stableRef(workflow.taskRef),
+    businessGoalRef: weekly.businessContentGoalRef ? stableRef(weekly.businessContentGoalRef) : null,
+    enterpriseProfileRef: weekly.enterpriseProfileRef ? stableRef(weekly.enterpriseProfileRef) : null,
+    factRefs: stableRefs(task.factRefs),
+    productionResultRef: { type: 'production_result', id: result.productionResultId, version: 1 },
+    upstreamRefs: stableRefs(result.sourceRefs),
+  };
+  const identity = { tenantId: text(input.tenantId), packageId: weekly.packageId, packageVersion: weekly.version, publicationTaskId: task.publicationTaskId, productionResultId: result.productionResultId, contentHash: result.contentHash.toLowerCase(), accountId: task.accountId, platform: task.platform };
+  const digest = stableDigest(identity);
+  const packageIdempotencyKey = `weekly:${weekly.packageId}:${weekly.version}:${task.publicationTaskId}:${result.productionResultId}`;
+  const packageId = `pubpkg_${stableDigest({ tenantId: text(input.tenantId), idempotencyKey: packageIdempotencyKey }).slice(0, 24)}`;
+  const assignmentHash = stableDigest({ identity, lineage });
+  return {
+    schemaVersion: 'publication-assignment.v1', assignmentId: `pasn_${digest.slice(0, 24)}`,
+    tenantId: text(input.tenantId), publicationTaskId: task.publicationTaskId, accountId: task.accountId,
+    platform: task.platform, publishWindow: task.publishWindow, packageId, packageIdempotencyKey,
+    lineage, assignmentHash,
+  };
+}
 
 function nextDailySlot(index: number, now: Date): string {
   const slot = new Date(now);

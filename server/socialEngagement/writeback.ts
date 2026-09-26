@@ -67,7 +67,7 @@ export function normalizeInteractionWriteback(raw: unknown): InteractionWritebac
     kind,
     platform: clean(value.platform, 50).toLowerCase(),
     providerEventId: clean(value.providerEventId, 300),
-    accountId: clean(value.accountId, 200),
+    accountId: clean(value.accountId, 200) || 'unknown',
     contentId: clean(value.contentId, 300) || undefined,
     body: clean(value.body, 10_000),
     occurredAt: iso(value.occurredAt) || '',
@@ -81,7 +81,8 @@ export function normalizeInteractionWriteback(raw: unknown): InteractionWritebac
       : undefined,
     raw: value.raw,
   };
-  if (!input.platform || !input.providerEventId || !input.accountId || !input.body || !input.occurredAt) throw Error('interaction_fields_required');
+  if (!input.platform || !input.providerEventId || !input.body || !input.occurredAt) throw Error('interaction_fields_required');
+  if (input.kind === 'comment' && input.accountId === 'unknown') throw Error('comment_account_required');
   if (input.kind === 'comment' && !input.contentId) throw Error('comment_content_required');
   return input;
 }
@@ -94,7 +95,7 @@ export async function writebackInteraction(tenantId: string, raw: unknown): Prom
   const now = new Date().toISOString();
   const item = await store.create<StoredInteractionWriteback>(INTERACTIONS, {
     tenant_id: tenantId, event_key: key, ...input,
-    source_confidence: input.contentId ? 'confirmed' : 'unknown',
+    source_confidence: input.contentId && input.accountId !== 'unknown' ? 'confirmed' : 'unknown',
     qualification_status: 'candidate', created_at: now, updated_at: now,
   });
   if (!item) throw Error('interaction_writeback_unavailable');

@@ -24,6 +24,7 @@ import {
 } from '../publishing/publishSourceClaim.js';
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
+import { realPublishingCapabilities } from '../publishing/weeklyLineage.js';
 
 export const publishingRouter = Router();
 
@@ -231,6 +232,13 @@ publishingRouter.get('/local-videos/:filename', async (req, res) => {
 });
 
 publishingRouter.use(requireAuth);
+
+publishingRouter.get('/capabilities', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const youtube = (await store.list<any>('youtube_accounts', { where: { tenantId, status: 'connected' }, perPage: 1 }).catch(() => ({ items: [] } as any))).items;
+  const social = (await store.list<any>('social_accounts', { where: { tenantId, status: 'connected' }, perPage: 50 }).catch(() => ({ items: [] } as any))).items;
+  res.json({ items: realPublishingCapabilities([...youtube.map(() => 'youtube'), ...social.map((item: any) => text(item.platform))]) });
+});
 
 publishingRouter.post('/local-videos/manifest', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
