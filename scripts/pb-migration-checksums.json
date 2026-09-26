@@ -88,6 +88,8 @@
     "1790553600_create_social_discovery_foundation.js": "70a135784cfb8921f6d890e92c828ec5bb39de7aa259f6ff5a896cec479feaf5",
     "1790553601_add_social_discovery_runs.js": "b66a16450265ecac4acca798e967dce7aa74c8a7912582ff2766a9342c3e8766",
     "1790640000_create_social_program_foundation.js": "8f8f0802cfe528e4a23b3078d2b4ead932fe7bd8b7739f8ad54cda8482b531c2",
-    "1790726400_create_social_production_handoffs.js": "7a431e27e1b229e856a09bafb62ee6a7e773383b749cc5e7ac2ddf3e9fac2e7e"
+    "1790726400_create_social_production_handoffs.js": "7a431e27e1b229e856a09bafb62ee6a7e773383b749cc5e7ac2ddf3e9fac2e7e",
+    "1790726400_create_social_interaction_review.js": "51556e22bf823ee7a5846c96e52a489bacbc3895f99db357dd41283e90b1a6c8",
+    "1790726401_make_social_qualification_append_only.js": "4aa8f385408951a6d9b3c10f82d4a3ed7c1bb2461d45c87f55aabec8393ba8b8"
   }
 }

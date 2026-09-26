@@ -110,6 +110,8 @@ const ROUTE_RULES: readonly RouteRule[] = [
   { kind: 'read', methods: ['GET', 'HEAD'], pages: DATA_PAGES, path: /^\/api\/overseas\/(?:youtube|social)\/accounts\/[^/]+\/video\/[^/]+\/comments\/?$/ },
   { kind: 'read', methods: ['GET', 'HEAD'], pages: DATA_PAGES, path: /^\/api\/overseas\/social-metrics\/(?:overview|trends)\/?$/ },
   { kind: 'read', methods: ['GET', 'HEAD'], pages: DATA_PAGES, path: /^\/api\/overseas\/social-engagement\/comments\/?$/ },
+  { kind: 'read', methods: ['GET', 'HEAD'], pages: DATA_PAGES, path: /^\/api\/overseas\/social-engagement\/(?:interactions|creative-learnings)\/?$/ },
+  { kind: 'edit', methods: ['POST'], pages: DATA_PAGES, path: /^\/api\/overseas\/social-engagement\/inquiries\/[^/]+\/qualification\/?$/ },
   { kind: 'generate', methods: ['POST'], pages: DATA_PAGES, path: /^\/api\/overseas\/social-engagement\/comments\/(?:translate|analyze)\/?$/ },
   { kind: 'edit', methods: ['PATCH'], pages: DATA_PAGES, path: /^\/api\/overseas\/social-engagement\/comments\/status\/?$/ },
 ];
