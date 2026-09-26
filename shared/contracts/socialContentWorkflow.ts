@@ -746,6 +746,66 @@ export interface SocialDiscoveryBrief {
   budgetLimitCny: number | null;
   productionGap: string | null;
   createdBy: 'director_agent' | 'user';
+  /** Per-channel execution policy. No product ratio is implied when omitted. */
+  modePolicies?: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModePolicy>>;
+}
+
+export interface SocialDiscoveryModePolicy {
+  enabled: boolean;
+  sourceRefs: string[];
+  platforms: string[];
+  resultLimit: number;
+  refreshIntervalMinutes: number;
+  budgetLimitCny: number | null;
+}
+
+export type SocialCollectionRunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'stopped';
+export type SocialCollectionStopReason = 'completed' | 'duplicate_limit' | 'no_valid_results' | 'budget_limited' | 'source_failed' | 'manual';
+
+export interface SocialDiscoveryModeRunStats {
+  requested: number;
+  fetched: number;
+  deduplicated: number;
+  accepted: number;
+  momentumCandidates: number;
+  failed: number;
+  costCny: number | null;
+  effectiveRate: number | null;
+}
+
+export interface SocialInspirationCollectionRun {
+  runId: string;
+  planId: string;
+  keywordSetId: string;
+  keywordSetVersion: number;
+  discoveryScopeId: string;
+  discoveryScopeVersion: number;
+  status: SocialCollectionRunStatus;
+  triggerType: 'scheduled' | 'manual' | 'production_gap';
+  scopeSnapshot: SocialDiscoveryBrief;
+  modeStats: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModeRunStats>>;
+  sourceRunRefs: string[];
+  queryBasis: Partial<Record<SocialDiscoveryMode, string[]>>;
+  market: string;
+  language: string;
+  stopReason: SocialCollectionStopReason | null;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+}
+
+export interface SocialDiscoverySummary {
+  keywordSetId: string;
+  keywordSetVersion: number;
+  runCount: number;
+  latestRunAt: string | null;
+  nextRunAt: string | null;
+  totals: SocialDiscoveryModeRunStats;
+  byMode: Partial<Record<SocialDiscoveryMode, SocialDiscoveryModeRunStats>>;
+  coverageGaps: SocialDiscoveryMode[];
+  totalKnownCostCny: number;
+  costComplete: boolean;
+  accountDecisionsPendingBusinessConfirmation: number;
 }
 
 export interface SocialCandidateEvidence {
@@ -787,6 +847,14 @@ export interface SocialAccountTrackingDecision {
   nextReviewAt?: string;
   recommendedCadence?: string;
   confidence: number;
+  recommendedBy?: 'director_agent' | 'user';
+  businessConfirmation?: {
+    status: 'pending' | 'confirmed' | 'rejected';
+    confirmedBy: 'business_agent' | null;
+    decisionRef: string | null;
+    reason: string | null;
+    confirmedAt: string | null;
+  };
 }
 
 export interface SocialCrawlStrategy {
@@ -807,6 +875,12 @@ export interface SocialCrawlStrategy {
   seasonTags: string[];
   regionalPlatformWeights: Record<string, number>;
   createdBy: 'director_agent' | 'user';
+  approval?: {
+    status: 'approved' | 'pending' | 'rejected';
+    approvedBy: 'business_agent' | 'user' | null;
+    approvedAt: string | null;
+    scopeVersion: number;
+  };
 }
 
 export interface SocialInspirationScores {

@@ -25,7 +25,7 @@ export interface ScheduledTask {
   id: string;
   name: string;
   category: 'daily' | 'monitor' | 'report' | 'automation';
-  taskType: 'trend_report' | 'weekly_review' | 'crm_wakeup' | 'exchange_rate' | 'market_intelligence' | 'holiday_push' | 'video_keyword_crawl' | 'image_post_crawl' | 'competitor_account_crawl' | 'custom';
+  taskType: 'trend_report' | 'weekly_review' | 'crm_wakeup' | 'exchange_rate' | 'market_intelligence' | 'holiday_push' | 'video_keyword_crawl' | 'image_post_crawl' | 'competitor_account_crawl' | 'social_discovery_collection' | 'custom';
   cronExpr: string;      // e.g. "0 8 * * *"
   cronLabel: string;     // e.g. "每天 08:00"
   enabled: boolean;
@@ -1275,6 +1275,18 @@ export function scheduledCrawlBatchResult(jobs: Record<string, any>[], requested
 }
 
 async function executeTask(task: ScheduledTask): Promise<string> {
+  if (task.taskType === 'social_discovery_collection') {
+    const { executeApprovedDiscoveryRun } = await import('../socialDiscovery/service.js');
+    const result = await executeApprovedDiscoveryRun({
+      tenantId: String(task.tenantId || task.config.tenantId || ''),
+      triggerType: 'scheduled',
+      expectedScopeId: task.config.discoveryScopeId,
+      expectedScopeVersion: Number(task.config.discoveryScopeVersion || 0) || undefined,
+    });
+    return result.skipped
+      ? `发现采集未执行：${result.reason || 'no_discovery_mode_due'}`
+      : `发现采集已完成：${result.run?.runId || 'unknown_run'}`;
+  }
   if (task.taskType === 'video_keyword_crawl') return executeVideoKeywordCrawl(task);
   if (task.taskType === 'image_post_crawl') return executeImagePostCrawl(task);
   if (task.taskType === 'competitor_account_crawl') return executeCompetitorAccountCrawl(task);
@@ -1287,6 +1299,69 @@ async function executeTask(task: ScheduledTask): Promise<string> {
     case 'crm_wakeup':   return executeCrmWakeup(task);
     default:              return '任务执行完成';
   }
+}
+
+/** One scheduler per tenant. It only stores an approved scope reference; execution resolves the immutable scope snapshot. */
+export function ensureSocialDiscoveryCollectionTask(input: {
+  tenantId: string;
+  discoveryScopeId: string;
+  discoveryScopeVersion: number;
+}): { task: ScheduledTask; created: boolean; updated: boolean } {
+  const tasks = load();
+  const existing = tasks.find(task => task.tenantId === input.tenantId && task.taskType === 'social_discovery_collection');
+  const config: Record<string, string> = {
+    tenantId: input.tenantId,
+    discoveryScopeId: input.discoveryScopeId,
+    discoveryScopeVersion: String(input.discoveryScopeVersion),
+    managedBy: 'social_discovery_scope',
+  };
+  const task: ScheduledTask = existing ? {
+    ...existing,
+    name: '连续发现采集',
+    cronExpr: '*/15 * * * *',
+    cronLabel: '每15分钟检查到期供给',
+    enabled: true,
+    config,
+  } : {
+    id: `task_social_discovery_${randomUUID()}`,
+    tenantId: input.tenantId,
+    name: '连续发现采集',
+    category: 'automation',
+    taskType: 'social_discovery_collection',
+    cronExpr: '*/15 * * * *',
+    cronLabel: '每15分钟检查到期供给',
+    enabled: true,
+    config,
+    createdAt: new Date().toISOString(),
+  };
+  if (existing) tasks[tasks.indexOf(existing)] = task;
+  else tasks.push(task);
+  save(tasks);
+  scheduleTask(task);
+  return { task, created: !existing, updated: Boolean(existing) };
+}
+
+/** Backfill managed schedules for approved scopes created before scheduler wiring existed. */
+export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number> {
+  let page = 1;
+  let reconciled = 0;
+  while (page <= 50) {
+    const result = await store.list<Record<string, any>>('social_discovery_scopes', {
+      where: { status: 'active' }, sort: 'created_at', page, perPage: 100,
+    });
+    for (const scope of result.items) {
+      const tenantId = String(scope.tenant_id || '').trim();
+      const version = Number(scope.version || 0);
+      const payload = scope.payload && typeof scope.payload === 'object' ? scope.payload as Record<string, any> : {};
+      const approval = payload.approval && typeof payload.approval === 'object' ? payload.approval as Record<string, any> : {};
+      if (!tenantId || !scope.id || !version || approval.status !== 'approved' || Number(approval.scopeVersion || 0) !== version) continue;
+      ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: version });
+      reconciled += 1;
+    }
+    if (page >= result.totalPages || result.items.length < 100) break;
+    page += 1;
+  }
+  return reconciled;
 }
 
 async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'catch-up' | 'manual'): Promise<string> {
@@ -1453,7 +1528,10 @@ export function ensureDigitalEmployeeSocialCollectionTask(input: {
 
 // Boot: restore active tasks
 export async function initScheduler() {
-  const tasks = (await hydrateTasksFromPocketBase()).filter(t => t.enabled && t.tenantId);
+  await hydrateTasksFromPocketBase();
+  try { await reconcileSocialDiscoveryCollectionTasks(); }
+  catch (error) { console.warn('[scheduler] discovery schedule reconciliation skipped:', error instanceof Error ? error.message : error); }
+  const tasks = load().filter(t => t.enabled && t.tenantId);
   tasks.forEach(scheduleTask);
   for (const task of tasks) {
     const missedAt = latestMissedRun(task);
@@ -1536,6 +1614,10 @@ schedulerRouter.get('/:id/export-pdf', async (req: Request, res: Response) => {
 
 schedulerRouter.post('/', (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
+  if (req.body.taskType === 'social_discovery_collection') {
+    res.status(403).json({ error: 'discovery_schedule_managed_by_scope' });
+    return;
+  }
   const tasks = load();
   const isCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(req.body.taskType);
   const requestedCronExpr = String(req.body.cronExpr ?? (isCrawler ? '0 1 * * *' : '0 8 * * *'));
@@ -1575,6 +1657,10 @@ schedulerRouter.put('/:id', (req: Request, res: Response) => {
   if (idx === -1) { res.status(404).json({ error: 'not found' }); return; }
   const current = tasks[idx];
   const nextTaskType = req.body.taskType ?? current.taskType;
+  if (current.taskType === 'social_discovery_collection' || nextTaskType === 'social_discovery_collection') {
+    res.status(403).json({ error: 'discovery_schedule_managed_by_scope' });
+    return;
+  }
   const requestedCronExpr = String(req.body.cronExpr ?? current.cronExpr);
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const nextIsCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(nextTaskType);
@@ -1607,6 +1693,7 @@ schedulerRouter.delete('/:id', (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const task = findTenantTask(req.params.id, tenantId);
   if (!task) { res.status(404).json({ error: 'not found' }); return; }
+  if (task.taskType === 'social_discovery_collection') { res.status(403).json({ error: 'discovery_schedule_managed_by_scope' }); return; }
   activeJobs.get(req.params.id)?.stop();
   activeJobs.delete(req.params.id);
   save(load().filter(t => !(t.id === req.params.id && t.tenantId === tenantId)));

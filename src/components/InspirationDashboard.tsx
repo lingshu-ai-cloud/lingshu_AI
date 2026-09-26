@@ -250,6 +250,7 @@ interface VideoAnalysisPayload {
     momentum?: { level?: 'rising' | 'high_performance' | 'unknown'; reasons?: string[]; confidence?: number };
     transferability?: { level?: 'high' | 'medium' | 'low'; mechanisms?: string[]; limitations?: string[] };
   };
+  discoveryOrigins?: Array<{ runId: string; scopeId: string; scopeVersion: number; mode: 'momentum' | 'account' | 'innovation'; queryRef: string; observedAt: string }>;
   publicAdSignals?: { isAd?: boolean; isPaidPartnership?: boolean };
   author?: string;
   crawlerOpsTaskId?: string;
@@ -2465,7 +2466,7 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFa
         <div className="flex flex-wrap gap-1">
           {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
         </div>
-        {!video.id.startsWith('material-') && <div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold" title={`来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
+        {!video.id.startsWith('material-') && <div className="mt-2 flex flex-wrap gap-1 text-[9px] font-bold" title={`来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}><span className="rounded-md bg-violet-50 px-2 py-1 text-violet-900" title={discoveryOriginTitle(video)}>{discoverySupplyLabel(video)}</span><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
         <div className="mt-auto border-t border-border pt-3">
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={onSelect}
@@ -2743,6 +2744,20 @@ function candidateDimensionLabels(video: TrendVideo): { relevance: string; momen
   const transferability = evidence?.transferability?.level === 'high' ? '易迁移'
     : evidence?.transferability?.level === 'medium' ? '可迁移' : evidence?.transferability?.level === 'low' ? '难迁移' : '迁移性待确认';
   return { relevance, momentum, transferability };
+}
+
+function latestDiscoveryOrigin(video: TrendVideo) {
+  return video.aiAnalysis?.discoveryOrigins?.at(-1);
+}
+
+function discoverySupplyLabel(video: TrendVideo): string {
+  const mode = latestDiscoveryOrigin(video)?.mode;
+  return mode === 'momentum' ? '行业起量' : mode === 'account' ? '确认对标' : mode === 'innovation' ? '创新参考' : '来源待归类';
+}
+
+function discoveryOriginTitle(video: TrendVideo): string {
+  const origin = latestDiscoveryOrigin(video);
+  return origin ? `范围 v${origin.scopeVersion} · 运行 ${origin.runId} · 依据 ${origin.queryRef}` : '历史素材尚无发现运行溯源';
 }
 
 function specialRecommendationForVideo(video: TrendVideo, accountVideos: TrendVideo[], accountMedians: number[]): AccountSpecialRecommendation | null {

@@ -17,6 +17,7 @@ import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, ob
 import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
 import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
+import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
 import { isDemoMode } from '../lib/demo.js';
 import { recordVideoAdminAlert, updateVideoAdminAlertByRecordId } from '../lib/videoAdminAlerts.js';
 import { requireAdminUser } from '../lib/demoAccounts.js';
@@ -853,6 +854,24 @@ export interface CrawlVideosInput {
   disableBackfill?: boolean;
   /** Scheduled collection finishes after persistence; analysis owns its own queue. */
   deferAnalysis?: boolean;
+  /** Immutable discovery provenance attached to every imported or deduplicated candidate. */
+  discoveryContext?: {
+    runId: string;
+    scopeId: string;
+    scopeVersion: number;
+    mode: SocialDiscoveryMode;
+    queryRef: string;
+  };
+}
+
+function discoveryOrigins(
+  existing: unknown,
+  context: CrawlVideosInput['discoveryContext'],
+): Array<Record<string, unknown>> | undefined {
+  if (!context) return Array.isArray(existing) ? existing as Array<Record<string, unknown>> : undefined;
+  const previous = Array.isArray(existing) ? existing.filter(item => item && typeof item === 'object') as Array<Record<string, unknown>> : [];
+  const origin = { ...context, observedAt: new Date().toISOString() };
+  return [...previous.filter(item => item.runId !== context.runId || item.mode !== context.mode || item.queryRef !== context.queryRef), origin].slice(-20);
 }
 
 class NoCrawlResultsError extends Error {}
@@ -1267,6 +1286,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
           sourceAccountName: accountMode ? accountName : existingAnalysis.sourceAccountName,
           dateFrom,
           dateTo,
+          discoveryOrigins: discoveryOrigins(existingAnalysis.discoveryOrigins, input.discoveryContext),
         }),
       };
       // 已有本地落盘缩略图时不要用新的临时签名链接覆盖
@@ -1310,6 +1330,7 @@ export async function crawlVideosForTenant(input: CrawlVideosInput): Promise<Cra
         dateTo,
         importedAt: new Date().toISOString(),
         userVisible: testTenant ? false : undefined,
+        discoveryOrigins: discoveryOrigins(undefined, input.discoveryContext),
       }),
       status: 'analyzed' as VideoStatus,
       crawledAt: new Date().toISOString(),
