@@ -25,6 +25,8 @@ import {
 import { createTrackedPostDraft, type PostRecord } from '../publishing/waLink.js';
 import { store } from '../storage/index.js';
 import { realPublishingCapabilities } from '../publishing/weeklyLineage.js';
+import { PUBLICATION_ASSIGNMENTS, PUBLICATION_ATTEMPTS, type DurablePublicationAttempt, type StoredPublicationAssignment } from '../publishing/weeklyLineage.js';
+import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities.js';
 
 export const publishingRouter = Router();
 
@@ -235,9 +237,29 @@ publishingRouter.use(requireAuth);
 
 publishingRouter.get('/capabilities', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const youtube = (await store.list<any>('youtube_accounts', { where: { tenantId, status: 'connected' }, perPage: 1 }).catch(() => ({ items: [] } as any))).items;
-  const social = (await store.list<any>('social_accounts', { where: { tenantId, status: 'connected' }, perPage: 50 }).catch(() => ({ items: [] } as any))).items;
-  res.json({ items: realPublishingCapabilities([...youtube.map(() => 'youtube'), ...social.map((item: any) => text(item.platform))]) });
+  res.json({ items: realPublishingCapabilities(await listTenantCapabilityEvidence(tenantId)) });
+});
+
+publishingRouter.get('/weekly-assignments', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const where: Record<string, string> = { tenant_id: tenantId };
+  if (text(req.query.packageId)) where.operating_package_id = text(req.query.packageId);
+  if (text(req.query.status)) where.status = text(req.query.status);
+  const result = await store.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, { where, sort: '-created_at', page: 1, perPage: 200 });
+  res.json({ items: result.items, total: result.totalItems });
+});
+
+publishingRouter.get('/weekly-assignments/:assignmentId/attempts', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const assignmentId = text(req.params.assignmentId);
+  const assignment = await store.list<StoredPublicationAssignment>(PUBLICATION_ASSIGNMENTS, {
+    where: { tenant_id: tenantId, assignment_id: assignmentId }, page: 1, perPage: 2,
+  });
+  if (assignment.totalItems !== 1 || !assignment.items[0]) { res.status(404).json({ error: 'publication_assignment_not_found' }); return; }
+  const attempts = await store.list<DurablePublicationAttempt>(PUBLICATION_ATTEMPTS, {
+    where: { tenant_id: tenantId, assignment_id: assignmentId }, sort: '-started_at', page: 1, perPage: 100,
+  });
+  res.json({ items: attempts.items, total: attempts.totalItems });
 });
 
 publishingRouter.post('/local-videos/manifest', async (req, res) => {

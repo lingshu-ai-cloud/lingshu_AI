@@ -8,6 +8,7 @@ import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolutio
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
 import type { OperatingPlanningRequest } from '../../shared/contracts/socialOperatingDecision.js';
 import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
+import { revokePublicationAssignments } from '../publishing/weeklyLineage.js';
 
 function asyncRoute(handler: RequestHandler): RequestHandler {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -137,9 +138,15 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
 
   router.put('/:programId/operating-packages/:packageId', asyncRoute(async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
+    const previousVersion = Number(req.body?.expectedVersion);
     const item = await weeklyPackages.revise(
       tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
     );
+    await revokePublicationAssignments({
+      tenantId, operatingPackageId: String(req.params.packageId || ''),
+      ...(Number.isSafeInteger(previousVersion) ? { operatingPackageVersion: previousVersion } : {}),
+      revokedBy: userId, revokedAt: item.updatedAt, dataStore,
+    });
     res.status(201).json({ item });
   }));
 
@@ -156,6 +163,10 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     const item = await weeklyPackages.retire(
       tenantId, userId, String(req.params.programId || ''), String(req.params.packageId || ''), req.body || {},
     );
+    await revokePublicationAssignments({
+      tenantId, operatingPackageId: item.packageId, operatingPackageVersion: item.version,
+      revokedBy: userId, revokedAt: item.updatedAt, dataStore,
+    });
     res.json({ item });
   }));
 

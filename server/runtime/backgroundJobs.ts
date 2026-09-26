@@ -10,6 +10,8 @@ import { initTenantPlatformTokenMonitor } from '../routes/tenantPlatformTokenMon
 import { initCrawlerOpsWorker, initPocketBaseVideoBackfill } from '../routes/videos.js';
 import { initWhatsAppCustomerMaintenance } from '../whatsapp/historyImport.js';
 import { startAdAutomationWorker } from '../platformAds/automation.js';
+import { initWeeklyPublicationPackageWorker } from '../publishing/weeklyPublicationWorker.js';
+import { initEngagementIngestionWorker } from '../socialEngagement/ingestionWorker.js';
 
 export async function startBackgroundJobs(): Promise<void> {
   console.log('[runtime] starting background jobs');
@@ -25,6 +27,8 @@ export async function startBackgroundJobs(): Promise<void> {
   initStarterQuoteArtifactWorker();
   initStarter198OrchestratorWorker();
   startAdAutomationWorker();
+  initWeeklyPublicationPackageWorker();
+  initEngagementIngestionWorker();
   initDigitalEmployeeRuntime();
   console.log('[runtime] background jobs started');
 }

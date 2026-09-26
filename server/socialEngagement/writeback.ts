@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { store } from '../storage/index.js';
+import type { DataStore } from '../storage/datastore.js';
 
 export type InteractionKind = 'comment' | 'direct_message' | 'form' | 'inquiry';
 export type SourceConfidence = 'confirmed' | 'unknown';
@@ -87,19 +88,23 @@ export function normalizeInteractionWriteback(raw: unknown): InteractionWritebac
   return input;
 }
 
-export async function writebackInteraction(tenantId: string, raw: unknown): Promise<{ item: StoredInteractionWriteback; repeated: boolean }> {
+export async function writebackInteraction(tenantId: string, raw: unknown, dataStore: DataStore = store): Promise<{ item: StoredInteractionWriteback; repeated: boolean }> {
   const input = normalizeInteractionWriteback(raw);
   const key = eventKey(input);
-  const existing = (await store.list<StoredInteractionWriteback>(INTERACTIONS, { where: { tenant_id: tenantId, event_key: key }, perPage: 1 })).items[0];
+  const existing = (await dataStore.list<StoredInteractionWriteback>(INTERACTIONS, { where: { tenant_id: tenantId, event_key: key }, perPage: 1 })).items[0];
   if (existing) return { item: existing, repeated: true };
   const now = new Date().toISOString();
-  const item = await store.create<StoredInteractionWriteback>(INTERACTIONS, {
+  const item = await dataStore.create<StoredInteractionWriteback>(INTERACTIONS, {
     tenant_id: tenantId, event_key: key, ...input,
     source_confidence: input.contentId && input.accountId !== 'unknown' ? 'confirmed' : 'unknown',
     qualification_status: 'candidate', created_at: now, updated_at: now,
   });
-  if (!item) throw Error('interaction_writeback_unavailable');
-  return { item, repeated: false };
+  if (item) return { item, repeated: false };
+  // A concurrent webhook/poll may have won the unique event key. Re-read and
+  // converge instead of turning a harmless provider replay into an error.
+  const raced = (await dataStore.list<StoredInteractionWriteback>(INTERACTIONS, { where: { tenant_id: tenantId, event_key: key }, perPage: 1 })).items[0];
+  if (raced) return { item: raced, repeated: true };
+  throw Error('interaction_writeback_unavailable');
 }
 
 export async function listInteractionWritebacks(tenantId: string, kind?: string) {

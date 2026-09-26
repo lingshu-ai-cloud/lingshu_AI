@@ -9,8 +9,32 @@ import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { confirmSalesQualification, createCreativeLearning, listCreativeLearnings, listInteractionWritebacks, writebackInteraction } from '../socialEngagement/writeback.js';
 import { declaredEngagementCapabilities } from '../socialEngagement/ingestion.js';
+import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities.js';
+import { createWebFormSource, ingestSignedWebForm, listWebFormSources, revokeWebFormSource } from '../socialEngagement/webForm.js';
 
 export const socialEngagementRouter = Router();
+
+// Public provider callback. Tenant authority comes exclusively from the
+// server-owned source id after signature verification, never from the payload.
+socialEngagementRouter.post('/webhooks/web-form/:sourceId', async (req, res) => {
+  try {
+    const rawBody = (req as typeof req & { rawBody?: Buffer }).rawBody;
+    if (!(rawBody instanceof Buffer)) { res.status(503).json({ error: 'web_form_raw_body_unavailable' }); return; }
+    const result = await ingestSignedWebForm({
+      sourceId: String(req.params.sourceId || ''), rawBody,
+      signature: req.headers['x-lingshu-signature-256'], body: req.body,
+    });
+    res.status(result.repeated ? 200 : 202).json({ ok: true, repeated: result.repeated, interactionId: result.item.id });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'web_form_ingestion_failed';
+    const status = code === 'web_form_source_not_found' ? 404
+      : code === 'web_form_signature_invalid' ? 403
+        : code === 'web_form_rate_limit_exceeded' ? 429
+          : code === 'web_form_event_invalid' || code === 'web_form_event_conflict' ? 400 : 503;
+    res.status(status).json({ error: code });
+  }
+});
+
 socialEngagementRouter.use(requireAuth);
 
 type Platform = 'youtube' | 'instagram' | 'facebook' | 'tiktok';
@@ -255,9 +279,38 @@ socialEngagementRouter.get('/interactions', async (req, res) => {
 
 socialEngagementRouter.get('/ingestion-capabilities', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const youtube = (await store.list<any>('youtube_accounts', { where: { tenantId, status: 'connected' }, perPage: 1 }).catch(() => ({ items: [] } as any))).items;
-  const social = (await store.list<any>('social_accounts', { where: { tenantId, status: 'connected' }, perPage: 50 }).catch(() => ({ items: [] } as any))).items;
-  res.json({ items: declaredEngagementCapabilities([...youtube.map(() => 'youtube'), ...social.map((item: any) => String(item.platform))]) });
+  const [evidence, sources] = await Promise.all([listTenantCapabilityEvidence(tenantId), listWebFormSources(tenantId)]);
+  res.json({ items: declaredEngagementCapabilities({ evidence, webFormConfigured: sources.some(item => item.status === 'active') }) });
+});
+
+socialEngagementRouter.get('/sources/web-form', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'web_form_source_read_forbidden' }); return; }
+  const items = await listWebFormSources(tenantId);
+  res.json({ items, total: items.length });
+});
+
+socialEngagementRouter.post('/sources/web-form', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'web_form_source_write_forbidden' }); return; }
+    const result = await createWebFormSource({ tenantId, userId, accountId: req.body?.accountId, label: req.body?.label, sourceId: req.body?.sourceId });
+    res.status(201).json(result);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'web_form_source_create_failed';
+    res.status(code.includes('required') || code.includes('invalid') ? 400 : code.includes('conflict') ? 409 : 503).json({ error: code });
+  }
+});
+
+socialEngagementRouter.delete('/sources/web-form/:sourceId', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'web_form_source_write_forbidden' }); return; }
+  const revoked = await revokeWebFormSource({ tenantId, sourceId: String(req.params.sourceId || '') });
+  if (!revoked) { res.status(404).json({ error: 'web_form_source_not_found' }); return; }
+  res.json({ ok: true });
 });
 
 socialEngagementRouter.get('/creative-learnings', async (_req, res) => {
