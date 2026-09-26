@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -266,7 +267,9 @@ function manualUploadClaim(tenantId: string, videoPathValue: unknown): FrozenPub
 }
 
 function sameClaim(left: FrozenPublishSourceClaim, right: FrozenPublishSourceClaim): boolean {
-  return fingerprint(left) === fingerprint(right);
+  // PocketBase canonicalizes JSON object key order while persisting the claim.
+  // The frozen values matter; serialization order does not.
+  return isDeepStrictEqual(left, right);
 }
 
 /** Freeze the approved social production row itself, never reclassify it as a manual upload. */

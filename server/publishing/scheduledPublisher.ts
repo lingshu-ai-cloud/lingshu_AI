@@ -23,6 +23,7 @@ import {
   type FrozenPublishSourceClaim,
 } from './publishSourceClaim.js';
 import { boundedAuthorizationIssue, type BoundedPublishingAuthorizationSnapshot } from '../digitalEmployees/publishingExecution.js';
+import { externalVideoApprovalValid, externalVideoSha256 } from './externalVideoApproval.js';
 
 type LegacyEffectExecutor = <T>(tenantId: string, effect: () => Promise<T>) => Promise<T>;
 export interface ScheduledPublishLeaseGuard {
@@ -98,6 +99,7 @@ export function scheduledRetryDelay(attempt: number): number {
 
 export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean {
   const stats = statsOf(post);
+  if (!externalVideoApprovalValid(post)) return false;
   const status = text(stats.status);
   const continuingExistingDelivery = ['provider_processing', 'finalize_pending'].includes(status);
   // Digital-employee calendar entries require an explicit, version-frozen
@@ -373,6 +375,15 @@ async function publishScheduledPost(
     try {
       await lease.beforeEffect();
       await (dependencies.verifySource ?? verifyFrozenPublishSourceClaim)(post.tenant_id, sourceClaim, videoPath);
+      if (initialStats.origin === 'authorized_external_video') {
+        const latest = await store.getById<PostRecord>('posts', post.id);
+        if (!latest || !externalVideoApprovalValid(latest)
+          || latest.title !== post.title || latest.published_at !== post.published_at
+          || statsOf(latest).externalApprovedContentHash !== initialStats.externalApprovedContentHash
+          || await externalVideoSha256(videoPath) !== initialStats.videoSha256) {
+          throw new PublishSourceVerificationError('external_video_approval_stale', 409, '获授权外部视频已变化，需要重新审批。');
+        }
+      }
       const publish = () => dependencies.publish({
         tenantId: post.tenant_id,
         accountId,

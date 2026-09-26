@@ -62,6 +62,7 @@ import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveS
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import { DouyinPublicationPackagePanel } from './publishing/DouyinPublicationPackagePanel';
+import { ExternalVideoApprovalPanel } from './publishing/ExternalVideoApprovalPanel';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -1305,6 +1306,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="space-y-4">
+        <ExternalVideoApprovalPanel storageScope={storageScope} />
         <section data-lingshu-guide="publishing-workbench" className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm ring-1 ring-emerald-50">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">

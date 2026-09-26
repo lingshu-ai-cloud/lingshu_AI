@@ -28,6 +28,7 @@ import { realPublishingCapabilities } from '../publishing/weeklyLineage.js';
 import { PUBLICATION_ASSIGNMENTS, PUBLICATION_ATTEMPTS, type DurablePublicationAttempt, type StoredPublicationAssignment } from '../publishing/weeklyLineage.js';
 import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities.js';
 import { fallbackQueueSuggestion, normalizeScheduleSlots } from './publishingSuggestions.js';
+import { externalVideoApprovalsRouter } from './externalVideoApprovals.js';
 
 export const publishingRouter = Router();
 
@@ -395,6 +396,8 @@ publishingRouter.put('/posting-schedule', async (req, res) => {
   res.status(201).json({ item: item || { id: '', ...next } });
 });
 
+publishingRouter.use('/external-video-approvals', externalVideoApprovalsRouter);
+
 publishingRouter.get('/calendar', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const from = Date.parse(text(req.query.from)) || Date.now() - 7 * 86_400_000;
@@ -552,6 +555,10 @@ publishingRouter.patch('/calendar/:id', async (req, res) => {
     return;
   }
   const currentStats = parseJson<Record<string, unknown>>(post.stats, {});
+  if (currentStats.origin === 'authorized_external_video') {
+    res.status(409).json({ error: 'external_video_approval_immutable', message: '获授权外部素材的审批快照不可修改；请重新上传并审批。' });
+    return;
+  }
   const update: Record<string, unknown> = {};
   const stats = { ...currentStats };
   let changed = false;

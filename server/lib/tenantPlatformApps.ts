@@ -137,6 +137,23 @@ export function decryptSecret(value?: string): string {
   }
 }
 
+/** Validate an OAuth app ID and secret together before any tenant app writes. */
+export function validateTenantOAuthCredentialPair(input: {
+  appId: string;
+  appSecret: string;
+  existing: TenantPlatformAppRecord | null;
+}): 'oauth_app_id_clear_requires_delete' | 'oauth_app_id_required' | 'oauth_app_secret_required' | null {
+  const appId = text(input.appId);
+  const appSecret = text(input.appSecret);
+  const existingId = text(input.existing?.app_id);
+  if (existingId && !appId) return 'oauth_app_id_clear_requires_delete';
+  if (appSecret && !appId) return 'oauth_app_id_required';
+  if (appId && (!decryptSecret(input.existing?.app_secret) || appId !== existingId) && !appSecret) {
+    return 'oauth_app_secret_required';
+  }
+  return null;
+}
+
 function randomToken(): string {
   return crypto.randomBytes(24).toString('base64url');
 }

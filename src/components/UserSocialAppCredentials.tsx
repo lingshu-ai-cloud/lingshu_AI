@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Clipboard, KeyRound, Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { validateOAuthCredentialPairs } from '../lib/socialOAuthCredentialValidation';
 import { getWhatsAppEmbeddedSignupConfig, startWhatsAppEmbeddedSignup } from '../lib/whatsappEmbeddedSignup';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -98,6 +99,12 @@ export default function UserSocialAppCredentials() {
   useEffect(() => { void load(); }, []);
   const field = <K extends keyof Form>(key: K, value: Form[K]) => setForm(current => ({ ...current, [key]: value }));
   async function save() {
+    const validationError = validateOAuthCredentialPairs([
+      { label: 'YouTube / Google', clientId: form.youtubeOAuthClientId, clientSecret: form.youtubeOAuthClientSecret, savedClientId: config?.apps.google?.appId || '', savedSecret: Boolean(config?.apps.google?.appSecretSet) },
+      { label: 'Instagram / Facebook', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.apps.meta?.appId || '', savedSecret: Boolean(config?.apps.meta?.appSecretSet) },
+      { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.apps.tiktok?.appId || '', savedSecret: Boolean(config?.apps.tiktok?.appSecretSet) },
+    ]);
+    if (validationError) { setError(validationError); return; }
     setSaving(true); setMessage(''); setError('');
     try {
       const response = await fetch('/api/overseas/platform-integrations/oauth-config', { method: 'PUT', headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
