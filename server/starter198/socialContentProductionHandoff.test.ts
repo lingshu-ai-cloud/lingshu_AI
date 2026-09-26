@@ -15,6 +15,7 @@ import {
   evaluateSocialProductionGates,
   persistSocialProductionHandoff,
   persistSocialProductionReceipt,
+  readSocialProductionState,
 } from './socialContentProductionHandoff.js';
 
 const analysis: SocialReferenceVideoAnalysis = {
@@ -135,6 +136,10 @@ test('requires append-only G4 technical receipts, Director G5 and business G6 pr
   await persistSocialProductionReceipt(repository, 'tenant-v3', g5);
   await persistSocialProductionReceipt(repository, 'tenant-v3', g6);
   await persistSocialProductionReceipt(repository, 'tenant-v3', g6);
+  const state = await readSocialProductionState({ repository, tenantId: 'tenant-v3', taskId: handoff.taskId });
+  assert.equal(state?.gates.readyForRelease, true);
+  assert.equal(state?.receipts.length, 4);
+  assert.equal(await readSocialProductionState({ repository, tenantId: 'other-tenant', taskId: handoff.taskId }), null);
 });
 
 test('blocks out-of-order quality gates and rejects forged receipt lineage', async () => {
@@ -150,9 +155,12 @@ test('blocks out-of-order quality gates and rejects forged receipt lineage', asy
 
 test('migration is additive, tenant-scoped and indexed for immutable identity', async () => {
   const source = await readFile(new URL('../../pb_migrations/1790726400_create_social_production_handoffs.js', import.meta.url), 'utf8');
+  const router = await readFile(new URL('./socialContentRouter.ts', import.meta.url), 'utf8');
   assert.match(source, /starter_social_production_handoffs/);
   assert.match(source, /starter_social_production_receipts/);
   assert.match(source, /UNIQUE INDEX idx_social_production_handoff_identity/);
   assert.match(source, /tenant_id, handoff_id, handoff_version/);
   assert.match(source, /UNIQUE INDEX idx_social_production_receipt_attempt/);
+  assert.match(router, /\/tasks\/:taskId\/production-state/);
+  assert.match(router, /readSocialProductionState/);
 });

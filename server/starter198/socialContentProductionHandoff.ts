@@ -481,3 +481,42 @@ export function parseSocialProductionReceiptRecord(record: StarterRecord): Socia
   assertReceiptIntegrity(payload);
   return payload;
 }
+
+export async function readSocialProductionHandoff(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+  version?: string | null;
+}): Promise<SocialProductionHandoff | null> {
+  const taskId = id(input.taskId);
+  const version = input.version ? id(input.version) : null;
+  const result = await input.repository.list(STARTER_COLLECTIONS.socialProductionHandoffs, input.tenantId, {
+    where: { task_id: taskId, ...(version ? { handoff_version: version } : {}) },
+    sort: '-created_at',
+    perPage: version ? 2 : 1,
+  });
+  if (version && result.totalItems > 1) fail('social_production_handoff_storage_integrity_violation');
+  return result.items[0] ? parseSocialProductionHandoffRecord(result.items[0]) : null;
+}
+
+export async function readSocialProductionState(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+  version?: string | null;
+}): Promise<{
+  handoff: SocialProductionHandoff;
+  receipts: SocialProductionReceipt[];
+  gates: ReturnType<typeof evaluateSocialProductionGates>;
+} | null> {
+  const handoff = await readSocialProductionHandoff(input);
+  if (!handoff) return null;
+  const rows = await input.repository.list(STARTER_COLLECTIONS.socialProductionReceipts, input.tenantId, {
+    where: { handoff_id: handoff.handoffId, handoff_version: handoff.version },
+    sort: 'created_at',
+    perPage: 500,
+  });
+  if (rows.totalItems > rows.items.length) fail('social_production_receipt_storage_integrity_violation');
+  const receipts = rows.items.map(parseSocialProductionReceiptRecord);
+  return { handoff, receipts, gates: evaluateSocialProductionGates(handoff, receipts) };
+}

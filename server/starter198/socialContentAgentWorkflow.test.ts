@@ -163,7 +163,7 @@ assert.ok(workflow.executionPlan.scenes.every(scene => (
   (scene.replicationFactorIds?.length ?? 0) > 0
   && scene.factorFeasibility?.every(factor => factor.feasible)
 )));
-assert.deepEqual(workflow.responsibilityBoundary?.finalGateOrder, ['content_agent', 'media_evaluation_worker', 'director_agent', 'user']);
+assert.deepEqual(workflow.responsibilityBoundary?.finalGateOrder, ['content_agent', 'media_evaluation_worker', 'director_agent', 'business_agent', 'rules_engine']);
 assert.equal(workflow.responsibilityBoundary?.selfApprovalForbidden, true);
 
 const directorJson = JSON.stringify(workflow.directorBrief);
