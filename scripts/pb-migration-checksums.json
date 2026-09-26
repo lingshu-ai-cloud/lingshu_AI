@@ -93,6 +93,7 @@
     "1790726400_create_social_production_handoffs.js": "7a431e27e1b229e856a09bafb62ee6a7e773383b749cc5e7ac2ddf3e9fac2e7e",
     "1790726400_create_weekly_operating_packages.js": "17eb739f65ab112d44ae52be3acff614db8b1207ba8ff80bfd43ec94b81b4c36",
     "1790726401_create_agent_notification_reads.js": "5d3800e6c33b5740775a99fa353ae13109a7502fdc85ee3cdae1ffa191d2145a",
-    "1790726401_make_social_qualification_append_only.js": "4aa8f385408951a6d9b3c10f82d4a3ed7c1bb2461d45c87f55aabec8393ba8b8"
+    "1790726401_make_social_qualification_append_only.js": "4aa8f385408951a6d9b3c10f82d4a3ed7c1bb2461d45c87f55aabec8393ba8b8",
+    "1790812800_create_social_content_authority_lineage.js": "c71a84ecc44938d33ebff2ae3895aabd992d774e5c8e47b4640b435da99c63dc"
   }
 }

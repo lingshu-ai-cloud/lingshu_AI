@@ -8,9 +8,14 @@ import type {
   SocialContentTaskSummary,
   SocialContentWorkspace,
   SocialWeeklyPlan,
+  SocialContentAgentWorkflow,
   SocialTaskSource,
   UpdateSocialContentTaskInput,
 } from '../../shared/contracts/socialContentWorkflow.js';
+import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
+import type { SocialWeeklyPublicationTask, VersionedSocialRef, WeeklyOperatingPackage, WeeklyWorkflowTask } from '../../shared/contracts/socialProgram.js';
+import type { VersionedReferenceSelection } from '../socialDiscovery/orchestration.js';
+import { buildSocialAgentWorkflow, type BuildSocialAgentWorkflowInput } from './socialContentAgentWorkflow.js';
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
 import { readTenantEnterpriseProfile } from '../routes/enterprise.js';
@@ -69,6 +74,51 @@ import {
 
 const TASK_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
 const SOURCE_EDITABLE_STATES = new Set(['draft', 'needs_input', 'plan_review', 'paused', 'attention']);
+
+/**
+ * T3/T4 adapter used by weekly orchestration. It intentionally requires the
+ * frozen package item and selection instead of accepting a loose weekly-plan
+ * id, so Starter198 cannot silently rebuild business authority from task UI.
+ */
+export function buildAuthoritativeSocialContentWorkflow(input: Omit<BuildSocialAgentWorkflowInput, 'mode' | 'weeklyPlanId' | 'authoritativeContext'> & {
+  programRef: VersionedSocialRef;
+  enterpriseProfileRef: VersionedSocialRef;
+  weeklyPackage: WeeklyOperatingPackage;
+  weeklyWorkflowTask: WeeklyWorkflowTask;
+  publicationTask: SocialWeeklyPublicationTask;
+  businessGoal: BusinessContentGoal;
+  referenceSelection: VersionedReferenceSelection;
+  selectedHandoffs: BuildSocialAgentWorkflowInput['inspirationHandoffs'];
+}): SocialContentAgentWorkflow {
+  return buildSocialAgentWorkflow({
+    ...input,
+    mode: 'weekly',
+    weeklyPlanId: input.weeklyPackage.packageId,
+    brief: {
+      ...input.brief,
+      objective: input.businessGoal.objective,
+      audience: input.businessGoal.audiences[0] ?? input.brief.audience,
+      markets: [...input.businessGoal.markets],
+      languages: [...input.businessGoal.languages],
+      platforms: [input.publicationTask.platform],
+      callToAction: input.publicationTask.cta,
+      dueAt: input.publicationTask.publishWindow ?? input.weeklyPackage.weekEnd,
+      weeklyBudgetCny: input.weeklyPackage.socialContentPackage.weeklyBudgetCny,
+      perItemBudgetCny: input.weeklyPackage.socialContentPackage.perItemBudgetCny,
+    },
+    factSourceRefs: input.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`),
+    authoritativeContext: {
+      programRef: input.programRef,
+      enterpriseProfileRef: input.enterpriseProfileRef,
+      weeklyPackage: input.weeklyPackage,
+      weeklyWorkflowTask: input.weeklyWorkflowTask,
+      publicationTask: input.publicationTask,
+      businessGoal: input.businessGoal,
+      referenceSelection: input.referenceSelection,
+      selectedHandoffs: input.selectedHandoffs ?? [],
+    },
+  });
+}
 
 function nextVersion(record: StarterRecord): string {
   const current = Number(record.version);

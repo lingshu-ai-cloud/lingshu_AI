@@ -36,6 +36,14 @@ import {
   inferSocialReplicationReferenceMode,
 } from '../../shared/socialInspirationStrategy.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
+import type {
+  SocialWeeklyPublicationTask,
+  VersionedSocialRef,
+  WeeklyOperatingPackage,
+  WeeklyWorkflowTask,
+} from '../../shared/contracts/socialProgram.js';
+import type { VersionedReferenceSelection } from '../socialDiscovery/orchestration.js';
 
 type CapabilityDefinition = {
   strategy: SocialShotSourceStrategy;
@@ -132,6 +140,43 @@ function buildBusinessContext(input: BuildSocialAgentWorkflowInput): {
   const originalContentCount = Math.max(1, Math.floor(input.brief.requestedOutputCount || 1));
   const publicationTaskCount = originalContentCount * Math.max(1, input.brief.platforms.length);
   if (input.mode === 'weekly') {
+    const authority = input.authoritativeContext;
+    if (authority) {
+      const content = authority.weeklyPackage.socialContentPackage;
+      return {
+        weeklyPackage: {
+          packageId: authority.weeklyPackage.packageId,
+          version: String(authority.weeklyPackage.version),
+          businessGoal: authority.businessGoal.objective,
+          productFocus: authority.businessGoal.products[0] ?? input.brief.productRef,
+          audience: authority.businessGoal.audiences[0] ?? input.brief.audience,
+          markets: [...authority.businessGoal.markets],
+          languages: [...authority.businessGoal.languages],
+          originalContentCount: content.originalContentTarget,
+          adaptationVersionCount: content.adaptationVersionTarget,
+          publicationTaskCount: content.publicationTaskTarget,
+          platforms: unique(content.publicationTasks.map(item => item.platform)),
+          publicationMatrix: content.publicationTasks.map(item => ({
+            platform: item.platform,
+            accountRef: item.accountId,
+            accountPositioning: item.accountPositioning,
+            publishWindow: item.publishWindow,
+          })),
+          weeklyBudgetCny: content.weeklyBudgetCny,
+          perItemBudgetCny: content.perItemBudgetCny,
+          dueAt: authority.weeklyPackage.weekEnd,
+          availableAssetRefs: input.sources.filter(source => source.kind === 'material').map(source => source.sourceId),
+          customerCanShoot: false,
+          availableCapabilities: socialContentCapabilityRegistry(input.capabilityRuntime)
+            .filter(item => item.executable).map(item => item.strategy),
+          priorities: ['must_do'],
+          successCriteria: [...authority.weeklyPackage.successCriteria],
+          metricTargets: [...authority.publicationTask.metricTargets],
+          createdBy: 'business_agent',
+        },
+        adHocBusinessContext: null,
+      };
+    }
     return {
       weeklyPackage: {
         packageId: input.weeklyPlanId || stableId('weekly_package', { taskId: input.taskId }),
@@ -233,6 +278,8 @@ function buildInspirationHandoffs(input: BuildSocialAgentWorkflowInput): SocialI
   const sourceRef = source?.sourceRef || '';
   const primaryHook = analysis.hookAnalysis;
   return [{
+    handoffId: stableId('inspiration_handoff', { taskId: input.taskId, inspirationId: source?.sourceId || analysis.referenceSourceId }),
+    version: input.taskVersion,
     inspirationId: source?.sourceId || analysis.referenceSourceId,
     analysisId: analysis.analysisId,
     analysisVersion: analysis.version || input.taskVersion,
@@ -276,6 +323,25 @@ function buildInspirationHandoffs(input: BuildSocialAgentWorkflowInput): SocialI
     })),
     rights: { mayAnalyze: true, mayUseOriginalMedia: false, mayAdapt: false, note: analysis.rightsNotice },
   }];
+}
+
+function authoritativeHandoffs(input: BuildSocialAgentWorkflowInput): SocialInspirationHandoff[] {
+  const authority = input.authoritativeContext;
+  if (!authority) return input.inspirationHandoffs ?? [];
+  if (authority.referenceSelection.status !== 'selected') throw new Error('social_content_reference_selection_required');
+  const selected = new Set(authority.referenceSelection.selected.map(item => item.candidateId));
+  const evidenceRefs = new Set(authority.referenceSelection.evidenceVersionRefs);
+  const handoffs = authority.selectedHandoffs.filter(item => selected.has(item.inspirationId));
+  if (handoffs.length !== selected.size || authority.referenceSelection.selected.some(item => (
+    !evidenceRefs.has(`${item.evidenceId}@${item.evidenceVersion}`)
+  ))) throw new Error('social_content_reference_selection_lineage_invalid');
+  return handoffs.map(handoff => ({
+    ...handoff,
+    handoffId: handoff.handoffId ?? stableId('inspiration_handoff', { taskId: authority.weeklyWorkflowTask.taskId, inspirationId: handoff.inspirationId }),
+    version: handoff.version ?? String(authority.referenceSelection.version),
+    taskContext: { ...handoff.taskContext, taskId: authority.weeklyWorkflowTask.taskId },
+    whySelected: unique([...handoff.whySelected, `ReferenceSelector ${authority.referenceSelection.selectionId}@${authority.referenceSelection.version}`]),
+  }));
 }
 
 function mergeInspirationHandoffs(
@@ -566,7 +632,21 @@ function buildDirectorBrief(
   const referenceRequired = input.brief.creationMode === 'viral_replication';
   const referenceReady = !referenceRequired || Boolean(input.referenceAnalysis?.status === 'ready' && coverage?.fullTimelineCovered !== false);
   const factorsReady = !referenceRequired || replicationJob?.status === 'factor_ready';
-  const status = scenes.length > 0 && referenceReady && factorsReady ? 'ready' : 'blocked';
+  const orderedScenes = [...scenes].sort((left, right) => left.order - right.order);
+  const timelineValid = orderedScenes.every((scene, index) => scene.duration.endSeconds > scene.duration.startSeconds
+    && (index === 0 || scene.duration.startSeconds >= orderedScenes[index - 1]!.duration.endSeconds));
+  // Five Han characters or 2.7 whitespace-delimited words per second is a
+  // deliberately conservative, deterministic speech-capacity gate.
+  const dialogueFits = scenes.every(scene => {
+    const speech = scene.audioLayers.dialogue ?? scene.audioLayers.voiceover;
+    if (!speech) return true;
+    const units = /[\u3400-\u9fff]/.test(speech)
+      ? [...speech].filter(char => /[\u3400-\u9fff]/.test(char)).length
+      : speech.trim().split(/\s+/).filter(Boolean).length;
+    const capacity = /[\u3400-\u9fff]/.test(speech) ? scene.duration.targetSeconds * 5 : scene.duration.targetSeconds * 2.7;
+    return units <= Math.max(1, capacity);
+  });
+  const status = scenes.length > 0 && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   return {
     directorBriefId: stableId('director_brief', { taskId: input.taskId }),
@@ -591,11 +671,11 @@ function buildDirectorBrief(
       gaps: coverage?.gaps ?? [],
       overallConfidence: coverage?.overallConfidence ?? null,
     } : null,
-    inspirationHandoffIds: inspirationHandoffs.map(item => item.inspirationId),
+    inspirationHandoffIds: inspirationHandoffs.map(item => item.handoffId ?? item.inspirationId),
     topic: input.brief.title,
     audience: input.brief.audience,
     platforms: input.brief.platforms,
-    accountRefs: [],
+    accountRefs: input.authoritativeContext ? [input.authoritativeContext.publicationTask.accountId] : [],
     creativeIntent: input.brief.objective,
     narrativeStructure: scenes.map(scene => scene.purpose),
     rhythm: input.referenceAnalysis ? '保持参考内容的信息推进节奏，但按新素材重新安排具体切点' : '前三秒快速建立主题，随后逐步补充价值、证据和行动信息',
@@ -606,7 +686,9 @@ function buildDirectorBrief(
     aspectRatio: input.brief.aspectRatio,
     languages: input.brief.languages,
     brandRequirements: unique([input.brief.brandNotes || '', ...input.brief.restrictions].filter(Boolean)),
-    factSourceRefs: input.factSourceRefs,
+    factSourceRefs: input.authoritativeContext
+      ? unique(input.authoritativeContext.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`))
+      : input.factSourceRefs,
     rightsConstraints: unique([
       '参考视频只用于分析结构和节奏，不复制原片素材、人物、声音、商标或原文案',
       ...(input.assetSupplyPlan.status === 'requires_rights_confirmation' ? ['参考内容或素材权利尚待确认'] : []),
@@ -922,9 +1004,48 @@ export interface BuildSocialAgentWorkflowInput {
   replicationContext?: SocialReplicationJobContext;
   /** Additional references used only by series/hybrid modes. */
   inspirationHandoffs?: SocialInspirationHandoff[];
+  /** Frozen T3/T4 authority. When present, legacy weeklyPlanId and caller facts are projections only. */
+  authoritativeContext?: {
+    programRef: VersionedSocialRef;
+    enterpriseProfileRef: VersionedSocialRef;
+    weeklyPackage: WeeklyOperatingPackage;
+    weeklyWorkflowTask: WeeklyWorkflowTask;
+    publicationTask: SocialWeeklyPublicationTask;
+    businessGoal: BusinessContentGoal;
+    referenceSelection: VersionedReferenceSelection;
+    selectedHandoffs: SocialInspirationHandoff[];
+  };
   /** Runtime registrations after adapter and environment readiness checks. Omit to use only embedded adapters. */
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   now?: Date;
+}
+
+function assertAuthoritativeContext(input: BuildSocialAgentWorkflowInput): void {
+  const authority = input.authoritativeContext;
+  if (!authority) return;
+  const packageTask = authority.weeklyPackage.workflowTasks.find(item => item.taskId === authority.weeklyWorkflowTask.taskId);
+  const publicationTask = authority.weeklyPackage.socialContentPackage.publicationTasks
+    .find(item => item.publicationTaskId === authority.publicationTask.publicationTaskId);
+  if (authority.weeklyPackage.programId !== authority.programRef.id
+    || authority.businessGoal.programId !== authority.weeklyPackage.programId
+    || authority.weeklyPackage.businessContentGoalRef?.id !== authority.businessGoal.goalId
+    || authority.weeklyPackage.enterpriseProfileRef?.id !== authority.enterpriseProfileRef.id
+    || !packageTask || packageTask.kind !== 'content' || !publicationTask
+    || !packageTask.subjectRefs.some(ref => ref.type === 'weekly_publication_task'
+      && ref.id === publicationTask.publicationTaskId && ref.version === authority.weeklyPackage.version)
+    || publicationTask.factRefs.some(factRef => !authority.businessGoal.publicFactRefs.some(goalFact => (
+      goalFact.type === factRef.type && goalFact.id === factRef.id && goalFact.version === factRef.version
+    )))
+    || authority.referenceSelection.upstreamTaskRef !== authority.weeklyWorkflowTask.taskId) {
+    throw new Error('social_content_authoritative_context_mismatch');
+  }
+  const mode = input.replicationContext?.referenceMode ?? input.brief.referenceMode;
+  if (mode === 'single_source_fidelity') {
+    const selected = authority.referenceSelection.selected;
+    if (selected.length !== 1 || selected[0]?.readiness !== 'production_reference') {
+      throw new Error('social_content_fidelity_primary_reference_required');
+    }
+  }
 }
 
 /**
@@ -933,11 +1054,12 @@ export interface BuildSocialAgentWorkflowInput {
  * objects without allowing the Director to lock assets or providers.
  */
 export function buildSocialAgentWorkflow(input: BuildSocialAgentWorkflowInput): SocialContentAgentWorkflow {
+  assertAuthoritativeContext(input);
   const context = buildBusinessContext(input);
   const discoveryBrief = buildDiscoveryBrief(input);
   const inspirationHandoffs = mergeInspirationHandoffs(
-    buildInspirationHandoffs(input),
-    input.inspirationHandoffs ?? [],
+    input.authoritativeContext ? [] : buildInspirationHandoffs(input),
+    authoritativeHandoffs(input),
   );
   const replicationJob = buildReplicationJob(input, context, inspirationHandoffs);
   const directorBrief = buildDirectorBrief(input, context, inspirationHandoffs, replicationJob);
