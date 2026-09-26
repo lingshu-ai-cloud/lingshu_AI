@@ -587,7 +587,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 text-[10px] font-semibold text-text-muted">
                     <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
-                    <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">服务条款</a>
+                    <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">用户协议</a>
                     <a href="/data-deletion" target="_blank" rel="noreferrer" className="hover:text-accent">数据删除</a>
                   </div>
                 </div>

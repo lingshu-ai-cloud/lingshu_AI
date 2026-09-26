@@ -8,6 +8,8 @@ import { publishVideoToAccount, resolvePendingPublishToAccount } from './platfor
 import { publishingUploadDir } from './publishSourceClaim.js';
 
 const originalAxios = { post: axios.post, put: axios.put };
+const originalTikTokReleaseMode = process.env.TIKTOK_DIRECT_POST_RELEASE_MODE;
+process.env.TIKTOK_DIRECT_POST_RELEASE_MODE = 'approved';
 const originalStore = {
   list: store.list,
   getById: store.getById,
@@ -183,6 +185,8 @@ try {
   assert.equal(youtubeInitCalls, 1);
   assert.equal(youtubeUploadCalls, 1);
 } finally {
+  if (originalTikTokReleaseMode === undefined) delete process.env.TIKTOK_DIRECT_POST_RELEASE_MODE;
+  else process.env.TIKTOK_DIRECT_POST_RELEASE_MODE = originalTikTokReleaseMode;
   Object.assign(axios, originalAxios);
   Object.assign(store, originalStore);
   fs.rmSync(videoPath, { force: true });

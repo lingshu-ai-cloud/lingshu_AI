@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ArrowLeft, FileText, ShieldCheck, Trash2 } from 'lucide-react';
 
 const SUPPORT_EMAIL = 'support@lingshu.ai';
-const UPDATED_AT = '2026年9月20日';
+const UPDATED_AT = '2026年9月27日';
 
 type LegalPageKind = 'privacy' | 'terms' | 'data-deletion';
 
@@ -70,7 +70,7 @@ function PrivacyPage() {
       </Section>
       <Section title="7. 数据保存与安全">
         <p>我们会在实现服务目的所需期间保存数据，并采取访问控制、权限隔离、日志审计、加密传输、备份和安全监控等措施保护数据安全。</p>
-        <p>当您删除账号、撤销授权或提出数据删除请求后，我们会在合理期限内删除或匿名化相关数据，法律法规、争议处理、安全审计或合规证明要求保留的除外。</p>
+        <p>当您撤销第三方授权后，我们会停止后续访问；核验通过的数据删除请求通常在 30 日内完成或告知进度。活动系统中的数据会被删除、匿名化或解除关联，备份残留会随正常轮换覆盖，通常不超过 90 日。法律法规、争议处理、安全审计或合规证明要求保留的最少记录除外。</p>
       </Section>
       <Section title="8. 您的权利">
         <p>您可以请求访问、更正、补充、删除个人数据，撤销第三方平台授权，注销账号，或获取关于数据处理的说明。您可以在灵枢 AI“渠道连接”中断开账号，也可以在 Meta、Google、TikTok 或其他平台的账号设置中移除灵枢 AI 的应用授权。</p>
@@ -82,7 +82,8 @@ function PrivacyPage() {
         <p>灵枢 AI 主要面向企业用户和商业用户。我们不会主动面向未成年人提供服务，也不会故意收集未成年人的个人信息。如您发现未成年人向我们提供了个人信息，请联系我们删除。</p>
       </Section>
       <Section title="11. 联系我们">
-        <p>客服邮箱：<a href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold text-accent">{SUPPORT_EMAIL}</a></p>
+        <p>运营主体：灵小枢（杭州）科技有限公司。注册地址：浙江省杭州市上城区宽桥街道水墩社区水墩北路 1 号产业区 5 幢 207-7 室。</p>
+        <p>客服与隐私邮箱：<a href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold text-accent">{SUPPORT_EMAIL}</a></p>
       </Section>
     </PageShell>
   );
@@ -99,7 +100,7 @@ function DataDeletionPage() {
         <p>请在邮件中提供：注册邮箱、企业名称、需要删除的数据范围、相关第三方平台账号信息，以及便于我们核验身份的必要说明。</p>
       </Section>
       <Section title="3. 处理流程">
-        <p>我们收到请求后，会先进行身份核验。核验通过后，我们会在合理期限内删除或匿名化相关数据，并通过邮件告知处理结果。</p>
+        <p>我们收到请求后，会先进行身份核验。核验通过后，通常会在 30 日内删除、匿名化相关数据或告知进度，并通过邮件告知处理结果。</p>
         <p>如果您的请求涉及 Meta、Google/YouTube、TikTok 或其他平台授权数据，我们会删除灵枢 AI 控制的授权信息、账号关联信息和在授权范围内同步的数据。</p>
       </Section>
       <Section title="4. 无法立即删除的情况">
@@ -117,7 +118,7 @@ function DataDeletionPage() {
 
 function TermsPage() {
   return (
-    <PageShell title="服务条款" subtitle="本条款说明灵枢 AI 网站、企业工作台、AI 辅助能力及第三方平台接入的使用规则。" icon={<FileText size={24} />}>
+    <PageShell title="用户协议（服务条款）" subtitle="本协议说明灵枢 AI 网站、企业工作台、AI 辅助能力及第三方平台接入的使用规则。" icon={<FileText size={24} />}>
       <Section title="1. 条款适用与接受">
         <p>灵枢 AI 由灵小枢（杭州）科技有限公司运营。创建账号、登录或使用服务，即表示您已阅读并同意本条款与《隐私政策》。如您代表企业操作，您确认已获得代表该企业的必要授权。</p>
       </Section>

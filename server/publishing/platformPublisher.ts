@@ -30,6 +30,7 @@ import {
   type PublishSourceRequestKind,
 } from './publishSourceClaim.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
+import { tikTokDirectPostApproved } from '../lib/socialOAuthScopes.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -491,6 +492,9 @@ async function publishVideoToAccountWithLease(
   publishLease: DirectPublishingLeaseGuard,
 ): Promise<PublishToAccountResult> {
   await assertNoUnresolvedPublishing({ tenantId: input.tenantId, platform: input.platform, accountIds: [input.accountId], contentId: input.contentId, videoPath: input.videoPath, videoUrl: input.videoUrl, currentPostId: input.trackingPost?.id, currentAttemptId: input.publishAttemptId });
+  if (input.platform === 'tiktok' && !tikTokDirectPostApproved()) {
+    throw publishError('TikTok Direct Post 尚未通过正式审核，当前仅开放账号连接与发布准备，不会向 TikTok 提交内容。', 409);
+  }
   if (input.platform === 'youtube') {
     const account = await store.getById<YouTubeAccountRecord>('youtube_accounts', input.accountId);
     if (!account || account.tenantId !== input.tenantId) throw publishError('YouTube account not found', 404);

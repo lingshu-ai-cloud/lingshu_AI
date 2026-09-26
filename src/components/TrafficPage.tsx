@@ -474,7 +474,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     setNotice('已从数字员工执行中心进入；新内容将单独归属当前任务，原有队列不受影响。');
   }, [workflowContext]);
 
-  const connectedAccounts = accounts.filter(account => account.status === 'connected');
+  const connectedAccounts = accounts.filter(account => account.status === 'connected' && account.platform !== 'tiktok');
   const activeItem = items.find(item => item.id === activeItemId) || items[0] || null;
   const activePreviewUrl = activeItem?.previewUrl || browserVideoUrl(activeItem?.videoPath);
   const activeCalendarPost = Boolean(activeItem?.calendarPostIds?.length);
@@ -812,11 +812,11 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
       ];
       setAccounts(next);
       if (!pendingAccountTargetsSeededRef.current) {
-        setPendingTargetAccountIds(next.filter(account => account.status === 'connected').map(account => account.id));
+        setPendingTargetAccountIds(next.filter(account => account.status === 'connected' && account.platform !== 'tiktok').map(account => account.id));
         pendingAccountTargetsSeededRef.current = true;
       }
       if (!accountTargetsSeededRef.current) {
-        const connected = next.filter(account => account.status === 'connected');
+        const connected = next.filter(account => account.status === 'connected' && account.platform !== 'tiktok');
         setItems(prev => prev.map(item => {
           if (item.targetAccountIds.length) return item;
           const matchingSource = item.sourcePlatform
@@ -876,6 +876,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
 
   const toggleAccount = (accountId: string) => {
     const next = new Set(selectedTargetAccountIds);
+    const target = accounts.find(account => account.id === accountId);
+    if (!target || target.status !== 'connected' || target.platform === 'tiktok') return;
     if (next.has(accountId)) next.delete(accountId);
     else next.add(accountId);
     if (activeItem) updateItem(activeItem.id, { targetAccountIds: Array.from(next), status: 'draft', error: undefined });
@@ -1250,7 +1252,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     const notices: string[] = [];
     if (successfulTargets) notices.push(`已确认 ${successfulTargets} 个账号完成发布，每条发布均生成独立追踪码。`);
     if (processingTargets) notices.push(`${processingTargets} 个账号已由平台受理，正在处理；收到最终公开视频回执前不会标记为已发布。`);
-    if (scheduledTargets) notices.push(`已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在设定时间自动发布到已选账号。`);
+    if (scheduledTargets) notices.push(`已将 ${scheduledTargets} 个账号任务加入内容日历；系统会在用户已确认的设定时间提交到已选账号。`);
     if (notices.length) setNotice(notices.join(' '));
   };
 
@@ -1414,9 +1416,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               </div>
             ) : accounts.map(account => {
               const meta = PLATFORM_META[account.platform];
-              const active = selectedTargetAccountIds.includes(account.id);
+              const directPostUnavailable = account.platform === 'tiktok';
+              const active = !directPostUnavailable && selectedTargetAccountIds.includes(account.id);
               return (
-                <button key={account.id} type="button" onClick={() => toggleAccount(account.id)} disabled={account.status !== 'connected'} className={`rounded-xl border p-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-55 ${active ? 'border-accent bg-accent-glow shadow-sm' : 'border-border bg-surface hover:border-border-bright'}`}>
+                <button key={account.id} type="button" onClick={() => toggleAccount(account.id)} disabled={account.status !== 'connected' || directPostUnavailable} className={`rounded-xl border p-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-55 ${active ? 'border-accent bg-accent-glow shadow-sm' : 'border-border bg-surface hover:border-border-bright'}`}>
                   <div className="flex items-center justify-between gap-3">
                     {account.avatarUrl ? (
                       <img src={account.avatarUrl} alt={account.title} className="h-10 w-10 shrink-0 rounded-xl object-cover" />
@@ -1425,8 +1428,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                         <SocialPlatformIcon platform={account.platform} size={20} />
                       </span>
                     )}
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${account.status === 'connected' ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-text-muted'}`}>
-                      {account.status === 'connected' ? '已连接' : '需重新授权'}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${account.status === 'connected' && !directPostUnavailable ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-text-muted'}`}>
+                      {directPostUnavailable ? '直发审核中' : account.status === 'connected' ? '已连接' : '需重新授权'}
                     </span>
                   </div>
                   <p className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-text-primary"><SocialPlatformIcon platform={account.platform} size={16} /> {meta.label}</p>
@@ -1656,9 +1659,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 <li>当前视频追踪链接：{activeItem?.trackWaLink ? '开启' : '关闭'}</li>
               </ul>
             </div>
-            {selectedPlatforms.includes('tiktok') && (
+            {accounts.some(account => account.platform === 'tiktok' && account.status === 'connected') && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[10px] leading-5 text-amber-800">
-                TikTok 正式公开发布前，还需按平台要求读取创作者信息，并让用户确认可见范围、评论、合拍和拼接选项；应用未通过审核时通常只能私密发布。
+                TikTok Direct Post 正式审核尚未完成，当前账号不会作为直发目标；请先生成和核对内容，待平台批准且完整发布设置上线后再由用户主动提交。
               </div>
             )}
 
@@ -1685,7 +1688,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3"><p className="text-[10px] font-bold text-emerald-700">立即真实发布</p><p className="mt-1 text-lg font-black text-emerald-900">{immediateItems.length} 条</p></div>
-                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-[10px] font-bold text-violet-700">定时自动发布</p><p className="mt-1 text-lg font-black text-violet-900">{scheduledItems.length} 条</p></div>
+                <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-[10px] font-bold text-violet-700">已确认定时提交</p><p className="mt-1 text-lg font-black text-violet-900">{scheduledItems.length} 条</p></div>
               </div>
               <p className="mt-3 rounded-xl bg-surface px-3 py-2 text-[11px] leading-5 text-text-secondary">共 {publishableAssignments} 个账号目标。部分平台可能因审核、权限或素材规范拒绝发布，失败项会保留在队列中供修改后重试。</p>
               <div className="mt-5 flex justify-end gap-2">
