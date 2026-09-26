@@ -820,6 +820,10 @@ export interface SocialCandidateEvidence {
 }
 
 export interface SocialInspirationHandoff {
+  /** Stable independent aggregate id; absent only on records written before Gap-V1 T5. */
+  handoffId?: string;
+  /** Independent immutable version; absent only on historic embedded records. */
+  version?: string;
   inspirationId: string;
   analysisId: string;
   analysisVersion: string;
