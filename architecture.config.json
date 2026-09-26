@@ -29,7 +29,6 @@
     "src/lib/studioApi.ts": 1039,
     "src/components/WorkspaceManagementPages.tsx": 1028,
     "server/routes/draftReply.ts": 980,
-    "src/lib/digitalEmployees.ts": 920,
     "server/routes/social.ts": 912
   }
 }

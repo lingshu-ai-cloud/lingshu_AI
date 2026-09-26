@@ -57,10 +57,15 @@ async function freePort(): Promise<number> {
 
 type RunningPocketBase = { process: ChildProcess; url: string; dataDir: string };
 
-async function startPocketBase(dataDir: string, sourceMigrations = migrationsDir, automigrate = true): Promise<RunningPocketBase> {
+async function startPocketBase(
+  dataDir: string,
+  sourceMigrations = migrationsDir,
+  automigrate = false,
+  provisionSuperuser = true,
+): Promise<RunningPocketBase> {
   // The superuser CLI may auto-apply pending migrations. Do not invoke it
   // between a rollback and the assertion that the rolled-back schema is gone.
-  if (automigrate) runPb(['superuser', 'upsert', adminEmail, adminPassword, `--dir=${dataDir}`]);
+  if (provisionSuperuser) runPb(['superuser', 'upsert', adminEmail, adminPassword, `--dir=${dataDir}`]);
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const child = spawn(pbBin, [
@@ -113,6 +118,25 @@ async function collectionNames(url: string, token: string): Promise<string[]> {
   return (await response.json() as { items: Array<{ name: string }> }).items.map(item => item.name);
 }
 
+// studio_production_defaults is normally provisioned by scripts/setup-pb.ts,
+// outside the migration set exercised by this isolated release harness. Build
+// the same real PocketBase collection locally so authority resolution crosses
+// the production datastore boundary without relying on process-memory mocks.
+async function ensureReleaseFixtureCollection(url: string, token: string): Promise<void> {
+  const name = 'studio_production_defaults';
+  if ((await collectionNames(url, token)).includes(name)) return;
+  const response = await adminRequest(url, token, '/api/collections', {
+    method: 'POST', body: JSON.stringify({
+      name, type: 'base', fields: [
+        { name: 'tenant_id', type: 'text', required: true },
+        { name: 'payload', type: 'json', maxSize: 2_000_000 },
+        { name: 'version', type: 'number', onlyInt: true },
+      ], indexes: [`CREATE UNIQUE INDEX idx_${name}_tenant ON ${name} (tenant_id)`],
+    }),
+  });
+  assert.equal(response.status, 200, `release fixture collection create failed: ${await response.text()}`);
+}
+
 function copyMigrationBaseline(target: string): void {
   fs.mkdirSync(target, { recursive: true });
   for (const name of fs.readdirSync(migrationsDir)) {
@@ -161,7 +185,7 @@ async function migrationDrill(): Promise<{ instance: RunningPocketBase; dataDir:
   runPb(['migrate', 'down', String(postBaselineCount), `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
   // Serve against the baseline migration directory so PocketBase cannot
   // immediately reapply the just-reverted forward migrations on startup.
-  instance = await startPocketBase(dataDir, baselineMigrations, false);
+  instance = await startPocketBase(dataDir, baselineMigrations, false, false);
   token = await adminToken(instance.url);
   names = await collectionNames(instance.url, token);
   assert.ok(!names.includes('social_operating_worker_heartbeats'), 'rollback removes runtime heartbeat collection');
@@ -262,6 +286,98 @@ async function createProgram(appUrl: string, userToken: string, brandName: strin
   return created.body.item;
 }
 
+async function prepareAuthoritativeOperatingPlan(input: {
+  appUrl: string;
+  pbUrl: string;
+  userToken: string;
+  tenantId: string;
+  programId: string;
+}): Promise<any> {
+  const token = await adminToken(input.pbUrl);
+  const now = new Date().toISOString();
+  await ensureReleaseFixtureCollection(input.pbUrl, token);
+
+  const profile = await adminRequest(input.pbUrl, token, '/api/collections/tenant_profiles/records', {
+    method: 'POST', body: JSON.stringify({
+      tenant_id: input.tenantId,
+      profile: {
+        company: { name: 'Release Factory', description: 'Verified ISO production and batch traceability.', mainMarkets: 'US', primaryLanguages: 'en' },
+        products: { highlights: 'Documented batch traceability', items: [{ name: 'Release Serum', images: [{ id: 'release-product-image' }] }] },
+        brand: { usp: 'Verified batch traceability', taboos: 'No unsupported medical claims' },
+        strategy: { currentGoal: 'Generate qualified wholesale inquiries', focusProducts: 'Release Serum', focusMarkets: 'US' },
+        customers: { targetProfiles: 'B2B beauty buyer' },
+      },
+      updated_by: 'release-harness',
+    }),
+  });
+  assert.equal(profile.status, 200, `release profile create failed: ${await profile.text()}`);
+
+  const accountsResponse = await appJson(input.appUrl, input.userToken, `/api/overseas/social-programs/${input.programId}/accounts`);
+  assert.equal(accountsResponse.status, 200, JSON.stringify(accountsResponse.body));
+  const accounts = accountsResponse.body.items as Array<{ accountId: string; version: number; platform: string }>;
+  const activeAccount = accounts[0]!;
+  const accountRows = await adminRequest(input.pbUrl, token, `/api/collections/social_owned_accounts/records?filter=${encodeURIComponent(`tenant_id = "${input.tenantId}" && account_id = "${activeAccount.accountId}"`)}`);
+  const accountRowsBody = await accountRows.json() as { items?: Array<{ id: string; payload: Record<string, unknown> }>; message?: string };
+  assert.equal(accountRows.status, 200, `release account lookup failed: ${JSON.stringify(accountRowsBody)}`);
+  const accountRow = accountRowsBody.items?.[0];
+  assert.ok(accountRow, 'release active account row missing');
+  const activatedAccount = await adminRequest(input.pbUrl, token, `/api/collections/social_owned_accounts/records/${accountRow.id}`, {
+    method: 'PATCH', body: JSON.stringify({ status: 'active', payload: { ...accountRow.payload, status: 'active' } }),
+  });
+  assert.equal(activatedAccount.status, 200, `release account activation fixture failed: ${await activatedAccount.text()}`);
+
+  const playbook = await appJson(input.appUrl, input.userToken, `/api/overseas/social-programs/${input.programId}/accounts/${activeAccount.accountId}/playbook`, {
+    method: 'PUT', body: JSON.stringify({
+      expectedAccountVersion: activeAccount.version,
+      audience: ['B2B beauty buyer'], pillars: ['verified production proof'], evidenceRules: ['cite versioned enterprise facts'],
+      conversionRoute: {
+        entryType: 'form', entryRef: 'https://example.invalid/release-inquiry', callToAction: 'Request verified wholesale details',
+        qualificationFields: ['company', 'volume'], handoffTarget: 'release-sales-owner', verifiedAt: now,
+      },
+      activate: true,
+    }),
+  });
+  assert.equal(playbook.status, 201, JSON.stringify(playbook.body));
+
+  const config = await adminRequest(input.pbUrl, token, '/api/collections/digital_employee_configs/records', {
+    method: 'POST', body: JSON.stringify({
+      tenant_id: input.tenantId, status: 'active', activated_at: now, config_version: 1,
+      config: {
+        autonomyMode: 'managed', approvalOwner: 'release-sales-owner', videoLanguages: ['en'],
+        enabledWorkflows: ['product_content', 'content_publish', 'customer_segmentation'],
+        publishingTargets: [{ platform: activeAccount.platform, accountId: activeAccount.accountId, accountLabel: 'Release account' }],
+      },
+      updated_by: 'release-harness', created_at: now, updated_at: now,
+    }),
+  });
+  assert.equal(config.status, 200, `release digital employee config create failed: ${await config.text()}`);
+  const studio = await adminRequest(input.pbUrl, token, '/api/collections/studio_production_defaults/records', {
+    method: 'POST', body: JSON.stringify({ tenant_id: input.tenantId, version: 1, payload: { presenters: [{ id: 'release-presenter', authorized: true }] } }),
+  });
+  assert.equal(studio.status, 200, `release studio defaults create failed: ${await studio.text()}`);
+
+  const capacities = Object.fromEntries(accounts.map(account => [account.accountId, account.accountId === activeAccount.accountId ? 1 : 0]));
+  const constraints = await appJson(input.appUrl, input.userToken, `/api/overseas/social-programs/${input.programId}/operating-constraints`, {
+    method: 'PUT', body: JSON.stringify({
+      expectedVersion: 0, weeklyBudgetCny: 100, costPerOriginalCny: 20, costPerAdaptationCny: 10,
+      materialUnitsPerOriginal: 1, productionItemsPerDay: 1, interactionItemsPerWeek: 10, salesLeadsPerWeek: 5,
+      expectedInteractionsPerPublication: 1, expectedLeadsPerPublication: 1, accountWeeklyPublicationCapacity: capacities,
+    }),
+  });
+  assert.equal(constraints.status, 201, JSON.stringify(constraints.body));
+  const resolution = await appJson(input.appUrl, input.userToken, `/api/overseas/social-programs/${input.programId}/operating-plan/resolve`, {
+    method: 'POST', body: JSON.stringify({
+      weekStart: '2026-09-21', desiredOriginalContents: 1, desiredAdaptations: 0,
+      requestedReferenceMode: 'ordinary_inspiration', expectedSnapshotVersion: 0,
+    }),
+  });
+  assert.equal(resolution.status, 201, JSON.stringify(resolution.body));
+  assert.equal(resolution.body.item.goal.status, 'ready');
+  assert.equal(resolution.body.item.capacityPlan.publicationQuota, 1);
+  assert.equal(resolution.body.item.automationPolicy.status, 'allowed');
+  return resolution.body;
+}
+
 async function provisionUser(pbUrl: string, tenantId: string, suffix: string): Promise<string> {
   const token = await adminToken(pbUrl);
   const email = `release-${suffix}@example.invalid`;
@@ -284,6 +400,12 @@ async function seedGapTask(tenantId: string, gapTaskId: string, budgetLimitCny =
   await pbCreateStrict('social_discovery_gap_tasks', {
     tenant_id: tenantId, gapTaskId, upstreamTaskRef: `weekly-${gapTaskId}`, productionGap: 'opening proof',
     status: 'collecting', stopReason: '', budgetLimitCny, spentCny: 0,
+    taskGap: {
+      description: 'opening proof', requiredSceneIds: ['opening'], minimumReferences: 1,
+      requiredReadiness: 'production_reference', requestedModes: ['momentum', 'account', 'innovation'],
+    },
+    budget: { currency: 'CNY', limitCny: budgetLimitCny, spentCny: 0 },
+    attemptCount: 0, lastError: null, lastAttemptAt: null, referenceSelectionRef: null,
     runRefs: [], selectedEvidenceRefs: [], createdAt: now, updatedAt: now,
   });
 }
@@ -347,14 +469,30 @@ try {
   assert.equal(crossTenant.status, 404, 'tenant B must not read tenant A program over HTTP');
 
   const currentProgram = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}`);
+  const operatingPlan = await prepareAuthoritativeOperatingPlan({
+    appUrl: application.url, pbUrl: pocketBase.url, userToken: tokenA, tenantId: tenantA, programId: programA.programId,
+  });
+  const accountId = operatingPlan.item.capacityPlan.accountQuotas.find((item: { publicationQuota: number }) => item.publicationQuota > 0)?.accountId;
+  assert.ok(accountId, 'authoritative capacity plan must allocate the release publication');
+  const factRef = operatingPlan.item.goal.publicFactRefs[0];
+  assert.ok(factRef, 'authoritative business goal must expose a versioned public fact');
   const draftResponse = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}/operating-packages`, {
     method: 'POST', body: JSON.stringify({
+      ...operatingPlan.weeklyAuthority,
       weekStart: '2026-09-21', objective: 'release chain', successCriteria: ['durable receipt'],
-      originalContentTarget: 1, weeklyBudgetCny: 20, perItemBudgetCny: 20,
+      perItemBudgetCny: 20,
+      publicationTasks: [{
+        accountId, businessProposition: 'Verified batch traceability for wholesale buyers',
+        cta: 'Request verified wholesale details', factRefs: [factRef],
+        metricTargets: ['1 qualified wholesale inquiry'], publishWindow: '2026-09-21T14:00:00.000Z',
+      }],
     }),
   });
   assert.equal(draftResponse.status, 201, JSON.stringify(draftResponse.body));
   const draft = draftResponse.body.item;
+  assert.deepEqual(draft.operatingDecisionSnapshotRef, operatingPlan.weeklyAuthority.operatingDecisionSnapshotRef);
+  assert.deepEqual(draft.businessContentGoalRef, operatingPlan.item.snapshot.businessContentGoalRef);
+  assert.equal(draft.planningBlockers.length, 0, JSON.stringify(draft.planningBlockers));
   const activeResponse = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/activate`, {
     method: 'POST', body: JSON.stringify({
       expectedVersion: 1, expectedProgramVersion: currentProgram.body.item.version, authorizePublishing: true,

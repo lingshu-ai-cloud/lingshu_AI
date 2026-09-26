@@ -39,6 +39,9 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
   const currencies = [...new Set(tasks.map(t => t.currency))];
   const chosen = currencies.includes(currency) ? currency : currencies[0] || 'CNY';
   const data = useMemo(() => overviewData(entries, chosen, since, until), [entries, chosen, since, until]);
+  const selectedTasks = tasks.filter(t => t.currency === chosen);
+  const missing = Math.max(0, selectedTasks.length - data.usable.length);
+  const plannedBudget = selectedTasks.reduce((n, t) => n + (Number(t.budget) || 0), 0);
   const dates = dayRange(since, until);
   const priorUntil = new Date(Date.parse(since + 'T00:00:00Z') - 86400000);
   const previous = Number.isFinite(priorUntil.getTime()) ? overviewData(entries, chosen, new Date(priorUntil.getTime() - Math.max(0, dates.length - 1) * 86400000).toISOString().slice(0, 10), priorUntil.toISOString().slice(0, 10)) : null;
@@ -54,6 +57,11 @@ export default function AdPerformanceOverview({ tasks, loading, onOpen }: { task
       <div className="ads-section-title"><div><p className="ads-muted">PERFORMANCE PULSE</p><h2>花费有依据，增长看全程</h2></div><button className="ads-button" disabled={busy || loading} onClick={() => setRefresh(r => r + 1)}>刷新数据</button></div>
       <div className="ad-toolbar"><label>统计周期<select value={period} onChange={e => { setPeriod(e.target.value); if (e.target.value !== 'custom') { setSince(day(1 - Number(e.target.value))); setUntil(day()); } }}><option value="1">今天</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="custom">自定义</option></select></label>{period === 'custom' && <><label>开始日期<input type="date" value={since} max={until} onChange={e => setSince(e.target.value)} /></label><label>结束日期<input type="date" value={until} min={since} max={day()} onChange={e => setUntil(e.target.value)} /></label></>}<label>币种<select value={chosen} onChange={e => setCurrency(e.target.value)}>{(currencies.length ? currencies : ['CNY']).map(c => <option key={c}>{c}</option>)}</select></label></div>
       {!dates.length && <p role="alert">请选择有效日期范围（最多 366 天）。</p>}
+      <div className="ads-muted" role="status">
+        <p>{data.stale ? '含历史快照 · 非实时' : '未发现历史快照'}；{!data.complete ? '数据覆盖不完整' : '数据覆盖完整'}。日期筛选按 UTC；缺失日期不补零，选择更长周期不会自动补采历史。</p>
+        <p>已返回 {data.usable.length}/{tasks.filter(t => t.currency === chosen).length} 个计划报告；{missing} 个尚无报告。计划预算：{chosen} {format(plannedBudget, 2)}（计划预算合计，非剩余预算）。</p>
+        {!hasData && <p>所选周期没有可核验的日数据。</p>}
+      </div>
       <div className="ad-kpis">{cards.map(c => <article key={c.label}><span>{c.label}</span><strong>{c.value}</strong><small>{c.note}</small></article>)}</div>
     </section>
     <section className="ads-card"><div className="ads-section-title"><div><h2>从投放到成交</h2><p className="ads-muted">前两步来自平台报告；后四步尚未归因，不连线、不推算转化率。</p></div></div><div className="ad-funnel">{[

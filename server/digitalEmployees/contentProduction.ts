@@ -13,7 +13,6 @@ import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
 import { buildPresentationTimeline } from './presenterMix.js';
 import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
-import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { generateNarration, reviewFinalNarration, narrationEvidenceIssues } from './narration.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,111 +36,15 @@ import { contentProjectLineageFields } from './contentProjectLineage.js';
 import { notifyStarterReviewableContentProjects } from '../starter198/contentArtifactWakeup.js';
 import { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js'; export { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js';
 import type { DirectorScriptContract, FrozenDirectorScript } from '../../src/lib/directorScript.js';
+import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
+import type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, ProductionStage, RouteSourcePlan, SceneSourcePlanItem, StoredRecord } from './contentProductionContracts.js';
+export type { AssetCandidate, ContentProductionAdvanceResult, ContentProductionOrderInput, ContentProductionRoute, ContentRouteEvidence, ContentRoutePlan, RouteSourcePlan, SceneSourcePlanItem } from './contentProductionContracts.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as {
   composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
-export type ContentProductionRoute = 'clone' | 'product' | 'material';
-type ProductionStage = 'script' | 'material_match' | 'voice_subtitles' | 'heygen' | 'render' | 'quality' | 'completed' | 'blocked';
 export const CONTENT_PRODUCTION_SCHEMA_VERSION = 3;
 export const CONTENT_PRODUCTION_MAX_CONCURRENCY = 2;
-type StoredRecord = { id: string; [key: string]: unknown };
-export type AssetCandidate = {
-  id: string;
-  name: string;
-  type: 'video' | 'image';
-  url?: string;
-  localPath?: string;
-  objectKey?: string;
-  cloudRecordId?: string;
-  duration: number;
-  observations: string[];
-  /** Stable product identity copied from the enterprise profile, never inferred. */
-  productId?: string;
-  productName?: string;
-  visualObservations: string[];
-  segments?: Array<Record<string, unknown>>;
-  scriptAnalysis?: MaterialScriptAnalysis;
-  authorization: {
-    status: 'owned' | 'licensed' | 'unknown';
-    scope: 'tenant' | 'shared';
-    evidence: string;
-  };
-  synthetic: boolean;
-  aspectRatio?: string;
-  width?: number;
-  height?: number;
-  focusX?: number;
-  focusY?: number;
-  tags: string[];
-  source: 'enterprise_product' | 'tenant_material' | 'licensed_shared_material';
-};
-
-export interface SceneSourcePlanItem {
-  sceneIndex: number;
-  start: number;
-  end: number;
-  intent: string;
-  assetId: string;
-  productId?: string;
-  score: number;
-  sourceStart?: number;
-  sourceEnd?: number;
-  evidenceSegmentId?: string;
-  observations?: string[];
-  reasons: string[];
-}
-
-export interface RouteSourcePlan {
-  route: ContentProductionRoute;
-  productId?: string;
-  productName?: string;
-  assetIds: string[];
-  seedAssetId?: string;
-  referenceAnalysisId?: string;
-  platform: string;
-  platformBrief: string;
-  gap?: string;
-}
-
-export interface ContentProductionOrderInput extends Partial<DirectorScriptContract> {
-  videoPlan?: VideoCreationPlan;
-  languages?: string[];
-  id: string;
-  route: ContentProductionRoute;
-  platform: string;
-  productId: string;
-  productName: string;
-  evidenceRefs: Array<{ type: 'exact_analysis' | 'enterprise_material'; id: string }>;
-  theme?: { key: string; label: string };
-  cta?: string;
-  constraints?: string[];
-  sourceContentOrderId?: string;
-  masterContentOrderId?: string;
-  masterLanguage?: string;
-}
-
-export interface ContentRouteEvidence {
-  exactAnalysisIds: string[];
-  productNames: string[];
-  assetIds: string[];
-}
-
-export interface ContentRoutePlan {
-  allocations: ContentProductionRoute[];
-  eligibleRoutes: ContentProductionRoute[];
-  blockers: string[];
-  evidence: ContentRouteEvidence;
-}
-
-export interface ContentProductionAdvanceResult {
-  changed: boolean;
-  ready: boolean;
-  projectRefs: Array<{ type: 'studio_project'; id: string; route: ContentProductionRoute; language?: string; status: string; stage: string; outputPath?: string }>;
-  knowledgeGaps: Array<{ type: 'knowledge_gap'; key: string; label: string; destination: string; purpose: string }>;
-  blocker: string;
-  summary: string;
-}
 
 export function expandContentOrdersByLanguage(
   orders: ContentProductionOrderInput[],

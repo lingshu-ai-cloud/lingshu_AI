@@ -1,4 +1,10 @@
-import type { MetricValues } from '../../server/socialMetrics/aggregation.js';
+/** Metric payload accepted by the review contract. Kept in shared so clients do
+ * not acquire a dependency on the server-side aggregation implementation. */
+export type ReviewMetricKey =
+  | 'views' | 'reach' | 'likes' | 'comments' | 'shares' | 'saves'
+  | 'watchTimeMinutes' | 'averageViewDurationSeconds' | 'averageViewPercentage'
+  | 'followers' | 'subscribers' | 'profileViews' | 'postsPublished';
+export type MetricValues = Partial<Record<ReviewMetricKey, number>>;
 
 export type ReviewAvailability = 'available' | 'unknown' | 'unavailable';
 export type ReviewEvidenceKind = 'external_reference' | 'owned_content_result';

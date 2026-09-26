@@ -10,10 +10,11 @@ import {
   type StudioGenerationMetadata,
 } from '../lib/studioGenerationVerification.js';
 import { store } from '../storage/index.js';
+import type { DataStore } from '../storage/datastore.js';
 
 export const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
 export type PublishSourceRequestKind = 'project' | 'manual_upload';
-export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload';
+export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload' | 'social_production_artifact';
 
 export interface PublishSourceRequest {
   sourceKind?: PublishSourceRequestKind;
@@ -40,6 +41,14 @@ export interface FrozenPublishSourceClaim {
   publishable: true;
   generationRecordId: string;
   sourceFingerprint: string;
+  artifactId?: string;
+  productionResultId?: string;
+  contentVersion?: string;
+  contentHash?: string;
+  videoHash?: string;
+  artifactVideoUrl?: string;
+  artifactFileId?: string;
+  artifactFileRef?: string;
 }
 
 type StoredProject = { id: string; tenant_id?: unknown; tenantId?: unknown; status?: unknown; spec?: unknown };
@@ -204,6 +213,9 @@ export function projectPublishSourceClaim(input: {
   tenantId: string;
   project: StoredProject;
   videoPath: string;
+  artifactVideoUrl?: string;
+  artifactFileId?: string;
+  artifactFileRef?: string;
   sourceVideoPath?: string;
   generation?: unknown;
   requireReadableVideo?: boolean;
@@ -248,6 +260,70 @@ function sameClaim(left: FrozenPublishSourceClaim, right: FrozenPublishSourceCla
   return fingerprint(left) === fingerprint(right);
 }
 
+/** Freeze the approved social production row itself, never reclassify it as a manual upload. */
+export async function socialProductionPublishSourceClaim(input: {
+  tenantId: string;
+  artifactId: string;
+  productionResultId: string;
+  contentVersion: string;
+  contentHash: string;
+  videoHash: string;
+  videoPath: string;
+  artifactVideoUrl?: string;
+  artifactFileId?: string;
+  artifactFileRef?: string;
+  dataStore?: DataStore;
+}): Promise<FrozenPublishSourceClaim> {
+  const dataStore = input.dataStore ?? store;
+  const result = await dataStore.list<{
+    id: string; tenant_id: string; artifact_id: string; version: string; status: string;
+    content_hash: string; resource_ref?: string; task_id?: string; content: unknown;
+  }>('starter_social_content_artifacts', {
+    where: { tenant_id: input.tenantId, artifact_id: input.artifactId }, page: 1, perPage: 2,
+  });
+  if (result.totalItems !== 1 || !result.items[0]) throw new PublishSourceVerificationError('social_production_artifact_not_found');
+  const row = result.items[0];
+  const content = record(row.content);
+  const production = record(content.productionResult);
+  const video = record(record(content.mediaStorage).video);
+  const videoPath = normalizedFilePath(input.videoPath);
+  const artifactFileId = text(video.fileId);
+  const artifactFileRef = text(video.fileRef);
+  if (row.status !== 'approved' || text(production.version) !== input.contentVersion
+    || text(production.productionResultId) !== input.productionResultId
+    || production.status !== 'asset_review'
+    || record(production.technicalReview).approved !== true
+    || record(production.creativeReview).approved !== true
+    || (text(row.content_hash) || text(video.sha256)).toLowerCase() !== input.contentHash.toLowerCase()
+    || text(video.sha256).toLowerCase() !== input.videoHash.toLowerCase()
+    || !artifactFileId || artifactFileRef !== `socialfile:${artifactFileId}`
+    || text(row.resource_ref) !== artifactFileRef
+    || (input.artifactFileId && input.artifactFileId !== artifactFileId)
+    || (input.artifactFileRef && input.artifactFileRef !== artifactFileRef)
+    || (input.artifactVideoUrl ? text(video.url) !== input.artifactVideoUrl : normalizedFilePath(video.url) !== videoPath)) {
+    throw new PublishSourceVerificationError('social_production_artifact_stale');
+  }
+  assertReadableVideo(videoPath);
+  const videoDigest = createHash('sha256');
+  for await (const chunk of fs.createReadStream(videoPath)) videoDigest.update(chunk);
+  const actualVideoHash = videoDigest.digest('hex');
+  if (actualVideoHash !== input.videoHash.toLowerCase()) throw new PublishSourceVerificationError('social_production_video_hash_mismatch');
+  return {
+    schemaVersion: 1, sourceKind: 'social_production_artifact', projectId: '',
+    sourceVideoPath: videoPath, deliveryVideoPath: videoPath,
+    generationKind: 'script', generationProvenance: 'ai', qualityStatus: 'passed',
+    publishable: true, generationRecordId: input.productionResultId,
+    artifactId: input.artifactId, productionResultId: input.productionResultId,
+    contentVersion: input.contentVersion, contentHash: input.contentHash.toLowerCase(),
+    videoHash: input.videoHash.toLowerCase(), artifactVideoUrl: input.artifactVideoUrl,
+    artifactFileId, artifactFileRef,
+    sourceFingerprint: fingerprint({ rowId: row.id, artifactId: row.artifact_id, version: row.version,
+      productionResultId: input.productionResultId, contentHash: input.contentHash.toLowerCase(),
+      videoHash: input.videoHash.toLowerCase(), artifactVideoUrl: input.artifactVideoUrl || '',
+      artifactFileId, artifactFileRef, videoPath }),
+  };
+}
+
 export async function freezePublishSourceClaim(
   tenantId: string,
   request: PublishSourceRequest,
@@ -288,7 +364,14 @@ export async function verifyFrozenPublishSourceClaim(
     throw new PublishSourceVerificationError('publish_source_claim_missing', 409, '排期缺少冻结的发布来源，请重新审核。');
   }
   let current: FrozenPublishSourceClaim;
-  if (claim.sourceKind === 'manual_upload') {
+  if (claim.sourceKind === 'social_production_artifact') {
+    current = await socialProductionPublishSourceClaim({
+      tenantId, artifactId: text(claim.artifactId), productionResultId: text(claim.productionResultId),
+      contentVersion: text(claim.contentVersion), contentHash: text(claim.contentHash),
+      videoHash: text(claim.videoHash), videoPath: text(claim.deliveryVideoPath), artifactVideoUrl: text(claim.artifactVideoUrl),
+      artifactFileId: text(claim.artifactFileId), artifactFileRef: text(claim.artifactFileRef),
+    });
+  } else if (claim.sourceKind === 'manual_upload') {
     current = manualUploadClaim(tenantId, claim.deliveryVideoPath);
   } else {
     const project = await store.getById<StoredProject>('studio_projects', text(claim.projectId));

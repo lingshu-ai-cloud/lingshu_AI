@@ -9,6 +9,8 @@ const previous = {
   NODE_ENV: process.env.NODE_ENV,
   DISABLE_LOCAL_AUTH_FALLBACK: process.env.DISABLE_LOCAL_AUTH_FALLBACK,
   PB_URL: process.env.PB_URL,
+  OBJECT_STORAGE_DRIVER: process.env.OBJECT_STORAGE_DRIVER,
+  LOCAL_OBJECT_STORAGE_ROOT: process.env.LOCAL_OBJECT_STORAGE_ROOT,
   cwd: process.cwd(),
 };
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-social-content-test-'));
@@ -16,6 +18,8 @@ process.chdir(temporaryRoot);
 process.env.NODE_ENV = 'test';
 process.env.DISABLE_LOCAL_AUTH_FALLBACK = 'false';
 process.env.PB_URL = 'http://127.0.0.1:1';
+process.env.OBJECT_STORAGE_DRIVER = 'local';
+process.env.LOCAL_OBJECT_STORAGE_ROOT = path.join(temporaryRoot, 'object-storage');
 
 type Row = Record_ & Record<string, unknown>;
 
@@ -852,7 +856,7 @@ try {
   packageRow.package_hash = originalHash;
 
   const mediaRow = dataStore.rows.get(STARTER_COLLECTIONS.socialContentFiles)!.find(row => row.file_id === uploadedMedia.body.file.fileId)!;
-  const mediaPath = path.join(temporaryRoot, 'data', 'social-content-sources', String(mediaRow.storage_key));
+  const mediaPath = path.join(process.env.LOCAL_OBJECT_STORAGE_ROOT!, String(mediaRow.storage_key));
   fs.writeFileSync(mediaPath, Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x62, 0x61, 0x64, 0x21]));
   const corruptMediaDownload = await request(`/api/overseas/starter-198/social-content/delivery-packages/${packageId}/download`);
   assert.equal(corruptMediaDownload.status, 503, 'checksum mismatch must fail before a media ZIP is served');
@@ -1462,7 +1466,10 @@ try {
   const reviewedReference = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}`);
   assert.equal(reviewedReference.status, 200, reviewedReference.raw);
   assert.equal(reviewedReference.body.task.replicationScript.status, 'confirmed');
-  const startedReference = await startSocialContentTask({
+  assert.equal(reviewedReference.body.task.agentWorkflow.executionPlanReview.approved, false,
+    'confirming the visible replication script does not bypass the independent Director execution review');
+  assert.ok(reviewedReference.body.task.agentWorkflow.executionPlanReview.failedCriteria.length > 0);
+  await assert.rejects(() => startSocialContentTask({
     repository,
     orchestratorQueue: referenceQueue,
     tenantId: tenant,
@@ -1472,9 +1479,9 @@ try {
     idempotencyKey: 'social-viral-reference-start-002',
     referenceResolver: exactReferenceResolver,
     now: new Date('2026-09-14T08:02:00.000Z'),
-  });
-  assert.equal(startedReference.status, 'producing');
-  assert.equal(referenceQueueCalls, 1, 'the second click starts production with the confirmed reference plan');
+  }), (error: any) => error?.code === 'social_content_execution_director_review_required');
+  assert.equal(referenceQueueCalls, 0,
+    'a confirmed replication script remains blocked until the Director execution review approves the executable plan');
 
   const conceptPreviewTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-zero-input-preview-create-001',
@@ -1643,4 +1650,8 @@ try {
   if (previous.DISABLE_LOCAL_AUTH_FALLBACK === undefined) delete process.env.DISABLE_LOCAL_AUTH_FALLBACK;
   else process.env.DISABLE_LOCAL_AUTH_FALLBACK = previous.DISABLE_LOCAL_AUTH_FALLBACK;
   if (previous.PB_URL === undefined) delete process.env.PB_URL; else process.env.PB_URL = previous.PB_URL;
+  if (previous.OBJECT_STORAGE_DRIVER === undefined) delete process.env.OBJECT_STORAGE_DRIVER;
+  else process.env.OBJECT_STORAGE_DRIVER = previous.OBJECT_STORAGE_DRIVER;
+  if (previous.LOCAL_OBJECT_STORAGE_ROOT === undefined) delete process.env.LOCAL_OBJECT_STORAGE_ROOT;
+  else process.env.LOCAL_OBJECT_STORAGE_ROOT = previous.LOCAL_OBJECT_STORAGE_ROOT;
 }

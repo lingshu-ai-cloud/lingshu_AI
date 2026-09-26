@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   BrainCircuit, FileText, Search, Sparkles, ShieldCheck, UserRoundCog,
   Users, Database, Clock3, Plus, Trash2, Loader2, X, Play, Copy, ArrowRight,
@@ -17,6 +17,7 @@ import {
   type ScriptLibraryActionPrefill,
 } from '../lib/contentActionNavigation';
 import { useModalFocus } from '../hooks/useModalFocus';
+import PageShell from './WorkspacePageShell';
 type ExactAnalysisDetail = {
   time?: string; timestamp?: string; environment?: string; shot?: string; camera?: string;
   angle?: string; composition?: string; visual?: string; subtitle?: string; dialogue?: string; audio?: string; note?: string; purpose?: string;
@@ -248,33 +249,6 @@ function HoverMedia({ title, poster, url }: { title: string; poster?: string; ur
       : poster ? <img src={poster} alt={title} className="h-full w-full object-cover" />
         : <div className="flex h-full items-center justify-center text-emerald-500"><Play size={28} /></div>}
   </div>;
-}
-
-function PageShell({ icon, title, description, hideHeader = false, children }: {
-  icon: ReactNode;
-  title: string;
-  description: string;
-  hideHeader?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div className="workspace-management-page flex h-full flex-col bg-white">
-      {!hideHeader && <header className="shrink-0 border-b border-border px-5 py-4 sm:px-6">
-        <div className="mx-auto flex max-w-6xl items-start gap-3">
-          <span className="mt-1 flex h-6 w-6 items-center justify-center text-accent">{icon}</span>
-          <div>
-            <h1 className="text-lg font-semibold text-text-primary">{title}</h1>
-            <p className="mt-1 text-xs leading-5 text-text-muted">{description}</p>
-          </div>
-        </div>
-      </header>}
-      <main className="min-h-0 flex-1 overflow-y-auto bg-[#f8faf7] px-4 py-6 sm:px-6">
-        <div className="mx-auto max-w-6xl">
-          {children}
-        </div>
-      </main>
-    </div>
-  );
 }
 
 export function ScriptLibraryPage({ socialContentTaskId }: { socialContentTaskId?: string | null } = {}) {

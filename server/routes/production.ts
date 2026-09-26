@@ -1,7 +1,5 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
-import { withPaidOperationLock } from '../lib/paidOperationLock.js';
 import { studioPaidBudget } from '../lib/studioPaidBudget.js';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient, type HeyGenInput } from '../lib/heygen.js';
@@ -10,97 +8,15 @@ import { mapNarrationCues, narrationFromDetail } from '../../src/lib/narrationAl
 import { candidateToolsFor, digitalHumanRouteSteps, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanExecutionRecord, type DigitalHumanPlanRecord, type DigitalHumanReferenceCue, type SentenceFirstFrameDraftResult, type SentenceReplicationResult } from '../../src/lib/digitalHumanPlan.js';
 import { deferUnavailableVisualChecksToManual, initialDigitalHumanQuality, recordDigitalHumanMediaCheck, recordModelQualityChecks, recordReferenceTechnicalChecks, recordReferenceVisualChecks, reviewDigitalHumanQuality, type ModelQualityDecision, type ModelQualityKey, type ReferenceTechnicalMetrics, type ReferenceVisualMetrics } from '../../src/lib/digitalHumanQuality.js';
 import { digitalHumanToolCapabilities, isDefinitiveSupplierSubmissionError, requiredReferencePreservation, selectReferenceAdapter, verifiedSupplierCost, type DigitalHumanExecutionAdapter, type DigitalHumanToolId } from '../lib/digitalHumanProviderRegistry.js';
-import { sentenceReplicationReadiness, type SentenceReplicationReadiness } from '../runtime/readiness.js';
 import { planPersonShotClusters } from '../../src/lib/personShotClustering.js';
+import type { ExecutionStoreRecord, FirstFrameDraftJobRecord, ImportedVideoResult, JobRecord, PlanStoreRecord, ProductionRouterOptions, ReferenceImportResult, SentenceJobRecord } from './productionContracts.js';
+import { candidateOutputFromImport, createProductionRuntime, createProductionStoreRuntime } from './productionRuntime.js';
+export { candidateOutputFromImport } from './productionRuntime.js';
 
-type JobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: AvatarJob; input: HeyGenInput };
-type PlanStoreRecord = { id: string; tenant_id: string; project_id: string; shot_key: string; fingerprint: string; payload: DigitalHumanPlanRecord };
-type ExecutionStoreRecord = { id: string; tenant_id: string; project_id: string; job_id: string; plan_id: string; request_id?: string; payload: DigitalHumanExecutionRecord };
-type SentenceJobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: { state: 'running' | 'completed' | 'failed' | 'uncertain'; fingerprint: string; assemblyId: string; shotId: string; providerTasks?: Record<string,string>; result?: SentenceReplicationResult; error?: string; createdAt: string; updatedAt: string } };
-type FirstFrameDraftJobRecord = { id: string; tenant_id: string; project_id: string; request_id: string; payload: { state: 'running' | 'completed' | 'failed'; fingerprint: string; assemblyId: string; shotId: string; result?: SentenceFirstFrameDraftResult; error?: string; createdAt: string; updatedAt: string } };
-type ImportedVideoResult = { materialId: string; objectKey?: string; localFile?: string; contentSha256?: string; objectEtag?: string };
-type ReferenceImportResult = ImportedVideoResult & { technicalMetrics?: ReferenceTechnicalMetrics; visualMetrics?: ReferenceVisualMetrics };
-export function candidateOutputFromImport(imported: ImportedVideoResult): NonNullable<DigitalHumanExecutionRecord['candidateOutput']> | undefined {
-  const contentSha256 = String(imported.contentSha256 || '').toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(contentSha256)) return undefined;
-  if (imported.objectKey && imported.objectEtag) return { materialId: imported.materialId, objectKey: imported.objectKey, contentSha256, objectEtag: imported.objectEtag };
-  if (imported.localFile) return { materialId: imported.materialId, localFile: imported.localFile, contentSha256 };
-  return undefined;
-}
-export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string | ImportedVideoResult>, options: {
-  client?: HeyGenClient; enabled?: () => boolean; lockRoot?: string; reserve?: (id: string) => Promise<void>;
-  prepareAudio?: (ref: NonNullable<HeyGenInput['audioRef']>, tenantId: string) => Promise<Uint8Array | { bytes: Uint8Array; segmentId: string; checksumSha256: string; start: number; duration: number }>;
-  adapters?: DigitalHumanExecutionAdapter[];
-  referenceBudgetLimitCny?: number;
-  maxAttemptsPerShot?: number;
-  reserveReference?: (tool: DigitalHumanToolId, id: string, estimatedCostCny: number | null) => Promise<void>;
-  releaseReference?: (tool: DigitalHumanToolId, id: string) => Promise<void>;
-  importReferenceVideo?: (url: string, execution: DigitalHumanExecutionRecord, tenantId: string) => Promise<ReferenceImportResult>;
-  importReferenceObject?: (objectKey: string, execution: DigitalHumanExecutionRecord, tenantId: string) => Promise<ReferenceImportResult>;
-  resolveReferenceInputs?: (input: { shot: ShotProduction; presenter: PresenterAsset; tenantId: string }) => Promise<{ characterUrl: string; characterType: 'image' | 'video'; characterMaterialId?: string; characterObjectKey?: string; characterObjectEtag?: string; referenceVideoUrl: string; referenceClipKey?: string; referenceClipObjectEtag?: string; referenceSourceObjectEtag?: string; referenceMaterialId?: string; referenceStart?: number; referenceDuration?: number }>;
-  inspectReferenceQuality?: (input: {
-    /** Exact cropped source evidence used for motion/background/product comparison. */
-    referenceClipObjectKey: string;
-    referenceMaterialId: string;
-    /** Authorized enterprise-person inputs used for identity comparison. */
-    presenterReferenceMaterialIds: string[];
-    /** Persisted candidate identity; candidateVideoUrl is only a short-lived fetch hint. */
-    candidateMaterialId: string;
-    candidateVideoUrl: string;
-    execution: DigitalHumanExecutionRecord;
-    tenantId: string;
-  }) => Promise<Partial<Record<ModelQualityKey, ModelQualityDecision>>>;
-  verifyCandidateOutput?: (evidence: NonNullable<DigitalHumanExecutionRecord['candidateOutput']>, tenantId: string) => Promise<boolean>;
-  verifyReferenceInputs?: (snapshot: NonNullable<DigitalHumanExecutionRecord['inputSnapshot']>, tenantId: string) => Promise<boolean>;
-  reconcileHeyGenCost?: (externalTaskId: string) => Promise<{ actualCostCny?: number; costSourceRef?: string }>;
-  validatePresenterMaterials?: (tenantId: string, materialIds: string[]) => Promise<void>;
-  verifyArkAsset?: (input: { tenantId: string; projectName: string; groupId: string; assetId: string }) => Promise<{ status: 'processing' | 'active' | 'failed'; assetType: 'image' | 'video'; failureReason?: string }>;
-  bindArkAsset?: (input: { tenantId: string; presenterId: string; certification: NonNullable<PresenterAsset['arkCertification']> }) => Promise<void>;
-  prepareSentenceFirstFrames?: (input: { tenantId: string; referenceMaterialId: string; cues: DigitalHumanReferenceCue[] }) => Promise<DigitalHumanReferenceCue[]>;
-  generateSentenceFirstFrameDrafts?: (input:{tenantId:string;projectId:string;assemblyId:string;presenter:PresenterAsset;cues:DigitalHumanReferenceCue[]})=>Promise<SentenceFirstFrameDraftResult>;
-  runSentenceReplication?: (input: { tenantId: string; projectId: string; assemblyId: string; shotId: string; fingerprint: string; shot: ShotProduction; presenter: PresenterAsset; cues: DigitalHumanReferenceCue[]; requestId: string; reuseCueMaterialIds?:Record<string,string>; reuseCueQuality?:NonNullable<SentenceReplicationResult['cueQuality']>; onProviderTaskSubmitted?: (cueId:string,taskId:string)=>Promise<void> }) => Promise<SentenceReplicationResult>;
-  /** Allows isolated tests or an alternate worker to expose its own preflight. */
-  sentenceReplicationReadiness?: () => SentenceReplicationReadiness;
-  toolUnavailableReasons?: Partial<Record<DigitalHumanToolId, string>>;
-} = {}) {
+export function createProductionRouter(store: DataStore, importVideo: (url: string, duration: number, job: AvatarJob, input: HeyGenInput, tenantId: string) => Promise<string | ImportedVideoResult>, options: ProductionRouterOptions = {}) {
   const router = Router();
-  const locks = new Map<string, Promise<unknown>>();
-  const exclusive = async <T>(key: string, operation: () => Promise<T>): Promise<T> => {
-    const next = (locks.get(key) || Promise.resolve()).catch(() => undefined).then(() =>
-      withPaidOperationLock(options.lockRoot || path.resolve(process.cwd(), 'data/studio-production-locks'), key, operation));
-    locks.set(key, next); try { return await next; } finally { if (locks.get(key) === next) locks.delete(key); }
-  };
-  const enabled = () => options.enabled?.() ?? Boolean(process.env.HEYGEN_API_KEY && process.env.HEYGEN_GENERATION_ENABLED === 'true');
-  const client = () => options.client || new HeyGenClient(process.env.HEYGEN_API_KEY || '');
-  const executableReferenceAdapters = () => options.reserveReference && options.importReferenceVideo && options.resolveReferenceInputs ? options.adapters || [] : [];
-  const referenceBudgetLimitCny = () => {
-    const value = Number(options.referenceBudgetLimitCny ?? process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT);
-    return Number.isFinite(value) && value >= 0 ? value : null;
-  };
-  const maxAttemptsPerShot = () => {
-    const value = Number(options.maxAttemptsPerShot ?? process.env.DIGITAL_HUMAN_MAX_ATTEMPTS_PER_SHOT ?? 3);
-    return Number.isSafeInteger(value) && value >= 1 && value <= 10 ? value : 3;
-  };
-  const sentenceReadiness = () => options.sentenceReplicationReadiness?.() ?? sentenceReplicationReadiness();
-  const releaseReferenceReservation = async (tool: DigitalHumanToolId, requestId: string): Promise<string> => {
-    if (!options.releaseReference) return '';
-    try { await options.releaseReference(tool, requestId); return ''; }
-    catch (error) { return `预算预占释放失败，请管理员核对账本：${error instanceof Error ? error.message : '未知错误'}`; }
-  };
-  const assertCandidateOutputCurrent = async (record: ExecutionStoreRecord, tenantId: string) => {
-    const evidence = record.payload.candidateOutput;
-    if (!evidence) return;
-    if (evidence.materialId !== record.payload.materialId || !options.verifyCandidateOutput) throw new Error('候选输出缺少可复核的存储证据服务，不能验收或填入分镜');
-    if (!await options.verifyCandidateOutput(evidence, tenantId)) throw new Error('候选输出对象版本已变化，或本地文件内容已变化，历史质检失效；请恢复原文件或生成新候选');
-  };
-  const assertAttemptAvailable = async (input: { tenantId: string; projectId: string; assemblyId: string; shotId: string; fingerprint: string; presenterAssetVersion: number }) => {
-    const records = await store.list<ExecutionStoreRecord>('studio_digital_human_executions', { where: { tenant_id: input.tenantId, project_id: input.projectId }, perPage: 500 });
-    const attempts = records.items.filter(item => item.payload.assemblyId === input.assemblyId && item.payload.shotId === input.shotId
-      && item.payload.fingerprint === input.fingerprint && item.payload.presenterAssetVersion === input.presenterAssetVersion
-      && item.payload.submissionOutcome !== 'rejected').length;
-    if (attempts >= maxAttemptsPerShot()) throw new Error(`本镜头当前要求与人物版本已达到 ${maxAttemptsPerShot()} 次生成上限；请先比较已有候选，或修改镜头要求后保存新方案`);
-  };
-  const readDefaults = async (tenantId: string) => (await store.list<any>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 1 })).items[0];
+  const { exclusive, enabled, client, executableReferenceAdapters, referenceBudgetLimitCny, maxAttemptsPerShot, sentenceReadiness, releaseReferenceReservation, assertCandidateOutputCurrent } = createProductionRuntime(options);
+  const { assertAttemptAvailable, readDefaults } = createProductionStoreRuntime(store, maxAttemptsPerShot);
   const persistPlan = async (input: { tenantId: string; project: any; assemblyId: string; shotId: string; fingerprint: string; origin?: 'manual' | 'content_agent'; sourceTaskId?: string; sourceTaskVersion?: string }) => {
     const { tenantId, project, assemblyId, shotId, fingerprint } = input;
     const shot = project.spec?.shotProductions?.[`${assemblyId}:${shotId}`] as ShotProduction | undefined;

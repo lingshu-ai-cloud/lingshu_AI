@@ -10,6 +10,7 @@ import {
   markPublicationAssignmentPackageReady,
   persistPublicationAssignment,
 } from './weeklyLineage.js';
+import { runWeeklyPublicationExecutionScan } from './weeklyPublicationExecutionWorker.js';
 
 type ArtifactRow = {
   id: string;
@@ -151,6 +152,12 @@ async function tick() {
     if (result.createdAssignments || result.createdPackages || result.errors.length) {
       console.log(`[weekly-publication-worker] scanned=${result.scanned} assignments=${result.createdAssignments} packages=${result.createdPackages} errors=${result.errors.length}`);
     }
+    if (process.env.SOCIAL_WEEKLY_REAL_PUBLISHING_ENABLED === 'true') {
+      const execution = await runWeeklyPublicationExecutionScan();
+      if (execution.published || execution.pending || execution.failed || execution.errors.length) {
+        console.log(`[weekly-publication-worker] execution scanned=${execution.scanned} published=${execution.published} pending=${execution.pending} failed=${execution.failed} errors=${execution.errors.length}`);
+      }
+    }
   } catch (error) {
     console.error('[weekly-publication-worker] cycle failed:', error instanceof Error ? error.message : error);
   } finally { running = false; }
@@ -163,5 +170,5 @@ export function initWeeklyPublicationPackageWorker(): void {
   void tick();
   timer = setInterval(() => { void tick(); }, interval);
   timer.unref?.();
-  console.log(`[weekly-publication-worker] enabled interval=${interval}ms; package-only, no external publish`);
+  console.log(`[weekly-publication-worker] enabled interval=${interval}ms; real-publishing=${process.env.SOCIAL_WEEKLY_REAL_PUBLISHING_ENABLED === 'true'}`);
 }

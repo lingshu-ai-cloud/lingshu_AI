@@ -4,7 +4,7 @@ import type {
   SocialContentThemeSelection,
   SocialScriptBaselineSummary,
 } from '../../shared/contracts/socialContentWorkflow.js';
-import type { EnterpriseProfile } from '../routes/enterprise.js';
+import type { EnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { SocialContentWorkflowError, socialJson, socialObject, socialText } from './socialContentValidation.js';
 

@@ -44,12 +44,15 @@ const task: ProductionGapTask = {
   gapTaskId: row.gapTaskId,
   tenantId: row.tenantId || tenantId,
   upstreamTaskRef: row.upstreamTaskRef,
-  productionGap: row.productionGap,
+  taskGap: row.taskGap,
+  budget: row.budget,
   status: row.status,
-  budgetLimitCny: Number(row.budgetLimitCny),
-  spentCny: Number(row.spentCny),
+  attemptCount: Number(row.attemptCount || 0),
+  lastError: row.lastError || null,
+  lastAttemptAt: row.lastAttemptAt || null,
   runRefs: Array.isArray(row.runRefs) ? row.runRefs : [],
   selectedEvidenceRefs: Array.isArray(row.selectedEvidenceRefs) ? row.selectedEvidenceRefs : [],
+  referenceSelectionRef: row.referenceSelectionRef || null,
   stopReason: row.stopReason || null,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
@@ -97,7 +100,8 @@ try {
       } as Awaited<ReturnType<NonNullable<Parameters<typeof runProductionGapWorker>[1]['executeRun']>>>;
     },
   });
-  console.log(JSON.stringify({ status: updated.status, gapTaskId, spentCny: updated.spentCny }));
+  console.log(JSON.stringify({ status: updated.status, gapTaskId, spentCny: updated.budget.spentCny }));
+  if (updated.lastError) process.exitCode = 1;
 } finally {
   await releaseDurableOperationLease({ dataStore: store, lease });
 }

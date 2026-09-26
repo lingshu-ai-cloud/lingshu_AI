@@ -464,5 +464,6 @@ test('weekly operating package migration defines immutable versions and one acti
   const eventsMigration = readFileSync('pb_migrations/1791072000_create_social_weekly_workflow_events.js', 'utf8');
   assert.match(eventsMigration, /UNIQUE INDEX idx_social_weekly_workflow_event_id/);
   assert.match(eventsMigration, /UNIQUE INDEX idx_social_weekly_workflow_state_version/);
-  assert.match(eventsMigration, /updateRule: "@request\.auth\.id != '' && false"/);
+  assert.match(eventsMigration, /updateRule: null/);
+  assert.match(eventsMigration, /deleteRule: null/);
 });
