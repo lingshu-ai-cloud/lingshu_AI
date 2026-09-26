@@ -7,7 +7,7 @@ import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
-import { confirmSalesQualification, createCreativeLearning, listInteractionWritebacks, writebackInteraction } from '../socialEngagement/writeback.js';
+import { confirmSalesQualification, createCreativeLearning, listCreativeLearnings, listInteractionWritebacks, writebackInteraction } from '../socialEngagement/writeback.js';
 
 export const socialEngagementRouter = Router();
 socialEngagementRouter.use(requireAuth);
@@ -243,16 +243,26 @@ socialEngagementRouter.post('/comments/convert', async (req, res) => {
 });
 
 socialEngagementRouter.get('/interactions', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'customer_service'].includes(role)) { res.status(403).json({ error: 'interaction_read_forbidden' }); return; }
   const kind = String(req.query.kind || '').trim();
   if (kind && !['comment', 'direct_message', 'form', 'inquiry'].includes(kind)) { res.status(400).json({ error: 'invalid_interaction_kind' }); return; }
   const items = await listInteractionWritebacks(tenantId, kind);
   res.json({ items, total: items.length });
 });
 
-socialEngagementRouter.post('/interactions/writeback', async (req, res) => {
+socialEngagementRouter.get('/creative-learnings', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
+  const items = await listCreativeLearnings(tenantId);
+  res.json({ items, total: items.length });
+});
+
+socialEngagementRouter.post('/interactions/writeback', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
   try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'social_operator', 'customer_service'].includes(role)) { res.status(403).json({ error: 'interaction_writeback_forbidden' }); return; }
     const result = await writebackInteraction(tenantId, req.body);
     res.status(result.repeated ? 200 : 201).json(result);
   } catch (error) {
@@ -281,7 +291,11 @@ socialEngagementRouter.post('/inquiries/:interactionId/qualification', async (re
 
 socialEngagementRouter.post('/creative-learnings', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
-  try { res.status(201).json({ item: await createCreativeLearning(tenantId, userId, req.body) }); }
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'creative_learning_write_forbidden' }); return; }
+    res.status(201).json({ item: await createCreativeLearning(tenantId, userId, req.body) });
+  }
   catch (error) {
     const code = error instanceof Error ? error.message : 'creative_learning_writeback_failed';
     res.status(code.startsWith('creative_learning_') && code !== 'creative_learning_writeback_unavailable' ? 400 : 503).json({ error: code });

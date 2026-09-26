@@ -323,7 +323,15 @@ export async function buildBusinessSnapshot(
   const weekRecipients = recipients.filter(item => inRange(item.created_at || item.created, startsAt, endsAt));
   const weekInteractions = interactionResult.items.filter(item => inRange(item.occurredAt || item.created_at, startsAt, endsAt));
   const weekQualifications = qualificationResult.items.filter(item => inRange(item.confirmed_at, startsAt, endsAt));
-  const qualifiedInteractionIds = new Set(weekQualifications.filter(item => item.status === 'qualified' && ['sales', 'crm'].includes(String(item.authority))).map(item => String(item.interaction_id)));
+  const latestQualifications = weekQualifications.reduce((latest, item) => {
+    const interactionId = String(item.interaction_id || '');
+    const previous = latest.get(interactionId);
+    if (interactionId && (!previous || time(item.confirmed_at) > time(previous.confirmed_at))) latest.set(interactionId, item);
+    return latest;
+  }, new Map<string, GenericRecord>());
+  const qualifiedInteractionIds = new Set([...latestQualifications.values()]
+    .filter(item => item.status === 'qualified' && ['sales', 'crm'].includes(String(item.authority)))
+    .map(item => String(item.interaction_id)));
   const qualifiedInquiries = weekInteractions.filter(item => item.kind !== 'comment' && qualifiedInteractionIds.has(item.id));
   const weekInquiries = weekInteractions.filter(item => item.kind !== 'comment');
   const interactionReviewUnavailable = interactionResult.failed || qualificationResult.failed;
@@ -507,7 +515,7 @@ export async function buildBusinessSnapshot(
       inquiries: interactionResult.failed ? null : weekInquiries.length,
       qualifiedInquiries: interactionReviewUnavailable ? null : qualifiedInquiries.length,
       unknownSourceInquiries: interactionResult.failed ? null : weekInquiries.filter(item => item.source_confidence === 'unknown' || !item.contentId).length,
-      creativeLearnings: learningResult.failed ? null : learningResult.items.filter(item => inRange(item.created_at, startsAt, endsAt)).length,
+      creativeLearnings: learningResult.failed ? null : new Set(learningResult.items.filter(item => inRange(item.created_at, startsAt, endsAt)).map(item => String(item.learning_id || item.id))).size,
       status: interactionReviewUnavailable || learningResult.failed ? 'unavailable' : 'available',
       note: '评论必须关联账号和内容；询盘无法可靠关联内容时保留为未知来源，不伪造全链路归因。',
       breakdown: interactionResult.failed ? [] : interactionBreakdown,

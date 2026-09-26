@@ -731,7 +731,7 @@ const COLLECTIONS: CollectionSpec[] = [
       { name: 'actor_id', type: 'text', required: true }, { name: 'reason', type: 'text', required: true, max: 2000 },
       { name: 'bant', type: 'json', maxSize: 524288 }, { name: 'confirmed_at', type: 'text', required: true },
     ],
-    indexes: ['CREATE UNIQUE INDEX idx_social_sales_qualification ON social_sales_qualifications (tenant_id, interaction_id)'],
+    indexes: ['CREATE INDEX idx_social_sales_qualification ON social_sales_qualifications (tenant_id, interaction_id, confirmed_at)'],
   },
   {
     name: 'social_creative_learnings',

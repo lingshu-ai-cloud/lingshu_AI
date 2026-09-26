@@ -320,6 +320,24 @@ export interface BusinessSnapshot {
     postsWithInquiries: number;
     status: DataAvailability;
   };
+  interactionReview?: {
+    deadline: string;
+    comments: number | null;
+    inquiries: number | null;
+    qualifiedInquiries: number | null;
+    unknownSourceInquiries: number | null;
+    creativeLearnings: number | null;
+    status: DataAvailability;
+    note: string;
+    breakdown: Array<{
+      businessDirectionRef: string | null;
+      accountId: string;
+      contentId: string | null;
+      comments: number;
+      inquiries: number;
+      qualifiedInquiries: number;
+    }>;
+  };
   dataGaps: string[];
 }
 

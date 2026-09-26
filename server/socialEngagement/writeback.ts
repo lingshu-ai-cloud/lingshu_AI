@@ -33,6 +33,7 @@ export interface StoredInteractionWriteback extends InteractionWritebackInput {
 }
 
 export interface CreativeLearningInput {
+  learningId?: string;
   evidenceKind: 'external_reference' | 'owned_content_result';
   scope: { platform?: string; accountId?: string; contentIds: string[]; businessDirection?: string };
   observation: string;
@@ -106,6 +107,12 @@ export async function listInteractionWritebacks(tenantId: string, kind?: string)
   })).items;
 }
 
+export async function listCreativeLearnings(tenantId: string) {
+  return (await store.list(LEARNINGS, {
+    where: { tenant_id: tenantId }, sort: '-created_at', perPage: 200,
+  })).items;
+}
+
 export async function confirmSalesQualification(input: {
   tenantId: string; interactionId: string; status: 'qualified' | 'disqualified'; authority: 'sales' | 'crm'; actorId: string; reason: string; bant?: unknown;
 }) {
@@ -114,14 +121,12 @@ export async function confirmSalesQualification(input: {
   const interaction = await store.getById<StoredInteractionWriteback>(INTERACTIONS, input.interactionId);
   if (!interaction || interaction.tenant_id !== input.tenantId || interaction.kind === 'comment') throw Error('inquiry_not_found');
   const now = new Date().toISOString();
-  const existing = (await store.list<any>(QUALIFICATIONS, { where: { tenant_id: input.tenantId, interaction_id: interaction.id }, perPage: 1 })).items[0];
   const payload = { tenant_id: input.tenantId, interaction_id: interaction.id, status: input.status, authority: input.authority, actor_id: clean(input.actorId, 200), reason: clean(input.reason, 2000), bant: input.bant, confirmed_at: now };
   if (!payload.actor_id || !payload.reason) throw Error('qualification_evidence_required');
-  if (existing) {
-    if (!await store.update(QUALIFICATIONS, existing.id, payload)) throw Error('qualification_writeback_unavailable');
-  } else if (!await store.create(QUALIFICATIONS, payload)) throw Error('qualification_writeback_unavailable');
+  const decision = await store.create(QUALIFICATIONS, payload);
+  if (!decision) throw Error('qualification_writeback_unavailable');
   if (!await store.update(INTERACTIONS, interaction.id, { qualification_status: input.status, updated_at: now })) throw Error('qualification_writeback_unavailable');
-  return { ...payload, sourceContentId: interaction.contentId || null, sourceConfidence: interaction.source_confidence };
+  return { ...decision, sourceContentId: interaction.contentId || null, sourceConfidence: interaction.source_confidence };
 }
 
 export async function createCreativeLearning(tenantId: string, actorId: string, raw: CreativeLearningInput) {
@@ -135,7 +140,8 @@ export async function createCreativeLearning(tenantId: string, actorId: string, 
   if (!['external_reference', 'owned_content_result'].includes(evidenceKind)) throw Error('creative_learning_kind_required');
   if (!observation || !nextAction || !evidenceRefs.length || !startsAt || !endsAt || !size) throw Error('creative_learning_evidence_required');
   if (Date.parse(startsAt) > Date.parse(endsAt)) throw Error('creative_learning_sample_range_invalid');
-  const learningId = `cl_${createHash('sha256').update(`${tenantId}\0${observation}\0${startsAt}\0${endsAt}`).digest('hex').slice(0, 24)}`;
+  const requestedLearningId = clean(raw?.learningId, 200);
+  const learningId = requestedLearningId || `cl_${createHash('sha256').update(`${tenantId}\0${evidenceKind}\0${observation}\0${startsAt}\0${endsAt}`).digest('hex').slice(0, 24)}`;
   const previous = (await store.list<any>(LEARNINGS, { where: { tenant_id: tenantId, learning_id: learningId }, sort: '-version', perPage: 1 })).items[0];
   const item = await store.create(LEARNINGS, {
     tenant_id: tenantId, learning_id: learningId, version: Number(previous?.version || 0) + 1,

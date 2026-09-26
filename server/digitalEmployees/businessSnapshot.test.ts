@@ -99,6 +99,7 @@ try {
   ]);
   fixtures.set('social_sales_qualifications', [
     { id: 'qualification-sales', tenant_id: tenantId, interaction_id: 'interaction-qualified', status: 'qualified', authority: 'sales', confirmed_at: '2026-09-03T02:00:00.000Z' },
+    { id: 'qualification-sales-reversed', tenant_id: tenantId, interaction_id: 'interaction-qualified', status: 'disqualified', authority: 'sales', confirmed_at: '2026-09-03T02:02:00.000Z' },
     { id: 'qualification-crm', tenant_id: tenantId, interaction_id: 'interaction-unknown-source', status: 'qualified', authority: 'crm', confirmed_at: '2026-09-03T02:01:00.000Z' },
   ]);
   fixtures.set('social_creative_learnings', [
@@ -126,16 +127,16 @@ try {
   );
   assert.equal(scheduled.content.scheduledPosts.value, 1);
   assert.equal(scheduled.content.publishedPosts.value, 1, 'only the post with a provider receipt is published');
-  assert.equal(scheduled.content.inquiries.value, 2, 'sales/CRM-confirmed inquiries count even when one has an explicitly unknown content source');
-  assert.equal(scheduled.attribution.postsWithInquiries, 1, 'only reliably linked inquiry content contributes to content attribution');
+  assert.equal(scheduled.content.inquiries.value, 1, 'only the latest sales/CRM decision per inquiry contributes to the metric');
+  assert.equal(scheduled.attribution.postsWithInquiries, 0, 'a later disqualification removes the linked inquiry from content attribution');
   assert.equal(scheduled.interactionReview.comments, 1);
   assert.equal(scheduled.interactionReview.inquiries, 2);
-  assert.equal(scheduled.interactionReview.qualifiedInquiries, 2);
+  assert.equal(scheduled.interactionReview.qualifiedInquiries, 1);
   assert.equal(scheduled.interactionReview.unknownSourceInquiries, 1, 'unknown inquiry sources remain explicit instead of receiving invented content attribution');
   assert.equal(scheduled.interactionReview.creativeLearnings, 1);
   assert.equal(scheduled.interactionReview.deadline, '2026-09-06T15:59:59.000Z', 'weekly snapshot deadline preserves the inclusive Asia/Shanghai reporting boundary');
   assert.deepEqual(scheduled.interactionReview.breakdown.find(item => item.businessDirectionRef === 'E2'), {
-    businessDirectionRef: 'E2', accountId: 'account-connected', contentId: 'post-receipt', comments: 0, inquiries: 1, qualifiedInquiries: 1,
+    businessDirectionRef: 'E2', accountId: 'account-connected', contentId: 'post-receipt', comments: 0, inquiries: 1, qualifiedInquiries: 0,
   });
   assert.equal(scheduled.content.deals.value, 1, 'only in-period nonrefunded tenant orders attributed to receipted posts count as deals');
   assert.equal(scheduled.customer.outreachBatches.status, 'available');
