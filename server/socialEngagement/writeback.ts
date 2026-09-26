@@ -135,7 +135,7 @@ export async function confirmSalesQualification(input: {
   return { ...decision, sourceContentId: interaction.contentId || null, sourceConfidence: interaction.source_confidence };
 }
 
-export async function createCreativeLearning(tenantId: string, actorId: string, raw: CreativeLearningInput) {
+export async function createCreativeLearning(tenantId: string, actorId: string, raw: CreativeLearningInput, dataStore: DataStore = store) {
   const evidenceKind = clean(raw?.evidenceKind, 50);
   const scope = raw?.scope && typeof raw.scope === 'object' ? raw.scope : { contentIds: [] };
   const evidenceRefs = unique(raw?.evidenceRefs);
@@ -148,8 +148,8 @@ export async function createCreativeLearning(tenantId: string, actorId: string, 
   if (Date.parse(startsAt) > Date.parse(endsAt)) throw Error('creative_learning_sample_range_invalid');
   const requestedLearningId = clean(raw?.learningId, 200);
   const learningId = requestedLearningId || `cl_${createHash('sha256').update(`${tenantId}\0${evidenceKind}\0${observation}\0${startsAt}\0${endsAt}`).digest('hex').slice(0, 24)}`;
-  const previous = (await store.list<any>(LEARNINGS, { where: { tenant_id: tenantId, learning_id: learningId }, sort: '-version', perPage: 1 })).items[0];
-  const item = await store.create(LEARNINGS, {
+  const previous = (await dataStore.list<any>(LEARNINGS, { where: { tenant_id: tenantId, learning_id: learningId }, sort: '-version', perPage: 1 })).items[0];
+  const item = await dataStore.create(LEARNINGS, {
     tenant_id: tenantId, learning_id: learningId, version: Number(previous?.version || 0) + 1,
     evidence_kind: evidenceKind,
     scope: { platform: clean(scope.platform, 50), accountId: clean(scope.accountId, 200), businessDirection: clean(scope.businessDirection, 200), contentIds },

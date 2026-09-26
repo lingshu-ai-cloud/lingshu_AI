@@ -20,6 +20,11 @@ export interface ReviewContentInput {
   attributionStatus?: 'attributed' | 'unknown' | 'unavailable';
   confounders?: string[];
   baseline?: MetricValues;
+  /** Durable weekly-plan item that asked for this publication. */
+  publicationTaskId?: string;
+  interactionRefs?: string[];
+  salesQualificationRefs?: string[];
+  salesQualifiedCount?: number;
 }
 export interface ReviewContentAggregate extends ReviewContentInput {
   metrics: Partial<Record<keyof MetricValues, ReviewMetric>>;
@@ -47,7 +52,9 @@ export interface FrozenWeeklyReview {
   snapshotId: string;
   version: 1;
   tenantId: string;
+  programId?: string;
   weekRef: string;
+  operatingPackageRef?: { type: 'weekly_operating_package'; id: string; version: number };
   window: ReviewWindow;
   contents: ReviewContentAggregate[];
   byBusinessDirection: ReviewAggregate[];
@@ -55,6 +62,15 @@ export interface FrozenWeeklyReview {
   maintenanceEffort: MaintenanceEffort;
   sampleSufficiency: SampleSufficiency;
   evidenceBoundary: { externalReferenceContentIds: string[]; ownedContentIds: string[] };
+  sourceEvidence?: {
+    workflowEventRefs: string[];
+    publicationReceiptRefs: string[];
+    interactionRefs: string[];
+    salesQualificationRefs: string[];
+    publishingAvailability: ReviewAvailability;
+    engagementAvailability: ReviewAvailability;
+    salesConfirmationAvailability: ReviewAvailability;
+  };
   sourceDigest: string;
 }
 
@@ -72,6 +88,7 @@ export interface WeeklyPromotionDecision {
   decisionId: string;
   snapshotId: string;
   contentId: string;
+  publicationTaskId?: string;
   action: PromotionAction;
   evidenceRefs: string[];
   reasons: string[];
@@ -81,7 +98,9 @@ export interface VersionedQuotaReference {
   quotaId: string;
   version: number;
   sourceSnapshotId: string;
+  programId?: string;
   previousQuotaRef?: string;
-  allocations: Array<{ businessDirection: string; accountId: string; action: PromotionAction; contentCount: number; sourceDecisionIds: string[] }>;
+  /** Observe decisions stay in the decision ledger and are never planning quota. */
+  allocations: Array<{ businessDirection: string; accountId: string; action: Exclude<PromotionAction, 'observe'>; contentCount: number; sourceDecisionIds: string[] }>;
   stopConditions: string[];
 }

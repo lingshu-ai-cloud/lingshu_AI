@@ -10,6 +10,7 @@ import {
   type WeeklyWorkflowEvent,
 } from '../../shared/contracts/socialProgram.js';
 import type { BusinessContentGoal } from '../../shared/contracts/socialOperatingDecision.js';
+import type { VersionedQuotaReference } from '../../shared/contracts/socialReview.js';
 import { SocialProgramError } from './service.js';
 import { buildWeeklyWorkflow, type WeeklyAutomationPolicySnapshot, type WeeklyCapacitySnapshot } from './weeklyPlanner.js';
 import { applyWorkflowEvent } from './workflowState.js';
@@ -24,12 +25,15 @@ import {
   projectWeeklyExecution,
   summarizeWeeklyExecutionTasks,
 } from './executionTasks.js';
+import { enqueueAgentNotificationDomainEvent } from '../notifications/agentNotificationOutbox.js';
 
 const PACKAGES = 'social_weekly_operating_packages';
 const PROGRAMS = 'social_programs';
 const ACCOUNTS = 'social_owned_accounts';
 const WORKFLOW_EVENTS = 'social_weekly_workflow_events';
 const workflowMutationTails = new Map<string, Promise<void>>();
+const PROMOTION_QUOTAS = 'social_weekly_quota_references';
+const WEEKLY_REVIEWS = 'social_weekly_review_snapshots';
 const SUPPORTED_PLATFORMS = ['tiktok', 'facebook', 'instagram', 'youtube'] as const;
 type SupportedPlatform = typeof SUPPORTED_PLATFORMS[number];
 
@@ -459,6 +463,7 @@ function packageFromInput(args: {
     automationPolicyRef: policy?.ref ?? null,
     operatingDecisionSnapshotRef: versionedRef(args.input.operatingDecisionSnapshotRef),
     referenceModeRef: versionedRef(args.input.referenceModeRef),
+    promotionQuotaRef: versionedRef(args.input.promotionQuotaRef),
     discoveryBudgetCny: finiteBudget(args.input.discoveryBudgetCny),
     socialContentPackage: contentPackage,
     successCriteria: uniqueText(args.input.successCriteria),
@@ -637,6 +642,89 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
     };
   }
 
+  async function withPromotionQuota(
+    tenantId: string,
+    programId: string,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const ref = versionedRef(input.promotionQuotaRef);
+    if (!ref) return input;
+    if (ref.type !== 'weekly_promotion_quota') {
+      throw new SocialProgramError('promotion_quota_ref_invalid', 400, '晋级配额引用类型无效。');
+    }
+    const found = await dataStore.list<{ id: string; program_id?: string; snapshot_id: string; quota: VersionedQuotaReference }>(PROMOTION_QUOTAS, {
+      where: { tenant_id: tenantId, quota_id: ref.id, version: ref.version }, page: 1, perPage: 2,
+    });
+    if (found.items.length !== 1) throw new SocialProgramError('promotion_quota_not_found', 404, '晋级配额不存在或不唯一。');
+    const row = found.items[0];
+    const quota = row.quota;
+    if (!quota || quota.quotaId !== ref.id || quota.version !== ref.version || (quota.programId && quota.programId !== programId)
+      || (row.program_id && row.program_id !== programId)) {
+      throw new SocialProgramError('promotion_quota_lineage_invalid', 409, '晋级配额与当前项目不匹配。');
+    }
+    if (!quota.allocations.length) {
+      throw new SocialProgramError('promotion_quota_observe_only', 409, '样本仍在观察，不能进入下周配额。');
+    }
+    const snapshots = await dataStore.list<{ id: string; snapshot: { programId?: string; window?: { endsAt?: string } } }>(WEEKLY_REVIEWS, {
+      where: { tenant_id: tenantId, snapshot_id: quota.sourceSnapshotId }, page: 1, perPage: 2,
+    });
+    const snapshot = snapshots.items[0]?.snapshot;
+    const weekStart = dateOnly(input.weekStart, 'week_start_invalid');
+    if (snapshots.items.length !== 1 || !snapshot || (snapshot.programId && snapshot.programId !== programId)
+      || !snapshot.window?.endsAt || Date.parse(`${weekStart}T00:00:00.000Z`) < Date.parse(snapshot.window.endsAt)) {
+      throw new SocialProgramError('promotion_quota_window_invalid', 409, '晋级配额只能输入复盘窗口之后的周计划。');
+    }
+    const byAccount = new Map<string, { accountId: string; publicationCount: number; accountPositioning: string }>();
+    for (const allocation of quota.allocations) {
+      const current = byAccount.get(allocation.accountId);
+      if (current) current.publicationCount += allocation.contentCount;
+      else byAccount.set(allocation.accountId, {
+        accountId: allocation.accountId,
+        publicationCount: allocation.contentCount,
+        accountPositioning: allocation.businessDirection,
+      });
+    }
+    const accountPlans = [...byAccount.values()];
+    const allocatedCount = accountPlans.reduce((sum, item) => sum + item.publicationCount, 0);
+    return {
+      ...input,
+      promotionQuotaRef: ref,
+      accountPlans,
+      originalContentTarget: Math.max(1, Math.min(allocatedCount, Number(input.originalContentTarget) || allocatedCount)),
+    };
+  }
+
+  async function enqueuePackageChange(input: {
+    tenantId: string;
+    item: WeeklyOperatingPackage;
+    operation: 'created' | 'revised' | 'activated' | 'retired';
+    before?: WeeklyOperatingPackage;
+    authorizationRequired?: boolean;
+  }): Promise<void> {
+    const kind = input.authorizationRequired ? 'authorization.required' as const : 'weekly_package.adjusted' as const;
+    await enqueueAgentNotificationDomainEvent({
+      eventId: `weekly-package:${input.item.packageId}:v${input.item.version}:${input.operation}`,
+      kind,
+      tenantId: input.tenantId,
+      programId: input.item.programId,
+      packageId: input.item.packageId,
+      packageVersion: input.item.version,
+      entityId: input.item.packageId,
+      title: input.authorizationRequired ? '周任务包需要发布授权' : '周任务包已更新',
+      summary: input.authorizationRequired
+        ? '周任务包已激活，但真实发布仍保持关闭，需由有权限的人员确认。'
+        : `周任务包已${input.operation === 'created' ? '创建' : input.operation === 'revised' ? '修订' : input.operation === 'activated' ? '激活' : '撤回'}。`,
+      sourceAgent: 'business_agent',
+      changes: [{
+        field: input.authorizationRequired ? 'publishingAuthorization' : 'weeklyPackageVersion',
+        label: input.authorizationRequired ? '发布授权' : '周任务包版本',
+        before: input.authorizationRequired ? false : input.before?.version ?? null,
+        after: input.authorizationRequired ? 'required' : input.item.version,
+      }],
+      occurredAt: input.item.updatedAt,
+    }, dataStore);
+  }
+
   return {
     async list(tenantId: string, programId: string, weekStart?: string): Promise<WeeklyOperatingPackage[]> {
       await programRow(dataStore, tenantId, programId);
@@ -659,6 +747,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       const accounts = await accountsForProgram(dataStore, tenantId, programId);
       input = await withAuthoritativeDecisions(tenantId, programId, input);
       input = (await withAuthoritativePlanning(tenantId, programId, input)).input;
+      input = await withAuthoritativeGoal(tenantId, programId, input);
+      input = await withPromotionQuota(tenantId, programId, input);
       const item = packageFromInput({
         input, programId, userId, accounts, program: program.payload,
         packageId: randomUUID(), contentPackageId: randomUUID(), version: 1, previousVersion: null,
@@ -674,6 +764,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         await dataStore.delete(PACKAGES, saved.id);
         throw error;
       }
+      input = await withPromotionQuota(tenantId, programId, input);
     },
 
     async revise(tenantId: string, userId: string, programId: string, packageId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
@@ -694,6 +785,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         automationPolicyRef: current.payload.automationPolicyRef,
         operatingDecisionSnapshotRef: current.payload.operatingDecisionSnapshotRef,
         referenceModeRef: current.payload.referenceModeRef,
+        promotionQuotaRef: current.payload.promotionQuotaRef,
         originalContentTarget: current.payload.socialContentPackage.originalContentTarget,
         weeklyBudgetCny: current.payload.socialContentPackage.weeklyBudgetCny,
         perItemBudgetCny: current.payload.socialContentPackage.perItemBudgetCny,
@@ -728,6 +820,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         await dataStore.delete(PACKAGES, saved.id);
         throw error;
       }
+        promotionQuotaRef: current.payload.promotionQuotaRef,
       if (current.payload.socialContentPackage.authorization.allowRealPublishing) {
         const timestamp = at();
         const invalidated: WeeklyOperatingPackage = {
@@ -934,6 +1027,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         dataStore, tenantId, programId, packageId, retired.version, `package_retired:${userId}`, timestamp,
       );
       return projectWeeklyExecution(retired, tasks, timestamp);
+      await enqueuePackageChange({ tenantId, item, operation: 'revised', before: current.payload });
     },
 
     async applyWorkflowEvent(

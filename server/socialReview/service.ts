@@ -14,6 +14,8 @@ export interface FreezeWeeklyReviewInput {
   tenantId: string;
   actorId: string;
   weekRef: string;
+  programId?: string;
+  operatingPackageRef?: { type: 'weekly_operating_package'; id: string; version: number };
   startsAt: string;
   endsAt: string;
   frozenAt?: string;
@@ -22,6 +24,7 @@ export interface FreezeWeeklyReviewInput {
   unavailableMetricKeys?: SocialMetricKey[];
   maintenance?: Array<{ ref: string; minutes?: number; availability?: ReviewAvailability }>;
   minimumOwnedContent?: number;
+  sourceEvidence?: FrozenWeeklyReview['sourceEvidence'];
 }
 
 const iso = (value: string) => {
@@ -80,26 +83,34 @@ export function buildFrozenWeeklyReview(input: FreezeWeeklyReviewInput): FrozenW
   const owned = contents.filter(item => item.evidenceKind === 'owned_content_result');
   const attributable = owned.filter(item => item.attributionStatus === 'attributed' && item.publicationReceiptRefs?.length);
   const minimumOwnedContent = Math.max(1, input.minimumOwnedContent || 2);
-  const reasons = [...(owned.length < minimumOwnedContent ? ['owned_content_sample_too_small'] : []), ...(attributable.length < owned.length ? ['owned_content_contains_unknown_or_unavailable_attribution'] : [])];
+  const metricReady = owned.filter(item => item.metrics.views?.availability === 'available');
+  const reasons = [
+    ...(owned.length < minimumOwnedContent ? ['owned_content_sample_too_small'] : []),
+    ...(attributable.length < owned.length ? ['owned_content_contains_unknown_or_unavailable_attribution'] : []),
+    ...(metricReady.length < owned.length ? ['owned_content_contains_unknown_or_unavailable_metrics'] : []),
+  ];
   const maintenanceEntries = input.maintenance || [];
   const maintenanceUnavailable = maintenanceEntries.find(entry => entry.availability === 'unavailable');
   const knownMinutes = maintenanceEntries.filter(entry => typeof entry.minutes === 'number');
   const maintenanceAvailability: ReviewAvailability = maintenanceUnavailable ? 'unavailable' : knownMinutes.length === maintenanceEntries.length && maintenanceEntries.length ? 'available' : 'unknown';
-  const source = { weekRef: input.weekRef, startsAt, endsAt, contents: input.contents, metricSnapshots: input.metricSnapshots, unavailableMetricKeys: input.unavailableMetricKeys || [], maintenance: maintenanceEntries };
+  const source = { weekRef: input.weekRef, programId: input.programId || '', operatingPackageRef: input.operatingPackageRef || null, startsAt, endsAt, contents: input.contents, metricSnapshots: input.metricSnapshots, unavailableMetricKeys: input.unavailableMetricKeys || [], maintenance: maintenanceEntries, sourceEvidence: input.sourceEvidence || null };
   const sourceDigest = digest(source);
   const snapshotId = `wr_${createHash('sha256').update(`${input.tenantId}\0${input.weekRef}\0${endsAt}\0${sourceDigest}`).digest('hex').slice(0, 24)}`;
   return {
-    snapshotId, version: 1, tenantId: input.tenantId, weekRef: input.weekRef, window: { startsAt, endsAt, frozenAt }, contents,
+    snapshotId, version: 1, tenantId: input.tenantId, ...(input.programId ? { programId: input.programId } : {}), weekRef: input.weekRef, ...(input.operatingPackageRef ? { operatingPackageRef: input.operatingPackageRef } : {}), window: { startsAt, endsAt, frozenAt }, contents,
     byBusinessDirection: aggregate(contents, item => item.businessDirection), byAccount: aggregate(contents, item => `${item.platform}:${item.accountId}`),
     maintenanceEffort: { minutes: maintenanceAvailability === 'available' ? knownMinutes.reduce((sum, entry) => sum + entry.minutes!, 0) : null, availability: maintenanceAvailability, entryRefs: maintenanceEntries.map(entry => entry.ref) },
     sampleSufficiency: { status: owned.length > 0 && owned.every(item => item.metrics.views?.availability === 'unavailable') ? 'unavailable' : reasons.length ? 'insufficient' : 'sufficient', ownedContentCount: owned.length, attributableContentCount: attributable.length, minimumOwnedContent, reasons },
-    evidenceBoundary: { externalReferenceContentIds: contents.filter(item => item.evidenceKind === 'external_reference').map(item => item.contentId), ownedContentIds: owned.map(item => item.contentId) }, sourceDigest,
+    evidenceBoundary: { externalReferenceContentIds: contents.filter(item => item.evidenceKind === 'external_reference').map(item => item.contentId), ownedContentIds: owned.map(item => item.contentId) }, ...(input.sourceEvidence ? { sourceEvidence: input.sourceEvidence } : {}), sourceDigest,
   };
 }
 
 export async function freezeWeeklyReview(input: FreezeWeeklyReviewInput, dataStore: DataStore = store): Promise<{ snapshot: FrozenWeeklyReview; repeated: boolean }> {
   const snapshot = buildFrozenWeeklyReview(input);
-  const read = () => dataStore.list<any>(WEEKLY_REVIEWS, { where: { tenant_id: input.tenantId, week_ref: input.weekRef }, perPage: 2 });
+  const identity: Record<string, string | number | boolean> = input.operatingPackageRef
+    ? { tenant_id: input.tenantId, package_id: input.operatingPackageRef.id, package_version: input.operatingPackageRef.version }
+    : { tenant_id: input.tenantId, week_ref: input.weekRef };
+  const read = () => dataStore.list<any>(WEEKLY_REVIEWS, { where: identity, perPage: 2 });
   const rows = await read();
   const existing = rows.items[0];
   if (existing) {
@@ -108,7 +119,7 @@ export async function freezeWeeklyReview(input: FreezeWeeklyReviewInput, dataSto
   }
   let saved = null;
   try {
-    saved = await dataStore.create(WEEKLY_REVIEWS, { tenant_id: input.tenantId, week_ref: input.weekRef, snapshot_id: snapshot.snapshotId, window_ends_at: snapshot.window.endsAt, source_digest: snapshot.sourceDigest, snapshot, frozen_at: snapshot.window.frozenAt, frozen_by: input.actorId });
+    saved = await dataStore.create(WEEKLY_REVIEWS, { tenant_id: input.tenantId, week_ref: input.weekRef, program_id: input.programId || '', package_id: input.operatingPackageRef?.id || '', package_version: input.operatingPackageRef?.version || 0, snapshot_id: snapshot.snapshotId, window_ends_at: snapshot.window.endsAt, source_digest: snapshot.sourceDigest, snapshot, frozen_at: snapshot.window.frozenAt, frozen_by: input.actorId });
   } catch {
     saved = null;
   }
@@ -121,14 +132,17 @@ export async function freezeWeeklyReview(input: FreezeWeeklyReviewInput, dataSto
   return { snapshot, repeated: false };
 }
 
-export async function generateWeeklyCreativeLearnings(snapshot: FrozenWeeklyReview, actorId: string) {
+export async function generateWeeklyCreativeLearnings(snapshot: FrozenWeeklyReview, actorId: string, dataStore: DataStore = store) {
   const results = [];
   for (const content of snapshot.contents) {
     const views = content.metrics.views;
     if (views?.availability !== 'available' || !views.value || !(content.metricSnapshotRefs.length || content.publicationReceiptRefs?.length)) continue;
     const boundaries = [content.evidenceKind === 'external_reference' ? 'External reference performance is not customer-owned outcome evidence.' : 'Observation is limited to the frozen weekly window.'];
     if (content.attributionStatus !== 'attributed') boundaries.push('Customer outcome attribution is unknown or unavailable; do not promote from this observation.');
-    results.push(await createCreativeLearning(snapshot.tenantId, actorId, { evidenceKind: content.evidenceKind, scope: { platform: content.platform, accountId: content.accountId, contentIds: [content.contentId], businessDirection: content.businessDirection }, observation: `Frozen weekly window recorded ${views.value} attributable-or-observed views for this content.`, evidenceRefs: [...content.metricSnapshotRefs, ...(content.publicationReceiptRefs || [])], sample: { startsAt: snapshot.window.startsAt, endsAt: snapshot.window.endsAt, size: 1 }, boundaries, nextAction: content.evidenceKind === 'owned_content_result' && content.attributionStatus === 'attributed' ? 'Compare against the customer account baseline before allocating more quota.' : 'Keep as observation only and collect attributable customer-owned results.' }));
+    const learningId = `weekly:${snapshot.snapshotId}:${content.contentId}`;
+    const previous = await dataStore.list<any>('social_creative_learnings', { where: { tenant_id: snapshot.tenantId, learning_id: learningId }, sort: '-version', perPage: 1 });
+    if (previous.items[0]) { results.push(previous.items[0]); continue; }
+    results.push(await createCreativeLearning(snapshot.tenantId, actorId, { learningId, evidenceKind: content.evidenceKind, scope: { platform: content.platform, accountId: content.accountId, contentIds: [content.contentId], businessDirection: content.businessDirection }, observation: `Frozen weekly window recorded ${views.value} attributable-or-observed views for this content.`, evidenceRefs: [...content.metricSnapshotRefs, ...(content.publicationReceiptRefs || []), ...(content.interactionRefs || []), ...(content.salesQualificationRefs || [])], sample: { startsAt: snapshot.window.startsAt, endsAt: snapshot.window.endsAt, size: 1 }, boundaries, nextAction: content.evidenceKind === 'owned_content_result' && content.attributionStatus === 'attributed' ? 'Compare against the customer account baseline before allocating more quota.' : 'Keep as observation only and collect attributable customer-owned results.' }, dataStore));
   }
   return results;
 }
@@ -162,7 +176,7 @@ export async function savePromotionLoop(
     }
     let saved = null;
     try {
-      saved = await dataStore.create(PROMOTION_DECISIONS, { tenant_id: input.tenantId, decision_id: decision.decisionId, snapshot_id: decision.snapshotId, content_id: decision.contentId, action: decision.action, decision, created_at: input.snapshot.window.frozenAt });
+      saved = await dataStore.create(PROMOTION_DECISIONS, { tenant_id: input.tenantId, decision_id: decision.decisionId, program_id: input.snapshot.programId || '', snapshot_id: decision.snapshotId, content_id: decision.contentId, action: decision.action, decision, created_at: input.snapshot.window.frozenAt });
     } catch {
       saved = null;
     }
@@ -181,7 +195,7 @@ export async function savePromotionLoop(
   }
   let savedQuota = null;
   try {
-    savedQuota = await dataStore.create(QUOTA_REFERENCES, { tenant_id: input.tenantId, quota_id: input.quota.quotaId, version: input.quota.version, snapshot_id: input.snapshot.snapshotId, payload_digest: quotaDigest, quota: input.quota, created_at: input.snapshot.window.frozenAt });
+    savedQuota = await dataStore.create(QUOTA_REFERENCES, { tenant_id: input.tenantId, quota_id: input.quota.quotaId, version: input.quota.version, program_id: input.snapshot.programId || '', snapshot_id: input.snapshot.snapshotId, payload_digest: quotaDigest, quota: input.quota, created_at: input.snapshot.window.frozenAt });
   } catch {
     savedQuota = null;
   }

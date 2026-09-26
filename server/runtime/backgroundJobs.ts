@@ -12,6 +12,8 @@ import { initWhatsAppCustomerMaintenance } from '../whatsapp/historyImport.js';
 import { startAdAutomationWorker } from '../platformAds/automation.js';
 import { initWeeklyPublicationPackageWorker } from '../publishing/weeklyPublicationWorker.js';
 import { initEngagementIngestionWorker } from '../socialEngagement/ingestionWorker.js';
+import { initAgentNotificationOutboxWorker } from '../notifications/agentNotificationOutbox.js';
+import { initSocialWeeklyReviewWorker } from '../socialReview/weeklyReviewWorker.js';
 
 export async function startBackgroundJobs(): Promise<void> {
   console.log('[runtime] starting background jobs');
@@ -29,6 +31,8 @@ export async function startBackgroundJobs(): Promise<void> {
   startAdAutomationWorker();
   initWeeklyPublicationPackageWorker();
   initEngagementIngestionWorker();
+  initAgentNotificationOutboxWorker();
+  initSocialWeeklyReviewWorker();
   initDigitalEmployeeRuntime();
   console.log('[runtime] background jobs started');
 }

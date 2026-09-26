@@ -240,6 +240,8 @@ export interface WeeklyOperatingPackage {
   automationPolicyRef: VersionedSocialRef | null;
   operatingDecisionSnapshotRef?: VersionedSocialRef | null;
   referenceModeRef?: VersionedSocialRef | null;
+  /** R6 output consumed as an explicit, versioned input to this plan. */
+  promotionQuotaRef?: VersionedSocialRef | null;
   discoveryBudgetCny: number | null;
   socialContentPackage: SocialWeeklyContentPackage;
   successCriteria: string[];

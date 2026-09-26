@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { store } from '../storage/index.js';
+import type { DataStore } from '../storage/datastore.js';
 import {
   AGENT_NOTIFICATION_TYPES,
   type AgentNotification,
@@ -85,7 +86,7 @@ export async function createAgentNotification(input: {
   entityId?: string;
   changes?: AgentNotificationChange[];
   action?: AgentNotification['action'];
-}): Promise<{ notification: AgentNotification; created: boolean }> {
+}, dataStore: DataStore = store): Promise<{ notification: AgentNotification; created: boolean }> {
   const tenantId = clean(input.tenantId, 120);
   const eventKey = clean(input.eventKey, 180);
   const title = clean(input.title, 160);
@@ -98,12 +99,12 @@ export async function createAgentNotification(input: {
   if (input.type === 'critical_business_change' && changes.length === 0) {
     throw new AgentNotificationError('critical_business_change_requires_changes');
   }
-  const existing = await store.list<StoredNotification>(COLLECTION, { where: { tenant_id: tenantId, event_key: eventKey }, perPage: 1 });
+  const existing = await dataStore.list<StoredNotification>(COLLECTION, { where: { tenant_id: tenantId, event_key: eventKey }, perPage: 1 });
   if (existing.items[0]) return { notification: present(existing.items[0]), created: false };
   const now = new Date().toISOString();
   let notification: StoredNotification | null;
   try {
-    notification = await store.create<StoredNotification>(COLLECTION, {
+    notification = await dataStore.create<StoredNotification>(COLLECTION, {
       notification_id: `notification_${randomUUID()}`,
       tenant_id: tenantId,
       event_key: eventKey,
@@ -121,7 +122,7 @@ export async function createAgentNotification(input: {
     });
   } catch (error) {
     // A concurrent producer may have won the unique tenant/event key race.
-    const raced = await store.list<StoredNotification>(COLLECTION, { where: { tenant_id: tenantId, event_key: eventKey }, perPage: 1 });
+    const raced = await dataStore.list<StoredNotification>(COLLECTION, { where: { tenant_id: tenantId, event_key: eventKey }, perPage: 1 });
     if (raced.items[0]) return { notification: present(raced.items[0]), created: false };
     throw error;
   }
@@ -146,9 +147,9 @@ export async function createAgentAdjustmentNotification(input: {
   changes: AgentNotificationChange[];
   action: NonNullable<AgentNotification['action']>;
   severity?: AgentNotificationSeverity;
-}) {
+}, dataStore: DataStore = store) {
   if (!input.changes.length) throw new AgentNotificationError('agent_adjustment_requires_changes');
-  return createAgentNotification(input);
+  return createAgentNotification(input, dataStore);
 }
 
 /**
@@ -199,7 +200,7 @@ function workbenchHref(event: AgentNotificationDomainEvent): string {
   return `/?${query.toString()}`;
 }
 
-export async function consumeAgentNotificationDomainEvent(event: AgentNotificationDomainEvent) {
+export async function consumeAgentNotificationDomainEvent(event: AgentNotificationDomainEvent, dataStore: DataStore = store) {
   const eventId = clean(event.eventId, 180);
   const programId = clean(event.programId, 180);
   const occurredAt = Date.parse(event.occurredAt);
@@ -222,7 +223,7 @@ export async function consumeAgentNotificationDomainEvent(event: AgentNotificati
       page: event.kind === 'scope.changed' ? 'socialInspiration' : 'socialWorkspace',
       href: workbenchHref(event),
     },
-  });
+  }, dataStore);
 }
 
 async function listTenantRecords(tenantId: string): Promise<StoredNotification[]> {
