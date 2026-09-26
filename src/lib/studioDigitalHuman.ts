@@ -76,13 +76,15 @@ export interface DigitalHumanJob {
   completedAt?: string;
 }
 
+export type MaterialLibraryPurpose = 'library' | 'reference' | 'all';
 export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }> };
 let latestMaterialLibraryState: MaterialLibraryState | null = null;
 export const getMaterialLibraryState = () => latestMaterialLibraryState;
 function publishMaterialLibraryState(state: MaterialLibraryState) { latestMaterialLibraryState = state; window.dispatchEvent(new CustomEvent('lingshu:material-library-status', { detail: state })); }
-export async function fetchMaterialLibrary(): Promise<MaterialLibraryState & { items: Material[] }> {
+export async function fetchMaterialLibrary(purpose: MaterialLibraryPurpose = 'library'): Promise<MaterialLibraryState & { items: Material[] }> {
   try {
-    const response = await fetch('/api/overseas/studio/materials?envelope=1', { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
+    const query = new URLSearchParams({ envelope: '1', purpose });
+    const response = await fetch(`/api/overseas/studio/materials?${query.toString()}`, { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if (response.status === 401) throw Error('登录已失效，请重新登录后读取素材');
     const data = await response.json();
     if (!response.ok || !Array.isArray(data.items)) throw Error(data.error || '素材库暂时无法读取，请重试');

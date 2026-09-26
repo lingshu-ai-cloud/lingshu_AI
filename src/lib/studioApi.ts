@@ -2,7 +2,7 @@ import { formatDemoQuotaError } from './studioQuotaMessage';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
 import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessment, TransformationAssessmentInput } from './studioDigitalHuman';
-import { fetchMaterialLibrary } from './studioDigitalHuman';
+import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigitalHuman';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 import { normalizeEffectPlan, type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 
@@ -717,7 +717,7 @@ export const studioApi = {
 
   // 素材库
   listMaterialLibrary: fetchMaterialLibrary,
-  listMaterials: async (): Promise<Material[]> => (await fetchMaterialLibrary()).items,
+  listMaterials: async (purpose: MaterialLibraryPurpose = 'library'): Promise<Material[]> => (await fetchMaterialLibrary(purpose)).items,
   uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (

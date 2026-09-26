@@ -2733,7 +2733,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const refreshMaterials = async () => {
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      setLocalMaterials(await studioApi.listMaterials());
+      // “我的素材”既是可编辑生产素材的入口，也是采集参考素材的可见库存。
+      // 参考素材必须可预览，但仍由 usage=reference_only 阻止进入生成链路。
+      setLocalMaterials(await studioApi.listMaterials('all'));
     } catch { /* keep last successful items; show connection status */ } finally {
       setMaterialsLoading(false);
     }
@@ -2951,6 +2953,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       };
     }), [localMaterials, crawledVideos]);
   const enterMaterialSmartGeneration = (material: Material) => {
+    if (material.usage === 'reference_only') {
+      setMaterialMessage('这条采集素材仅供分析与镜头参考，完成商业授权复核后才能用于生成成片。');
+      return;
+    }
     const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
       : /youtube/i.test(material.name) ? 'youtube' : /instagram/i.test(material.name) ? 'instagram' : 'tiktok';
     const title = material.name.replace(/\.[a-z0-9]+$/i, '');
@@ -3977,7 +3983,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               </div>
 
               <MaterialLibraryStatus onRetry={refreshMaterials} />
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {localMaterials.some(material => material.usage === 'reference_only') && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-xs text-sky-900">
+                  <span><strong>{localMaterials.filter(material => material.usage === 'reference_only').length}</strong> 条采集参考素材已显示；视频可直接预览，授权复核前不会进入商用生成链路。</span>
+                  <span className="font-bold">参考素材 ≠ 可商用素材</span>
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5">
                 {materialsLoading ? (
                   <div className="col-span-full flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
@@ -4035,6 +4047,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         </p>
                       )}
                       <div className="mt-2 flex flex-wrap gap-1">
+                        {material.usage === 'reference_only' && <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800">采集参考 · 仅供分析</span>}
                         <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${material.productName ? 'bg-emerald-50 text-emerald-700' : isEnterpriseCommonMaterial(material) ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'}`}>
                           {material.productName ? `产品：${material.productName}` : isEnterpriseCommonMaterial(material) ? '企业通用素材' : '产品归属待确认'}
                         </span>
@@ -4055,11 +4068,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
-                          disabled={material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
-                          title={material.type === 'image' || material.duration > 0 ? '把这条素材带入内容制作' : '当前素材缺少可用时长'}
+                          disabled={material.usage === 'reference_only' || material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
+                          title={material.usage === 'reference_only' ? '采集参考素材仅供分析，完成商业授权复核后才能用于生成' : material.type === 'image' || material.duration > 0 ? '把这条素材带入内容制作' : '当前素材缺少可用时长'}
                           className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          <Sparkles size={14} />用此素材生成
+                          {material.usage === 'reference_only' ? <><Eye size={14} />仅供分析</> : <><Sparkles size={14} />用此素材生成</>}
                         </button>
                         {material.canManage && <>
                           <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition hover:border-accent hover:text-accent"><Pencil size={14} /></button>
