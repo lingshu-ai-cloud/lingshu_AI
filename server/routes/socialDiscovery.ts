@@ -133,6 +133,11 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   }).filter(item => item.label);
 
   const previous = await latestScope(tenantId);
+  const innovationExperimentShare = body.innovationExperimentShare === undefined ? 0.15 : Number(body.innovationExperimentShare);
+  if (!Number.isFinite(innovationExperimentShare) || innovationExperimentShare < 0.1 || innovationExperimentShare > 0.2) {
+    res.status(400).json({ error: 'innovation_share_out_of_experiment_bounds', message: '创新实验占比必须在 10%—20% 之间。' });
+    return;
+  }
   const strategy = buildSocialCrawlStrategy({
     businessGoal: String(body.businessGoal || '发现与当前产品、市场和沟通对象相符，并可迁移到生产的内容机会').trim(),
     productTerms: products,
@@ -154,6 +159,7 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   strategy.discoveryBrief.keywordSetVersion = strategy.keywordSet.version;
   strategy.discoveryBrief.discoveryModes = discoveryModes(body.discoveryModes);
   strategy.discoveryBrief.modePolicies = normalizeModePolicies(body.modePolicies, strategy.discoveryBrief.discoveryModes, strategy.discoveryBrief.resultLimit, strategy.discoveryBrief.platforms);
+  (strategy.discoveryBrief as typeof strategy.discoveryBrief & { innovationExperimentShare: number }).innovationExperimentShare = innovationExperimentShare;
   strategy.discoveryBrief.createdBy = 'director_agent';
   strategy.createdBy = 'user';
   strategy.approval = { status: 'approved', approvedBy: 'user', approvedAt: new Date().toISOString(), scopeVersion: strategy.keywordSet.version };

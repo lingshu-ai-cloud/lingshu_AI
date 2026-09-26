@@ -1,12 +1,16 @@
 import { store } from '../storage/index.js';
 import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
+import { planRollingSevenDayQuotas } from './qualityOrchestration.js';
 import type {
   SocialCrawlStrategy,
+  SocialDiscoveryBrief,
   SocialDiscoveryMode,
   SocialDiscoveryModeRunStats,
   SocialInspirationCollectionRun,
 } from '../../shared/contracts/socialContentWorkflow.js';
+
+type SocialDiscoveryBriefWithQuality = SocialDiscoveryBrief & { innovationExperimentShare?: number };
 
 export const DISCOVERY_SCOPE_COLLECTION = 'social_discovery_scopes';
 export const DISCOVERY_RUN_COLLECTION = 'social_discovery_runs';
@@ -59,15 +63,20 @@ export async function executeApprovedDiscoveryRun(input: {
   }
 
   const brief = structuredClone(scope.payload.discoveryBrief);
-  const previousRuns = input.triggerType === 'scheduled'
-    ? (await store.list<SocialInspirationCollectionRun>(DISCOVERY_RUN_COLLECTION, {
+  const previousRuns = (await store.list<SocialInspirationCollectionRun>(DISCOVERY_RUN_COLLECTION, {
       where: { tenant_id: input.tenantId, keywordSetId: brief.keywordSetId }, sort: '-startedAt', page: 1, perPage: 200,
-    })).items
-    : [];
+    })).items;
   const candidates = input.triggerType === 'scheduled'
     ? dueDiscoveryModes(brief, previousRuns)
     : input.requestedModes ?? brief.discoveryModes;
-  const requestedModes = [...new Set(candidates)].filter(mode => brief.discoveryModes.includes(mode) && brief.modePolicies?.[mode]?.enabled);
+  const configuredShare = Number((brief as SocialDiscoveryBriefWithQuality).innovationExperimentShare ?? 0.15);
+  const quotaPlan = planRollingSevenDayQuotas(previousRuns, {
+    totalAcceptedTarget: brief.resultLimit,
+    innovationShare: configuredShare,
+  });
+  const requestedModes = [...new Set(candidates)].filter(mode => brief.discoveryModes.includes(mode)
+    && brief.modePolicies?.[mode]?.enabled
+    && (input.triggerType === 'production_gap' || quotaPlan.remainingByMode[mode] > 0));
   if (!requestedModes.length) return { skipped: true, reason: 'no_discovery_mode_due', nextRunAt: nextDiscoveryRunAt(brief, previousRuns) };
   brief.discoveryModes = requestedModes;
   const issues = validateDiscoveryBrief(brief);
@@ -96,7 +105,11 @@ export async function executeApprovedDiscoveryRun(input: {
     const targets = refs.flatMap(ref => /^https?:\/\//i.test(ref)
       ? [{ ref, platform: inferPlatformFromUrl(ref) }]
       : configuredPlatforms.filter(platform => ['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform)).map(platform => ({ ref, platform: platform as ReturnType<typeof inferPlatformFromUrl> })));
-    let remaining = policy.resultLimit;
+    // Scheduled/manual discovery fills accepted-item gaps. A production gap owns its
+    // independent budget and is therefore bounded by its explicit mode policy.
+    let remaining = input.triggerType === 'production_gap'
+      ? policy.resultLimit
+      : Math.min(policy.resultLimit, quotaPlan.remainingByMode[mode]);
     for (const [index, target] of targets.entries()) {
       if (remaining <= 0) break;
       const perSourceLimit = Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index)));
