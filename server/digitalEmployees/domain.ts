@@ -318,7 +318,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
       businessDomain: 'content', capabilityKey: 'studio.quality_gate', destination: 'smartAssets', destinationView: 'create', statusSource: 'studio project quality state', executionMode: 'observe', externalEffect: 'none',
     },
     {
-      key: 'content_release_approval', title: '审批发布内容与账号', description: '经营 Agent 汇总作品、平台文案、发布账号和时间交负责人逐项确认；修改内容后原审批自动失效。',
+      key: 'content_release_approval', title: '审批发布内容与账号', description: '经营 Agent 汇总作品、平台文案、发布账号和时间；负责人一次确认本周有界发布范围，包内合规内容自动排期。修改内容或关键经营边界后原授权自动失效并提醒用户。',
       agentRole: 'business', backgroundCapability: 'risk', kind: 'approval', sequence: 8, priority: 'high', requiresApproval: runtimePolicy.agents.content.approvals.contentPublish, dependsOn: ['content_quality_gate'], expectedMinutes: 5,
       businessDomain: 'publishing', capabilityKey: 'publishing.approval', destination: 'smartAssets', destinationView: 'publish', statusSource: 'approval_requests', executionMode: 'approval', externalEffect: 'publish',
     },

@@ -18,9 +18,14 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
     ...(template.id === 'production' ? { videoPlans: goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
   }));
   const contentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
+  const publishAccountCount = config.publishingTargets.filter(target => goal.contentPlatforms.includes(target.platform)).length;
+  const defaultPublishActions = contentCount * Math.max(1, publishAccountCount);
   return { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     directorPlan: defaultDirectorPlan(contentCount),
-    authorization: { mode: 'each', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: 1, customerIds: [], maxCustomerMessages: 1 } };
+    // Approving the weekly package is the single human authorization event.
+    // Every actual publish still has to pass the frozen account/week/count/hash
+    // boundary and the existing quality, connection and receipt safeguards.
+    authorization: { mode: 'bounded', accountIds: config.publishingTargets.map(t => t.accountId), maxPublishItems: Math.max(1, defaultPublishActions), customerIds: [], maxCustomerMessages: 1 } };
 }
 
 export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
@@ -88,6 +93,19 @@ export function compilePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, confi
 export function packageTaskForKey(pack: WeeklyPackage | undefined, key: string): PackageTask | undefined {
   const template = TASK_TEMPLATES.find(t => (t.keys as readonly string[]).includes(key));
   return pack?.tasks.find(t => t.templateId === template?.id);
+}
+
+export function criticalBusinessConfigChanges(before: DigitalEmployeeConfig, after: DigitalEmployeeConfig): string[] {
+  const stable = (values: string[]) => JSON.stringify([...new Set(values)].sort());
+  const changed: string[] = [];
+  if (before.focusProducts !== after.focusProducts) changed.push('products');
+  if (before.targetMarkets !== after.targetMarkets) changed.push('markets');
+  if (before.customerProfile !== after.customerProfile) changed.push('audience');
+  if (stable(before.videoLanguages) !== stable(after.videoLanguages)) changed.push('languages');
+  if (stable(before.publishingTargets.map(item => item.platform)) !== stable(after.publishingTargets.map(item => item.platform))) changed.push('platforms');
+  if (stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}`))) changed.push('accounts');
+  if (before.allowRealPublishing !== after.allowRealPublishing) changed.push('realPublishingPermission');
+  return changed;
 }
 
 // A package grant authorizes only the frozen scope. A later content edit is

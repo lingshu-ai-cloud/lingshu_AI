@@ -31,8 +31,32 @@ export interface PublishingApprovalPackage {
   schemaVersion: 1;
   contentHash: string;
   allowRealPublishing: boolean;
+  authorizationSnapshot?: BoundedPublishingAuthorizationSnapshot;
   items: PublishingApprovalItem[];
 }
+
+export interface BoundedPublishingAuthorizationSnapshot {
+  schemaVersion: 1;
+  packageRevision: number;
+  authorizedBy: string;
+  authorizedAt: string;
+  startsAt: string;
+  endsAt: string;
+  accountBindings: Array<{ accountId: string; platform: PublishingPlatform }>;
+  maxPublishItems: number;
+  businessBoundary: {
+    products: string;
+    markets: string;
+    audience: string;
+    languages: string[];
+    platforms: PublishingPlatform[];
+    productionBudget: number;
+    paidMediaBudget: number;
+  };
+  snapshotHash: string;
+}
+
+export type BoundedPublishingAuthorizationInput = Omit<BoundedPublishingAuthorizationSnapshot, 'schemaVersion' | 'snapshotHash'>;
 
 const text = (value: unknown): string => String(value ?? '').trim();
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -44,8 +68,67 @@ function nextDailySlot(index: number, now: Date): string {
   return slot.toISOString();
 }
 
-function contentFingerprint(items: PublishingApprovalItem[], allowRealPublishing: boolean): string {
-  return createHash('sha256').update(JSON.stringify({ allowRealPublishing, items })).digest('hex');
+function stableAuthorizationValue(input: BoundedPublishingAuthorizationInput) {
+  return {
+    ...input,
+    accountBindings: [...input.accountBindings].sort((a, b) => `${a.platform}:${a.accountId}`.localeCompare(`${b.platform}:${b.accountId}`)),
+    businessBoundary: {
+      ...input.businessBoundary,
+      languages: [...input.businessBoundary.languages].sort(),
+      platforms: [...input.businessBoundary.platforms].sort(),
+    },
+  };
+}
+
+export function buildBoundedPublishingAuthorization(input: BoundedPublishingAuthorizationInput): BoundedPublishingAuthorizationSnapshot {
+  const stable = stableAuthorizationValue(input);
+  return { schemaVersion: 1, ...stable, snapshotHash: createHash('sha256').update(JSON.stringify(stable)).digest('hex') };
+}
+
+export function boundedAuthorizationIssue(snapshot: BoundedPublishingAuthorizationSnapshot | undefined, input: {
+  accountId: string;
+  platform: PublishingPlatform;
+  scheduledAt: string;
+}): string {
+  if (!snapshot) return 'bounded_authorization_missing';
+  const raw = snapshot as unknown as Record<string, unknown>;
+  const boundary = record(raw.businessBoundary);
+  const bindings = raw.accountBindings;
+  const languages = boundary.languages;
+  const platforms = boundary.platforms;
+  if (!Array.isArray(bindings) || !bindings.every(binding => {
+    const item = record(binding);
+    return Boolean(text(item.accountId) && text(item.platform));
+  }) || !Array.isArray(languages) || !languages.every(language => typeof language === 'string')
+    || !Array.isArray(platforms) || !platforms.every(platform => typeof platform === 'string')
+    || typeof raw.snapshotHash !== 'string' || !Number.isInteger(raw.packageRevision)
+    || !Number.isInteger(raw.maxPublishItems)
+    || !Number.isFinite(Number(boundary.productionBudget)) || !Number.isFinite(Number(boundary.paidMediaBudget))) {
+    return 'bounded_authorization_malformed';
+  }
+  if (snapshot.schemaVersion !== 1) return 'bounded_authorization_version_unsupported';
+  const { snapshotHash, schemaVersion: _schemaVersion, ...value } = snapshot;
+  try {
+    if (buildBoundedPublishingAuthorization(value).snapshotHash !== snapshotHash) return 'bounded_authorization_tampered';
+  } catch {
+    return 'bounded_authorization_malformed';
+  }
+  if (!snapshot.authorizedBy || !snapshot.authorizedAt) return 'bounded_authorization_actor_missing';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshot.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(snapshot.endsAt)
+    || snapshot.startsAt > snapshot.endsAt || !Number.isFinite(Date.parse(snapshot.authorizedAt))) return 'bounded_authorization_period_invalid';
+  if (snapshot.maxPublishItems < 1) return 'bounded_authorization_empty';
+  if (!snapshot.businessBoundary.platforms.includes(input.platform)) return 'bounded_authorization_platform_mismatch';
+  const instant = new Date(input.scheduledAt);
+  const scheduledDate = Number.isNaN(instant.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(instant);
+  if (!scheduledDate || scheduledDate < snapshot.startsAt || scheduledDate > snapshot.endsAt) return 'bounded_authorization_week_mismatch';
+  if (!snapshot.accountBindings.some(binding => binding.accountId === input.accountId && binding.platform === input.platform)) return 'bounded_authorization_account_mismatch';
+  return '';
+}
+
+function contentFingerprint(items: PublishingApprovalItem[], allowRealPublishing: boolean, authorizationSnapshot?: BoundedPublishingAuthorizationSnapshot): string {
+  return createHash('sha256').update(JSON.stringify({ allowRealPublishing, authorizationSnapshot, items })).digest('hex');
 }
 
 /** Build the exact, human-readable subject of a batch approval. */
@@ -58,6 +141,7 @@ export function buildPublishingApprovalPackage(input: {
   now?: Date;
   scheduling?: { startsAt: string; endsAt: string; timezone: 'account' | 'Asia/Shanghai' };
   matrixPlan?: MatrixAccountPlan[];
+  boundedAuthorization?: BoundedPublishingAuthorizationInput;
 }, dependencies: { sourceClaim: typeof digitalEmployeePublishSourceClaim } = { sourceClaim: digitalEmployeePublishSourceClaim }): PublishingApprovalPackage {
   const now = input.now || new Date();
   const selectedPlatforms = new Set(input.goalPlatforms);
@@ -130,7 +214,24 @@ export function buildPublishingApprovalPackage(input: {
     }
     items.splice(0, items.length, ...expanded);
   }
-  return { schemaVersion: 1, contentHash: contentFingerprint(items, input.allowRealPublishing), allowRealPublishing: input.allowRealPublishing, items };
+  const authorizationSnapshot = input.boundedAuthorization
+    ? buildBoundedPublishingAuthorization(input.boundedAuthorization)
+    : undefined;
+  if (authorizationSnapshot) {
+    const publishActions = items.reduce((count, item) => count + item.accountIds.length, 0);
+    if (publishActions > authorizationSnapshot.maxPublishItems) throw new Error('bounded_authorization_item_limit_exceeded');
+    for (const item of items) for (const accountId of item.accountIds) {
+      const issue = boundedAuthorizationIssue(authorizationSnapshot, { accountId, platform: item.platform, scheduledAt: item.scheduledAt });
+      if (issue) throw new Error(issue);
+    }
+  }
+  return {
+    schemaVersion: 1,
+    contentHash: contentFingerprint(items, input.allowRealPublishing, authorizationSnapshot),
+    allowRealPublishing: input.allowRealPublishing,
+    ...(authorizationSnapshot ? { authorizationSnapshot } : {}),
+    items,
+  };
 }
 
 async function tenantPosts(tenantId: string): Promise<any[]> {
@@ -154,7 +255,7 @@ export async function createPublishingCalendarEntries(input: {
   verifySource: (tenantId: string, claim: unknown, videoPath?: unknown) => Promise<unknown>;
 } = { verifySource: verifyFrozenPublishSourceClaim }): Promise<Array<{ id: string; status: string }>> {
   if (input.package.contentHash !== input.approvedContentHash
-    || contentFingerprint(input.package.items, input.package.allowRealPublishing) !== input.approvedContentHash) throw new Error('approval_subject_changed');
+    || contentFingerprint(input.package.items, input.package.allowRealPublishing, input.package.authorizationSnapshot) !== input.approvedContentHash) throw new Error('approval_subject_changed');
   return withDigitalEmployeeRunLock(input.tenantId, input.runId, async () => {
   const existing = await tenantPosts(input.tenantId);
   const result: Array<{ id: string; status: string }> = [];
@@ -183,6 +284,8 @@ export async function createPublishingCalendarEntries(input: {
         workflowRunId: input.runId, workflowTaskId: input.approvalTaskId, workflowTaskKey: 'content_release_approval',
         approvalId: input.approvalId, approvedContentHash: input.approvedContentHash,
         realPublishingAuthorized: input.package.allowRealPublishing,
+        authorizationMode: input.package.authorizationSnapshot ? 'bounded' : 'each',
+        ...(input.package.authorizationSnapshot ? { boundedAuthorization: input.package.authorizationSnapshot } : {}),
       },
     });
     existing.push(tracked);
@@ -237,4 +340,37 @@ export async function invalidatePublishingApprovalForProject(
     });
   }
   return affected.length;
+}
+
+/** Pause queued delivery when the approved weekly-package boundary changes. */
+export async function invalidatePublishingAuthorizationForRun(
+  tenantId: string,
+  runId: string,
+): Promise<number> {
+  return withDigitalEmployeeRunLock(tenantId, runId, async () => {
+    const posts = await tenantPosts(tenantId);
+    const affected = posts.filter(post => {
+      const stats = record(post.stats);
+      if (text(stats.workflowRunId) !== runId || ['published', 'partial', 'awaiting_reapproval'].includes(text(stats.status))) return false;
+      const results = record(stats.publishResults);
+      // Provider-accepted, successful, or ambiguous calls must remain in the
+      // receipt-recovery path. Revoking them here could cause a duplicate send.
+      return !Object.values(results).some(value => {
+        const status = text(record(value).status);
+        return ['published', 'provider_accepted', 'in_flight', 'unknown'].includes(status);
+      });
+    });
+    for (const post of affected) {
+      const stats = record(post.stats);
+      await store.update('posts', post.id, { stats: {
+        ...stats,
+        status: 'awaiting_reapproval',
+        realPublishingAuthorized: false,
+        nextPublishAttemptAt: '',
+        authorizationInvalidatedAt: new Date().toISOString(),
+        authorizationInvalidatedReason: 'weekly_package_changed',
+      } });
+    }
+    return affected.length;
+  });
 }

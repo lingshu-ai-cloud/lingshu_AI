@@ -29,6 +29,10 @@ assert.match(source, /team: \[\.\.\.VISIBLE_AGENT_ROLES\]/, 'legacy plan snapsho
 assert.match(source, /digitalEmployeeOperatingGoals\(goalResult\.items\)/, 'overview must exclude non-operating lineage records before selecting the current weekly goal');
 assert.match(source, /isDigitalEmployeeOperatingGoal\(goal\)/, 'direct overview links must reject non-operating lineage records');
 assert.match(source, /updateTenantEnterpriseProfile/, 'onboarding must synchronize missing company basics into the tenant enterprise profile');
+assert.match(source, /critical_business_change/, 'critical product, market, audience, language, platform, account, or publishing-permission changes must notify the active run');
+assert.match(source, /本周预算、产品、市场或发布授权范围已变更/, 'authorization invalidation must explicitly warn about budget and business-boundary changes');
+assert.match(source, /appendAuthorizationRequiredEvent/, 'weekly-package changes must emit a visible reauthorization event');
+assert.match(source, /invalidatePublishingAuthorizationForRun/, 'weekly-package changes must pause already materialized work that has no provider receipt');
 const socialContentBridgeGoal = { id: 'social-bridge', metric: 'approved_social_content_artifacts', scope: { socialTaskId: 'socialtask-1' } };
 const weeklyOperatingGoal = { id: 'weekly-operating', metric: 'qualified_leads', scope: { description: '本周经营范围' } };
 assert.equal(isDigitalEmployeeOperatingGoal(socialContentBridgeGoal), false, 'a social-content execution bridge is not a Digital Employee weekly goal');

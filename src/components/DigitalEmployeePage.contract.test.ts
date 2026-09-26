@@ -268,6 +268,7 @@ assert.match(pageSource, /完成或取消当前运行后才能制定下一周目
 assert.match(pageSource, /requiredReadiness[\s\S]{0,300}firstMissingReadiness/, 'plan approval must derive its blocker from real resource readiness');
 assert.match(packageSource, /issues.length > 0/, 'invalid packages must block launch and explain missing dependencies');
 assert.match(pageSource, /<WeeklyPackagePanel/, 'the execution view must expose the editable weekly business package');
+assert.match(packageSource, /每条内容发布到一个账号计一次/, 'bounded publishing must explain that the limit counts actual account-level publish actions');
 assert.doesNotMatch(pageSource, /required\.add\(["'](?:products|viral_library|customers)["']\)/, 'new tenants must not be blocked from starting merely because products, inspiration, or customers are still empty');
 
 for (const label of ['重试任务', '跳过并继续', '登记人工完成', '任务受阻，需要处理']) {
