@@ -97,6 +97,7 @@ test('weekly operating package: default six-account cadence creates seven workfl
   assert.equal(item.socialContentPackage.authorization.maxPublishItems, 26);
   assert.equal(item.socialContentPackage.authorization.allowRealPublishing, false);
   assert.equal(item.socialContentPackage.authorization.authorizedAt, null);
+  assert.equal(item.socialContentPackage.authorization.revokedAt, null);
   const counts = Object.fromEntries(['tiktok', 'facebook', 'instagram', 'youtube'].map(platform => [
     platform,
     item.socialContentPackage.publicationTasks.filter(task => task.platform === platform).length,
@@ -211,6 +212,35 @@ test('weekly operating package: explicit activation authorizes only the frozen b
   assert.equal((await programs.getProgram('tenant-a', program.programId)).version, 2);
 });
 
+test('weekly operating package: retiring an active version revokes publishing and clears the program reference', async () => {
+  const { packages, programs, program } = await fixture();
+  const draft = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '可撤回周包', successCriteria: ['撤回后停止发布'],
+  });
+  await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
+    expectedVersion: 1, expectedProgramVersion: 1, authorizePublishing: true,
+  });
+  await assert.rejects(
+    packages.retire('tenant-a', 'owner', program.programId, draft.packageId, {
+      expectedVersion: 1, expectedProgramVersion: 1,
+    }),
+    (error: unknown) => error instanceof SocialProgramError && error.code === 'program_version_conflict',
+  );
+  assert.equal((await packages.get('tenant-a', program.programId, draft.packageId)).status, 'active');
+
+  const retired = await packages.retire('tenant-a', 'owner', program.programId, draft.packageId, {
+    expectedVersion: 1, expectedProgramVersion: 2,
+  });
+  assert.equal(retired.status, 'retired');
+  assert.equal(retired.socialContentPackage.status, 'retired');
+  assert.equal(retired.socialContentPackage.authorization.allowRealPublishing, false);
+  assert.equal(retired.socialContentPackage.authorization.revokedBy, 'owner');
+  assert.ok(retired.socialContentPackage.authorization.revokedAt);
+  const updatedProgram = await programs.getProgram('tenant-a', program.programId);
+  assert.equal(updatedProgram.activeWeeklyOperatingPackageRef, null);
+  assert.equal(updatedProgram.version, 3);
+});
+
 test('weekly operating package: default cadence reports a missing account matrix instead of inventing accounts', async () => {
   const dataStore = memoryStore();
   const programs = createSocialProgramService(dataStore);
@@ -231,4 +261,6 @@ test('weekly operating package migration defines immutable versions and one acti
   assert.match(migration, /idx_weekly_operating_package_version/);
   assert.match(migration, /UNIQUE INDEX idx_weekly_operating_package_active/);
   assert.match(migration, /WHERE status = 'active'/);
+  assert.match(migration, /updated_by/);
+  assert.match(migration, /updated_at/);
 });

@@ -277,6 +277,8 @@ function packageFromInput(args: {
       allowRealPublishing: false,
       authorizedBy: null,
       authorizedAt: null,
+      revokedBy: null,
+      revokedAt: null,
     },
   };
   return {
@@ -431,6 +433,8 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
               allowRealPublishing: true,
               authorizedBy: userId,
               authorizedAt: at(),
+              revokedBy: null,
+              revokedAt: null,
             }
             : current.payload.socialContentPackage.authorization,
         },
@@ -460,6 +464,74 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         throw new SocialProgramError('program_storage_unavailable', 503, '周任务包激活失败，已回滚当前版本。');
       }
       return activated;
+    },
+
+    async retire(
+      tenantId: string,
+      userId: string,
+      programId: string,
+      packageId: string,
+      input: Record<string, unknown>,
+    ): Promise<WeeklyOperatingPackage> {
+      const current = await latestPackageRow(dataStore, tenantId, programId, packageId);
+      if (!current) throw new SocialProgramError('weekly_operating_package_not_found', 404, '周任务包不存在。');
+      requireExpectedVersion(current.payload.version, input.expectedVersion);
+      if (current.payload.status === 'retired') {
+        throw new SocialProgramError('weekly_operating_package_retired', 409, '该周任务包版本已撤回。');
+      }
+      const timestamp = at();
+      let activeProgram: ProgramRow | null = null;
+      let nextProgram: Record<string, unknown> | null = null;
+      if (current.payload.status === 'active') {
+        activeProgram = await programRow(dataStore, tenantId, programId);
+        const expectedProgramVersion = Number(input.expectedProgramVersion);
+        const actualProgramVersion = Number(activeProgram.payload.version);
+        if (!Number.isSafeInteger(expectedProgramVersion) || expectedProgramVersion !== actualProgramVersion) {
+          throw new SocialProgramError('program_version_conflict', 409, `项目已更新，当前版本为 ${actualProgramVersion}。`);
+        }
+        const activeRef = activeProgram.payload.activeWeeklyOperatingPackageRef as VersionedSocialRef | null | undefined;
+        if (activeRef?.id !== packageId || activeRef.version !== current.payload.version) {
+          throw new SocialProgramError('program_active_package_mismatch', 409, '项目当前活动周任务包引用与撤回版本不一致。');
+        }
+        nextProgram = {
+          ...activeProgram.payload,
+          activeWeeklyOperatingPackageRef: null,
+          version: actualProgramVersion + 1,
+          updatedAt: timestamp,
+        };
+      }
+      const retired: WeeklyOperatingPackage = {
+        ...current.payload,
+        status: 'retired',
+        socialContentPackage: {
+          ...current.payload.socialContentPackage,
+          status: 'retired',
+          authorization: {
+            ...current.payload.socialContentPackage.authorization,
+            allowRealPublishing: false,
+            revokedBy: userId,
+            revokedAt: timestamp,
+          },
+        },
+        updatedAt: timestamp,
+      };
+      if (!await dataStore.update(PACKAGES, current.id, {
+        status: 'retired', payload: retired, updated_by: userId, updated_at: timestamp,
+      })) {
+        throw new SocialProgramError('weekly_operating_package_storage_unavailable', 503, '周任务包暂时无法撤回。');
+      }
+
+      if (activeProgram && nextProgram) {
+        if (!await dataStore.update(PROGRAMS, activeProgram.id, {
+          payload: nextProgram, version: nextProgram.version, updated_by: userId, updated_at: timestamp,
+        })) {
+          await dataStore.update(PACKAGES, current.id, {
+            status: current.status, payload: current.payload, updated_at: current.payload.updatedAt,
+          });
+          throw new SocialProgramError('program_storage_unavailable', 503, '周任务包撤回失败，已回滚当前版本。');
+        }
+      }
+      return retired;
     },
   };
 }

@@ -42,3 +42,37 @@ test('social program API accepts a valid project list', async () => {
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });
   }
 });
+
+test('social program API exposes the weekly operating package lifecycle', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      method: init?.method || 'GET',
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    });
+    return Response.json(String(input).includes('?weekStart=') ? { items: [] } : { item: { packageId: 'package-a' } });
+  };
+  try {
+    assert.deepEqual(await socialProgramApi.listOperatingPackages('program/a', '2026-10-05'), []);
+    await socialProgramApi.getOperatingPackage('program/a', 'package/a');
+    await socialProgramApi.createOperatingPackage('program/a', { weekStart: '2026-10-05' });
+    await socialProgramApi.reviseOperatingPackage('program/a', 'package/a', { expectedVersion: 1 });
+    await socialProgramApi.activateOperatingPackage('program/a', 'package/a', { expectedVersion: 2 });
+    await socialProgramApi.retireOperatingPackage('program/a', 'package/a', { expectedVersion: 2 });
+    assert.deepEqual(calls, [
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages?weekStart=2026-10-05', method: 'GET', body: null },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa', method: 'GET', body: null },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages', method: 'POST', body: { weekStart: '2026-10-05' } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa', method: 'PUT', body: { expectedVersion: 1 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/activate', method: 'POST', body: { expectedVersion: 2 } },
+      { url: '/api/overseas/social-programs/program%2Fa/operating-packages/package%2Fa/retire', method: 'POST', body: { expectedVersion: 2 } },
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });
+  }
+});

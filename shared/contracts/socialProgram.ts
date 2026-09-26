@@ -113,6 +113,8 @@ export interface SocialWeeklyContentPackage {
     allowRealPublishing: boolean;
     authorizedBy: string | null;
     authorizedAt: string | null;
+    revokedBy: string | null;
+    revokedAt: string | null;
   };
 }
 
