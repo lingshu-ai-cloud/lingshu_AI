@@ -85,7 +85,7 @@ export default function DiscoveryScopePanel() {
         ...editor,
         productTerms: [...new Set([editor.productRef, ...editor.productTerms].map(value => value.trim()).filter(Boolean))],
         sceneClusters: lines.map(label => ({ label, productTask: editor.productRef, demandDimension: 'scene', queryVariants: [`${editor.productRef} ${label}`], status: 'approved' })),
-        benchmarkAccounts: [...new Set(accountText.split(/[\n;；]+/).map(value => value.trim()).filter(Boolean))].map(accountRef => ({ accountRef, type: 'brand' as const })),
+        benchmarkAccounts: [...new Set(accountText.split(/[\n;；]+/).map(value => value.trim()).filter(Boolean))].map(accountRef => ({ accountRef, type: 'brand_factory' as const })),
       });
       setStrategy(result.scope);
       setEditor(inputFromStrategy(result.scope));

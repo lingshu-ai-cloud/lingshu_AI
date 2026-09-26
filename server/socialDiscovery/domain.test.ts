@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import type { SocialInspirationCollectionRun } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialDiscoveryBrief, SocialInspirationCollectionRun } from '../../shared/contracts/socialContentWorkflow.js';
 import { buildDiscoverySummary, dueDiscoveryModes, nextDiscoveryRunAt, normalizeModePolicies, validateDiscoveryBrief } from './domain.js';
 
 const policies = normalizeModePolicies({
@@ -15,9 +15,9 @@ assert.equal(policies.innovation?.enabled, false);
 assert.deepEqual(policies.momentum?.platforms, ['tiktok', 'facebook']);
 assert.notEqual(policies.momentum?.resultLimit, policies.account?.resultLimit, '三类供给不能被固定比例覆盖');
 
-const brief = {
+const brief: SocialDiscoveryBrief = {
   discoveryBriefId: 'brief-1', keywordSetId: 'set-1', keywordSetVersion: 3, productRef: 'connector', market: 'DE', audience: 'brand_buyer',
-  discoverySeedIds: ['seed-1'], trackedSceneIds: [], competitorAccounts: [], discoveryModes: ['account'] as const,
+  discoverySeedIds: ['seed-1'], trackedSceneIds: [], competitorAccounts: [], discoveryModes: ['account'],
   platforms: ['facebook'], lookbackDays: 7, resultLimit: 30, budgetLimitCny: null, productionGap: null,
   createdBy: 'director_agent' as const, modePolicies: { account: { enabled: true, sourceRefs: [], platforms: ['facebook'], resultLimit: 5, refreshIntervalMinutes: 60, budgetLimitCny: null } },
 };
