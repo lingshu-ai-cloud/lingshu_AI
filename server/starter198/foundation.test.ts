@@ -357,7 +357,7 @@ assert.equal(rows.get(STARTER_COLLECTIONS.runs)?.[0].status, 'paused');
 assert.equal('updated_at' in (rows.get(STARTER_COLLECTIONS.runs)?.[0] ?? {}), false,
   'workflow_runs schema has no updated_at field and run controls must not invent one');
 assert.equal(rows.get(STARTER_COLLECTIONS.commands)?.[0].status, 'processing');
-const reconciledPause = await runStarter198Command({ tenantId, userId: 'actor-a', role: 'owner', request: pauseRequest, dependencies: { repository } });
+const reconciledPause = await runStarter198Command({ tenantId, userId: 'actor-a', role: 'owner', request: pauseRequest, dependencies: { repository, now: () => new Date('2026-09-12T01:30:00.000Z') } });
 assert.equal(reconciledPause.status, 200);
 assert.equal(reconciledPause.body.accepted, true);
 assert.equal(rows.get(STARTER_COLLECTIONS.commands)?.[0].status, 'succeeded');
@@ -432,14 +432,14 @@ const queueRequest = { command: 'submit_orchestrator_input' as const, idempotenc
 await assert.rejects(
   () => runStarter198Command({
     tenantId, userId: 'actor-a', role: 'owner', request: queueRequest,
-    dependencies: { repository, orchestratorQueue: { async enqueue() { enqueueCalls += 1; return { queueItemId: 'queue-a' }; } } },
+    dependencies: { repository, now: () => new Date('2026-09-12T01:30:00.000Z'), orchestratorQueue: { async enqueue() { enqueueCalls += 1; return { queueItemId: 'queue-a' }; } } },
   }),
   (error: unknown) => error instanceof Starter198CommandError && error.code === 'starter_198_command_journal_finalize_failed',
 );
 await assert.rejects(
   () => runStarter198Command({
     tenantId, userId: 'actor-a', role: 'owner', request: queueRequest,
-    dependencies: { repository, orchestratorQueue: { async enqueue() { enqueueCalls += 1; return { queueItemId: 'queue-b' }; } } },
+    dependencies: { repository, now: () => new Date('2026-09-12T01:30:00.000Z'), orchestratorQueue: { async enqueue() { enqueueCalls += 1; return { queueItemId: 'queue-b' }; } } },
   }),
   (error: unknown) => error instanceof Starter198CommandError && error.code === 'starter_198_command_state_unknown',
 );
@@ -447,14 +447,14 @@ assert.equal(enqueueCalls, 1, 'an external queue operation must never be blindly
 
 const unavailableRequest = { command: 'submit_orchestrator_input' as const, idempotencyKey: 'queue-unavailable-1', payload: { input: '执行任务' } };
 await assert.rejects(
-  () => runStarter198Command({ tenantId, userId: 'actor-a', role: 'owner', request: unavailableRequest, dependencies: { repository } }),
+  () => runStarter198Command({ tenantId, userId: 'actor-a', role: 'owner', request: unavailableRequest, dependencies: { repository, now: () => new Date('2026-09-12T01:30:00.000Z') } }),
   (error: unknown) => error instanceof Starter198CommandError && error.code === 'starter_198_orchestrator_worker_unavailable' && error.status === 503,
 );
 let replayEnqueueCalls = 0;
 await assert.rejects(
   () => runStarter198Command({
     tenantId, userId: 'actor-a', role: 'owner', request: unavailableRequest,
-    dependencies: { repository, orchestratorQueue: { async enqueue() { replayEnqueueCalls += 1; return { queueItemId: 'must-not-run' }; } } },
+    dependencies: { repository, now: () => new Date('2026-09-12T01:30:00.000Z'), orchestratorQueue: { async enqueue() { replayEnqueueCalls += 1; return { queueItemId: 'must-not-run' }; } } },
   }),
   (error: unknown) => error instanceof Starter198CommandError && error.code === 'starter_198_orchestrator_worker_unavailable' && error.status === 503,
 );
