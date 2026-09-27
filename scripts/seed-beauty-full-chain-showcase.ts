@@ -28,42 +28,47 @@ if (PASSWORD && PASSWORD.length < 10) throw new Error('BEAUTY_SHOWCASE_PASSWORD 
 if (EMAIL === 'lingshu-admin@local.test') throw new Error('Beauty showcase must never use the administrator account');
 
 type Product = {
+  number: number;
   sku: string;
   name: string;
-  shortName: string;
+  brand: string;
   category: string;
-  color: string;
-  accent: string;
-  highlights: string;
+  netContent: string | null;
+  retailPriceCny: string;
+  retailPriceUsd: string;
+  highlights: string[];
   scene: string;
-  hook: string;
+  sourcePage: number;
+  imageFile: string | null;
+  imageSha256: string | null;
+  certifications: string;
 };
 
-const products: Product[] = [
-  { sku: 'AB-SERUM-01', name: '积雪草屏障修护精华', shortName: 'BARRIER SERUM', category: '面部精华', color: '#dff1e8', accent: '#2c6652', highlights: '轻薄水感质地；适合日常保湿修护步骤；无香型', scene: '敏感泛红后的晚间护肤', hook: '一滴精华在镜面上快速铺开，前三秒直接展示流动质地' },
-  { sku: 'AB-SPF-02', name: '清透防晒乳 SPF50+', shortName: 'DAILY SUNSCREEN', category: '防晒', color: '#fff0c9', accent: '#d0872e', highlights: '轻薄肤感；适合妆前使用；SPF50+ PA++++', scene: '通勤前快速防晒', hook: '左右手背涂抹对比，首秒出现半边推开画面' },
-  { sku: 'AB-CLEAN-03', name: '氨基酸云朵洁面慕斯', shortName: 'CLOUD CLEANSER', category: '洁面', color: '#dff2fa', accent: '#3283a7', highlights: '按压泡沫；温和清洁；易冲洗', scene: '早晨快速洁面', hook: '按压瞬间形成绵密泡沫，用体积变化制造开场反差' },
-  { sku: 'AB-LIP-04', name: '丝绒持色唇釉 04 枫糖棕', shortName: 'VELVET LIP TINT', category: '彩妆', color: '#f6d7d5', accent: '#9d3f43', highlights: '枫糖棕色；丝绒妆效；薄涂与叠涂均可', scene: '通勤妆容快速提气色', hook: '白卡上一笔显色，从空白到高饱和色块' },
-  { sku: 'AB-CREAM-05', name: '神经酰胺锁水面霜', shortName: 'CERAMIDE CREAM', category: '面霜', color: '#eee5fb', accent: '#7654a8', highlights: '绵密乳霜质地；夜间保湿步骤；无香型', scene: '睡前锁水护肤', hook: '挖取面霜后倒置勺面，展示绵密挂壁质地' },
-];
+type ProductCatalog = {
+  schemaVersion: number;
+  imageCoverage: { embeddedImageCount: number; missingProductNumbers: number[] };
+  products: Product[];
+};
+
+const productCatalogFile = path.resolve(process.cwd(), 'fixtures', 'beauty-showcase', 'product-catalog.json');
+const productAssetSourceDir = path.resolve(process.cwd(), 'fixtures', 'beauty-showcase', 'media', 'tenants', TENANT_ID);
+
+function readProductCatalog(): ProductCatalog {
+  const catalog = JSON.parse(fs.readFileSync(productCatalogFile, 'utf8')) as ProductCatalog;
+  if (catalog.schemaVersion !== 1 || catalog.products.length !== 41) throw new Error('Beauty product catalog must contain exactly 41 products');
+  const numbers = catalog.products.map(item => item.number);
+  if (new Set(numbers).size !== 41 || numbers.some((number, index) => number !== index + 1)) throw new Error('Beauty product catalog numbering is invalid');
+  if (catalog.imageCoverage.embeddedImageCount !== 40 || catalog.imageCoverage.missingProductNumbers.join(',') !== '38') {
+    throw new Error('Beauty product catalog image coverage no longer matches the source PDF');
+  }
+  return catalog;
+}
+
+const productCatalog = readProductCatalog();
+const products = productCatalog.products;
 
 function sha256(file: string): string {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-}
-
-function svgFor(product: Product, index: number): string {
-  const shapes = index % 2 === 0
-    ? `<rect x="256" y="350" width="208" height="520" rx="70" fill="white" opacity=".96"/><rect x="306" y="280" width="108" height="100" rx="24" fill="${product.accent}"/>`
-    : `<rect x="235" y="390" width="250" height="420" rx="38" fill="white" opacity=".96"/><rect x="285" y="315" width="150" height="95" rx="22" fill="${product.accent}"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
-    <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${product.color}"/><stop offset="1" stop-color="#ffffff"/></linearGradient><filter id="shadow"><feDropShadow dx="0" dy="24" stdDeviation="28" flood-opacity=".16"/></filter></defs>
-    <rect width="720" height="1280" fill="url(#bg)"/><circle cx="100" cy="220" r="180" fill="${product.accent}" opacity=".08"/><circle cx="650" cy="1030" r="250" fill="${product.accent}" opacity=".1"/>
-    <g filter="url(#shadow)">${shapes}</g>
-    <text x="360" y="120" text-anchor="middle" font-family="Arial,sans-serif" font-size="25" letter-spacing="6" fill="${product.accent}">AURELIA LAB</text>
-    <text x="360" y="930" text-anchor="middle" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="${product.accent}">${product.shortName}</text>
-    <text x="360" y="980" text-anchor="middle" font-family="Arial,sans-serif" font-size="18" letter-spacing="3" fill="#52605c">REAL PRODUCT FOOTAGE</text>
-    <rect x="110" y="1055" width="500" height="2" fill="${product.accent}" opacity=".25"/><text x="360" y="1110" text-anchor="middle" font-family="Arial,sans-serif" font-size="21" fill="#42514c">${product.scene}</text>
-  </svg>`;
 }
 
 type OpenBeautyMaterialSource = {
@@ -207,13 +212,25 @@ function crawlTikTokPlayback(playbackUrl: string, cookieFile: string): Buffer {
 async function ensureProductAssets(): Promise<string[]> {
   fs.mkdirSync(assetDir, { recursive: true });
   const output: string[] = [];
-  for (const [index, product] of products.entries()) {
-    const posterFile = path.join(assetDir, `beauty-${index + 1}.png`);
-    const obsoleteMockVideo = path.join(assetDir, `beauty-${index + 1}.mp4`);
-    if (fs.existsSync(obsoleteMockVideo)) fs.unlinkSync(obsoleteMockVideo);
-    await sharp(Buffer.from(svgFor(product, index))).png().toFile(posterFile);
+  for (let index = 1; index <= 5; index += 1) {
+    for (const obsolete of [`beauty-${index}.png`, `beauty-${index}.mp4`]) {
+      const obsoleteFile = path.join(assetDir, obsolete);
+      if (fs.existsSync(obsoleteFile)) fs.unlinkSync(obsoleteFile);
+    }
+  }
+  const expectedFiles = new Set(products.flatMap(product => product.imageFile ? [product.imageFile] : []));
+  for (const file of fs.readdirSync(assetDir)) {
+    if (/^rongshang-product-\d+\.png$/.test(file) && !expectedFiles.has(file)) fs.unlinkSync(path.join(assetDir, file));
+  }
+  for (const product of products) {
+    if (!product.imageFile) continue;
+    const source = path.join(productAssetSourceDir, product.imageFile);
+    const posterFile = path.join(assetDir, product.imageFile);
+    if (!fs.existsSync(source) || sha256(source) !== product.imageSha256) throw new Error(`Beauty product image is missing or invalid: ${product.imageFile}`);
+    fs.copyFileSync(source, posterFile);
     output.push(posterFile);
   }
+  if (output.length !== productCatalog.imageCoverage.embeddedImageCount) throw new Error('Beauty product image count is invalid');
   return output;
 }
 
@@ -383,14 +400,15 @@ async function seedBusinessAndContent(productPosters: string[], materials: Downl
     company: { name: COMPANY, industry: '美妆护肤', companyType: '品牌', mainMarkets: '美国、加拿大', primaryLanguages: '英语', socialPlatformExperience: 'TikTok、Instagram Reels、YouTube Shorts', founded: '2019', description: '专注敏感肌日常护肤与通勤彩妆的消费品牌，产品由合规代工厂生产，强调真实质地、清晰用法和不过度承诺。' },
     socialStrategy: { enabledRoutes: ['consumer_retail'], routeStrategies: { consumer_retail: { targetBuyerRoles: ['18-35岁关注成分与肤感的消费者'], primaryCta: '进入官网查看产品和使用方式' } }, manuallyEditedFields: [] },
     products: {
-      categories: '护肤、洁面、防晒、彩妆', priceRange: 'US$16-32', moq: '现货零售；渠道合作另议', certifications: '产品档案已留存；具体市场合规资料按 SKU 提供',
-      highlights: '真实质地演示、简单日常步骤、避免夸大功效',
-      items: products.map((product, index) => ({
-        sku: product.sku, name: product.name, category: product.category, brand: 'Aurelia', retailPrice: ['24.00', '22.00', '18.00', '16.00', '28.00'][index], priceRange: `US$${['24', '22', '18', '16', '28'][index]}`, moq: '1件', certifications: '以产品页面与实物标签为准', highlights: product.highlights,
-        imageUrl: `/media/${assetRelativeDir}/beauty-${index + 1}.png`, attributes: { 核心场景: product.scene, 内容边界: '只表达已确认的质地、用法和产品信息，不承诺治疗或永久效果' },
+      categories: Array.from(new Set(products.map(product => product.category))).join('、'), priceRange: '¥18-2689 / US$2.70-403.35', moq: '1件起；渠道合作另议', certifications: '第39-41款按附件标注欧盟代理人 / CPNP；其余以实物标签与正式资料为准',
+      highlights: '融尚 GUIANFA 现货盘，共 41 款；价格与卖点按附件录入，产品图直接提取自原 PDF',
+      items: products.map(product => ({
+        sku: product.sku, name: product.name, category: product.category, brand: product.brand, retailPrice: `¥${product.retailPriceCny}`, priceRange: `¥${product.retailPriceCny} / US$${product.retailPriceUsd}`, moq: '1件', certifications: product.certifications, highlights: product.highlights.join('；'),
+        ...(product.imageFile ? { imageUrl: `/media/${assetRelativeDir}/${product.imageFile}` } : {}),
+        attributes: { 货盘序号: product.number, 净含量: product.netContent || '附件未标注', 美元建议零售价: `US$${product.retailPriceUsd}`, 核心场景: product.scene, 来源文件: '融尚货盘报价表_零售价7.14.pdf', 来源页码: product.sourcePage, 原图状态: product.imageFile ? '已从附件直接提取' : '附件未嵌入产品图', 内容边界: '只表达附件与实物可验证的信息，不承诺治疗或永久效果' },
       })),
     },
-    brand: { tone: '直白、克制、像懂护肤的朋友', style: '明亮真实、近景质地、步骤清楚', taboos: '禁止医疗化表述、永久效果、绝对化承诺、伪造前后对比', usp: '让小白也能看懂的真实质地与日常步骤', preferredLanguages: '英语' },
+    brand: { name: 'GUIANFA', tone: '直白、克制、像懂护肤的朋友', style: '明亮真实、近景质地、步骤清楚', taboos: '禁止医疗化表述、永久效果、绝对化承诺、伪造前后对比', usp: '让小白也能看懂的真实质地与日常步骤', preferredLanguages: '英语' },
     strategy: { currentGoal: '用高质量短视频提高美妆产品的收藏、站内搜索和官网访问', focusProducts: products.map(item => item.name).join('、'), focusMarkets: '美国', excludedMarkets: '', pricingStrategy: '中端日常美妆', minMargin: '按产品核算', agentAutonomy: '事实和权利问题必须确认；内容结构可自动推进', aiAutonomy: 'draft' },
     customers: { targetProfiles: '18-35岁关注成分、肤感和简单步骤的美国消费者', highValueSignals: '询问成分、肤质适配、使用顺序、购买链接', lowQualitySignals: '索要无法验证的疗效保证', commonQuestions: '敏感肌日常怎么用；妆前会不会搓泥；质地厚不厚；早晚使用顺序；如何选择色号', followupStyle: '先回答用法和可见事实，再引导查看产品页面' },
     operations: { leadTime: '美国现货订单通常 2 个工作日内处理', customization: '不对消费者提供定制；渠道合作需单独确认', logistics: '美国和加拿大可配送，时效以结账页为准', paymentTerms: '官网在线支付', riskNotes: '不同肤质体验不同；涉及敏感或不适请停止使用并咨询专业人士' },

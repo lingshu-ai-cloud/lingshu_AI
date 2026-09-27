@@ -12,6 +12,7 @@ const ROOT = process.cwd();
 const FIXTURE_ROOT = path.resolve(ROOT, 'fixtures', 'beauty-showcase');
 const BUNDLE_FILE = path.join(FIXTURE_ROOT, 'account-data.json');
 const MANIFEST_FILE = path.join(FIXTURE_ROOT, 'manifest.json');
+const PRODUCT_CATALOG_FILE = path.join(FIXTURE_ROOT, 'product-catalog.json');
 const SOURCE_MEDIA_ROOT = path.resolve(ROOT, 'data', 'media', 'tenants', TENANT_ID);
 const FIXTURE_MEDIA_ROOT = path.join(FIXTURE_ROOT, 'media', 'tenants', TENANT_ID);
 const collections = [
@@ -72,6 +73,20 @@ function validateBundle(bundle: FixtureBundle): void {
   if (bundle.collections.trend_videos?.length !== 30) throw new Error('fixture must contain exactly 30 trend videos');
   if (bundle.collections.competitor_accounts?.length !== 27) throw new Error('fixture must contain exactly 27 competitor accounts');
   if (bundle.materials.length !== 30) throw new Error('fixture must contain exactly 30 materials');
+  const catalog = JSON.parse(fs.readFileSync(PRODUCT_CATALOG_FILE, 'utf8')) as { products?: Array<{ number?: number; sku?: string; imageFile?: string | null }> };
+  if (catalog.products?.length !== 41 || catalog.products.some((item, index) => item.number !== index + 1 || !item.sku?.startsWith('GUIANFA-RS-'))) {
+    throw new Error('fixture product catalog must contain the ordered 41-product GUIANFA range');
+  }
+  const profileRecord = bundle.collections.tenant_profiles?.find(belongsToFixture);
+  const profile = profileRecord?.profile as { products?: { items?: Array<{ sku?: string; imageUrl?: string }> } } | undefined;
+  const productItems = profile?.products?.items || [];
+  if (productItems.length !== 41 || productItems.some((item, index) => item.sku !== catalog.products?.[index]?.sku)) {
+    throw new Error('fixture tenant profile does not match the GUIANFA product catalog');
+  }
+  if (productItems.filter(item => item.imageUrl).length !== 40 || productItems[37]?.imageUrl) throw new Error('fixture product image coverage must match the source PDF');
+  for (const item of catalog.products) {
+    if (item.imageFile && !fs.existsSync(path.join(FIXTURE_MEDIA_ROOT, item.imageFile))) throw new Error(`fixture product image is missing: ${item.imageFile}`);
+  }
 }
 
 function exportFixture(): void {
@@ -131,6 +146,7 @@ function importFixture(): void {
   const bundle = verifyFixture();
   const password = String(process.env.BEAUTY_SHOWCASE_PASSWORD || '');
   if (password.length < 10) throw new Error('BEAUTY_SHOWCASE_PASSWORD with at least 10 characters is required');
+  const catalog = JSON.parse(fs.readFileSync(PRODUCT_CATALOG_FILE, 'utf8')) as { products: Array<{ imageFile?: string | null }> };
   if (getLocalTenant(TENANT_ID)) updateLocalDataTenant(TENANT_ID, bundle.tenant);
   else createLocalDataTenant(bundle.tenant);
   const accounts = readLocalAccountRecords(localAccountRecordsFile());
@@ -141,6 +157,17 @@ function importFixture(): void {
   }]);
   for (const collection of collections) mergeTenantRecords(path.resolve(ROOT, 'data', 'local-store', `${collection}.json`), bundle.collections[collection] || []);
   mergeTenantRecords(path.resolve(ROOT, 'data', 'materials.json'), bundle.materials);
+  for (let index = 1; index <= 5; index += 1) {
+    for (const obsolete of [`beauty-${index}.png`, `beauty-${index}.mp4`]) {
+      const file = path.join(SOURCE_MEDIA_ROOT, obsolete);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    }
+  }
+  const expectedProductImages = new Set(catalog.products.flatMap(item => item.imageFile ? [item.imageFile] : []));
+  for (const file of filesBelow(SOURCE_MEDIA_ROOT)) {
+    const base = path.basename(file);
+    if (/^rongshang-product-\d+\.png$/.test(base) && !expectedProductImages.has(base)) fs.unlinkSync(file);
+  }
   for (const source of filesBelow(FIXTURE_MEDIA_ROOT)) {
     const target = path.resolve(ROOT, 'data', 'media', 'tenants', TENANT_ID, path.relative(FIXTURE_MEDIA_ROOT, source));
     fs.mkdirSync(path.dirname(target), { recursive: true });
