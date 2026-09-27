@@ -418,6 +418,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
             ? await registerSocialTaskCreativeMaterial({
               tenantId: identity.tenantId,
               taskId,
+              productId: task.brief.productId,
               productRef: task.brief.productRef,
               file,
               stored,

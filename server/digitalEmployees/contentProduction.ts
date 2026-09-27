@@ -34,6 +34,7 @@ import { planVideoSourceSegments, resolveSourceDurations } from '../lib/videoSou
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
 import { contentProjectLineageFields } from './contentProjectLineage.js';
 import { notifyStarterReviewableContentProjects } from '../starter198/contentArtifactWakeup.js';
+import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js'; export { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js';
 import type { DirectorScriptContract, FrozenDirectorScript } from '../../src/lib/directorScript.js';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
@@ -84,7 +85,7 @@ const json = <T>(value: unknown, fallback: T): T => {
 const stableHash = (value: unknown): string => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export function productIdentity(product: NonNullable<EnterpriseProfile['products']['items']>[number], index: number): string {
-  return text(product.sku, 160) || `product-${stableHash([index, text(product.name, 200)]).slice(0, 16)}`;
+  return enterpriseProductIdentity(product, index);
 }
 
 function stringList(value: unknown): string[] {

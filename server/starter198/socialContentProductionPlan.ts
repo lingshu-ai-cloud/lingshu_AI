@@ -5,6 +5,14 @@ import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.j
 import { socialText } from './socialContentValidation.js';
 import type { MaterialScriptAnalysis, MaterialScriptRole } from '../../shared/materialScriptAnalysis.js';
 import {
+  inferMaterialRoles,
+  normalizeSceneVisualContract,
+  resolveProductCompatibility,
+  scoreSceneVisualCompatibility,
+  type SocialMaterialRole,
+  type SocialSceneVisualContract,
+} from '../../shared/sceneVisualContract.js';
+import {
   buildMaterialSceneReview,
   materialReviewBundle,
   type MaterialReviewBundle,
@@ -74,6 +82,8 @@ export type ProductionClip = {
   actionEnd?: number;
   editorialTerms?: string[];
   role?: MaterialScriptRole;
+  visualContract?: SocialSceneVisualContract;
+  materialRoles?: SocialMaterialRole[];
 };
 
 export type PlannedProductionScene = {
@@ -86,6 +96,20 @@ export type PlannedProductionScene = {
   narration: string;
   clip: ProductionClip;
   semanticScore: number;
+  matchBasis?: {
+    primary: 'voiceover_verbatim';
+    voiceover: string;
+    primaryVoiceoverScore: number;
+    secondaryVisualIntent: string;
+    secondaryVisualScore: number;
+    productCompatibilityScore: number;
+    hookHighPrecision: boolean;
+    lockedSourceRange: {
+      evidenceShotId: string;
+      startSeconds: number;
+      endSeconds: number;
+    };
+  };
   materialReview?: MaterialSceneReview;
 };
 
@@ -145,6 +169,8 @@ function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
       needsReview: false, evidenceBasis: 'visual_analysis',
       ...(indexed ? {
         role: indexed.role,
+        visualContract: structuredClone(indexed.visualContract),
+        materialRoles: [...indexed.materialRoles],
         editorialTerms: [
           ...(indexed.matchTags || []).filter(tag => tag !== indexed.role),
           ...(indexed.editorial?.subjects || []),
@@ -232,6 +258,8 @@ function trustedClips(asset: SocialProductionAsset): ProductionClip[] {
         ...(actionStart !== undefined && actionEnd !== undefined ? { actionStart, actionEnd } : {}),
         ...(indexed ? {
           role: indexed.role,
+          visualContract: structuredClone(indexed.visualContract),
+          materialRoles: [...indexed.materialRoles],
           editorialTerms: [
             ...(indexed.matchTags || []).filter(tag => tag !== indexed.role),
             ...(indexed.editorial?.subjects || []),
@@ -310,42 +338,94 @@ function sceneOrder(count: number, available: number): number[] {
   return [0, ...Array.from({ length: middleCount }, (_, index) => Math.min(count - 2, index + 1)), count - 1];
 }
 
-function endsSentence(value: string, language: StoredSocialScriptBaseline['language']): string {
-  const clean = value.trim().replace(/[，,;；:\s]+$/g, '');
-  if (!clean) return language === 'en' ? 'Only verified information is presented.' : '只呈现真实画面和已确认资料。';
-  return /[。！？.!?]$/.test(clean) ? clean : `${clean}${language === 'en' ? '.' : '。'}`;
-}
-
-function compactNarration(value: string, seconds: number, language: StoredSocialScriptBaseline['language']): string {
-  const clean = socialText(value).replace(/\s+/g, ' ');
-  if (language === 'en') {
-    const maximum = Math.max(5, Math.floor(seconds * 2.35));
-    const words = clean.split(/\s+/).filter(Boolean);
-    if (words.length <= maximum) return endsSentence(clean, language);
-    const clauses = clean.split(/(?<=[,;.!?])\s+/).map(item => item.trim()).filter(Boolean);
-    const complete = clauses
-      .filter(clause => clause.split(/\s+/).length <= maximum)
-      .sort((left, right) => right.split(/\s+/).length - left.split(/\s+/).length)[0];
-    return endsSentence(complete || 'Verified information is shown', language);
-  }
-  const maximum = Math.max(9, Math.floor(seconds * 4.4));
-  const characters = [...clean];
-  if (characters.length <= maximum) return endsSentence(clean, language);
-  const candidates = new Set(clean.split(/[，；。！？]/).map(item => item.trim()).filter(Boolean));
-  if (/^本片使用用户明确关联到.+的素材/.test(clean)) candidates.add('使用用户关联素材');
-  if (/^以上为.+的已确认资料与用户关联素材/.test(clean)) candidates.add('资料与关联素材展示完毕');
-  if (/未经确认的产品事实/.test(clean)) candidates.add('不扩展未经确认的产品事实');
-  if (/不推断画面事实/.test(clean)) candidates.add('不推断画面事实');
-  const complete = [...candidates]
-    .filter(clause => [...clause].length >= 2 && [...clause].length <= maximum)
-    .sort((left, right) => [...right].length - [...left].length)[0];
-  // Never hand the Director Agent a fragment cut in the middle of a Chinese
-  // phrase. When no complete clause fits, keep a short, factual fallback.
-  return endsSentence(complete || '只呈现已确认内容', language);
-}
-
 function sceneIntent(scene: StoredSocialScriptBaseline['scenes'][number]): string {
+  return `${frozenVoiceover(scene)} ${scene.shotFunction} ${scene.subject} ${scene.action}`;
+}
+
+function secondaryVisualIntent(scene: StoredSocialScriptBaseline['scenes'][number]): string {
   return `${scene.shotFunction} ${scene.subject} ${scene.action}`;
+}
+
+function frozenVoiceover(scene: StoredSocialScriptBaseline['scenes'][number]): string {
+  return socialText(scene.voiceover) || socialText(scene.narration);
+}
+
+function expectedVisualContract(
+  scene: StoredSocialScriptBaseline['scenes'][number],
+  sceneIndex: number,
+): SocialSceneVisualContract {
+  const stored = (scene as typeof scene & { visualContract?: unknown }).visualContract;
+  return normalizeSceneVisualContract(stored ?? {
+    subjects: [scene.subject],
+    interaction: scene.action,
+    action: scene.action,
+    shotLanguage: scene.referenceStructure ? {
+      shotSize: scene.referenceStructure.shotScale,
+      movement: scene.referenceStructure.cameraMovement,
+    } : undefined,
+    precision: isHookScene(scene, sceneIndex) ? 'hook_high' : 'standard',
+  });
+}
+
+function candidateVisualContract(clip: ProductionClip): SocialSceneVisualContract {
+  return clip.visualContract ?? normalizeSceneVisualContract({
+    subjects: clip.observations,
+    interaction: clip.editorialTerms,
+    action: clip.observations.join(' '),
+  });
+}
+
+function isHookScene(scene: StoredSocialScriptBaseline['scenes'][number], sceneIndex: number): boolean {
+  return sceneIndex === 0 || Number(scene.referenceStructure?.sourceTiming.startSeconds) < 3;
+}
+
+function voiceoverFirstScore(
+  scene: StoredSocialScriptBaseline['scenes'][number],
+  sceneIndex: number,
+  clip: ProductionClip,
+): {
+  semanticScore: number;
+  primaryVoiceoverScore: number;
+  secondaryVisualScore: number;
+  productCompatibilityScore: number;
+  compatible: boolean;
+} {
+  const voiceover = editorialEvidenceScore(
+    frozenVoiceover(scene),
+    clip,
+    clip.sourceDuration,
+    clip.start,
+    clip.end,
+  );
+  const visual = editorialEvidenceScore(
+    secondaryVisualIntent(scene),
+    clip,
+    clip.sourceDuration,
+    clip.start,
+    clip.end,
+  );
+  const hookBonus = isHookScene(scene, sceneIndex)
+    && visualEvidenceScore(sceneIntent(scene), [...clip.observations, ...(clip.editorialTerms || [])]) > 0 ? 12 : 0;
+  const expected = expectedVisualContract(scene, sceneIndex);
+  const candidate = candidateVisualContract(clip);
+  const visualContractScore = scoreSceneVisualCompatibility(expected, candidate) * 100;
+  const productCompatibility = resolveProductCompatibility({
+    policy: expected.product.policy,
+    requestedProductId: expected.product.requestedProductId,
+    requestedProductRef: expected.product.requestedProductRef,
+    candidateProductId: candidate.product.requestedProductId ?? candidate.productUsage.productId,
+    candidateProductRef: candidate.product.requestedProductRef ?? candidate.productUsage.productRef,
+    candidateMaterialRoles: clip.materialRoles ?? inferMaterialRoles(candidate),
+  });
+  return {
+    // Compatibility field retained for review/learning consumers. Ranking is
+    // lexicographic below: exact frozen voiceover first, then scene/product.
+    semanticScore: voiceover * 2 + visual + hookBonus,
+    primaryVoiceoverScore: voiceover,
+    secondaryVisualScore: visual + visualContractScore + productCompatibility.score * 100 + hookBonus,
+    productCompatibilityScore: productCompatibility.score * 100,
+    compatible: productCompatibility.compatible,
+  };
 }
 
 /** Pure production gate. It never mutates/deletes the material library: low
@@ -376,13 +456,8 @@ export function buildSocialProductionPlan(input: {
   }
   const taskAssociatedAssetCount = uniqueAssets.filter(hasTaskUploadAssociation).length;
   const associationSafe = isAssociationSafeBaseline(input.baseline)
-    // Two independently selected task assets are enough to authorize a
-    // generic edit even when the reference vocabulary does not match their
-    // visual-analysis wording. The clips retain their real observations and
-    // never inherit factual claims from the reference video.
-    || taskAssociatedAssetCount >= 2
     || (['system_theme_baseline', 'knowledge_fallback'].includes(input.baseline.source)
-      && uniqueAssets.some(hasLocalTaskWindows));
+      && (taskAssociatedAssetCount >= 2 || uniqueAssets.some(hasLocalTaskWindows)));
   const clipRows = uniqueAssets.map(asset => {
     const visuallyTrusted = trustedClips(asset);
     return {
@@ -460,15 +535,18 @@ export function buildSocialProductionPlan(input: {
   const remaining = [...relevantClips];
   const assignments = indices.flatMap(sceneIndex => {
     const scene = input.baseline.scenes[sceneIndex]!;
-    const ranked = remaining.map((clip, index) => ({
-      clip,
-      index,
-      semanticScore: associationSafe ? 0 : editorialEvidenceScore(
-        sceneIntent(scene), clip, clip.sourceDuration, clip.start, clip.end,
-      ),
-    })).filter(candidate => associationSafe || candidate.semanticScore >= 10).sort((left, right) => associationSafe
+    const ranked = remaining.map((clip, index) => {
+      const scores = associationSafe ? {
+        semanticScore: 0, primaryVoiceoverScore: 0, secondaryVisualScore: 0,
+        productCompatibilityScore: 100, compatible: true,
+      } : voiceoverFirstScore(scene, sceneIndex, clip);
+      return { clip, index, ...scores };
+    }).filter(candidate => associationSafe || (candidate.compatible
+      && candidate.semanticScore >= (isHookScene(scene, sceneIndex) ? 25 : 10))).sort((left, right) => associationSafe
       ? left.clip.start - right.clip.start
-      : right.semanticScore - left.semanticScore
+      : right.primaryVoiceoverScore - left.primaryVoiceoverScore
+        || right.secondaryVisualScore - left.secondaryVisualScore
+        || right.productCompatibilityScore - left.productCompatibilityScore
         || right.clip.confidence - left.clip.confidence
         || right.clip.sourceDuration - left.clip.sourceDuration);
     const selected = ranked[0];
@@ -499,7 +577,11 @@ export function buildSocialProductionPlan(input: {
     for (let index = remaining.length - 1; index >= 0; index -= 1) {
       if (remaining[index]!.evidenceShotId === selected.clip.evidenceShotId) remaining.splice(index, 1);
     }
-    return [{ sceneIndex, scene, clip: selected.clip, semanticScore: selected.semanticScore, materialReview }];
+    return [{ sceneIndex, scene, clip: selected.clip, semanticScore: selected.semanticScore,
+      primaryVoiceoverScore: selected.primaryVoiceoverScore,
+      secondaryVisualScore: selected.secondaryVisualScore,
+      productCompatibilityScore: selected.productCompatibilityScore,
+      materialReview }];
   });
   const sourceClipSeconds = assignments.reduce((sum, item) => sum + item.clip.sourceDuration, 0);
   const dynamicSeconds = assignments.filter(item => item.clip.type === 'video')
@@ -523,9 +605,7 @@ export function buildSocialProductionPlan(input: {
         : ['系统不会删除已上传素材，也不会用文字资料卡或重复末帧凑成品。'],
     };
   }
-  const totalWeight = assignments.reduce((sum, item) => sum + (item.clip.type === 'image' ? 2.8 : item.clip.sourceDuration / 0.82), 0);
   const scenes = assignments.map(item => {
-    const seconds = Math.max(2.2, maxDuration * (item.clip.type === 'image' ? 2.8 : item.clip.sourceDuration / 0.82) / totalWeight);
     return {
       sceneId: item.scene.sceneId,
       baselineSceneIndex: item.sceneIndex,
@@ -533,9 +613,25 @@ export function buildSocialProductionPlan(input: {
       subject: item.scene.subject,
       action: item.scene.action,
       baselineNarration: item.scene.narration,
-      narration: compactNarration(item.scene.narration, seconds, input.baseline.language),
+      // The Content Agent retrieves and edits against the Director's exact
+      // spoken line. Only a new DirectorPlan version may rewrite it.
+      narration: item.scene.narration,
       clip: item.clip,
       semanticScore: item.semanticScore,
+      matchBasis: {
+        primary: 'voiceover_verbatim' as const,
+        voiceover: frozenVoiceover(item.scene),
+        primaryVoiceoverScore: item.primaryVoiceoverScore,
+        secondaryVisualIntent: secondaryVisualIntent(item.scene),
+        secondaryVisualScore: item.secondaryVisualScore,
+        productCompatibilityScore: item.productCompatibilityScore,
+        hookHighPrecision: isHookScene(item.scene, item.sceneIndex),
+        lockedSourceRange: {
+          evidenceShotId: item.clip.evidenceShotId,
+          startSeconds: item.clip.start,
+          endSeconds: item.clip.end,
+        },
+      },
       materialReview: item.materialReview,
     };
   });
@@ -598,11 +694,18 @@ export function buildPlannedTimeline(input: {
     const targetStart = cues[index]!.start;
     const targetEnd = cues[index]!.end;
     const targetDuration = Math.max(0.5, targetEnd - targetStart);
+    const lockedRange = scene.matchBasis?.lockedSourceRange;
+    if (lockedRange && (lockedRange.evidenceShotId !== scene.clip.evidenceShotId
+      || lockedRange.startSeconds !== scene.clip.start || lockedRange.endSeconds !== scene.clip.end)) {
+      throw new Error('production_plan_locked_source_range_mismatch');
+    }
     if (asset.type === 'image') {
       if (targetDuration > 4.2) throw new Error('production_input_required:单张图片停留时间过长，请补充动态素材或缩短脚本');
       return { name: asset.name, type: 'image' as const, url: asset.url, targetStart, targetEnd, targetDuration };
     }
-    const availableSourceDuration = scene.clip.end - scene.clip.start;
+    const lockedStart = lockedRange?.startSeconds ?? scene.clip.start;
+    const lockedEnd = lockedRange?.endSeconds ?? scene.clip.end;
+    const availableSourceDuration = lockedEnd - lockedStart;
     // A shorter spoken scene may take a shorter sub-range from the verified
     // clip. A longer spoken scene may slow the clip by at most 20%; it may not
     // clone the last frame or loop the same interval.
@@ -615,8 +718,8 @@ export function buildPlannedTimeline(input: {
       name: asset.name,
       type: 'video' as const,
       url: asset.url,
-      trimStart: scene.clip.start,
-      trimEnd: scene.clip.start + sourceDuration,
+      trimStart: lockedStart,
+      trimEnd: lockedStart + sourceDuration,
       speed,
       targetStart,
       targetEnd,

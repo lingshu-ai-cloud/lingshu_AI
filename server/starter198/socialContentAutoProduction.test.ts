@@ -155,6 +155,16 @@ try {
   } as never, '用户上传视频里的新产品');
   assert.equal(unmatchedProductContext.source, 'none',
     'company profile facts must not be promoted to facts about an unmatched task product');
+  const stableProductContext = verifiedSocialScriptContext({
+    company: { name: '测试企业' },
+    brand: { name: '测试品牌' },
+    products: {
+      items: [{ name: '企业知识中的另一款产品', sku: 'KNOWN-001', category: '护肤' }],
+    },
+  } as never, 'KNOWN-001');
+  assert.equal(stableProductContext.productName, '企业知识中的另一款产品',
+    '企业中心下拉保存的稳定产品 ID 必须解析回正确产品名');
+  assert.equal(stableProductContext.source, 'enterprise_product');
 
   const systemBaseline = freezeSocialScriptBaseline({
     brief: {
@@ -421,9 +431,9 @@ try {
       visualObservations: [`用户所选素材 ${index + 1} 的真实视觉观察`],
     })),
   });
-  assert.equal(inspirationTaskAssetPlan.ok, true, inspirationTaskAssetPlan.message);
-  assert.deepEqual(inspirationTaskAssetPlan.selectedAssetIds.sort(), ['association-a', 'association-b'],
-    'viral-reference vocabulary must not replace two user-selected task assets with system graphics');
+  assert.equal(inspirationTaskAssetPlan.ok, false,
+    'viral replication must not bypass sentence-level semantic matching merely because two task assets exist');
+  assert.equal(inspirationTaskAssetPlan.reasonCode, 'insufficient_visual_coverage');
 
   const sourcePath = path.join(temporaryRoot, 'single-upload.mp4');
   const generated = await runVisualFfmpeg([

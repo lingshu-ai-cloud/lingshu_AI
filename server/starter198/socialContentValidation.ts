@@ -6,6 +6,7 @@ import {
   SOCIAL_CONTENT_MANAGEMENT_MODES,
   SOCIAL_CONTENT_TASK_MODES,
   SOCIAL_CONTENT_PRODUCTION_MODES,
+  SOCIAL_PRODUCTION_APPROACHES,
   SOCIAL_CONTENT_THEME_IDS,
   SOCIAL_SOURCE_KINDS,
   SOCIAL_WORK_PACKAGE_KINDS,
@@ -121,13 +122,14 @@ function safeRecord(value: unknown, code: string, maxBytes: number): Record<stri
 }
 
 const BRIEF_KEYS = [
-  'title', 'objective', 'productRef', 'audience', 'markets', 'languages', 'platforms', 'formats',
+  'title', 'objective', 'productId', 'productRef', 'audience', 'markets', 'languages', 'platforms', 'formats',
   'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny',
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
   'customTopic', 'topic', 'legacyCreationRoute',
   'productionMode', 'creationMode', 'assetAvailability', 'managementMode',
   'programRef', 'targetAccountRef', 'accountPlaybookRef', 'referenceMode', 'primaryExperimentVariable',
+  'productionApproach',
 ] as const;
 
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
@@ -181,6 +183,10 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   if (!SOCIAL_CONTENT_PRODUCTION_MODES.includes(productionMode as CreateSocialContentTaskInput['productionMode'] & string)) {
     throw new SocialContentWorkflowError('social_content_production_mode_invalid', 400);
   }
+  const productionApproach = source.productionApproach === undefined ? 'ai_enhanced' : socialText(source.productionApproach);
+  if (!SOCIAL_PRODUCTION_APPROACHES.includes(productionApproach as CreateSocialContentTaskInput['productionApproach'] & string)) {
+    throw new SocialContentWorkflowError('social_content_production_approach_invalid', 400);
+  }
   const mode = source.mode === undefined ? undefined : socialText(source.mode);
   if (mode !== undefined && !SOCIAL_CONTENT_TASK_MODES.includes(mode as CreateSocialContentTaskInput['mode'] & string)) {
     throw new SocialContentWorkflowError('social_content_mode_invalid', 400);
@@ -216,6 +222,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     ...parseSocialReplicationContext(source),
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
+    productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),
     productRef: optionalText(source.productRef, 'social_content_product_ref_invalid', 200),
     audience: optionalText(source.audience, 'social_content_audience_invalid', 500),
     markets: textList(source.markets, 'social_content_markets_invalid', 10, 80),
@@ -239,6 +246,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     assetAvailability: assetAvailability as CreateSocialContentTaskInput['assetAvailability'],
     managementMode: managementMode as CreateSocialContentTaskInput['managementMode'],
     productionMode: productionMode as CreateSocialContentTaskInput['productionMode'],
+    productionApproach: productionApproach as CreateSocialContentTaskInput['productionApproach'],
     ...(mode ? { mode: mode as CreateSocialContentTaskInput['mode'] } : {}),
     weeklyPlanId: source.weeklyPlanId === undefined || source.weeklyPlanId === null || source.weeklyPlanId === ''
       ? null : safeId(source.weeklyPlanId, 'social_content_weekly_plan_id_invalid'),
@@ -252,7 +260,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
 export function parseCreateSocialWeeklyPlan(value: unknown): CreateSocialWeeklyPlanInput {
   const source = socialObject(value);
   if (!source) throw new SocialContentWorkflowError('social_weekly_plan_invalid', 400);
-  assertKeys(source, ['title', 'objective', 'productRef', 'audience', 'items']);
+  assertKeys(source, ['title', 'objective', 'productId', 'productRef', 'audience', 'items']);
   if (!Array.isArray(source.items) || source.items.length < 1 || source.items.length > 20) {
     throw new SocialContentWorkflowError('social_weekly_plan_items_invalid', 400);
   }
@@ -277,6 +285,7 @@ export function parseCreateSocialWeeklyPlan(value: unknown): CreateSocialWeeklyP
   return {
     title: requiredText(source.title, 'social_weekly_plan_title_invalid', 120),
     objective: requiredText(source.objective, 'social_weekly_plan_objective_invalid', 1_000),
+    productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),
     productRef: optionalText(source.productRef, 'social_content_product_ref_invalid', 200),
     audience: optionalText(source.audience, 'social_content_audience_invalid', 500),
     items,

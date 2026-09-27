@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes, randomUUID } from 'crypto';
+import { enterpriseProductIdentity, mergeEnterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import type { Request } from 'express';
 import { store } from '../storage/index.js';
 import type { AutonomyLevel } from '../autonomy/actionRules.js';
@@ -175,6 +176,10 @@ export interface EnterpriseProfile {
     enabledRoutes: Array<'oem_odm' | 'wholesale_distribution' | 'consumer_retail'>;
     routeStrategies: Partial<Record<'oem_odm' | 'wholesale_distribution' | 'consumer_retail', { targetBuyerRoles: string[]; primaryCta: string }>>;
     manuallyEditedFields?: string[];
+    /** First-use social stage selected in the content workspace. */
+    contentStage?: 'b2b_launch' | 'b2b_growth' | 'd2c_brand';
+    /** PRD-aligned generation preset derived from contentStage. */
+    weeklyTaskPackagePreset?: 'b2b_starting' | 'b2b_growing' | 'dtc_sales';
   };
   products: {
     categories: string;
@@ -184,6 +189,8 @@ export interface EnterpriseProfile {
     certifications: string;
     highlights: string;
     items?: Array<{
+      id?: string;
+      productId?: string;
       sku?: string;
       name: string;
       category?: string;
@@ -210,6 +217,8 @@ export interface EnterpriseProfile {
     }>;
   };
   brand: {
+    /** Customer-facing brand name; independent from the legal enterprise name. */
+    name: string;
     tone: string;
     style: string;
     taboos: string;
@@ -321,7 +330,7 @@ function readProfile(): EnterpriseProfile {
         highlights: '',
         items: [],
       },
-      brand: { tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
+      brand: { name: '', tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
       strategy: { currentGoal: '', focusProducts: '', focusMarkets: '', excludedMarkets: '', pricingStrategy: '', minMargin: '', agentAutonomy: '', aiAutonomy: 'draft' },
       customers: { targetProfiles: '', highValueSignals: '', lowQualitySignals: '', commonQuestions: '', followupStyle: '' },
       operations: { leadTime: '', customization: '', logistics: '', paymentTerms: '', riskNotes: '' },
@@ -635,6 +644,7 @@ function safeStoredName(originalName: string): string {
 
 function emptyProduct(index: number): NonNullable<EnterpriseProfile['products']['items']>[number] {
   return {
+    id: randomUUID(),
     name: `产品${index + 1}`,
     images: [],
     videos: [],
@@ -732,8 +742,9 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const products = profile.products ?? { categories: '', priceRange: '', moq: '', certifications: '', highlights: '' };
   const existing = Array.isArray(products.items) ? products.items : [];
   const items = existing.length
-    ? existing.map((item) => ({
+    ? existing.map((item, index) => ({
       ...item,
+      id: enterpriseProductIdentity(item, index),
       // 空名称代表尚在编辑的产品草稿，不能在保存时隐式删除。
       name: typeof item.name === 'string' ? item.name : (item.sku || ''),
       images: Array.isArray(item.images) ? item.images : [],
@@ -761,6 +772,15 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const salesStyleProfile = normalizeSalesStyleProfile(profile.salesStyleProfile);
   const faq = normalizeFaq(profile.faq);
   const strategy = { ...(profile.strategy ?? {}), aiAutonomy: normalizeAutonomy(profile.strategy?.aiAutonomy) };
+  const brandInput = (profile.brand ?? {}) as Partial<EnterpriseProfile['brand']>;
+  const brand = {
+    name: text(brandInput.name),
+    tone: text(brandInput.tone),
+    style: text(brandInput.style),
+    taboos: text(brandInput.taboos),
+    usp: text(brandInput.usp),
+    preferredLanguages: text(brandInput.preferredLanguages),
+  };
   const dataGovernance = {
     aiAccessEnabled: profile.dataGovernance?.aiAccessEnabled !== false,
     lastSavedAt: text(profile.dataGovernance?.lastSavedAt),
@@ -792,9 +812,16 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     const source: { targetBuyerRoles: string[]; primaryCta: string } = socialInput.routeStrategies?.[route] ?? { targetBuyerRoles: defaultBuyers[route], primaryCta: '引导跳转WhatsApp以触达' };
     return [route, { targetBuyerRoles: Array.isArray(source.targetBuyerRoles) && source.targetBuyerRoles.length ? source.targetBuyerRoles.map(text).filter(Boolean) : defaultBuyers[route], primaryCta: text(source.primaryCta) || '引导跳转WhatsApp以触达' }];
   }));
+  const allowedContentStages = ['b2b_launch', 'b2b_growth', 'd2c_brand'] as const;
+  const contentStage = allowedContentStages.includes(socialInput.contentStage as typeof allowedContentStages[number])
+    ? socialInput.contentStage as typeof allowedContentStages[number]
+    : undefined;
+  const presetByStage = { b2b_launch: 'b2b_starting', b2b_growth: 'b2b_growing', d2c_brand: 'dtc_sales' } as const;
+  const weeklyTaskPackagePreset = contentStage ? presetByStage[contentStage] : undefined;
   return {
     ...profile,
     company,
+    brand,
     operations,
     strategy,
     products: { ...products, searchKeywords: text(products.searchKeywords), items },
@@ -806,7 +833,7 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     salesStyleProfile,
     dataGovernance,
     digitalEmployeeOnboarding,
-    socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [] },
+    socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [], contentStage, weeklyTaskPackagePreset },
   };
 }
 
@@ -1189,6 +1216,7 @@ function normalizeApiProduct(input: ApiProductInput): NonNullable<EnterpriseProf
   if (!name) return null;
   const imageUrl = text(input.imageUrl);
   return {
+    id: randomUUID(),
     sku,
     name,
     color: text(input.color),
@@ -1219,7 +1247,7 @@ function upsertProductItems(existing: NonNullable<EnterpriseProfile['products'][
     const index = sku
       ? next.findIndex(item => item.sku?.trim() === sku)
       : next.findIndex(item => item.name?.trim() === product.name?.trim());
-    if (index >= 0) next[index] = { ...next[index], ...product };
+    if (index >= 0) next[index] = mergeEnterpriseProductIdentity(next[index], product, index);
     else next.push(product);
   }
   return next;
@@ -1275,6 +1303,7 @@ export function buildEnterpriseContext(profile: EnterpriseProfile): string {
   if (profile.handoffRules) {
     parts.push(`Handoff rules: keywords=${profile.handoffRules.keywords.join('/')}; missStreakToDraft=${profile.handoffRules.missStreakToDraft}; negativeSentiment=${profile.handoffRules.negativeSentiment}`);
   }
+  if (profile.brand?.name) parts.push(`品牌名称：${profile.brand.name}`);
   if (profile.brand?.usp) parts.push(`核心卖点：${profile.brand.usp}`);
   if (profile.brand?.tone) parts.push(`品牌调性：${profile.brand.tone}`);
   if (profile.brand?.preferredLanguages) parts.push(`首选输出语言：${profile.brand.preferredLanguages}`);

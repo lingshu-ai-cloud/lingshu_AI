@@ -427,6 +427,7 @@ async function sha256File(file: string): Promise<string> {
 export async function registerSocialTaskCreativeMaterial(input: {
   tenantId: string;
   taskId: string;
+  productId?: string | null;
   productRef?: string | null;
   file: SocialContentFile;
   stored: StoredSocialContentFile;
@@ -463,11 +464,15 @@ export async function registerSocialTaskCreativeMaterial(input: {
     taskFileRef: input.file.fileRef,
     sha256: input.file.sha256,
     productRef: input.productRef,
+    productName: input.productRef || undefined,
     title: input.file.name,
     type,
     duration: 0,
     sizeBytes: input.file.size,
-    productId: '',
+    // Keep the Enterprise Center stable ID separate from the display name so
+    // later material matching cannot confuse an identifier with user-facing
+    // product text.
+    productId: input.productId || '',
     media,
   });
 }

@@ -33,6 +33,13 @@ export interface VideoSpatialContinuity {
 
 export interface VideoAiAnalysis {
   theme: string;
+  /** Names explicitly visible/audible in the reference; never inferred. */
+  identityEntities?: Array<{
+    type: 'company' | 'brand' | 'product';
+    text: string;
+    evidence?: string;
+    confidence?: number;
+  }>;
   hooks: string[];
   sellingPoints: string[];
   mood: string;

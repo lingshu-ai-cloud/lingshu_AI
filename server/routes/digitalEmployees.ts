@@ -1934,7 +1934,29 @@ digitalEmployeesRouter.get('/overview', async (req, res) => {
 
 digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
-  const submittedConfig = normalizeDigitalEmployeeConfig(req.body || {});
+  const onboardingInput = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const minimalOnboarding = onboardingInput.minimalOnboarding === true;
+  // First login deliberately asks for no operating assumptions. These values
+  // satisfy the internal legacy runtime contract only; they are never written
+  // into Enterprise Center and cannot authorize publishing or customer sends.
+  const submittedConfig = normalizeDigitalEmployeeConfig(minimalOnboarding ? {
+    ...onboardingInput,
+    industry: '待在实际任务中确认',
+    primaryBusiness: '待在实际任务中确认',
+    targetMarkets: '待在实际任务中确认',
+    customerProfile: '待在实际任务中确认',
+    focusProducts: '',
+    primaryGoal: 'awareness',
+    approvalOwner: String(onboardingInput.approvalOwner || '').trim() || '企业管理员',
+    enabledWorkflows: ['viral_clone', 'product_content', 'material_content'],
+    publishingTargets: [],
+    allowRealPublishing: false,
+    allowRealCustomerMessages: false,
+    allowGeneratedVisuals: false,
+    autonomyMode: 'managed',
+  } : onboardingInput);
   const boundPublishing = await bindPublishingTargets(tenantId, submittedConfig.publishingTargets);
   submittedConfig.publishingTargets = boundPublishing.targets;
   if (boundPublishing.invalidAccountIds.length) {
@@ -1953,6 +1975,16 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
     submittedConfig.managedPublishingGrant = { ...submittedConfig.managedPublishingGrant, grantId: randomUUID(), authorizedBy: userId, authorizedAt: now };
   } else delete submittedConfig.managedPublishingGrant;
   const enterprise = await readTenantEnterpriseProfile(tenantId);
+  const minimalCompanyName = String(onboardingInput.companyName || enterprise.company.name || '').trim();
+  const minimalBrandName = String(onboardingInput.brandName || enterprise.brand?.name || '').trim();
+  if (minimalOnboarding) {
+    const missing = [
+      ...(!minimalCompanyName ? ['企业名称'] : []),
+      ...(!minimalBrandName ? ['品牌名称'] : []),
+      ...(!(enterprise.products.items?.length) ? ['产品表'] : []),
+    ];
+    if (missing.length) { res.status(400).json({ error: 'onboarding_incomplete', missing }); return; }
+  }
   const customerAgentEnabled = submittedConfig.enabledWorkflows.some(workflow => (
     workflow === 'customer_segmentation' || workflow === 'batch_followup'
   ));
@@ -1963,7 +1995,18 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
     mainMarkets: enterprise.company.mainMarkets || submittedConfig.targetMarkets,
     description: enterprise.company.description || submittedConfig.primaryBusiness,
   };
-  const enterprisePatch = {
+  const enterprisePatch = minimalOnboarding ? {
+    company: { ...enterprise.company, name: minimalCompanyName },
+    brand: { ...enterprise.brand, name: minimalBrandName },
+    customerService: {
+      ...enterprise.customerService,
+      enabled: false,
+      disabledAt: now,
+      partialAutoReplyEnabled: false,
+      partialAutoReplyDecision: 'pending' as const,
+      partialAutoReplyDecisionAt: '',
+    },
+  } : {
     company: {
       ...companyPatch,
       name: enterprise.company.name || submittedConfig.companyName,
@@ -2053,7 +2096,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
       payload: { eventType: 'critical_business_change', changedFields, action: 'review_weekly_package' },
     });
   }
-  await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion } });
+  await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, minimalOnboarding, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion } });
   res.json(await buildOverview(tenantId));
 });
 

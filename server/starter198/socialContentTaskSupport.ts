@@ -162,6 +162,7 @@ export function socialWeeklyPlan(record: StarterRecord): SocialWeeklyPlan | null
     weeklyPlanId,
     title: socialText(value.title),
     objective: socialText(value.objective),
+    productId: socialText(value.productId) || null,
     productRef: socialText(value.productRef) || null,
     audience: socialText(value.audience) || null,
     taskIds: taskIds.map(socialText),
@@ -210,6 +211,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
   return {
     title: value.title,
     objective: value.objective,
+    productId: value.productId ?? null,
     productRef: value.productRef ?? null,
     audience: value.audience ?? null,
     markets: value.markets ?? (themeDriven ? ['全球'] : []),
@@ -239,6 +241,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     assetAvailability: value.assetAvailability ?? 'none',
     managementMode: value.managementMode ?? 'one_click_managed',
     productionMode: value.productionMode ?? 'social_ready',
+    productionApproach: value.productionApproach ?? 'ai_enhanced',
   };
 }
 
@@ -251,7 +254,7 @@ export async function groundedScriptBaseline(input: {
 }): Promise<StoredSocialScriptBaseline> {
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
   const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, input.brief.productRef)
+    ? verifiedSocialScriptContext(profile, input.brief.productId || input.brief.productRef)
     : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
   const inspiration = input.theme.themeId
     ? await resolveSocialInspirationScript({ tenantId: input.tenantId, themeId: input.theme.themeId, verifiedContext })
@@ -287,7 +290,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   const references = detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link');
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
   const verifiedContext = profile
-    ? verifiedSocialScriptContext(profile, summary.brief.productRef)
+    ? verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef)
     : { productName: null, facts: [], source: 'none' as const, confidence: 0 };
   let resolved: ResolvedSocialTaskReference | null = null;
   if (references.length) {

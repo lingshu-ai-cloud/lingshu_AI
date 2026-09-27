@@ -34,19 +34,21 @@ try {
   const baseRecord = { id: 'material-a', name: '产品图.png', type: 'image', tenantId: 'a', scope: 'own', createdAt: new Date(0).toISOString() };
   const first = upsertSocialTaskMaterial({
     id: 'material-a', tenantId: 'a', taskId: 'task-a', taskFileRef: 'socialfile:file-a',
-    contentSha256: sha, productRef: '产品 A', record: baseRecord,
+    contentSha256: sha, productId: 'product-a', productName: '产品 A', record: baseRecord,
   });
   const reused = upsertSocialTaskMaterial({
     id: 'ignored-second-id', tenantId: 'a', taskId: 'task-b', taskFileRef: 'socialfile:file-b',
-    contentSha256: sha, productRef: '产品 B', record: { ...baseRecord, id: 'ignored-second-id' },
+    contentSha256: sha, productId: 'product-b', productName: '产品 B', record: { ...baseRecord, id: 'ignored-second-id' },
   });
   const isolated = upsertSocialTaskMaterial({
     id: 'material-b', tenantId: 'b', taskId: 'task-c', taskFileRef: 'socialfile:file-c',
-    contentSha256: sha, productRef: '产品 C', record: { ...baseRecord, id: 'material-b', tenantId: 'b' },
+    contentSha256: sha, productId: 'product-c', productName: '产品 C', record: { ...baseRecord, id: 'material-b', tenantId: 'b' },
   });
   assert.equal(reused.id, first.id, 'same tenant and SHA reuse one material identity');
   assert.deepEqual(reused.sourceTaskIds, ['task-a', 'task-b']);
   assert.deepEqual(reused.productRefs, ['产品 A', '产品 B']);
+  assert.equal(reused.productId, 'product-b', '关联产品使用稳定 ID');
+  assert.equal(reused.productName, '产品 B', '展示名与稳定 ID 分开保存');
   assert.notEqual(isolated.id, first.id, 'a second tenant never reuses another tenant material identity');
   assert.equal(readLocalMaterials().length, 2);
 } finally {

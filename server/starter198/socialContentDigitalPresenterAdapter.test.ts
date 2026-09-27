@@ -44,6 +44,7 @@ const plan: SocialAssetSupplyPlan = {
 
 let executeCount = 0;
 let capturedKey = '';
+let capturedVisualControl: any = null;
 const ports: SocialDigitalPresenterBridgePorts = {
   async resolvePresenter() {
     return { presenterAssetId: 'presenter-1', providerId: 'heygen', providerPresenterId: 'avatar-1',
@@ -56,6 +57,7 @@ const ports: SocialDigitalPresenterBridgePorts = {
     executeCount += 1;
     assert.equal(input.idempotencyKey, capturedKey);
     assert.equal(input.presenter.consentRef, 'consent-1');
+    capturedVisualControl = input.visualControl;
     return { status: 'completed', providerTaskId: 'heygen-task-1', localPath: output,
       contentHash: 'sha256-mock', duration: 3.2, actualCostCny: 1.1 };
   },
@@ -70,6 +72,77 @@ assert.equal(completed.execution.shots[0]?.provenance.synthetic, true);
 assert.equal(completed.execution.shots[0]?.provenance.authorizationRef, 'rights-1');
 assert.match(completed.execution.shots[0]?.provenance.disclosure || '', /数字人合成/);
 assert.equal((completed.assets[0]?.segments[0] as any)?.presenterConsistencyKey, presenterLock.consistencyKey);
+assert.equal(capturedVisualControl.precision, 'hook_high');
+assert.equal(capturedVisualControl.interaction, 'talking');
+assert.match(capturedVisualControl.action.path, /口播说明/);
+assert.deepEqual(capturedVisualControl.requiredCapabilities, ['scripted_speech', 'timing_control']);
+
+const complexShot = {
+  ...plan.shots[0]!,
+  requestedDescription: '人物将精华挤出后涂抹上脸',
+  visualContract: {
+    schemaVersion: 'social-scene-visual-contract.v1',
+    subjects: [
+      { subjectId: 'person', kind: 'person', description: '人物', identityRef: null, confidence: 1 },
+      { subjectId: 'product', kind: 'product', description: '精华产品', identityRef: 'serum-a', confidence: 1 },
+    ],
+    interaction: { kind: 'apply_product_to_face', description: '涂抹上脸', actorSubjectId: 'person', objectSubjectId: 'product', contactArea: '面部' },
+    environment: { kind: 'bathroom', description: '浴室洗手台', details: [] },
+    productUsage: { kind: 'apply_to_face', description: '挤出并涂抹', productId: 'product-a', productRef: 'serum-a' },
+    product: { policy: 'locked', requestedProductId: 'product-a', requestedProductRef: 'serum-a', source: 'user_explicit' },
+    action: { startState: '手持产品', path: '挤出后涂抹', peakState: '指尖接触面部', endState: '涂抹完成', startSeconds: 0, peakSeconds: 1.4, endSeconds: 2.8 },
+    camera: { shotSize: '人物近景', angle: '平视', movement: '轻微推近', composition: '手部和面部不遮挡' },
+    precision: 'hook_high', evidence: { sourceRange: { startSeconds: 0, endSeconds: 3 }, keyframeIds: [], confidence: 0.95 },
+  },
+} as any;
+const complexContext = {
+  tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
+  shot: complexShot, baselineScene: baseline.scenes[0]!, availableAssets: [],
+};
+
+let unsupportedExecuted = false;
+const talkingOnly = createSocialDigitalPresenterAdapter({
+  ...ports,
+  capabilities: { methods: ['talking'], controls: ['scripted_speech', 'timing_control'] },
+  async execute(input) { unsupportedExecuted = true; return ports.execute(input); },
+});
+await assert.rejects(() => talkingOnly.execute(complexContext),
+  /digital_presenter_capability_unsupported:controls:.*guided_action.*product_interaction/,
+  '当前 talking-head provider 不支持产品上脸时必须显式报告能力不足');
+assert.equal(unsupportedExecuted, false, '不得向不具备复杂动作能力的 provider 提交付费任务');
+
+const governedKeys: string[] = [];
+let governedControl: any = null;
+const fullControl = createSocialDigitalPresenterAdapter({
+  ...ports,
+  capabilities: {
+    methods: ['talking'],
+    controls: ['scripted_speech', 'timing_control', 'guided_action', 'product_interaction',
+      'environment_control', 'camera_control'],
+  },
+  async authorizeBudget(input) {
+    capturedKey = input.idempotencyKey;
+    governedKeys.push(input.idempotencyKey);
+    return { allowed: true, reservationRef: `budget-${governedKeys.length}` };
+  },
+  async execute(input) {
+    governedControl = input.visualControl;
+    return ports.execute(input);
+  },
+});
+await fullControl.execute(complexContext);
+await fullControl.execute({
+  ...complexContext,
+  shot: { ...complexShot, visualContract: { ...complexShot.visualContract,
+    action: { ...complexShot.visualContract.action, path: '开盖、挤出后点涂面部' } } },
+});
+assert.deepEqual(governedControl.timing, {
+  startSeconds: 0, endSeconds: 2.8, durationSeconds: 2.8, actionPeakSeconds: 1.4,
+});
+assert.equal(governedControl.product.productRefs[0], 'serum-a');
+assert.ok(governedControl.requiredCapabilities.includes('environment_control'));
+assert.ok(governedControl.requiredCapabilities.includes('camera_control'));
+assert.notEqual(governedKeys[0], governedKeys[1], '动作控制变化必须生成不同幂等键');
 
 const failedProvider = createSocialDigitalPresenterAdapter({ ...ports, async execute() {
   return { status: 'failed', providerTaskId: 'heygen-task-failed', error: 'provider_failed' };

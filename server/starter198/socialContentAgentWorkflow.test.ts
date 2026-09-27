@@ -171,6 +171,18 @@ assert.ok(workflow.executionPlan.scenes.every(scene => (
 )));
 assert.deepEqual(workflow.responsibilityBoundary?.finalGateOrder, ['content_agent', 'media_evaluation_worker', 'director_agent', 'business_agent', 'rules_engine']);
 assert.equal(workflow.responsibilityBoundary?.selfApprovalForbidden, true);
+assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.text, replicationScript.shots[0]?.spokenText);
+assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.matchMode, 'verbatim_semantic');
+assert.ok(workflow.directorBrief.scenes[0]?.acceptanceCriteria.some(item => item.includes('前三秒钩子必须逐帧核对')));
+assert.equal(workflow.directorBrief.contentRequirements?.product.required, true);
+assert.equal(workflow.directorBrief.contentRequirements?.product.productRef, 'product:verified-1');
+assert.equal(workflow.directorBrief.contentRequirements?.product.policy, 'locked');
+assert.equal(workflow.directorBrief.contentRequirements?.product.source, 'user_explicit');
+assert.equal(workflow.directorBrief.contentRequirements?.enterpriseFacts.required, false);
+assert.equal(workflow.directorBrief.scenes[0]?.visualContract?.precision, 'hook_high');
+assert.deepEqual(workflow.executionPlan.productionOptions?.map(option => option.approach), [
+  'ai_enhanced', 'material_cut', 'shooting_plan',
+]);
 
 const directorJson = JSON.stringify(workflow.directorBrief);
 assert.doesNotMatch(directorJson, /sourceStrategy|candidateId|provider|model|clipId/);
@@ -198,6 +210,39 @@ assert.ok(runtimeCapabilities.every(capability => (
 assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.executable, false);
 assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.availabilityReason, '未注册执行适配器');
 assert.deepEqual(runtimeCapabilities.find(item => item.strategy === 'motion_graphics')?.registeredAdapterIds, ['system_safe_motion_graphics.v1']);
+
+const localMaterialSupply = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication', productionApproach: 'material_cut', planVersion: 'local-material-1',
+  confirmedFactRefs: ['knowledge:product-1'], inventory: { customerVideoIds: ['owned-video-1'] },
+  shots: [
+    { shotId: 'scene-hook', function: 'hook', requestedDescription: '产品开场动作' },
+    { shotId: 'scene-cta', function: 'call_to_action', requestedDescription: '产品收束画面' },
+  ],
+});
+const localMaterialWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-local-material', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, productRef: null, productionApproach: 'material_cut' }, sources: [],
+  factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: localMaterialSupply,
+  referenceAnalysis, replicationScript, inferredProductRef: 'product:auto-selected',
+  referencePreviewUrl: '/media/reference.mp4',
+  materialCandidates: [{
+    assetId: 'owned-video-1', sourceRef: 'owned-video-1', label: '我的产品素材', mediaType: 'video',
+    previewUrl: '/media/owned-video-1.mp4', origin: 'my_materials',
+    matchedVoiceoverCueIds: ['scene-hook:voiceover', 'scene-cta:voiceover'], matchScore: 980,
+  }],
+});
+assert.equal(localMaterialWorkflow.executionPlan.selectedApproach, 'material_cut');
+assert.equal(localMaterialWorkflow.executionPlan.productionOptions?.length, 3);
+const localFreeOption = localMaterialWorkflow.executionPlan.productionOptions?.find(option => option.approach === 'material_cut');
+assert.equal(localFreeOption?.available, true);
+assert.equal(localFreeOption?.usesPaidProviders, false);
+assert.equal(localFreeOption?.firstFramePreview?.sourceTimestampSeconds, 0);
+assert.equal(localMaterialWorkflow.executionPlan.referenceFirstFramePreview?.mediaType, 'image');
+assert.equal(localMaterialWorkflow.directorBrief.contentRequirements?.product.productRef, 'product:auto-selected');
+assert.equal(localMaterialWorkflow.directorBrief.contentRequirements?.product.policy, 'preferred');
+assert.ok(localMaterialWorkflow.executionPlan.scenes.some(scene => scene.candidates.some(candidate => (
+  candidate.sourceRef === 'owned-video-1' && candidate.matchedVoiceoverCueIds?.includes('scene-hook:voiceover')
+))));
 
 const runtimeBlockedDigitalHuman = buildSocialAgentWorkflow({
   taskId: 'task-runtime-blocked', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
@@ -294,9 +339,9 @@ const blocked = buildSocialAgentWorkflow({
   referenceAnalysis, replicationScript: null,
 });
 assert.equal(blocked.adHocBusinessContext?.version, '13');
-assert.equal(blocked.executionPlanReview.approved, false);
-assert.ok(blocked.executionPlanReview.reasonCodes.includes('facts_missing'));
-assert.equal(blocked.stage, 'needs_facts');
+assert.equal(blocked.executionPlanReview.approved, true);
+assert.equal(blocked.executionPlanReview.reasonCodes.includes('facts_missing'), false);
+assert.equal(blocked.stage, 'director_ready');
 
 const incompleteReference = { ...referenceAnalysis, coverage: { ...referenceAnalysis.coverage!, gaps: [{ startSeconds: 5, endSeconds: 6, reason: '未覆盖' }], fullTimelineCovered: false } };
 const incomplete = buildSocialAgentWorkflow({

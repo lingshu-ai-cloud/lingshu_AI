@@ -8,11 +8,14 @@ import type {
 import type { EnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { SocialContentWorkflowError, socialJson, socialObject, socialText } from './socialContentValidation.js';
+import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 
 export const SOCIAL_SCRIPT_BASELINE_SCHEMA = 'social-content-script-baseline.v1';
 export const SOCIAL_SCRIPT_GROUNDING_VERSION = 'social-script-grounding.v5';
 
 export interface VerifiedSocialScriptContext {
+  enterpriseName?: string | null;
+  brandName?: string | null;
   productName: string | null;
   facts: Array<{ key: string; label: string; value: string }>;
   source: 'enterprise_product' | 'enterprise_profile' | 'none';
@@ -94,7 +97,14 @@ export interface StoredSocialScriptBaseline {
     action: string;
     /** Director-ready content fields. `narration` remains the compatibility alias for voiceover. */
     script?: string;
+    /** Verbatim ASR/dialogue recovered from the selected reference before identity substitution. */
+    referenceSpokenText?: string | null;
     voiceover?: string;
+    /** New reference baselines may replace identities, never facts or phrasing. */
+    voiceoverReplacement?: {
+      mode: 'identity_only';
+      replacedEntityTypes: Array<'company' | 'brand' | 'product'>;
+    };
     caption?: string;
     narration: string;
   }>;
@@ -244,10 +254,15 @@ export function verifiedSocialScriptContext(
   profile: EnterpriseProfile,
   productRef: string | null,
 ): VerifiedSocialScriptContext {
+  const identityContext = {
+    enterpriseName: compactFactValue(profile.company.name, 80) || null,
+    brandName: compactFactValue(profile.brand?.name, 80) || null,
+  };
   const reference = socialText(productRef).toLocaleLowerCase();
   const products = profile.products.items ?? [];
   const exact = reference
-    ? products.find(item => [item.name, item.sku].some(value => socialText(value).toLocaleLowerCase() === reference))
+    ? products.find((item, index) => [enterpriseProductIdentity(item, index), item.name, item.sku]
+      .some(value => socialText(value).toLocaleLowerCase() === reference))
     : undefined;
   const product = exact ?? (!reference && products.length === 1 ? products[0] : undefined);
   if (product) {
@@ -259,6 +274,7 @@ export function verifiedSocialScriptContext(
       ['moq', '起订量', product.moq],
     ];
     return {
+      ...identityContext,
       productName: compactFactValue(product.name, 48) || null,
       facts: candidates
         .map(([key, label, value]) => ({ key, label, value: compactFactValue(value) }))
@@ -272,13 +288,14 @@ export function verifiedSocialScriptContext(
   // is not yet an Enterprise Knowledge row. It never unlocks product claims;
   // facts remain empty until an exact enterprise-product match exists.
   if (reference) {
-    return { productName: compactFactValue(productRef, 48) || null, facts: [], source: 'none', confidence: 0.5 };
+    return { ...identityContext, productName: compactFactValue(productRef, 48) || null, facts: [], source: 'none', confidence: 0.5 };
   }
   const profileFacts: Array<{ key: string; label: string; value: string }> = [
     { key: 'company_industry', label: '所属行业', value: compactFactValue(profile.company.industry) },
     { key: 'product_categories', label: '产品类别', value: compactFactValue(profile.products.categories) },
   ].filter(item => item.value);
   return {
+    ...identityContext,
     productName: null,
     facts: profileFacts.slice(0, 2),
     source: profileFacts.length ? 'enterprise_profile' : 'none',
@@ -438,8 +455,10 @@ export function freezeSocialScriptBaseline(input: {
   const replicationShots = input.replicationScript?.shots?.slice(0, 12) ?? [];
   const scenes = replicationShots.length ? replicationShots.map((shot, index) => {
     const referenceStructure = input.inspiration?.nodes[index]?.referenceStructure;
-    const narration = socialText(shot.spokenText || shot.captionText);
-    const caption = socialText(shot.captionText || shot.spokenText);
+    // A silent reference shot stays silent. Captions are not promoted to
+    // speech, and missing ASR is never filled with newly authored copy.
+    const narration = socialText(shot.spokenText);
+    const caption = socialText(shot.captionText);
     const visualInstruction = socialText(shot.visualInstruction || shot.materialPlan?.requestedDescription);
     return {
       sceneId: socialText(shot.shotId) || `scene-${index + 1}`,
@@ -455,7 +474,14 @@ export function freezeSocialScriptBaseline(input: {
       subject: socialText(shot.materialPlan?.requestedDescription) || visualInstruction || '本次内容',
       action: visualInstruction || '按参考节奏展示',
       script: visualInstruction || narration,
+      referenceSpokenText: shot.referenceSpokenText ?? null,
       voiceover: narration,
+      ...(shot.voiceoverReplacement ? {
+        voiceoverReplacement: {
+          mode: 'identity_only' as const,
+          replacedEntityTypes: [...shot.voiceoverReplacement.replacedEntityTypes],
+        },
+      } : {}),
       caption,
       narration,
     };
@@ -526,7 +552,7 @@ export function freezeSocialScriptBaseline(input: {
       narration,
     };
   });
-  if (!scenes.length || scenes.some(scene => !scene.narration)) {
+  if (!scenes.length || (!replicationShots.length && scenes.some(scene => !scene.narration))) {
     throw new SocialContentWorkflowError('social_content_script_baseline_invalid', 503);
   }
   return {
@@ -618,6 +644,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
   const scenes = scenesValue.map(value => {
     const scene = socialObject(value);
     const referenceStructure = socialObject(scene?.referenceStructure);
+    const voiceoverReplacement = socialObject(scene?.voiceoverReplacement);
     const sourceTiming = socialObject(referenceStructure?.sourceTiming);
     const parsedReferenceStructure: NonNullable<StoredSocialScriptBaseline['scenes'][number]['referenceStructure']> | null = referenceStructure && sourceTiming ? {
       sourceTiming: {
@@ -639,12 +666,27 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
       subject: socialText(scene?.subject),
       action: socialText(scene?.action),
       script: socialText(scene?.script) || `${socialText(scene?.shotFunction)}：${socialText(scene?.subject)}，${socialText(scene?.action)}`,
+      ...(Object.prototype.hasOwnProperty.call(scene ?? {}, 'referenceSpokenText')
+        ? { referenceSpokenText: socialText(scene?.referenceSpokenText) || null }
+        : {}),
       voiceover: socialText(scene?.voiceover) || socialText(scene?.narration),
-      caption: socialText(scene?.caption) || socialText(scene?.voiceover) || socialText(scene?.narration),
+      ...(socialText(voiceoverReplacement?.mode) === 'identity_only' ? {
+        voiceoverReplacement: {
+          mode: 'identity_only' as const,
+          replacedEntityTypes: Array.isArray(socialJson(voiceoverReplacement?.replacedEntityTypes))
+            ? (socialJson(voiceoverReplacement?.replacedEntityTypes) as unknown[])
+              .map(socialText)
+              .filter((type): type is 'company' | 'brand' | 'product' => ['company', 'brand', 'product'].includes(type))
+            : [],
+        },
+      } : {}),
+      caption: socialText(scene?.caption),
       narration: socialText(scene?.narration),
     };
+    const frozenReferenceScene = source === 'inspiration_script'
+      && socialText(voiceoverReplacement?.mode) === 'identity_only';
     if (!scene || !parsed.sceneId || !parsed.shotFunction || !parsed.subject || !parsed.action
-      || !parsed.script || !parsed.voiceover || !parsed.caption || !parsed.narration) {
+      || !parsed.script || (!frozenReferenceScene && (!parsed.voiceover || !parsed.caption || !parsed.narration))) {
       throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
     }
     if (parsedReferenceStructure && (

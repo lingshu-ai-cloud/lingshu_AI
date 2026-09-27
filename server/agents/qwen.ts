@@ -37,6 +37,7 @@ export interface QwenTimelineBoundary {
 }
 export interface QwenTimelinePlan {
   theme: string;
+  identityEntities: NonNullable<VideoAiAnalysis['identityEntities']>;
   hooks: string[];
   sellingPoints: string[];
   mood: string;
@@ -186,6 +187,7 @@ ${modeInstruction}
 
 必需 JSON 字段：
 - theme: string，用一句中文概括视频核心主题/产品/场景
+- identityEntities: array，仅提取口播、字幕或画面中明确出现的企业名、品牌名和产品名；每项包含 type("company"|"brand"|"product")、text、evidence、confidence，不确定时不输出
 - hooks: string[], 2-4 个中文开头钩子或吸引注意力的方法
 - sellingPoints: string[], 3-6 个中文卖点、利益点或画面展示点
 - mood: string，中文情绪/风格描述
@@ -269,7 +271,7 @@ export async function detectVideoTimelineWithQwen(opts: {
       { type: 'text', text: `你是视频时间轴检测器。只输出合法JSON，不要解释。根据按时间排列的真实关键帧建立连续分析窗口，不编造画面、台词、品牌或动作。
 ${titleEvidence}
 平台：${opts.platform || '未知'}；局部时长：${opts.duration.toFixed(2)}s；帧时间：${opts.frames.map(frame => frame.timeLabel).join(', ')}。
-JSON字段：theme、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType，以及boundaries。
+JSON字段：theme、identityEntities（仅提取明确出现的企业名、品牌名和产品名，每项含type/text/evidence/confidence）、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType，以及boundaries。
 boundaries每项仅含id、start、end、reason、evidence。必须从0连续无重叠覆盖到${opts.duration.toFixed(2)}，每段最长5秒；真实内容稳定时也拆成连续“分析窗口”，reason写“连续观察窗口”，不要伪称转场。start/end为数字，id依次为b1、b2。evidence只写可见变化或持续状态。` },
       ...opts.frames.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
     ] as any }],
@@ -279,6 +281,7 @@ boundaries每项仅含id、start、end、reason、evidence。必须从0连续无
   const parsed = parseJson<Partial<QwenTimelinePlan>>(completion.choices[0]?.message?.content || '', {});
   return {
     theme: String(parsed.theme || ''),
+    identityEntities: Array.isArray(parsed.identityEntities) ? parsed.identityEntities : [],
     hooks: Array.isArray(parsed.hooks) ? parsed.hooks.map(String) : [],
     sellingPoints: Array.isArray(parsed.sellingPoints) ? parsed.sellingPoints.map(String) : [],
     mood: String(parsed.mood || ''),
@@ -311,7 +314,7 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
       { type: 'text', text: `你是视频导演分镜分析器。只输出合法JSON对象 {"summary":{},"shots":[]}。严格逐项分析服务端时间窗口，不得新增、删除、合并或修改边界；每项用boundaryId关联。
 时间窗口：${JSON.stringify(boundaries)}
 ${opts.transcript?.segments.length ? `独立ASR：${JSON.stringify(opts.transcript.segments)}` : '无可靠ASR，dialogue留空。'}
-summary字段：theme、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType。
+summary字段：theme、identityEntities（仅提取明确出现的企业名、品牌名和产品名，每项含type/text/evidence/confidence）、hooks、sellingPoints、mood、structure、baseRequirements、firstTenSeconds（atmosphere/audioVisual/camera/visuals/voiceMusic）、coarseStructure（time/label/description）、scriptSummary15s（visualStyle/coreEmotion/competitors）、recommendedScriptType。
 shots每项字段：boundaryId、environment、shot、camera、angle、composition、purpose、visual、dialogue、onScreenText、ambientSound、bgm、soundEffects、beats、persistentState、startState、endState、transitionToNext、authenticity、observedFacts、inferredIntent、causalGap、omniPrompt、omniNegativePrompt、confidence、needsReview、viralPotential、subtitle、audio、note。每个字符串简洁、具体、尽量不超过24个汉字。shots必须完整返回${boundaries.length}项；无法确认时也必须保留对应boundaryId，用needsReview=true和较低confidence表达不确定，禁止省略分镜。
 observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因果只写causalGap，不得进入visual或omniPrompt。分别记录口播、屏幕文字、环境声、BGM、音效。动作写初态、接触/路径、终态；运镜、角度、构图分开。专名、价格、型号、左右方向或ASR不确定时needsReview=true，禁止猜测。omni字段使用英文。` },
       ...opts.frames.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),

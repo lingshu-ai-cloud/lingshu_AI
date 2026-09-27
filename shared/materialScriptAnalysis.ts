@@ -1,3 +1,10 @@
+import {
+  inferMaterialRoles,
+  normalizeSceneVisualContract,
+  type SocialMaterialRole,
+  type SocialSceneVisualContract,
+} from './sceneVisualContract.js';
+
 export type MaterialScriptRole = 'hook' | 'demonstration' | 'proof' | 'explanation' | 'transition' | 'closing' | 'support';
 
 export interface MaterialScriptShot {
@@ -10,6 +17,10 @@ export interface MaterialScriptShot {
   matchTags: string[];
   confidence: number;
   needsReview: boolean;
+  /** Same visual vocabulary consumed by the Director and Content Agent. */
+  visualContract: SocialSceneVisualContract;
+  /** Asset roles are separate from this shot's narrative `role`. */
+  materialRoles: SocialMaterialRole[];
   /** Reusable editorial facts computed once when the material is ingested. */
   editorial: {
     subjects: string[];
@@ -35,7 +46,7 @@ export interface MaterialScriptShot {
  * the uploaded pixels.
  */
 export interface MaterialScriptAnalysis {
-  schemaVersion: 'material-script-analysis.v2';
+  schemaVersion: 'material-script-analysis.v3';
   status: 'ready';
   sourceRevision: string;
   summary: string;
@@ -52,6 +63,9 @@ export interface MaterialScriptAnalysis {
     environments: string[];
     shotLanguage: string[];
     functions: string[];
+    interactions: string[];
+    productUsage: string[];
+    materialRoles: SocialMaterialRole[];
   };
   shots: MaterialScriptShot[];
   truthBoundary: string;
@@ -151,6 +165,57 @@ function editorialFor(segment: SegmentLike, start: number, end: number): Materia
   };
 }
 
+function visualContractFor(input: {
+  segment: SegmentLike;
+  start: number;
+  end: number;
+  productId?: string | null;
+  productRef?: string | null;
+  productPolicy?: 'locked' | 'preferred' | 'open';
+  productPolicySource?: 'user_explicit' | 'agent_inferred' | 'inventory_open';
+  hook: boolean;
+}): SocialSceneVisualContract {
+  const segment = input.segment;
+  const productId = text(segment.productId ?? input.productId, 240) || null;
+  const productRef = text(segment.productRef ?? input.productRef, 240) || null;
+  return normalizeSceneVisualContract({
+    subjects: [...strings(segment.subject), text(segment.subject), ...strings(segment.observedFacts)].filter(Boolean),
+    interaction: segment.interaction,
+    subjectRelations: segment.subjectRelations,
+    environment: segment.environment,
+    productUsage: typeof segment.productUsage === 'object' && segment.productUsage
+      ? segment.productUsage
+      : { description: text(segment.productUsage), productId, productRef },
+    product: {
+      policy: input.productPolicy ?? (productRef ? 'preferred' : 'open'),
+      requestedProductId: productId,
+      requestedProductRef: productRef,
+      source: input.productPolicySource ?? (productRef ? 'agent_inferred' : 'inventory_open'),
+    },
+    action: {
+      startState: text(segment.startState),
+      path: text(segment.action) || strings(segment.actions)[0] || '',
+      peakState: text(segment.peakState),
+      endState: text(segment.endState),
+      startSeconds: segment.actionStart,
+      peakSeconds: segment.actionPeak,
+      endSeconds: segment.actionEnd,
+    },
+    camera: {
+      shotSize: text(segment.shot),
+      angle: text(segment.angle),
+      movement: text(segment.camera),
+      composition: text(segment.composition),
+    },
+    precision: input.hook ? 'hook_high' : 'standard',
+    evidence: {
+      sourceRange: { startSeconds: input.start, endSeconds: input.end },
+      keyframeIds: strings(segment.keyframeIds),
+      confidence: segment.confidence,
+    },
+  });
+}
+
 export function buildMaterialScriptAnalysis(input: {
   materialId: string;
   name: string;
@@ -158,6 +223,10 @@ export function buildMaterialScriptAnalysis(input: {
   duration: number;
   segments?: SegmentLike[];
   visualObservations?: string[];
+  productId?: string | null;
+  productRef?: string | null;
+  productPolicy?: 'locked' | 'preferred' | 'open';
+  productPolicySource?: 'user_explicit' | 'agent_inferred' | 'inventory_open';
   analyzedAt?: string;
 }): MaterialScriptAnalysis {
   const sourceSegments = Array.isArray(input.segments) ? input.segments : [];
@@ -180,6 +249,16 @@ export function buildMaterialScriptAnalysis(input: {
     const end = Math.max(start, Number(segment.end ?? input.duration ?? start));
     const confidence = Math.max(0, Math.min(1, Number(segment.confidence ?? 0.7)));
     const editorial = editorialFor(segment, start, end);
+    const visualContract = visualContractFor({
+      segment,
+      start,
+      end,
+      productId: input.productId,
+      productRef: input.productRef,
+      productPolicy: input.productPolicy,
+      productPolicySource: input.productPolicySource,
+      hook: role === 'hook' || start < 3,
+    });
     return {
       segmentId: text(segment.id, 160) || `${input.materialId}-segment-${index + 1}`,
       startSeconds: Number(start.toFixed(2)),
@@ -190,6 +269,8 @@ export function buildMaterialScriptAnalysis(input: {
       matchTags: unique([role, ...functions, ...evidence]),
       confidence,
       needsReview: Boolean(segment.needsReview) || confidence < 0.65,
+      visualContract,
+      materialRoles: inferMaterialRoles(visualContract),
       editorial,
     };
   });
@@ -211,7 +292,7 @@ export function buildMaterialScriptAnalysis(input: {
     ...shots.flatMap(shot => [shot.role, ...shot.matchTags, ...shot.observedEvidence]),
   ], 120).join(' ').slice(0, 8_000);
   return {
-    schemaVersion: 'material-script-analysis.v2',
+    schemaVersion: 'material-script-analysis.v3',
     status: 'ready',
     sourceRevision: input.sourceRevision,
     summary: `已将${shots.length}个真实画面区间整理为可匹配的脚本镜头；前三秒钩子能力 ${hookScore}/100。`,
@@ -224,6 +305,9 @@ export function buildMaterialScriptAnalysis(input: {
       environments: unique(shots.flatMap(shot => shot.editorial.environments), 60),
       shotLanguage: unique(shots.flatMap(shot => shot.editorial.shotLanguage), 60),
       functions,
+      interactions: unique(shots.map(shot => shot.visualContract.interaction.kind), 40),
+      productUsage: unique(shots.map(shot => shot.visualContract.productUsage.kind), 40),
+      materialRoles: [...new Set(shots.flatMap(shot => shot.materialRoles))],
     },
     shots,
     truthBoundary: '分析只描述原素材中可见、可确认的内容；不会改写客户原片，也不会生成未核实的产品功效、工厂或人物事实。',
@@ -233,13 +317,69 @@ export function buildMaterialScriptAnalysis(input: {
 
 export function reusableMaterialScriptAnalysis(value: unknown, sourceRevision: string): MaterialScriptAnalysis | null {
   if (!value || typeof value !== 'object') return null;
-  const analysis = value as Partial<MaterialScriptAnalysis>;
-  return analysis.schemaVersion === 'material-script-analysis.v2'
+  const analysis = value as Partial<MaterialScriptAnalysis> & Record<string, unknown>;
+  const schemaVersion = analysis.schemaVersion as string | undefined;
+  if (schemaVersion === 'material-script-analysis.v3'
     && analysis.status === 'ready'
     && analysis.sourceRevision === sourceRevision
     && Array.isArray(analysis.shots)
-    && analysis.shots.every(shot => Boolean(shot?.editorial?.trim))
+    && analysis.shots.every(shot => Boolean(shot?.editorial?.trim && shot.visualContract && shot.materialRoles))
     && Boolean(analysis.directorIndex)
-    ? analysis as MaterialScriptAnalysis
-    : null;
+  ) return analysis as MaterialScriptAnalysis;
+  // v2 records are read-compatible. Project their factual editorial fields to
+  // the shared contract; callers can persist the returned v3 value lazily.
+  if (schemaVersion !== 'material-script-analysis.v2'
+    || analysis.status !== 'ready'
+    || analysis.sourceRevision !== sourceRevision
+    || !Array.isArray(analysis.shots)) return null;
+  const legacy = analysis as unknown as {
+    status: 'ready'; sourceRevision: string; summary: string;
+    hookCapability: { score: number; reasons: string[] }; functions: string[];
+    searchableText: string; truthBoundary: string; analyzedAt: string;
+    directorIndex?: { subjects?: string[]; actions?: string[]; environments?: string[]; shotLanguage?: string[]; functions?: string[] };
+    shots: Array<Omit<MaterialScriptShot, 'visualContract' | 'materialRoles'>>;
+  };
+  const shots = legacy.shots.flatMap((shot, index): MaterialScriptShot[] => {
+    if (!shot?.editorial?.trim) return [];
+    const visualContract = normalizeSceneVisualContract({
+      subjects: shot.editorial.subjects,
+      actions: shot.editorial.actions,
+      environments: shot.editorial.environments,
+      shotLanguage: {
+        shotSize: shot.editorial.shotLanguage[0] || '',
+        cameraAngle: shot.editorial.shotLanguage[1] || '',
+        movement: shot.editorial.shotLanguage[2] || '',
+        composition: shot.editorial.shotLanguage[3] || '',
+      },
+      precision: index === 0 || shot.startSeconds < 3 ? 'hook_high' : 'standard',
+      evidence: {
+        sourceRange: { startSeconds: shot.startSeconds, endSeconds: shot.endSeconds },
+        confidence: shot.confidence,
+      },
+    });
+    return [{ ...shot, visualContract, materialRoles: inferMaterialRoles(visualContract) }];
+  });
+  if (shots.length !== legacy.shots.length) return null;
+  return {
+    schemaVersion: 'material-script-analysis.v3',
+    status: 'ready',
+    sourceRevision: legacy.sourceRevision,
+    summary: legacy.summary,
+    hookCapability: legacy.hookCapability,
+    functions: legacy.functions,
+    searchableText: legacy.searchableText,
+    directorIndex: {
+      subjects: legacy.directorIndex?.subjects ?? unique(shots.flatMap(shot => shot.editorial.subjects), 80),
+      actions: legacy.directorIndex?.actions ?? unique(shots.flatMap(shot => shot.editorial.actions), 80),
+      environments: legacy.directorIndex?.environments ?? unique(shots.flatMap(shot => shot.editorial.environments), 60),
+      shotLanguage: legacy.directorIndex?.shotLanguage ?? unique(shots.flatMap(shot => shot.editorial.shotLanguage), 60),
+      functions: legacy.directorIndex?.functions ?? legacy.functions,
+      interactions: unique(shots.map(shot => shot.visualContract.interaction.kind), 40),
+      productUsage: unique(shots.map(shot => shot.visualContract.productUsage.kind), 40),
+      materialRoles: [...new Set(shots.flatMap(shot => shot.materialRoles))],
+    },
+    shots,
+    truthBoundary: legacy.truthBoundary,
+    analyzedAt: legacy.analyzedAt,
+  };
 }
