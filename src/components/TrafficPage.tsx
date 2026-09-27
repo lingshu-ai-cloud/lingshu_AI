@@ -14,6 +14,7 @@ import {
   Trash2,
   Upload,
   Wand2,
+  X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { CalendarPost } from './publishing/CalendarPlanner';
@@ -61,8 +62,7 @@ import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { resolveInitialTrafficViewMode, resolveNavigationEventViewMode, resolveSignalViewMode, resolveWorkflowNavigationPage, type TrafficViewMode } from './trafficViewMode';
 import { useSocialContentNavigation } from './socialContent/useSocialContentNavigation';
 import { PAGE_REGISTRY } from '../pageRegistry';
-import { DouyinPublicationPackagePanel } from './publishing/DouyinPublicationPackagePanel';
-import { ExternalVideoApprovalPanel } from './publishing/ExternalVideoApprovalPanel';
+import ContentLibrary from './ContentLibrary';
 
 // 每个工作区都很重，按当前视图拆包，避免进入“内容创作”时同时解析灵感中心、
 // 账号动态和发布日历。外层 App 的 Suspense 会提供统一加载态。
@@ -326,6 +326,19 @@ export default function TrafficPage({
     const kickoff = payload as {
       source?: string;
       productInfo?: string;
+      generatedVideo?: {
+        title?: string;
+        url?: string;
+        poster?: string;
+        material?: {
+          name?: string;
+          type?: 'video' | 'image' | 'audio';
+          url?: string;
+          poster?: string;
+          productId?: string;
+          productName?: string;
+        };
+      };
       video?: {
         id?: string;
         title?: string;
@@ -336,6 +349,39 @@ export default function TrafficPage({
         contentFormat?: string;
       };
     };
+    if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
+      const material = kickoff.generatedVideo.material;
+      const materialUrl = String(material.url || kickoff.generatedVideo.url || '').trim();
+      const previewUrl = String(material.poster || kickoff.generatedVideo.poster || materialUrl).trim();
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+        detail: {
+          page: 'smartAssets',
+          view: 'create',
+          contentCreationRequest: {
+            requestId: Date.now(),
+            themeId: 'product_value',
+            mode: 'instant',
+            creationPath: 'material_processing',
+            materialInput: 'ready',
+            managedMode: 'one_click_managed',
+            prefill: {
+              title: `${material.name || kickoff.generatedVideo.title || '素材'} · 自由创作`,
+              topic: material.name || kickoff.generatedVideo.title || '',
+              productId: material.productId,
+              productName: material.productName,
+              referenceLinks: materialUrl ? [materialUrl] : [],
+            },
+            sourceContext: {
+              originLabel: '来自我的素材',
+              referenceTitle: material.name || kickoff.generatedVideo.title || '已选素材',
+              referenceThumbnail: previewUrl || undefined,
+              referenceContentType: material.poster || kickoff.generatedVideo.poster ? 'image' : material.type === 'video' ? 'video' : 'image',
+            },
+          },
+        },
+      }));
+      return;
+    }
     if (kickoff.source === 'inspiration_analysis' && kickoff.video?.contentFormat !== 'image') {
       const referenceUrl = kickoff.video?.sourceUrl || kickoff.video?.videoUrl || '';
       window.dispatchEvent(new CustomEvent('lingshu:navigate', {
@@ -481,6 +527,7 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   const [savingContent, setSavingContent] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false);
+  const [systemLibraryOpen, setSystemLibraryOpen] = useState(false);
   const [adaptingTarget, setAdaptingTarget] = useState<'all' | PublishPlatform | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -496,6 +543,10 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
   const publishConfirmationRef = useModalFocus<HTMLDivElement>({
     open: publishConfirmationOpen,
     onClose: () => setPublishConfirmationOpen(false),
+  });
+  const systemLibraryDialogRef = useModalFocus<HTMLDivElement>({
+    open: systemLibraryOpen,
+    onClose: () => setSystemLibraryOpen(false),
   });
   const handledWorkflowContextRef = useRef(
     workflowContext ? `${workflowContext.runId}:${workflowContext.taskId}` : '',
@@ -1058,6 +1109,25 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
     if (videoInputRef.current) videoInputRef.current.value = '';
   };
 
+  const addSystemFinishedVideo = (selectedDraft: PublishDraft) => {
+    const targetAccountIds = activeItem ? activeItem.targetAccountIds : pendingTargetAccountIds;
+    const additions = createPublishItems(selectedDraft, targetAccountIds);
+    if (!additions.length) {
+      setError('这条成片暂时无法加入发布，请返回内容制作确认成片状态。');
+      return;
+    }
+    setItems(previous => {
+      const onlyBlank = previous.length === 1 && !previous[0].videoPath.trim() && !previous[0].title.trim();
+      return mergePublishItems(onlyBlank ? [] : previous, additions);
+    });
+    setActiveItemId(additions[0].id);
+    setWorkspaceTab('publish');
+    setSystemLibraryOpen(false);
+    setError('');
+    setNotice(`已从系统成片库加入 ${additions.length} 条视频。`);
+    window.setTimeout(() => document.getElementById('publishing-video-preview')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+  };
+
   const adaptCopy = async (platform?: PublishPlatform) => {
     if (!activeItem || adaptingTarget) return;
     if (activeItem.status === 'provider_processing') {
@@ -1346,19 +1416,8 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
         ) : (
         <>
 
-        <DouyinPublicationPackagePanel source={activeItem ? {
-          id: activeItem.id,
-          videoPath: activeItem.videoPath,
-          title: activeItem.title,
-          description: activeItem.description,
-          firstComment: activeItem.firstComment,
-          sourceProjectId: activeItem.sourceProjectId,
-          generationRecordId: activeItem.generationRecordId,
-        } : null} />
-
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="space-y-4">
-        <ExternalVideoApprovalPanel storageScope={storageScope} />
         <section data-lingshu-guide="publishing-workbench" className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm ring-1 ring-emerald-50">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1378,6 +1437,9 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 <button type="button" onClick={() => videoInputRef.current?.click()} disabled={uploadingVideos} className="inline-flex h-9 w-24 items-center justify-center gap-1.5 rounded-lg bg-accent text-xs font-bold text-white disabled:opacity-50">
                   {uploadingVideos ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
                   {uploadingVideos ? '上传中' : '上传'}
+                </button>
+                <button type="button" onClick={() => setSystemLibraryOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-accent/30 bg-accent-glow px-3 text-xs font-bold text-accent hover:border-accent">
+                  <Film size={13} />选择系统成片
                 </button>
                 <button
                   type="button"
@@ -1745,6 +1807,14 @@ function SocialPublishPanel({ onNavigate, draft, onReturnToPreview, workflowCont
                 <button type="button" data-modal-initial-focus onClick={() => setPublishConfirmationOpen(false)} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary hover:bg-surface">返回检查</button>
                 <button type="button" onClick={() => void publishConfirmed()} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white hover:bg-emerald-700"><CheckCircle2 size={14} /> 确认真实发布</button>
               </div>
+            </div>
+          </div>
+        )}
+        {systemLibraryOpen && (
+          <div ref={systemLibraryDialogRef} tabIndex={-1} className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="选择系统生成成片" onClick={() => setSystemLibraryOpen(false)}>
+            <div className="relative h-[92vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-ink shadow-2xl" onClick={event => event.stopPropagation()}>
+              <button type="button" data-modal-initial-focus aria-label="关闭成片选择" title="关闭" onClick={() => setSystemLibraryOpen(false)} className="absolute right-5 top-5 z-20 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-text-muted shadow-sm hover:text-text-primary"><X size={17} /></button>
+              <ContentLibrary onPublish={addSystemFinishedVideo} />
             </div>
           </div>
         )}

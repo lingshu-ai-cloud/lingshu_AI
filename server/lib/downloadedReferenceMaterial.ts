@@ -30,6 +30,7 @@ export function buildDownloadedReferenceMaterial(input: DownloadedReferenceMater
     contentSha256: input.contentSha256,
     scope: 'own' as const,
     usage: 'reference_only' as const,
+    pinned: true,
     sourceType: input.platform,
     sourceUrl: input.sourceUrl,
     rightsReviewStatus: 'pending_human_review' as const,

@@ -12,6 +12,7 @@ test('downloaded competitor media is tenant-scoped and fail-closed for rights', 
   });
   assert.equal(material.tenantId, 'tenant-a');
   assert.equal(material.usage, 'reference_only');
+  assert.equal(material.pinned, true);
   assert.equal(material.sourceType, 'youtube');
   assert.equal(material.commercialUseApproved, false);
   assert.equal(material.derivativesApproved, false);

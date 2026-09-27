@@ -43,6 +43,7 @@ export interface SocialContentSourceContext {
   originLabel: string;
   referenceTitle: string;
   referenceThumbnail?: string;
+  referenceContentType?: 'video' | 'image';
 }
 
 export interface SocialContentCreateRequest {

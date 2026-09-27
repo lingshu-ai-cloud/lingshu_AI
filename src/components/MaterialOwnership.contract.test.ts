@@ -77,5 +77,9 @@ assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{mater
 assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素材 ≠ 可商用素材|产品归属待确认|点击智能分类/, '我的素材卡片不得展示内部用途、归属和分类标注');
 assert.match(inspirationSource, /grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5/, '我的素材卡片密度必须与灵感卡片保持一致');
 assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{materialSemanticLabel\(material\)\}<\/p>/, '每张我的素材卡片必须显示产品名或主要内容关键词');
+assert.match(inspirationSource, /<Eye size=\{14\} \/>查看详情/, '每张素材卡必须提供查看详情入口');
+assert.match(inspirationSource, /<Sparkles size=\{14\} \/>自由创作/, '每张素材卡必须提供自由创作入口');
+assert.match(inspirationSource, /\{ id: 'library' as const[\s\S]{0,220}\{ id: 'accounts' as const/, '对标账号必须排列在我的素材之后');
+assert.match(inspirationSource, /aria-label=\{`\$\{isFavoriteMaterial\(material\) \? '取消收藏' : '收藏'\} \$\{material\.name\}`\}/, '素材卡必须提供可持久化的收藏按钮');
 
 console.log('material ownership frontend contracts passed');

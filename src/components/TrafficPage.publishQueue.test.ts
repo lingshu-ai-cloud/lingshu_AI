@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   classifyDirectPublishResponse,
   normalizeStoredPublishDraft,
@@ -181,5 +182,10 @@ assert.equal(draft.description, '');
 assert.equal(draft.items?.length, 2);
 assert.equal(draft.items?.[1].videoPath, undefined);
 assert.equal(draft.items?.[1].platform, undefined);
+
+const trafficSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
+assert.doesNotMatch(trafficSource, /<DouyinPublicationPackagePanel|<ExternalVideoApprovalPanel/, '新建发布不得重复显示旧发布包和外部素材审批表单');
+assert.match(trafficSource, /<ContentLibrary onPublish=\{addSystemFinishedVideo\}/, '一键发布必须直接从系统成片库选择社媒成片');
+assert.match(trafficSource, /source === 'material_library'[\s\S]{0,900}creationPath: 'material_processing'/, '我的素材自由创作必须明确进入自由创作三栏工作台');
 
 console.log('TrafficPage publish queue compatibility tests passed');

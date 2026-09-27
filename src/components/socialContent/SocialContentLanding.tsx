@@ -40,9 +40,11 @@ const CREATION_PATHS: CreationPathCard[] = [
 
 export default function SocialContentLanding({
   onStart,
+  onSelectViralReplication,
   onClose = () => {},
 }: {
   onStart: (options: SocialContentLaunchOptions) => void;
+  onSelectViralReplication?: () => void;
   onClose?: () => void;
 }) {
   return (
@@ -64,7 +66,13 @@ export default function SocialContentLanding({
               <button
                 key={path.id}
                 type="button"
-                onClick={() => onStart({ creationPath: path.id, materialInput: path.id === 'viral_replication' ? 'ready' : 'none', managedMode: 'one_click_managed' })}
+                onClick={() => {
+                  if (path.id === 'viral_replication' && onSelectViralReplication) {
+                    onSelectViralReplication();
+                    return;
+                  }
+                  onStart({ creationPath: path.id, materialInput: path.id === 'viral_replication' ? 'ready' : 'none', managedMode: 'one_click_managed' });
+                }}
                 className={`group rounded-2xl border p-6 text-left transition hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 ${path.tint}`}
               >
                 <span className="flex items-start gap-5">

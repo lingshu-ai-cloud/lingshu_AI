@@ -81,16 +81,16 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
         <div className="absolute top-2 left-2">
           <span className="platform-badge inline-flex items-center gap-1 text-[10px]" style={{ background: 'rgba(255,255,255,.94)', color: '#0f172a' }}><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}</span>
           {video.id.startsWith('material-') && (
-            <span className="mt-1 block rounded-md bg-green-600 px-1.5 py-0.5 text-[9px] font-black text-white shadow-sm">置顶 · 片段已分析</span>
+            <span className="mt-1 block rounded-md bg-green-600 px-1.5 py-0.5 text-[9px] font-black text-white shadow-sm">收藏 · 片段已分析</span>
           )}
         </div>
         {video.sourceUrl && !isImagePost && <button
           type="button"
-          onClick={event => { event.stopPropagation(); if (!isFavoriteMaterial) onFavoriteMaterial?.(); }}
-          disabled={favoritingMaterial || isFavoriteMaterial}
-          aria-label={isFavoriteMaterial ? `已收藏 ${video.title}` : `收藏 ${video.title}`}
-          title={isFavoriteMaterial ? '已收藏到我的素材' : '收藏到我的素材'}
-          className={`absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm backdrop-blur-sm transition ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'} disabled:cursor-default`}
+          onClick={event => { event.stopPropagation(); onFavoriteMaterial?.(); }}
+          disabled={favoritingMaterial}
+          aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}
+          title={isFavoriteMaterial ? '取消收藏' : '收藏到我的素材'}
+          className={`absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm backdrop-blur-sm transition ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'} disabled:cursor-wait disabled:opacity-60`}
         >
           {favoritingMaterial ? <Loader2 size={15} className="animate-spin" /> : <Star size={16} fill={isFavoriteMaterial ? 'currentColor' : 'none'} />}
         </button>}
@@ -161,7 +161,7 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span className="platform-badge inline-flex items-center gap-1 text-[9px]" style={{ background: '#fff', color: '#0f172a' }}><SocialPlatformIcon platform={video.platform} size={12} />{meta.label}</span>
-          {video.id.startsWith('material-') && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">置顶 · 片段已分析</span>}
+          {video.id.startsWith('material-') && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">收藏 · 片段已分析</span>}
           <span className={`text-[10px] font-semibold ${trendColor}`}>{trendLabel}</span>
         </div>
         <p className="text-sm text-text-primary font-medium truncate">{video.title}</p>
@@ -188,10 +188,10 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
         </button>
       </div>
       {video.sourceUrl && !isImagePost && (
-        <button onClick={e => { e.stopPropagation(); if (!isFavoriteMaterial) onFavoriteMaterial?.(); }} disabled={favoritingMaterial || isFavoriteMaterial}
-          aria-label={isFavoriteMaterial ? `已收藏 ${video.title}` : `收藏 ${video.title}`}
-          title={isFavoriteMaterial ? '已收藏到我的素材' : '收藏到我的素材'}
-          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border transition ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-border text-text-muted hover:border-amber-300 hover:text-amber-500'} disabled:cursor-default`}>
+        <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }} disabled={favoritingMaterial}
+          aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}
+          title={isFavoriteMaterial ? '取消收藏' : '收藏到我的素材'}
+          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border transition ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-border text-text-muted hover:border-amber-300 hover:text-amber-500'} disabled:cursor-wait disabled:opacity-60`}>
           {favoritingMaterial ? <Loader2 size={13} className="animate-spin" /> : <Star size={15} fill={isFavoriteMaterial ? 'currentColor' : 'none'} />}
         </button>
       )}

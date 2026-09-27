@@ -25,6 +25,7 @@ interface EnterpriseProductOption {
 export interface SocialCreationWorkbenchSeed {
   referenceTitle?: string;
   referenceThumbnail?: string;
+  referenceContentType?: 'video' | 'image';
   referenceLinks?: string[];
   productId?: string;
   productName?: string;
@@ -200,13 +201,14 @@ export default function SocialCreationWorkbench({
             <div className="relative flex min-h-[460px] w-full overflow-hidden rounded-xl border border-[#dfe5e1] bg-[#eef0f3] shadow-[0_2px_12px_rgba(23,61,49,0.06)]">
               {previewUrl && files[0]?.type.startsWith('video/') ? <video src={previewUrl} controls className="h-full w-full object-contain" />
                 : previewUrl ? <img src={previewUrl} alt="用户上传素材预览" className="h-full w-full object-contain" />
-                : isReplication && seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt="爆款视频预览" className="h-full w-full object-contain" />
+                : seed?.referenceThumbnail && seed.referenceContentType === 'video' ? <video src={seed.referenceThumbnail} controls className="h-full w-full object-contain" />
+                : seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt={isReplication ? '爆款视频预览' : '已选素材预览'} className="h-full w-full object-contain" />
                 : <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-8 text-center text-[#294c40]">
                     <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-sm"><Film size={27} /></span>
                     <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : '暂无预览'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '先从素材库选择画面，或上传本地视频与图片。'}</p></div>
                     {!isReplication && <div className="flex items-center gap-3"><button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:open-material-library'))} className="rounded-lg border border-white bg-white px-4 py-2.5 text-xs font-black text-[#38594d] shadow-sm">选择素材</button><button type="button" onClick={() => uploadRef.current?.click()} className="rounded-lg bg-[#173d31] px-4 py-2.5 text-xs font-black text-white shadow-sm">上传素材</button></div>}
                   </div>}
-              {(previewUrl || (isReplication && seed?.referenceThumbnail)) && <div className="pointer-events-none absolute inset-x-6 bottom-5 rounded-lg bg-black/55 px-3 py-2 text-center text-xs font-bold leading-5 text-white backdrop-blur-sm">{script[activeLine]}</div>}
+              {(previewUrl || seed?.referenceThumbnail) && <div className="pointer-events-none absolute inset-x-6 bottom-5 rounded-lg bg-black/55 px-3 py-2 text-center text-xs font-bold leading-5 text-white backdrop-blur-sm">{script[activeLine]}</div>}
             </div>
           </div>
           <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已上传 ${files.length} 个素材` : isReplication ? '沿用爆款原片素材' : '尚未上传素材'}</span><button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">为所选口播更换素材</button></div>

@@ -782,6 +782,19 @@ export const studioApi = {
       return { ok: false, error: '素材编辑失败' };
     }
   },
+  setMaterialPinned: async (id: string, pinned: boolean): Promise<{ ok: boolean; material?: Partial<Material>; error?: string }> => {
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}/pin`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ pinned }),
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; material?: Partial<Material>; error?: string };
+      return response.ok && payload.ok ? { ok: true, material: payload.material } : { ok: false, error: payload.error || '收藏状态保存失败' };
+    } catch {
+      return { ok: false, error: '收藏状态保存失败' };
+    }
+  },
   deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}`, {

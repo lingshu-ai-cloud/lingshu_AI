@@ -20,6 +20,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
   return {
     referenceTitle: request.sourceContext?.referenceTitle,
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
+    referenceContentType: request.sourceContext?.referenceContentType,
     referenceLinks: request.prefill?.referenceLinks,
     productId: request.prefill?.productId,
     productName: request.prefill?.productName,
@@ -83,6 +84,16 @@ export default function SocialContentPlanningPage({
     setView('creations');
   };
 
+  const selectViralReplication = () => {
+    setChooserOpen(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('view');
+    url.searchParams.delete('productId');
+    url.searchParams.delete('productRef');
+    window.history.replaceState(window.history.state, '', url);
+    onNavigate('socialInspiration');
+  };
+
   if (taskOnly) {
     return <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} defaultCreateMode="instant" />;
   }
@@ -118,7 +129,7 @@ export default function SocialContentPlanningPage({
         </div>
       )}
 
-      {chooserOpen && <SocialContentLanding onStart={startCreation} onClose={() => setChooserOpen(false)} />}
+      {chooserOpen && <SocialContentLanding onStart={startCreation} onSelectViralReplication={selectViralReplication} onClose={() => setChooserOpen(false)} />}
     </div>
   );
 }

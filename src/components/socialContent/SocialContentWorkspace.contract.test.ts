@@ -94,6 +94,10 @@ assert.match(landing, /爆款裂变/);
 assert.match(landing, /我的素材[^]*?只需选择要宣传的产品/);
 assert.match(landing, /沿用爆款口播与结构[^]*?仅替换企业、品牌和产品名称/);
 assert.match(landing, /managedMode: 'one_click_managed'/);
+assert.match(landing, /path\.id === 'viral_replication' && onSelectViralReplication/,
+  '选择爆款裂变必须先进入灵感中心选择真实爆款');
+assert.match(planning, /const selectViralReplication[\s\S]{0,520}onNavigate\('socialInspiration'\)/,
+  '内容制作的爆款裂变入口必须跳到灵感中心');
 assert.doesNotMatch(landing, /适合：|把你现有的视频|提供一条参考视频/,
   'the mode chooser must use one concise capability description per card');
 assert.match(landing, /role="dialog"/);
@@ -140,6 +144,8 @@ assert.match(creationWorkbench, /referenceLinks:\s*seed\?\.referenceLinks \|\| \
   '从爆款卡片带入的 reference 链接必须继续传入任务');
 assert.match(planning, /referenceTitle:\s*request\.sourceContext\?\.referenceTitle[\s\S]{0,180}referenceLinks:\s*request\.prefill\?\.referenceLinks/,
   '爆款卡片的标题、封面与参考链路不得在极简入口丢失');
+assert.match(creationWorkbench, /seed\?\.referenceThumbnail && seed\.referenceContentType === 'video'/,
+  '从我的素材进入自由创作后必须直接显示已选视频，而不是丢失素材预览');
 assert.match(workspace, /productId:\s*quickStartRequest\.productId,[\s\S]{0,80}productName:\s*quickStartRequest\.productName/,
   '稳定产品 ID 不得在制作台转任务时丢失');
 assert.doesNotMatch(landing, /SOCIAL_THEME_OPTIONS|选好视频主题|这条视频想讲什么/,
