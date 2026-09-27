@@ -4613,7 +4613,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     setModeNotice('正在按分镜语义、镜头角色和有效时长快速匹配…');
     try {
       await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
-      const allVisuals = materials.filter(item => item.type !== 'audio' && item.usage !== 'reference_only');
+      const allVisuals = materials.filter(item => item.type !== 'audio');
       const compatiblePool = allVisuals.filter(item => isClipCompatibleWithRatio(item, ratio));
       if (!allVisuals.length) {
         setModeNotice('素材库暂无可匹配的视频或图片，请先上传素材。');
@@ -4734,7 +4734,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
         setShowSetupMaterialPicker(true);
         return false;
       }
-      const editable = pool.filter(item => item.scope !== 'shared' && item.usage !== 'reference_only');
+      const editable = pool.filter(item => item.scope !== 'shared');
       const analyzed = await ensureMaterialAnalysis(editable.map(item => item.id), isCurrentRequest, setModeActionStatus);
       if (!isCurrentRequest()) return false;
       const fresh = new Map(analyzed.map(item => [item.id, materialToClip(item)]));
@@ -8869,7 +8869,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
           setActiveStoryboardSlotId(storyboardSlots[0]?.id || '');
         };
         const createMatchedAssembly = () => {
-          const allVisuals = materials.filter(item => item.type !== 'audio' && item.usage !== 'reference_only');
+          const allVisuals = materials.filter(item => item.type !== 'audio');
           if (!storyboardSlots.length) {
             setModeNotice('请先生成分镜脚本，再创建不同的素材组合版本。');
             return;
@@ -9367,7 +9367,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       className="rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-text-secondary hover:bg-surface-2">
                       + 空白版本
                     </button>
-                    <button type="button" onClick={createMatchedAssembly} disabled={!storyboardSlots.length || !materials.some(item => item.type !== 'audio' && item.usage !== 'reference_only')}
+                    <button type="button" onClick={createMatchedAssembly} disabled={!storyboardSlots.length || !materials.some(item => item.type !== 'audio')}
                       className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-black text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40">
                       <Sparkles size={11} />生成新组合
                     </button>
@@ -11616,7 +11616,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const activeMaterialCandidates = useMemo(() => {
     if (!activeWorkbenchSlot) return [] as Array<{ clip: Clip; assessment: MaterialMatchAssessment }>;
     return materials
-      .filter(clip => (clip.type === 'video' || clip.type === 'image') && clip.usage !== 'reference_only')
+      .filter(clip => clip.type === 'video' || clip.type === 'image')
       .map(clip => ({ clip, assessment: assessMaterialMatch(activeWorkbenchSlot, clip, ratio) }))
       .sort((a, b) => b.assessment.score - a.assessment.score)
       .slice(0, 6);

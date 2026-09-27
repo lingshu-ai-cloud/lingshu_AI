@@ -412,7 +412,6 @@ function exactAnalysis(record: StoredRecord): boolean {
 
 function realMaterial(record: Record<string, unknown>, tenantId: string): boolean {
   if (isSyntheticMaterial(record)) return false;
-  if (String(record.usage || 'editable') === 'reference_only') return false;
   const scope = String(record.scope || 'own');
   return scope === 'shared' || String(record.tenantId || record.tenant_id || '') === tenantId;
 }

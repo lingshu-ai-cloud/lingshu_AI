@@ -24,7 +24,7 @@ export default function MaterialAnalysisStatus({ material, onRefresh }: { materi
         }}>已查看原片，确认此区间</button>}
       </div>)}</div>}
     </>}
-    {!pending && status !== 'completed' && material.scope !== 'shared' && material.usage !== 'reference_only' && <button type="button" disabled={busy} className="mt-1 font-semibold text-accent disabled:opacity-50" onClick={async event => {
+    {!pending && status !== 'completed' && material.scope !== 'shared' && <button type="button" disabled={busy} className="mt-1 font-semibold text-accent disabled:opacity-50" onClick={async event => {
       event.preventDefault(); setBusy(true); setError('');
       try { const result = await studioApi.startMaterialAnalysis(material.id, status === 'failed'); if (!result.ok) throw Error(result.error || '无法启动分析'); await onRefresh(); }
       catch (err) { setError(err instanceof Error ? err.message : '无法启动分析'); }

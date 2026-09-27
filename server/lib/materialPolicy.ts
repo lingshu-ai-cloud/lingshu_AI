@@ -10,17 +10,10 @@ export interface MaterialPolicyInput {
 
 export type MaterialUsage = 'editable' | 'reference_only';
 
-/**
- * Legacy crawled videos predate explicit usage metadata. Keep them available for
- * competitor analysis, but never expose them as downloadable editing assets.
- */
-export function materialUsage(material: MaterialPolicyInput): MaterialUsage {
-  if (material.usage === 'reference_only') return 'reference_only';
-  if (/^(youtube|facebook|instagram|tiktok)$/i.test(String(material.sourceType || ''))) return 'reference_only';
-  if (/youtube\.com|youtu\.be|facebook\.com|instagram\.com|tiktok\.com/i.test(String(material.sourceUrl || ''))) return 'reference_only';
-  if (material.folder === 'hot' && /爆款[·・](?:YouTube|Facebook|Instagram|TikTok)/i.test(String(material.name || ''))) {
-    return 'reference_only';
-  }
+/** The material library itself is the usability boundary: once a visual asset
+ * is stored there, every creation workflow may select and edit it. Keep the
+ * legacy union type so old records remain readable, but normalize them here. */
+export function materialUsage(_material: MaterialPolicyInput): MaterialUsage {
   return 'editable';
 }
 

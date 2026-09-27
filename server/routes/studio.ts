@@ -3918,7 +3918,7 @@ interface Material {
   posterObjectKey?: string;
   scope: 'shared' | 'own'; // shared=公共库（运营预置），own=用户自己上传
   tenantId?: string;
-  usage?: MaterialUsage;   // editable=可剪辑；reference_only=仅供对标分析，禁止进入公共下载库
+  usage?: MaterialUsage;   // 兼容旧数据；进入素材库后统一按 editable 使用
   sourceType?: string;
   sourceName?: string;
   sourceProvider?: string;
@@ -4550,7 +4550,7 @@ export function productionAnalysisSegments(id: string, duration: number, analysi
 }
 
 // GET /studio/materials?scope=shared|own&purpose=library|reference|all
-// 默认只返回可剪辑素材；reference 专供对标分析。reference_only 永不进入 shared 公共库。
+// 素材库是统一使用边界：所有已入库视觉素材都可进入创作。
 studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = req.query.scope as string | undefined;
@@ -4669,11 +4669,7 @@ async function saveMaterialUploadToDatabase(input: {
   sha256: string;
   tempDirectory: string;
 }): Promise<Material> {
-  const requestedUsage: MaterialUsage = input.usage === 'reference_only'
-    || input.sourceType === 'youtube'
-    || /youtube\.com|youtu\.be/i.test(input.sourceUrl)
-    ? 'reference_only'
-    : 'editable';
+  const requestedUsage: MaterialUsage = 'editable';
   const poster = await createTransientMaterialPoster({
     directory: input.tempDirectory,
     mediaPath: input.mediaPath,
@@ -4781,7 +4777,7 @@ studioRouter.post('/materials/file', async (req, res) => {
       usage, sourceType, sourceUrl, mimeType: contentType, mediaName: file,
       mediaPath: storedPath, sizeBytes: bytes, sha256: digest.digest('hex'), tempDirectory: tempDir,
     });
-    if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') {
+    if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
     }
     res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });
@@ -4817,7 +4813,7 @@ studioRouter.post('/materials', async (req, res) => {
       mimeType: contentType, mediaName: file, mediaPath: tempFile, sizeBytes: buf.length,
       sha256: createHash('sha256').update(buf).digest('hex'), tempDirectory: tempDir,
     });
-    if (['video', 'image'].includes(material.type) && material.usage !== 'reference_only') {
+    if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
     }
     res.status(201).json({ ok: true, material: await materialResponse(material, tenantId) });

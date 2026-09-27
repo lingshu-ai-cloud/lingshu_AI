@@ -2802,7 +2802,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
       // “我的素材”既是可编辑生产素材的入口，也是采集参考素材的可见库存。
-      // 参考素材必须可预览，但仍由 usage=reference_only 阻止进入生成链路。
       setLocalMaterials(await studioApi.listMaterials('all'));
     } catch { /* keep last successful items; show connection status */ } finally {
       setMaterialsLoading(false);
@@ -2967,66 +2966,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (latest && latest !== selectedVideo) setSelectedVideo(latest);
   }, [crawledVideos, selectedVideo]);
 
-  const pinnedMaterialVideos = useMemo<TrendVideo[]>(() => localMaterials
-    .filter(material => material.pinned && material.type === 'video' && material.segmentAnalysisStatus === 'completed' && material.segments?.length)
-    .map(material => {
-      const persistedAnalysis = crawledVideos.find(video => video.aiAnalysis?.materialId === material.id);
-      const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
-        : /youtube/i.test(material.name) ? 'youtube' : /instagram/i.test(material.name) ? 'instagram' : 'tiktok';
-      const title = material.name.replace(/^爆款[·・][^·・]+[·・]/, '').replace(/\.[a-z0-9]+$/i, '');
-      return {
-        id: `material-${material.id}`,
-        recordId: persistedAnalysis?.recordId,
-        platform,
-        title,
-        thumbnail: material.poster || material.segments?.[0]?.poster || '',
-        duration: material.duration,
-        tags: ['片段已分析', '收藏素材'],
-        views: '本地素材',
-        trend: 'stable',
-        videoUrl: material.url,
-        status: persistedAnalysis?.status || 'analyzed',
-        crawledAt: material.createdAt,
-        contentFormat: 'video',
-        aiAnalysis: persistedAnalysis?.aiAnalysis || {
-          source: 'material_segment_analysis',
-          materialUrl: material.url,
-          materialPoster: material.poster,
-          geminiStatus: 'completed',
-          analysisQuality: 'segment_grounded',
-          analyzedAt: material.createdAt,
-          gemini: {
-            theme: title,
-            structure: material.segments!.map(segment => segment.recommendedFunctions.join('、')).filter(Boolean).join(' → '),
-            hooks: material.segments!.slice(0, 2).flatMap(segment => segment.recommendedFunctions),
-            mood: '素材片段级分析',
-            scriptSummary15s: { visualStyle: '真实本地视频素材', coreEmotion: '待人工校验', competitors: [] },
-            scriptDetails15s: material.segments!.map(segment => ({
-              time: `${segment.start}-${segment.end}s`,
-              environment: segment.environment,
-              shot: segment.shot,
-              camera: segment.camera,
-              angle: segment.angle,
-              composition: segment.composition,
-              visual: segment.action,
-              subtitle: segment.ocrText,
-              onScreenText: segment.ocrText,
-              purpose: segment.recommendedFunctions.join('、'),
-              authenticity: segment.authenticity,
-              confidence: segment.confidence,
-              needsReview: segment.needsReview,
-            })),
-            recommendedScriptType: 'storyboard',
-          },
-        },
-      };
-    }), [localMaterials, crawledVideos]);
   const enterMaterialSmartGeneration = (material: Material) => {
-    if (material.usage === 'reference_only') {
-      setMaterialMessage('这条采集素材仅供分析与镜头参考，完成商业授权复核后才能用于生成成片。');
-      showActionFeedback({ title: '这条素材暂不能用于创作', description: '完成商业授权复核后即可使用。', tone: 'warning' });
-      return;
-    }
     const usableUrl = String(material.url || material.poster || '').trim();
     if (material.type === 'audio' || !usableUrl) {
       showActionFeedback({ title: '当前素材无法直接创作', description: material.type === 'audio' ? '请选择视频或图片素材。' : '素材文件尚未准备好，请稍后重试。', tone: 'warning' });
@@ -3068,11 +3008,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     });
     showActionSuccess('已带入自由创作', `正在打开“${material.name}”的制作页面。`);
   };
-  const pinnedTitles = new Set(pinnedMaterialVideos.map(video => video.title.trim().toLowerCase()));
-  const allVideos = [
-    ...(videoPage === 1 ? pinnedMaterialVideos : []),
-    ...crawledVideos.filter(video => !pinnedTitles.has(video.title.trim().toLowerCase())),
-  ];
+  // 爆款页只展示灵感采集结果；已入库素材统一留在“我的素材”，
+  // 避免把本地片段伪装成爆款视频并混用两套交互。
+  const allVideos = crawledVideos;
   const accountRecommendationByVideoId = useMemo(() => {
     const groups = new Map<string, TrendVideo[]>();
     for (const item of crawledVideos) {
@@ -3106,17 +3044,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const q = search.trim().toLowerCase();
     return visibleVideos
       .filter(v =>
-        (v.id.startsWith('material-') || !limitToLastCrawl || lastCrawlIds.has(v.id)) &&
+        (!limitToLastCrawl || lastCrawlIds.has(v.id)) &&
         (platform === 'all' || v.platform === platform) &&
-        (inspirationFavoriteFilter === 'all' || v.id.startsWith('material-') || favoritedVideoIds.includes(v.id) || favoriteSourceUrls.has(String(v.sourceUrl || '').trim())) &&
+        (inspirationFavoriteFilter === 'all' || favoritedVideoIds.includes(v.id) || favoriteSourceUrls.has(String(v.sourceUrl || '').trim())) &&
         (!q || v.title.toLowerCase().includes(q) || v.tags.some(t => t.toLowerCase().includes(q)))
       )
       .sort((a, b) => {
-        const pinnedRank = Number(b.id.startsWith('material-')) - Number(a.id.startsWith('material-'));
-        if (pinnedRank) return pinnedRank;
-        if (a.id.startsWith('material-') && b.id.startsWith('material-')) {
-          return pinnedMaterialVideos.findIndex(item => item.id === a.id) - pinnedMaterialVideos.findIndex(item => item.id === b.id);
-        }
         if (contentFormat === 'image') {
           const analyzedRank = Number(b.aiAnalysis?.imageEvidence?.status === 'analyzed') - Number(a.aiAnalysis?.imageEvidence?.status === 'analyzed');
           if (analyzedRank) return analyzedRank;
@@ -3130,7 +3063,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           || scoreB.sourcePriority - scoreA.sourcePriority
           || timeValue(b.crawledAt) - timeValue(a.crawledAt);
       });
-  }, [visibleVideos, lastCrawlVideoIds, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, pinnedMaterialVideos, contentFormat]);
+  }, [visibleVideos, lastCrawlVideoIds, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
 
   const recentThreeDayUploads = visibleVideos.filter(v => {
     const t = v.crawledAt ? new Date(v.crawledAt).getTime() : 0;
@@ -4268,7 +4201,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
                           disabled={material.type === 'audio' || !String(material.url || material.poster || '').trim()}
-                          title={material.usage === 'reference_only' ? '点击查看这条素材暂不能用于成片的原因' : material.type === 'audio' ? '音频素材不能单独进入画面创作' : '带入内容制作的自由创作'}
+                          title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : '带入内容制作的自由创作'}
                           className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Sparkles size={14} />自由创作
@@ -4346,7 +4279,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
                     ].map(([label, value]) => <div key={label} className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
-                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || !String(detailMaterial.url || detailMaterial.poster || '').trim()} title={detailMaterial.usage === 'reference_only' ? '点击查看这条素材暂不能用于成片的原因' : '带入内容制作的自由创作'} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
+                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || !String(detailMaterial.url || detailMaterial.poster || '').trim()} title="带入内容制作的自由创作" className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
                   </div>
                 </div>
               </div>

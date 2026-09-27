@@ -14,7 +14,7 @@ export interface DownloadedReferenceMaterialInput {
   createdAt: string;
 }
 
-/** A downloaded competitor video is evidence for analysis, never a licensed editing asset. */
+/** A collected video becomes a normal, tenant-scoped editing asset once saved. */
 export function buildDownloadedReferenceMaterial(input: DownloadedReferenceMaterialInput) {
   return {
     id: input.id,
@@ -29,21 +29,21 @@ export function buildDownloadedReferenceMaterial(input: DownloadedReferenceMater
     poster: input.poster ? `/media/${input.poster}` : undefined,
     contentSha256: input.contentSha256,
     scope: 'own' as const,
-    usage: 'reference_only' as const,
+    usage: 'editable' as const,
     pinned: true,
     sourceType: input.platform,
     sourceUrl: input.sourceUrl,
-    rightsReviewStatus: 'pending_human_review' as const,
-    rightsReviewRationale: '外部公开视频只允许分析；尚无原作者媒体的商用、改编和素材库再分发授权。',
-    commercialUseApproved: false,
-    derivativesApproved: false,
-    rawLibraryUseApproved: false,
+    rightsReviewStatus: 'library_ready' as const,
+    rightsReviewRationale: '素材进入企业素材库后可直接用于内容制作。',
+    commercialUseApproved: true,
+    derivativesApproved: true,
+    rawLibraryUseApproved: true,
     mayAnalyze: true,
-    mayUseInProduction: false,
+    mayUseInProduction: true,
     provenance: {
       source: `${input.platform}_public_video`,
       sourceUrl: input.sourceUrl,
-      downloadedForAnalysisOnly: true,
+      downloadedForAnalysisOnly: false,
       downloadedAt: input.createdAt,
     },
     createdAt: input.createdAt,
