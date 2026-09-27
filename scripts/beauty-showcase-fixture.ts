@@ -145,15 +145,22 @@ function mergeTenantRecords(file: string, records: JsonRecord[]): void {
 function importFixture(): void {
   const bundle = verifyFixture();
   const password = String(process.env.BEAUTY_SHOWCASE_PASSWORD || '');
-  if (password.length < 10) throw new Error('BEAUTY_SHOWCASE_PASSWORD with at least 10 characters is required');
   const catalog = JSON.parse(fs.readFileSync(PRODUCT_CATALOG_FILE, 'utf8')) as { products: Array<{ imageFile?: string | null }> };
   if (getLocalTenant(TENANT_ID)) updateLocalDataTenant(TENANT_ID, bundle.tenant);
   else createLocalDataTenant(bundle.tenant);
   const accounts = readLocalAccountRecords(localAccountRecordsFile());
-  const salt = randomBytes(16).toString('hex');
+  const existingAccount = accounts.find(item => item.email === EMAIL || item.userId === bundle.account.userId);
+  if (!existingAccount && password.length < 10) {
+    throw new Error('BEAUTY_SHOWCASE_PASSWORD with at least 10 characters is required when creating the showcase account');
+  }
+  const salt = password.length >= 10 ? randomBytes(16).toString('hex') : existingAccount!.salt;
   writeLocalAccountRecords(localAccountRecordsFile(), [...accounts.filter(item => item.email !== EMAIL && item.userId !== bundle.account.userId), {
-    ...bundle.account, role: bundle.account.role === 'admin' ? 'admin' : undefined, salt,
-    passwordHash: scryptSync(password, salt, 64).toString('hex'),
+    ...bundle.account,
+    role: bundle.account.role === 'admin' ? 'admin' : undefined,
+    salt,
+    passwordHash: password.length >= 10
+      ? scryptSync(password, salt, 64).toString('hex')
+      : existingAccount!.passwordHash,
   }]);
   for (const collection of collections) mergeTenantRecords(path.resolve(ROOT, 'data', 'local-store', `${collection}.json`), bundle.collections[collection] || []);
   mergeTenantRecords(path.resolve(ROOT, 'data', 'materials.json'), bundle.materials);
