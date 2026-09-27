@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Bot,
   CalendarPlus,
   CheckCircle2,
   CircleDollarSign,
@@ -20,8 +19,8 @@ import type { DeliveryResource } from "../lib/delivery";
 import SocialAccountStrategies from "./socialProgram/SocialAccountStrategies";
 import type { Page } from "../pageRegistry";
 import { SocialPlatformIcon } from "./SocialPlatformIcon";
-import { AgentOrbitIllustration } from "./ui/ProductIllustrations";
 import { showActionSuccess } from "../lib/actionFeedback";
+import AgentRoleIcon from "./ui/AgentRoleIcon";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "review";
 
@@ -130,10 +129,12 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
   const [monitor, setMonitor] = useState<AgentCard | null>(null);
   const snapshot = data.businessSnapshot;
   const deliveries = data.deliveries || [];
-  const activeAgentCount = agentCards.filter(item => {
+  const agentLiveState = Object.fromEntries(agentCards.map(item => {
     const status = data.agents.find(agent => roleAliases[item.role].includes(agent.role));
-    return Boolean(status && runningStatuses.has(status.status)) || relatedTasks(data, item.role).some(task => runningStatuses.has(task.status));
-  }).length;
+    const live = Boolean(status && runningStatuses.has(status.status)) || relatedTasks(data, item.role).some(task => runningStatuses.has(task.status));
+    return [item.role, live];
+  })) as Record<AgentCard["role"], boolean>;
+  const activeAgentCount = agentCards.filter(item => agentLiveState[item.role]).length;
   const waitingCount = deliveries.filter(card => /验收|确认|review/i.test(card.stage || "")).length;
   const completedCount = deliveries.filter(card => card.column === "done").length;
   const platformCoverage = platformOptions.map(platform => ({
@@ -164,9 +165,16 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
           <div className="mt-5 grid gap-x-6 gap-y-4 sm:grid-cols-2">{pulse.map(item => <div key={item.label}><div className="flex items-center justify-between text-[11px]"><span className="font-bold text-slate-600">{item.label}</span><strong className="text-[#10244a]">{item.value}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{background:item.color,width:`${item.value === 0 ? 0 : Math.max(12,item.value/pulseMax*100)}%`}}/></div></div>)}</div>
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4"><span className="mr-1 text-[10px] font-bold text-slate-400">内容覆盖</span>{platformCoverage.map(item => <span key={item.platform} title={`${platformLabels[item.platform]} ${item.count} 条`} className={`inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-xl border px-2 ${item.count?'border-[#10244a]/15 bg-white':'border-slate-200 bg-slate-50 opacity-45'}`}><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-[#10244a]">{item.count}</span></span>)}</div>
         </article>
-        <article className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-gradient-to-br from-[#f4f1ff] to-[#e9fbf7] p-4">
-          <AgentOrbitIllustration className="mx-auto h-36 w-full max-w-[220px]"/>
-          <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[.16em] text-[#6558cf]">Agent 协同</p><p className="mt-1 text-sm font-black text-[#10244a]">{activeAgentCount ? `${activeAgentCount} 位正在工作` : '等待下一项任务'}</p></div><span className="rounded-full border border-[#10244a]/10 bg-white/80 px-2.5 py-1 text-[10px] font-black text-[#10244a]">4 位数字员工</span></div>
+        <article className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-gradient-to-br from-[#f4f1ff] to-[#e9fbf7] p-5">
+          <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[.16em] text-[#6558cf]">Agent 协同</p><p className="mt-1 text-sm font-black text-[#10244a]">数字员工协作状态</p></div><span className="rounded-full border border-[#10244a]/10 bg-white/80 px-2.5 py-1 text-[10px] font-black text-[#10244a]">{activeAgentCount}/4 运行中</span></div>
+          <div className="relative mt-7 grid grid-cols-4 gap-3" aria-label="四位数字员工协作状态">
+            <span aria-hidden="true" className="absolute left-[11%] right-[11%] top-6 h-px bg-[#9AAEA4]/55"/>
+            {agentCards.map(item => <div key={item.role} className="relative z-10 flex min-w-0 flex-col items-center gap-2 text-center">
+              <AgentRoleIcon role={item.role} active={agentLiveState[item.role]} size="lg" label={item.name}/>
+              <span className="max-w-full truncate text-[9px] font-bold text-[#53695F]">{item.name.replace(' Agent', '')}</span>
+            </div>)}
+          </div>
+          <div className="mt-6 flex items-center gap-2 rounded-xl border border-white/80 bg-white/65 px-3 py-2.5"><span className={`h-2 w-2 rounded-full ${activeAgentCount ? 'bg-[#117F51] motion-safe:animate-pulse' : 'bg-[#9AAEA4]'}`}/><p className="text-[11px] font-bold text-[#10244a]">{activeAgentCount ? `${activeAgentCount} 位正在协作处理任务` : '等待下一项任务'}</p></div>
         </article>
       </div>
     </section>
@@ -175,7 +183,7 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
       <div><p className="text-xs font-bold tracking-[0.16em] text-slate-400">数字员工</p><h2 className="mt-1 text-xl font-black text-slate-950">我的 4 个 Agent 现在在做什么</h2></div>
       <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{agentCards.map((item)=>{const status=data.agents.find(agent=>roleAliases[item.role].includes(agent.role));const tasks=relatedTasks(data,item.role);const live=Boolean(status&&runningStatuses.has(status.status))||tasks.some(task=>runningStatuses.has(task.status));return <button type="button" key={item.role} onClick={()=>setMonitor(item)} className={`group relative min-h-52 overflow-hidden rounded-3xl border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${live?'border-emerald-300':'border-slate-200'} bg-gradient-to-br ${item.tint}`}>
         {live&&<span className="absolute right-4 top-4 h-11 w-11 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"/>}
-        <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${live?'bg-emerald-700 text-white':'bg-white text-slate-500'} shadow-sm`}><Bot size={20}/></span>
+        <AgentRoleIcon role={item.role} active={live} size="md" label={item.name}/>
         <h3 className="mt-7 text-lg font-black text-slate-950">{item.name}</h3><p className="mt-1 text-xs text-slate-500">{item.description}</p>
         <div className="mt-5 flex items-center justify-between gap-2"><span className={`text-xs font-bold ${live?'text-emerald-700':'text-slate-400'}`}>{live?'运行中':'静默'}</span><span className="text-[10px] text-slate-400">{status?.completed||0}/{status?.total||0}</span></div>
         <p className="mt-2 truncate text-[11px] text-slate-500">{status?.currentTask||tasks[0]?.title||"等待下一项任务"}</p>

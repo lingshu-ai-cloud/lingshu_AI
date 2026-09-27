@@ -11,16 +11,13 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowLeft,
   ArrowUp,
-  BarChart3,
   Bot,
   CheckCircle2,
-  Clapperboard,
   Compass,
   Loader2,
-  Users,
-  WandSparkles,
   X,
 } from 'lucide-react';
+import { AGENT_ROLE_ICONS } from './ui/AgentRoleIcon';
 import type { AgentAction, AgentType, Message, Page } from '../App';
 import { authHeader } from '../lib/auth';
 import { ASSISTANT_GUIDES, type AssistantGuide } from '../lib/assistantGuides';
@@ -200,10 +197,10 @@ const SKILL_AGENTS: Array<{
   Icon: typeof Compass;
   position: { x: number; y: number };
 }> = [
-  { id: 'business', label: '经营 Agent', agentType: 'strategy', Icon: BarChart3, position: { x: 0, y: -1 } },
-  { id: 'director', label: '编导 Agent', agentType: 'traffic', Icon: Clapperboard, position: { x: -0.5, y: -0.866 } },
-  { id: 'content', label: '内容 Agent', agentType: 'traffic', Icon: WandSparkles, position: { x: -0.866, y: -0.5 } },
-  { id: 'customer', label: '客服 Agent', agentType: 'conversion', Icon: Users, position: { x: -1, y: 0 } },
+  { id: 'business', label: '经营 Agent', agentType: 'strategy', Icon: AGENT_ROLE_ICONS.business, position: { x: 0, y: -1 } },
+  { id: 'director', label: '编导 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.director, position: { x: -0.5, y: -0.866 } },
+  { id: 'content', label: '内容 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.content, position: { x: -0.866, y: -0.5 } },
+  { id: 'customer', label: '客服 Agent', agentType: 'conversion', Icon: AGENT_ROLE_ICONS.customer, position: { x: -1, y: 0 } },
 ];
 
 const ORBIT_AGENT_IDLE_STYLE = { color: '#53695F', borderColor: '#9AAEA4', backgroundColor: '#F1F6F2' };

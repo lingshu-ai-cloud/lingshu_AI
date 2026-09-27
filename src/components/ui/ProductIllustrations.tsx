@@ -18,16 +18,3 @@ export function CreationEmptyIllustration({ className = '' }: { className?: stri
     </svg>
   );
 }
-
-export function AgentOrbitIllustration({ className = '' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 240 170" role="img" aria-label="数字员工协同运转示意图" className={className}>
-      <ellipse cx="120" cy="84" rx="82" ry="58" fill="#f8f7ff" stroke="#8b7cf6" strokeWidth="3" strokeDasharray="8 8"/>
-      <rect x="79" y="48" width="82" height="72" rx="25" fill="#dff9f3" stroke="#10244a" strokeWidth="6"/>
-      <path d="M120 48V32M105 86h.01M135 86h.01M104 103h32" stroke="#10244a" strokeWidth="6" strokeLinecap="round"/>
-      <circle cx="120" cy="25" r="8" fill="#2fd1c5" stroke="#10244a" strokeWidth="5"/>
-      {[[35,83,'#ff8e72'],[205,83,'#2fd1c5'],[120,151,'#8b7cf6']].map(([cx,cy,fill]) => <circle key={`${cx}`} cx={String(cx)} cy={String(cy)} r="18" fill={String(fill)} stroke="#10244a" strokeWidth="5"/>)}
-      <path d="M29 83h12M199 83h12M120 127v7" stroke="#10244a" strokeWidth="4" strokeLinecap="round"/>
-    </svg>
-  );
-}

@@ -488,22 +488,21 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(16, 36, 74, 0.1);
-    border-radius: 9px;
-    background: linear-gradient(145deg, #ffffff 8%, #f1f4ff 100%);
-    box-shadow: 0 2px 0 rgba(16, 36, 74, 0.08);
-    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    transition: transform 160ms ease, opacity 160ms ease;
   }
 
   [aria-current='page'] .duotone-glyph {
-    border-color: rgba(16, 36, 74, 0.24);
-    background: linear-gradient(145deg, #e6fbf6 4%, #eeeaff 100%);
-    box-shadow: 0 3px 0 rgba(16, 36, 74, 0.12);
+    background: transparent;
+    box-shadow: none;
   }
 
   button:hover .duotone-glyph {
     transform: translateY(-1px);
-    border-color: rgba(16, 36, 74, 0.2);
+    opacity: .82;
   }
 
   .visual-card {
