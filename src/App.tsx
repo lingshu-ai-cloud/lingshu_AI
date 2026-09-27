@@ -45,10 +45,6 @@ const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'
 const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
 const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWorkspacePage'));
 const SocialOperatingSummary = lazy(() => import('./components/socialProgram/SocialOperatingSummary'));
-const SocialWorkspacePage = lazy(() => import('./components/socialProgram/SocialWorkspacePage'));
-const SocialOperatingConfiguration = lazy(() => import('./components/socialProgram/SocialOperatingConfiguration'));
-const SocialAccountStrategies = lazy(() => import('./components/socialProgram/SocialAccountStrategies'));
-const SocialPlanningPage = lazy(() => import('./components/socialProgram/SocialPlanningPage'));
 const SocialContentPlanningPage = lazy(() => import('./components/socialContent/SocialContentPlanningPage'));
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
@@ -655,10 +651,6 @@ export default function App() {
               socialContentTaskId={activeSocialContentTaskId}
             />
           )}
-          {page === 'socialWorkspace' && <SocialWorkspacePage onNavigate={handleNavigate} />}
-          {page === 'socialSetup' && <SocialOperatingConfiguration onNavigate={handleNavigate} />}
-          {page === 'socialAccounts' && <SocialAccountStrategies onNavigate={handleNavigate} />}
-          {page === 'socialPlanning' && <SocialPlanningPage onNavigate={handleNavigate} />}
           {page === 'socialInspiration' && (
             <TrafficPage
               key="social-inspiration"

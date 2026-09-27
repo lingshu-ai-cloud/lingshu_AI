@@ -44,11 +44,6 @@ const SOCIAL_NAV: NavSection = {
   items: PRIMARY_SOCIAL_NAV_PAGES.map(id => navItem(id, SOCIAL_NAV_ICONS[id])),
 };
 
-const SOCIAL_PROGRAM_NAV: NavSection = {
-  label: '社媒矩阵经营',
-  items: [navItem('socialWorkspace', <Target size={16} />)],
-};
-
 const ADS_NAV: NavSection = {
   label: '平台投放',
   items: [
@@ -92,7 +87,7 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_PROGRAM_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
 const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {

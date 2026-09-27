@@ -47,9 +47,9 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   agentMonitor: { navLabel: '运行监控', canonicalTitle: '运行监控' },
   strategy: { navLabel: '首页', canonicalTitle: '首页' },
   socialWorkspace: { navLabel: '经营工作台', canonicalTitle: '社媒经营工作台' },
-  socialSetup: { navLabel: '项目搭建', canonicalTitle: '社媒项目搭建', navParent: 'socialWorkspace' },
-  socialAccounts: { navLabel: '账号矩阵', canonicalTitle: '自有账号矩阵', navParent: 'socialWorkspace' },
-  socialPlanning: { navLabel: '月周计划', canonicalTitle: '月周经营计划', navParent: 'socialWorkspace' },
+  socialSetup: { navLabel: '项目搭建', canonicalTitle: '社媒项目搭建' },
+  socialAccounts: { navLabel: '账号矩阵', canonicalTitle: '自有账号矩阵' },
+  socialPlanning: { navLabel: '月周计划', canonicalTitle: '月周经营计划' },
   traffic: { navLabel: '发布与渠道', canonicalTitle: '发布与渠道' },
   socialInspiration: { navLabel: '灵感中心', canonicalTitle: '灵感中心' },
   scriptLibrary: { navLabel: '脚本库', canonicalTitle: '脚本库', navParent: 'smartAssets' },
@@ -99,6 +99,8 @@ export function isPage(value: unknown): value is Page {
  */
 export function resolvePage(value: unknown): Page | null {
   if (!isPage(value)) return null;
+  if (value === 'socialWorkspace' || value === 'socialSetup' || value === 'socialPlanning') return 'digitalEmployees';
+  if (value === 'socialAccounts') return 'traffic';
   if (value === 'retention') return 'conversion';
   if (value === 'accountManagement') return 'traffic';
   return value;
