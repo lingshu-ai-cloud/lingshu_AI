@@ -357,18 +357,35 @@ test('weekly operating package: retiring an active version revokes publishing an
   assert.equal(updatedProgram.version, 3);
 });
 
-test('weekly operating package: default cadence reports a missing account matrix instead of inventing accounts', async () => {
+test('weekly operating package: default cadence uses every configured account without inventing missing platforms', async () => {
   const dataStore = memoryStore();
   const programs = createSocialProgramService(dataStore);
   const packages = createWeeklyOperatingPackageService(dataStore);
   const program = await programs.createProgram('tenant-a', 'owner', {
     brandName: 'Incomplete', market: '欧洲', targetAudience: '采购', candidatePlatforms: ['youtube'], route: 'cold_start',
   });
+  const youtube = await programs.createAccount('tenant-a', 'owner', program.programId, {
+    platform: 'youtube', displayName: 'YouTube-1', businessRole: '产品演示', audiencePromise: '目标买家', contentPromise: '产品内容',
+  });
+  const first = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-05', objective: '按已配置账号规划', successCriteria: ['显示缺口'],
+  });
+  assert.equal(first.socialContentPackage.publicationTasks.length, 3);
+  assert.ok(first.socialContentPackage.publicationTasks.every(task => task.accountId === youtube.accountId));
+  await programs.createAccount('tenant-a', 'owner', program.programId, {
+    platform: 'facebook', displayName: 'Facebook-1', businessRole: '品牌展示', audiencePromise: '目标买家', contentPromise: '产品内容',
+  });
+  const second = await packages.create('tenant-a', 'owner', program.programId, {
+    weekStart: '2026-10-12', objective: '新账号加入', successCriteria: ['显示缺口'],
+  });
+  assert.equal(second.socialContentPackage.publicationTasks.length, 8);
   await assert.rejects(
-    packages.create('tenant-a', 'owner', program.programId, {
+    packages.create('tenant-a', 'owner', (await programs.createProgram('tenant-a', 'owner', {
+      brandName: 'No accounts', market: '欧洲', targetAudience: '采购', candidatePlatforms: ['youtube'], route: 'cold_start',
+    })).programId, {
       weekStart: '2026-10-05', objective: '不伪造账号', successCriteria: ['显示缺口'],
     }),
-    (error: unknown) => error instanceof SocialProgramError && error.code === 'default_account_matrix_incomplete',
+    (error: unknown) => error instanceof SocialProgramError && error.code === 'account_plans_required',
   );
 });
 

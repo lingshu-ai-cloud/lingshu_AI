@@ -67,6 +67,14 @@ export const WEEKLY_OPERATING_WORKFLOW_KINDS = [
 ] as const;
 export type WeeklyOperatingWorkflowKind = typeof WEEKLY_OPERATING_WORKFLOW_KINDS[number];
 
+/** Default weekly video target for each account in the project matrix. */
+export const DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT: Record<Extract<SocialPlatform, 'facebook' | 'tiktok' | 'instagram' | 'youtube'>, number> = {
+  facebook: 5,
+  tiktok: 5,
+  instagram: 3,
+  youtube: 3,
+};
+
 export const WEEKLY_OPERATING_PACKAGE_STATUSES = ['draft', 'active', 'superseded', 'retired'] as const;
 export type WeeklyOperatingPackageStatus = typeof WEEKLY_OPERATING_PACKAGE_STATUSES[number];
 export type WeeklyOperatingWorkflowStatus = 'planned' | 'blocked' | 'in_progress' | 'completed' | 'cancelled';

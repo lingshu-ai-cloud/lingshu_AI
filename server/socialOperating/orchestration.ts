@@ -221,9 +221,14 @@ export function createSocialOperatingOrchestrationService(
         'customer.attribution': [configRef, ...conversionRoutes.map(item => item.ref)].filter((item): item is VersionedSocialRef => Boolean(item)),
       };
       const options = { operator: { type: 'system' as const, id: 'social-operating-orchestrator' }, decidedAt: clock() };
+      const requestedPublicationCount = accounts.reduce((sum, account) => sum + (account.status === 'active'
+        ? constraints?.accountWeeklyPublicationCapacity[account.accountId] ?? 0 : 0), 0);
+      const desiredOriginalContents = Number.isSafeInteger(request.desiredOriginalContents)
+        ? Math.max(0, Number(request.desiredOriginalContents)) : Math.min(10, requestedPublicationCount);
+      const desiredAdaptations = Number.isSafeInteger(request.desiredAdaptations)
+        ? Math.max(0, Number(request.desiredAdaptations)) : Math.max(0, requestedPublicationCount - desiredOriginalContents);
       const capacity = planCapacity({
-        goal, desiredOriginalContents: Number.isSafeInteger(request.desiredOriginalContents) ? Math.max(0, Number(request.desiredOriginalContents)) : 10,
-        desiredAdaptations: Number.isSafeInteger(request.desiredAdaptations) ? Math.max(0, Number(request.desiredAdaptations)) : 16,
+        goal, desiredOriginalContents, desiredAdaptations,
         costPerOriginalCny: constraints?.costPerOriginalCny ?? null, costPerAdaptationCny: constraints?.costPerAdaptationCny ?? null,
         readyMaterialUnits: profileRow ? assets(profile) : null, materialUnitsPerOriginal: constraints?.materialUnitsPerOriginal ?? null,
         productionItemsPerDay: constraints?.productionItemsPerDay ?? null, daysUntilDeadline: 7,

@@ -58,3 +58,12 @@ test('fails closed for unavailable capability and unknown capacity', () => {
   assert.deepEqual(result.decision.blockers.map(item => item.code), ['invalid_or_unknown_input', 'capability_unavailable']);
   assert.equal(result.decision.evidence.find(item => item.key === 'capacity_limits')?.state, 'unknown');
 });
+
+test('planned accounts do not create a publishable weekly quota', () => {
+  const input = fixture();
+  input.accounts = input.accounts.map(account => ({ ...account, status: 'planned' }));
+  const result = planCapacity(input, options);
+  assert.equal(result.plan.status, 'blocked');
+  assert.equal(result.plan.publicationQuota, 0);
+  assert.ok(result.decision.blockers.some(item => item.code === 'account_capacity_insufficient'));
+});

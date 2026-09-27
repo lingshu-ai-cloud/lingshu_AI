@@ -147,6 +147,9 @@ export function planCapacity(input: CapacityPlanInput, options: OperatingResolve
   if (unavailableCapabilities.length) blockers.push({ code: 'capability_unavailable', field: 'capabilities', message: `能力不可用或状态未知：${unavailableCapabilities.join('、')}。`, recoverable: true });
   const usableAccounts = input.accounts.filter(account => account.status === 'active' && finiteNonNegative(account.weeklyPublicationCapacity))
     .sort((a, b) => a.accountId.localeCompare(b.accountId));
+  if (!usableAccounts.length) {
+    blockers.push({ code: 'account_capacity_insufficient', field: 'accounts', message: '没有可发布且容量已知的活跃账号。', recoverable: true });
+  }
   if (input.accounts.some(account => account.status === 'unknown' || !finiteNonNegative(account.weeklyPublicationCapacity))) {
     blockers.push({ code: 'invalid_or_unknown_input', field: 'accounts', message: '账号状态或周发布容量未知，已失败关闭。', recoverable: true });
   }

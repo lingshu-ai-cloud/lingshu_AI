@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
+  DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT,
   type OwnedSocialAccount,
   type SocialPlatform,
   type SocialWeeklyContentPackage,
@@ -60,13 +61,6 @@ export interface WeeklyPublishingAccountPlan {
   publicationCount: number;
   accountPositioning: string | null;
 }
-
-const DEFAULT_COUNTS: Record<SupportedPlatform, number[]> = {
-  tiktok: [5, 5],
-  facebook: [5, 5],
-  instagram: [3],
-  youtube: [3],
-};
 
 const text = (value: unknown, max = 500) => String(value ?? '').trim().slice(0, max);
 const uniqueText = (value: unknown, max = 30) => Array.isArray(value)
@@ -189,24 +183,13 @@ export async function accountsForProgram(dataStore: DataStore, tenantId: string,
 }
 
 function defaultAccountPlans(accounts: OwnedSocialAccount[]): WeeklyPublishingAccountPlan[] {
-  const plans: WeeklyPublishingAccountPlan[] = [];
-  for (const platform of SUPPORTED_PLATFORMS) {
-    const available = accounts.filter(account => account.platform === platform);
-    const counts = DEFAULT_COUNTS[platform];
-    if (available.length < counts.length) {
-      throw new SocialProgramError(
-        'default_account_matrix_incomplete',
-        409,
-        `默认周包需要 ${platform} ${counts.length} 个业务账号，当前仅 ${available.length} 个。`,
-      );
-    }
-    counts.forEach((publicationCount, index) => plans.push({
-      accountId: available[index]!.accountId,
-      platform,
-      publicationCount,
-      accountPositioning: available[index]!.businessRole || null,
-    }));
-  }
+  const plans = accounts.filter(account => isSupportedPlatform(account.platform)).map(account => ({
+    accountId: account.accountId,
+    platform: account.platform as SupportedPlatform,
+    publicationCount: DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT[account.platform as SupportedPlatform],
+    accountPositioning: account.businessRole || null,
+  }));
+  if (!plans.length) throw new SocialProgramError('account_plans_required', 409, '当前项目没有可规划的业务账号。');
   return plans;
 }
 

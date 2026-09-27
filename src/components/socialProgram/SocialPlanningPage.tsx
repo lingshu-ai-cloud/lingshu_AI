@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertTriangle, CalendarRange, CheckCircle2, Loader2 } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
-import { monthlyPlanActivationIssues, type SocialMonthlyPlan } from '../../../shared/contracts/socialProgram';
+import { DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT, monthlyPlanActivationIssues, type SocialMonthlyPlan } from '../../../shared/contracts/socialProgram';
 import { useSocialProgram } from '../../contexts/SocialProgramContext';
 import { socialProgramApi } from '../../lib/socialProgramApi';
 import type { OperatingPlanningResolution, SocialOperatingConstraints } from '../../../shared/contracts/socialOperatingDecision';
@@ -15,6 +15,7 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
   const [objective, setObjective] = useState('');
   const [successCriteria, setSuccessCriteria] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
+  const [accountSelectionTouched, setAccountSelectionTouched] = useState(false);
   const [lastSaved, setLastSaved] = useState<SocialMonthlyPlan | null>(null);
   const [notice, setNotice] = useState('');
   const [constraints, setConstraints] = useState<SocialOperatingConstraints | null>(null);
@@ -23,20 +24,39 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
   const [resolution, setResolution] = useState<OperatingPlanningResolution | null>(null);
   const [weekStart, setWeekStart] = useState(() => new Date().toISOString().slice(0, 10));
   const [limits, setLimits] = useState({ weeklyBudgetCny: 1000, costPerOriginalCny: 50, costPerAdaptationCny: 20, materialUnitsPerOriginal: 1, productionItemsPerDay: 5, interactionItemsPerWeek: 260, salesLeadsPerWeek: 52, expectedInteractionsPerPublication: 10, expectedLeadsPerPublication: 2 });
+  const [accountCapacity, setAccountCapacity] = useState<Record<string, number>>({});
+  const planningAccounts = useMemo(() => accounts.filter(account => account.status !== 'retired' && account.platform in DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT), [accounts]);
 
   useEffect(() => {
     setSelectedAccounts([]);
+    setAccountSelectionTouched(false);
     setLastSaved(null);
     setNotice('');
     setResolution(null);
     setOperatingError('');
+    setAccountCapacity({});
   }, [activeProgram?.programId]);
+
+  useEffect(() => {
+    if (!accountSelectionTouched) setSelectedAccounts(planningAccounts.map(account => account.accountId));
+  }, [planningAccounts, accountSelectionTouched]);
+
+  useEffect(() => {
+    setAccountCapacity(current => Object.fromEntries(planningAccounts.map(account => [
+      account.accountId,
+      current[account.accountId] ?? constraints?.accountWeeklyPublicationCapacity[account.accountId]
+        ?? DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT[account.platform as keyof typeof DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT],
+    ])));
+  }, [planningAccounts, constraints]);
 
   useEffect(() => {
     if (!activeProgram) { setConstraints(null); return; }
     void socialProgramApi.getOperatingConstraints(activeProgram.programId).then(item => {
       setConstraints(item);
-      if (item) setLimits({ weeklyBudgetCny: item.weeklyBudgetCny, costPerOriginalCny: item.costPerOriginalCny, costPerAdaptationCny: item.costPerAdaptationCny, materialUnitsPerOriginal: item.materialUnitsPerOriginal, productionItemsPerDay: item.productionItemsPerDay, interactionItemsPerWeek: item.interactionItemsPerWeek, salesLeadsPerWeek: item.salesLeadsPerWeek, expectedInteractionsPerPublication: item.expectedInteractionsPerPublication, expectedLeadsPerPublication: item.expectedLeadsPerPublication });
+      if (item) {
+        setLimits({ weeklyBudgetCny: item.weeklyBudgetCny, costPerOriginalCny: item.costPerOriginalCny, costPerAdaptationCny: item.costPerAdaptationCny, materialUnitsPerOriginal: item.materialUnitsPerOriginal, productionItemsPerDay: item.productionItemsPerDay, interactionItemsPerWeek: item.interactionItemsPerWeek, salesLeadsPerWeek: item.salesLeadsPerWeek, expectedInteractionsPerPublication: item.expectedInteractionsPerPublication, expectedLeadsPerPublication: item.expectedLeadsPerPublication });
+        setAccountCapacity(item.accountWeeklyPublicationCapacity);
+      }
     }).catch(error => setOperatingError(error instanceof Error ? error.message : '经营约束读取失败。'));
   }, [activeProgram?.programId]);
 
@@ -46,7 +66,7 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
     try {
       const item = await socialProgramApi.saveOperatingConstraints(activeProgram.programId, {
         ...limits, expectedVersion: constraints?.version ?? 0,
-        accountWeeklyPublicationCapacity: Object.fromEntries(accounts.map(account => [account.accountId, 5])),
+        accountWeeklyPublicationCapacity: Object.fromEntries(planningAccounts.map(account => [account.accountId, accountCapacity[account.accountId] ?? DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT[account.platform as keyof typeof DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT]])),
       });
       setConstraints(item); setNotice('经营约束已保存为服务端版本化事实。');
     } catch (error) { setOperatingError(error instanceof Error ? error.message : '经营约束保存失败。'); }
@@ -64,9 +84,12 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
   };
 
   const activationIssues = useMemo(() => activeProgram ? monthlyPlanActivationIssues(activeProgram) : [], [activeProgram]);
-  const toggleAccount = (accountId: string) => setSelectedAccounts(current => current.includes(accountId)
-    ? current.filter(item => item !== accountId)
-    : [...current, accountId]);
+  const toggleAccount = (accountId: string) => {
+    setAccountSelectionTouched(true);
+    setSelectedAccounts(current => current.includes(accountId)
+      ? current.filter(item => item !== accountId)
+      : [...current, accountId]);
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -133,8 +156,9 @@ export default function SocialPlanningPage({ onNavigate }: { onNavigate: (page: 
           {Object.entries(limits).map(([key, value]) => <label key={key} className="space-y-1 text-xs font-medium text-text-secondary">{key}<input type="number" min="0" step="any" value={value} onChange={event => setLimits(current => ({ ...current, [key]: Number(event.target.value) }))} className="ui-field" /></label>)}
           <label className="space-y-1 text-xs font-medium text-text-secondary">周起始日<input type="date" value={weekStart} onChange={event => setWeekStart(event.target.value)} className="ui-field" /></label>
         </div>
+        <fieldset className="mt-5"><legend className="text-sm font-bold text-text-primary">各账号每周视频数</legend><p className="mt-1 text-xs text-text-muted">默认 Facebook、TikTok 每账号 5 条，Instagram、YouTube 每账号 3 条。仅为当前项目账号建立计划；实际发布仍受预算、产能、授权和质检约束。</p><div className="mt-3 grid gap-3 sm:grid-cols-3">{planningAccounts.map(account => <label key={account.accountId} className="space-y-1 text-xs font-medium text-text-secondary">{account.displayName} · {account.platform}<input type="number" min="0" max="50" step="1" value={accountCapacity[account.accountId] ?? DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT[account.platform as keyof typeof DEFAULT_WEEKLY_PUBLICATIONS_PER_ACCOUNT]} onChange={event => setAccountCapacity(current => ({ ...current, [account.accountId]: Number(event.target.value) }))} className="ui-field" /></label>)}</div></fieldset>
         {operatingError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{operatingError}</p>}
-        <div className="mt-5 flex flex-wrap gap-2"><button type="button" onClick={() => void saveConstraints()} disabled={operatingBusy || !accounts.length} className="btn-ghost">保存容量事实</button><button type="button" onClick={() => void resolveOperatingPlan()} disabled={operatingBusy || !constraints} className="btn-primary">{operatingBusy ? '编排中…' : '生成权威规划快照'}</button></div>
+        <div className="mt-5 flex flex-wrap gap-2"><button type="button" onClick={() => void saveConstraints()} disabled={operatingBusy || !planningAccounts.length || planningAccounts.some(account => !Number.isSafeInteger(accountCapacity[account.accountId]) || accountCapacity[account.accountId] < 0 || accountCapacity[account.accountId] > 50)} className="btn-ghost">保存容量事实</button><button type="button" onClick={() => void resolveOperatingPlan()} disabled={operatingBusy || !constraints} className="btn-primary">{operatingBusy ? '编排中…' : '生成权威规划快照'}</button></div>
         {resolution && <div className="mt-5 rounded-lg bg-surface-2 p-4 text-sm"><p className="font-bold">快照 v{resolution.snapshot.version} · {resolution.snapshot.status}</p><p className="mt-2 text-text-secondary">目标 {resolution.goal.status} · 产能 {resolution.capacityPlan.status} / {resolution.capacityPlan.publicationQuota} 条 · 自动化 {resolution.automationPolicy.status} · 参考模式 {resolution.referenceMode.status}</p><p className="mt-2 break-all text-xs text-text-muted">周包应引用 operating_authority_snapshot:{resolution.snapshot.snapshotId}:v{resolution.snapshot.version}</p>{resolution.snapshot.invalidations.length > 0 && <p className="mt-2 text-amber-800">需处理 {resolution.snapshot.invalidations.length} 条旧快照/周包失效信息。</p>}</div>}
       </section>
 
