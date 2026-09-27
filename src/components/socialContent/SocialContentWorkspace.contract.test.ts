@@ -101,15 +101,17 @@ assert.match(planning, /chooserOpen/);
 assert.match(planning, /我的创作/);
 assert.match(planning, /quickStartRequest/);
 assert.match(planning, /loadSocialContentStage\(\)/, '内容制作首次进入必须读取已保存的社媒阶段');
-assert.match(planning, /<SocialContentStageOnboarding/, '没有阶段设置时必须主动打开新手引导');
+assert.doesNotMatch(planning, /<SocialContentStageOnboarding|新手引导/, '全局新手引导不得放进内容制作页面');
+assert.doesNotMatch(creationWorkbench, /onOpenOnboarding|新手引导/, '三栏制作台不得重复承载应用级新手引导');
 for (const label of ['B2B 起步验证', 'B2B 增长进阶', 'D2C 品牌增长']) {
   assert.match(stageStrategy, new RegExp(label), `新手引导必须使用润色后的阶段名称：${label}`);
 }
 for (const preset of ['b2b_starting', 'b2b_growing', 'dtc_sales']) {
   assert.match(stageStrategy, new RegExp(preset), `社媒阶段必须映射到 PRD 周任务方案：${preset}`);
 }
-assert.match(stageOnboarding, /首次使用 · 1 分钟设置/);
-assert.match(stageOnboarding, /保存并进入内容制作/);
+assert.match(stageOnboarding, /社媒经营阶段/);
+assert.match(stageOnboarding, /确认阶段并开始使用/);
+assert.doesNotMatch(stageOnboarding, /产品 PRD|推荐起步节奏|这不是行业标签/);
 assert.match(workspace, /stageStrategy\.generationBrief/, '阶段设置必须进入持久化任务的生成策略');
 assert.match(workspace, /state\.saveDraft\(draft, quickStartRequest\.files, true, target\)/,
   'the new workbench must reuse the persisted social production queue');

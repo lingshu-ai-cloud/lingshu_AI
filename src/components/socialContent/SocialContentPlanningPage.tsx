@@ -7,8 +7,7 @@ import SocialCreationWorkbench, {
   type SocialCreationWorkbenchSeed,
   type SocialCreationWorkbenchSubmit,
 } from './SocialCreationWorkbench';
-import SocialContentStageOnboarding from './SocialContentStageOnboarding';
-import { loadSocialContentStage, readSocialContentStage, saveSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
+import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
 
 type PlanningView = 'workbench' | 'creations';
 
@@ -40,9 +39,7 @@ export default function SocialContentPlanningPage({
 }) {
   const cachedStage = readSocialContentStage();
   const [view, setView] = useState<PlanningView>(initialCreateRequest ? 'workbench' : 'creations');
-  const [chooserOpen, setChooserOpen] = useState(Boolean(cachedStage) && !taskOnly && !initialCreateRequest);
-  const [stageOnboardingOpen, setStageOnboardingOpen] = useState(!taskOnly && !cachedStage);
-  const [stageSaving, setStageSaving] = useState(false);
+  const [chooserOpen, setChooserOpen] = useState(!taskOnly && !initialCreateRequest);
   const [stageProfile, setStageProfile] = useState<SocialContentStageProfile | null>(cachedStage);
   const [launch, setLaunch] = useState<SocialContentLaunchOptions | null>(() => initialCreateRequest ? {
     creationPath: creationPathFromRequest(initialCreateRequest),
@@ -58,8 +55,6 @@ export default function SocialContentPlanningPage({
     void loadSocialContentStage().then((profile) => {
       if (!active) return;
       setStageProfile(profile);
-      setStageOnboardingOpen(!profile);
-      if (profile && !initialCreateRequest) setChooserOpen(true);
     });
     return () => { active = false; };
   }, [initialCreateRequest, taskOnly]);
@@ -124,7 +119,6 @@ export default function SocialContentPlanningPage({
       )}
 
       {chooserOpen && <SocialContentLanding onStart={startCreation} onClose={() => setChooserOpen(false)} />}
-      {stageOnboardingOpen && <SocialContentStageOnboarding busy={stageSaving} onConfirm={async (id) => { setStageSaving(true); const saved=await saveSocialContentStage(id); setStageProfile(saved.profile); setStageOnboardingOpen(false); setStageSaving(false); if (!initialCreateRequest) setChooserOpen(true); }} />}
     </div>
   );
 }

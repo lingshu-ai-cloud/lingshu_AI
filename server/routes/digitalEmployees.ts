@@ -1977,11 +1977,15 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   const enterprise = await readTenantEnterpriseProfile(tenantId);
   const minimalCompanyName = String(onboardingInput.companyName || enterprise.company.name || '').trim();
   const minimalBrandName = String(onboardingInput.brandName || enterprise.brand?.name || '').trim();
+  const minimalContentStage = ['b2b_launch', 'b2b_growth', 'd2c_brand'].includes(String(enterprise.socialStrategy?.contentStage || ''))
+    ? enterprise.socialStrategy?.contentStage
+    : undefined;
   if (minimalOnboarding) {
     const missing = [
       ...(!minimalCompanyName ? ['企业名称'] : []),
       ...(!minimalBrandName ? ['品牌名称'] : []),
       ...(!(enterprise.products.items?.length) ? ['产品表'] : []),
+      ...(!minimalContentStage ? ['社媒经营阶段'] : []),
     ];
     if (missing.length) { res.status(400).json({ error: 'onboarding_incomplete', missing }); return; }
   }

@@ -23,7 +23,13 @@ import {
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import SmartBusinessDashboard from "./SmartBusinessDashboard";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
+import {
+  saveSocialContentStage,
+  socialContentStageProfile,
+  type SocialContentStageId,
+} from "../lib/socialContentStage";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -596,6 +602,7 @@ function OnboardingPanel({
   busy,
   mode = "first",
   activeRun = false,
+  restartFromBeginning = false,
   onSave,
   onOpenReadiness,
 }: {
@@ -604,7 +611,8 @@ function OnboardingPanel({
   busy: boolean;
   mode?: "first" | "rules";
   activeRun?: boolean;
-  onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string }) => void | Promise<void>;
+  restartFromBeginning?: boolean;
+  onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
 }) {
   const restoredRules = useMemo(() => agentRuleFields(initial), [initial.socialCadence, initial.followupCadence, initial.reviewSchedule]);
@@ -620,7 +628,10 @@ function OnboardingPanel({
   const [collectionLimit, setCollectionLimit] = useState(restoredRules.collectionLimit);
   const [collectionTime, setCollectionTime] = useState(restoredRules.collectionTime);
   const [publishCount, setPublishCount] = useState(restoredRules.publishCount);
-  const [selectedPublishPlatforms, setSelectedPublishPlatforms] = useState<Array<PublishingTarget["platform"]>>(() => publishingPlatforms.slice());
+  const [selectedPublishPlatforms, setSelectedPublishPlatforms] = useState<Array<PublishingTarget["platform"]>>(() => {
+    const savedPlatforms = [...new Set(initial.publishingTargets.map((target) => target.platform))];
+    return savedPlatforms.length ? savedPlatforms : publishingPlatforms.slice();
+  });
   const [platformPublishCounts, setPlatformPublishCounts] = useState(() => platformCountsFromCadence(initial.socialCadence, restoredRules.publishCount));
   const [connectedPublishingAccounts, setConnectedPublishingAccounts] = useState<PublishingTarget[]>([]);
   const [publishingAccountsLoading, setPublishingAccountsLoading] = useState(true);
@@ -636,6 +647,7 @@ function OnboardingPanel({
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first");
+  const [productConfirmed, setProductConfirmed] = useState(mode !== "first");
   const [brandName, setBrandName] = useState("");
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
@@ -644,6 +656,9 @@ function OnboardingPanel({
   const [productError, setProductError] = useState("");
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
+  const [contentStage, setContentStage] = useState<SocialContentStageId>();
+  const [stageSaving, setStageSaving] = useState(false);
+  const [stageError, setStageError] = useState("");
   const themeContentEnabled = form.enabledWorkflows.some((item) =>
     contentCreationWorkflows.includes(item),
   );
@@ -738,13 +753,18 @@ function OnboardingPanel({
           companyName: loadedProfile.companyName || current.companyName,
         }));
         setBrandName(loadedProfile.brandName);
-        setKnowledgeProducts(Array.isArray(profile.products?.items) ? profile.products.items : []);
+        const loadedProducts = Array.isArray(profile.products?.items) ? profile.products.items : [];
+        setKnowledgeProducts(loadedProducts);
+        const loadedStage = socialContentStageProfile(profile.socialStrategy?.contentStage);
+        if (loadedStage) setContentStage(loadedStage.id);
         setCollectionLanguage(primaryEnterpriseLanguage(profile.company?.primaryLanguages));
         // Progress is persisted with the tenant profile so a refresh, HMR remount,
         // or a late overview response cannot throw the user back to step one.
         // Only promote local progress here; never regress a step from a stale GET.
-        if (profile.digitalEmployeeOnboarding?.profileConfirmedAt
+        if (!restartFromBeginning && profile.digitalEmployeeOnboarding?.profileConfirmedAt
           && loadedProfile.companyName && loadedProfile.brandName) setProfileConfirmed(true);
+        if (!restartFromBeginning && profile.digitalEmployeeOnboarding?.productSelectionConfirmedAt
+          && loadedProducts.length) setProductConfirmed(true);
         if (mode === "first") setProductsLoading(false);
         setProfileError("");
       })
@@ -755,8 +775,16 @@ function OnboardingPanel({
         if (!cancelled) { setProfileLoading(false); setProductsLoading(false); }
       });
     return () => { cancelled = true; };
-  }, [mode]);
-  const errors = configErrors(form);
+  }, [mode, restartFromBeginning]);
+  const selectedPublishingTargets = form.publishingTargets.filter((target) => selectedPublishPlatforms.includes(target.platform));
+  const publishingConfigured = selectedPublishPlatforms.length > 0 && selectedPublishingTargets.length > 0;
+  const validationForm = publishingConfigured ? { ...form, publishingTargets: selectedPublishingTargets } : {
+    ...form,
+    enabledWorkflows: form.enabledWorkflows.filter((workflow) => workflow !== "content_publish"),
+    publishingTargets: [],
+    allowRealPublishing: false,
+  };
+  const errors = configErrors(validationForm);
   const errorLabels: Record<string, string> = {
     companyName: "企业名称",
     industry: "所属行业",
@@ -962,29 +990,49 @@ function OnboardingPanel({
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品文件解析失败"); }
     finally { setProductImporting(false); }
   };
-  const completeMinimalOnboarding = async () => {
+  const confirmProductTable = async () => {
     if (!knowledgeProducts.length || productSaving) return;
     setProductSaving(true); setProductError("");
     try {
       const response = await fetch("/api/overseas/enterprise/profile", { method: "PATCH", headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() }, body: JSON.stringify({ digitalEmployeeOnboarding: { productSelectionConfirmedAt: new Date().toISOString(), continuedWithoutProducts: false } }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "产品表确认失败");
-      await onSave({ ...form, companyName: form.companyName.trim(), focusProducts: "", minimalOnboarding: true, brandName: brandName.trim() });
+      setProductConfirmed(true);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品表确认失败"); }
     finally { setProductSaving(false); }
+  };
+  const completeMinimalOnboarding = async (stageId: SocialContentStageId) => {
+    if (stageSaving) return;
+    setStageSaving(true);
+    setStageError("");
+    try {
+      const savedStage = await saveSocialContentStage(stageId);
+      setContentStage(savedStage.profile.id);
+      if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
+      const completed = await onSave({ ...form, companyName: form.companyName.trim(), focusProducts: "", minimalOnboarding: true, brandName: brandName.trim() });
+      if (completed === false) throw new Error("新手引导暂未完成，请稍后重试");
+    } catch (error) {
+      setStageError(error instanceof Error ? error.message : "新手引导暂未完成，请稍后重试");
+    } finally {
+      setStageSaving(false);
+    }
   };
   const submit = () => {
     setSubmitted(true);
     if (Object.keys(errors).length) return;
-    const enabledWorkflows = synchronizeThemeContentWorkflows(
+    const contentWorkflows = synchronizeThemeContentWorkflows(
       form.enabledWorkflows,
     );
-    const publishingTargets = form.publishingTargets.filter((target) => selectedPublishPlatforms.includes(target.platform));
+    const enabledWorkflows = publishingConfigured
+      ? [...new Set([...contentWorkflows, "content_publish" as DigitalEmployeeWorkflow])]
+      : contentWorkflows.filter((workflow) => workflow !== "content_publish");
+    const publishingTargets = selectedPublishingTargets;
     const platformCounts = selectedPublishPlatforms.map((platform) => `${platform}=${platformPublishCounts[platform]}`).join(",");
     const completed = {
       ...form,
       publishingTargets,
       enabledWorkflows,
+      allowRealPublishing: publishingConfigured && form.allowRealPublishing,
       team: ["planner", "knowledge", "risk", "review", ...(enabledWorkflows.some((item) => contentCreationWorkflows.includes(item)) ? ["content"] : []), ...(enabledWorkflows.some((item) => ["customer_segmentation", "batch_followup"].includes(item)) ? ["customer"] : [])],
       socialCadence: `${collectionPlatforms}；${collectionSources}；关键词：${collectionKeywords || form.focusProducts || form.primaryBusiness}；关键词语言：${collectionLanguage}；近 ${collectionLookback} 天；${collectionTime}；每次最多 ${collectionLimit} 条；按链接与标题去重 30 天；每周生成 ${publishCount} 条发布草稿；发布平台：${selectedPublishPlatforms.join("、")}；各平台条数：${platformCounts}；账号范围：${publishingTargets.map(target => `${target.platform}/${target.accountLabel}`).join("、") || "未确认"}；发布节奏按视频矩阵执行`,
       followupCadence: [followupGenerateAt, followupApproveBy, followupWindow, followupFrequency].every((value, index) => value === [restoredRules.followupGenerateAt, restoredRules.followupApproveBy, restoredRules.followupWindow, restoredRules.followupFrequency][index]) ? initial.followupCadence : `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
@@ -1016,7 +1064,7 @@ function OnboardingPanel({
       </>}
     </section>
   );
-  if (mode === "first" && profileConfirmed) return (
+  if (mode === "first" && profileConfirmed && !productConfirmed) return (
     <section id="onboarding-focus-products" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-2xl bg-blue-50 p-3 text-blue-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">第二步 · 产品表</p><h2 className="mt-1 text-xl font-bold text-slate-950">导入或确认企业已有产品表</h2><p className="mt-1 text-sm text-slate-500">这里只建立产品资料，不选择重点产品；具体宣传哪个产品会在内容制作时从企业中心选择。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">企业与品牌已保存</span></div>
       {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
@@ -1025,9 +1073,20 @@ function OnboardingPanel({
         {productImportMessage&&<p role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
         {!knowledgeProducts.length ? <div className="mt-4 rounded-2xl border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-2xl border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
         {productError&&<p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-500">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以开始使用。`:"导入至少一个产品后即可完成。"}</p><button type="button" disabled={!knowledgeProducts.length||productSaving} onClick={()=>void completeMinimalOnboarding()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{productSaving?<Loader2 size={16} className="animate-spin"/>:<ArrowRight size={16}/>}确认产品表并开始使用</button></div>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-500">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p><button type="button" disabled={!knowledgeProducts.length||productSaving} onClick={()=>void confirmProductTable()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{productSaving?<Loader2 size={16} className="animate-spin"/>:<ArrowRight size={16}/>}确认产品表，下一步</button></div>
       </>}
     </section>
+  );
+  if (mode === "first" && profileConfirmed && productConfirmed) return (
+    <SocialContentStageOnboarding
+      embedded
+      eyebrow="第三步 · 社媒经营阶段"
+      submitLabel="确认阶段并开始使用"
+      initialValue={contentStage}
+      busy={stageSaving || busy}
+      error={stageError}
+      onConfirm={(stageId) => void completeMinimalOnboarding(stageId)}
+    />
   );
   return (
     <>
@@ -1105,10 +1164,11 @@ function OnboardingPanel({
           </div>
         </section>}
         {activeRuleAgent === "business" && <section className="rounded-2xl border border-slate-200 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">周草稿与发布矩阵</p><p className="mt-1 text-xs text-slate-500">默认向所有已连接账号和平台发布，具体节奏沿用视频矩阵。</p></div><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布账号"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">周草稿、发布平台与具体账号</p><p className="mt-1 text-xs text-slate-500">默认向所有已连接账号和平台发布，具体节奏沿用视频矩阵。</p></div><div className="flex flex-wrap items-center gap-3"><button type="button" onClick={()=>{setSelectedPublishPlatforms([]);set("publishingTargets",[]);set("allowRealPublishing",false);}} className="text-xs font-bold text-slate-600 hover:text-slate-950">本周暂不发布，仅生成内容</button><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布账号"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div></div>
           <div className="mt-4"><Field label="每周生成的草稿条数"><input className={inputClass} type="number" min={0} value={publishCount} onChange={event=>setPublishCount(Number(event.target.value))} /><p className="mt-1 text-[10px] text-slate-500">当前值从旧站发布条数恢复，用户可以直接修改。</p></Field></div>
           <div className="mt-4 space-y-3">{publishingPlatforms.map(platform => { const selected=selectedPublishPlatforms.includes(platform); const accounts=connectedPublishingAccounts.filter(account=>account.platform===platform); return <div key={platform} className={`rounded-xl border p-3 ${selected?'border-violet-200 bg-violet-50/35':'border-slate-200 bg-slate-50'}`}><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-36 items-center gap-2 text-xs font-black text-slate-900"><input type="checkbox" checked={selected} onChange={event=>setSelectedPublishPlatforms(current=>event.target.checked?[...new Set([...current,platform])]:current.filter(item=>item!==platform))}/>{contentPlatformLabel[platform]}</label><label className="ml-auto flex items-center gap-2 text-[11px] font-bold text-slate-600">每周发布<input type="number" min={0} disabled={!selected} value={platformPublishCounts[platform]} onChange={event=>setPlatformPublishCounts(current=>({...current,[platform]:Number(event.target.value)}))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs" />条</label></div><div className="mt-2 flex flex-wrap gap-2">{publishingAccountsLoading?<span className="text-[10px] text-slate-400">正在读取账号…</span>:accounts.length?accounts.map(account=>{const checked=form.publishingTargets.some(target=>target.accountId===account.accountId);return <label key={account.accountId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${checked&&selected?'border-violet-200 bg-white text-violet-800':'border-slate-200 bg-white text-slate-400'}`}><input type="checkbox" disabled={!selected} checked={checked&&selected} onChange={()=>set('publishingTargets',checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/>{account.accountLabel}</label>}):<span className="text-[10px] text-amber-700">尚未连接该平台账号</span>}</div></div>; })}</div>
           {publishingAccountsError&&<p className="mt-3 text-[10px] text-red-600">{publishingAccountsError}</p>}
+          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={event=>set("allowRealPublishing",event.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] leading-5 text-slate-500">关闭时只生成发布草稿和排期，不会发送到社媒平台。</span></span></label>
           <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">已选平台 {selectedPublishPlatforms.length} 个；发布时按各平台条数和所选账号进入视频矩阵排期。</p>
         </section>}
         {activeRuleAgent === "customer" && <details className="rounded-2xl border border-emerald-100 bg-emerald-50/45 p-4">
@@ -3253,6 +3313,45 @@ function AgentOperationFeed({ task, events }: { task?: WorkflowTask; events: Run
   return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 text-white"><div className="flex items-center justify-between border-b border-slate-800 px-4 py-3"><div className="flex items-center gap-2"><MonitorPlay size={15} className="text-emerald-400"/><p className="text-xs font-black">Agent 操作现场</p></div><span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] font-bold text-slate-300">真实事件流</span></div>{latestScreenshot ? <div className="relative bg-black" style={{aspectRatio:viewportRatio}}><img src={latestScreenshot.screenshotUrl} alt="Agent Worker 上报的操作截图" className="absolute inset-0 h-full w-full object-contain"/>{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={22} className="fill-white text-slate-950 drop-shadow"/>{cursorAction?.kind === "click" && <i className="absolute -left-2 -top-2 h-8 w-8 animate-ping rounded-full border-2 border-emerald-400"/>}</div>}<div className="absolute bottom-3 left-3 rounded-lg bg-black/70 px-2 py-1 text-[9px]">{latestScreenshot.label}</div></div> : actions.length ? <div className="relative p-4">{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={20} className="fill-white text-slate-950 drop-shadow"/></div>}<div className="space-y-2">{actions.slice(-6).map((action,index)=><div key={`${action.kind}-${index}`} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"><MousePointer2 size={13} className="text-emerald-400"/><div><p className="text-[10px] font-bold text-slate-200">{action.label}</p><p className="text-[9px] text-slate-500">{action.kind}{action.page ? ` · ${action.page}` : ""}</p></div></div>)}</div></div> : <div className="px-5 py-10 text-center"><MonitorPlay size={24} className="mx-auto text-slate-600"/><p className="mt-3 text-xs font-black text-slate-300">现场画面流尚未接入</p><p className="mx-auto mt-2 max-w-md text-[10px] leading-5 text-slate-500">当前只展示真实任务状态、产物和事件。Agent Worker 上报带坐标的 navigation、click、input、screenshot 后，这里才会移动真实鼠标，不生成假鼠标动画。</p>{task && <p className="mt-3 text-[9px] text-slate-600">当前任务：{task.title}</p>}</div>}</section>;
 }
 
+const ONBOARDING_CONFETTI_COLORS = ['#117f51', '#65c99c', '#f4b860', '#e76f51', '#6c8ae4', '#f2d45c'];
+
+function OnboardingWelcome({ onClose }: { onClose: () => void }) {
+  const confetti = useMemo(() => Array.from({ length: 60 }, (_, index) => ({
+    id: index,
+    left: `${(index * 37) % 100}%`,
+    delay: `${(index % 12) * 0.08}s`,
+    duration: `${4.2 + (index % 7) * 0.28}s`,
+    color: ONBOARDING_CONFETTI_COLORS[index % ONBOARDING_CONFETTI_COLORS.length],
+    size: 6 + (index % 4) * 2,
+    drift: ((index * 29) % 180) - 90,
+  })), []);
+
+  return (
+    <div className="fixed inset-0 z-[230] overflow-hidden bg-[#15392f]/35 backdrop-blur-[2px]" aria-live="polite">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        {confetti.map((piece) => <span key={piece.id} className="absolute -top-10 rounded-[2px]" style={{
+          left: piece.left,
+          width: piece.size,
+          height: piece.size * 1.8,
+          background: piece.color,
+          animation: `onboarding-confetti-fall ${piece.duration} ${piece.delay} cubic-bezier(.18,.72,.28,.98) forwards`,
+          '--confetti-drift': `${piece.drift}px`,
+        } as CSSProperties} />)}
+      </div>
+      <div className="relative flex h-full items-center justify-center p-5">
+        <section role="dialog" aria-modal="true" aria-label="灵小枢欢迎你" className="w-full max-w-md rounded-3xl border border-white/80 bg-white/95 p-7 text-center shadow-2xl sm:p-9">
+          <img src="/brand-logo.png?v=20260921" alt="灵小枢" className="mx-auto h-20 w-20 object-contain" />
+          <p className="mt-4 text-xs font-black uppercase tracking-[0.18em] text-emerald-700">灵小枢</p>
+          <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">欢迎加入，准备工作已经完成！</h2>
+          <p className="mt-3 text-sm leading-7 text-slate-600">企业资料、产品表和社媒经营阶段都已保存。接下来，我会和四位数字员工一起陪你把内容与经营计划真正跑起来。</p>
+          <button type="button" onClick={onClose} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#173d31] px-6 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644]"><Sparkles size={16} />开始使用灵枢</button>
+        </section>
+      </div>
+      <style>{`@keyframes onboarding-confetti-fall { 0% { transform: translate3d(0,-12vh,0) rotate(0deg); opacity: 0; } 8% { opacity: 1; } 100% { transform: translate3d(var(--confetti-drift,0),112vh,0) rotate(720deg); opacity: .95; } }`}</style>
+    </div>
+  );
+}
+
 export default function DigitalEmployeePage({
   onNavigate,
   onOpenMonitor,
@@ -3276,6 +3375,8 @@ export default function DigitalEmployeePage({
   const [businessLine, setBusinessLine] = useState<BusinessLine>("full_funnel");
   const [contentPlatform, setContentPlatform] = useState<ContentPlatform>("all");
   const [navigationNotice, setNavigationNotice] = useState("");
+  const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
+  const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
   const [productionPeriod, setProductionPeriod] = useState<OverviewPeriod>("week");
@@ -3573,8 +3674,13 @@ export default function DigitalEmployeePage({
     if (next && firstLogin) {
       setWorkspaceView("today");
       setNewGoal(!next.goal);
+      setOnboardingWelcomeOpen(true);
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu-assistant-say', {
+        detail: { message: '欢迎加入灵枢！准备工作已经完成，接下来我会陪你和四位数字员工一起开始经营。', durationMs: 10_000 },
+      })), 350);
       scrollTo(goalPanelRef);
     }
+    return Boolean(next);
   };
 
   const saveGoal = async (goalInput: GoalDraft) => {
@@ -3649,11 +3755,12 @@ export default function DigitalEmployeePage({
       { id: "review", label: "数据复盘", caption: "热度排行与下周待办" },
     ];
     return (
+      <>
       <div className="h-full overflow-y-auto bg-[#f7f8f6]">
         <div className="mx-auto w-full max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
           <header className="flex flex-wrap items-end justify-between gap-4">
             <div><p className="text-xs font-bold tracking-[0.2em] text-emerald-700">ALWAYS ON</p><h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">智能经营</h1><p className="mt-1 text-sm text-slate-500">查看经营结果、内容队列和 Agent 的实时工作。</p></div>
-            <button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black shadow-sm ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={15}/>Agent 设置</button>
+            <div className="flex items-center gap-2"><button type="button" onClick={()=>setApplicationGuideOpen(true)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:border-emerald-300"><Sparkles size={15}/>新手引导</button><button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-black shadow-sm ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={15}/>Agent 设置</button></div>
           </header>
           <nav aria-label="智能经营视图" className="mt-6 flex gap-7 overflow-x-auto border-b border-slate-200">
             {views.map((view)=><button type="button" key={view.id} onClick={()=>setWorkspaceView(view.id)} aria-current={workspaceView===view.id?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${workspaceView===view.id?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${workspaceView===view.id?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>)}
@@ -3666,6 +3773,14 @@ export default function DigitalEmployeePage({
           </main>
         </div>
       </div>
+      {applicationGuideOpen && <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setApplicationGuideOpen(false); }}>
+        <section role="dialog" aria-modal="true" aria-label="新手引导" className="relative max-h-[94dvh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-[#f7f8f6] p-4 shadow-2xl sm:p-6">
+          <button type="button" aria-label="关闭新手引导" onClick={()=>setApplicationGuideOpen(false)} className="absolute right-4 top-4 z-10 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18}/></button>
+          <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }} />
+        </section>
+      </div>}
+      {onboardingWelcomeOpen && <OnboardingWelcome onClose={()=>setOnboardingWelcomeOpen(false)} />}
+      </>
     );
   }
 
@@ -3768,7 +3883,7 @@ export default function DigitalEmployeePage({
               readiness={data?.businessSnapshot?.readiness || []}
               busy={Boolean(busy)}
               onOpenReadiness={openReadiness}
-              onSave={(config) => void saveConfig(config)}
+              onSave={saveConfig}
             />
           </div>
         )}

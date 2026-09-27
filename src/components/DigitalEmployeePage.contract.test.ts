@@ -34,11 +34,11 @@ const digitalEmployeeRouteSource = fs.readFileSync('server/routes/digitalEmploye
 const enterpriseRouteSource = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
 const firstOnboardingSource = pageSource.slice(
   pageSource.indexOf('if (mode === "first" && !profileConfirmed)'),
-  pageSource.indexOf('if (mode === "first" && profileConfirmed)'),
+  pageSource.indexOf('if (mode === "first" && profileConfirmed && !productConfirmed)'),
 );
 const productTableOnboardingSource = pageSource.slice(
-  pageSource.indexOf('if (mode === "first" && profileConfirmed)'),
-  pageSource.indexOf('  return (', pageSource.indexOf('if (mode === "first" && profileConfirmed)')),
+  pageSource.indexOf('if (mode === "first" && profileConfirmed && !productConfirmed)'),
+  pageSource.indexOf('if (mode === "first" && profileConfirmed && productConfirmed)'),
 );
 
 const assistantOrbitSource = assistantSource.slice(
@@ -108,7 +108,7 @@ for (const role of ['orchestrator', 'business', 'director', 'content', 'customer
 assert.doesNotMatch(pageSource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
 assert.match(pageSource, /id: "business"[\s\S]{0,400}workflows: \["content_publish"\]/, 'content publishing belongs to the business Agent');
 assert.match(pageSource, /id: "content"[\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
-assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2200}周草稿与发布矩阵/, 'publishing controls belong to the business Agent panel');
+assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2200}周草稿、发布平台与具体账号/, 'publishing controls belong to the business Agent panel');
 for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '当前动作', '查看详情']) {
   assert.match(executionStatusSource, new RegExp(label), `live Agent status must expose ${label}`);
 }
@@ -152,7 +152,7 @@ assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan previe
 assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
 assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
-assert.match(productTableOnboardingSource, /上传产品表[\s\S]*确认产品表并开始使用/, 'second onboarding step must only import or confirm the product table');
+assert.match(productTableOnboardingSource, /上传产品表[\s\S]*确认产品表，下一步/, 'second onboarding step must only import or confirm the product table');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 
 for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
@@ -271,14 +271,20 @@ assert.match(pageSource, /allowGeneratedVisuals:\s*false/, 'generated visuals mu
 assert.match(pageSource, /setWorkspaceView\(["']live["']\)[\s\S]{0,500}setSelectedTaskId/, 'approving a plan must focus the live production scene');
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*["']smooth["']/, 'first-run transitions must focus the next required panel');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
-assert.match(pageSource, /minimalOnboarding:\s*true,\s*brandName:/, 'finishing the product table must directly complete minimal onboarding');
+assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
+assert.match(pageSource, /第三步 · 社媒经营阶段[\s\S]{0,600}确认阶段并开始使用/, 'first-use onboarding must finish with the social operating stage');
+assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,500}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after its social stage is persisted');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
+assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.productSelectionConfirmedAt[\s\S]{0,120}loadedProducts\.length[\s\S]{0,80}setProductConfirmed\(true\)/, 'persisted product confirmation may restore step three only when products still exist');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');
 assert.match(pageSource, /overviewRequestVersionRef/, 'late overview responses must be versioned so they cannot overwrite a completed mutation');
-assert.doesNotMatch(pageSource, /第三步|第四步/, 'first-time onboarding must end after the product-table step');
+assert.doesNotMatch(pageSource, /第四步/, 'first-time onboarding must end after the social-stage step');
 assert.doesNotMatch(pageSource, /rulesStepSaved/, 'onboarding must not keep a redundant fourth-step state');
 assert.match(digitalEmployeeRouteSource, /minimalOnboarding[\s\S]{0,1800}enabledWorkflows:\s*\['viral_clone', 'product_content', 'material_content'\]/, 'minimal onboarding must resolve to an internal fail-closed default config');
+assert.match(digitalEmployeeRouteSource, /!minimalContentStage\s*\?\s*\['社媒经营阶段'\]/, 'minimal onboarding must reject completion until the application-level social stage exists');
 assert.match(digitalEmployeeRouteSource, /const enterprisePatch = minimalOnboarding \? \{[\s\S]{0,500}brand:\s*\{ \.\.\.enterprise\.brand, name: minimalBrandName \}/, 'minimal defaults must not be written as fabricated enterprise facts');
+assert.match(pageSource, /新手引导[\s\S]{0,500}restartFromBeginning/, 'configured users must have an application-level entry to reopen onboarding');
+assert.match(pageSource, /function OnboardingWelcome[\s\S]{0,3000}灵小枢[\s\S]{0,3000}onboarding-confetti-fall/, 'first completion must show Lingxiaoshu with a confetti welcome');
 assert.match(enterpriseRouteSource, /brand:\s*\{[\s\S]{0,100}name:\s*string/, 'EnterpriseProfile must store a brand name');
 assert.match(enterpriseRouteSource, /const brandInput[\s\S]{0,500}name:\s*text\(brandInput\.name\)/, 'brand name must be normalized as text');
 assert.match(pageSource, /id:\s*String\(existing\.id \|\| existing\.productId \|\| product\.id\)/,

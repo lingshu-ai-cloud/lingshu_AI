@@ -176,7 +176,7 @@ export interface EnterpriseProfile {
     enabledRoutes: Array<'oem_odm' | 'wholesale_distribution' | 'consumer_retail'>;
     routeStrategies: Partial<Record<'oem_odm' | 'wholesale_distribution' | 'consumer_retail', { targetBuyerRoles: string[]; primaryCta: string }>>;
     manuallyEditedFields?: string[];
-    /** First-use social stage selected in the content workspace. */
+    /** Social operating stage selected during application onboarding. */
     contentStage?: 'b2b_launch' | 'b2b_growth' | 'd2c_brand';
     /** PRD-aligned generation preset derived from contentStage. */
     weeklyTaskPackagePreset?: 'b2b_starting' | 'b2b_growing' | 'dtc_sales';
