@@ -21,14 +21,13 @@ import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficVi
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
-import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, loadTrafficEntryView, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
+import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
 // 避免登录后一次性解析所有页面造成主线程长任务，表现为浏览器“页面无响应”。
 const PlatformAdsPage = lazy(() => import('./components/PlatformAdsPage'));
 const StrategyPage = lazy(() => import('./components/StrategyPage'));
 const TrafficPage = lazy(() => import('./components/TrafficPage'));
-const SocialMonitoringPage = lazy(() => import('./components/SocialMonitoringPage'));
 const WeComCustomerServicePage = lazy(() => import('./components/WeComCustomerServicePage'));
 const ConversionPage = lazy(() => import('./components/ConversionPage'));
 const OrderManagementPage = lazy(() => import('./components/OrderManagementPage'));
@@ -44,7 +43,6 @@ const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPag
 const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'));
 const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
 const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWorkspacePage'));
-const SocialOperatingSummary = lazy(() => import('./components/socialProgram/SocialOperatingSummary'));
 const SocialContentPlanningPage = lazy(() => import('./components/socialContent/SocialContentPlanningPage'));
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
@@ -93,7 +91,6 @@ export default function App() {
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(loadPage);
-  const [trafficEntryView, setTrafficEntryView] = useState<'publish' | 'accounts'>(loadTrafficEntryView);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [socialContentNavigation, setSocialContentNavigation] = useState<{
@@ -115,7 +112,6 @@ export default function App() {
     const restorePage = (event: PopStateEvent) => {
       const previous = resolveNavigationPage(event.state?.productionPage, event.state?.productionDetail?.view);
       if (previous) {
-        if (previous === 'traffic') setTrafficEntryView(event.state?.productionDetail?.view === 'accounts' ? 'accounts' : 'publish');
         setPage(previous);
         const socialTaskId = isSocialTaskContextPage(previous)
           ? readSocialContentNavigationTaskId(previous, event.state)
@@ -353,7 +349,6 @@ export default function App() {
 
   const handleNavigate = useCallback((p: Page) => {
     const next = resolvePage(p) || 'digitalEmployees';
-    if (next === 'traffic') setTrafficEntryView((p === 'accountManagement' || p === 'socialAccounts') ? 'accounts' : 'publish');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
       ...window.history.state,
@@ -423,7 +418,6 @@ export default function App() {
       if (!detail.restoreHistory) {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
         handleNavigate(incomingDetail.page === 'socialSetup' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? incomingDetail.page : nextPage);
-        if (nextPage === 'traffic') setTrafficEntryView(incomingDetail.view === 'accounts' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? 'accounts' : 'publish');
         window.history.replaceState({ ...window.history.state, productionDetail: detail }, '');
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
         if (socialTaskId && isSocialTaskContextPage(nextPage)
@@ -618,13 +612,9 @@ export default function App() {
         <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
-            <div className="flex h-full min-h-0 flex-col">
-            <SocialOperatingSummary onNavigate={handleNavigate} />
-            <div className="min-h-0 flex-1">
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
               : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
-            </div></div>
           </Activity>
           {monitorMounted && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {page === 'strategy' && (
@@ -655,8 +645,9 @@ export default function App() {
               onScriptPanelOpen={() => setScriptPanelOpen(true)}
               onScriptPanelClose={() => setScriptPanelOpen(false)}
               onSessionRefresh={() => void refreshSession()}
-              initialView={trafficEntryView}
-              visibleModes={['publish', 'accounts']}
+              initialView="publish"
+              visibleModes={['publish']}
+              showModeTabs={false}
               pageTitle={PAGE_REGISTRY.traffic.canonicalTitle}
               storageScope={session.tenant?.id || session.user.tenantId}
               socialContentTaskId={activeSocialContentTaskId}
@@ -706,7 +697,21 @@ export default function App() {
               )}
             </div>
           )}
-          {page === 'socialMonitoring' && <SocialMonitoringPage onNavigate={handleNavigate} />}
+          {page === 'socialMonitoring' && (
+            <TrafficPage
+              key="social-monitoring-accounts"
+              onEnterConversation={enterConversation}
+              onLeaveConversation={leaveConversation}
+              isInConversation={false}
+              onNavigate={handleNavigate}
+              initialView="accounts"
+              visibleModes={['accounts']}
+              showModeTabs={false}
+              pageTitle={PAGE_REGISTRY.socialMonitoring.canonicalTitle}
+              storageScope={session.tenant?.id || session.user.tenantId}
+              socialContentTaskId={activeSocialContentTaskId}
+            />
+          )}
           {page === 'scriptLibrary' && <ScriptLibraryPage socialContentTaskId={activeSocialContentTaskId} />}
           {(['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged'] as Page[]).includes(page) && <PlatformAdsPage page={page} onNavigate={handleNavigate} />}
           {page === 'conversion' && (

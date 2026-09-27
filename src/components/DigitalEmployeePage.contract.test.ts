@@ -13,7 +13,6 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
-const socialOperatingSummarySource = fs.readFileSync('src/components/socialProgram/SocialOperatingSummary.tsx', 'utf8');
 const inspirationSource = fs.readFileSync('src/components/InspirationDashboard.tsx', 'utf8');
 const competitorAccountsSource = fs.readFileSync('src/components/CompetitorAccountsModal.tsx', 'utf8');
 const reviewSource = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'utf8');
@@ -93,7 +92,9 @@ assert.match(pageSource, /关键词语言[\s\S]{0,400}默认同步企业中心�
 assert.match(pageSource, /采集平台（可多选）/, 'director collection platforms must use a multi-select control');
 assert.match(pageSource, /定时任务负责执行，编导 Agent 负责验收/, 'director settings must explain the shared Inspiration collection pipeline');
 assert.match(pageSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
-assert.doesNotMatch(socialOperatingSummarySource, /业务配置|SocialOperatingConfiguration/, 'the obsolete business-configuration entry must be removed');
+assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
+assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
+assert.match(appSource, /page === 'socialMonitoring'[\s\S]{0,800}<TrafficPage[\s\S]{0,500}initialView="accounts"[\s\S]{0,300}visibleModes=\{\['accounts'\]\}/, 'Content Monitoring must host the account activity surface');
 for (const label of ['经营总览', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
 for (const label of ['运营平台账号', '获得询盘', '实际增长', '投流消耗', '经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '生产实况']) assert.match(smartBusinessSource, new RegExp(label), `Smart Business overview must expose ${label}`);
 assert.match(smartBusinessSource, /animate-spin/, 'a running Agent must have a rotating halo');

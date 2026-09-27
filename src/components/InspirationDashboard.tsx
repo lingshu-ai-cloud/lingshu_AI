@@ -108,9 +108,9 @@ export function materialSemanticLabel(material: MaterialSemanticSource): string 
     .map(compactMaterialKeyword).filter(Boolean);
   const analysis = material.scriptAnalysis;
   const analyzedKeywords = [
-    ...(analysis?.directorIndex.subjects || []),
-    ...(analysis?.directorIndex.actions || []),
-    ...(analysis?.directorIndex.environments || []),
+    ...(analysis?.directorIndex?.subjects || []),
+    ...(analysis?.directorIndex?.actions || []),
+    ...(analysis?.directorIndex?.environments || []),
     ...(material.visualObservations || []),
   ].map(compactMaterialKeyword).filter(Boolean);
   const keywords = [...new Set(manualKeywords.length ? manualKeywords : analyzedKeywords)].slice(0, 3);

@@ -55,7 +55,7 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   scriptLibrary: { navLabel: '脚本库', canonicalTitle: '脚本库', navParent: 'smartAssets' },
   smartAssets: { navLabel: '内容制作', canonicalTitle: '内容制作' },
   socialMonitoring: { navLabel: '内容监控', canonicalTitle: '账号内容监控' },
-  accountManagement: { navLabel: '账号', canonicalTitle: '发布与渠道 · 账号', navParent: 'traffic' },
+  accountManagement: { navLabel: '账号', canonicalTitle: '账号内容监控', navParent: 'socialMonitoring' },
   adsOverview: { navLabel: '投放总览', canonicalTitle: '投放总览' },
   adsPlans: { navLabel: '投放计划', canonicalTitle: '投放计划' },
   adsCreatives: { navLabel: '广告素材', canonicalTitle: '广告素材', navParent: 'adsPlans' },
@@ -100,9 +100,9 @@ export function isPage(value: unknown): value is Page {
 export function resolvePage(value: unknown): Page | null {
   if (!isPage(value)) return null;
   if (value === 'socialWorkspace' || value === 'socialSetup' || value === 'socialPlanning') return 'smartAssets';
-  if (value === 'socialAccounts') return 'traffic';
+  if (value === 'socialAccounts') return 'socialMonitoring';
   if (value === 'retention') return 'conversion';
-  if (value === 'accountManagement') return 'traffic';
+  if (value === 'accountManagement') return 'socialMonitoring';
   return value;
 }
 
@@ -114,6 +114,6 @@ export function resolveNavigationPage(value: unknown, view?: unknown): Page | nu
   if (page !== 'traffic') return page;
   if (view === 'materials') return 'socialInspiration';
   if (view === 'create') return 'smartAssets';
-  if (view === 'accounts') return 'traffic';
+  if (view === 'accounts') return 'socialMonitoring';
   return page;
 }

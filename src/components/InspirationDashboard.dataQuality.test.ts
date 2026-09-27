@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   canProcessVideo,
   displayDuration,
+  materialSemanticLabel,
   resultEmptyState,
   trendFromEvidence,
 } from './InspirationDashboard.js';
@@ -19,6 +20,13 @@ assert.equal(displayDuration(125), '2:05');
 assert.equal(canProcessVideo({ contentFormat: 'video', duration: 0 }), false);
 assert.equal(canProcessVideo({ contentFormat: 'video', duration: 12 }), true);
 assert.equal(canProcessVideo({ contentFormat: 'image', duration: 0 }), true);
+assert.equal(materialSemanticLabel({
+  productName: '',
+  tags: '',
+  visualObservations: ['产品特写'],
+  // Historical material records may have analysis without a director index.
+  scriptAnalysis: { status: 'ready' } as never,
+}), '内容：产品特写');
 
 assert.equal(resultEmptyState(0, '', false), 'no-data');
 assert.equal(resultEmptyState(12, 'not-found', false), 'no-match');
@@ -27,7 +35,7 @@ assert.equal(resultEmptyState(12, '', true), 'no-match');
 const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 assert.match(componentSource, /aria-label={`播放 \${material\.name}`}[^]*?event\.stopPropagation\(\); setPreviewMaterial\(material\);[^]*?z-20/, '播放按钮应稳定置于 hover 操作层之上且只打开预览');
 assert.match(componentSource, /contentFormat: isImageMaterial \? 'image' : 'video'/, '图片素材进入工作流时必须保留图片类型，不能伪装成视频');
-assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video'[^]*?用此素材生成/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
+assert.match(componentSource, /disabled=\{material\.type === 'audio' \|\| \(material\.type === 'video'[^]*?用于创作/, '图片素材必须可以直接进入生成，只有无有效时长的视频和音频被拦截');
 assert.match(componentSource, /aria-label={`编辑 \${material\.name}`}[^]*?aria-label={`删除 \${material\.name}`}/, '每条可管理素材必须固定提供编辑与删除入口');
 assert.match(componentSource, /INSPIRATION_PAGE_SIZE = 30/, '灵感列表每页必须固定读取最新 30 条');
 assert.match(componentSource, /inventory-summary[^]*?setTenantVideoTotalItems/, '首屏必须独立优先读取真实库存量');

@@ -43,17 +43,17 @@ assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES, []);
 assert.equal(resolvePage('socialWorkspace'), 'smartAssets');
 assert.equal(resolvePage('socialSetup'), 'smartAssets');
 assert.equal(resolvePage('socialPlanning'), 'smartAssets');
-assert.equal(resolvePage('socialAccounts'), 'traffic');
+assert.equal(resolvePage('socialAccounts'), 'socialMonitoring');
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');
-assert.equal(resolvePage('accountManagement'), 'traffic', 'the removed account settings surface forwards to publishing');
+assert.equal(resolvePage('accountManagement'), 'socialMonitoring', 'the removed account settings surface forwards to account monitoring');
 assert.equal(resolveNavigationPage('traffic', 'materials'), 'socialInspiration');
 assert.equal(resolveNavigationPage('traffic', 'create'), 'smartAssets');
 assert.equal(resolveNavigationPage('traffic', 'publish'), 'traffic');
-assert.equal(resolveNavigationPage('traffic', 'accounts'), 'traffic');
+assert.equal(resolveNavigationPage('traffic', 'accounts'), 'socialMonitoring');
 assert.equal(resolveNavigationPage('not-a-page', 'create'), null);
 assert.equal(PAGE_REGISTRY.scriptLibrary.navParent, 'smartAssets');
 assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
-assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'traffic');
+assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
 
 console.log('Page registry tests passed');
