@@ -114,6 +114,10 @@ export async function runSocialContentAutoProductionWithRetry(input: {
       lastError = error;
       const raw = String(error instanceof Error ? error.message : error || '自动成片失败');
       if (raw.startsWith('user_input_required:')) break;
+      // Paid model failures and quality-gate rejections are deterministic for
+      // the same inputs. Repeating them silently can charge the user three
+      // times without improving the result; preserve the reason for review.
+      if (raw.includes('asset_supply_provider_exhausted:') || raw.includes('product_scene_')) break;
       if (attempt >= 3) break;
       await writeExecutionStage({
         ...input,

@@ -428,6 +428,7 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   if (draft.referenceLinks.length > 50) add(1, '参考链接一次最多添加 50 个');
   draft.referenceLinks.forEach(value => {
     if (value.length > 600) { add(1, '参考链接过长，请检查后重试'); return; }
+    if (/^local:\/\/[A-Za-z0-9._-]+$/.test(value)) return;
     try {
       const url = new URL(value);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error();

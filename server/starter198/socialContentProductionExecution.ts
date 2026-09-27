@@ -46,6 +46,8 @@ import {
   type SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
 import { createConfiguredSocialAiVisualAdapter } from './socialContentAiVisualAdapter.js';
+import { createSocialProductSceneAdapter } from './socialContentProductSceneAdapter.js';
+import { createEnvironmentSeedanceProductScenePorts } from './socialContentSeedanceProductScene.js';
 import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
 import { buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
@@ -161,7 +163,13 @@ export async function runSocialContentAutoProduction(input: {
     // system-theme baseline so first-content tasks gain the new safe fallback.
     baseline = null;
   }
-  if (!baseline || baseline.groundingVersion !== SOCIAL_SCRIPT_GROUNDING_VERSION) {
+  const replicationBaselineOutdated = Boolean(detail.replicationScript?.shots.length
+    && (baseline?.scenes.length !== detail.replicationScript.shots.length
+      || detail.replicationScript.shots.some((shot, index) => (
+        socialText(baseline?.scenes[index]?.voiceover) !== socialText(shot.spokenText || shot.captionText)
+        || socialText(baseline?.scenes[index]?.caption) !== socialText(shot.captionText || shot.spokenText)
+      ))));
+  if (!baseline || baseline.groundingVersion !== SOCIAL_SCRIPT_GROUNDING_VERSION || replicationBaselineOutdated) {
     // Compatibility path for older tasks: discard any baseline that directly
     // interpolated title/objective/product free text and re-freeze it from
     // governed formula/inspiration structure plus verified enterprise facts.
@@ -187,6 +195,7 @@ export async function runSocialContentAutoProduction(input: {
       theme: detail.theme ?? null,
       formula: directorFormula,
       inspiration,
+      replicationScript: detail.replicationScript ?? null,
       verifiedContext,
       lockedAt: new Date().toISOString(),
       previous: baseline,
@@ -221,7 +230,7 @@ export async function runSocialContentAutoProduction(input: {
 	    themeId: detail.theme?.themeId ?? null,
 	    productionMode,
 	    outputDirectory: outputDir,
-	    allowAuthorizedSharedLibrary: zeroAssetRoute,
+	    allowAuthorizedSharedLibrary: true,
 	  }).catch(error => {
 	    if (zeroAssetRoute) return [];
 	    throw error;
@@ -229,7 +238,7 @@ export async function runSocialContentAutoProduction(input: {
 	  const analyzed = await analyzeProductionAssets({ tenantId: input.tenantId, assets: rawAssets });
 	  let assets = analyzed.assets;
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
-	  if (zeroAssetRoute && detail.assetSupplyPlan) {
+	  if (detail.assetSupplyPlan) {
 	    const environmentPresenter = input.repository.dataStore
 	      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
 	      : null;
@@ -242,19 +251,19 @@ export async function runSocialContentAutoProduction(input: {
 	      availableAssets: assets,
 	      adapters: [
 	        ...(input.assetSupplyAdapters ?? []),
+	        createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
 	        ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
 	        createConfiguredSocialAiVisualAdapter(),
 	        ...existingAssetSupplyAdapters(),
 	      ],
 	    });
-	    // Only assets selected by the governed per-shot router may enter a
-	    // zero-asset render. Ambient shared inventory cannot bypass its trace.
+	    // Only assets selected by the Director's per-shot router enter the edit.
 	    assets = supplied.assets;
 	    assetSupplyExecution = supplied.execution;
 	    await writeExecutionStage({
 	      ...input,
 	      stage: 'asset_supply_completed',
-	      message: '内容 Agent 已逐镜完成零素材来源路由和真实性边界检查。',
+	      message: '内容 Agent 已逐镜完成素材库、Seedream/Seedance 与真实工厂素材路由。',
 	      extra: { assetSupplyExecution },
 	    });
 	  }

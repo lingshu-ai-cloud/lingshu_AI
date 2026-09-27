@@ -2,6 +2,7 @@ import type {
   SocialContentTaskBrief,
   SocialContentThemeId,
   SocialContentThemeSelection,
+  SocialReplicationScriptVersion,
   SocialScriptBaselineSummary,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import type { EnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
@@ -267,12 +268,11 @@ export function verifiedSocialScriptContext(
       confidence: exact ? 1 : 0.85,
     };
   }
-  // A product name supplied for this task must match an enterprise product
-  // exactly before company/profile facts can ground product copy. Falling back
-  // to company industry or broad categories here made an unrelated factory
-  // profile look like evidence for the named product.
+  // The user-supplied product name is safe as an identity/keyword even when it
+  // is not yet an Enterprise Knowledge row. It never unlocks product claims;
+  // facts remain empty until an exact enterprise-product match exists.
   if (reference) {
-    return { productName: null, facts: [], source: 'none', confidence: 0 };
+    return { productName: compactFactValue(productRef, 48) || null, facts: [], source: 'none', confidence: 0.5 };
   }
   const profileFacts: Array<{ key: string; label: string; value: string }> = [
     { key: 'company_industry', label: '所属行业', value: compactFactValue(profile.company.industry) },
@@ -377,6 +377,7 @@ export function freezeSocialScriptBaseline(input: {
   theme: SocialContentThemeSelection | null;
   formula?: InternalSocialContentFormula | null;
   inspiration?: SocialInspirationScriptMatch | null;
+  replicationScript?: SocialReplicationScriptVersion | null;
   verifiedContext?: VerifiedSocialScriptContext | null;
   userProductAssociation?: {
     basis: 'tenant_task_upload';
@@ -434,7 +435,31 @@ export function freezeSocialScriptBaseline(input: {
   const formulaReference = matchedFormula
     ? { formulaId: matchedFormula.formulaId, version: matchedFormula.version }
     : null;
-  const scenes = sourceNodes.slice(0, 12).map((node, index) => {
+  const replicationShots = input.replicationScript?.shots?.slice(0, 12) ?? [];
+  const scenes = replicationShots.length ? replicationShots.map((shot, index) => {
+    const referenceStructure = input.inspiration?.nodes[index]?.referenceStructure;
+    const narration = socialText(shot.spokenText || shot.captionText);
+    const caption = socialText(shot.captionText || shot.spokenText);
+    const visualInstruction = socialText(shot.visualInstruction || shot.materialPlan?.requestedDescription);
+    return {
+      sceneId: socialText(shot.shotId) || `scene-${index + 1}`,
+      formulaNodeId: null,
+      inspirationNodeId: socialText(shot.referenceShotId) || null,
+      ...(referenceStructure ? {
+        referenceStructure: {
+          ...referenceStructure,
+          sourceTiming: { ...referenceStructure.sourceTiming },
+        },
+      } : {}),
+      shotFunction: socialText(shot.purpose) || '主题表达',
+      subject: socialText(shot.materialPlan?.requestedDescription) || visualInstruction || '本次内容',
+      action: visualInstruction || '按参考节奏展示',
+      script: visualInstruction || narration,
+      voiceover: narration,
+      caption,
+      narration,
+    };
+  }) : sourceNodes.slice(0, 12).map((node, index) => {
     const referenceStructure = !matchedFormula
       ? input.inspiration?.nodes[index]?.referenceStructure
       : undefined;

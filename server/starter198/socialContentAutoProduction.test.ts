@@ -214,7 +214,7 @@ try {
   assert.equal(automaticSocialMaterialEligible({ id: 'other', type: 'image', tenantId: 'tenant-b' } as never, 'tenant-a'), false);
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-without-rights', type: 'video', scope: 'shared', commercialUseApproved: true,
-  } as never, 'tenant-a'), false, 'shared inventory fails closed without derivative rights and license evidence');
+  } as never, 'tenant-a'), true, 'visible material-library rows are directly usable');
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-authorized', type: 'video', scope: 'shared', commercialUseApproved: true,
     derivativesApproved: true, licenseEvidence: 'license-record-1',
@@ -222,7 +222,7 @@ try {
   assert.equal(automaticSocialMaterialEligible({
     id: 'shared-reference-only', type: 'video', scope: 'shared', usage: 'reference_only', commercialUseApproved: true,
     derivativesApproved: true, licenseEvidence: 'license-record-2',
-  } as never, 'tenant-a'), false);
+  } as never, 'tenant-a'), true, 'legacy reference_only metadata no longer disables production use');
 
   const associationBrief = {
     title: forbiddenUserText, objective: forbiddenUserText, productRef: 'Meno Moso 损伤发质洗护', audience: null,

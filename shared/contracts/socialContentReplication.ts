@@ -242,6 +242,10 @@ export interface SocialProductSceneReplicationSpec {
   templateSource: 'reference_shot' | 'account_scene_template' | 'system_clean_stage';
   sceneTemplateKey: string;
   referenceShotId: string | null;
+  /** Source video used to recover the real environment/composition frame. */
+  referenceSourceId?: string | null;
+  referenceStartSeconds?: number | null;
+  referenceEndSeconds?: number | null;
   productIdentity: {
     groups: SocialProductIdentityGroup[];
     identitySimilarityMinimum: number;
@@ -480,6 +484,8 @@ export interface SocialReferenceVideoAnalysis {
   /** Incrementing analysis version. Optional only on historic records. */
   version?: string;
   referenceSourceId: string;
+  /** Stable inspiration-library record used to retrieve the exact reference media at execution time. */
+  referenceRecordId?: string;
   status: 'analyzing' | 'ready' | 'blocked';
   durationSeconds: number | null;
   analysisLayers?: Array<{

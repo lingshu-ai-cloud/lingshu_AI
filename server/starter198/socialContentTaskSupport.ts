@@ -320,6 +320,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
         brief: summary.brief,
         theme: summary.theme,
         inspiration: resolved.match,
+        replicationScript: resolved.replicationScript,
         verifiedContext,
         lockedAt: (input.now ?? new Date()).toISOString(),
         previous,

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export type FirstFrameProvider = 'seedream' | 'qwen';
-export type FirstFrameReferenceRole = 'source_composition' | 'authorized_presenter';
+export type FirstFrameReferenceRole = 'source_composition' | 'authorized_presenter' | 'product_identity';
 
 export interface FirstFrameReference {
   role: FirstFrameReferenceRole;
@@ -11,6 +11,9 @@ export interface FirstFrameReference {
 }
 
 export interface FirstFrameRequest {
+  /** Presenter replacement keeps the historic two-image contract. Product
+   * scenes accept one composition frame plus one or more product references. */
+  referenceMode?: 'presenter_replace' | 'product_scene';
   tenantId: string;
   videoId: string;
   compositionId: string;
@@ -44,11 +47,16 @@ export class FirstFrameProviderError extends Error {
 }
 
 export function validateFirstFrameRequest(input: FirstFrameRequest, options: { requireIdempotencyKey?: boolean } = {}): void {
-  if (!input.tenantId.trim() || !input.videoId.trim() || !input.compositionId.trim() || !input.presenterVersion.trim()) throw new Error('首帧请求缺少租户、成片、构图或人物版本');
+  if (!input.tenantId.trim() || !input.videoId.trim() || !input.compositionId.trim() || !input.presenterVersion.trim()) throw new Error('首帧请求缺少租户、成片、构图或身份版本');
   if (!input.prompt.trim()) throw new Error('首帧请求缺少构图提示词');
   if (options.requireIdempotencyKey !== false && !input.idempotencyKey.trim()) throw new Error('首帧请求缺少稳定幂等键');
   const roles = input.references.map(item => item.role);
-  if (input.references.length !== 2 || roles.filter(role => role === 'source_composition').length !== 1 || roles.filter(role => role === 'authorized_presenter').length !== 1) {
+  if (input.referenceMode === 'product_scene') {
+    const products = roles.filter(role => role === 'product_identity').length;
+    if (roles.filter(role => role === 'source_composition').length !== 1 || products < 1 || products > 9 || input.references.length !== products + 1) {
+      throw new Error('产品场景首帧必须包含一张原构图和一至九张同产品参考图');
+    }
+  } else if (input.references.length !== 2 || roles.filter(role => role === 'source_composition').length !== 1 || roles.filter(role => role === 'authorized_presenter').length !== 1) {
     throw new Error('人物首帧必须且只能包含一张原构图和一张已授权人物参考图');
   }
   for (const reference of input.references) {
@@ -60,6 +68,6 @@ export function validateFirstFrameRequest(input: FirstFrameRequest, options: { r
 export function firstFrameInputFingerprint(input: FirstFrameRequest, provider: FirstFrameProvider, model: string): string {
   validateFirstFrameRequest(input, { requireIdempotencyKey: false });
   return createHash('sha256').update(JSON.stringify({ tenantId: input.tenantId, videoId: input.videoId,
-    compositionId: input.compositionId, presenterVersion: input.presenterVersion, prompt: input.prompt.trim(), ratio: input.ratio,
+    compositionId: input.compositionId, presenterVersion: input.presenterVersion, referenceMode: input.referenceMode || 'presenter_replace', prompt: input.prompt.trim(), ratio: input.ratio,
     references: input.references.map(item => ({ role: item.role, sha256: item.sha256.toLowerCase() })), provider, model })).digest('hex');
 }

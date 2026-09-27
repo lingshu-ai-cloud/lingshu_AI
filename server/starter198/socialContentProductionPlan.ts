@@ -454,7 +454,8 @@ export function buildSocialProductionPlan(input: {
       : ['独立镜头按真实分析片段计算；同一片段的切窗不会增加镜头数。', '不相关素材仅从本次剪辑中舍弃，不会从素材库删除。'],
   };
 
-  const wanted = Math.min(4, input.baseline.scenes.length, relevantEvidenceShots.length);
+  const maximumScenes = input.baseline.source === 'inspiration_script' ? 12 : 4;
+  const wanted = Math.min(maximumScenes, input.baseline.scenes.length, relevantEvidenceShots.length);
   const indices = sceneOrder(input.baseline.scenes.length, wanted);
   const remaining = [...relevantClips];
   const assignments = indices.flatMap(sceneIndex => {

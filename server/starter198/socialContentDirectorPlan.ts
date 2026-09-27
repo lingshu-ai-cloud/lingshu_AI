@@ -492,8 +492,10 @@ export function buildSocialDirectorPlan(input: {
     caption: scene.caption,
     music: direction.music.mood,
     pace: direction.pace === 'balanced' ? 'medium' : direction.pace,
-    protectedVisual: true,
-  })), 1, 198, input.bgmSelection.primary.beatEvidence);
+    // Captions/SFX remain post-production layers and never alter the locked
+    // product or factory pixels underneath.
+    protectedVisual: false,
+  })), 2, 198, input.bgmSelection.primary.beatEvidence);
   return withDirectorPlanHash({
     schemaVersion: SOCIAL_DIRECTOR_PLAN_SCHEMA,
     directorPlanId,

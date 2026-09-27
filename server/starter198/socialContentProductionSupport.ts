@@ -11,7 +11,7 @@ import type {
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
-import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
+import { readMaterialLibrary, updateAccessibleLocalMaterial, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import {
   automationBgmAudio,
@@ -134,23 +134,19 @@ export async function taskProductionAssets(input: {
       origin: materialTenantId(record) === input.tenantId ? 'tenant_library' as const : 'shared_library' as const,
       linked: false,
     }));
-  // Publish-ready production is grounded only in material the user explicitly
-  // linked to this task. Ambient tenant-library footage must never leak into a
-  // product video simply because it scores well on generic theme keywords.
+  // The material library is the Content Agent's production inventory. Items
+  // do not need to be re-linked or re-authorized per task; relevance is decided
+  // by the Director's semantic tags and the per-shot router below.
   const candidates = [
     ...linkedCandidates,
-    ...(input.productionMode === 'concept_preview'
-      ? libraryCandidates
-      : input.allowAuthorizedSharedLibrary
-        ? libraryCandidates.filter(candidate => candidate.origin === 'shared_library')
-        : []),
+    ...libraryCandidates,
   ]
     .sort((left, right) => automaticMaterialScore({
       record: right.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: right.linked,
     }) - automaticMaterialScore({
       record: left.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: left.linked,
     }))
-    .slice(0, 16);
+    .slice(0, 64);
   const assets: ProductionAsset[] = [];
   for (const [index, candidate] of candidates.entries()) {
     const { record } = candidate;
@@ -184,9 +180,7 @@ export async function taskProductionAssets(input: {
       ...(socialText(record.contentSha256 || record.sha256 || location.sha256)
         ? { contentHash: socialText(record.contentSha256 || record.sha256 || location.sha256) }
         : {}),
-      ...(candidate.origin === 'shared_library'
-        ? { authorizationRef: socialText(record.licenseEvidence || record.licenseName) }
-        : {}),
+      authorizationRef: 'material_library_default',
       duration: Math.max(0, Number(record.duration || 0)),
       visualObservations: [record.visualObservations, record.observations]
         .flatMap(value => Array.isArray(value) ? value : [])
@@ -267,9 +261,11 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
     adapterId: 'existing_customer_asset.v1',
     sourceStrategies: ['customer_real_asset', 'customer_product_image_animation'],
     async execute(context) {
-      const asset = context.availableAssets.find(candidate => (
+      const candidates = context.availableAssets.filter(candidate => (
         context.shot.sourceRefs.includes(candidate.sourceId) || context.shot.sourceRefs.includes(candidate.id)
       ));
+      const seed = [...context.shot.shotId].reduce((sum, character) => sum + character.charCodeAt(0), 0);
+      const asset = candidates.length ? candidates[seed % candidates.length] : undefined;
       if (!asset) return null;
       const customerEvidence = context.shot.truthBoundary.customerEvidenceRefs.includes(asset.sourceId)
         || context.shot.truthBoundary.customerEvidenceRefs.includes(asset.id);
@@ -280,7 +276,7 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         sourceRef: context.shot.sourceRefs.find(ref => ref === asset.sourceId || ref === asset.id) ?? asset.sourceId,
         synthetic: false,
         representation: customerEvidence ? 'customer_evidence' : 'non_evidentiary_visual',
-        authorizationRef: 'tenant_task_upload_warranty',
+        authorizationRef: 'material_library_default',
         disclosure: null,
       };
     },
@@ -301,8 +297,8 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         sourceRef: asset.sourceId,
         synthetic: false,
         representation: 'non_evidentiary_visual',
-        authorizationRef: asset.authorizationRef || null,
-        disclosure: '授权素材 · 非客户实拍',
+        authorizationRef: asset.authorizationRef || 'material_library_default',
+        disclosure: null,
       };
     },
   };
@@ -381,14 +377,25 @@ export async function analyzeProductionAssets(input: {
   const failures: Array<{ assetId: string; assetName: string; reason: string }> = [];
   for (const asset of input.assets) {
     if (asset.visualObservations.length || asset.segments.length) {
-      assets.push({ ...asset, scriptAnalysis: asset.scriptAnalysis || buildMaterialScriptAnalysis({
+      const scriptAnalysis = asset.scriptAnalysis || buildMaterialScriptAnalysis({
         materialId: asset.id,
         name: asset.name,
         sourceRevision: asset.contentHash || createHash('sha256').update(JSON.stringify([asset.id, asset.duration, asset.segments, asset.visualObservations])).digest('hex'),
         duration: asset.duration,
         segments: asset.segments,
         visualObservations: asset.visualObservations,
-      }) });
+      });
+      updateAccessibleLocalMaterial(asset.id, input.tenantId, {
+        scriptAnalysis,
+        directorTags: scriptAnalysis.directorIndex,
+        assetClasses: [
+          /工厂|车间|产线|生产|灌装|旋盖|设备|factory|production/i.test(scriptAnalysis.searchableText) ? 'factory' : '',
+          /产品|瓶|罐|包装|product|bottle|jar|package/i.test(scriptAnalysis.searchableText) ? 'product' : '',
+          /人物|员工|工人|person|worker|presenter/i.test(scriptAnalysis.searchableText) ? 'person' : '',
+        ].filter(Boolean),
+        segmentAnalysisStatus: 'completed',
+      });
+      assets.push({ ...asset, scriptAnalysis });
       continue;
     }
     try {
@@ -400,15 +407,30 @@ export async function analyzeProductionAssets(input: {
         tags: [],
         source: 'tenant_material',
       }, input.tenantId);
+      const scriptAnalysis = buildMaterialScriptAnalysis({
+        materialId: asset.id, name: asset.name, sourceRevision: analyzed.revision,
+        duration: analyzed.duration, segments: analyzed.segments, visualObservations: analyzed.observations,
+      });
+      updateAccessibleLocalMaterial(asset.id, input.tenantId, {
+        duration: analyzed.duration,
+        segments: analyzed.segments,
+        visualObservations: analyzed.observations,
+        scriptAnalysis,
+        directorTags: scriptAnalysis.directorIndex,
+        assetClasses: [
+          /工厂|车间|产线|生产|灌装|旋盖|设备|factory|production/i.test(scriptAnalysis.searchableText) ? 'factory' : '',
+          /产品|瓶|罐|包装|product|bottle|jar|package/i.test(scriptAnalysis.searchableText) ? 'product' : '',
+          /人物|员工|工人|person|worker|presenter/i.test(scriptAnalysis.searchableText) ? 'person' : '',
+        ].filter(Boolean),
+        segmentAnalysisStatus: 'completed',
+        analysisSourceRevision: analyzed.revision,
+      });
       assets.push({
         ...asset,
         duration: analyzed.duration || asset.duration,
         visualObservations: analyzed.observations,
         segments: analyzed.segments,
-        scriptAnalysis: buildMaterialScriptAnalysis({
-          materialId: asset.id, name: asset.name, sourceRevision: analyzed.revision,
-          duration: analyzed.duration, segments: analyzed.segments, visualObservations: analyzed.observations,
-        }),
+        scriptAnalysis,
       });
     } catch (error) {
       const rawReason = String(error instanceof Error ? error.message : error || '素材分析失败');

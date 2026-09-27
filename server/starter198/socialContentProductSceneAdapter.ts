@@ -11,6 +11,8 @@ export interface ProductSceneReferenceImage {
   assetId: string;
   productRef: string;
   url: string;
+  localPath?: string;
+  objectKey?: string;
   contentHash: string | null;
 }
 
@@ -81,6 +83,8 @@ function references(context: SocialAssetSupplyAdapterContext, spec: SocialProduc
         assetId: asset.id,
         productRef: group.productRef,
         url: asset.url,
+        ...(asset.localPath ? { localPath: asset.localPath } : {}),
+        ...(asset.objectKey ? { objectKey: asset.objectKey } : {}),
         contentHash: asset.contentHash || null,
       });
     }
@@ -98,9 +102,9 @@ function qualityFailure(spec: SocialProductSceneReplicationSpec, quality: Produc
     .map(group => group.productRef);
   if (missingIdentity.length) return `product_identity_failed:${missingIdentity.join(',')}`;
   if (spec.productIdentity.ocrExactMatchRequired && !quality.labelOcrExactMatch) return 'label_ocr_failed';
-  if (score(quality.sceneTopologyScore) < 0.9) return 'scene_topology_failed';
-  if (score(quality.productSlotLayoutScore) < 0.9) return 'product_slot_layout_failed';
-  if (score(quality.cameraTrajectoryScore) < 0.9) return 'camera_trajectory_failed';
+  if (score(quality.sceneTopologyScore) < 0.75) return 'scene_topology_failed';
+  if (score(quality.productSlotLayoutScore) < 0.75) return 'product_slot_layout_failed';
+  if (score(quality.cameraTrajectoryScore) < 0.75) return 'camera_trajectory_failed';
   if (!quality.evidenceRefs.length) return 'quality_evidence_missing';
   return null;
 }

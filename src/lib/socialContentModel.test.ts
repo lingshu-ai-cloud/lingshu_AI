@@ -165,6 +165,8 @@ const validDraft = {
 };
 assert.deepEqual(validateSocialContentDraft(validDraft), {});
 assert.match(validateSocialContentDraft({ ...validDraft, referenceLinks: ['not-a-link'] })[1]?.[0] || '', /参考链接/);
+assert.equal(validateSocialContentDraft({ ...validDraft, referenceLinks: ['local://Download-1.mp4'] })[1], undefined,
+  'inspiration-center internal references remain valid through task creation');
 assert.deepEqual(validateSocialContentDraft({
   ...validDraft,
   selectedSources: validDraft.selectedSources.filter(source => source.kind === 'knowledge'),

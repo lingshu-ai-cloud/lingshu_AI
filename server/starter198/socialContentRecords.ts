@@ -56,6 +56,8 @@ import {
   parseStoredSocialShotMaterialMap,
 } from './socialContentScriptSources.js';
 import { buildSocialAgentWorkflow } from './socialContentAgentWorkflow.js';
+import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
+import { decodeMaterialRef } from './socialContentProductionMaterials.js';
 
 type StoredPresenter = Record<string, unknown> & {
   id?: string; authorized?: boolean; avatarId?: string; voiceId?: string;
@@ -546,12 +548,48 @@ export async function readSocialTaskDetail(input: {
     throw new SocialContentWorkflowError('social_content_task_projection_out_of_sync', 503);
   }
   const activeMaterials = activeSources.filter(source => source.kind === 'material');
-  const productImageIds = activeMaterials
-    .filter(source => /\.(?:jpe?g|png|webp|gif)(?:$|\?)/i.test(`${source.label} ${source.sourceRef}`))
-    .map(source => source.sourceId);
-  const customerVideoIds = activeMaterials
-    .filter(source => !productImageIds.includes(source.sourceId))
-    .map(source => source.sourceId);
+  const materialInventory = await readMaterialLibrary(input.tenantId).catch(() => ({ items: [] as MaterialRecord[] }));
+  const materialById = new Map(materialInventory.items.map(item => [socialText(item.id), item]));
+  const linkedMaterialRows = activeMaterials.flatMap(source => {
+    const record = materialById.get(decodeMaterialRef(source.sourceRef));
+    return record ? [{ source, record }] : [];
+  });
+  const searchable = (record: MaterialRecord) => [record.name, record.title, record.tags, record.visualObservations, record.observations]
+    .flatMap(value => Array.isArray(value) ? value : [value]).map(socialText).join(' ').toLocaleLowerCase();
+  const productImageScore = (record: MaterialRecord) => {
+    const text = searchable(record);
+    return (/产品|瓶|罐|包装|product|bottle|jar|package/.test(text) ? 30 : 0)
+      + (/组合|系列|陈列|静物|矩阵/.test(text) ? 20 : 0)
+      + (socialText(record.productRef || record.productName) ? 10 : 0)
+      - (/工具|化妆刷|黄瓜|人物|真人|口红上妆/.test(text) ? 50 : 0);
+  };
+  const productCandidates = [
+    ...linkedMaterialRows.filter(item => socialText(item.record.type) === 'image')
+      .map(item => ({ id: item.source.sourceId, record: item.record, linked: true })),
+    ...materialInventory.items.filter(record => socialText(record.type) === 'image')
+      .map(record => ({ id: socialText(record.id), record, linked: false })),
+  ].filter((item, index, rows) => productImageScore(item.record) > 0
+    && rows.findIndex(other => other.id === item.id) === index)
+    .sort((left, right) => Number(right.linked) - Number(left.linked)
+      || productImageScore(right.record) - productImageScore(left.record));
+  // A product scene may use multiple views only when the library explicitly
+  // identifies them as the same product. Otherwise use the strongest single
+  // product-family image instead of silently mixing unrelated SKUs.
+  const primaryProduct = productCandidates[0];
+  const primaryProductRef = socialText(primaryProduct?.record.productRef || primaryProduct?.record.productName)
+    || summary.brief.productRef || socialText(primaryProduct?.record.id) || 'task-product';
+  const productImageIds = primaryProduct ? productCandidates
+    .filter(item => item.id === primaryProduct.id || (socialText(item.record.productRef || item.record.productName)
+      && socialText(item.record.productRef || item.record.productName) === socialText(primaryProduct.record.productRef || primaryProduct.record.productName)))
+    .slice(0, 4).map(item => item.id) : [];
+  const linkedVideoRows = linkedMaterialRows.filter(item => socialText(item.record.type) === 'video');
+  const factoryRows = materialInventory.items.filter(record => socialText(record.type) === 'video'
+    && /工厂|车间|产线|生产|灌装|旋盖|包装|实验室|机器人|factory|production|manufactur|filling|capping/.test(searchable(record)));
+  const factoryEvidenceAssetIds = [...new Set(factoryRows.map(record => socialText(record.id)).filter(Boolean))];
+  const customerVideoIds = linkedVideoRows.filter(item => !factoryEvidenceAssetIds.includes(socialText(item.record.id)))
+    .map(item => item.source.sourceId);
+  const licensedStockAssetIds = materialInventory.items.filter(record => socialText(record.type) === 'video'
+    && !factoryEvidenceAssetIds.includes(socialText(record.id))).map(record => socialText(record.id)).filter(Boolean);
   const presenterInventory = await readAuthorizedPresenterInventory(
     input.repository,
     input.tenantId,
@@ -571,12 +609,15 @@ export async function readSocialTaskDetail(input: {
     planVersion: summary.version,
     inventory: { customerVideoIds, productImageIds,
       productIdentityGroups: productImageIds.length ? [{
-        productRef: summary.brief.productRef || 'task-product', imageIds: productImageIds,
+        productRef: primaryProductRef, imageIds: productImageIds,
       }] : [],
       presenterAssetIds: presenterInventory.assetIds,
       referenceVideoIds: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
-        && referenceVideoAnalysis && customerVideoIds.includes(referenceVideoAnalysis.referenceSourceId)
-        ? [referenceVideoAnalysis.referenceSourceId] : [] },
+        && referenceVideoAnalysis ? [referenceVideoAnalysis.referenceRecordId
+          ? `system-reference:${referenceVideoAnalysis.referenceRecordId}`
+          : referenceVideoAnalysis.referenceSourceId] : [],
+      factoryEvidenceAssetIds,
+      licensedStockAssetIds },
     confirmedFactRefs,
     accountPresenterLock: presenterInventory.accountPresenterLock,
     referenceShots: referenceVideoAnalysis?.shots,
@@ -587,8 +628,7 @@ export async function readSocialTaskDetail(input: {
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
     })),
-    rightsConfirmationRequired: (summary.brief.creationMode ?? 'material_processing') === 'viral_replication'
-      && !activeSources.some(source => source.kind === 'reference_link'),
+    rightsConfirmationRequired: false,
   });
   const agentWorkflow = buildSocialAgentWorkflow({
     taskId: summary.taskId,

@@ -122,7 +122,7 @@ export async function qualityCheckStoryboardFramesWithQwen(opts: {
   checks: Record<string, number>;
 }> {
   if (!opts.frames.length) throw new Error('Qwen storyboard quality check requires frames');
-  const completion = await client().chat.completions.create({
+  const request = {
     model: QWEN_VL_MODEL(),
     messages: [{ role: 'user', content: [
       { type: 'text', text: `你是电商短视频质检员。根据按时间排列的连续抽帧检查这个分镜是否可用于发布。
@@ -135,7 +135,17 @@ export async function qualityCheckStoryboardFramesWithQwen(opts: {
     ] as any }],
     response_format: { type: 'json_object' },
     max_tokens: 1200,
-  } as any);
+  } as any;
+  let completion: any = null;
+  for (let attempt = 0; attempt < 2 && !completion; attempt += 1) {
+    try { completion = await client().chat.completions.create(request); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error || 'quality_check_failed');
+      if (attempt === 0 && /terminated|connection|socket|ECONNRESET|ETIMEDOUT/i.test(message)) continue;
+      throw error;
+    }
+  }
+  if (!completion) throw new Error('Qwen storyboard quality check failed without a response');
   const parsed = parseJson<Record<string, unknown>>(String(completion.choices[0]?.message?.content || ''), {});
   const rawChecks = parsed.checks && typeof parsed.checks === 'object' ? parsed.checks as Record<string, unknown> : {};
   const checks = Object.fromEntries(Object.entries(rawChecks).map(([key, value]) => [key, Math.max(0, Math.min(100, Number(value) || 0))]));

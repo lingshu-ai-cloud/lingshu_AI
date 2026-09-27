@@ -206,9 +206,12 @@ export function buildSocialProductSceneReplicationSpec(input: {
     templateSource: reference ? 'reference_shot' : 'system_clean_stage',
     sceneTemplateKey: reference ? `reference-shot:${reference.shotId}` : 'system:clean-platform-orbit-v1',
     referenceShotId,
+    referenceSourceId: input.inventory.referenceVideoIds[0] ?? null,
+    referenceStartSeconds: reference?.startSeconds ?? null,
+    referenceEndSeconds: reference?.endSeconds ?? null,
     productIdentity: {
       groups,
-      identitySimilarityMinimum: 0.92,
+      identitySimilarityMinimum: 0.78,
       ocrExactMatchRequired: true,
     },
     sceneLock: {
@@ -257,8 +260,13 @@ function generalStrategy(
   referenceShots?: SocialReferenceShotAnalysis[],
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec } {
   const description = String(shot.requestedDescription || '');
+  const firstReferenceShot = shot.referenceShotId === 'reference-shot-1'
+    || shot.shotId === 'shot-hook'
+    || /(?:^|-)shot-?1$/i.test(shot.shotId);
   const productScenePreferred = inventory.productImageIds.length > 0 && (
-    shot.function === 'hook' || shot.function === 'demonstration' || /产品|商品|包装|陈列|展台|product/i.test(description)
+    creationMode === 'viral_replication'
+      ? firstReferenceShot
+      : shot.function === 'hook' || shot.function === 'demonstration' || /产品|商品|包装|陈列|展台|product/i.test(description)
   );
   if (productScenePreferred) {
     return {
@@ -268,9 +276,16 @@ function generalStrategy(
       productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }),
     };
   }
+  if (creationMode === 'viral_replication' && inventory.factoryEvidenceAssetIds.length > 0) {
+    return {
+      strategy: 'customer_real_asset',
+      refs: inventory.factoryEvidenceAssetIds,
+      instruction: '开头产品场景后只使用素材库中的真实工厂视频，按参考片节奏切换不同工厂镜头，并叠加口播、字幕与轻量音效',
+    };
+  }
   if (creationMode === 'viral_replication' && inventory.presenterAssetIds.length > 0 && inventory.referenceVideoIds.length > 0) {
     return { strategy: 'authorized_digital_presenter', refs: inventory.presenterAssetIds,
-      instruction: '使用当前社媒账号已发布的数字人身份版本，以授权参考视频逐句对齐；不得在任务内随机更换人脸、声线或身份版本' };
+      instruction: '使用当前社媒账号已发布的数字人身份版本，以参考视频逐句对齐；不得在任务内随机更换人脸、声线或身份版本' };
   }
   if (inventory.customerVideoIds.length > 0) {
     return {

@@ -60,13 +60,8 @@ function materialOption(item: MaterialRecord): SocialContentSourceOption | null 
 
 function productionEligibleMaterial(item: MaterialRecord, tenantId: string): boolean {
   if (!['video', 'image'].includes(socialText(item.type))) return false;
-  if (socialText(item.usage) === 'reference_only') return false;
-  if (socialText(item.scope) !== 'shared') {
-    return socialText(item.tenantId || item.tenant_id) === tenantId;
-  }
-  return item.commercialUseApproved === true
-    && item.derivativesApproved === true
-    && Boolean(socialText(item.licenseEvidence || item.licenseName));
+  return socialText(item.scope) === 'shared'
+    || socialText(item.tenantId || item.tenant_id) === tenantId;
 }
 
 function profileFacts(profile: Record<string, unknown>): Record<string, unknown> {

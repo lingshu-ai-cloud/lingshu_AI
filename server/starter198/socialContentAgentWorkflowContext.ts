@@ -56,6 +56,10 @@ export interface SocialContentCapabilityRuntimeRegistration {
   reason: string | null;
 }
 
+const PRODUCT_SCENE_RUNTIME_READY = process.env.SEEDANCE_VIDEO_ENABLED === 'true'
+  && Boolean(String(process.env.SEEDANCE_API_KEY || '').trim())
+  && Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
+
 export type SocialContentCapabilityRuntime = CapabilityDefinition & {
   availability: 'available' | 'degraded' | 'unavailable';
   executable: boolean;
@@ -63,19 +67,25 @@ export type SocialContentCapabilityRuntime = CapabilityDefinition & {
   availabilityReason: string | null;
 };
 
-/** These adapters are unconditionally registered by socialContentAutoProduction.
- * Provider-backed adapters must be passed explicitly after their environment is checked. */
+/** Runtime registrations advertised to the planner. Provider-backed capabilities
+ * become executable only after this process has verified their environment. */
 export const EMBEDDED_RUNTIME_REGISTRATIONS: SocialContentCapabilityRuntimeRegistration[] = [
   { strategy: 'customer_real_asset', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
   { strategy: 'customer_product_image_animation', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },
   { strategy: 'licensed_stock_asset', adapterIds: ['authorized_shared_library.v1'], environmentReady: true, reason: '执行仍取决于租户可见库存与逐条授权记录' },
   { strategy: 'motion_graphics', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
   { strategy: 'verified_fact_card', adapterIds: ['system_safe_motion_graphics.v1'], environmentReady: true, reason: null },
+  ...(PRODUCT_SCENE_RUNTIME_READY ? [{
+    strategy: 'aigc_product_scene_replication',
+    adapterIds: ['controlled_product_scene_replication.v1'],
+    environmentReady: true,
+    reason: null,
+  } satisfies SocialContentCapabilityRuntimeRegistration] : []),
 ];
 
 const CAPABILITIES: CapabilityDefinition[] = [
   { strategy: 'customer_product_image_animation', label: '产品图基础动效（兼容）', evidenceStrength: 'supporting', estimatedCostCny: 0.35, estimatedSeconds: 45, estimatedSuccessRate: 0.94, dataTransfer: 'local_only', rightsStatus: 'confirmed', canDo: ['在不具备产品场景生成能力时制作受控的基础运镜'], cannotDo: ['宣称完整复刻参考场景或镜头语言', '重绘包装文字、商标或证明真实使用效果'], inputRequirements: ['已授权且清晰的客户产品图'], outputSpec: '基础产品图短镜头', qualityRange: '仅作为兼容回退路线', concurrencyLimit: 4, rateLimitPerMinute: 30, planningAvailability: 'supported', authorizationScope: '当前租户产品素材', dataRestriction: '本地处理优先', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
-  { strategy: 'aigc_product_scene_replication', label: 'AIGC 产品场景复刻', evidenceStrength: 'supporting', estimatedCostCny: 2.8, estimatedSeconds: 240, estimatedSuccessRate: 0.78, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['在锁定真实产品身份的前提下，复现展台、背景、布光、产品槽位和完整镜头轨迹'], cannotDo: ['重设计产品轮廓、材质、Logo或包装文字', '把生成场景表述为客户真实工厂、案例或使用效果'], inputRequirements: ['ProductIdentityLock', 'ProductSceneReplicationSpec', '已授权产品多角度参考图', '单镜预算'], outputSpec: '产品身份、场景拓扑与镜头轨迹可分别验收的视频镜头', qualityRange: '五项强锁门禁通过后才可采用', concurrencyLimit: 2, rateLimitPerMinute: 8, planningAvailability: 'supported', authorizationScope: '当前租户产品参考图与已授权场景参考', dataRestriction: '仅传输本镜产品参考与冻结场景规格', fallbackStrategies: ['customer_product_image_animation', 'motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
+  { strategy: 'aigc_product_scene_replication', label: 'AIGC 产品场景复刻', evidenceStrength: 'supporting', estimatedCostCny: 2.8, estimatedSeconds: 240, estimatedSuccessRate: 0.78, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['在锁定真实产品身份的前提下，复现展台、背景、布光、产品槽位和完整镜头轨迹'], cannotDo: ['重设计产品轮廓、材质、Logo或包装文字', '把生成场景表述为客户真实工厂、案例或使用效果'], inputRequirements: ['ProductIdentityLock', 'ProductSceneReplicationSpec', '素材库产品参考图', '单镜预算'], outputSpec: '产品身份、场景拓扑与镜头轨迹可分别验收的视频镜头', qualityRange: '五项强锁门禁通过后才可采用', concurrencyLimit: 2, rateLimitPerMinute: 8, planningAvailability: 'supported', authorizationScope: '当前租户可见素材库', dataRestriction: '仅传输本镜产品参考与冻结场景规格', fallbackStrategies: ['customer_product_image_animation', 'motion_graphics'], applicableScenes: ['hook', 'value', 'demonstration', 'call_to_action'] },
   { strategy: 'authorized_digital_presenter', label: '账号一致数字人口播', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.2, estimatedSeconds: 150, estimatedSuccessRate: 0.87, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['复用当前社媒账号已发布的形象与声音人格生成稳定口播'], cannotDo: ['任务内随机换脸、换声、换年龄感或冒充客户证言'], inputRequirements: ['已确认口播', '已发布 AccountPresenterProfile', '形象与声音授权', '目标语言'], outputSpec: '带账号身份版本溯源的口播镜头', qualityRange: '口型、人脸、声纹与账号身份一致性逐镜检查', concurrencyLimit: 2, rateLimitPerMinute: 10, planningAvailability: 'supported', authorizationScope: '当前社媒账号已发布数字人版本', dataRestriction: '仅传输生成所需文案和锁定身份资产', fallbackStrategies: ['motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'call_to_action'] },
   { strategy: 'licensed_stock_asset', label: '商用授权素材库', evidenceStrength: 'non_evidentiary', estimatedCostCny: 0.8, estimatedSeconds: 30, estimatedSuccessRate: 0.9, dataTransfer: 'external_processor', rightsStatus: 'confirmed', canDo: ['补充环境、气氛和转场画面'], cannotDo: ['作为客户真实工厂、案例或效果证据'], inputRequirements: ['场景语义', '平台和权利范围'], outputSpec: '已授权图片或视频片段', qualityRange: '依赖素材库供给', concurrencyLimit: 8, rateLimitPerMinute: 60, planningAvailability: 'supported', authorizationScope: '商用授权范围内', dataRestriction: '只发送检索词和规格', fallbackStrategies: ['non_evidentiary_ai_visual', 'motion_graphics'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },
   { strategy: 'non_evidentiary_ai_visual', label: '非证明性生成画面', evidenceStrength: 'non_evidentiary', estimatedCostCny: 1.8, estimatedSeconds: 220, estimatedSuccessRate: 0.74, dataTransfer: 'external_processor', rightsStatus: 'restricted', canDo: ['生成概念、气氛和非证明性辅助画面'], cannotDo: ['伪造客户工厂、案例、认证、效果或真实产品细节'], inputRequirements: ['真值边界', '画面目标', '禁止事项'], outputSpec: '图片或短视频镜头', qualityRange: '一致性和文字准确性需复检', concurrencyLimit: 2, rateLimitPerMinute: 8, planningAvailability: 'supported', authorizationScope: '允许外部生成的非敏感输入', dataRestriction: '真实客户证据不得外传或作为生成目标', fallbackStrategies: ['motion_graphics', 'licensed_stock_asset'], applicableScenes: ['hook', 'problem', 'value', 'transition'] },

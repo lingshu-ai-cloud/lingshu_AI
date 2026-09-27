@@ -107,3 +107,14 @@ export function releaseSeedanceBudget(tenantId: string, reservationId: string): 
   store[tenantId] = { ...(store[tenantId] || {}), [month]: next };
   writeStore(store);
 }
+
+export function reconcileSeedanceBudget(tenantId: string, reservationId: string, actualCostCny: number): void {
+  if (!Number.isFinite(actualCostCny) || actualCostCny < 0) return;
+  const store = readStore();
+  const month = monthKey();
+  const entries = store[tenantId]?.[month] || [];
+  const target = entries.find(entry => entry.reservationId === reservationId);
+  if (!target) return;
+  target.amountCny = Math.round(actualCostCny * 10_000) / 10_000;
+  writeStore(store);
+}

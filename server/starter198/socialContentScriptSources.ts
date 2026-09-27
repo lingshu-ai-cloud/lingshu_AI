@@ -239,6 +239,7 @@ function safeReferenceNodes(
   themeId: SocialContentThemeId,
   details: ExactReferenceDetail[],
 ): SocialInspirationScriptMatch['nodes'] {
+  const referenceLines = referenceNarrationLines(details);
   return details.slice(0, 12).map((row, index, nodes) => {
     const referenceStructure = safeReferenceStructure(row);
     return {
@@ -247,22 +248,35 @@ function safeReferenceNodes(
       subject: safeSubject(row.detail),
       action: `${referenceStructure.shotScale} · ${referenceStructure.cameraMovement} · ${referenceStructure.pace}节奏 · ${referenceStructure.transition}`,
       referenceStructure,
-      // The reference contributes only a de-identified shot grammar. Original
-      // dialogue, OCR, brands, people and claims never enter these templates.
       narrationTemplate: {
-        zh: index === 0
-          ? '通过客户上传的真实画面，看看{{product}}。'
-          : index === nodes.length - 1
-            ? '只呈现真实画面和已确认资料。{{callToAction}}'
-            : '以下内容只说明素材中真实可见的画面。',
-        en: index === 0
-          ? 'See {{product}} through real customer-supplied footage.'
-          : index === nodes.length - 1
-            ? 'Only real footage and verified information are presented. {{callToAction}}'
-            : 'This section stays within what is visibly supported by the supplied footage.',
+        zh: referenceTemplate(referenceLines[index] || socialText(row.detail.onScreenText) || socialText(row.detail.subtitle)),
+        en: referenceTemplate(referenceLines[index] || socialText(row.detail.onScreenText) || socialText(row.detail.subtitle)),
       },
     };
   });
+}
+
+function referenceTemplate(value: string): string {
+  return value
+    .replace(/@?topfeelpack1?/gi, '{{product}}')
+    .replace(/private\s+label\s+beauty\s+product/gi, '{{product}}')
+    .replace(/\bNOQ\b/g, 'MOQ')
+    .trim();
+}
+
+function referenceNarrationLines(details: ExactReferenceDetail[]): string[] {
+  const dialogue = details.map(item => socialText(item.detail.dialogue))
+    .sort((left, right) => right.length - left.length)[0] || '';
+  const sentences = dialogue.match(/[^.!?。！？]+[.!?。！？]?/g)?.map(value => value.trim()).filter(Boolean) || [];
+  if (sentences.length >= 5 && details.length >= 6) {
+    const fourth = sentences[3]!.replace(/\bNOQ\b/g, 'MOQ');
+    const match = fourth.match(/^(.*?\bstarts\b)\s+(from\s+.+)$/i);
+    return [sentences[0]!, sentences[1]!, sentences[2]!, match?.[1] || fourth, match?.[2] || '', sentences[4]!, ...sentences.slice(5)];
+  }
+  return details.map(item => {
+    const audio = socialText(item.detail.audio).replace(/^ASR\s*:\s*/i, '').replace(/^['"]|['"]$/g, '');
+    return /口播|旁白|voiceover/i.test(audio) ? '' : audio;
+  }).map((line, index) => line || sentences[index] || '');
 }
 
 export function normalizedReferenceIdentity(value: unknown): string {
@@ -343,16 +357,17 @@ function structuralFidelityPoints(input: {
 }
 
 const REQUIRED_DIFFERENCES = [
-  '重写全部口播与字幕，不复制原视频文案',
-  '替换原视频人物、品牌、账号标识和水印',
-  '使用客户自有、已授权或明确标记为非证据的全新画面',
-  '更换音乐、音效、字幕样式和视觉包装',
+  '保留原口播和字幕节奏，只替换任务指定的产品、品牌和行动关键词',
+  '替换原视频品牌、账号标识和水印',
+  '开场使用目标商品身份生成，后续优先使用素材库真实画面',
+  '保留信息顺序，同时增加全新音乐、音效和字幕动效包装',
 ] as const;
 
 function publicShot(input: {
   row: ExactReferenceDetail;
   index: number;
   themeId: SocialContentThemeId;
+  spokenText?: string;
 }): SocialReferenceShotAnalysis {
   const purpose = shotPurpose(input.row.detail, input.themeId);
   const subject = safeSubject(input.row.detail);
@@ -373,8 +388,8 @@ function publicShot(input: {
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
     visualDescription: `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
-    spokenText: null,
-    captionText: null,
+    spokenText: socialText(input.spokenText) || null,
+    captionText: socialText(input.row.detail.onScreenText || input.row.detail.subtitle) || null,
     audioDescription: '保留声画配合与节奏功能，重新制作配音、配乐和音效。',
     rhythmDescription: `${structure.pace}节奏，${structure.transition}`,
     purpose,
@@ -391,8 +406,8 @@ function publicShot(input: {
       composition: /对称|symmetr/i.test(compositionText) ? '对称构图' : /三分|third/i.test(compositionText) ? '三分构图' : /中心|center/i.test(compositionText) ? '中心构图' : '未确认具体构图',
     },
     audioLayers: {
-      voice: voiceDetected ? '检测到人声层；原话不进入复刻脚本' : null,
-      captions: captionDetected ? '检测到字幕或平台文字叠加层；按后期图层处理' : null,
+      voice: voiceDetected ? '检测到人声层；按原节奏保留并做产品关键词替换' : null,
+      captions: captionDetected ? '检测到字幕层；保留信息顺序并重新制作字幕动效' : null,
       ambient: ambientDetected ? '检测到环境声层' : null,
       music: musicDetected ? '检测到音乐层；新视频必须重新授权或替换' : null,
       soundEffects: effectsDetected ? '检测到音效层' : null,
@@ -409,8 +424,8 @@ function publicShot(input: {
       subjectRelations: [purpose === 'demonstration' ? '主体执行动作' : '主体承担镜头信息'],
       cameraLanguage: [structure.shotScale, structure.cameraMovement, structure.transition],
       contentFunctions: [purpose],
-      soundTypes: ['重新配音', '重新配乐'],
-      onScreenInformation: ['重新编写字幕'],
+      soundTypes: ['原口播关键词替换', '重新配乐与音效'],
+      onScreenInformation: ['原字幕关键词替换与动效重制'],
       truthRequirements: [truth.subject],
       suggestedProductionMethods: [strategy],
     },
@@ -480,6 +495,18 @@ function safeScriptCopy(input: {
   narrationStyle?: NarrationStyleProfile | null;
 }): { spokenText: string; captionText: string } {
   const product = input.verifiedContext.productName || '这类产品';
+  const productKeyword = product.split(/[：:｜|]/)[0]!.trim().slice(0, 28) || '这类产品';
+  const adapt = (value: string) => value
+    .replace(/@?topfeelpack1?/gi, productKeyword)
+    .replace(/private\s+label\s+beauty\s+product/gi, productKeyword)
+    .replace(/\bNOQ\b/g, 'MOQ')
+    .trim();
+  if (input.shot.spokenText || input.shot.captionText) {
+    return {
+      spokenText: adapt(input.shot.spokenText || input.shot.captionText || ''),
+      captionText: adapt(input.shot.captionText || input.shot.spokenText || ''),
+    };
+  }
   const fact = input.verifiedContext.facts[input.index % Math.max(1, input.verifiedContext.facts.length)];
   if (input.shot.purpose === 'hook') {
     const spokenText = input.narrationStyle?.hookMechanism === 'question' ? `你选${product}时，最容易忽略什么？`
@@ -584,9 +611,17 @@ export function buildSocialTaskReferencePackage(input: {
     recordId,
     analysis: input.record.aiAnalysis,
   }).slice(0, 20)}`;
-  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({ row, index, themeId: input.themeId }));
+  const referenceLines = referenceNarrationLines(exact.details);
+  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({ row, index, themeId: input.themeId, spokenText: referenceLines[index] }));
   const narrationStyle = deriveNarrationStyleProfile(exact.details.map(row => row.detail));
-  const primaryHook = hookOption({
+  const hookCopy = safeScriptCopy({
+    shot: shots[0]!,
+    index: 0,
+    verifiedContext: input.verifiedContext,
+    narrationStyle,
+  });
+  const primaryHook = {
+    ...hookOption({
     analysisId,
     role: 'primary',
     index: 0,
@@ -594,7 +629,10 @@ export function buildSocialTaskReferencePackage(input: {
     strategy: productionStrategyFor(truthBoundaryFor({ purpose: 'hook', subject: shots[0]!.visualDescription }), 'hook'),
     productLabel: input.verifiedContext.productName || '这类产品',
     narrationStyle,
-  });
+    }),
+    spokenLine: fitSpokenTextToDuration(hookCopy.spokenText, shots[0]!.endSeconds - shots[0]!.startSeconds),
+    caption: hookCopy.captionText,
+  } satisfies SocialThreeSecondHook;
   const hookOptions: SocialThreeSecondHook[] = [
     primaryHook,
     hookOption({ analysisId, role: 'alternative', index: 1, firstShot: shots[0]!, strategy: 'authorized_digital_presenter', productLabel: input.verifiedContext.productName || '这类产品' }),
@@ -609,6 +647,7 @@ export function buildSocialTaskReferencePackage(input: {
     analysisId,
     version: socialRequestHash({ recordId, analysis: input.record.aiAnalysis }).slice(0, 12),
     referenceSourceId: input.source.sourceId,
+    referenceRecordId: recordId,
     status: 'ready',
     durationSeconds: coverage.fullDurationSeconds,
     analysisLayers: [
@@ -621,12 +660,12 @@ export function buildSocialTaskReferencePackage(input: {
     coverage,
     shots,
     hookAnalysis: primaryHook,
-    rightsNotice: '参考链接仅用于分析镜头功能、顺序和节奏，不代表版权已经确认；系统不会复制原视频文件、原文案、人物身份、品牌标识、水印或原声音频。',
+    rightsNotice: '素材库内容默认可直接用于本任务制作。系统保留参考视频的口播、字幕信息顺序和镜头节奏，替换产品/品牌关键词、账号标识、水印与视觉包装。',
     createdAt,
   };
   const scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
     const copy = safeScriptCopy({ shot, index, verifiedContext: input.verifiedContext, narrationStyle });
-    const rawSpokenText = shot.purpose === 'hook' ? primaryHook.spokenLine : copy.spokenText;
+    const rawSpokenText = copy.spokenText;
     return {
     shotId: `replication-${shot.shotId}`,
     referenceShotId: shot.shotId,
@@ -654,7 +693,7 @@ export function buildSocialTaskReferencePackage(input: {
     hookOptions,
     shots: scriptShots,
     structureFidelitySummary: '保留参考视频的前三秒机制、镜头功能顺序、时长分配、景别、运镜、节奏和转场关系。',
-    originalityDifferenceSummary: '全部文案、人物、品牌、画面素材、声音和视觉包装重新制作；真实证明类镜头缺素材时使用功能等价替代。',
+    originalityDifferenceSummary: '口播和字幕保持原视频的信息顺序并做产品关键词替换；画面使用目标商品 AIGC 开场与素材库真实工厂片段，重制音乐、音效、字幕动效和视觉包装。',
     createdAt,
   };
   return {

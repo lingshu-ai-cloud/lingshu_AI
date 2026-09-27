@@ -50,6 +50,8 @@ export default function SocialGenerationConfirmationCard({
     && task.brief.creationMode === 'viral_replication'
     && explanationOnly;
   const canConfirm = approved && !formalReplicationBlocked;
+  const needsReplicationReview = task.brief.creationMode === 'viral_replication'
+    && task.replicationScript?.status !== 'confirmed';
   const formats = task.brief.formats.map(value => optionLabel(FORMAT_OPTIONS, value)).filter(Boolean).join('、') || '内容成品';
   const estimatedMinutes = Math.max(1, Math.round(plan.estimatedTotalSeconds / 60));
 
@@ -91,7 +93,7 @@ export default function SocialGenerationConfirmationCard({
 
       <div className="flex flex-col gap-3 border-t border-border bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex items-start gap-2 text-[10px] leading-4 text-text-muted">{canConfirm ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-700" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-700" />}<span>{formalReplicationBlocked ? '正式生成已阻止：补充真实产品素材后会重新计算费用和效果。' : approved ? '费用为当前执行方案预估，最终账单按实际调用结算；重试或改稿前会重新提示。' : workflow.executionPlanReview.requiredRevision.join('；') || '方案存在阻断项，请先补齐信息。'}</span></div>
-        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{formalReplicationBlocked ? '请先补充产品素材' : approved ? `确认方案并开始生成 · 预计 ${money(plan.estimatedTotalCostCny)}` : '先处理方案风险'}</button>
+        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{formalReplicationBlocked ? '请先补充产品素材' : approved ? needsReplicationReview ? '确认逐镜方案' : `开始生成 · 预计 ${money(plan.estimatedTotalCostCny)}` : '先处理方案风险'}</button>
       </div>
     </section>
   );

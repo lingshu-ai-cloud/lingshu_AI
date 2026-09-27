@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { estimateSeedanceCostCny, releaseSeedanceBudget, reserveSeedanceBudget } from './seedanceBudget.js';
+import { estimateSeedanceCostCny, reconcileSeedanceBudget, releaseSeedanceBudget, reserveSeedanceBudget } from './seedanceBudget.js';
 
 export interface ConceptVideoResult {
   providerId: 'seedance' | 'veo';
@@ -26,6 +26,27 @@ export interface ConceptVideoInput {
 
 type SeedanceTask = Record<string, any>;
 
+function transportFailure(error: unknown): string {
+  if (!(error instanceof Error)) return String(error || 'network_error');
+  const cause = error.cause;
+  if (cause && typeof cause === 'object') {
+    const record = cause as { code?: unknown; message?: unknown };
+    return [error.message, record.code, record.message].filter(Boolean).map(String).join(' / ').slice(0, 400);
+  }
+  return error.message.slice(0, 400);
+}
+
+function reportedSeedanceCostCny(model: string, task: SeedanceTask, fallback: number): number {
+  const tokens = Number(task.usage?.total_tokens ?? task.usage?.completion_tokens ?? task.data?.usage?.total_tokens);
+  if (!Number.isFinite(tokens) || tokens <= 0) return fallback;
+  const perMillion = /seedance-1-0-pro-fast/i.test(model)
+    ? 4.2
+    : /seedance-1-0-pro/i.test(model)
+      ? 15
+      : null;
+  return perMillion === null ? fallback : Math.round((tokens * perMillion / 1_000_000) * 10_000) / 10_000;
+}
+
 function deepUrl(value: unknown): string | null {
   if (typeof value === 'string') return /^https:\/\//i.test(value) ? value : null;
   if (Array.isArray(value)) return value.map(deepUrl).find(Boolean) || null;
@@ -41,11 +62,16 @@ function deepUrl(value: unknown): string | null {
 }
 
 async function jsonRequest(fetcher: typeof fetch, url: string, apiKey: string, init?: RequestInit): Promise<SeedanceTask> {
-  const response = await fetcher(url, {
-    ...init,
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', ...(init?.headers || {}) },
-    signal: init?.signal || AbortSignal.timeout(45_000),
-  });
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      ...init,
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', ...(init?.headers || {}) },
+      signal: init?.signal || AbortSignal.timeout(45_000),
+    });
+  } catch (error) {
+    throw new Error(`Seedance network: ${transportFailure(error)}`);
+  }
   const value = await response.json().catch(() => ({})) as SeedanceTask;
   if (!response.ok) {
     const detail = value?.error?.message || value?.message || value?.error || response.statusText;
@@ -62,39 +88,83 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
   transport?: typeof fetch;
   reserveBudget?: typeof reserveSeedanceBudget;
   releaseBudget?: typeof releaseSeedanceBudget;
+  reconcileBudget?: typeof reconcileSeedanceBudget;
+  firstFrameDataUrl?: string;
+  referenceImageDataUrls?: string[];
+  referenceVideoUrl?: string;
+  checkpointPath?: string;
 }): Promise<ConceptVideoResult> {
   if (!input.apiKey.trim()) throw new Error('Seedance 未配置方舟 API Key');
-  // This gateway is deliberately text-only. Reference-person inputs belong to
-  // the separately authorized digital-human pipeline and are never accepted.
   const fetcher = input.transport || fetch;
   const duration = Math.max(4, Math.min(15, Math.round(input.durationSeconds)));
   const resolution = input.resolution || '720p';
   const reserve = input.reserveBudget || reserveSeedanceBudget;
   const release = input.releaseBudget || releaseSeedanceBudget;
-  const budget = reserve({ tenantId: input.tenantId, duration, resolution });
+  let checkpoint: { taskId: string; reservationId: string; reservedCny: number } | null = null;
+  if (input.checkpointPath) {
+    checkpoint = await fsp.readFile(input.checkpointPath, 'utf8')
+      .then(value => JSON.parse(value) as { taskId: string; reservationId: string; reservedCny: number })
+      .catch(() => null);
+    if (!checkpoint?.taskId || !checkpoint.reservationId || !Number.isFinite(checkpoint.reservedCny)) checkpoint = null;
+  }
+  const budget = checkpoint
+    ? { ok: true, reservationId: checkpoint.reservationId, reservedCny: checkpoint.reservedCny }
+    : reserve({ tenantId: input.tenantId, duration, resolution });
   if (!budget.ok || !budget.reservationId) throw new Error('seedance_monthly_budget_exceeded');
   const baseUrl = (input.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
-  let accepted = false;
+  let accepted = Boolean(checkpoint);
   try {
-    const created = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks`, input.apiKey, {
-      method: 'POST',
-      body: JSON.stringify({
-        model: input.model,
-        content: [{ type: 'text', text: input.prompt.slice(0, 8000) }],
-        ratio: input.ratio,
-        duration,
-        resolution,
-        generate_audio: false,
-        watermark: false,
-      }),
+    const content: Array<Record<string, unknown>> = [{ type: 'text', text: input.prompt.slice(0, 8000) }];
+    const fullModalReference = Boolean(input.referenceVideoUrl || input.referenceImageDataUrls?.length);
+    if (input.firstFrameDataUrl) content.push({
+      type: 'image_url',
+      image_url: { url: input.firstFrameDataUrl },
+      role: fullModalReference ? 'reference_image' : 'first_frame',
     });
-    const taskId = String(created.id || created.data?.id || created.task?.id || '').trim();
-    if (!taskId) throw new Error('Seedance 提交结果未知：未返回任务 ID，不能自动重试');
-    accepted = true;
+    for (const url of (input.referenceImageDataUrls || []).slice(0, 8)) {
+      content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' });
+    }
+    if (input.referenceVideoUrl) {
+      content.push({ type: 'video_url', video_url: { url: input.referenceVideoUrl }, role: 'reference_video' });
+    }
+    let taskId = checkpoint?.taskId || '';
+    if (!taskId) {
+      const created = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks`, input.apiKey, {
+        method: 'POST',
+        body: JSON.stringify({
+          model: input.model,
+          content,
+          ratio: input.ratio,
+          duration,
+          resolution,
+          generate_audio: false,
+          watermark: false,
+        }),
+        signal: AbortSignal.timeout(Math.min(input.timeoutMs, 180_000)),
+      });
+      taskId = String(created.id || created.data?.id || created.task?.id || '').trim();
+      if (!taskId) throw new Error('Seedance 提交结果未知：未返回任务 ID，不能自动重试');
+      accepted = true;
+      if (input.checkpointPath) {
+        await fsp.mkdir(path.dirname(input.checkpointPath), { recursive: true });
+        const temporary = `${input.checkpointPath}.${process.pid}.tmp`;
+        await fsp.writeFile(temporary, JSON.stringify({ taskId, reservationId: budget.reservationId, reservedCny: budget.reservedCny }), 'utf8');
+        await fsp.rename(temporary, input.checkpointPath);
+      }
+    }
     const deadline = Date.now() + input.timeoutMs;
     let completed: SeedanceTask | null = null;
+    let lastPollError = '';
     while (Date.now() < deadline) {
-      const task = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks/${encodeURIComponent(taskId)}`, input.apiKey);
+      let task: SeedanceTask;
+      try {
+        task = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks/${encodeURIComponent(taskId)}`, input.apiKey);
+        lastPollError = '';
+      } catch (error) {
+        lastPollError = transportFailure(error);
+        await new Promise(resolve => setTimeout(resolve, input.pollMs || 8_000));
+        continue;
+      }
       const status = String(task.status || task.data?.status || task.task?.status || '').toLowerCase();
       if (['succeeded', 'success', 'completed', 'done'].includes(status)) { completed = task; break; }
       if (['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(status)) {
@@ -102,15 +172,27 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
       }
       await new Promise(resolve => setTimeout(resolve, input.pollMs || 8_000));
     }
-    if (!completed) throw new Error(`Seedance task ${taskId} timed out; do not resubmit automatically`);
+    if (!completed) throw new Error(`Seedance task ${taskId} timed out; do not resubmit automatically${lastPollError ? `; last poll error: ${lastPollError}` : ''}`);
     const url = deepUrl(completed);
     if (!url) throw new Error('Seedance 任务成功但没有输出 URL');
-    const media = await fetcher(url, { signal: AbortSignal.timeout(Math.min(input.timeoutMs, 120_000)) });
+    let media: Response | null = null;
+    let mediaError = '';
+    for (let attempt = 0; attempt < 3 && !media; attempt += 1) {
+      try { media = await fetcher(url, { signal: AbortSignal.timeout(Math.min(input.timeoutMs, 120_000)) }); }
+      catch (error) {
+        mediaError = transportFailure(error);
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1_500 * (attempt + 1)));
+      }
+    }
+    if (!media) throw new Error(`Seedance 视频下载连接失败：${mediaError || 'network_error'}`);
     if (!media.ok) throw new Error(`Seedance 视频下载失败：${media.status}`);
+    const actualCostCny = reportedSeedanceCostCny(input.model, completed, budget.reservedCny);
+    const reconcile = input.reconcileBudget || (input.reserveBudget ? null : reconcileSeedanceBudget);
+    reconcile?.(input.tenantId, budget.reservationId, actualCostCny);
     return {
       providerId: 'seedance', model: input.model, providerTaskId: taskId,
       bytes: Buffer.from(await media.arrayBuffer()), duration,
-      estimatedCostCny: budget.reservedCny,
+      estimatedCostCny: actualCostCny,
     };
   } catch (error) {
     if (!accepted) release(input.tenantId, budget.reservationId);

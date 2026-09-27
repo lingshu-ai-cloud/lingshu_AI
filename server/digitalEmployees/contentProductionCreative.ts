@@ -43,7 +43,7 @@ export function socialVideoEffectPlan(input: {
 }): EffectPlanV1 | undefined {
   if (input.stored && typeof input.stored === 'object') return normalizeEffectPlan(input.stored, input.scenes);
   if (input.schemaVersion < 4) return undefined;
-  return createIntentEffectPlan(input.scenes.map(scene => ({ ...scene, protectedVisual: true })), 1, input.seed ?? 198);
+  return createIntentEffectPlan(input.scenes.map(scene => ({ ...scene, protectedVisual: false })), 2, input.seed ?? 198);
 }
 
 export async function ensureStoredVoiceQuality(input: {

@@ -276,7 +276,7 @@ export function parseSocialSource(value: unknown): AddSocialTaskSourceInput {
   const kind = socialText(source.kind) as AddSocialTaskSourceInput['kind'];
   if (!SOCIAL_SOURCE_KINDS.includes(kind)) throw new SocialContentWorkflowError('social_content_source_kind_invalid', 400);
   const sourceRef = reference(source.sourceRef, 'social_content_source_ref_invalid');
-  if (kind === 'reference_link' && !/^https?:/i.test(sourceRef)) {
+  if (kind === 'reference_link' && !/^(?:https?:\/\/|local:\/\/[A-Za-z0-9._-]+$)/i.test(sourceRef)) {
     throw new SocialContentWorkflowError('social_content_source_ref_invalid', 400);
   }
   return {

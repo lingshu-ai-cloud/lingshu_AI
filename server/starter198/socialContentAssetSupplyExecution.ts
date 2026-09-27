@@ -114,7 +114,20 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     shot.productSceneReplication?.productIdentity.groups.flatMap(group => group.referenceImageIds) ?? []
   )))];
   const presenterAssetIds = [...new Set(input.plan.shots.flatMap(shot => shot.digitalHumanPlan?.presenterAssetIds ?? []))];
-  const referenceVideoIds = [...new Set(input.plan.shots.flatMap(shot => shot.digitalHumanPlan?.referenceMaterialIds ?? []))];
+  const referenceVideoIds = [...new Set(input.plan.shots.flatMap(shot => [
+    ...(shot.digitalHumanPlan?.referenceMaterialIds ?? []),
+    ...(shot.productSceneReplication?.referenceSourceId ? [shot.productSceneReplication.referenceSourceId] : []),
+  ]))];
+  const factoryEvidenceAssetIds = [...new Set(input.plan.shots
+    .filter(shot => shot.truthBoundary.subject === 'customer_factory')
+    .flatMap(shot => shot.truthBoundary.customerEvidenceRefs.length
+      ? shot.truthBoundary.customerEvidenceRefs : shot.sourceRefs))];
+  const customerVideoIds = [...new Set(input.plan.shots
+    .filter(shot => shot.sourceStrategy === 'customer_real_asset' && shot.truthBoundary.subject === 'none')
+    .flatMap(shot => shot.sourceRefs))];
+  const licensedStockAssetIds = [...new Set(input.plan.shots
+    .filter(shot => shot.sourceStrategy === 'licensed_stock_asset')
+    .flatMap(shot => shot.sourceRefs))];
   const aligned = createSocialAssetSupplyPlan({
     creationMode: input.plan.creationMode,
     assetAvailability: input.plan.assetAvailability,
@@ -131,6 +144,9 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
       )),
       presenterAssetIds,
       referenceVideoIds,
+      factoryEvidenceAssetIds,
+      customerVideoIds,
+      licensedStockAssetIds,
     },
     confirmedFactRefs,
     rightsConfirmationRequired: input.plan.status === 'requires_rights_confirmation',
@@ -221,6 +237,12 @@ export function assertSocialAssetSupplyTruthBoundary(input: {
 }
 
 function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] {
+  // The fee card promises a real product-scene generation. Provider or quality
+  // failure must pause instead of silently returning a lower-quality graphic.
+  if (shot.sourceStrategy === 'aigc_product_scene_replication') {
+    return shot.productSceneReplication && shot.sourceRefs.length > 0
+      ? ['aigc_product_scene_replication'] : [];
+  }
   return [...new Set([
     shot.sourceStrategy,
     ...(shot.fallbackSourceStrategy ? [shot.fallbackSourceStrategy] : []),
@@ -303,7 +325,11 @@ export async function executeSocialAssetSupplyPlan(input: {
       }
       if (selected) break;
     }
-    if (!selected) throw new Error(`asset_supply_provider_exhausted:${shot.shotId}`);
+    if (!selected) {
+      const reasons = attempts.map(item => `${item.adapterId || item.sourceStrategy}:${item.status}${item.reason ? `:${item.reason}` : ''}`)
+        .join('|').slice(0, 900);
+      throw new Error(`asset_supply_provider_exhausted:${shot.shotId}:${reasons}`);
+    }
     assertSocialAssetSupplyTruthBoundary({ shot, result: selected });
     assets.push(selected.asset);
     shots.push({

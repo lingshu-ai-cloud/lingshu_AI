@@ -162,7 +162,7 @@ for (const detail of ['经营 Agent', '编导 Agent', '内容 Agent', 'DirectorB
 for (const field of ['weeklyPackage', 'adHocBusinessContext', 'directorBrief', 'executionPlan', 'executionPlanReview', 'precisionIntervals', 'overallConfidence']) {
   assert.match(agentWorkflowPanel, new RegExp(field));
 }
-for (const detail of ['这次会产出', '预计费用', '效果预判', '低成本分镜预演', '不是实际生成关键帧', '确认方案并开始生成']) {
+for (const detail of ['这次会产出', '预计费用', '效果预判', '低成本分镜预演', '不是实际生成关键帧', '确认逐镜方案', '开始生成']) {
   assert.match(generationConfirmation, new RegExp(detail));
 }
 for (const field of ['estimatedTotalCostCny', 'estimatedSuccessRate', 'budgetLimitCny', 'executionPlanReview']) {

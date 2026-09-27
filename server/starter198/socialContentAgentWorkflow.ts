@@ -299,7 +299,12 @@ function capabilityCandidates(input: {
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
   const sourceExecutable = Boolean(sourceRuntime?.environmentReady && sourceRuntime.adapterIds.length);
-  const actualAssets = (sourceExecutable ? input.supply.sourceRefs : []).map((sourceRef, index): SocialExecutionCandidate => ({
+  // Product image refs are inputs to the paid scene-generation capability,
+  // not zero-cost finished clips. Keeping them out of `actualAssets` makes the
+  // confirmation card report the real Seedream + Seedance route and estimate.
+  const finishedAssetRefs = input.supply.sourceStrategy === 'aigc_product_scene_replication'
+    ? [] : sourceExecutable ? input.supply.sourceRefs : [];
+  const actualAssets = finishedAssetRefs.map((sourceRef, index): SocialExecutionCandidate => ({
     candidateId: stableId('candidate', { sceneId: input.sceneId, sourceRef }),
     kind: 'asset',
     label: `客户或已授权素材 ${index + 1}`,

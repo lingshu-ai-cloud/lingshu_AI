@@ -325,7 +325,7 @@ export function createIntentEffectPlan(
   const scenes = timeline.map((item, index): EffectSceneV1 => {
     const duration = clamp(item.targetDuration, .5, 300, 3);
     const intent = [item.purpose, item.targetVisual, item.action, item.music].filter(Boolean).join(' ').toLowerCase();
-    const hook = /hook|钩子|开场|problem|痛点/.test(intent);
+    const hook = index === 0 || /hook|钩子|开场|problem|痛点/.test(intent);
     const proof = /proof|trust|证据|证明|质检|参数|事实/.test(intent);
     const demo = /demonstration|demo|演示|操作|过程|使用/.test(intent);
     const cta = /call.to.action|cta|行动|收尾|咨询|私信/.test(intent);
@@ -354,6 +354,7 @@ export function createIntentEffectPlan(
       ? nearestBeat : cursor;
     if (intensity >= 2 && hook) audioEvents.push({ presetId: 'impact', at: eventAt, volume: .42 });
     else if (intensity >= 2 && transitionPurpose) audioEvents.push({ presetId: 'whoosh', at: eventAt, volume: .3 });
+    else if (intensity >= 2 && index > 0) audioEvents.push({ presetId: 'pop', at: eventAt, volume: .2 });
     const scene: EffectSceneV1 = {
       sceneId: cleanId(item.sceneId || item.clipId, String(index)),
       enabled: intensity > 0,

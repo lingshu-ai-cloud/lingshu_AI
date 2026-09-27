@@ -154,17 +154,13 @@ export function materialTenantId(record: MaterialRecord): string {
   return socialText(record.tenantId || record.tenant_id);
 }
 
-/** Shared inventory is an automatic render source only when its commercial
- * and derivative-use evidence is explicit. Tenant-owned material remains
- * available under the tenant's own upload warranty. */
+/** Every non-synthetic visual that is visible in the current tenant's material
+ * library is production-ready. `readMaterialLibrary` remains the tenant
+ * isolation boundary; legacy `reference_only` and rights-review labels are
+ * metadata for the Director, not a second usability gate. */
 export function automaticSocialMaterialEligible(record: MaterialRecord, tenantId: string): boolean {
-  if (!['video', 'image'].includes(socialText(record.type)) || socialText(record.usage) === 'reference_only') return false;
-  if (socialText(record.scope) === 'shared') {
-    return record.commercialUseApproved === true
-      && record.derivativesApproved === true
-      && Boolean(socialText(record.licenseEvidence || record.licenseName));
-  }
-  return materialTenantId(record) === tenantId;
+  if (!['video', 'image'].includes(socialText(record.type))) return false;
+  return socialText(record.scope) === 'shared' || materialTenantId(record) === tenantId;
 }
 
 export function materialSearchText(record: MaterialRecord): string {
