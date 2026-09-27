@@ -74,6 +74,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { authHeader } from "../lib/auth";
+import { showActionSuccess } from "../lib/actionFeedback";
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from "../lib/productImport";
 import {
   buildTaskDeepLink,
@@ -1112,7 +1113,7 @@ function OnboardingPanel({
         </div>
       </section>
       {settingsEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setSettingsEditorOpen(false); }}>
-    <section role="dialog" aria-modal="true" aria-label="Agent 设置" className="relative max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+    <section role="dialog" aria-modal="true" aria-label="Agent 设置" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-5">
       <button type="button" aria-label="关闭 Agent 设置" disabled={busy} onClick={() => setSettingsEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
       <div className="flex items-start gap-3">
         <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
@@ -1313,7 +1314,7 @@ function GoalPanel({
         <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</button><button type="button" disabled={busy} onClick={submit} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认并生成周任务</button></div>
       </section>
       {goalEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setGoalEditorOpen(false); }}>
-    <section role="dialog" aria-modal="true" aria-label="调整本周设置" className="relative max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-border bg-white p-4 shadow-2xl sm:p-5">
+    <section role="dialog" aria-modal="true" aria-label="调整本周设置" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-4 sm:p-5">
       <button type="button" aria-label="关闭本周设置" disabled={busy} onClick={() => setGoalEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
       <div className="flex items-start gap-3">
         <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
@@ -3680,6 +3681,7 @@ export default function DigitalEmployeePage({
       })), 350);
       scrollTo(goalPanelRef);
     }
+    if (next && !firstLogin) showActionSuccess("设置已保存", "新的经营设置会从下一轮计划开始生效。");
     return Boolean(next);
   };
 
@@ -3690,6 +3692,7 @@ export default function DigitalEmployeePage({
     if (next) {
       setNewGoal(false);
       setWorkspaceView("live");
+      showActionSuccess("周任务已生成 👏", "四位数字员工会按确认后的计划开始推进。");
     }
   };
 
@@ -3775,7 +3778,7 @@ export default function DigitalEmployeePage({
         </div>
       </div>
       {applicationGuideOpen && <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setApplicationGuideOpen(false); }}>
-        <section role="dialog" aria-modal="true" aria-label="新手引导" className="relative max-h-[94dvh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-[#f7f8f6] p-4 shadow-2xl sm:p-6">
+        <section role="dialog" aria-modal="true" aria-label="新手引导" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-4 sm:p-6">
           <button type="button" aria-label="关闭新手引导" onClick={()=>setApplicationGuideOpen(false)} className="absolute right-4 top-4 z-10 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18}/></button>
           <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }} />
         </section>

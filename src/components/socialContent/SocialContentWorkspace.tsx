@@ -25,6 +25,7 @@ import { useSocialContentWorkspace, type SocialContentSaveTarget } from './useSo
 import { taskToDraft } from './socialContentUi';
 import type { SocialCreationWorkbenchSubmit } from './SocialCreationWorkbench';
 import { socialContentStageStrategy } from '../../lib/socialContentStage';
+import { showActionSuccess } from '../../lib/actionFeedback';
 
 interface EditorSession {
   task: SocialContentTaskDetail | null;
@@ -158,6 +159,7 @@ export default function SocialContentWorkspace({
       attemptId: `socialquick:${quickStartRequest.requestId}`,
     };
     void state.saveDraft(draft, quickStartRequest.files, true, target)
+      .then(() => showActionSuccess('成功开始生成 👏', '任务已进入“我的创作”，可以随时回来查看进度。'))
       .catch(() => {})
       .finally(() => onQuickStartSettled?.());
   }, [onQuickStartSettled, quickStartRequest, state, state.workspace]);
@@ -208,6 +210,7 @@ export default function SocialContentWorkspace({
       });
     });
     setEditor(null);
+    if (start) showActionSuccess('成功开始生成 👏', '任务已进入“我的创作”，可以随时回来查看进度。');
     // Keep the user on the task after it starts. Script adaptation, voice-over,
     // subtitles and editing continue as one automated job; users return only
     // for task input or result review.
@@ -215,10 +218,16 @@ export default function SocialContentWorkspace({
   const submitPublication = async (input: RegisterSocialPublicationInput) => {
     await state.registerPublication(input);
     setPublicationOpen(false);
+    showActionSuccess('发布结果已登记', '这条内容的后续数据会继续汇总到复盘中。');
   };
   const submitMetrics = async (publicationId: string, input: SubmitSocialMetricsInput, files: File[]) => {
     await state.submitMetrics(publicationId, input, files);
     setMetricsOpen(false);
+    showActionSuccess('数据已回传', '最新表现已经纳入内容复盘。');
+  };
+  const startTask = async (approach?: Parameters<typeof state.startTask>[0]) => {
+    await state.startTask(approach);
+    showActionSuccess('成功开始生成 👏', '脚本、配音、字幕和画面会按顺序推进。');
   };
 
   const taskRunning = Boolean(task && isLiveSocialProduction(task));
@@ -243,17 +252,17 @@ export default function SocialContentWorkspace({
         createMode={defaultCreateMode}
         onCreate={() => onRequestCreate ? onRequestCreate() : openNewTask()}
         onEdit={() => task && setEditor({ task, target: { mode: 'edit', taskId: task.taskId, expectedVersion: task.version, attemptId: editorAttemptId() }, initialMode: task.mode ?? defaultCreateMode, lockMode: true })}
-        onStart={approach => void state.startTask(approach).catch(() => {})}
+        onStart={approach => void startTask(approach).catch(() => {})}
         onDownload={() => void state.downloadLatest().catch(() => {})}
         onOpenPublication={() => { if (task && socialContentCanRegisterPublication(task)) setPublicationOpen(true); }}
         onOpenMetrics={() => setMetricsOpen(true)}
         onArtifactDecision={(artifact, decision) => {
           if (decision === 'changes_requested') { setChangeArtifact(artifact); return; }
-          void state.decideArtifact(artifact, decision).catch(() => {});
+          void state.decideArtifact(artifact, decision).then(() => showActionSuccess('内容已确认', '验收结果已经保存。')).catch(() => {});
         }}
         onBatchDecision={decision => {
           if (decision === 'changes_requested') { setBatchChangesOpen(true); return; }
-          void state.decideArtifactBatch('approved').catch(() => {});
+          void state.decideArtifactBatch('approved').then(() => showActionSuccess('本批内容已确认', '全部验收结果已经保存。')).catch(() => {});
         }}
         onCreateDeliveryPackage={() => void state.createDeliveryPackage().catch(() => {})}
         onRefresh={() => void state.refresh()}

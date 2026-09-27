@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { CheckCircle2, ExternalLink, Link2 } from 'lucide-react';
 import { platformAdsRequest, type PlatformAdTask } from '../lib/platformAds';
 import './adAccountConnections.css';
+import { SocialPlatformIcon } from './SocialPlatformIcon';
 
 export type AdConnection = { id: string; provider: string; accountId: string; name: string; currency: string; status: string };
 type Provider = 'meta' | 'tiktok' | 'google';
@@ -10,10 +11,16 @@ type Connections = { items: AdConnection[]; capabilities: Capability[] };
 type OAuth = { sessionId: string; url: string; status: string; accounts: Array<{ id: string; name: string; currency: string }> };
 type Campaign = { id: string; name: string; effective_status?: string; status?: string };
 const platforms = {
-  meta: { name: 'Meta', channels: 'Facebook · Instagram', mark: 'M', account: 'Meta 广告账户 ID', example: 'act_123456789', help: '在 Meta 广告管理工具中查看广告账户 ID，可带 act_ 前缀。', token: '由有广告管理权限的管理员提供该账户的访问令牌。', scope: '网站引流与视频观看；托管与审批需在计划中另行设置授权。' },
-  tiktok: { name: 'TikTok', channels: 'TikTok 视频广告', mark: 'T', account: 'TikTok 广告主 ID', example: '1234567890123456789', help: '在 TikTok 广告管理平台查看广告主 ID（Advertiser ID），请勿填写个人账号。', token: '由管理员提供已获该广告主授权的 Marketing API 访问令牌。', scope: '已有授权帖子的视频观看广告，可人工创建与启停；暂不支持托管与审批。' },
-  google: { name: 'Google Ads', channels: 'YouTube 视频广告', mark: 'G', account: 'Google Ads 客户 ID', example: '123-456-7890', help: '在 Google Ads 账户中查看 10 位客户 ID，可包含短横线；不是登录邮箱。', token: '由管理员提供有权访问该客户账户的 Google OAuth 访问令牌。令牌过期后需重新连接。', scope: '使用现有资产创建 Demand Gen 转化广告，可人工创建与启停；暂不支持托管与审批。' },
+  meta: { name: 'Meta', channels: 'Reels 与视频广告', account: 'Meta 广告账户 ID', example: 'act_123456789', help: '在 Meta 广告管理工具中查看广告账户 ID，可带 act_ 前缀。', token: '由有广告管理权限的管理员提供该账户的访问令牌。', scope: '网站引流与视频观看；托管与审批需在计划中另行设置授权。' },
+  tiktok: { name: 'TikTok', channels: '短视频广告', account: 'TikTok 广告主 ID', example: '1234567890123456789', help: '在 TikTok 广告管理平台查看广告主 ID（Advertiser ID），请勿填写个人账号。', token: '由管理员提供已获该广告主授权的 Marketing API 访问令牌。', scope: '已有授权帖子的视频观看广告，可人工创建与启停；暂不支持托管与审批。' },
+  google: { name: 'Google Ads', channels: '视频与转化广告', account: 'Google Ads 客户 ID', example: '123-456-7890', help: '在 Google Ads 账户中查看 10 位客户 ID，可包含短横线；不是登录邮箱。', token: '由管理员提供有权访问该客户账户的 Google OAuth 访问令牌。令牌过期后需重新连接。', scope: '使用现有资产创建 Demand Gen 转化广告，可人工创建与启停；暂不支持托管与审批。' },
 };
+
+function ProviderLogos({ provider }: { provider: Provider }) {
+  if (provider === 'meta') return <span className="inline-flex items-center gap-1"><SocialPlatformIcon platform="facebook" size={23}/><SocialPlatformIcon platform="instagram" size={23}/></span>;
+  if (provider === 'google') return <SocialPlatformIcon platform="youtube" size={25}/>;
+  return <SocialPlatformIcon platform="tiktok" size={25}/>;
+}
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '请求失败，请重试';
 export function normalizeAdAccountId(provider: Provider, value: string) {
   const trimmed = value.trim();
@@ -127,7 +134,7 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
     <p className="ads-muted">先选择广告平台，再连接对应账户。广告账户连接与社媒发布授权独立。</p>
     <div className="ad-connect-platforms" role="group" aria-label="选择广告平台">
       {(Object.keys(platforms) as Provider[]).map(key => <button type="button" key={key} aria-pressed={provider === key} disabled={busy || loading} onClick={() => switchProvider(key)} className={provider === key ? 'selected' : ''}>
-        <span className={`ad-platform-mark ${key}`} aria-hidden="true">{platforms[key].mark}</span><strong>{platforms[key].name}</strong><small>{platforms[key].channels}</small>
+        <span className={`ad-platform-mark ${key}`} aria-hidden="true"><ProviderLogos provider={key}/></span><strong className="sr-only">{platforms[key].name}</strong><small>{platforms[key].channels}</small>
       </button>)}
     </div>
     {loading ? <p role="status">正在读取账户与连接方式…</p> : loadError ? <div role="alert"><p>{loadError}</p><button className="ads-button" onClick={() => void load()}>重新加载</button></div> : <>

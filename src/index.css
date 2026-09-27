@@ -20,6 +20,10 @@
   --color-amber-dim: #fff3e7;
   --color-green: #147a51;
   --color-red: #b74d43;
+  --color-visual-navy: #10244a;
+  --color-visual-teal: #2fd1c5;
+  --color-visual-lavender: #8b7cf6;
+  --color-visual-coral: #ff8e72;
 
   --font-display: "SF Pro Display", "PingFang SC", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "SF Pro Text", "PingFang SC", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
@@ -478,6 +482,125 @@
   .secondary-empty {
     border-radius: 0;
   }
+
+  .duotone-glyph {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(16, 36, 74, 0.1);
+    border-radius: 9px;
+    background: linear-gradient(145deg, #ffffff 8%, #f1f4ff 100%);
+    box-shadow: 0 2px 0 rgba(16, 36, 74, 0.08);
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  }
+
+  [aria-current='page'] .duotone-glyph {
+    border-color: rgba(16, 36, 74, 0.24);
+    background: linear-gradient(145deg, #e6fbf6 4%, #eeeaff 100%);
+    box-shadow: 0 3px 0 rgba(16, 36, 74, 0.12);
+  }
+
+  button:hover .duotone-glyph {
+    transform: translateY(-1px);
+    border-color: rgba(16, 36, 74, 0.2);
+  }
+
+  .visual-card {
+    border: 1px solid rgba(16, 36, 74, 0.12);
+    border-radius: 1rem;
+    background:
+      radial-gradient(circle at 100% 0%, rgba(139, 124, 246, 0.11), transparent 31%),
+      radial-gradient(circle at 0% 100%, rgba(47, 209, 197, 0.12), transparent 34%),
+      #fff;
+    box-shadow: 0 7px 0 rgba(16, 36, 74, 0.04);
+  }
+
+  .visual-kicker {
+    color: var(--color-visual-navy);
+    font-size: 0.6875rem;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  .ui-modal-frame {
+    display: flex;
+    width: min(100%, 64rem);
+    height: min(46rem, calc(100dvh - 2rem));
+    max-height: calc(100dvh - 2rem);
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 1.25rem;
+    background: #fbfcfa;
+    box-shadow: 0 30px 90px rgba(15, 36, 29, 0.22);
+  }
+
+  .ui-modal-frame--compact {
+    width: min(100%, 48rem);
+    height: min(36rem, calc(100dvh - 2rem));
+  }
+
+  .ui-modal-frame--wide {
+    width: min(100%, 80rem);
+    height: min(50rem, calc(100dvh - 2rem));
+  }
+
+  .ui-modal-body {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+
+  .ui-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    gap: 0.875rem;
+  }
+
+  .ui-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .action-feedback {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    overflow: hidden;
+    border: 1px solid rgba(16, 36, 74, 0.16);
+    border-left-width: 5px;
+    border-radius: 0.875rem;
+    background: rgba(255, 255, 255, 0.97);
+    padding: 0.875rem;
+    box-shadow: 0 18px 50px rgba(16, 36, 74, 0.16);
+    backdrop-filter: blur(14px);
+  }
+
+  .action-feedback--success { border-left-color: var(--color-visual-teal); }
+  .action-feedback--info { border-left-color: var(--color-visual-lavender); }
+  .action-feedback--warning { border-left-color: var(--color-visual-coral); }
+  .action-feedback--error { border-left-color: #e05d57; }
+
+  .action-feedback__icon {
+    display: inline-flex;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--color-visual-navy);
+    border-radius: 999px;
+    background: #dff9f3;
+    color: var(--color-visual-navy);
+    box-shadow: 2px 2px 0 rgba(16, 36, 74, 0.12);
+  }
+
+  .action-feedback--info .action-feedback__icon { background: #ece9ff; }
+  .action-feedback--warning .action-feedback__icon { background: #fff0ea; }
+  .action-feedback--error .action-feedback__icon { background: #fff0ef; }
 }
 
 /*
@@ -745,6 +868,16 @@
 }
 
 @media (max-width: 767px) {
+  .ui-modal-frame,
+  .ui-modal-frame--compact,
+  .ui-modal-frame--wide {
+    height: calc(100dvh - 1rem);
+    max-height: calc(100dvh - 1rem);
+    border-radius: 1rem;
+  }
+
+  .ui-form-grid { grid-template-columns: 1fr; }
+
   .auth-shell {
     display: block;
     height: auto;

@@ -1024,7 +1024,7 @@ export function ChannelOverview() {
           {platforms.map(p => (
             <button key={p.id} type="button" onClick={() => setPlatform(p.id)} role="tab" aria-selected={platform === p.id}
               className={`inline-flex shrink-0 items-center gap-1.5 border-b-2 px-1 pb-3 pt-1 text-xs font-semibold transition-colors ${platform === p.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'}`}>
-              <SocialPlatformIcon platform={p.id} size={15} /> {p.label}{p.count > 0 ? ` ${p.count}` : ''}
+              <SocialPlatformIcon platform={p.id} size={18} /><span className="sr-only">{p.label}</span>{p.count > 0 ? <span>{p.count}</span> : null}
             </button>
           ))}
         </div>

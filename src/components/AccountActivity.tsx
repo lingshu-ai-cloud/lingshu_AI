@@ -303,7 +303,7 @@ export default function AccountActivity() {
                   {PLATFORM_OPTIONS.map(platform => {
                     const active = selectedPlatforms.includes(platform);
                     const count = comments.filter(comment => comment.platform === platform).length;
-                    return <button key={platform} type="button" onClick={() => togglePlatform(platform)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] font-bold ${active ? 'bg-accent-glow text-accent' : 'text-text-secondary hover:bg-surface'}`}>{active ? <CheckSquare2 size={14} /> : <Square size={14} />}<SocialPlatformIcon platform={platform} size={15} /><span className="flex-1">{platform}</span><span className="text-[10px] text-text-muted">{count}</span></button>;
+                    return <button key={platform} type="button" title={platform} aria-label={`${platform}，${count} 条`} onClick={() => togglePlatform(platform)} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[11px] font-bold ${active ? 'bg-accent-glow text-accent' : 'text-text-secondary hover:bg-surface'}`}>{active ? <CheckSquare2 size={14} /> : <Square size={14} />}<SocialPlatformIcon platform={platform} size={17} /><span className="sr-only">{platform}</span><span className="ml-auto text-[10px] text-text-muted">{count}</span></button>;
                   })}
                 </div>
               </details>
@@ -351,7 +351,7 @@ export default function AccountActivity() {
                 return (
                   <button key={comment.id} type="button" aria-pressed={checked} onClick={() => toggleComment(comment.id)} className={`relative rounded-lg border p-4 text-left transition-colors hover:border-border-bright ${checked ? 'border-accent bg-accent-glow/50 ring-1 ring-accent/20' : 'border-border bg-white'}`}>
                     <span className={`absolute right-3 top-3 ${checked ? 'text-accent' : 'text-text-muted'}`}>{checked ? <CheckSquare2 size={18} /> : <Square size={18} />}</span>
-                    <div className="flex items-center gap-2 pr-7"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-2 text-text-muted"><CircleUserRound size={18} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-black text-text-primary">{comment.author}</p><p className="flex items-center gap-1 truncate text-[10px] text-text-muted"><SocialPlatformIcon platform={comment.platform} size={12} /> {comment.platform} · {comment.receivedAt}</p></div></div>
+                    <div className="flex items-center gap-2 pr-7"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-2 text-text-muted"><CircleUserRound size={18} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-black text-text-primary">{comment.author}</p><p className="flex items-center gap-1 truncate text-[10px] text-text-muted"><SocialPlatformIcon platform={comment.platform} size={12} /><span className="sr-only">{comment.platform} · </span>{comment.receivedAt}</p></div></div>
                     <p className="mt-3 line-clamp-3 min-h-[60px] text-xs leading-5 text-text-secondary">{comment.text}</p>
                     {comment.translationStatus === 'loading' && <p className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-accent"><RefreshCw size={10} className="animate-spin" /> 正在翻译成中文…</p>}
                     {comment.translation && (
@@ -377,7 +377,7 @@ export default function AccountActivity() {
               <div className="space-y-4">
                 <div className="rounded-lg border border-border bg-white p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-4">
-                    <div><div className="flex items-center gap-2"><h3 className="text-sm font-black text-text-primary">{selected.author}</h3><span className="text-xs text-text-muted">{selected.handle}</span></div><p className="mt-1 flex items-center gap-1 text-[11px] text-text-muted"><SocialPlatformIcon platform={selected.platform} size={13} /> {selected.platform} · 来自《{selected.contentTitle}》</p></div>
+                    <div><div className="flex items-center gap-2"><h3 className="text-sm font-black text-text-primary">{selected.author}</h3><span className="text-xs text-text-muted">{selected.handle}</span></div><p className="mt-1 flex items-center gap-1 text-[11px] text-text-muted"><SocialPlatformIcon platform={selected.platform} size={13} /><span className="sr-only">{selected.platform} · </span>来自《{selected.contentTitle}》</p></div>
                     <button type="button" className="inline-flex items-center gap-1 text-[11px] font-bold text-text-muted hover:text-accent">查看原评论 <ExternalLink size={11} /></button>
                   </div>
                   <div className="mt-4 rounded-md bg-surface-2 px-4 py-3">

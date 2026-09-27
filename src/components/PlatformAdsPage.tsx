@@ -29,33 +29,33 @@ import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformA
 import AdPerformanceOverview from './AdPerformanceOverview';
 import AdManagedWorkspace from './AdManagedWorkspace';
 import { PlatformAdsManagedPreview, PlatformAdsPerformancePreview } from './PlatformAdsPreviewSections';
+import { SocialPlatformIcon } from './SocialPlatformIcon';
 
 const channels = [
   {
     name: "Facebook",
-    mark: "f",
-    color: "#1877f2",
     description: "放大视频触达，积累品牌关注",
   },
   {
     name: "Instagram",
-    mark: "◎",
-    color: "#c94f88",
     description: "用 Reels 提升观看与互动",
   },
   {
     name: "TikTok",
-    mark: "♪",
-    color: "#182e2b",
     description: "通过短视频获得更多有效观看",
   },
   {
     name: "YouTube",
-    mark: "▶",
-    color: "#e45148",
     description: "覆盖 Shorts 与多种视频版位",
   },
 ];
+
+function PlatformLogoGroup({ value, size = 20 }: { value: string; size?: number }) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes('meta')) return <span className="inline-flex items-center gap-1" aria-label={value}><SocialPlatformIcon platform="facebook" size={size}/><SocialPlatformIcon platform="instagram" size={size}/></span>;
+  if (normalized.includes('google')) return <span aria-label={value}><SocialPlatformIcon platform="youtube" size={size}/></span>;
+  return <span aria-label={value}><SocialPlatformIcon platform={value} size={size}/></span>;
+}
 type Draft = AdManagement & Pick<PlatformAdTask, 'currency' | 'status' | 'version' | 'proposal' | 'authorization' | 'sourceContext'> & {
   id: string;
   name: string;
@@ -224,7 +224,7 @@ export default function PlatformAdsPage({
             <summary>查看各平台已实现能力与限制</summary>
             <p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p>
             <div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>
-              {PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td>{item.name}</td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}
+              {PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td><PlatformLogoGroup value={item.name}/><span className="sr-only">{item.name}</span></td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}
             </tbody></table></div>
           </details>
         </div>
@@ -338,21 +338,9 @@ export default function PlatformAdsPage({
                   </div>
                   {selectedDraft.channels.map((name) => (
                     <div className="ads-channel-row" key={name}>
-                      <span
-                        className="ads-channel-logo"
-                        style={{
-                          color: channels.find(
-                            (channel) => channel.name === name,
-                          )?.color,
-                        }}
-                      >
-                        {
-                          channels.find((channel) => channel.name === name)
-                            ?.mark
-                        }
-                      </span>
+                      <span className="ads-channel-logo"><PlatformLogoGroup value={name}/></span>
                       <div>
-                        <strong>{name}</strong>
+                        <strong className="sr-only">{name}</strong>
                         <small>平台资源与状态请查看执行记录</small>
                       </div>
                       <span className="ads-pill neutral">方案渠道</span>
@@ -429,7 +417,7 @@ export default function PlatformAdsPage({
                               {d.video} · {d.goal}
                             </small>
                           </td>
-                          <td>{d.channels.join(" / ")}</td>
+                          <td><span className="inline-flex items-center gap-1.5">{d.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={18}/></span>)}</span></td>
                           <td>{d.market}</td>
                           <td>{d.creationSource === 'platform_import' && Number(d.budget) === 0 ? '平台总预算未同步' : `${d.currency} ${Number(d.budget).toLocaleString()}`}</td>
                           <td>
@@ -681,7 +669,7 @@ export default function PlatformAdsPage({
                               })
                             }
                           />
-                          {c.name}
+                          <PlatformLogoGroup value={c.name} size={22}/><span className="sr-only">{c.name}</span>
                         </label>
                       ))}
                     </div>
@@ -720,7 +708,6 @@ export default function PlatformAdsPage({
                       ["推广目标", form.goal],
                       ["投放视频", form.video],
                       ["目标市场", form.market],
-                      ["投放渠道", form.channels.join(" / ")],
                       [
                         "总预算上限",
                         `${form.currency} ${Number(form.budget).toLocaleString()}`,
@@ -731,6 +718,7 @@ export default function PlatformAdsPage({
                         <strong>{v}</strong>
                       </div>
                     ))}
+                    <div><span>投放渠道</span><strong className="inline-flex items-center gap-1.5">{form.channels.map(name => <span key={name} title={name}><PlatformLogoGroup value={name} size={20}/></span>)}</strong></div>
                     <p>
                       <CircleHelp size={15} />
                       {entry === 'manual' || selectedDraft ? '保存配置不会创建平台广告或产生消耗。' : 'AI 将根据这些信息生成可编辑的方案及依据；生成后请在任务详情检查方案并选择管理方式。生成方案不会自动启用广告。'}

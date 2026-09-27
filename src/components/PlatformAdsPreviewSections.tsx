@@ -12,11 +12,10 @@ import {
   Target,
   Wallet,
 } from 'lucide-react';
+import { SocialPlatformIcon } from './SocialPlatformIcon';
 
 interface ChannelPreview {
   name: string;
-  mark: string;
-  color: string;
   description: string;
 }
 
@@ -64,8 +63,8 @@ export function PlatformAdsPerformancePreview({ channels, onOpenAccounts, onOpen
       <section className="ads-card">
         <div className="ads-section-title"><h2>投放渠道 <span className="ads-count">0 / 4</span></h2><button className="ads-text-button" onClick={onOpenAccounts}>管理连接 <ArrowUpRight size={14} /></button></div>
         <div className="ads-channel-list">{channels.map(channel => <div className="ads-channel-row" key={channel.name}>
-          <span className="ads-channel-logo" style={{ color: channel.color }}>{channel.mark}</span>
-          <div><strong>{channel.name}</strong><small>{channel.description}</small></div><span className="ads-muted">未连接</span>
+          <span className="ads-channel-logo"><SocialPlatformIcon platform={channel.name} size={21}/></span>
+          <div><strong className="sr-only">{channel.name}</strong><small>{channel.description}</small></div><span className="ads-muted">未连接</span>
           <button className="ads-button small" onClick={onOpenAccounts}>连接</button>
         </div>)}</div>
         <div className="ads-footnote"><CircleHelp size={14} />Facebook 与 Instagram 使用 Meta 广告账户，可统一连接。</div>

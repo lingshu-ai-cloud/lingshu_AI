@@ -29,7 +29,7 @@ function DialogFrame({ title, eyebrow, busy, onClose, children, footer }: { titl
   }, [busy, onClose]);
   return (
     <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="social-action-dialog-title" className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl outline-none">
+      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="social-action-dialog-title" className="ui-modal-frame ui-modal-frame--compact outline-none">
         <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4"><div><p className="text-[11px] font-bold text-emerald-700">{eyebrow}</p><h2 id="social-action-dialog-title" className="mt-1 text-lg font-black text-text-primary">{title}</h2></div><button type="button" disabled={busy} aria-label="关闭" onClick={onClose} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button></header>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
         <footer className="flex justify-end gap-2 border-t border-border px-5 py-4">{footer}</footer>

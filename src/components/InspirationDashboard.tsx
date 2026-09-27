@@ -1338,7 +1338,7 @@ function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onEx
     <div className="flex min-h-0 flex-1 flex-col" data-lingshu-guide="analysis-evidence">
       <div className="flex-shrink-0 border-b border-border bg-surface px-4 py-3">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] text-text-muted">
-          <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 font-semibold text-text-secondary">{video.contentFormat === 'image' && <SocialPlatformIcon platform={video.platform} size={12} />}{video.contentFormat === 'image' ? `${getPlatformMeta(video.platform).label} 图文` : analysis.videoType}</span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 font-semibold text-text-secondary">{video.contentFormat === 'image' && <><SocialPlatformIcon platform={video.platform} size={12} /><span className="sr-only">{getPlatformMeta(video.platform).label}</span></>}{video.contentFormat === 'image' ? '图文' : analysis.videoType}</span>
           {video.contentFormat === 'image' ? <><span className="flex items-center gap-1"><BarChart2 size={9} className="text-accent" />{hasTrustedImageAnalysis ? `已提取 ${imageEvidenceCount} 条证据` : '图片分析待完成'}</span><span className="flex items-center gap-1"><Images size={9} />{video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张图片</span></> : <><span className="flex items-center gap-1"><BarChart2 size={9} className="text-accent" />信息速度 {analysis.infoSpeed}</span><span className="flex items-center gap-1"><TrendingUp size={9} />{video.views} 播放</span><span>{analysis.emotion}</span></>}
         </div>
         {showStrategyProgress && <div role="status" aria-live="polite" className="mb-3 flex items-start gap-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-[10px] leading-relaxed text-text-secondary">
@@ -2471,7 +2471,7 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
         onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-4 px-4 py-3 border-b border-border">
           <div className="min-w-0">
-            <p className="text-[10px] font-mono uppercase tracking-widest text-text-muted">{PLATFORM_META[video.platform]?.label ?? video.platform} 预览</p>
+            <p className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-text-muted"><SocialPlatformIcon platform={video.platform} size={14}/><span className="sr-only">{PLATFORM_META[video.platform]?.label ?? video.platform}</span>预览</p>
             <h3 id="inspiration-watch-title" className="mt-0.5 truncate text-sm font-semibold text-text-primary">{video.title}</h3>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -2582,9 +2582,7 @@ function DirectorVideoDetailPanel({
               <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${pending ? 'bg-amber-50 text-amber-700' : exactQuality.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}>{statusLabel}</span>
             </div>
             <h2 id="director-video-analysis-title" className="mt-2 line-clamp-2 text-base font-bold leading-6 text-text-primary">{video.title}</h2>
-            <p className="mt-1 text-[11px] text-text-muted">
-              {PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}
-            </p>
+            <p className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted"><SocialPlatformIcon platform={video.platform} size={13}/><span className="sr-only">{PLATFORM_META[video.platform]?.label || video.platform} · </span>{displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
           </div>
           <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭编导分析" className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
             <X size={18} />
@@ -4357,7 +4355,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                               need.priority === '高' ? 'bg-red/5 text-red' : need.priority === '中' ? 'bg-amber-dim text-amber' : 'bg-surface-2 text-text-muted'
                             }`}>{need.priority}优先级</span>
                             <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need.ratio}</span>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary"><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</span>
+                            <span title={getPlatformMeta(need.platform).label} className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary"><SocialPlatformIcon platform={need.platform} size={12} /><span className="sr-only">{getPlatformMeta(need.platform).label}</span></span>
                           </div>
                           <h3 className="mt-2 text-sm font-bold text-text-primary">{need.title}</h3>
                           <p className="mt-1 text-xs leading-relaxed text-text-secondary">{need.suggestion}</p>

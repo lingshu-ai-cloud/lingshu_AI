@@ -34,6 +34,8 @@ import SocialTaskRunStatusPanel, { isLiveSocialProduction } from './SocialTaskRu
 import SocialWeeklySummary from './SocialWeeklySummary';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, optionLabel, packageVersionLabel } from './socialContentUi';
+import { CreationEmptyIllustration } from '../ui/ProductIllustrations';
+import { SocialPlatformIcon } from '../SocialPlatformIcon';
 
 const ARTIFACT_STATUS: Record<SocialContentArtifact['status'], string> = {
   draft: '制作中',
@@ -138,7 +140,7 @@ function ArtifactPanel({ task, busy, onArtifactDecision, onBatchDecision, onCrea
       {currentArtifacts.length === 0 ? <div className="mt-5 rounded-xl bg-surface-2 px-4 py-6 text-center"><Sparkles size={18} className="mx-auto text-emerald-600" /><p className="mt-2 text-xs font-semibold text-text-muted">首批内容完成后将在这里出现</p></div> : <div role="list" aria-label={`全部 ${currentArtifacts.length} 项内容成品`} className="mt-4 max-h-[34rem] divide-y divide-border overflow-y-auto overscroll-contain pr-1">{currentArtifacts.map(artifact => {
         const preview = artifactPreview(artifact.content);
         const generation = socialArtifactGenerationDisclosure(artifact);
-        return <article role="listitem" key={artifact.artifactId} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-text-muted"><FileCheck2 size={16} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-text-primary">{artifactKindLabel(artifact.kind)}</p><p className="mt-0.5 text-[10px] text-text-muted">{[artifact.platform && optionLabel(PLATFORM_OPTIONS, artifact.platform), contentLanguageLabel(artifact.language), packageVersionLabel(artifact.version)].filter(Boolean).join(' · ')}</p><p className={`mt-1 text-[10px] font-bold ${generation.approvalAllowed ? 'text-emerald-700' : 'text-amber-700'}`}>{generation.sourceLabel} · {generation.verificationLabel}</p>{preview && <p className="mt-1 truncate text-[11px] text-text-secondary">{preview}</p>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${artifact.status === 'review_required' ? 'bg-amber-50 text-amber-800' : artifact.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : 'bg-surface-2 text-text-muted'}`}>{ARTIFACT_STATUS[artifact.status]}</span><button type="button" onClick={() => setPreviewArtifact(artifact)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">预览</button>{artifact.status === 'review_required' && <div className="flex gap-1.5"><button type="button" disabled={busy} onClick={() => onArtifactDecision(artifact, 'changes_requested')} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">退回修改</button><button type="button" disabled={busy || !generation.approvalAllowed} title={generation.approvalAllowed ? undefined : generation.verificationLabel} onClick={() => onArtifactDecision(artifact, 'approved')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">确认</button></div>}</article>;
+        return <article role="listitem" key={artifact.artifactId} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-text-muted"><FileCheck2 size={16} /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-text-primary">{artifactKindLabel(artifact.kind)}</p><p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-text-muted">{artifact.platform && <><SocialPlatformIcon platform={artifact.platform} size={13}/><span className="sr-only">{optionLabel(PLATFORM_OPTIONS, artifact.platform)}</span></>}<span>{[contentLanguageLabel(artifact.language), packageVersionLabel(artifact.version)].filter(Boolean).join(' · ')}</span></p><p className={`mt-1 text-[10px] font-bold ${generation.approvalAllowed ? 'text-emerald-700' : 'text-amber-700'}`}>{generation.sourceLabel} · {generation.verificationLabel}</p>{preview && <p className="mt-1 truncate text-[11px] text-text-secondary">{preview}</p>}</div><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${artifact.status === 'review_required' ? 'bg-amber-50 text-amber-800' : artifact.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : 'bg-surface-2 text-text-muted'}`}>{ARTIFACT_STATUS[artifact.status]}</span><button type="button" onClick={() => setPreviewArtifact(artifact)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">预览</button>{artifact.status === 'review_required' && <div className="flex gap-1.5"><button type="button" disabled={busy} onClick={() => onArtifactDecision(artifact, 'changes_requested')} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">退回修改</button><button type="button" disabled={busy || !generation.approvalAllowed} title={generation.approvalAllowed ? undefined : generation.verificationLabel} onClick={() => onArtifactDecision(artifact, 'approved')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">确认</button></div>}</article>;
       })}</div>}
       {previewArtifact && <SocialArtifactPreviewDialog artifact={previewArtifact} onClose={() => setPreviewArtifact(null)} />}
     </section>
@@ -159,7 +161,7 @@ function DeliveryPanel({ task, busy, onDownload, onOpenPublication, onOpenMetric
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">交付与回收</p><h3 className="mt-1 text-base font-black text-text-primary">{heading}</h3></div><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700"><PackageCheck size={20} /></span></div>
       <div className="mt-4 space-y-2.5">
         {delivery && <div className="flex items-center justify-between gap-3 rounded-xl bg-surface-2 px-3 py-3"><div><p className="text-xs font-bold text-text-primary">交付包 · {packageVersionLabel(delivery.version)}</p><p className="mt-0.5 text-[10px] text-text-muted">{delivery.artifactIds.length} 项内容</p></div>{delivery.downloadHref && <button type="button" disabled={busy} onClick={onDownload} className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-black text-emerald-700 shadow-sm"><Download size={12} />下载</button>}</div>}
-        {lastPublication && <div className="rounded-xl bg-surface-2 px-3 py-3"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{optionLabel(PLATFORM_OPTIONS, lastPublication.platform)} 已发布</p><p className="mt-0.5 text-[10px] text-text-muted">{lastPublication.accountLabel || new Date(lastPublication.publishedAt).toLocaleString('zh-CN')}</p></div><span className="text-[10px] font-bold text-text-muted">已回传 {metricCount} 次</span></div></div>}
+        {lastPublication && <div className="rounded-xl bg-surface-2 px-3 py-3"><div className="flex items-center justify-between gap-3"><div><p className="flex items-center gap-2 text-xs font-bold text-text-primary"><SocialPlatformIcon platform={lastPublication.platform} size={16}/><span className="sr-only">{optionLabel(PLATFORM_OPTIONS, lastPublication.platform)}</span>已发布</p><p className="mt-0.5 text-[10px] text-text-muted">{lastPublication.accountLabel || new Date(lastPublication.publishedAt).toLocaleString('zh-CN')}</p></div><span className="text-[10px] font-bold text-text-muted">已回传 {metricCount} 次</span></div></div>}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">{canRegisterPublication && <button type="button" disabled={busy} onClick={onOpenPublication} className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[11px] font-bold text-text-secondary hover:bg-surface-2"><Send size={13} />{task.publications.length > 0 ? '登记其他平台' : '登记发布'}</button>}{task.publications.length > 0 && <button type="button" disabled={busy} onClick={onOpenMetrics} className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-[11px] font-bold text-text-secondary hover:bg-surface-2"><BarChart3 size={13} />{task.metricSubmissions.length > 0 ? '继续回传数据' : '回传数据'}</button>}</div>
     </section>
@@ -170,6 +172,28 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
   const { task, onCreate, createMode } = props;
   if (!task) {
     const weekly = createMode === 'weekly';
+    if (!weekly) return (
+      <section className="visual-card grid min-h-[540px] overflow-hidden lg:grid-cols-[minmax(0,.9fr)_minmax(28rem,1.1fr)]" aria-label="还没有内容任务">
+        <div className="relative flex min-h-[300px] items-center justify-center overflow-hidden bg-gradient-to-br from-[#eefcf8] via-white to-[#f0edff] p-8">
+          <span aria-hidden="true" className="absolute -left-10 top-9 h-28 w-28 rounded-full border-[18px] border-[#2fd1c5]/12"/>
+          <span aria-hidden="true" className="absolute -right-8 bottom-7 h-36 w-36 rotate-12 rounded-[2rem] border-[20px] border-[#8b7cf6]/10"/>
+          <CreationEmptyIllustration className="relative w-full max-w-[440px] drop-shadow-[0_18px_22px_rgba(16,36,74,.10)]"/>
+        </div>
+        <div className="flex flex-col justify-center p-7 sm:p-10">
+          <p className="visual-kicker">你的第一条内容</p>
+          <h2 className="mt-3 text-2xl font-black tracking-tight text-[#10244a]">从灵感到成片，都在这里推进</h2>
+          <p className="mt-3 max-w-xl text-sm leading-7 text-slate-600">选择自由创作或爆款裂变后，脚本、画面、字幕和验收进度会依次出现在同一个工作区。</p>
+          <div className="mt-7 grid gap-3 sm:grid-cols-3">
+            {[
+              ['01', '选择方式', '素材创作或爆款裂变'],
+              ['02', '确认方案', '逐句查看口播与画面'],
+              ['03', '生成验收', '随时掌握进度与成片'],
+            ].map(([number, title, description], index) => <div key={number} className="rounded-2xl border border-[#10244a]/10 bg-white/80 p-3"><span className={`inline-flex h-7 min-w-7 items-center justify-center rounded-lg border-2 border-[#10244a] px-1 text-[10px] font-black text-[#10244a] ${index===1?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}>{number}</span><p className="mt-3 text-xs font-black text-[#10244a]">{title}</p><p className="mt-1 text-[10px] leading-4 text-slate-500">{description}</p></div>)}
+          </div>
+          <button type="button" onClick={onCreate} className="mt-7 inline-flex w-fit items-center gap-2 rounded-xl bg-[#10244a] px-5 py-3 text-sm font-black text-white shadow-[0_5px_0_#8b7cf6] transition hover:-translate-y-0.5"><Plus size={16} strokeWidth={3}/>开始创作</button>
+        </div>
+      </section>
+    );
     return (
       <section className="rounded-xl border border-dashed border-border-bright bg-white px-4 py-4 sm:px-5">
         <div className="flex flex-wrap items-center justify-between gap-4">

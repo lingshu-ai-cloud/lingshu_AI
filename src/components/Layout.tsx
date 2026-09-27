@@ -1,10 +1,8 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Home, Users, LayoutGrid, BarChart3, Megaphone, Bot,
-  Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, WandSparkles, BrainCircuit, UserRoundCog, Clock, Send, PanelRightOpen,
+  PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
@@ -15,6 +13,8 @@ import AccountSettingsModal from './AccountSettingsModal';
 import AgentNotificationBell from './AgentNotificationBell';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
+import ActionFeedbackHost from './ui/ActionFeedbackHost';
+import DuotoneGlyph from './ui/DuotoneGlyph';
 
 interface NavSection {
   label: string;
@@ -23,13 +23,13 @@ interface NavSection {
 
 const navItem = (id: Page, icon: ReactNode) => ({ id, label: PAGE_REGISTRY[id].navLabel, icon });
 
-const HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
+const HOME_NAV_ITEM = navItem('digitalEmployees', <DuotoneGlyph kind="home" />);
 
 const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactNode> = {
-  socialInspiration: <Clapperboard size={16} />,
-  smartAssets: <WandSparkles size={16} />,
-  traffic: <Send size={16} />,
-  socialMonitoring: <BarChart3 size={16} />,
+  socialInspiration: <DuotoneGlyph kind="inspiration" />,
+  smartAssets: <DuotoneGlyph kind="create" />,
+  traffic: <DuotoneGlyph kind="publish" />,
+  socialMonitoring: <DuotoneGlyph kind="monitor" />,
 };
 
 const SOCIAL_NAV: NavSection = {
@@ -40,48 +40,48 @@ const SOCIAL_NAV: NavSection = {
 const ADS_NAV: NavSection = {
   label: '平台投放',
   items: [
-    navItem('adsOverview', <BarChart3 size={16} />),
-    navItem('adsPlans', <Megaphone size={16} />),
-    navItem('adsManaged', <Bot size={16} />),
+    navItem('adsOverview', <DuotoneGlyph kind="ads" />),
+    navItem('adsPlans', <DuotoneGlyph kind="campaign" />),
+    navItem('adsManaged', <DuotoneGlyph kind="agent" />),
   ],
 };
 
 const CUSTOMER_NAV: NavSection = {
   label: '客户管理',
   items: [
-    navItem('conversion', <Users size={16} />),
-    navItem('orders', <LayoutGrid size={16} />),
+    navItem('conversion', <DuotoneGlyph kind="customers" />),
+    navItem('orders', <DuotoneGlyph kind="orders" />),
   ],
 };
 
 const AGENT_NAV: NavSection = {
   label: '智能体管理',
   items: [
-    navItem('enterprise', <Building2 size={16} />),
-    navItem('agentMemory', <BrainCircuit size={16} />),
-    navItem('scheduled', <Clock size={16} />),
+    navItem('enterprise', <DuotoneGlyph kind="enterprise" />),
+    navItem('agentMemory', <DuotoneGlyph kind="memory" />),
+    navItem('scheduled', <DuotoneGlyph kind="schedule" />),
   ],
 };
 
 const ADMIN_NAV: NavSection = {
   label: '管理员权限',
   items: [
-    navItem('admin', <ShieldCheck size={16} />),
-    navItem('adminDelivery', <PlugZap size={16} />),
+    navItem('admin', <DuotoneGlyph kind="permissions" />),
+    navItem('adminDelivery', <DuotoneGlyph kind="integration" />),
   ],
 };
 
 const SYSTEM_NAV: NavSection = {
   label: '系统设置',
   items: [
-    navItem('plugins', <PlugZap size={16} />),
-    navItem('organizationPermissions', <UserRoundCog size={16} />),
+    navItem('plugins', <DuotoneGlyph kind="integration" />),
+    navItem('organizationPermissions', <DuotoneGlyph kind="permissions" />),
   ],
 };
 
 const NAV_SECTIONS = [SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
-const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
+const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <DuotoneGlyph kind="home" />);
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
   super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
@@ -352,6 +352,8 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
 
   return (
     <div className="app-shell flex h-[100dvh] min-h-0 overflow-hidden">
+
+      <ActionFeedbackHost />
 
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside

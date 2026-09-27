@@ -12,6 +12,7 @@ import {
   optionLabel,
   packageVersionLabel,
 } from './socialContentUi';
+import { SocialPlatformIcon } from '../SocialPlatformIcon';
 
 const ARCHIVED_MEDIA_REF = /^socialfile:socialfile_[a-f0-9]{24}$/;
 const CONTENT_FIELDS = ['body', 'caption', 'copy', 'text', 'summary', 'script'] as const;
@@ -194,7 +195,6 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
   }, [artifact]);
 
   const details = [
-    artifact.platform ? optionLabel(PLATFORM_OPTIONS, artifact.platform) : null,
     contentLanguageLabel(artifact.language),
     packageVersionLabel(artifact.version),
     generation.sourceLabel,
@@ -204,9 +204,9 @@ export default function SocialArtifactPreviewDialog({ artifact, onClose }: {
 
   return (
     <div className="fixed inset-0 z-[195] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="social-artifact-preview-title" className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl outline-none">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="social-artifact-preview-title" className="ui-modal-frame outline-none">
         <header className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-          <div className="min-w-0"><p className="text-[11px] font-bold text-emerald-700">{artifactKindLabel(artifact.kind)}</p><h2 id="social-artifact-preview-title" className="mt-1 truncate text-lg font-black text-text-primary">{copy.title}</h2>{details && <p className="mt-1 text-[11px] text-text-muted">{details}</p>}</div>
+          <div className="min-w-0"><p className="flex items-center gap-2 text-[11px] font-bold text-emerald-700">{artifact.platform && <SocialPlatformIcon platform={artifact.platform} size={15}/>}<span>{artifactKindLabel(artifact.kind)}</span>{artifact.platform && <span className="sr-only">{optionLabel(PLATFORM_OPTIONS, artifact.platform)}</span>}</p><h2 id="social-artifact-preview-title" className="mt-1 truncate text-lg font-black text-text-primary">{copy.title}</h2>{details && <p className="mt-1 text-[11px] text-text-muted">{details}</p>}</div>
           <button type="button" aria-label="关闭预览" onClick={onClose} className="shrink-0 rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto bg-[#f8faf9] p-5">

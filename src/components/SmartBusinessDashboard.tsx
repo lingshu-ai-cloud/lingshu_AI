@@ -19,6 +19,9 @@ import { nextReviewWeek, type ReviewTodo, type ReviewTodoBoard } from "../lib/re
 import type { DeliveryResource } from "../lib/delivery";
 import SocialAccountStrategies from "./socialProgram/SocialAccountStrategies";
 import type { Page } from "../pageRegistry";
+import { SocialPlatformIcon } from "./SocialPlatformIcon";
+import { AgentOrbitIllustration } from "./ui/ProductIllustrations";
+import { showActionSuccess } from "../lib/actionFeedback";
 
 export type SmartBusinessView = "home" | "matrix" | "queue" | "review";
 
@@ -97,12 +100,12 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
 
   return (
     <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/35 p-4" onMouseDown={onClose}>
-      <section role="dialog" aria-modal="true" aria-label={`${agentCard.name} 生产实况`} className="max-h-[86dvh] w-full max-w-2xl overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+      <section role="dialog" aria-modal="true" aria-label={`${agentCard.name} 生产实况`} className="ui-modal-frame ui-modal-frame--compact" onMouseDown={(event) => event.stopPropagation()}>
         <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div><p className="text-xs font-bold tracking-[0.18em] text-emerald-700">AGENT LIVE</p><h2 className="mt-1 text-xl font-black text-slate-950">{agentCard.name} · 生产实况</h2><p className="mt-1 text-sm text-slate-500">{agentStatus?.currentTask || "当前没有运行中的任务"}</p></div>
           <button type="button" aria-label="关闭生产实况" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50"><X size={18}/></button>
         </header>
-        <div className="overflow-y-auto px-6 py-5">
+        <div className="ui-modal-body px-6 py-5">
           <div className="rounded-2xl bg-slate-950 p-4 text-white">
             <div className="flex items-center justify-between gap-4 text-xs"><span>当前进度</span><strong>{agentStatus?.completed || 0} / {agentStatus?.total || 0}</strong></div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${agentStatus?.total ? Math.min(100, agentStatus.completed / agentStatus.total * 100) : 0}%` }}/></div>
@@ -126,6 +129,24 @@ function AgentMonitor({ data, agent: agentCard, onClose }: { data: DigitalEmploy
 function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
   const [monitor, setMonitor] = useState<AgentCard | null>(null);
   const snapshot = data.businessSnapshot;
+  const deliveries = data.deliveries || [];
+  const activeAgentCount = agentCards.filter(item => {
+    const status = data.agents.find(agent => roleAliases[item.role].includes(agent.role));
+    return Boolean(status && runningStatuses.has(status.status)) || relatedTasks(data, item.role).some(task => runningStatuses.has(task.status));
+  }).length;
+  const waitingCount = deliveries.filter(card => /验收|确认|review/i.test(card.stage || "")).length;
+  const completedCount = deliveries.filter(card => card.column === "done").length;
+  const platformCoverage = platformOptions.map(platform => ({
+    platform,
+    count: deliveries.filter(card => deliveryPlatform(card) === platform).length,
+  }));
+  const pulse = [
+    { label: "已进入内容队列", value: deliveries.length, color: "#2fd1c5" },
+    { label: "已完成交付", value: completedCount, color: "#8b7cf6" },
+    { label: "等待验收", value: waitingCount, color: "#ff8e72" },
+    { label: "正在工作的 Agent", value: activeAgentCount, color: "#10244a" },
+  ];
+  const pulseMax = Math.max(1, ...pulse.map(item => item.value));
   const metrics = [
     { label: "运营平台账号", value: metricValue(snapshot?.social.accountCount.value), note: snapshot?.social.accountCount.note || "已接入账号", icon: Users },
     { label: "获得询盘", value: metricValue(snapshot?.content.inquiries.value), note: snapshot?.content.inquiries.note || "当前统计周期", icon: MessageSquareText },
@@ -134,9 +155,20 @@ function HomeView({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefres
   ];
 
   return <>
-    <section className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-[#f3fbf7] via-white to-[#fbf8f2] p-5 shadow-[0_18px_50px_rgba(31,73,59,.06)] sm:p-7">
+    <section className="visual-card overflow-hidden p-5 sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">过去业绩</p><h2 className="mt-2 text-2xl font-black text-slate-950">经营结果一眼看清</h2><p className="mt-1 text-sm text-slate-500">仅展示业务系统已经回传的真实数据。</p></div>{onRefresh&&<button type="button" onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800"><RefreshCcw size={14}/>刷新</button>}</div>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon })=><article key={label} className="rounded-2xl border border-white bg-white/80 p-4 shadow-sm"><div className="flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><Icon size={16} className="text-emerald-700"/></div><p className="mt-3 text-3xl font-black tracking-tight text-slate-950">{value}</p><p className="mt-1 truncate text-[11px] text-slate-400">{note}</p></article>)}</div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, note, icon: Icon }, index)=><article key={label} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/90 p-4 shadow-[0_4px_0_rgba(16,36,74,.04)]"><span aria-hidden="true" className={`absolute -right-5 -top-5 h-20 w-20 rounded-full ${index%2?'bg-[#8b7cf6]/10':'bg-[#2fd1c5]/12'}`}/><div className="relative flex items-center justify-between"><span className="text-xs font-bold text-slate-500">{label}</span><span className={`flex h-8 w-8 items-center justify-center rounded-xl border-2 border-[#10244a] ${index%2?'bg-[#dcd7ff]':'bg-[#baf2e8]'}`}><Icon size={15} className="text-[#10244a]" strokeWidth={2.5}/></span></div><p className="relative mt-3 text-3xl font-black tracking-tight text-[#10244a]">{value}</p><p className="relative mt-1 truncate text-[11px] text-slate-400">{note}</p><div aria-hidden="true" className="relative mt-4 flex h-5 items-end gap-1">{[0.35,0.58,0.46,0.78,0.68].map((height, barIndex)=><span key={barIndex} className={`w-2 rounded-t-sm ${index%2?'bg-[#8b7cf6]/35':'bg-[#2fd1c5]/40'}`} style={{height:`${height*100}%`}}/>)}</div></article>)}</div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,.65fr)]">
+        <article className="rounded-2xl border border-[#10244a]/10 bg-white/82 p-5">
+          <div className="flex items-center justify-between gap-4"><div><p className="visual-kicker">经营脉冲</p><h3 className="mt-1 text-base font-black text-[#10244a]">内容与执行状态</h3></div><span className="text-[10px] font-bold text-slate-400">实时业务记录</span></div>
+          <div className="mt-5 grid gap-x-6 gap-y-4 sm:grid-cols-2">{pulse.map(item => <div key={item.label}><div className="flex items-center justify-between text-[11px]"><span className="font-bold text-slate-600">{item.label}</span><strong className="text-[#10244a]">{item.value}</strong></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{background:item.color,width:`${item.value === 0 ? 0 : Math.max(12,item.value/pulseMax*100)}%`}}/></div></div>)}</div>
+          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4"><span className="mr-1 text-[10px] font-bold text-slate-400">内容覆盖</span>{platformCoverage.map(item => <span key={item.platform} title={`${platformLabels[item.platform]} ${item.count} 条`} className={`inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-xl border px-2 ${item.count?'border-[#10244a]/15 bg-white':'border-slate-200 bg-slate-50 opacity-45'}`}><SocialPlatformIcon platform={item.platform} size={16}/><span className="text-[10px] font-black text-[#10244a]">{item.count}</span></span>)}</div>
+        </article>
+        <article className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-gradient-to-br from-[#f4f1ff] to-[#e9fbf7] p-4">
+          <AgentOrbitIllustration className="mx-auto h-36 w-full max-w-[220px]"/>
+          <div className="flex items-end justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[.16em] text-[#6558cf]">Agent 协同</p><p className="mt-1 text-sm font-black text-[#10244a]">{activeAgentCount ? `${activeAgentCount} 位正在工作` : '等待下一项任务'}</p></div><span className="rounded-full border border-[#10244a]/10 bg-white/80 px-2.5 py-1 text-[10px] font-black text-[#10244a]">4 位数字员工</span></div>
+        </article>
+      </div>
     </section>
 
     <section className="mt-6">
@@ -200,14 +232,14 @@ function ReviewView({ data }: { data: DigitalEmployeeOverview }) {
       quantity:3, videoIndexes:[], status:"pending", reason:"",
     };
     setTodoBusy(true); setTodoMessage("");
-    try { const saved=await digitalEmployeeApi.saveReviewTodos({...board,sourceGoalId:board.sourceGoalId||data.goal?.id||"",items:[...board.items,item]});setBoard(saved);setTodoMessage("已加入下周待办"); }
+    try { const saved=await digitalEmployeeApi.saveReviewTodos({...board,sourceGoalId:board.sourceGoalId||data.goal?.id||"",items:[...board.items,item]});setBoard(saved);setTodoMessage("已加入下周待办");showActionSuccess("已加入下周待办 👏", "Agent 会在下周计划中继续推进这条内容建议。"); }
     catch (error) { setTodoMessage(error instanceof Error?error.message:"保存失败"); }
     finally { setTodoBusy(false); }
   };
 
   return <div>
     <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">数据复盘</p><h2 className="mt-1 text-2xl font-black text-slate-950">内容热度排行</h2><p className="mt-1 text-sm text-slate-500">这里看内容层面的播放量排行；单条视频的完整数据仍在发布渠道页查看。</p></div>
-    <div className="mt-5 flex gap-5 overflow-x-auto border-b border-slate-200">{platformOptions.map((item)=><button type="button" key={item} onClick={()=>setPlatform(item)} aria-pressed={platform===item} className={`shrink-0 border-b-2 pb-3 text-xs font-black ${platform===item?'border-emerald-700 text-emerald-800':'border-transparent text-slate-400'}`}>{platformLabels[item]}</button>)}</div>
+    <div className="mt-5 flex gap-3 overflow-x-auto border-b border-slate-200">{platformOptions.map((item)=><button type="button" key={item} title={platformLabels[item]} aria-label={platformLabels[item]} onClick={()=>setPlatform(item)} aria-pressed={platform===item} className={`flex h-11 w-12 shrink-0 items-center justify-center border-b-2 pb-2 ${platform===item?'border-emerald-700':'border-transparent opacity-45 hover:opacity-75'}`}><SocialPlatformIcon platform={item} size={21}/></button>)}</div>
     <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white">{ranking.map((card,index)=>{const views=deliveryMetric(card,/播放|浏览|view/i)||0;return <article key={card.id} className={`grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 p-5 ${index?'border-t border-slate-100':''}`}><span className={`flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black ${index===0?'bg-amber-100 text-amber-800':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div className="min-w-0"><h3 className="truncate text-sm font-black text-slate-950">{card.title}</h3><p className="mt-1 truncate text-xs text-slate-400">{card.subject}</p></div><div className="text-right"><p className="flex items-center gap-1 text-sm font-black text-slate-900"><Eye size={13}/>{views.toLocaleString("zh-CN")}</p><p className="mt-1 text-[10px] text-slate-400">播放量</p></div></article>})}{!ranking.length&&<div className="px-5 py-20 text-center"><Eye size={28} className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-bold text-slate-600">{platformLabels[platform]} 暂无内容播放量</p><p className="mt-1 text-xs text-slate-400">平台数据回传后会自动按播放量排序。</p></div>}</section>
       <aside className="space-y-4"><section className="rounded-3xl border border-emerald-100 bg-emerald-50/55 p-5"><Sparkles size={20} className="text-emerald-700"/><h3 className="mt-4 text-base font-black text-slate-950">Agent 制作建议</h3><p className="mt-3 text-sm font-bold leading-6 text-slate-800">{top?`批量复刻《${top.title}》的开头钩子与叙事节奏。`:"等待平台播放量回传后生成建议。"}</p><p className="mt-2 text-xs leading-6 text-slate-500">{top?"保留高表现结构，替换为下周主推产品与已核验卖点；建议先制作 3 条变体。":"当前没有足够数据，不生成未经证实的复刻建议。"}</p><button type="button" disabled={!top||!board||todoBusy} onClick={()=>void addTopToTodo()} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">{todoBusy?<Loader2 size={14} className="animate-spin"/>:<CalendarPlus size={14}/>}纳入下周待办</button>{todoMessage&&<p role="status" className="mt-2 text-center text-[10px] text-emerald-800">{todoMessage}</p>}</section>
