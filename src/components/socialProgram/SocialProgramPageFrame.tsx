@@ -31,6 +31,7 @@ export default function SocialProgramPageFrame({
   onNavigate,
   children,
   action,
+  embedded = false,
 }: {
   title: string;
   description: string;
@@ -38,19 +39,20 @@ export default function SocialProgramPageFrame({
   onNavigate: (page: Page) => void;
   children: ReactNode;
   action?: ReactNode;
+  embedded?: boolean;
 }) {
   const { programs, activeProgramId, loading, error, selectProgram, refreshPrograms } = useSocialProgram();
   return (
-    <div className="bg-[#f6f8f5]">
-      <main className="mx-auto max-w-[1440px] space-y-5 px-4 py-5 sm:px-8 sm:py-7">
-        <nav aria-label="社媒矩阵经营步骤" className="overflow-x-auto rounded-xl border border-border bg-white p-2">
+    <div className={embedded ? '' : 'bg-[#f6f8f5]'}>
+      <main className={`mx-auto max-w-[1440px] space-y-5 ${embedded ? '' : 'px-4 py-5 sm:px-8 sm:py-7'}`}>
+        {!embedded && <nav aria-label="社媒矩阵经营步骤" className="overflow-x-auto rounded-xl border border-border bg-white p-2">
           <ol className="grid min-w-[680px] grid-cols-4 gap-1">
             {PROGRAM_STEPS.map((step, index) => {
               const active = step.page === currentPage;
               return <li key={step.page}><button type="button" aria-current={active ? 'step' : undefined} onClick={() => onNavigate(step.page)} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition ${active ? 'bg-[#173d31] text-white' : 'text-text-secondary hover:bg-surface-2'}`}><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${active ? 'bg-white text-[#173d31]' : 'bg-surface-2 text-text-muted'}`}>{index + 1}</span><span className="min-w-0"><strong className="block text-xs">{step.label}</strong><span className={`mt-0.5 block truncate text-[10px] ${active ? 'text-emerald-100' : 'text-text-muted'}`}>{step.next}</span></span>{index < PROGRAM_STEPS.length - 1 && <ArrowRight size={12} className={`ml-auto shrink-0 ${active ? 'text-emerald-200' : 'text-text-muted'}`} />}</button></li>;
             })}
           </ol>
-        </nav>
+        </nav>}
         <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>

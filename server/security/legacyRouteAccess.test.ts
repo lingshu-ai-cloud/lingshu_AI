@@ -146,7 +146,7 @@ try {
   assert.equal(authenticatedTranslation.status, 400, 'authenticated tenant utility calls must reach validation without exposing global plugin configuration');
 
   const whatsappWebhook = await request('/channels/webhook/whatsapp/not-configured');
-  assert.equal(whatsappWebhook.status, 404, 'public WhatsApp verification webhook must remain reachable without login');
+  assert.equal(whatsappWebhook.status, 404, 'retired WhatsApp verification endpoints stay unavailable');
   const telegramWebhook = await request('/channels/webhook/telegram/not-configured', { method: 'POST' });
   assert.equal(telegramWebhook.status, 404, 'unknown Telegram webhooks must not acknowledge or mutate state');
   const unknownWhatsAppPost = await request('/channels/webhook/whatsapp/not-configured', {
@@ -154,7 +154,7 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
   });
-  assert.equal(unknownWhatsAppPost.status, 404, 'unknown WhatsApp webhooks must not acknowledge or ingest events');
+  assert.equal(unknownWhatsAppPost.status, 404, 'retired WhatsApp webhooks must not acknowledge or ingest events');
 
   const body = Buffer.from('{"object":"whatsapp_business_account"}');
   const secret = 'legacy-meta-webhook-secret';
@@ -170,14 +170,14 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
   });
-  assert.equal(missingWhatsAppSecret.status, 503, 'a configured legacy WhatsApp route without an app secret must fail closed');
+  assert.equal(missingWhatsAppSecret.status, 404, 'configured legacy WhatsApp routes are retired');
 
   const invalidWhatsAppSignature = await request('/channels/webhook/whatsapp/known-whatsapp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': 'sha256=' + '0'.repeat(64) },
     body: '{}',
   });
-  assert.equal(invalidWhatsAppSignature.status, 403, 'a legacy WhatsApp route must reject an invalid body signature');
+  assert.equal(invalidWhatsAppSignature.status, 404, 'legacy WhatsApp routes stay unavailable regardless of signature');
 
   const signedPayload = '{"entry":[]}';
   const signedPayloadSignature = `sha256=${createHmac('sha256', secret).update(signedPayload).digest('hex')}`;
@@ -186,7 +186,7 @@ try {
     headers: { 'Content-Type': 'application/json', 'x-hub-signature-256': signedPayloadSignature },
     body: signedPayload,
   });
-  assert.equal(validWhatsAppSignature.status, 200, 'a correctly signed legacy WhatsApp route must reach ingestion');
+  assert.equal(validWhatsAppSignature.status, 404, 'legacy WhatsApp ingestion remains retired');
 
   const invalidTelegramSecret = await request('/channels/webhook/telegram/known-telegram', {
     method: 'POST',
@@ -202,12 +202,12 @@ try {
   assert.equal(validTelegramSecret.status, 200, 'a legacy Telegram route must accept its configured secret header');
 
   const storedChannels = JSON.parse(fs.readFileSync(channelsDataFile, 'utf8')) as Array<{ id: string; stats: { received: number } }>;
-  assert.equal(storedChannels.find(channel => channel.id === 'known-whatsapp')?.stats.received, 1, 'only the valid WhatsApp delivery may update receipt statistics');
+  assert.equal(storedChannels.find(channel => channel.id === 'known-whatsapp')?.stats.received, 0, 'retired WhatsApp deliveries cannot update receipt statistics');
   assert.equal(storedChannels.find(channel => channel.id === 'known-telegram')?.stats.received, 1, 'only the valid Telegram delivery may update receipt statistics');
 
   const safeChannel = publicChannel({
     id: 'channel-security-fixture',
-    type: 'whatsapp',
+    type: 'messenger',
     label: 'Security fixture',
     enabled: true,
     status: 'connected',
@@ -229,7 +229,7 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: '{"untrusted":"payload"}',
   });
-  assert.equal(wecomPost.status, 400, 'WeCom callback ingestion must reject unsupported JSON envelopes');
+  assert.equal(wecomPost.status, 404, 'retired WeCom callback endpoints stay unavailable');
   assert.doesNotMatch(wecomPost.body, /untrusted/, 'rejected webhook responses must not echo untrusted payloads');
   process.env.NODE_ENV = 'production';
   try {
@@ -238,7 +238,7 @@ try {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
-    assert.equal(productionWecomPost.status, 400, 'production must also reject unsupported WeCom callback envelopes');
+    assert.equal(productionWecomPost.status, 404, 'production must keep retired WeCom callback endpoints unavailable');
   } finally {
     process.env.NODE_ENV = 'test';
   }

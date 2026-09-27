@@ -713,12 +713,12 @@ export function fitSpeechToShot(value: string, duration: number): string {
 
 export function ctaSemanticallySatisfied(candidate: string, primaryCta: string): boolean {
   if (!primaryCta || candidate.includes(primaryCta)) return true;
-  const requestedWhatsApp = /whatsapp|\bwa\b/i.test(primaryCta);
-  const usedWhatsApp = /whatsapp|\bwa\b/i.test(candidate);
+  const requestedNamedChannel = /messenger|whatsapp|\bwa\b/i.test(primaryCta);
+  const usedNamedChannel = /messenger|whatsapp|\bwa\b/i.test(candidate);
   // A named channel is part of the enterprise's single CTA. Generic contact
-  // wording may not silently replace WhatsApp, or introduce it when unverified.
-  if (requestedWhatsApp !== usedWhatsApp) return false;
-  if (requestedWhatsApp) return /message|contact|联系|触达|咨询/i.test(candidate);
+  // wording may not silently replace it, or introduce it when unverified.
+  if (requestedNamedChannel !== usedNamedChannel) return false;
+  if (requestedNamedChannel) return /message|contact|联系|触达|咨询/i.test(candidate);
   const intentPatterns: Array<[RegExp, RegExp]> = [
     [/发送|提交|发来|分享|\bsend\b|\bshare\b|\bsubmit\b/i, /发送|提交|发来|分享|\bsend\b|\bshare\b|\bsubmit\b/i],
     [/工件|节拍|缺陷|样本|布局|参数|需求|workpiece|cycle|defect|sample|layout|specification|requirement/i, /工件|节拍|缺陷|样本|布局|参数|需求|workpiece|cycle|defect|sample|layout|specification|requirement/i],
@@ -736,6 +736,7 @@ export function ctaSemanticallySatisfied(candidate: string, primaryCta: string):
 
 function safeStoryboardCta(primaryCta: string, language: string): string {
   const cta = String(primaryCta || '').trim();
+  if (/messenger/i.test(cta)) return language === 'zh' ? '请通过 Messenger 联系。' : 'Message us on Messenger.';
   if (/whatsapp/i.test(cta)) return language === 'zh' ? '请用WhatsApp联系。' : 'Message us on WhatsApp.';
   if (language === 'zh') {
     if (/(?:发送|提交|发来|分享)/.test(cta) && /预约/.test(cta) && /(?:诊断|评估|方案|咨询)/.test(cta)) {
@@ -759,6 +760,7 @@ function safeStoryboardCta(primaryCta: string, language: string): string {
 
 function shortStoryboardCta(primaryCta: string, language: string): string {
   const cta = String(primaryCta || '');
+  if (/messenger/i.test(cta)) return language === 'zh' ? 'Messenger 联系。' : 'Message us on Messenger.';
   if (/whatsapp/i.test(cta)) return language === 'zh' ? 'WhatsApp联系。' : 'Message us on WhatsApp.';
   if (language === 'zh') {
     if (/预约/.test(cta) && /(?:诊断|评估|方案|咨询)/.test(cta)) return '预约方案诊断。';
@@ -1112,6 +1114,7 @@ export function ensureStoryboardPrimaryCta(
 export function canonicalMaterialPrimaryCta(primaryCta: string, language: string): string {
   const cta = String(primaryCta || '').replace(/\s+/g, ' ').trim();
   if (!cta) return '';
+  if (/messenger/i.test(cta)) return language === 'zh' ? '通过 Messenger 联系我们。' : 'Message us on Messenger.';
   if (/whatsapp|\bwa\b/i.test(cta)) return language === 'zh' ? '通过 WhatsApp 联系我们。' : 'Message us on WhatsApp.';
   // Enterprise settings sometimes store workflow language rather than public
   // copy. Normalize those cases, while preserving an already publishable CTA

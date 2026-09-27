@@ -1,4 +1,3 @@
-import SocialAccountStrategies from './socialProgram/SocialAccountStrategies';
 import { lazy, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -449,7 +448,6 @@ export default function TrafficPage({
           ) : (
             <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
               <AccountActivity />
-              <SocialAccountStrategies onNavigate={page => onNavigate?.(page)} />
             </motion.div>
           )}
         </AnimatePresence>

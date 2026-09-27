@@ -809,8 +809,8 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     consumer_retail: ['终端消费者'],
   };
   const routeStrategies = Object.fromEntries(enabledRoutes.map(route => {
-    const source: { targetBuyerRoles: string[]; primaryCta: string } = socialInput.routeStrategies?.[route] ?? { targetBuyerRoles: defaultBuyers[route], primaryCta: '引导跳转WhatsApp以触达' };
-    return [route, { targetBuyerRoles: Array.isArray(source.targetBuyerRoles) && source.targetBuyerRoles.length ? source.targetBuyerRoles.map(text).filter(Boolean) : defaultBuyers[route], primaryCta: text(source.primaryCta) || '引导跳转WhatsApp以触达' }];
+    const source: { targetBuyerRoles: string[]; primaryCta: string } = socialInput.routeStrategies?.[route] ?? { targetBuyerRoles: defaultBuyers[route], primaryCta: '引导通过 Messenger 联系' };
+    return [route, { targetBuyerRoles: Array.isArray(source.targetBuyerRoles) && source.targetBuyerRoles.length ? source.targetBuyerRoles.map(text).filter(Boolean) : defaultBuyers[route], primaryCta: text(source.primaryCta) || '引导通过 Messenger 联系' }];
   }));
   const allowedContentStages = ['b2b_launch', 'b2b_growth', 'd2c_brand'] as const;
   const contentStage = allowedContentStages.includes(socialInput.contentStage as typeof allowedContentStages[number])

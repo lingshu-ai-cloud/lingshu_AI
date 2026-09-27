@@ -6,10 +6,9 @@ const review = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'utf8');
 const clientTypes = fs.readFileSync('src/lib/digitalEmployees.ts', 'utf8');
 const starterAccess = fs.readFileSync('server/starter198/socialLegacyAccess.ts', 'utf8');
 
-assert.match(activity, /id: 'inquiries', label: '询盘与资格'/, 'account activity must expose the inquiry qualification workbench');
-assert.match(activity, /social-engagement\/interactions/, 'the inquiry workbench must read faithful interaction writebacks');
-assert.match(activity, /inquiries\/\$\{encodeURIComponent\(item\.id\)\}\/qualification/, 'sales decisions must write through the qualification endpoint');
-assert.match(activity, /内容：\{item\.contentId \|\| '未知来源'\}/, 'unknown content attribution must stay visible');
+assert.doesNotMatch(activity, /id: 'inquiries'/, 'content monitoring no longer owns an inquiry qualification page');
+assert.doesNotMatch(activity, /social-engagement\/interactions/, 'content monitoring must not load inquiry writebacks');
+assert.doesNotMatch(activity, /inquiries\/\$\{encodeURIComponent\(item\.id\)\}\/qualification/, 'qualification actions are removed from content monitoring');
 assert.match(review, /互动与销售资格/, 'weekly review must render the interaction review');
 assert.match(review, /按经营方向—账号—内容查看/, 'weekly review must expose direction-account-content breakdowns');
 assert.match(clientTypes, /interactionReview\?:/, 'the frontend snapshot contract must include interaction review data');

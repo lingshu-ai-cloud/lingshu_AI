@@ -3,14 +3,10 @@ import { timingSafeEqual } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { verifyWhatsAppWebhook, getPhoneNumberInfo } from '../integrations/whatsapp.js';
 import { getBotInfo, sendTelegramMessage } from '../integrations/telegram.js';
 import { testDingTalk } from '../integrations/dingtalk.js';
 import { testFeishu } from '../integrations/feishu.js';
 import { getShopInfo, testShopify } from '../integrations/shopify.js';
-import { handleMetaWebhook } from '../whatsapp/historyImport.js';
-import { ingestFollowupDeliveryStatuses } from '../digitalEmployees/followupDispatchWorker.js';
-import { sendTenantWhatsAppText } from '../whatsapp/send.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { adminUserForHttp, requireInternalAdmin } from '../lib/demoAccounts.js';
 import {
@@ -28,7 +24,7 @@ const DATA = process.env.NODE_ENV === 'test' && process.env.CHANNELS_DATA_FILE
 
 export interface Channel {
   id: string;
-  type: 'whatsapp' | 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'telegram' | 'dingtalk' | 'feishu' | 'wechat' | 'wecom' | 'shopify';
+  type: 'youtube' | 'tiktok' | 'instagram' | 'facebook' | 'messenger' | 'telegram' | 'dingtalk' | 'feishu' | 'wechat' | 'shopify';
   label: string;
   enabled: boolean;
   config: Record<string, string>;
@@ -117,11 +113,10 @@ export const channelsRouter = Router();
 type TenantChannelStatus = 'advisor_configuring' | 'waiting_customer' | 'importing' | 'connected' | 'needs_service';
 
 const USER_CHANNELS = [
-  { id: 'whatsapp', name: 'WhatsApp Business', platform: 'meta' as const, oauth: true },
+  { id: 'messenger', name: 'Messenger', platform: 'meta' as const, oauth: true },
   { id: 'instagram', name: 'Instagram', platform: 'meta' as const, oauth: true },
   { id: 'facebook', name: 'Facebook', platform: 'meta' as const, oauth: true },
   { id: 'youtube', name: 'YouTube', platform: 'google' as const, oauth: true },
-  { id: 'wecom', name: '企业微信', platform: 'wecom' as const, oauth: false },
 ] as const;
 
 function tenantStatus(status?: TenantPlatformStatus): TenantChannelStatus {
@@ -145,8 +140,7 @@ channelsRouter.get('/status', requireAuth, async (req, res) => {
   const isAdmin = Boolean(admin);
   const metaApp = await getTenantPlatformApp(tenantId, 'meta');
   const googleApp = await getTenantPlatformApp(tenantId, 'google');
-  const wecomApp = await getTenantPlatformApp(tenantId, 'wecom');
-  const platformApps = { meta: metaApp, google: googleApp, wecom: wecomApp };
+  const platformApps = { meta: metaApp, google: googleApp };
   const [youtubeAccounts, socialAccounts] = await Promise.all([
     store.list<Record<string, unknown>>('youtube_accounts', {
       where: { tenantId, status: 'connected' }, page: 1, perPage: 10,
@@ -163,6 +157,8 @@ channelsRouter.get('/status', requireAuth, async (req, res) => {
       const app = platformApps[channel.platform];
       const hasConnectedAccount = channel.id === 'youtube'
         ? youtubeAccounts.length > 0
+        : channel.id === 'messenger'
+          ? socialAccounts.some(account => account.platform === 'facebook' && account.messengerSubscribed === true)
         : channel.id === 'facebook' || channel.id === 'instagram'
           ? connectedSocialPlatforms.has(channel.id)
           : false;
@@ -220,11 +216,6 @@ channelsRouter.post('/:id/test', requireAuth, requireInternalAdmin, async (req: 
 
   try {
     switch (channel.type) {
-      case 'whatsapp': {
-        const info = await getPhoneNumberInfo({ phoneNumberId: cfg.phoneNumberId, accessToken: cfg.accessToken, verifyToken: cfg.verifyToken });
-        res.json({ ok: true, info });
-        break;
-      }
       case 'telegram': {
         const info = await getBotInfo({ botToken: cfg.botToken });
         res.json({ ok: true, info });
@@ -275,7 +266,6 @@ channelsRouter.post('/:id/test', requireAuth, requireInternalAdmin, async (req: 
 
 // Send message via channel
 channelsRouter.post('/:id/send', requireAuth, requireInternalAdmin, async (req: Request, res: Response) => {
-  const { tenantId } = res.locals as AuthLocals;
   const channel = load().find(c => c.id === req.params.id);
   if (!channel) { res.status(404).json({ error: 'not found' }); return; }
   const { to, text } = req.body;
@@ -283,9 +273,6 @@ channelsRouter.post('/:id/send', requireAuth, requireInternalAdmin, async (req: 
 
   try {
     switch (channel.type) {
-      case 'whatsapp':
-        await sendTenantWhatsAppText(tenantId, to, text);
-        break;
       case 'telegram':
         await sendTelegramMessage({ botToken: cfg.botToken }, to ?? cfg.defaultChatId, text);
         break;
@@ -299,53 +286,6 @@ channelsRouter.post('/:id/send', requireAuth, requireInternalAdmin, async (req: 
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message });
   }
-});
-
-// WhatsApp webhook verify
-channelsRouter.get('/webhook/whatsapp/:id', (req: Request, res: Response) => {
-  const channel = load().find(c => c.id === req.params.id && c.type === 'whatsapp');
-  if (!channel) { res.status(404).send('Not found'); return; }
-  const result = verifyWhatsAppWebhook(
-    channel.config as any,
-    req.query['hub.mode'] as string,
-    req.query['hub.verify_token'] as string,
-    req.query['hub.challenge'] as string
-  );
-  result ? res.send(result) : res.status(403).send('Forbidden');
-});
-
-// WhatsApp webhook receive
-channelsRouter.post('/webhook/whatsapp/:id', async (req: Request, res: Response) => {
-  const channel = load().find(c => c.id === req.params.id && c.type === 'whatsapp');
-  if (!channel) { res.status(404).send('Not found'); return; }
-  const appSecret = String(channel.config.appSecret || channel.config.webhookAppSecret || '').trim();
-  if (!appSecret) {
-    res.status(503).json({ error: 'legacy_webhook_secret_not_configured' });
-    return;
-  }
-  const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
-  if (!(rawBody instanceof Buffer)) {
-    res.status(503).json({ error: 'webhook_raw_body_unavailable' });
-    return;
-  }
-  if (!verifyLegacyMetaWebhookSignature(appSecret, rawBody, req.headers['x-hub-signature-256'])) {
-    res.status(403).json({ error: 'invalid_signature' });
-    return;
-  }
-  try {
-    await Promise.all([
-      handleMetaWebhook(channel.id, req.body),
-      ingestFollowupDeliveryStatuses(channel.id, req.body, { verifiedSignature: true }),
-    ]);
-  } catch (error) {
-    console.error('[whatsapp-channel-webhook]', error);
-    res.status(500).json({ error: 'webhook_persistence_failed' });
-    return;
-  }
-  const channels = load();
-  const idx = channels.findIndex(c => c.id === req.params.id);
-  if (idx !== -1) { channels[idx].stats.received++; channels[idx].lastActivity = new Date().toISOString(); save(channels); }
-  res.sendStatus(200);
 });
 
 // Telegram webhook receive

@@ -1,4 +1,4 @@
-import { decryptSecret, getTenantPlatformApp } from '../lib/tenantPlatformApps.js';
+import { socialAccessToken } from '../lib/accountCredentials.js';
 import { store } from '../storage/index.js';
 
 type ConfigRecord = {
@@ -58,7 +58,7 @@ export function resolveCustomerMessagingAuthorization(
   if (!input.configActive) reasons.push('digital_employee_configuration_inactive');
   if (!input.customerAgentEnabled) reasons.push('customer_agent_not_enabled');
   if (!input.allowRealCustomerMessages) reasons.push('tenant_real_customer_messages_not_authorized');
-  if (!input.providerReady) reasons.push('whatsapp_provider_not_ready');
+  if (!input.providerReady) reasons.push('messenger_provider_not_ready');
   if (!input.backgroundWorkerEnabled) reasons.push('followup_background_worker_disabled');
   return {
     tenantId: input.tenantId,
@@ -83,26 +83,28 @@ export async function readCustomerMessagingAuthorization(
   tenantId: string,
 ): Promise<CustomerMessagingAuthorization> {
   try {
-    const [configs, app] = await Promise.all([
+    const [configs, messengerAccounts] = await Promise.all([
       store.list<ConfigRecord>('digital_employee_configs', {
         where: { tenant_id: tenantId },
         sort: '-config_version',
         page: 1,
         perPage: 1,
       }),
-      getTenantPlatformApp(tenantId, 'meta'),
+      store.list<Record<string, unknown>>('social_accounts', {
+        where: { tenantId, platform: 'facebook', status: 'connected' },
+        page: 1,
+        perPage: 100,
+      }),
     ]);
     const configRecord = configs.items[0];
     const config = jsonObject(configRecord?.config);
     const enabledWorkflows = Array.isArray(config.enabledWorkflows)
       ? config.enabledWorkflows.map(item => String(item || ''))
       : [];
-    const providerReady = Boolean(
-      app
-      && app.status === 'active'
-      && String(app.phone_number_id || '').trim()
-      && decryptSecret(app.access_token),
-    );
+    const providerReady = messengerAccounts.items.some(account => {
+      if (account.messengerSubscribed !== true) return false;
+      try { return Boolean(socialAccessToken(account)); } catch { return false; }
+    });
     return resolveCustomerMessagingAuthorization({
       tenantId,
       configVersion: configRecord?.config_version,

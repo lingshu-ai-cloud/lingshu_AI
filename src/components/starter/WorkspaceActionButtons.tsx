@@ -251,7 +251,7 @@ export default function WorkspaceActionButtons({ actions, targetId, pendingComma
           ) : composerAction.command === 'submit_quote_send_evidence' ? (
             <div className="mt-2 grid gap-2">
               <p className="text-[11px] text-text-muted">报价文件哈希由系统自动锁定。这里只登记你在系统外的人工发送记录并等待验真，不会调用平台或自动标记为已发送。</p>
-              <input value={quoteChannel} onChange={event => setQuoteChannel(event.target.value)} maxLength={80} placeholder="发送渠道，例如 WhatsApp / 邮件" className="w-full border border-border bg-white px-3 py-2 text-sm" />
+              <input value={quoteChannel} onChange={event => setQuoteChannel(event.target.value)} maxLength={80} placeholder="发送渠道，例如 Messenger / 邮件" className="w-full border border-border bg-white px-3 py-2 text-sm" />
               <input value={quoteReference} onChange={event => setQuoteReference(event.target.value)} maxLength={240} placeholder="消息 ID、邮件 Message-ID 或工单引用" className="w-full border border-border bg-white px-3 py-2 text-sm" />
             </div>
           ) : (

@@ -32,6 +32,7 @@ export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 import { sealedSocialCredentialPatch, socialAccessToken } from '../lib/accountCredentials.js';
 import { metaOAuthScopes, tikTokOAuthScopes } from '../lib/socialOAuthScopes.js';
+import { subscribeMessengerPage } from '../integrations/messenger.js';
 
 const COL = 'social_accounts';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -71,6 +72,8 @@ interface SocialAccountRecord {
   connectedAt: string;
   lastSyncAt?: string;
   status: 'connected' | 'error' | 'expired';
+  messengerSubscribed?: boolean;
+  messengerSubscriptionError?: string;
 }
 
 const pendingOAuthStates = new Map<string, PendingOAuthState>();
@@ -255,6 +258,8 @@ function publicSocialAccount(a: SocialAccountRecord) {
     connectedAt: a.connectedAt,
     lastSyncAt: a.lastSyncAt,
     status: a.status,
+    messengerSubscribed: a.messengerSubscribed === true,
+    messengerSubscriptionError: a.messengerSubscriptionError || '',
   };
 }
 
@@ -282,7 +287,7 @@ async function saveFacebookPageFromMeta(input: {
   userId: string;
   page: Awaited<ReturnType<typeof getMetaPages>>[number];
 }) {
-  return upsertSocialAccount({
+  const account = await upsertSocialAccount({
     tenantId: input.tenantId,
     userId: input.userId,
     platform: 'facebook',
@@ -301,6 +306,15 @@ async function saveFacebookPageFromMeta(input: {
     viewCount: 0,
     likeCount: 0,
   });
+  try {
+    await subscribeMessengerPage({ pageId: input.page.id, pageAccessToken: input.page.accessToken });
+    await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '' });
+    return { ...account, messengerSubscribed: true, messengerSubscriptionError: '' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Messenger webhook subscription failed';
+    await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
+    return { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
+  }
 }
 
 async function saveInstagramFromMeta(input: {
@@ -370,25 +384,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   let saved = 0;
   for (const page of pages) {
     if (pending.platform === 'facebook') {
-      await upsertSocialAccount({
-        tenantId: pending.tenantId,
-        userId: pending.userId,
-        platform: 'facebook',
-        providerAccountId: page.id,
-        title: page.name,
-        handle: page.name,
-        avatarUrl: page.pictureUrl || '',
-        accessToken: page.accessToken,
-        refreshToken: '',
-        tokenExpiresAt: '',
-        scope: metaOAuthScopes('facebook').join(','),
-        parentPageId: page.id,
-        parentPageName: page.name,
-        followerCount: page.fanCount || 0,
-        videoCount: 0,
-        viewCount: 0,
-        likeCount: 0,
-      });
+      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page });
       saved += 1;
     }
     if (pending.platform === 'instagram' && page.instagram) {
@@ -624,6 +620,15 @@ socialRouter.post('/connect/manual', async (req, res) => {
           viewCount: 0,
           likeCount: 0,
         });
+        try {
+          await subscribeMessengerPage({ pageId: page.id, pageAccessToken: page.accessToken });
+          await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '' });
+          account = { ...account, messengerSubscribed: true, messengerSubscriptionError: '' };
+        } catch (subscriptionError) {
+          const message = subscriptionError instanceof Error ? subscriptionError.message : 'Messenger webhook subscription failed';
+          await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
+          account = { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
+        }
       }
     }
 

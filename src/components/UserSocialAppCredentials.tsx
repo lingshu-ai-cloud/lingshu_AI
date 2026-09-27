@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, Clipboard, KeyRound, Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Clipboard, KeyRound, Loader2, Save, Trash2 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { validateOAuthCredentialPairs } from '../lib/socialOAuthCredentialValidation';
-import { getWhatsAppEmbeddedSignupConfig, startWhatsAppEmbeddedSignup } from '../lib/whatsappEmbeddedSignup';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useModalFocus } from '../hooks/useModalFocus';
 
@@ -18,7 +17,7 @@ type AppInfo = {
   status: string;
 } | null;
 type Config = {
-  callbacks: Record<'youtube' | 'instagram' | 'facebook' | 'tiktok', string>;
+  callbacks: Record<'youtube' | 'instagram' | 'facebook' | 'messenger' | 'tiktok', string>;
   metaWebhookUrl: string;
   apps: Record<'google' | 'meta' | 'tiktok', AppInfo>;
 };
@@ -28,22 +27,21 @@ type Form = {
   youtubeOAuthClientSecret: string;
   metaSocialAppId: string;
   metaSocialAppSecret: string;
-  metaWhatsAppConfigId: string;
   metaWebhookVerifyToken: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
 };
-const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', metaWhatsAppConfigId: '', metaWebhookVerifyToken: '', tiktokClientKey: '', tiktokClientSecret: '' };
+const EMPTY: Form = { youtubeOAuthClientId: '', youtubeOAuthClientSecret: '', metaSocialAppId: '', metaSocialAppSecret: '', metaWebhookVerifyToken: '', tiktokClientKey: '', tiktokClientSecret: '' };
 
 const PLATFORM_LABELS: Record<ConfigPlatform, string> = {
   google: 'YouTube / Google',
-  meta: 'Instagram / Facebook / WhatsApp',
+  meta: 'Instagram / Facebook / Messenger',
   tiktok: 'TikTok',
 };
 
 function withoutPlatformCredentials(form: Form, platform: ConfigPlatform): Form {
   if (platform === 'google') return { ...form, youtubeOAuthClientId: '', youtubeOAuthClientSecret: '' };
-  if (platform === 'meta') return { ...form, metaSocialAppId: '', metaSocialAppSecret: '', metaWhatsAppConfigId: '', metaWebhookVerifyToken: '' };
+  if (platform === 'meta') return { ...form, metaSocialAppId: '', metaSocialAppSecret: '', metaWebhookVerifyToken: '' };
   return { ...form, tiktokClientKey: '', tiktokClientSecret: '' };
 }
 
@@ -92,7 +90,7 @@ export default function UserSocialAppCredentials() {
       const data = await response.json() as Config & { error?: string };
       if (!response.ok) throw new Error(data.error || '读取社媒应用配置失败');
       setConfig(data);
-      setForm(current => ({ ...current, youtubeOAuthClientId: data.apps.google?.appId || '', metaSocialAppId: data.apps.meta?.appId || '', metaWhatsAppConfigId: data.apps.meta?.waConfigId || '', tiktokClientKey: data.apps.tiktok?.appId || '' }));
+      setForm(current => ({ ...current, youtubeOAuthClientId: data.apps.google?.appId || '', metaSocialAppId: data.apps.meta?.appId || '', tiktokClientKey: data.apps.tiktok?.appId || '' }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : '读取社媒应用配置失败'); }
     finally { setLoading(false); }
   }
@@ -139,7 +137,7 @@ export default function UserSocialAppCredentials() {
   }
   const cards = config && [
     { key: 'google', title: 'YouTube / Google', icon: <SocialPlatformIcon platform="youtube" size={20} />, sub: 'Google Cloud OAuth Web application', idLabel: 'Client ID', idKey: 'youtubeOAuthClientId' as const, secretLabel: 'Client Secret', secretKey: 'youtubeOAuthClientSecret' as const, callbacks: [['Authorized redirect URI', config.callbacks.youtube]] },
-    { key: 'meta', title: 'Instagram / Facebook / WhatsApp', icon: <span className="flex gap-1"><SocialPlatformIcon platform="instagram" size={19} /><SocialPlatformIcon platform="facebook" size={19} /><SocialPlatformIcon platform="whatsapp" size={19} /></span>, sub: '三个平台共用一套 Meta App', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram], ['Facebook redirect URI', config.callbacks.facebook], ['WhatsApp Webhook Callback URL', config.metaWebhookUrl]] },
+    { key: 'meta', title: 'Instagram / Facebook / Messenger', icon: <span className="flex gap-1"><SocialPlatformIcon platform="instagram" size={19} /><SocialPlatformIcon platform="facebook" size={19} /><SocialPlatformIcon platform="messenger" size={19} /></span>, sub: '三个能力共用一套 Meta App', idLabel: 'App ID', idKey: 'metaSocialAppId' as const, secretLabel: 'App Secret', secretKey: 'metaSocialAppSecret' as const, callbacks: [['Instagram redirect URI', config.callbacks.instagram], ['Facebook redirect URI', config.callbacks.facebook], ['Messenger Webhook Callback URL', config.callbacks.messenger || config.metaWebhookUrl]] },
     { key: 'tiktok', title: 'TikTok', icon: <SocialPlatformIcon platform="tiktok" size={20} />, sub: 'Login Kit + Content Posting API', idLabel: 'Client Key', idKey: 'tiktokClientKey' as const, secretLabel: 'Client Secret', secretKey: 'tiktokClientSecret' as const, callbacks: [['Redirect URI', config.callbacks.tiktok]] },
   ];
   return <>
@@ -166,8 +164,7 @@ export default function UserSocialAppCredentials() {
           </div>
           <Field label={card.idLabel} value={form[card.idKey]} onChange={value => field(card.idKey, value)} />
           <Field secret label={card.secretLabel} value={form[card.secretKey]} saved={config?.apps[card.key as keyof Config['apps']]?.appSecretSet} onChange={value => field(card.secretKey, value)} />
-          {card.key === 'meta' && <Field secret label="WhatsApp Webhook Verify Token" value={form.metaWebhookVerifyToken} saved={config?.apps.meta?.webhookVerifyTokenSet} onChange={value => field('metaWebhookVerifyToken', value)} />}
-          {card.key === 'meta' && <Field label="Embedded Signup Config ID（连接 WhatsApp 时填写）" value={form.metaWhatsAppConfigId} onChange={value => field('metaWhatsAppConfigId', value)} />}
+          {card.key === 'meta' && <Field secret label="Messenger Webhook Verify Token" value={form.metaWebhookVerifyToken} saved={config?.apps.meta?.webhookVerifyTokenSet} onChange={value => field('metaWebhookVerifyToken', value)} />}
           {card.callbacks.map(([label, value]) => <Callback key={label} label={label} value={value} />)}
         </div>)}</div>
         <div className="flex justify-end"><button type="button" disabled={saving} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2.5 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-50">{saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}保存我的平台凭证</button></div>
@@ -193,73 +190,4 @@ export default function UserSocialAppCredentials() {
     </div>
   </div>}
   </>;
-}
-
-export function WhatsAppConnectionPanel() {
-  const [config, setConfig] = useState<Config | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-
-  async function load() {
-    setLoading(true);
-    setError('');
-    try {
-      const response = await fetch('/api/overseas/platform-integrations/oauth-config', { headers: authHeader() });
-      const data = await response.json().catch(() => ({})) as Config & { error?: string };
-      if (!response.ok) throw new Error(data.error || '读取 WhatsApp 配置失败');
-      setConfig(data);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '读取 WhatsApp 配置失败');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { void load(); }, []);
-  const meta = config?.apps.meta;
-  const connected = Boolean(meta?.phoneNumberId && meta?.accessTokenSet && meta?.status === 'active');
-
-  async function connect() {
-    setConnecting(true);
-    setMessage('');
-    setError('');
-    try {
-      const signupConfig = await getWhatsAppEmbeddedSignupConfig();
-      await startWhatsAppEmbeddedSignup(signupConfig);
-      setMessage('WhatsApp Business 已连接成功。');
-      await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'WhatsApp 授权没有完成');
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  return <section className="flex min-h-[360px] flex-col rounded-lg border border-border bg-white p-4 sm:p-5">
-    <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
-      <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent"><SocialPlatformIcon platform="whatsapp" size={24} /></div>
-        <div className="min-w-0"><h2 className="text-sm font-semibold text-text-primary">WhatsApp Business 一键授权</h2><p className="mt-1 text-xs leading-relaxed text-text-muted">连接后，客户发来的 WhatsApp 消息会自动进入“我的客户”。</p></div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <button type="button" onClick={() => void load()} disabled={loading} title="刷新" aria-label="刷新 WhatsApp 连接状态" className="rounded-md border border-border p-2 text-text-muted hover:bg-surface-2 disabled:opacity-50"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></button>
-        <button type="button" onClick={() => void connect()} disabled={connecting || loading} className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-dim disabled:opacity-50 sm:flex-none">
-          {connecting ? <Loader2 size={15} className="animate-spin" /> : <SocialPlatformIcon platform="whatsapp" size={17} />}{connected ? '重新连接' : '连接 WhatsApp'}
-        </button>
-      </div>
-    </div>
-    {message && <div role="status" className="mt-4 flex items-start gap-2 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs text-accent"><CheckCircle2 size={14} className="mt-0.5 shrink-0" /><span>{message}</span></div>}
-    {error && <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-red bg-red/5 px-3 py-2 text-xs text-red"><AlertCircle size={14} className="mt-0.5 shrink-0" /><span>{error}</span></div>}
-    {loading ? <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />正在读取 WhatsApp 状态...</div> : connected ? (
-      <div className="mt-auto border-y border-border py-4">
-        <div className="flex items-center gap-2"><CheckCircle2 size={18} className="text-accent" /><p className="text-sm font-semibold text-text-primary">WhatsApp Business 已连接</p></div>
-        <div className="mt-3 grid gap-2 text-xs text-text-secondary sm:grid-cols-2">
-          <div className="rounded-md bg-surface-2 px-3 py-2"><span className="block text-[10px] text-text-muted">号码</span>{meta?.waPublicNumber || '已完成授权'}</div>
-          <div className="rounded-md bg-surface-2 px-3 py-2"><span className="block text-[10px] text-text-muted">Phone Number ID</span><span className="break-all">{meta?.phoneNumberId}</span></div>
-        </div>
-      </div>
-    ) : <div className="mt-auto rounded-md border border-dashed border-border px-4 py-5 text-center"><SocialPlatformIcon platform="whatsapp" size={32} className="mx-auto mb-2 opacity-35" /><p className="text-sm font-medium text-text-secondary">还没有连接 WhatsApp Business</p><p className="mt-1 text-xs text-text-muted">请先在上方保存 Meta App 和 Embedded Signup Config ID。</p></div>}
-  </section>;
 }

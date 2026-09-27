@@ -43,7 +43,8 @@ assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES, []);
 assert.equal(resolvePage('socialWorkspace'), 'smartAssets');
 assert.equal(resolvePage('socialSetup'), 'smartAssets');
 assert.equal(resolvePage('socialPlanning'), 'smartAssets');
-assert.equal(resolvePage('socialAccounts'), 'socialMonitoring');
+assert.equal(resolvePage('socialAccounts'), 'digitalEmployees');
+assert.equal(resolvePage('wecomCustomerService'), 'conversion');
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');
 assert.equal(resolvePage('accountManagement'), 'socialMonitoring', 'the removed account settings surface forwards to account monitoring');

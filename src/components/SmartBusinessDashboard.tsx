@@ -17,8 +17,10 @@ import {
 import { digitalEmployeeApi, type DigitalEmployeeOverview, type DigitalEmployeeAgentRole } from "../lib/digitalEmployees";
 import { nextReviewWeek, type ReviewTodo, type ReviewTodoBoard } from "../lib/reviewTodos";
 import type { DeliveryResource } from "../lib/delivery";
+import SocialAccountStrategies from "./socialProgram/SocialAccountStrategies";
+import type { Page } from "../pageRegistry";
 
-export type SmartBusinessView = "home" | "queue" | "review";
+export type SmartBusinessView = "home" | "matrix" | "queue" | "review";
 
 type AgentCard = {
   role: Exclude<DigitalEmployeeAgentRole, "orchestrator">;
@@ -214,7 +216,8 @@ function ReviewView({ data }: { data: DigitalEmployeeOverview }) {
   </div>;
 }
 
-export default function SmartBusinessDashboard({ data, view, onRefresh }: { data: DigitalEmployeeOverview; view: SmartBusinessView; onRefresh?: () => void }) {
+export default function SmartBusinessDashboard({ data, view, onRefresh, onNavigate }: { data: DigitalEmployeeOverview; view: SmartBusinessView; onRefresh?: () => void; onNavigate?: (page: Page) => void }) {
+  if (view === "matrix") return <SocialAccountStrategies embedded onNavigate={onNavigate || (() => undefined)}/>;
   if (view === "queue") return <QueueView data={data}/>;
   if (view === "review") return <ReviewView data={data}/>;
   return <HomeView data={data} onRefresh={onRefresh}/>;

@@ -61,6 +61,26 @@ const platformValues = (value: unknown): SocialPlatform[] => unique(value, 8).fi
 ));
 const nowIso = () => new Date().toISOString();
 const versionedRef = (type: string, id: string, version: number): VersionedSocialRef => ({ type, id, version });
+const accountIdentity = (value: unknown) => text(value).replace(/^@/, '').toLowerCase().replace(/\s+/g, '');
+
+type ConnectedSocialAccount = {
+  id: string;
+  platform?: string;
+  providerAccountId?: string;
+  title?: string;
+  handle?: string;
+  status?: string;
+};
+
+function matchingConnection(account: OwnedSocialAccount, candidates: ConnectedSocialAccount[]): ConnectedSocialAccount | null {
+  const samePlatform = candidates.filter(candidate => candidate.platform === account.platform && candidate.status === 'connected');
+  if (!samePlatform.length) return null;
+  const identities = [account.handle, account.displayName].map(accountIdentity).filter(Boolean);
+  const exact = samePlatform.filter(candidate => [candidate.handle, candidate.title, candidate.providerAccountId]
+    .map(accountIdentity).some(candidateIdentity => identities.includes(candidateIdentity)));
+  if (exact.length === 1) return exact[0];
+  return samePlatform.length === 1 ? samePlatform[0] : null;
+}
 
 async function programRow(dataStore: DataStore, tenantId: string, programId: string): Promise<ProgramRow | null> {
   const result = await dataStore.list<ProgramRow>(PROGRAMS, {
@@ -184,7 +204,23 @@ export function createSocialProgramService(dataStore: DataStore) {
       const result = await dataStore.list<AccountRow>(ACCOUNTS, {
         where: { tenant_id: tenantId, program_id: programId }, sort: 'created_at', page: 1, perPage: 100,
       });
-      return result.items.map(row => row.payload);
+      const connected = await dataStore.list<ConnectedSocialAccount>('social_accounts', {
+        where: { tenantId, status: 'connected' }, page: 1, perPage: 200,
+      }).then(response => response.items).catch(() => []);
+      const resolved: OwnedSocialAccount[] = [];
+      for (const row of result.items) {
+        const connection = matchingConnection(row.payload, connected);
+        const connectionId = connection?.id || null;
+        const capabilities = connection
+          ? ['publish', 'read_metrics', ...(connection.platform === 'facebook' ? ['messenger'] : [])]
+          : [];
+        if (row.payload.connectionId !== connectionId || JSON.stringify(row.payload.connectionCapabilities) !== JSON.stringify(capabilities)) {
+          const next = { ...row.payload, connectionId, connectionCapabilities: capabilities, updatedAt: nowIso() };
+          await dataStore.update(ACCOUNTS, row.id, { payload: next, updated_at: next.updatedAt });
+          resolved.push(next);
+        } else resolved.push(row.payload);
+      }
+      return resolved;
     },
 
     async createAccount(tenantId: string, userId: string, programId: string, input: Record<string, unknown>): Promise<OwnedSocialAccount> {

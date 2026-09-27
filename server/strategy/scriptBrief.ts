@@ -126,11 +126,11 @@ export const DEFAULT_ROUTE_BUYER_ROLES: Record<CooperationRoute, string[]> = {
   consumer_retail: ['终端消费者'],
 };
 
-/** Applied only when WhatsApp has been configured and verified for the enterprise. */
+/** Applied only when Messenger has been configured and verified for the enterprise. */
 export const DEFAULT_ROUTE_PRIMARY_CTA: Record<CooperationRoute, string> = {
-  oem_odm: '引导跳转WhatsApp以触达',
-  wholesale_distribution: '引导跳转WhatsApp以触达',
-  consumer_retail: '引导跳转WhatsApp以触达',
+  oem_odm: '引导通过 Messenger 联系',
+  wholesale_distribution: '引导通过 Messenger 联系',
+  consumer_retail: '引导通过 Messenger 联系',
 };
 
 export type CooperationRouteResolution =

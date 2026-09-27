@@ -1,4 +1,3 @@
-import { requestProductionBack } from '../lib/productionNavigation';
 import FollowupTemplateEditor, { needsFollowupTemplate } from './FollowupTemplateEditor';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { useEffect, useState } from 'react';
@@ -65,7 +64,6 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-accent">Customer workflow</p>
         <h3 className="mt-1 text-base font-bold text-text-primary">{titles[taskKey] || '客户任务工作区'}</h3>
       </div>
-      <button type="button" className={secondaryButton} onClick={requestProductionBack}>返回上一页</button>
     </header>
 
     {(currentTask || workspace) && <div className="flex flex-wrap gap-x-5 gap-y-1 border-b border-border px-1 pb-3 text-xs text-text-secondary">

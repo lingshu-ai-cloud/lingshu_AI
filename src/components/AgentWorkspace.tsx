@@ -7,7 +7,7 @@ import { authHeader } from '../lib/auth';
 const AGENTS = [
   { type: 'strategy' as AgentType, name: '首页', desc: '经营总览、策略编排和关键动作拆解', icon: Compass, color: '#4f46e5', bg: 'rgba(79,70,229,0.08)', status: 'active' as const, recentActivity: '等待真实经营数据接入', stats: [{ label: '本周方案', value: '—' }, { label: '协调任务', value: '—' }, { label: '采纳率', value: '—' }] },
   { type: 'traffic' as AgentType, name: '我的社媒', desc: '竞品视频克隆、脚本生成、素材去重矩阵', icon: Zap, color: '#d97706', bg: 'rgba(217,119,6,0.08)', status: 'idle' as const, recentActivity: '等待社媒账号授权', stats: [{ label: '今日脚本', value: '—' }, { label: '覆盖平台', value: '—' }, { label: '去重命中', value: '—' }] },
-  { type: 'conversion' as AgentType, name: '我的客户', desc: '询盘筛选、自动回复、跟单建议和老客唤醒', icon: MessageSquare, color: '#0891b2', bg: 'rgba(8,145,178,0.08)', status: 'idle' as const, recentActivity: '等待 WhatsApp 客户接入', stats: [{ label: '今日询盘', value: '—' }, { label: '高意向', value: '—' }, { label: '待唤醒', value: '—' }] },
+  { type: 'conversion' as AgentType, name: '我的客户', desc: '询盘筛选、回复建议和客户跟进', icon: MessageSquare, color: '#0891b2', bg: 'rgba(8,145,178,0.08)', status: 'idle' as const, recentActivity: '等待 Messenger 客户接入', stats: [{ label: '今日询盘', value: '—' }, { label: '高意向', value: '—' }, { label: '待跟进', value: '—' }] },
 ];
 const SM = { active: { label: '运行中', color: '#16a34a' }, running: { label: '执行中', color: '#d97706' }, idle: { label: '待机', color: '#94a3b8' } };
 
@@ -95,7 +95,7 @@ function taskAction(task: ScheduledTask): string {
   if (task.taskType === 'holiday_push') return '扫描未来节日营销节点，生成推品、内容和客户触达动作。';
   if (task.taskType === 'exchange_rate') return '更新汇率报价提醒，辅助多币种询盘和大额报价有效期设置。';
   if (task.taskType === 'weekly_review') return '复盘本周经营数据，拆解下周流量、转化、留存行动。';
-  if (task.taskType === 'crm_wakeup') return '筛选沉默客户并生成 WhatsApp / 邮件唤醒批次。';
+  if (task.taskType === 'crm_wakeup') return '筛选沉默客户并生成 Messenger / 邮件跟进草稿。';
   return task.name;
 }
 

@@ -12,7 +12,7 @@ import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js
 
 export const platformIntegrationsRouter = Router();
 
-const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'whatsapp'] as const;
+const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'messenger'] as const;
 
 platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
@@ -29,6 +29,7 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
       youtube: `${origin}/api/overseas/youtube/oauth/callback`,
       instagram: `${origin}/api/overseas/social/oauth/instagram/callback`,
       facebook: `${origin}/api/overseas/social/oauth/facebook/callback`,
+      messenger: `${origin}/api/webhooks/meta/${tenantId}`,
       tiktok: `${origin}/api/overseas/social/oauth/tiktok/callback`,
     },
     metaWebhookUrl: publicMeta?.webhookUrl || '',
@@ -55,7 +56,6 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
       platform: 'meta' as const,
       appId: appId(req.body?.metaSocialAppId, existing[1]?.app_id),
       appSecret: text(req.body?.metaSocialAppSecret),
-      waConfigId: text(req.body?.metaWhatsAppConfigId),
       webhookVerifyToken: text(req.body?.metaWebhookVerifyToken),
     },
     { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[2]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
@@ -69,7 +69,7 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
       return;
     }
   }
-  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('waConfigId' in entry && entry.waConfigId) || ('webhookVerifyToken' in entry && entry.webhookVerifyToken)).map(entry => upsertTenantPlatformApp({
+  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('webhookVerifyToken' in entry && entry.webhookVerifyToken)).map(entry => upsertTenantPlatformApp({
     tenantId,
     ...entry,
   })));
@@ -105,9 +105,9 @@ platformIntegrationsRouter.get('/providers', (_req, res) => {
   res.json({
     providers: SUPPORTED.map(id => ({
       id,
-      oauth: ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube'].includes(id),
-      messaging: ['whatsapp'].includes(id),
-      implemented: false,
+      oauth: ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'messenger'].includes(id),
+      messaging: id === 'messenger',
+      implemented: id === 'messenger',
       owner: 'platform-integrations',
     })),
   });
@@ -123,7 +123,7 @@ platformIntegrationsRouter.get('/:provider/status', requireAuth, async (req, res
   const { provider } = req.params;
   if (!SUPPORTED.includes(provider as any)) { res.status(404).json({ error: 'unsupported_provider' }); return; }
   const { tenantId } = res.locals as AuthLocals;
-  const appPlatform = ['whatsapp', 'facebook', 'instagram'].includes(provider)
+  const appPlatform = ['messenger', 'facebook', 'instagram'].includes(provider)
     ? 'meta'
     : provider === 'youtube'
       ? 'google'

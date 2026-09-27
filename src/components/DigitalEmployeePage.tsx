@@ -1580,7 +1580,7 @@ function EventTimeline({
   );
 }
 
-type WorkspaceView = "today" | "overview" | "live" | "review" | "rules";
+type WorkspaceView = "today" | "matrix" | "overview" | "live" | "review" | "rules";
 type BusinessLine = "full_funnel" | "content_growth" | "customer_conversion";
 type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "youtube";
 
@@ -3269,7 +3269,7 @@ function BatchFollowupTruthPanel({
                 title={
                   manualSendAllowed
                     ? "发送当前已到期且通过预检的客户"
-                    : dispatchBlockedReason || "租户真实发送授权或 WhatsApp 渠道尚未就绪"
+                    : dispatchBlockedReason || "租户真实发送授权或 Messenger 渠道尚未就绪"
                 }
                 className="inline-flex items-center gap-1.5 rounded-xl bg-violet-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
               >
@@ -3748,9 +3748,10 @@ export default function DigitalEmployeePage({
     );
 
   if (data?.config) {
-    const dashboardView = workspaceView === "overview" ? "queue" : workspaceView === "review" ? "review" : "home";
-    const views: Array<{ id: "today" | "overview" | "review"; label: string; caption: string }> = [
+    const dashboardView = workspaceView === "matrix" ? "matrix" : workspaceView === "overview" ? "queue" : workspaceView === "review" ? "review" : "home";
+    const views: Array<{ id: "today" | "matrix" | "overview" | "review"; label: string; caption: string }> = [
       { id: "today", label: "经营总览", caption: "业绩与 Agent 实况" },
+      { id: "matrix", label: "账号矩阵", caption: "职责、策略与连接" },
       { id: "overview", label: "内容队列", caption: "进度、验收与成本" },
       { id: "review", label: "数据复盘", caption: "热度排行与下周待办" },
     ];
@@ -3769,7 +3770,7 @@ export default function DigitalEmployeePage({
           <main className="py-6">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} />}
+              : <SmartBusinessDashboard data={data} view={dashboardView} onRefresh={() => void load()} onNavigate={page => onNavigate?.(page === "socialInspiration" ? "socialInspiration" : "smartAssets")} />}
           </main>
         </div>
       </div>

@@ -100,8 +100,9 @@ export function isPage(value: unknown): value is Page {
 export function resolvePage(value: unknown): Page | null {
   if (!isPage(value)) return null;
   if (value === 'socialWorkspace' || value === 'socialSetup' || value === 'socialPlanning') return 'smartAssets';
-  if (value === 'socialAccounts') return 'socialMonitoring';
+  if (value === 'socialAccounts') return 'digitalEmployees';
   if (value === 'retention') return 'conversion';
+  if (value === 'wecomCustomerService') return 'conversion';
   if (value === 'accountManagement') return 'socialMonitoring';
   return value;
 }

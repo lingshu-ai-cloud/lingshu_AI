@@ -1,5 +1,6 @@
 export type CustomerSource =
   | 'whatsapp'
+  | 'messenger'
   | 'facebook'
   | 'instagram'
   | 'tiktok'
@@ -11,7 +12,7 @@ export type CustomerSource =
   | string;
 export type CustomerStage = 'lead' | 'inquiry' | 'quoted' | 'won' | 'silent30' | 'silent60';
 export type HandlingMode = 'ai_auto' | 'ai_draft' | 'human_needed';
-export type TimelineType = 'whatsapp' | 'call' | 'note' | 'quote' | 'task' | 'system';
+export type TimelineType = 'whatsapp' | 'messenger' | 'call' | 'note' | 'quote' | 'task' | 'system';
 export type AutonomyLevel = 'remind' | 'draft' | 'auto';
 
 export type AuthenticityBand = 'verified' | 'reduced' | 'suspected_scraping';
@@ -151,6 +152,8 @@ export interface CustomerProfile {
   isMock?: boolean;
   simulation?: CustomerSimulationScenario;
   waNumber?: string;
+  messengerUserId?: string;
+  pageId?: string;
   newProductMatch?: boolean;
   blockedAutoReplyReason?: string;
   pendingDraft?: string;

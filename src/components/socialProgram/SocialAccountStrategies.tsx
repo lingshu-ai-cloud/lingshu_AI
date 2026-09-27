@@ -10,7 +10,7 @@ const PLATFORM_LABELS: Record<SocialPlatform, string> = {
   douyin: '抖音', xiaohongshu: '小红书', other: '其他',
 };
 
-export default function SocialAccountStrategies({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export default function SocialAccountStrategies({ onNavigate, embedded = false }: { onNavigate: (page: Page) => void; embedded?: boolean }) {
   const {
     available, activeProgram, accounts, accountsLoading, accountsError, mutating,
     createAccount, refreshAccounts, updateActiveProgram,
@@ -44,16 +44,17 @@ export default function SocialAccountStrategies({ onNavigate }: { onNavigate: (p
     } catch { /* context shows the server error */ }
   };
 
-  if (!available) return null;
+  if (!available && !embedded) return null;
 
   if (!activeProgram) {
-    return <SocialProgramPageFrame title="账号矩阵" description="为真实账号分配职责。" currentPage="socialAccounts" onNavigate={onNavigate}><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><Users size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">上一步：项目方向</button></section></SocialProgramPageFrame>;
+    return <SocialProgramPageFrame embedded={embedded} title="账号矩阵" description="为真实账号分配职责。" currentPage="socialAccounts" onNavigate={onNavigate}><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><Users size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">开始创建经营项目</button></section></SocialProgramPageFrame>;
   }
 
   return (
     <SocialProgramPageFrame
+      embedded={embedded}
       title="账号经营策略"
-      description="账号定义与平台授权分开保存；这里不会把候选平台伪装成已连接账号。"
+      description="统一管理账号职责、内容方向与平台连接状态。"
       currentPage="socialAccounts"
       onNavigate={onNavigate}
       action={<button type="button" onClick={() => setShowCreate(value => !value)} className="btn-primary inline-flex items-center gap-2"><Plus size={15} />新增账号</button>}

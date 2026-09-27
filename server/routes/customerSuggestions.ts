@@ -6,8 +6,8 @@ import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
 import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence } from '../knowledge/strategyRetrieve.js';
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
-import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
-import { sendTenantWhatsAppTemplateWithReceipt, sendTenantWhatsAppTextWithReceipts } from '../whatsapp/send.js';
+import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
+import { getMessengerCustomers, patchMessengerCustomer, sendTenantMessengerText } from '../messenger/conversations.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
@@ -15,37 +15,6 @@ export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
 
 const manualActiveUntil = new Map<string, number>();
-
-const MESSAGE_TEMPLATES = [
-  {
-    name: 'greeting_opener',
-    label: '问候开场',
-    status: process.env.WHATSAPP_TEMPLATE_STATUS || 'pending',
-    body: 'Hi {{1}}, this is {{2}}. We can support wholesale supply for {{3}}. May I know your target quantity?',
-  },
-  {
-    name: 'product_update',
-    label: '新品通知',
-    status: process.env.WHATSAPP_TEMPLATE_STATUS || 'pending',
-    body: 'Hi {{1}}, we recently updated {{2}}. I can send you the latest catalog and wholesale offer.',
-  },
-  {
-    name: 'order_followup',
-    label: '订单跟进',
-    status: process.env.WHATSAPP_TEMPLATE_STATUS || 'pending',
-    body: 'Hi {{1}}, following up on your {{2}} order. We can confirm {{3}} for you today.',
-  },
-] as const;
-
-function isTemplateApproved(templateName: string) {
-  return MESSAGE_TEMPLATES.some(template => template.name === templateName && template.status === 'approved');
-}
-
-function renderTemplate(templateName: string, variables: string[]) {
-  const template = MESSAGE_TEMPLATES.find(item => item.name === templateName);
-  if (!template) return '';
-  return template.body.replace(/\{\{(\d+)}}/g, (_, index) => variables[Number(index) - 1] || '');
-}
 
 async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: string, finalBody: string) {
   const memory = req.body?.styleMemory;
@@ -72,19 +41,15 @@ async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: st
 customerSuggestionsRouter.get('/', requireAuth, (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const source = String(req.query.source || '');
-  if (source && source !== 'whatsapp') {
+  if (source && source !== 'messenger') {
     res.json({ items: [], source });
     return;
   }
-  res.json({ items: getWhatsAppCustomers(tenantId), source: 'whatsapp', importStatus: getWhatsAppImportStatus() });
-});
-
-customerSuggestionsRouter.get('/whatsapp/import-status', (_req, res) => {
-  res.json(getWhatsAppImportStatus());
+  res.json({ items: getMessengerCustomers(tenantId), source: 'messenger' });
 });
 
 customerSuggestionsRouter.get('/templates', (_req, res) => {
-  res.json({ items: MESSAGE_TEMPLATES });
+  res.json({ items: [] });
 });
 
 customerSuggestionsRouter.get('/knowledge-misses/briefing', async (_req, res) => {
@@ -127,11 +92,7 @@ customerSuggestionsRouter.patch('/:id', (req, res) => {
   if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'orders')) {
     res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
   }
-  const customer = patchWhatsAppCustomer({
-    tenantId,
-    customerId,
-    patch: req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {},
-  });
+  const customer = patchMessengerCustomer(tenantId, customerId, req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {});
   if (!customer) {
     res.status(404).json({ error: 'customer_not_found' });
     return;
@@ -147,7 +108,10 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
     res.status(400).json({ error: 'customer_id_and_post_id_required' });
     return;
   }
-  const customer = await confirmCustomerSourceAttribution({ tenantId, customerId, postId });
+  const customer = patchMessengerCustomer(tenantId, customerId, {
+    sourcePostId: postId,
+    sourcePostPlatform: 'facebook',
+  });
   if (!customer) {
     res.status(404).json({ error: 'attribution_candidate_not_found' });
     return;
@@ -166,14 +130,8 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   const body = String(req.body?.body || '').trim();
-  const mode = String(req.body?.mode || 'free_text');
-  const to = String(req.body?.to || '').trim();
   if (!customerId || !body) {
     res.status(400).json({ error: 'customer_id_and_body_required' });
-    return;
-  }
-  if (!to) {
-    res.status(400).json({ error: 'whatsapp_recipient_required', message: 'WhatsApp recipient is missing.' });
     return;
   }
   if (req.body?.auto === true) {
@@ -184,44 +142,8 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       return;
     }
   }
-  if (mode === 'free_text' && req.body?.outsideWindow) {
-    res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过24小时，请使用模板消息发送。' });
-    return;
-  }
-  if (mode === 'template') {
-    const templateName = String(req.body?.templateName || '').trim();
-    const variables = Array.isArray(req.body?.variables) ? req.body.variables.map((item: unknown) => String(item || '')) : [];
-    if (!isTemplateApproved(templateName)) {
-      res.status(409).json({ error: 'template_pending', message: '消息模板审核中，暂时不能发送超窗触达。' });
-      return;
-    }
-    try {
-      const receipt = await sendTenantWhatsAppTemplateWithReceipt({
-        tenantId,
-        to,
-        templateName,
-        variables,
-        languageCode: String(req.body?.languageCode || 'en_US'),
-      });
-      if (!receipt.messageId) throw new Error('whatsapp_provider_message_id_missing');
-      const renderedBody = renderTemplate(templateName, variables) || body;
-      markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to, providerReceipts: [receipt] });
-      await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
-      res.json({
-        ok: true,
-        outboxId: receipt.messageId,
-        providerMessageIds: [receipt.messageId],
-        status: 'sent',
-        sentAt: new Date().toISOString(),
-        renderedBody,
-      });
-    } catch (error) {
-      res.status(502).json({
-        error: 'whatsapp_send_failed',
-        message: error instanceof Error ? error.message : 'WhatsApp send failed',
-      });
-      return;
-    }
+  if (req.body?.outsideWindow) {
+    res.status(409).json({ error: 'messenger_window_closed', message: '距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。' });
     return;
   }
   const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
@@ -231,30 +153,22 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
       return;
     }
   }
-  let sentMessages: string[] = [];
-  let providerReceipts: Array<{ messageId: string; recipientId: string; raw: Record<string, unknown> }> = [];
   try {
-    const delivered = await sendTenantWhatsAppTextWithReceipts(tenantId, to, body);
-    if (!delivered.receipts.length || delivered.receipts.some(receipt => !receipt.messageId)) throw new Error('whatsapp_provider_message_id_missing');
-    sentMessages = delivered.messages;
-    providerReceipts = delivered.receipts;
+    const receipt = await sendTenantMessengerText({ tenantId, customerId, body });
+    await maybeRecordStyleMemory(req, tenantId, customerId, body);
+    res.json({
+      ok: true,
+      outboxId: receipt.messageId,
+      providerMessageIds: [receipt.messageId],
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+    });
   } catch (error) {
     res.status(502).json({
-      error: 'whatsapp_send_failed',
-      message: error instanceof Error ? error.message : 'WhatsApp send failed',
+      error: 'messenger_send_failed',
+      message: error instanceof Error ? error.message : 'Messenger send failed',
     });
-    return;
   }
-  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to, providerReceipts });
-  await maybeRecordStyleMemory(req, tenantId, customerId, body);
-  res.json({
-    ok: true,
-    outboxId: providerReceipts[0]?.messageId,
-    providerMessageIds: providerReceipts.map(receipt => receipt.messageId),
-    status: 'sent',
-    sentAt: new Date().toISOString(),
-    messages: sentMessages,
-  });
 });
 
 interface CustomerHint {
@@ -267,24 +181,24 @@ interface CustomerHint {
 
 const SYSTEM_PROMPT = `你是灵枢 AI「我的客户」里的转化助手。
 请返回 2 到 3 条给中国商家看的主动建议。
-每条建议一句话，动作明确，可以继续转成 WhatsApp 回复草稿。
+每条建议一句话，动作明确，可以继续转成 Messenger 回复草稿。
 不要写完整的客户回复，不要编号、Markdown 或解释。`;
 
 customerSuggestionsRouter.get('/:id/suggestions', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!customerServicePolicy(await readTenantEnterpriseProfile(tenantId)).enabled) {
-    res.status(409).json({ items: [], error: 'customer_service_disabled', message: '请先开启智能客服。' });
+    res.status(409).json({ items: [], error: 'conversation_suggestions_disabled', message: '请先在 Agent 设置中开启会话建议。' });
     return;
   }
   const id = String(req.params.id ?? '');
-  const customer = getWhatsAppCustomers(tenantId).find(item => item.id === id);
+  const customer = getMessengerCustomers(tenantId).find(item => item.id === id);
   if (!customer) {
     res.status(404).json({ items: [], error: 'customer_not_found' });
     return;
   }
   const customerTimeline = Array.isArray(customer.timeline) ? customer.timeline.slice(-8) : [];
   const hint: CustomerHint = {
-    name: String(customer.name || customer.waNumber || '客户'),
+    name: String(customer.name || customer.messengerUserId || '客户'),
     stage: String(customer.stage || 'inquiry'),
     intentScore: Number(customer.intentScore || 0),
     product: String(customer.outboundProduct || customer.product || ''),

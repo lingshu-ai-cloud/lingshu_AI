@@ -21,7 +21,7 @@ import { ChannelOverview } from './YouTubeIntegration';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 
-type ActivityTab = 'overview' | 'comments' | 'inquiries';
+type ActivityTab = 'overview' | 'comments';
 type CommentFilter = 'all' | 'high' | 'pending' | 'following' | 'converted' | 'ignored';
 type CommentStatus = 'pending' | 'following' | 'converted' | 'ignored' | 'replied';
 
@@ -57,26 +57,11 @@ type AccountOption = {
   status: string;
 };
 
-type InteractionItem = {
-  id: string;
-  kind: 'comment' | 'direct_message' | 'form' | 'inquiry';
-  platform: string;
-  accountId: string;
-  contentId?: string;
-  body: string;
-  occurredAt: string;
-  entryRef?: string;
-  qualificationFields?: Record<string, unknown>;
-  source_confidence: 'confirmed' | 'unknown';
-  qualification_status: 'candidate' | 'qualified' | 'disqualified';
-};
-
 const PLATFORM_OPTIONS: SocialComment['platform'][] = ['YouTube', 'TikTok', 'Instagram', 'Facebook'];
 
 const TAB_ITEMS: Array<{ id: ActivityTab; label: string }> = [
   { id: 'overview', label: '数据概览' },
   { id: 'comments', label: '评论管理' },
-  { id: 'inquiries', label: '询盘与资格' },
 ];
 
 const FILTERS: Array<{ id: CommentFilter; label: string }> = [
@@ -84,14 +69,14 @@ const FILTERS: Array<{ id: CommentFilter; label: string }> = [
   { id: 'high', label: '高意向' },
   { id: 'pending', label: '待回复' },
   { id: 'following', label: '跟进中' },
-  { id: 'converted', label: '已引导 WhatsApp' },
+  { id: 'converted', label: '已引导私信' },
   { id: 'ignored', label: '已忽略' },
 ];
 
 const statusLabel: Record<CommentStatus, string> = {
   pending: '待回复',
   following: '跟进中',
-  converted: '已引导 WhatsApp',
+  converted: '已引导私信',
   ignored: '已忽略',
   replied: '已回复',
 };
@@ -117,8 +102,6 @@ export default function AccountActivity() {
   const [accountOptions, setAccountOptions] = useState<AccountOption[]>([]);
   const [selectedPlatforms, setSelectedPlatforms] = useState<SocialComment['platform'][]>([]);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
-  const [interactions, setInteractions] = useState<InteractionItem[]>([]);
-  const [qualificationReasons, setQualificationReasons] = useState<Record<string, string>>({});
 
   const api = async (url: string, init?: RequestInit) => {
     const response = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...authHeader(), ...(init?.headers || {}) } });
@@ -201,33 +184,7 @@ export default function AccountActivity() {
     finally { setLoading(false); }
   };
 
-  const loadInteractions = async () => {
-    setLoading(true); setNotice('');
-    try {
-      const data = await api('/api/overseas/social-engagement/interactions');
-      const next = (Array.isArray(data.items) ? data.items : []).filter((item: InteractionItem) => item.kind !== 'comment');
-      setInteractions(next);
-      setNotice(next.length ? `已读取 ${next.length} 条私信、表单或询盘回写。` : '暂无已回写的私信、表单或询盘。');
-    } catch (error) { setNotice(error instanceof Error ? error.message : '询盘读取失败'); }
-    finally { setLoading(false); }
-  };
-
-  const qualifyInteraction = async (item: InteractionItem, status: 'qualified' | 'disqualified') => {
-    const reason = String(qualificationReasons[item.id] || '').trim();
-    if (!reason) { setNotice('请先填写销售确认依据。'); return; }
-    setActing(true); setNotice('');
-    try {
-      await api(`/api/overseas/social-engagement/inquiries/${encodeURIComponent(item.id)}/qualification`, {
-        method: 'POST', body: JSON.stringify({ status, authority: 'sales', reason }),
-      });
-      setInteractions(current => current.map(row => row.id === item.id ? { ...row, qualification_status: status } : row));
-      setNotice(status === 'qualified' ? '已由销售确认为有效询盘。' : '已由销售标记为无效询盘。');
-    } catch (error) { setNotice(error instanceof Error ? error.message : '销售资格回写失败'); }
-    finally { setActing(false); }
-  };
-
   useEffect(() => { if (tab === 'comments' && !comments.length) void loadComments(); }, [tab]);
-  useEffect(() => { if (tab === 'inquiries' && !interactions.length) void loadInteractions(); }, [tab]);
 
   const scopedComments = useMemo(() => comments.filter(comment => {
     if (selectedPlatforms.length && !selectedPlatforms.includes(comment.platform)) return false;
@@ -331,19 +288,6 @@ export default function AccountActivity() {
       )}
 
       {tab === 'overview' && <div className="px-4 py-5 sm:px-6"><ChannelOverview /></div>}
-
-      {tab === 'inquiries' && <div className="px-4 py-5 sm:px-6">
-        <div className="mx-auto max-w-5xl space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4"><div><h2 className="text-base font-black text-text-primary">忠实回写的询盘</h2><p className="mt-1 text-xs leading-5 text-text-muted">内容来源无法可靠识别时保留为未知；只有销售或可信 CRM 确认后才进入有效询盘指标。</p></div><button type="button" onClick={() => void loadInteractions()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-bold text-text-secondary disabled:opacity-50"><RefreshCw size={13} className={loading ? 'animate-spin' : ''}/>刷新</button></div>
-          {interactions.map(item => <article key={item.id} className="rounded-md border border-border bg-white p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-bold text-text-primary">{item.platform} · {item.kind === 'direct_message' ? '私信' : item.kind === 'form' ? '表单' : '询盘'}</span><span className={`rounded-sm px-2 py-1 text-[10px] font-bold ${item.qualification_status === 'qualified' ? 'bg-emerald-50 text-emerald-700' : item.qualification_status === 'disqualified' ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>{item.qualification_status === 'qualified' ? '销售已确认' : item.qualification_status === 'disqualified' ? '已排除' : '待销售确认'}</span></div>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{item.body}</p>
-            <div className="mt-3 grid gap-2 text-[11px] text-text-muted sm:grid-cols-3"><span>账号：{item.accountId}</span><span>内容：{item.contentId || '未知来源'}</span><span>时间：{item.occurredAt ? new Date(item.occurredAt).toLocaleString('zh-CN') : '未知'}</span></div>
-            <div className="mt-4 flex flex-col gap-2 border-t border-border pt-4 sm:flex-row"><input value={qualificationReasons[item.id] || ''} onChange={event => setQualificationReasons(current => ({ ...current, [item.id]: event.target.value }))} placeholder="填写销售确认依据（必填）" className="ui-field flex-1 !min-h-9 !py-2 !text-xs"/><button type="button" disabled={acting} onClick={() => void qualifyInteraction(item, 'qualified')} className="rounded-md bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50">确认有效</button><button type="button" disabled={acting} onClick={() => void qualifyInteraction(item, 'disqualified')} className="rounded-md border border-border px-3 py-2 text-xs font-bold text-text-secondary disabled:opacity-50">标记无效</button></div>
-          </article>)}
-          {!loading && !interactions.length && <div className="rounded-md border border-dashed border-border bg-white px-5 py-12 text-center text-sm text-text-muted">尚无可处理询盘；未知来源记录也会在此保留。</div>}
-        </div>
-      </div>}
 
       {tab === 'comments' && (
         <div className="min-h-[620px]">
@@ -480,7 +424,7 @@ export default function AccountActivity() {
                     <button type="button" onClick={() => setStatus(selected.id, 'ignored')} className="text-xs font-bold text-text-muted hover:text-text-secondary">忽略评论</button>
                     <div className="flex gap-2">
                       <button type="button" onClick={() => setStatus(selected.id, 'following')} className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-bold text-text-secondary"><MessageCircle size={14} /> 标记跟进</button>
-                      <span className="inline-flex items-center rounded-md border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-text-muted">加 WhatsApp 后自动进入客户</span>
+                      <span className="inline-flex items-center rounded-md border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-text-muted">Messenger 私信后自动进入我的会话</span>
                       <button type="button" onClick={() => void sendReplies()} disabled={acting || !replyText.trim()} className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-50"><Send size={14} /> {acting ? '批量发送中' : `一键回复 ${selectedComments.length} 条`}</button>
                     </div>
                   </div>

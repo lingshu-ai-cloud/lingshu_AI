@@ -1,6 +1,7 @@
 import { useState } from "react";
 import SmartBusinessDashboard, { type SmartBusinessView } from "../components/SmartBusinessDashboard";
 import type { DigitalEmployeeOverview } from "../lib/digitalEmployees";
+import { SocialProgramProvider } from "../contexts/SocialProgramContext";
 
 const mockOverview = {
   config: {}, goals: [], goal: null, plan: null, run: null, approvals: [], handoffs: [], review: null,
@@ -31,9 +32,9 @@ const mockOverview = {
   },
 } as unknown as DigitalEmployeeOverview;
 
-const tabs: Array<[SmartBusinessView,string]> = [["home","经营总览"],["queue","内容队列"],["review","数据复盘"]];
+const tabs: Array<[SmartBusinessView,string]> = [["home","经营总览"],["matrix","账号矩阵"],["queue","内容队列"],["review","数据复盘"]];
 
 export default function SmartBusinessPreview() {
   const [view,setView]=useState<SmartBusinessView>("home");
-  return <main className="min-h-screen bg-[#f7f8f6] p-4 sm:p-7"><div className="mx-auto max-w-[1450px]"><header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold tracking-[.2em] text-emerald-700">ALWAYS ON</p><h1 className="mt-1 text-3xl font-black text-slate-950">智能经营</h1></div><span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-slate-400">本地 UI 预览</span></header><nav className="mt-6 flex gap-7 border-b border-slate-200">{tabs.map(([id,label])=><button key={id} onClick={()=>setView(id)} className={`border-b-2 pb-3 text-sm font-black ${view===id?'border-emerald-700 text-emerald-800':'border-transparent text-slate-400'}`}>{label}</button>)}</nav><section className="py-6"><SmartBusinessDashboard data={mockOverview} view={view}/></section></div></main>;
+  return <SocialProgramProvider scope="smart-business-preview" enabled={false}><main className="min-h-screen bg-[#f7f8f6] p-4 sm:p-7"><div className="mx-auto max-w-[1450px]"><header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold tracking-[.2em] text-emerald-700">ALWAYS ON</p><h1 className="mt-1 text-3xl font-black text-slate-950">智能经营</h1></div><span className="rounded-full bg-white px-3 py-1.5 text-[10px] font-bold text-slate-400">本地 UI 预览</span></header><nav className="mt-6 flex gap-7 border-b border-slate-200">{tabs.map(([id,label])=><button key={id} onClick={()=>setView(id)} className={`border-b-2 pb-3 text-sm font-black ${view===id?'border-emerald-700 text-emerald-800':'border-transparent text-slate-400'}`}>{label}</button>)}</nav><section className="py-6"><SmartBusinessDashboard data={mockOverview} view={view}/></section></div></main></SocialProgramProvider>;
 }

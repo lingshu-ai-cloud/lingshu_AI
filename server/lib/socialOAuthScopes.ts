@@ -22,7 +22,11 @@ export function metaOAuthScopes(
   env: ScopeEnvironment = process.env,
 ): string[] {
   const scopes = new Set(['pages_show_list', 'pages_read_engagement']);
-  if (platform === 'facebook' || platform === 'combined') scopes.add('pages_manage_posts');
+  if (platform === 'facebook' || platform === 'combined') {
+    scopes.add('pages_manage_posts');
+    scopes.add('pages_messaging');
+    scopes.add('pages_manage_metadata');
+  }
   if (platform === 'instagram' || platform === 'combined') {
     scopes.add('instagram_basic');
     scopes.add('instagram_content_publish');

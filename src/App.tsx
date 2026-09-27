@@ -28,7 +28,6 @@ import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isA
 const PlatformAdsPage = lazy(() => import('./components/PlatformAdsPage'));
 const StrategyPage = lazy(() => import('./components/StrategyPage'));
 const TrafficPage = lazy(() => import('./components/TrafficPage'));
-const WeComCustomerServicePage = lazy(() => import('./components/WeComCustomerServicePage'));
 const ConversionPage = lazy(() => import('./components/ConversionPage'));
 const OrderManagementPage = lazy(() => import('./components/OrderManagementPage'));
 const EnterprisePage = lazy(() => import('./components/EnterprisePage'));
@@ -593,7 +592,6 @@ export default function App() {
         />}
       </Suspense>
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
-      {!isAgentProductionSession() && page !== 'agentMonitor' && window.history.state?.productionDepth > 0 && <button type="button" onClick={requestProductionBack} className="shrink-0 border-b bg-white px-5 py-2 text-left text-sm font-semibold text-blue-700">← 返回上一页</button>}
       {starterMode && isSocialTaskContextPage(page) && (
         <Suspense fallback={null}>
           <SocialTaskContextBar
@@ -728,7 +726,6 @@ export default function App() {
               mockCustomerScope={session.user.email || session.user.id || session.tenant?.id || 'admin'}
             />
           )}
-          {page === 'wecomCustomerService' && <WeComCustomerServicePage />}
           {page === 'orders' && <OrderManagementPage />}
           {page === 'enterprise' && <EnterprisePage />}
           {page === 'agentMemory' && (

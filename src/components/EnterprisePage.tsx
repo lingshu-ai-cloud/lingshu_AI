@@ -1689,7 +1689,7 @@ export default function EnterprisePage() {
       <div className="mb-4 rounded-xl border border-border bg-surface-2/60 p-3">
         <p className="text-xs font-black text-text-primary">承接渠道</p>
         <p className="mt-1 text-[11px] text-text-muted">状态仅从账号连接或官网配置同步，此处不可手动修改。</p>
-        <div className="mt-2 flex flex-wrap gap-2">{['WhatsApp', '表单', '私信', '官网'].map(channel => <span key={channel} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-500">{channel} · 未验证</span>)}</div>
+        <div className="mt-2 flex flex-wrap gap-2">{['Messenger', '表单', '私信', '官网'].map(channel => <span key={channel} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-500">{channel} · 未验证</span>)}</div>
       </div>
       <div className="space-y-3">
         {COOPERATION_ROUTE_OPTIONS.map(option => {
@@ -1701,14 +1701,14 @@ export default function EnterprisePage() {
                 const current = prev.socialStrategy ?? DEFAULT.socialStrategy!;
                 const enabledRoutes = event.target.checked ? [...current.enabledRoutes, option.value] : current.enabledRoutes.filter(value => value !== option.value);
                 const routeStrategies = { ...current.routeStrategies };
-                if (event.target.checked && !routeStrategies[option.value]) routeStrategies[option.value] = { targetBuyerRoles: option.buyers, primaryCta: '引导跳转WhatsApp以触达' };
+                if (event.target.checked && !routeStrategies[option.value]) routeStrategies[option.value] = { targetBuyerRoles: option.buyers, primaryCta: '引导通过 Messenger 联系' };
                 return { ...prev, socialStrategy: { ...current, enabledRoutes, routeStrategies } };
               })} />
               {option.label}
             </label>
             {selected && <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <Field label="默认买家（顺序即优先级）"><input className={inputCls} value={(route?.targetBuyerRoles ?? option.buyers).join('、')} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: splitTokens(event.target.value), primaryCta: route?.primaryCta ?? '引导跳转WhatsApp以触达' } } } }))} /></Field>
-              <Field label="默认主 CTA"><input className={inputCls} value={route?.primaryCta ?? '引导跳转WhatsApp以触达'} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: route?.targetBuyerRoles ?? option.buyers, primaryCta: event.target.value } } } }))} /></Field>
+              <Field label="默认买家（顺序即优先级）"><input className={inputCls} value={(route?.targetBuyerRoles ?? option.buyers).join('、')} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: splitTokens(event.target.value), primaryCta: route?.primaryCta ?? '引导通过 Messenger 联系' } } } }))} /></Field>
+              <Field label="默认主 CTA"><input className={inputCls} value={route?.primaryCta ?? '引导通过 Messenger 联系'} onChange={event => setProfile(prev => ({ ...prev, socialStrategy: { ...(prev.socialStrategy ?? DEFAULT.socialStrategy!), routeStrategies: { ...(prev.socialStrategy?.routeStrategies ?? {}), [option.value]: { targetBuyerRoles: route?.targetBuyerRoles ?? option.buyers, primaryCta: event.target.value } } } }))} /></Field>
             </div>}
           </div>;
         })}

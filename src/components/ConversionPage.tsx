@@ -1,5 +1,4 @@
 import { sortCustomersByLatestMessage } from '../lib/customerRecency';
-import { requestProductionBack } from '../lib/productionNavigation';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import CustomerWorkflowPanel from './CustomerWorkflowPanel';
 import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
@@ -184,7 +183,7 @@ function replyLanguage(customer: CustomerProfile): string {
 }
 
 function latestBuyerMessage(customer: CustomerProfile): string {
-  return [...customer.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer')?.body || '';
+  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer')?.body || '';
 }
 
 function inferMessageLanguage(text: string): 'Arabic' | 'Spanish' | 'English' | null {
@@ -210,7 +209,7 @@ function fallbackConversationPhase(customer: CustomerProfile): 'first_contact' |
   if (latestBuyerIndex < 0) return 'first_contact';
   const previousSeller = [...customer.timeline.slice(0, latestBuyerIndex)]
     .reverse()
-    .find(event => event.type === 'whatsapp' && (event.actor === 'seller' || event.actor === 'ai'));
+    .find(event => (event.type === 'messenger' || event.type === 'whatsapp') && (event.actor === 'seller' || event.actor === 'ai'));
   if (!previousSeller) return 'first_contact';
   const latestBuyerAt = Number(customer.timeline[latestBuyerIndex]?.timestamp);
   const previousSellerAt = Number(previousSeller.timestamp);
@@ -322,7 +321,7 @@ async function translateReplyToCustomerLanguage(customer: CustomerProfile, text:
 }
 
 function latestBuyerText(customer: CustomerProfile): string {
-  return [...customer.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer')?.body || '';
+  return [...customer.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer')?.body || '';
 }
 
 function isWaitingForHumanQuote(customer: CustomerProfile): boolean {
@@ -881,8 +880,7 @@ function ChatThread({
   const [mockInput, setMockInput] = useState('');
   const composerState = draftSuggestion ? 'draft' : input.trim() ? 'typing' : 'idle';
   const isOutsideWindow = customer ? timelineEventAgeHours(lastBuyerEvent(customer)) > 24 : false;
-  const templatePlan = customer && draftSuggestion ? buildTemplatePlan(customer, templates, draftSuggestion) : null;
-  const typedTemplatePlan = customer && input.trim() ? buildTemplatePlan(customer, templates, input) : null;
+  const templatePlan = null;
   const chips = customer && composerState === 'idle' ? sceneChips(customer) : [];
   useDismissibleLayer(emojiOpen, emojiMenuRef, () => setEmojiOpen(false));
 
@@ -974,7 +972,7 @@ function ChatThread({
             </form>
           )}
           {customer.timeline.map(event => {
-            if (event.type !== 'whatsapp') {
+            if (event.type !== 'messenger' && event.type !== 'whatsapp') {
               return (
                 <div key={event.id} className="flex justify-center">
                   <div className="max-w-[90%] rounded-md border border-border bg-surface px-3 py-2 text-center sm:max-w-[82%]">
@@ -1030,14 +1028,14 @@ function ChatThread({
           {draftSuggestion && (
             <>
               <SalesDecisionEvidence meta={draftMeta} />
-              <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={isOutsideWindow} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+              <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
             </>
           )}
         </div>
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
-          {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{'\u8ddd\u5ba2\u6237\u4e0a\u6b21\u6d88\u606f\u5df2\u8d85\u8fc724\u5c0f\u65f6\uff0cWhatsApp \u8981\u6c42\u4ee5\u6a21\u677f\u6d88\u606f\u53d1\u9001'}</div>}
+          {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-accent/30 hover:bg-accent-glow hover:text-accent"><Sparkles size={13} /> {chip.label}</button>)}
@@ -1048,12 +1046,6 @@ function ChatThread({
               <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
                 <span className="font-black text-text-primary">目标语言译文（{customer.language}）：</span>
                 {translationLoading ? '翻译中…' : translatedInput || '请输入中文内容后查看译文'}
-              </div>
-            )}
-            {isOutsideWindow && typedTemplatePlan && input.trim() && (
-              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
-                <span className="font-black">{'\u5c06\u4f7f\u7528\u6a21\u677f\uff1a'}</span>{typedTemplatePlan.template.label}
-                <div className="mt-1">{typedTemplatePlan.template.status === 'approved' ? '\u6a21\u677f\u5df2\u901a\u8fc7\uff0c\u53ef\u53d1\u9001' : '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d\uff0c\u6682\u4e0d\u80fd\u53d1\u9001'}</div>
               </div>
             )}
             <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder="输入中文回复…" className="max-h-24 w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-text-primary outline-none shadow-none placeholder:text-text-muted focus:border-0 focus:shadow-none" />
@@ -1091,7 +1083,7 @@ function ChatThread({
                 </button>
               </div>
                <button type="button" onClick={() => onSaveDraft(input)} disabled={savingDraft || !input.trim()} className="shrink-0 rounded-lg border border-border px-2 py-2 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存草稿'}</button>
-               <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || (isOutsideWindow && typedTemplatePlan?.template.status !== 'approved')} className="flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '\u53d1\u9001\u6a21\u677f' : '\u53d1\u9001'}</button>
+               <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || isOutsideWindow} className="flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '已超出回复时间' : '发送'}</button>
             </div>
           </div>
         </div>
@@ -1594,14 +1586,14 @@ function CustomerInfoRail({
           autoReplyReady={autoReplyReady}
           hasReplyReady={hasReplyReady}
         />
-        <QuoteSkillCard
+        {customer.source !== 'messenger' && <QuoteSkillCard
           key={customer.id}
           customer={customer}
           onInsertReply={onInsertQuoteReply}
           onToast={onToast}
           channelReady={Boolean(customerServiceStatus?.messagingAuthorization?.providerReady)}
           onCardSent={onQuoteCardSent}
-        />
+        />}
         <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
         <TagsWidget customer={customer} />
         <RulesDisclosure
@@ -1628,7 +1620,7 @@ function createMessageEvent(
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return {
     id: `${customerId}-${Date.now()}-${actor}`,
-    type: 'whatsapp',
+    type: 'messenger',
     actor,
     title: actor === 'buyer' ? '客户消息' : actor === 'ai' ? 'AI 回复' : '我的回复',
     body,
@@ -1644,8 +1636,8 @@ async function sendCustomerOutbox(customer: CustomerProfile, body: string, outsi
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
     body: JSON.stringify(templatePlan
-      ? { body: templatePlan.rendered, mode: 'template', outsideWindow, templateName: templatePlan.template.name, variables: templatePlan.variables, to: customer.waNumber, styleMemory }
-      : { body, mode: 'free_text', outsideWindow, to: customer.waNumber, styleMemory }),
+      ? { body: templatePlan.rendered, mode: 'template', outsideWindow, to: customer.messengerUserId, styleMemory }
+      : { body, mode: 'free_text', outsideWindow, to: customer.messengerUserId, styleMemory }),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.message || data.error || '发送失败');
@@ -1740,7 +1732,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
   const selectedLatestBuyerId = useMemo(() => (
-    selected ? [...selected.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer')?.id ?? '' : ''
+    selected ? [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer')?.id ?? '' : ''
   ), [selected?.id, selected?.timeline]);
   const customersInActiveView = useMemo(() => filterCustomers(view, customers), [view, customers]);
   const activeView = VIEW_META[view];
@@ -1918,7 +1910,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     if (!selected) return;
-    const untranslated = selected.timeline.filter(event => event.type === 'whatsapp' && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
+    const untranslated = selected.timeline.filter(event => (event.type === 'messenger' || event.type === 'whatsapp') && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
     if (!untranslated.length) return;
     let cancelled = false;
     void Promise.all(untranslated.map(async event => {
@@ -1940,7 +1932,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   useEffect(() => {
     if (!selected) return;
     if (!customerServiceStatus?.enabled) return;
-    const lastBuyer = [...selected.timeline].reverse().find(event => event.type === 'whatsapp' && event.actor === 'buyer');
+    const lastBuyer = [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'whatsapp') && event.actor === 'buyer');
     if (!lastBuyer) return;
     if (isWaitingForHumanQuote(selected)) {
       setDraftSuggestion(null);
@@ -2304,18 +2296,17 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     if (!selected || sendingReply) return;
     setSendingReply(true);
     try {
-      const templatePlan = isOutsideWhatsAppWindow(selected) ? buildTemplatePlan(selected, templates, input) : null;
-      const body = templatePlan?.rendered || translatedInput.trim() || await translateReplyToCustomerLanguage(selected, input);
+      if (isOutsideWhatsAppWindow(selected)) {
+        showToast('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
+        setSendingReply(false);
+        return;
+      }
+      const body = translatedInput.trim() || await translateReplyToCustomerLanguage(selected, input);
       if (!body) {
         setSendingReply(false);
         return;
       }
-      if (isOutsideWhatsAppWindow(selected) && templatePlan?.template.status !== 'approved') {
-        showToast('消息模板审核中，暂时不能发送超窗触达。');
-        setSendingReply(false);
-        return;
-      }
-      queueSend(selected, body, input, templatePlan, draftMeta?.knowledgeMiss ? draftMeta : null);
+      queueSend(selected, body, input, null, draftMeta?.knowledgeMiss ? draftMeta : null);
     } catch (error) {
       setSendingReply(false);
       showToast(error instanceof Error ? error.message : '发送失败');
@@ -2325,15 +2316,14 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const sendDraftDirectly = async () => {
     if (!selected || !draftSuggestion || sendingReply) return;
     setSendingReply(true);
-    const templatePlan = isOutsideWhatsAppWindow(selected) ? buildTemplatePlan(selected, templates, draftSuggestion) : null;
-    if (isOutsideWhatsAppWindow(selected) && templatePlan?.template.status !== 'approved') {
-      showToast('消息模板审核中，暂时不能发送超窗触达。');
+    if (isOutsideWhatsAppWindow(selected)) {
+      showToast('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
       setSendingReply(false);
       return;
     }
     try {
-      const body = templatePlan?.rendered || await translateReplyToCustomerLanguage(selected, draftSuggestion);
-      queueSend(selected, body, draftSuggestion, templatePlan, draftMeta);
+      const body = await translateReplyToCustomerLanguage(selected, draftSuggestion);
+      queueSend(selected, body, draftSuggestion, null, draftMeta);
     } catch (error) {
       setSendingReply(false);
       showToast(error instanceof Error ? error.message : '发送失败');
@@ -2487,7 +2477,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
     {deliveryHandoff?.runId && <div className="shrink-0"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
     {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 shrink-0 border-l-2 border-accent bg-accent-glow p-3">
-      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p><button type="button" onClick={requestProductionBack} className="text-xs font-bold text-accent">返回上一页</button></div>
+      <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold text-accent">来自业务交付看板 · 客户跟进草稿</p></div>
       {deliveryError ? <p role="alert" className="mt-2 text-xs text-red-700">{deliveryError}</p> : deliveryDraft ? <>
         <details className="mt-2 text-xs text-slate-700"><summary className="cursor-pointer">查看关联草稿 v{deliveryDraft.version}</summary><p className="mt-2 whitespace-pre-wrap leading-6">{deliveryDraft.body}</p></details>
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
