@@ -104,6 +104,7 @@
     "1791072003_harden_social_discovery_lineage.js": "06f2b7d6baa1c6a6a460005c1a31e04ba215d73925314adc93f85649fe112871",
     "1791072004_create_publication_engagement_runtime.js": "76a1b3ad1d0d00ce2665535b270af2c426548641f82ad13b7d76f9ac901d076f",
     "1791072005_connect_social_weekly_review_loop.js": "c1d10030aa1d7c28f3b318221ebf3b2a560ff880591217d99ee01b756401c993",
-    "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12"
+    "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12",
+    "1791072007_create_studio_production_defaults.js": "88f1dd2f5f785eb5b00e3b573d8fdcfcde4de6e23bf9b3f32d20b21cf12059a9"
   }
 }
