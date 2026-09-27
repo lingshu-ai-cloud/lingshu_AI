@@ -3778,7 +3778,7 @@ export default function DigitalEmployeePage({
         </div>
       </div>
       {applicationGuideOpen && <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setApplicationGuideOpen(false); }}>
-        <section role="dialog" aria-modal="true" aria-label="新手引导" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-4 sm:p-6">
+        <section role="dialog" aria-modal="true" aria-label="新手引导" className="ui-modal-frame relative overflow-y-auto p-4 sm:p-6">
           <button type="button" aria-label="关闭新手引导" onClick={()=>setApplicationGuideOpen(false)} className="absolute right-4 top-4 z-10 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18}/></button>
           <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }} />
         </section>

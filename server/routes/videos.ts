@@ -155,6 +155,7 @@ interface Material {
   rawLibraryUseApproved?: boolean;
   mayAnalyze?: boolean;
   mayUseInProduction?: boolean;
+  pinned?: boolean;
   contentSha256?: string;
   provenance?: Record<string, unknown>;
   createdAt: string;
@@ -3152,6 +3153,32 @@ async function handleDownloadMaterial(
       }
     }
 
+    if (record) {
+      const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+      const linkedMaterialId = String(analysis.materialId || '').trim();
+      const materials = loadMaterials();
+      const linkedMaterial = materials.find(item => item.id === linkedMaterialId && item.tenantId === tenantId);
+      if (linkedMaterial) {
+        linkedMaterial.pinned = true;
+        persistMaterials(materials);
+        res.status(200).json({ ok: true, material: linkedMaterial });
+        return;
+      }
+
+      const hasStoredVideo = Boolean(analysis.videoObjectKey || record.videoFileId);
+      if (hasStoredVideo) {
+        const material = await copyStoredCrawlerVideoToMaterial({
+          record,
+          tenantId,
+          title: String(input.title || record.title || `${record.platform || 'tiktok'}-video`),
+          platform: (input.platform || record.platform || 'tiktok') as Platform,
+          duration: Number(record.duration || 0),
+        });
+        res.status(201).json({ ok: true, material });
+        return;
+      }
+    }
+
     const source = resolvedPublicVideoSource(record, input);
     if (!source) {
       res.status(400).json({ error: '只允许当前记录绑定的 YouTube、TikTok、Instagram 或 Facebook HTTPS 单条视频链接' });
@@ -3185,6 +3212,94 @@ async function handleDownloadMaterial(
     console.error('[videos] download-material failed:', e);
     res.status(502).json({ error: e instanceof Error ? e.message : 'Video download failed' });
   }
+}
+
+async function storedCrawlerVideo(record: Record<string, unknown>): Promise<{ buf: Buffer; contentType: string } | null> {
+  const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
+  const objectKey = String(analysis.videoObjectKey || '').trim();
+  if (objectKey) {
+    try {
+      const stored = await objectStorageDownload(objectKey);
+      if (stored?.buf.length) return { buf: stored.buf, contentType: stored.contentType || 'video/mp4' };
+    } catch (error) {
+      console.warn('[videos] stored favorite COS read failed, trying local/PocketBase copy:', error instanceof Error ? error.message : error);
+    }
+  }
+
+  const filename = String(record.videoFileId || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  const recordTenantId = String(record.tenantId || '').trim();
+  if (filename && recordTenantId) {
+    const expectedPrefix = `tenants/${recordTenantId}/`;
+    const tenantRoot = path.resolve(MEDIA_DIR, 'tenants', recordTenantId);
+    const localPath = path.resolve(MEDIA_DIR, filename);
+    if (filename.startsWith(expectedPrefix)
+      && localPath.startsWith(`${tenantRoot}${path.sep}`)
+      && fs.existsSync(localPath)
+      && fs.statSync(localPath).isFile()) {
+      return { buf: fs.readFileSync(localPath), contentType: 'video/mp4' };
+    }
+  }
+  if (!filename) return null;
+  const stored = await fetchFile(COL, String(record.id || ''), filename);
+  return stored?.buf.length ? { buf: stored.buf, contentType: stored.contentType || 'video/mp4' } : null;
+}
+
+async function copyStoredCrawlerVideoToMaterial(input: {
+  record: Record<string, unknown>;
+  tenantId: string;
+  title: string;
+  platform: Platform;
+  duration: number;
+}): Promise<Material> {
+  const stored = await storedCrawlerVideo(input.record);
+  if (!stored) throw new Error('站内视频文件暂不可用，请稍后重试');
+
+  const tenantMediaDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
+  fs.mkdirSync(tenantMediaDir, { recursive: true });
+  const id = randomUUID();
+  const videoFile = `${id}.mp4`;
+  const posterFile = `${id}.poster.jpg`;
+  const videoPath = path.join(tenantMediaDir, videoFile);
+  const posterPath = path.join(tenantMediaDir, posterFile);
+  fs.writeFileSync(videoPath, stored.buf);
+  const posterOk = await extractPoster(videoPath, posterPath, input.duration > 1 ? 1 : 0);
+  const createdAt = new Date().toISOString();
+  const sourceUrl = String(input.record.sourceUrl || `/api/overseas/videos/${encodeURIComponent(String(input.record.id || ''))}/media`);
+  const base = buildDownloadedReferenceMaterial({
+    id,
+    tenantId: input.tenantId,
+    name: safeMaterialName(input.title, input.platform),
+    platform: input.platform,
+    sourceUrl,
+    duration: input.duration || await probeDuration(videoPath),
+    size: humanSize(stored.buf.length),
+    file: tenantAssetRelativePath(input.tenantId, videoFile),
+    poster: posterOk ? tenantAssetRelativePath(input.tenantId, posterFile) : undefined,
+    contentSha256: createHash('sha256').update(stored.buf).digest('hex'),
+    createdAt,
+  });
+  const material = {
+    ...base,
+    provenance: {
+      ...base.provenance,
+      sourceRecordId: String(input.record.id || ''),
+      copiedFromStoredVideo: true,
+    },
+  } as Material;
+  persistMaterials([material, ...loadMaterials().filter(item => item.id !== material.id)]);
+
+  const analysis = parseJsonRecord<Record<string, unknown>>(input.record.aiAnalysis, {});
+  await store.update(COL, String(input.record.id || ''), {
+    aiAnalysis: JSON.stringify({
+      ...analysis,
+      materialId: material.id,
+      materialUrl: material.url,
+      materialPoster: material.poster,
+      downloadedAt: createdAt,
+      downloadStatus: 'downloaded',
+    }),
+  });
+  return material;
 }
 
 async function downloadMaterialJob(input: {

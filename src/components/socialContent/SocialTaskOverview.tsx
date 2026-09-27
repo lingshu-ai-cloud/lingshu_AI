@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  ArrowRight,
   BarChart3,
   CheckCircle2,
   Circle,
@@ -88,7 +89,7 @@ interface SocialTaskOverviewProps {
   createMode?: SocialContentTaskMode;
 }
 
-function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
+function ReadinessPanel({ task, busy, onStart, onEdit }: Pick<SocialTaskOverviewProps, 'busy' | 'onStart' | 'onEdit'> & { task: SocialContentTaskDetail }) {
   const sources = task.sources.filter(item => item.status === 'active');
   const hasKnowledge = sources.some(item => item.kind === 'knowledge');
   const hasMaterial = sources.some(item => item.kind === 'material');
@@ -123,8 +124,40 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-black text-text-primary">{readinessTitle}</h3>{canStart && !hasKnowledge && <p className="mt-1 text-[10px] text-text-muted">企业资料可选；未提供时系统不会编造参数或功效。</p>}{managedWithoutShoot && <p className="mt-1 text-[10px] text-emerald-700">系统已逐镜确认可以完整实现或功能等价实现；补充实拍只作为可选增强。</p>}{task.assetSupplyPlan?.overallFeasibility === 'blocked_for_facts_or_rights' && <p className="mt-1 text-[10px] text-amber-800">部分镜头缺少不可替代的事实或权利信息，系统不会用生成画面冒充真实证据。</p>}</div><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${canStart ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{canStart ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">{sourceStats.map(item => <div key={item.label} className="rounded-xl bg-surface-2 px-3 py-2.5"><item.icon size={14} className="text-text-muted" /><strong className="mt-2 block text-lg text-text-primary">{item.value}</strong><span className="text-[10px] font-semibold text-text-muted">{item.label}</span></div>)}</div>
+      <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/55 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><p className="text-xs font-black text-emerald-950">这个区域用来确认能否开始制作</p><p className="mt-1 text-[11px] leading-5 text-emerald-800">确认后会依次生成脚本与口播、匹配画面，再进入成片验收。</p></div>
+          <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} onClick={onEdit} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">调整素材与资料</button><button type="button" disabled={busy || !canStart} onClick={() => onStart()} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45">开始制作 <ArrowRight size={14}/></button></div>
+        </div>
+      </div>
       {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-black text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；系统会结合现有素材安排画面。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-xl border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}
       {!canStart && task.readiness.missing.length > 0 && <ul className="mt-4 space-y-1.5">{task.readiness.missing.filter(item => !item.startsWith('material_requirement:') && item !== 'publish_ready_material' && item !== 'source_material').slice(0, 4).map(item => <li key={item} className="flex items-start gap-2 text-xs text-amber-800"><Circle size={6} fill="currentColor" className="mt-1.5 shrink-0" />{`请补充${READINESS_LABEL[item] || '任务资料'}`}</li>)}</ul>}
+    </section>
+  );
+}
+
+function PreparationRoadmap() {
+  const steps = [
+    { number: '01', title: '脚本与口播', description: '整理表达重点，并把口播拆成可逐句确认的段落。' },
+    { number: '02', title: '画面匹配', description: '优先使用已有素材，再补充可生成的过渡画面。' },
+    { number: '03', title: '成片验收', description: '统一检查字幕、音乐、特效与发布版本。' },
+  ];
+  return (
+    <section className="visual-card overflow-hidden p-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div><p className="visual-kicker">接下来</p><h3 className="mt-1 text-base font-black text-[#10244a]">这条内容会怎样完成</h3></div>
+        <span className="rounded-full border border-[#10244a]/10 bg-white px-3 py-1 text-[10px] font-black text-[#10244a]">全程可查看进度</span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {steps.map((step, index) => (
+          <article key={step.number} className="relative overflow-hidden rounded-2xl border border-[#10244a]/10 bg-white/85 p-4">
+            <span aria-hidden="true" className={`absolute -right-5 -top-5 h-16 w-16 rounded-full ${index === 1 ? 'bg-[#dcd7ff]/65' : 'bg-[#baf2e8]/65'}`} />
+            <span className="relative inline-flex h-7 min-w-7 items-center justify-center rounded-lg border-2 border-[#10244a] px-1 text-[10px] font-black text-[#10244a]">{step.number}</span>
+            <p className="relative mt-4 text-xs font-black text-[#10244a]">{step.title}</p>
+            <p className="relative mt-1 text-[11px] leading-5 text-slate-600">{step.description}</p>
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
@@ -242,7 +275,8 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
       <div className="min-w-0 space-y-4">
         {running && <SocialTaskRunStatusPanel task={task} />}
         {!running && task.status === 'plan_review' && <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />}
-        {!running && preparing && <ReadinessPanel task={task} />}
+        {!running && preparing && <ReadinessPanel task={task} busy={props.busy} onStart={props.onStart} onEdit={props.onEdit} />}
+        {!running && preparing && task.mode !== 'weekly' && <PreparationRoadmap />}
         {!running && preparing && task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
         {!running && (reviewing || finished) && (
           <div className={`grid items-start gap-4 ${showDelivery ? 'xl:grid-cols-[minmax(0,1.45fr)_minmax(20rem,0.55fr)]' : ''}`}>

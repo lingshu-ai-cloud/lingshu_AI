@@ -141,7 +141,7 @@ function NavItem({
       aria-label={collapsed ? item.label : undefined}
       aria-current={active ? 'page' : undefined}
       data-demo-target={item.id}
-      className={`relative flex w-full items-center border-l-2 py-2 text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} ${active ? 'border-accent bg-[#edf4ef]' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2] hover:text-text-primary'}`}
+      className={`relative flex w-full items-center border-l-2 py-1 text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-3'} ${active ? 'border-accent bg-[#edf4ef]' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2] hover:text-text-primary'}`}
       style={
         active
           ? { color: 'var(--color-text-primary)' }
@@ -390,7 +390,7 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         )}
 
         {/* Home nav */}
-        <nav aria-label="主导航" className="px-3 pb-2">
+        <nav aria-label="主导航" className="px-3 pb-1">
           <NavItem
             item={homeNavItem}
             active={page === homeNavItem.id}
@@ -402,9 +402,9 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
         <div className="min-h-0 flex-1 overflow-y-auto pb-2">
           {navSections.map((section, index) => (
             <div key={section.label}>
-              {index > 0 && <div className="mx-4 my-2 border-t border-border" />}
-              <nav aria-label={section.label} className="px-3 space-y-0.5">
-                {!sidebarCollapsed && <p className="px-3 pb-1.5 pt-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
+              {index > 0 && <div className={`mx-4 border-t border-border ${sidebarCollapsed ? 'my-1' : 'my-1.5'}`} />}
+              <nav aria-label={section.label} className="px-3">
+                {!sidebarCollapsed && <p className="px-3 pb-1 pt-0.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
                 {section.items.map(item => (
                   <NavItem
                     key={item.id}

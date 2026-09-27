@@ -526,7 +526,6 @@
   .ui-modal-frame {
     display: flex;
     width: min(100%, 64rem);
-    height: min(46rem, calc(100dvh - 2rem));
     max-height: calc(100dvh - 2rem);
     flex-direction: column;
     overflow: hidden;
@@ -537,13 +536,11 @@
   }
 
   .ui-modal-frame--compact {
-    width: min(100%, 48rem);
-    height: min(36rem, calc(100dvh - 2rem));
+    width: min(100%, 46rem);
   }
 
   .ui-modal-frame--wide {
-    width: min(100%, 80rem);
-    height: min(50rem, calc(100dvh - 2rem));
+    width: min(100%, 72rem);
   }
 
   .ui-modal-body {
@@ -870,7 +867,7 @@
   .ui-modal-frame,
   .ui-modal-frame--compact,
   .ui-modal-frame--wide {
-    height: calc(100dvh - 1rem);
+    height: auto;
     max-height: calc(100dvh - 1rem);
     border-radius: 1rem;
   }

@@ -84,7 +84,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
             <span className="mt-1 block rounded-md bg-green-600 px-1.5 py-0.5 text-[9px] font-black text-white shadow-sm">收藏 · 片段已分析</span>
           )}
         </div>
-        {video.sourceUrl && !isImagePost && <button
+        {!isImagePost && onFavoriteMaterial && <button
           type="button"
           onClick={event => { event.stopPropagation(); onFavoriteMaterial?.(); }}
           disabled={favoritingMaterial}
@@ -187,7 +187,7 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
           <Eye size={13} />查看详情
         </button>
       </div>
-      {video.sourceUrl && !isImagePost && (
+      {!isImagePost && onFavoriteMaterial && (
         <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }} disabled={favoritingMaterial}
           aria-label={isFavoriteMaterial ? `取消收藏 ${video.title}` : `收藏 ${video.title}`}
           title={isFavoriteMaterial ? '取消收藏' : '收藏到我的素材'}

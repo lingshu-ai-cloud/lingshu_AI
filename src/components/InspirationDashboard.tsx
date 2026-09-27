@@ -28,6 +28,7 @@ import { resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '.
 import { useSocialProgram } from '../contexts/SocialProgramContext';
 import { setActiveSocialContentTaskId } from '../lib/socialContentContext';
 import { VideoCard, VideoListItem } from './InspirationVideoCards';
+import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
 import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -2520,6 +2521,9 @@ function DirectorVideoDetailPanel({
   onCancelAnalysis,
   analyzing,
   notice,
+  onFavorite,
+  favoriting,
+  isFavorite,
 }: {
   video: TrendVideo;
   onClose: () => void;
@@ -2530,6 +2534,9 @@ function DirectorVideoDetailPanel({
   onCancelAnalysis: () => void;
   analyzing: boolean;
   notice?: string;
+  onFavorite: () => void;
+  favoriting?: boolean;
+  isFavorite?: boolean;
 }) {
   const dialogRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const analysis = getAnalysis(video);
@@ -2584,9 +2591,9 @@ function DirectorVideoDetailPanel({
             <h2 id="director-video-analysis-title" className="mt-2 line-clamp-2 text-base font-bold leading-6 text-text-primary">{video.title}</h2>
             <p className="mt-1 flex items-center gap-1.5 text-[11px] text-text-muted"><SocialPlatformIcon platform={video.platform} size={13}/><span className="sr-only">{PLATFORM_META[video.platform]?.label || video.platform} · </span>{displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
           </div>
-          <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭编导分析" className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
+          <div className="flex items-center gap-1"><button type="button" onClick={onFavorite} disabled={favoriting} aria-label={isFavorite ? `取消收藏 ${video.title}` : `收藏 ${video.title}`} title={isFavorite ? '取消收藏' : '收藏到我的素材'} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition disabled:cursor-wait disabled:opacity-60 ${isFavorite ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-border bg-white text-text-muted hover:border-amber-300 hover:text-amber-500'}`}>{favoriting ? <Loader2 size={15} className="animate-spin"/> : <Star size={16} fill={isFavorite ? 'currentColor' : 'none'}/>}</button><button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭编导分析" className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
             <X size={18} />
-          </button>
+          </button></div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -3017,6 +3024,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const enterMaterialSmartGeneration = (material: Material) => {
     if (material.usage === 'reference_only') {
       setMaterialMessage('这条采集素材仅供分析与镜头参考，完成商业授权复核后才能用于生成成片。');
+      showActionFeedback({ title: '这条素材暂不能用于创作', description: '完成商业授权复核后即可使用。', tone: 'warning' });
+      return;
+    }
+    const usableUrl = String(material.url || material.poster || '').trim();
+    if (material.type === 'audio' || !usableUrl) {
+      showActionFeedback({ title: '当前素材无法直接创作', description: material.type === 'audio' ? '请选择视频或图片素材。' : '素材文件尚未准备好，请稍后重试。', tone: 'warning' });
       return;
     }
     const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
@@ -3028,12 +3041,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       platform,
       title,
       thumbnail: material.poster || material.segments?.[0]?.poster || '',
-      duration: isImageMaterial ? 1 : material.duration,
+      duration: isImageMaterial ? 1 : Math.max(1, Number(material.duration) || 0),
       tags: Array.from(new Set(['本地素材', ...visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean)])),
       views: '本地素材',
       trend: 'stable',
-      videoUrl: material.type === 'video' ? material.url : undefined,
-      sourceUrl: material.sourceUrl || material.url,
+      videoUrl: material.type === 'video' ? usableUrl : undefined,
+      sourceUrl: material.sourceUrl || usableUrl,
       status: 'analyzed',
       crawledAt: material.createdAt,
       contentFormat: isImageMaterial ? 'image' : 'video',
@@ -3045,14 +3058,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       generatedVideo: {
         id: material.id,
         title: material.name,
-        url: material.url,
+        url: usableUrl,
         poster: material.poster,
-        duration: material.duration,
+        duration: isImageMaterial ? 1 : Math.max(1, Number(material.duration) || 0),
         createdAt: material.createdAt,
         source: 'material_library',
         material,
       },
     });
+    showActionSuccess('已带入自由创作', `正在打开“${material.name}”的制作页面。`);
   };
   const pinnedTitles = new Set(pinnedMaterialVideos.map(video => video.title.trim().toLowerCase()));
   const allVideos = [
@@ -3366,10 +3380,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
-    if (!video.sourceUrl || favoritingMaterialIds.includes(video.id)) return;
+    if (favoritingMaterialIds.includes(video.id)) return;
     const linkedMaterial = localMaterials.find(material =>
       material.id === video.aiAnalysis?.materialId
       || (Boolean(material.sourceUrl) && material.sourceUrl === video.sourceUrl));
+    const linkedMaterialId = linkedMaterial?.id || String(video.aiAnalysis?.materialId || '').trim();
     const currentlyFavorite = favoritedVideoIds.includes(video.id) || Boolean(linkedMaterial?.pinned);
     setFavoritingMaterialIds(ids => [...ids, video.id]);
     if (!quiet) setMaterialMessage('');
@@ -3384,15 +3399,28 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         setLocalMaterials(items => items.map(item => item.id === linkedMaterial.id ? { ...item, pinned: false } : item));
         setFavoritedVideoIds(ids => ids.filter(id => id !== video.id));
         setMaterialMessage(`已取消收藏：${video.title}`);
+        showActionSuccess('已取消收藏', video.title);
         setTimeout(() => setMaterialMessage(''), 3500);
         return;
       }
+      if (linkedMaterialId) {
+        const result = await studioApi.setMaterialPinned(linkedMaterialId, true);
+        if (!result.ok) throw new Error(result.error || '收藏失败');
+        setLocalMaterials(items => items.map(item => item.id === linkedMaterialId ? { ...item, pinned: true } : item));
+        setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
+        setMaterialMessage(`已收藏到我的素材：${video.title}`);
+        showActionSuccess('收藏成功', '已加入“我的素材”，可以通过收藏筛选快速找到。');
+        setTimeout(() => setMaterialMessage(''), 3500);
+        return;
+      }
+      const sourceUrl = String(video.sourceUrl || video.videoUrl || '').trim();
+      if (!sourceUrl && !video.recordId) throw new Error('当前视频尚未准备好可收藏的文件');
       const r = await fetch('/api/overseas/videos/download-material', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           id: video.recordId,
-          sourceUrl: video.sourceUrl,
+          sourceUrl,
           title: video.title,
           platform: video.platform,
           async: true,
@@ -3406,6 +3434,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       if (r.status === 202) {
         setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
         setMaterialMessage(`已加入爆款素材收藏队列：${video.title}`);
+        showActionFeedback({ title: '正在收藏', description: '视频获取完成后会自动出现在“我的素材”。', tone: 'info' });
         setTimeout(() => setMaterialMessage(''), 3500);
         void refreshVideos();
         window.setTimeout(() => void refreshMaterials(), 5000);
@@ -3423,16 +3452,23 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
       void refreshMaterials();
       setMaterialMessage(`已收藏到爆款素材：${data.material?.name || video.title}`);
+      showActionSuccess('收藏成功', '已加入“我的素材”，可以通过收藏筛选快速找到。');
       setTimeout(() => setMaterialMessage(''), 3500);
     } catch (e) {
-      if (!quiet) setMaterialMessage(e instanceof Error ? e.message : '收藏失败');
+      const message = e instanceof Error ? e.message : '收藏失败';
+      if (!quiet) setMaterialMessage(message);
+      showActionFeedback({ title: '收藏失败', description: message, tone: 'error' });
     } finally {
       setFavoritingMaterialIds(ids => ids.filter(id => id !== video.id));
     }
   };
 
   const toggleMaterialFavorite = async (material: Material) => {
-    if (!material.canManage || favoritingMaterialIds.includes(material.id)) return;
+    if (favoritingMaterialIds.includes(material.id)) return;
+    if (!material.canManage) {
+      showActionFeedback({ title: '共享素材暂不能收藏', description: '请先复制到企业素材库后再收藏。', tone: 'warning' });
+      return;
+    }
     const nextPinned = !isFavoriteMaterial(material);
     setFavoritingMaterialIds(ids => [...ids, material.id]);
     setMaterialMessage('');
@@ -3441,10 +3477,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       if (!result.ok) throw new Error(result.error || '收藏状态保存失败');
       setLocalMaterials(items => items.map(item => item.id === material.id ? { ...item, pinned: nextPinned } : item));
       setMaterialMessage(nextPinned ? `已收藏素材：${material.name}` : `已取消收藏：${material.name}`);
+      showActionSuccess(nextPinned ? '收藏成功' : '已取消收藏', nextPinned ? '可通过“仅看收藏”快速筛选。' : material.name);
       setTimeout(() => setMaterialMessage(''), 3500);
       window.dispatchEvent(new Event('lingshu:materials-updated'));
     } catch (error) {
-      setMaterialMessage(error instanceof Error ? error.message : '收藏状态保存失败');
+      const message = error instanceof Error ? error.message : '收藏状态保存失败';
+      setMaterialMessage(message);
+      showActionFeedback({ title: '操作失败', description: message, tone: 'error' });
     } finally {
       setFavoritingMaterialIds(ids => ids.filter(id => id !== material.id));
     }
@@ -4228,8 +4267,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
-                          disabled={material.usage === 'reference_only' || material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
-                          title={material.usage === 'reference_only' ? '这条素材仅供参考，完成授权后才能用于创作' : material.type === 'image' || material.duration > 0 ? '带入内容制作的自由创作' : '当前素材缺少可用时长'}
+                          disabled={material.type === 'audio' || !String(material.url || material.poster || '').trim()}
+                          title={material.usage === 'reference_only' ? '点击查看这条素材暂不能用于成片的原因' : material.type === 'audio' ? '音频素材不能单独进入画面创作' : '带入内容制作的自由创作'}
                           className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Sparkles size={14} />自由创作
@@ -4307,7 +4346,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
                     ].map(([label, value]) => <div key={label} className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
-                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.usage === 'reference_only' || detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && detailMaterial.duration <= 0)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
+                    <button type="button" onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || !String(detailMaterial.url || detailMaterial.poster || '').trim()} title={detailMaterial.usage === 'reference_only' ? '点击查看这条素材暂不能用于成片的原因' : '带入内容制作的自由创作'} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={15} />自由创作</button>
                   </div>
                 </div>
               </div>
@@ -4406,6 +4445,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             onCancelAnalysis={() => void cancelExactFullAnalysis(selectedVideo)}
             analyzing={analyzingVideoIds.includes(selectedVideo.id)}
             notice={materialMessage}
+            onFavorite={() => void favoriteMaterial(selectedVideo)}
+            favoriting={favoritingMaterialIds.includes(selectedVideo.id)}
+            isFavorite={favoritedVideoIds.includes(selectedVideo.id) || favoriteSourceUrls.has(String(selectedVideo.sourceUrl || '').trim())}
           />
         )}
       </AnimatePresence>
