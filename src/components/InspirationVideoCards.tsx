@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Bookmark, Clock, Eye, Images, Loader2, Play, Sparkles } from 'lucide-react';
+import { Clock, Eye, Images, Loader2, Play, Sparkles, Star } from 'lucide-react';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { TrendVideo } from '../lib/inspirationTypes';
 import { AuthenticatedVideo, ThumbnailImage, VideoThumbnail, candidateDimensionLabels, discoveryOriginTitle, discoverySupplyLabel, getPlatformMeta, inspirationScoresForVideo } from './InspirationDashboard';
@@ -14,11 +14,12 @@ interface VideoCardProps {
   onWatch: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
+  isFavoriteMaterial?: boolean;
   createLabel?: string;
   creating?: boolean;
 }
 
-export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, createLabel, creating }: VideoCardProps) {
+export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const inspirationScores = inspirationScoresForVideo(video);
@@ -67,8 +68,8 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
           />
         ) : null}
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          <span className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900 shadow-sm">
-            {isImagePost ? <Images size={12} /> : <Play size={12} fill="currentColor" />}预览内容
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-900 shadow-sm" aria-hidden="true">
+            {isImagePost ? <Images size={16} /> : <Play size={16} fill="currentColor" />}
           </span>
         </div>
         <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold text-white bg-black/50 backdrop-blur-sm">
@@ -83,8 +84,18 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
             <span className="mt-1 block rounded-md bg-green-600 px-1.5 py-0.5 text-[9px] font-black text-white shadow-sm">置顶 · 片段已分析</span>
           )}
         </div>
+        {video.sourceUrl && !isImagePost && <button
+          type="button"
+          onClick={event => { event.stopPropagation(); if (!isFavoriteMaterial) onFavoriteMaterial?.(); }}
+          disabled={favoritingMaterial || isFavoriteMaterial}
+          aria-label={isFavoriteMaterial ? `已收藏 ${video.title}` : `收藏 ${video.title}`}
+          title={isFavoriteMaterial ? '已收藏到我的素材' : '收藏到我的素材'}
+          className={`absolute right-2 top-2 z-20 inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow-sm backdrop-blur-sm transition ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'} disabled:cursor-default`}
+        >
+          {favoritingMaterial ? <Loader2 size={15} className="animate-spin" /> : <Star size={16} fill={isFavoriteMaterial ? 'currentColor' : 'none'} />}
+        </button>}
         {crawledLabel && (
-          <div className="absolute top-2 right-2 max-w-[48%] truncate px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold text-white bg-black/50 backdrop-blur-sm"
+          <div className={`absolute max-w-[48%] truncate rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] font-mono font-bold text-white backdrop-blur-sm ${video.canManage ? 'right-2 top-12' : video.sourceUrl && !isImagePost ? 'right-12 top-2' : 'right-2 top-2'}`}
             title={`爬取入库时间：${crawledDate!.toLocaleString()}`}>
             {crawledLabel}
           </div>
@@ -111,14 +122,6 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
               <Sparkles size={12} />{createLabel || '用于创作'}
             </button>
           </div>
-          <div className="mt-2 flex items-center justify-between text-[10px] font-semibold text-text-muted">
-            <button type="button" onClick={onWatch} aria-label={`预览 ${video.title}`} className="inline-flex items-center gap-1 rounded-md px-1 py-1 transition hover:text-accent">
-              {isImagePost ? <Images size={11} /> : <Play size={11} fill="currentColor" />}预览内容
-            </button>
-            {video.sourceUrl && !isImagePost && <button type="button" onClick={() => onFavoriteMaterial?.()} disabled={favoritingMaterial} className="inline-flex items-center gap-1 rounded-md px-1 py-1 transition hover:text-accent disabled:opacity-60">
-              {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />}收藏素材
-            </button>}
-          </div>
         </div>
       </div>
     </motion.div>
@@ -126,7 +129,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
 }
 
 // ── Video List Item ───────────────────────────────────────────────────────────
-export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, createLabel, creating }: {
+export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating }: {
   video: TrendVideo;
   isSelected: boolean;
   onSelect: () => void;
@@ -134,6 +137,7 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
   onWatch: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
+  isFavoriteMaterial?: boolean;
   createLabel?: string;
   creating?: boolean;
 }) {
@@ -178,18 +182,17 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
           className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-95">
           <Sparkles size={12} />{createLabel || '用此灵感创作'}
         </button>
-        <button type="button" onClick={onWatch} aria-label="预览内容" title="预览内容" className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent">
-          {isImagePost ? <Images size={13} /> : <Play size={13} fill="currentColor" />}
-        </button>
         <button type="button" onClick={onSelect}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary transition hover:border-accent hover:bg-surface hover:text-accent disabled:opacity-60">
           <Eye size={13} />查看详情
         </button>
       </div>
       {video.sourceUrl && !isImagePost && (
-        <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }} disabled={favoritingMaterial}
-          className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-60">
-          {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />} 收藏
+        <button onClick={e => { e.stopPropagation(); if (!isFavoriteMaterial) onFavoriteMaterial?.(); }} disabled={favoritingMaterial || isFavoriteMaterial}
+          aria-label={isFavoriteMaterial ? `已收藏 ${video.title}` : `收藏 ${video.title}`}
+          title={isFavoriteMaterial ? '已收藏到我的素材' : '收藏到我的素材'}
+          className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border transition ${isFavoriteMaterial ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-border text-text-muted hover:border-amber-300 hover:text-amber-500'} disabled:cursor-default`}>
+          {favoritingMaterial ? <Loader2 size={13} className="animate-spin" /> : <Star size={15} fill={isFavoriteMaterial ? 'currentColor' : 'none'} />}
         </button>
       )}
     </div>

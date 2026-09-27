@@ -2,7 +2,7 @@ import DiscoveryProductPicker from './DiscoveryProductPicker';
 import { readProductDiscoveryFile } from '../../lib/productDiscoveryFile';
 import { fiveProductKeywords } from '../../../shared/productDiscovery';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronRight, Compass, Loader2, Play, SlidersHorizontal, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Compass, Loader2, Play, SlidersHorizontal, X } from 'lucide-react';
 import type { SocialCrawlStrategy, SocialDiscoveryMode, SocialDiscoverySummary, SocialInspirationCollectionRun } from '../../../shared/contracts/socialContentWorkflow';
 import { socialDiscoveryApi, type SocialDiscoveryScopeInput } from '../../lib/socialDiscoveryApi';
 
@@ -48,6 +48,7 @@ export default function DiscoveryScopePanel() {
   const [strategy, setStrategy] = useState<SocialCrawlStrategy | null>(null);
   const [editor, setEditor] = useState<SocialDiscoveryScopeInput>(EMPTY_INPUT);
   const [open, setOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -179,33 +180,39 @@ export default function DiscoveryScopePanel() {
   }));
 
   return <>
-    <section className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/55 px-3.5 py-3" aria-label="当前灵感发现范围">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <span className="mt-0.5 rounded-lg bg-cyan-100 p-2 text-cyan-800"><Compass size={16} /></span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-black tracking-wide text-cyan-900">当前发现范围</p>
-            {loading ? <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-bold text-text-muted"><Loader2 size={12} className="animate-spin" />正在读取企业资料与已保存范围</p>
-              : strategy ? <>
-                <p className="mt-1 text-sm font-black text-text-primary">{strategy.keywordSet.scope.productRef || '未选产品'} · {strategy.keywordSet.scope.market || '未选市场'} · {AUDIENCE_ROLE_LABEL[strategy.keywordSet.scope.audienceRole]}</p>
-                <p className="mt-1 text-[10px] leading-4 text-text-muted">{COMPANY_ROLE_LABEL[strategy.keywordSet.scope.companyRole]} · {strategy.keywordSet.scope.language || '未确认语言'} · {strategy.discoveryBrief.platforms.join(' / ')} · {strategy.keywordRecommendation ? '2个大词 · 3个中词' : `${scenes.length} 个场景簇`}</p>
-              </> : <p className="mt-1 text-xs font-bold text-amber-900">尚未确认产品、市场和沟通对象，系统不会凭空使用行业词。</p>}
+    <section className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/55 px-3.5 py-2.5" aria-label="当前灵感发现范围">
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <span className="rounded-lg bg-cyan-100 p-1.5 text-cyan-800"><Compass size={15} /></span>
+          <div className="min-w-0 flex-1">
+            {loading ? <p className="inline-flex items-center gap-1.5 text-xs font-bold text-text-muted"><Loader2 size={12} className="animate-spin" />正在读取发现范围</p>
+              : strategy ? <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <p className="truncate text-sm font-black text-text-primary">{strategy.keywordSet.scope.productRef || '未选产品'} · {strategy.keywordSet.scope.market || '未选市场'} · {AUDIENCE_ROLE_LABEL[strategy.keywordSet.scope.audienceRole]}</p>
+                <p className="truncate text-[10px] text-text-muted">{COMPANY_ROLE_LABEL[strategy.keywordSet.scope.companyRole]} · {strategy.keywordSet.scope.language || '未确认语言'} · {strategy.discoveryBrief.platforms.join(' / ')}</p>
+              </div> : <p className="text-xs font-bold text-amber-900">尚未确认产品、市场和沟通对象</p>}
           </div>
         </div>
-        <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 text-xs font-black text-cyan-900 hover:border-cyan-400">
-          <SlidersHorizontal size={14} />调整发现范围<ChevronRight size={13} />
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {strategy && <button type="button" onClick={() => setSummaryOpen(value => !value)} aria-expanded={summaryOpen} className="inline-flex min-h-8 items-center gap-1 rounded-lg px-2 text-[10px] font-black text-cyan-900 hover:bg-white">
+            {summaryOpen ? '收起' : '详情'}<ChevronDown size={12} className={`transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+          </button>}
+          <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-2.5 text-[10px] font-black text-cyan-900 hover:border-cyan-400">
+            <SlidersHorizontal size={13} />调整范围<ChevronRight size={12} />
+          </button>
+        </div>
       </div>
-      {strategy?.keywordRecommendation && <div className="mt-2 flex flex-wrap gap-1.5">{[...strategy.keywordRecommendation.broadTerms, ...strategy.keywordRecommendation.mediumTerms].map(item => <span key={item.term} className="rounded-full bg-white px-2 py-1 text-xs text-emerald-900">{item.term}</span>)}</div>}
-      {scenes.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{scenes.slice(0, 6).map(scene => <span key={scene.sceneId} className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-cyan-900">{scene.label}</span>)}</div>}
       {message && <p className={`mt-2 text-[10px] font-semibold ${strategy ? 'text-emerald-800' : 'text-amber-900'}`}>{message}</p>}
-      {strategy && <div className="mt-3 grid gap-2 border-t border-cyan-100 pt-3 sm:grid-cols-4">
-        <div><p className="text-[9px] font-bold text-text-muted">运行次数</p><p className="text-sm font-black text-text-primary">{summary?.runCount ?? '—'}</p></div>
-        <div><p className="text-[9px] font-bold text-text-muted">已接纳素材</p><p className="text-sm font-black text-text-primary">{summary?.totals.accepted ?? '—'}</p></div>
-        <div><p className="text-[9px] font-bold text-text-muted">已知成本</p><p className="text-sm font-black text-text-primary">{summary ? `¥${summary.totalKnownCostCny.toFixed(2)}${summary.costComplete ? '' : '+'}` : '—'}</p></div>
-        <div className="flex items-end justify-between gap-2"><div><p className="text-[9px] font-bold text-text-muted">待经营确认</p><p className="text-sm font-black text-text-primary">{summary?.accountDecisionsPendingBusinessConfirmation ?? '—'}</p></div><button type="button" onClick={() => void runNow()} disabled={running} className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-cyan-900 px-2 text-[10px] font-black text-white disabled:opacity-50">{running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}立即采集</button></div>
+      {summaryOpen && strategy && <div className="mt-2.5 border-t border-cyan-100 pt-2.5">
+        {strategy.keywordRecommendation && <div className="flex flex-wrap gap-1.5">{[...strategy.keywordRecommendation.broadTerms, ...strategy.keywordRecommendation.mediumTerms].map(item => <span key={item.term} className="rounded-full bg-white px-2 py-1 text-[10px] text-emerald-900">{item.term}</span>)}</div>}
+        {scenes.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{scenes.slice(0, 6).map(scene => <span key={scene.sceneId} className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-cyan-900">{scene.label}</span>)}</div>}
+        <div className="mt-2.5 grid gap-2 border-t border-cyan-100 pt-2.5 sm:grid-cols-4">
+          <div><p className="text-[9px] font-bold text-text-muted">运行次数</p><p className="text-sm font-black text-text-primary">{summary?.runCount ?? '—'}</p></div>
+          <div><p className="text-[9px] font-bold text-text-muted">已接纳素材</p><p className="text-sm font-black text-text-primary">{summary?.totals.accepted ?? '—'}</p></div>
+          <div><p className="text-[9px] font-bold text-text-muted">已知成本</p><p className="text-sm font-black text-text-primary">{summary ? `¥${summary.totalKnownCostCny.toFixed(2)}${summary.costComplete ? '' : '+'}` : '—'}</p></div>
+          <div className="flex items-end justify-between gap-2"><div><p className="text-[9px] font-bold text-text-muted">待经营确认</p><p className="text-sm font-black text-text-primary">{summary?.accountDecisionsPendingBusinessConfirmation ?? '—'}</p></div><button type="button" onClick={() => void runNow()} disabled={running} className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-cyan-900 px-2 text-[10px] font-black text-white disabled:opacity-50">{running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}立即采集</button></div>
+        </div>
+        {runs.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5" aria-label="最近采集运行">{runs.map(run => <span key={run.runId} title={run.runId} className="rounded-md border border-cyan-100 bg-white px-2 py-1 text-[9px] font-bold text-text-muted">v{run.discoveryScopeVersion} · {run.triggerType} · {run.status} · {Object.values(run.modeStats).reduce((sum, item) => sum + (item?.accepted || 0), 0)} 条</span>)}</div>}
       </div>}
-      {runs.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5" aria-label="最近采集运行">{runs.map(run => <span key={run.runId} title={run.runId} className="rounded-md border border-cyan-100 bg-white px-2 py-1 text-[9px] font-bold text-text-muted">v{run.discoveryScopeVersion} · {run.triggerType} · {run.status} · {Object.values(run.modeStats).reduce((sum, item) => sum + (item?.accepted || 0), 0)} 条</span>)}</div>}
     </section>
 
     {open && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setOpen(false); }}>

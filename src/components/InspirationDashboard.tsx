@@ -7,7 +7,7 @@ import {
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
   Lightbulb, Flame, BarChart2, ChevronRight, Film, Download,
   Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
-  SlidersHorizontal, Package, ScanFace,
+  SlidersHorizontal, Package, ScanFace, Star,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
 import { authHeader } from '../lib/auth';
@@ -38,7 +38,7 @@ type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
-type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
+type MaterialSourceFilter = 'all' | 'favorite' | 'local_upload' | 'seedance' | 'gemini' | 'official_import' | 'licensed_stock';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 
 const INSPIRATION_PAGE_SIZE = 30;
@@ -145,12 +145,15 @@ const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
   all: '全部适用范围', universal: '通用素材', cross_industry: '跨行业素材', industry_specific: '行业专属',
 };
 const MATERIAL_SOURCE_LABELS: Record<MaterialSourceFilter, string> = {
-  all: '全部来源', local_upload: '本地上传', seedance: 'Seedance 生成',
+  all: '全部来源', favorite: '收藏的爆款', local_upload: '本地上传', seedance: 'Seedance 生成',
   gemini: 'Gemini 生成', official_import: '官方爆款导入', licensed_stock: '授权图库',
 };
 
 function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'all'> {
   const source = String(material.sourceType || '').toLowerCase();
+  const downloadedFavorite = material.provenance?.downloadedForAnalysisOnly === true
+    || (material.usage === 'reference_only' && material.folder === 'hot' && ['youtube', 'tiktok', 'instagram', 'facebook'].includes(source));
+  if (downloadedFavorite) return 'favorite';
   if (source.includes('licensed-stock') || source.includes('licensed_stock')) return 'licensed_stock';
   if (source.includes('seedance')) return 'seedance';
   if (source.includes('gemini')) return 'gemini';
@@ -2731,6 +2734,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [lastCrawlVideoIds, setLastCrawlVideoIds] = useState<string[]>([]);
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
   const [favoritingMaterialIds, setFavoritingMaterialIds] = useState<string[]>([]);
+  const [favoritedVideoIds, setFavoritedVideoIds] = useState<string[]>([]);
   const [materialMessage, setMaterialMessage] = useState('');
   const [localMaterials, setLocalMaterials] = useState<Material[]>([]);
   const [manageTarget, setManageTarget] = useState<(({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action: 'edit' | 'delete' }) | null>(null);
@@ -2792,6 +2796,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   };
 
   useEffect(() => { void refreshMaterials(); }, []);
+  useEffect(() => { if (innerView === 'library') void refreshMaterials(); }, [innerView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let active = true;
@@ -3112,6 +3117,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     localMaterials.forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
     return [...values].sort((a, b) => (MATERIAL_FUNCTION_LABELS[a] || a).localeCompare(MATERIAL_FUNCTION_LABELS[b] || b, 'zh-CN'));
   }, [localMaterials]);
+  const favoriteSourceUrls = useMemo(() => new Set(localMaterials
+    .filter(material => materialSourceOf(material) === 'favorite')
+    .map(material => String(material.sourceUrl || '').trim())
+    .filter(Boolean)), [localMaterials]);
   const filteredMaterials = useMemo(() => {
     const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
@@ -3368,6 +3377,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       };
       if (!r.ok) throw new Error(data.error || '收藏失败');
       if (r.status === 202) {
+        setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
         setMaterialMessage(`已加入爆款素材收藏队列：${video.title}`);
         setTimeout(() => setMaterialMessage(''), 3500);
         void refreshVideos();
@@ -3382,6 +3392,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       setCrawledVideos(prev => prev.map(v => v.id === video.id ? updated : v));
       setSelectedVideo(v => v?.id === video.id ? updated : v);
       setWatchVideo(v => v?.id === video.id ? updated : v);
+      setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
+      void refreshMaterials();
       setMaterialMessage(`已收藏到爆款素材：${data.material?.name || video.title}`);
       setTimeout(() => setMaterialMessage(''), 3500);
     } catch (e) {
@@ -3750,7 +3762,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             </div>}
             {innerView === 'inspiration' && <DiscoveryScopePanel />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-              <div className="space-y-2.5">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="relative w-full">
                   <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input type="search" value={search} onChange={e => { setLastCrawlVideoIds([]); setSearch(e.target.value); }}
@@ -3758,7 +3770,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     placeholder="搜索标题或标签..."
                     className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent" />
                 </div>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="contents">
                 <div className="relative h-10 min-w-0 rounded-md border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
                 {platform === 'all'
                   ? <Globe size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -3900,9 +3912,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         creating={launchingReferences.includes(video.id)}
                         onWatch={() => handleWatch(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
-                        favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
+                        favoritingMaterial={favoritingMaterialIds.includes(video.id)}
+                        isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim()) || Boolean(video.aiAnalysis?.materialId)} />
               {video.canManage && (
-                <div className="absolute right-2 top-9 z-20 flex gap-1">
+                <div className="absolute right-12 top-2 z-30 flex gap-1">
                   <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-accent"><Pencil size={14} /></button>
                   <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-red-600"><Trash2 size={14} /></button>
                 </div>
@@ -3921,7 +3934,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                         creating={launchingReferences.includes(video.id)}
                       onWatch={() => handleWatch(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
-                      favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
+                      favoritingMaterial={favoritingMaterialIds.includes(video.id)}
+                      isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim()) || Boolean(video.aiAnalysis?.materialId)} />
                   ))}
                 </div>
               )}
@@ -3998,7 +4012,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               )}
 
               <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
-                <div className="space-y-2.5">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="relative w-full">
                     <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <input
@@ -4010,7 +4024,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
                     />
                   </div>
-                  <div className="grid grid-cols-4 gap-2.5">
+                  <div className="contents">
                   <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
                     <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                     <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
@@ -4024,21 +4038,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   </label>
                   <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
-                    <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                    {materialSource === 'favorite'
+                      ? <Star size={15} fill="currentColor" className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-amber-500" />
+                      : <Download size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />}
                     <select value={materialSource} onChange={event => setMaterialSource(event.target.value as MaterialSourceFilter)} aria-label="素材来源"
                       className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
                       {Object.entries(MATERIAL_SOURCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                    <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                  </label>
-                  <label className="relative block h-10 min-w-0 rounded-md border border-border bg-surface focus-within:border-accent">
-                    <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <select value={materialType} onChange={event => setMaterialType(event.target.value as MaterialTypeFilter)} aria-label="素材类型"
-                      className="h-full w-full cursor-pointer appearance-none rounded-md bg-transparent pl-10 pr-9 text-sm font-bold text-text-primary outline-none">
-                      <option value="all">全部类型</option>
-                      <option value="video">视频</option>
-                      <option value="image">图片</option>
-                      <option value="audio">音频</option>
                     </select>
                     <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   </label>
@@ -4052,8 +4057,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 </div>
                 <AnimatePresence initial={false}>
                   {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-5">
                       {[
+                        { label: '素材类型', value: materialType, onChange: (value: string) => setMaterialType(value as MaterialTypeFilter), options: [['all', '全部类型'], ['video', '视频'], ['image', '图片'], ['audio', '音频']] },
                         { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
                         { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
                         { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
@@ -4103,6 +4109,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 ) : filteredMaterials.map(material => (
                   <article key={material.id} className="group flex h-full flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-sm transition hover:border-border-bright hover:shadow-md">
                     <div className="relative aspect-[9/16] bg-surface-2">
+                      {material.canManage && <div className="absolute right-2 top-2 z-30 flex gap-1">
+                        <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow backdrop-blur-sm transition hover:text-accent"><Pencil size={14} /></button>
+                        <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow backdrop-blur-sm transition hover:text-red-600"><Trash2 size={14} /></button>
+                      </div>}
                       {material.type === 'video' ? (
                         <>
                           {material.poster
@@ -4131,8 +4141,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <div className="flex flex-1 flex-col p-3">
                       <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
                       <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
-                      {(material.usage !== 'reference_only' || material.canManage) && <div className="mt-auto flex items-center gap-2 pt-3">
-                        {material.usage !== 'reference_only' && <button
+                      {material.usage !== 'reference_only' && <div className="mt-auto flex items-center gap-2 pt-3">
+                        <button
                           type="button"
                           onClick={() => enterMaterialSmartGeneration(material)}
                           disabled={material.type === 'audio' || (material.type === 'video' && (!Number.isFinite(material.duration) || material.duration <= 0))}
@@ -4140,11 +4150,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Sparkles size={14} />用于创作
-                        </button>}
-                        {material.canManage && <>
-                          <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition hover:border-accent hover:text-accent"><Pencil size={14} /></button>
-                          <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border text-text-muted transition hover:border-red-300 hover:text-red-600"><Trash2 size={14} /></button>
-                        </>}
+                        </button>
                       </div>}
                     </div>
                   </article>
