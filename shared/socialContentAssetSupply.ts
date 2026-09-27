@@ -6,6 +6,7 @@ import type {
   SocialAccountPresenterLock,
   SocialContentCreationMode,
   SocialContentManagementMode,
+  SocialProductionApproach,
   SocialProductIdentityGroup,
   SocialProductSceneReplicationSpec,
   SocialReferenceShotAnalysis,
@@ -15,6 +16,10 @@ import type {
   SocialTruthProhibition,
   SocialTruthSensitiveSubject,
 } from './contracts/socialContentWorkflow';
+import {
+  normalizeSceneVisualContract,
+  type SocialSceneVisualContract,
+} from './sceneVisualContract';
 
 export interface SocialAssetInventory {
   customerVideoIds?: string[];
@@ -37,12 +42,22 @@ export interface SocialAssetSupplyShotRequest {
   referenceShotId?: string | null;
   /** Optional Director-frozen spec; otherwise the planner builds a safe default. */
   productSceneReplication?: SocialProductSceneReplicationSpec;
+  /** Optional normalized fields emitted by newer Director versions. Historic
+   * callers are classified from the reference analysis and description. */
+  subjects?: string[];
+  interaction?: string | null;
+  environment?: string | null;
+  productUsage?: string | null;
+  productPolicy?: 'locked' | 'preferred' | 'open';
+  productRef?: string | null;
+  visualContract?: SocialSceneVisualContract;
 }
 
 export interface CreateSocialAssetSupplyPlanInput {
   creationMode: SocialContentCreationMode;
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;
+  productionApproach?: SocialProductionApproach;
   /** Task-backed version for new plans. Historic callers may omit it. */
   planVersion?: string;
   inventory?: SocialAssetInventory;
@@ -145,23 +160,6 @@ function prohibitionsFor(subject: SocialTruthSensitiveSubject): SocialTruthProhi
   return common;
 }
 
-function replacementDescription(subject: SocialTruthSensitiveSubject): string {
-  if (subject === 'customer_factory') {
-    return '用已确认的能力参数、产品细节和流程示意承担信任功能，不生成或暗示客户真实工厂画面';
-  }
-  if (subject === 'customer_case') {
-    return '用通用采购决策过程、服务步骤或经确认的匿名事实承担说明功能，不虚构客户身份、案例和结果';
-  }
-  if (subject === 'product_effect') {
-    return '用使用步骤、适用场景、工作原理或经确认的参数承担说明功能，不生成可被误认成真实效果的画面';
-  }
-  return '';
-}
-
-function safeReplacementStrategy(confirmedFactRefs: string[]): SocialShotSourceStrategy {
-  return confirmedFactRefs.length > 0 ? 'verified_fact_card' : 'motion_graphics';
-}
-
 function presenterLockReady(lock: SocialAccountPresenterLock | null | undefined): lock is SocialAccountPresenterLock {
   return Boolean(lock
     && lock.status === 'published'
@@ -176,6 +174,75 @@ function presenterLockReady(lock: SocialAccountPresenterLock | null | undefined)
     && lock.consistencyKey.trim());
 }
 
+function referenceShot(
+  shot: SocialAssetSupplyShotRequest,
+  referenceShots?: SocialReferenceShotAnalysis[],
+): SocialReferenceShotAnalysis | undefined {
+  return referenceShots?.find(item => item.shotId === shot.referenceShotId);
+}
+
+function shotSignals(
+  shot: SocialAssetSupplyShotRequest,
+  referenceShots?: SocialReferenceShotAnalysis[],
+): {
+  text: string;
+  hasPerson: boolean;
+  hasProduct: boolean;
+  personUsesProduct: boolean;
+  factory: boolean;
+  customerCase: boolean;
+} {
+  const reference = referenceShot(shot, referenceShots);
+  const visualContract = normalizeSceneVisualContract(shot.visualContract ?? reference?.visualContract ?? {
+    subjects: shot.subjects,
+    interaction: shot.interaction,
+    environment: shot.environment,
+    productUsage: shot.productUsage,
+    productPolicy: shot.productPolicy,
+    productRef: shot.productRef,
+  });
+  const values = [
+    shot.requestedDescription,
+    ...(shot.subjects ?? []),
+    shot.interaction,
+    shot.environment,
+    shot.productUsage,
+    reference?.visualDescription,
+    reference?.spokenText,
+    reference?.captionText,
+    ...(reference?.tags.subjects ?? []),
+    ...(reference?.tags.subjectRelations ?? []),
+    ...(reference?.tags.sceneTypes ?? []),
+    reference?.action?.startState,
+    reference?.action?.path,
+    reference?.action?.endState,
+    reference?.action?.spatialRelation,
+  ].filter(Boolean).join(' ').toLocaleLowerCase();
+  const subjectKinds = new Set(visualContract.subjects.map(subject => subject.kind));
+  const hasPerson = subjectKinds.has('person')
+    || ['person_talking', 'person_holding_product', 'person_using_product', 'apply_product_to_face', 'person_factory_interaction'].includes(visualContract.interaction.kind)
+    || /人物|真人|人像|主播|模特|员工|工人|脸|面部|手持|手部|person|people|human|presenter|model|worker|face|hand/.test(values);
+  const hasProduct = subjectKinds.has('product') || visualContract.productUsage.kind !== 'none'
+    || ['person_holding_product', 'person_using_product', 'apply_product_to_face', 'product_only_display', 'product_motion'].includes(visualContract.interaction.kind)
+    || /产品|商品|包装|瓶|罐|盒|精华|面霜|面膜|膏体|涂抹|上脸|product|package|bottle|jar|serum|cream|apply/.test(values);
+  const personUsesProduct = hasPerson && hasProduct && (
+    ['person_holding_product', 'person_using_product', 'apply_product_to_face'].includes(visualContract.interaction.kind)
+    || visualContract.productUsage.kind !== 'none'
+    || /使用|试用|涂|抹|上脸|拿|握|手持|开盖|挤|按压|喷|展示|触碰|接触|互动|apply|use|hold|open|squeeze|touch|interact/.test(values)
+  );
+  return {
+    text: values,
+    hasPerson,
+    hasProduct,
+    personUsesProduct,
+    factory: shot.truthSensitiveSubject === 'customer_factory' || subjectKinds.has('factory')
+      || visualContract.environment.kind === 'factory' || visualContract.interaction.kind === 'factory_process'
+      || /工厂|车间|产线|生产基地|仓库|灌装|旋盖|包装线|factory|workshop|production line|warehouse|filling|capping/.test(values),
+    customerCase: shot.truthSensitiveSubject === 'customer_case' || subjectKinds.has('customer_case')
+      || /客户案例|客户反馈|合作案例|成交结果|客户成果|customer case|testimonial|client result/.test(values),
+  };
+}
+
 export function buildSocialProductSceneReplicationSpec(input: {
   shot: SocialAssetSupplyShotRequest;
   inventory: Required<SocialAssetInventory>;
@@ -183,14 +250,25 @@ export function buildSocialProductSceneReplicationSpec(input: {
 }): SocialProductSceneReplicationSpec {
   if (input.shot.productSceneReplication) return structuredClone(input.shot.productSceneReplication);
   const reference = input.referenceShots?.find(item => item.shotId === input.shot.referenceShotId);
-  const groups: SocialProductIdentityGroup[] = input.inventory.productIdentityGroups.length
-    ? input.inventory.productIdentityGroups.map(group => ({
+  const visualContract = normalizeSceneVisualContract(input.shot.visualContract ?? reference?.visualContract ?? {
+    productPolicy: input.shot.productPolicy,
+    productRef: input.shot.productRef,
+  });
+  const requestedProduct = String(visualContract.product.requestedProductRef
+    || visualContract.productUsage.productRef || input.shot.productRef || '').normalize('NFKC').trim().toLocaleLowerCase();
+  const inventoryGroups = visualContract.product.policy === 'locked' && requestedProduct
+    ? input.inventory.productIdentityGroups.filter(group => (
+      group.productRef.normalize('NFKC').trim().toLocaleLowerCase() === requestedProduct
+    ))
+    : input.inventory.productIdentityGroups;
+  const groups: SocialProductIdentityGroup[] = inventoryGroups.length
+    ? inventoryGroups.map(group => ({
       productRef: group.productRef,
       referenceImageIds: [...group.imageIds],
       requiredVisibleElements: ['产品轮廓', '材质与颜色', 'Logo', '包装标签与可读文字'],
       forbiddenChanges: ['shape', 'material', 'color', 'logo', 'label_text', 'packaging_structure'],
     }))
-    : [{
+    : visualContract.product.policy === 'locked' && requestedProduct ? [] : [{
       productRef: 'task-product',
       referenceImageIds: [...input.inventory.productImageIds],
       requiredVisibleElements: ['产品轮廓', '材质与颜色', 'Logo', '包装标签与可读文字'],
@@ -255,20 +333,92 @@ function generalStrategy(
   shot: SocialAssetSupplyShotRequest,
   inventory: Required<SocialAssetInventory>,
   confirmedFactRefs: string[],
-  creationMode: SocialContentCreationMode,
   accountPresenterLock: SocialAccountPresenterLock | null | undefined,
   referenceShots?: SocialReferenceShotAnalysis[],
+  productionApproach: SocialProductionApproach = 'ai_enhanced',
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec } {
-  const description = String(shot.requestedDescription || '');
-  const firstReferenceShot = shot.referenceShotId === 'reference-shot-1'
-    || shot.shotId === 'shot-hook'
-    || /(?:^|-)shot-?1$/i.test(shot.shotId);
-  const productScenePreferred = inventory.productImageIds.length > 0 && (
-    creationMode === 'viral_replication'
-      ? firstReferenceShot
-      : shot.function === 'hook' || shot.function === 'demonstration' || /产品|商品|包装|陈列|展台|product/i.test(description)
-  );
-  if (productScenePreferred) {
+  const signals = shotSignals(shot, referenceShots);
+  if (productionApproach !== 'ai_enhanced') {
+    const localVideoRefs = signals.factory && inventory.factoryEvidenceAssetIds.length
+      ? inventory.factoryEvidenceAssetIds
+      : signals.customerCase && inventory.customerCaseEvidenceAssetIds.length
+        ? inventory.customerCaseEvidenceAssetIds
+        : shot.truthSensitiveSubject === 'product_effect' && inventory.productEffectEvidenceAssetIds.length
+          ? inventory.productEffectEvidenceAssetIds
+          : inventory.customerVideoIds;
+    if (localVideoRefs.length > 0) {
+      return {
+        strategy: 'customer_real_asset',
+        refs: localVideoRefs,
+        instruction: signals.factory || signals.customerCase
+          ? '直接使用“我的素材”中匹配的工厂或客户案例片段；已入库素材不因产品关联或权利元数据缺失而停止制作；统一静音原声并避开明显口型，使用编导锁定的逐句口播音轨'
+          : '以逐句口播为主查询匹配“我的素材”真实片段；按动作完整性与安全切点裁切，原声静音并避开明显口型，使用编导锁定的逐句口播音轨；只做重排、变速、调色、字幕和本地转场，不重绘主体',
+      };
+    }
+    if (inventory.productImageIds.length > 0) {
+      return {
+        strategy: 'customer_product_image_animation',
+        refs: inventory.productImageIds,
+        instruction: '使用“我的素材”中的产品图片做本地裁切、构图和轻量动效；不得调用付费画面生成或数字人能力',
+      };
+    }
+    return {
+      strategy: productionApproach === 'material_polish' && confirmedFactRefs.length > 0
+        ? 'verified_fact_card' : 'motion_graphics',
+      refs: productionApproach === 'material_polish' ? confirmedFactRefs : [],
+      instruction: productionApproach === 'material_polish'
+        ? '仅使用本地图文加工补足缺口，不调用外部画面生成或数字人能力'
+        : '纯素材方案缺少可匹配的“我的素材”，必须停止并提示素材覆盖不足',
+    };
+  }
+
+  // Real factory and customer-case media already in the material library has
+  // first priority. These are edit inputs, not a request for new evidence.
+  if (signals.factory && inventory.factoryEvidenceAssetIds.length > 0) {
+    return {
+      strategy: 'customer_real_asset',
+      refs: inventory.factoryEvidenceAssetIds,
+      instruction: '直接使用素材库中的工厂片段，再按逐句口播选择具体区间并裁切；原声静音，有人物时避开明显口型；不因权利字段或产品关联缺失改走生成路线',
+    };
+  }
+  if (signals.customerCase && inventory.customerCaseEvidenceAssetIds.length > 0) {
+    return {
+      strategy: 'customer_real_asset',
+      refs: inventory.customerCaseEvidenceAssetIds,
+      instruction: '直接使用素材库中的客户案例片段，再按逐句口播选择具体区间并裁切；原声静音，有人物时避开明显口型；不因权利字段或产品关联缺失改走生成路线',
+    };
+  }
+  if (shot.truthSensitiveSubject === 'product_effect' && !signals.hasPerson
+    && inventory.productEffectEvidenceAssetIds.length > 0) {
+    return {
+      strategy: 'customer_real_asset',
+      refs: inventory.productEffectEvidenceAssetIds,
+      instruction: '非人物使用类的产品效果直接使用已入库效果素材，按逐句口播裁切',
+    };
+  }
+
+  // Any visible person belongs to the digital-presenter route. When the
+  // person interacts with a product, freeze the same product-scene identity
+  // references into the shot so the presenter executor cannot silently swap
+  // products.
+  if (signals.hasPerson) {
+    return {
+      strategy: 'authorized_digital_presenter',
+      refs: presenterLockReady(accountPresenterLock)
+        ? [accountPresenterLock.presenterAssetId]
+        : inventory.presenterAssetIds,
+      instruction: signals.personUsesProduct
+        ? '使用数字人完成人物与产品的动作和接触关系；必须传递动作、交互、产品、环境、镜头与时序控制，当前 provider 不支持时必须显式停止'
+        : '使用数字人完成人物出镜，传递表演、环境、镜头与时序控制，不得用图形卡片伪装为已生成人物镜头',
+      ...(signals.personUsesProduct && inventory.productImageIds.length > 0 ? {
+        productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }),
+      } : {}),
+    };
+  }
+
+  // Only product-only shots use IAIGC. A hook is not automatically a product
+  // shot merely because product images exist in the account.
+  if (signals.hasProduct && inventory.productImageIds.length > 0) {
     return {
       strategy: 'aigc_product_scene_replication',
       refs: inventory.productImageIds,
@@ -276,29 +426,11 @@ function generalStrategy(
       productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }),
     };
   }
-  if (creationMode === 'viral_replication' && inventory.factoryEvidenceAssetIds.length > 0) {
-    return {
-      strategy: 'customer_real_asset',
-      refs: inventory.factoryEvidenceAssetIds,
-      instruction: '开头产品场景后只使用素材库中的真实工厂视频，按参考片节奏切换不同工厂镜头，并叠加口播、字幕与轻量音效',
-    };
-  }
-  if (creationMode === 'viral_replication' && inventory.presenterAssetIds.length > 0 && inventory.referenceVideoIds.length > 0) {
-    return { strategy: 'authorized_digital_presenter', refs: inventory.presenterAssetIds,
-      instruction: '使用当前社媒账号已发布的数字人身份版本，以参考视频逐句对齐；不得在任务内随机更换人脸、声线或身份版本' };
-  }
   if (inventory.customerVideoIds.length > 0) {
     return {
       strategy: 'customer_real_asset',
       refs: inventory.customerVideoIds,
-      instruction: '优先剪辑客户真实视频；只做裁切、调色、字幕和声音处理，不重绘真实主体',
-    };
-  }
-  if (presenterLockReady(accountPresenterLock) || inventory.presenterAssetIds.length > 0) {
-    return {
-      strategy: 'authorized_digital_presenter',
-      refs: presenterLockReady(accountPresenterLock) ? [accountPresenterLock.presenterAssetId] : inventory.presenterAssetIds,
-      instruction: '复用当前社媒账号已发布的数字人身份与声音人格；任务只改变口播和允许变化的表演参数，不改变账号主播身份',
+      instruction: '按编导锁定的逐句口播匹配已入库真实视频；素材原声静音，有人物时避开明显口型；只做裁切、调色、字幕和声音处理，不重绘真实主体',
     };
   }
   if (inventory.productImageIds.length > 0) {
@@ -337,10 +469,15 @@ function generalStrategy(
   };
 }
 
-function fallbackFor(strategy: SocialShotSourceStrategy): SocialShotSourceStrategy | null {
+function fallbackFor(strategy: SocialShotSourceStrategy, productionApproach: SocialProductionApproach = 'ai_enhanced'): SocialShotSourceStrategy | null {
+  if (productionApproach === 'material_cut' || productionApproach === 'shooting_plan') return null;
+  if (productionApproach === 'material_polish') return strategy === 'verified_fact_card' ? 'motion_graphics' : null;
   if (strategy === 'motion_graphics') return 'authorized_digital_presenter';
-  if (strategy === 'authorized_digital_presenter') return 'motion_graphics';
-  if (strategy === 'aigc_product_scene_replication') return 'motion_graphics';
+  // The promoted option promises a real digital-person/product IAIGC shot.
+  // Provider incapability must remain visible instead of being disguised as a
+  // completed motion-graphics shot.
+  if (strategy === 'authorized_digital_presenter') return null;
+  if (strategy === 'aigc_product_scene_replication') return null;
   if (strategy === 'licensed_stock_asset') return 'non_evidentiary_ai_visual';
   if (strategy === 'non_evidentiary_ai_visual') return 'motion_graphics';
   if (strategy === 'verified_fact_card') return 'motion_graphics';
@@ -359,16 +496,23 @@ function planShot(
   creationMode: SocialContentCreationMode,
   accountPresenterLock: SocialAccountPresenterLock | null | undefined,
   referenceShots?: SocialReferenceShotAnalysis[],
+  productionApproach: SocialProductionApproach = 'ai_enhanced',
 ): SocialAssetSupplyShotPlan {
   const subject = shot.truthSensitiveSubject ?? 'none';
+  const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
+  const signals = shotSignals(shot, referenceShots);
   const evidenceRefs = evidenceRefsFor(subject, inventory);
-  const hasEvidence = subject !== 'none' && evidenceRefs.length > 0;
+  const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
+    && !(subject === 'product_effect' && signals.hasPerson);
 
   if (hasEvidence) {
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: false,
-      customerEvidenceRequired: true,
+      // A material that already entered the tenant-visible library is an
+      // available edit input. Missing rights/product metadata must not add a
+      // second production gate here.
+      customerEvidenceRequired: false,
       customerEvidenceRefs: evidenceRefs,
       confirmedFactRefs,
       mustNotImplyCustomerReality: false,
@@ -381,7 +525,7 @@ function planShot(
       sourceStrategy: 'customer_real_asset',
       sourceRefs: evidenceRefs,
       fallbackSourceStrategy: null,
-      productionInstruction: '使用对应的客户真实证据素材；不得生成、替换或夸大承担证明作用的主体和结果',
+      productionInstruction: '直接使用已入库的工厂、客户案例或非人物效果素材，再按逐句口播裁切；不因权利或产品关联元数据缺失停止制作',
       truthBoundary,
       functionalEquivalentReplacement: {
         required: false,
@@ -393,49 +537,17 @@ function planShot(
       feasibility: 'full_fidelity',
       feasibilityReason: '已有可追溯的客户真实证据，可以完整承担该镜头的证明作用',
       customerShootRequired: false,
+      ...(canonicalVisualContract ? { visualContract: structuredClone(canonicalVisualContract) } : {}),
     };
   }
 
-  if (subject !== 'none') {
-    const strategy = safeReplacementStrategy(confirmedFactRefs);
-    const hasConfirmedFacts = confirmedFactRefs.length > 0;
-    const truthBoundary: SocialShotTruthBoundary = {
-      subject,
-      syntheticVisualAllowed: true,
-      customerEvidenceRequired: false,
-      customerEvidenceRefs: [],
-      confirmedFactRefs,
-      mustNotImplyCustomerReality: true,
-      prohibitedRepresentations: prohibitionsFor(subject),
-    };
-    return {
-      shotId: shot.shotId,
-      function: shot.function,
-      requestedDescription: shot.requestedDescription ?? null,
-      sourceStrategy: strategy,
-      sourceRefs: strategy === 'verified_fact_card' ? confirmedFactRefs : [],
-      fallbackSourceStrategy: fallbackFor(strategy),
-      productionInstruction: replacementDescription(subject),
-      truthBoundary,
-      functionalEquivalentReplacement: {
-        required: true,
-        preservesFunction: shot.function,
-        replacesSubject: subject,
-        description: replacementDescription(subject),
-        reason: '缺少可证明该真实场景或结果的客户素材，自动改成不依赖实拍的等价表达',
-      },
-      feasibility: hasConfirmedFacts ? 'functional_equivalent' : 'blocked_for_facts_or_rights',
-      feasibilityReason: hasConfirmedFacts
-        ? '缺少真实证据素材，但已有确认事实，可以用非证据型表达保持镜头功能'
-        : '缺少可核验事实和真实证据，不能安全替代该证明型镜头',
-      customerShootRequired: false,
-    };
-  }
-
-  const selected = generalStrategy(shot, inventory, confirmedFactRefs, creationMode, accountPresenterLock, referenceShots);
-  const hasUsableInput = selected.refs.length > 0 || confirmedFactRefs.length > 0;
-  const feasibility = !hasUsableInput
-    ? 'blocked_for_facts_or_rights'
+  const selected = generalStrategy(shot, inventory, confirmedFactRefs, accountPresenterLock, referenceShots, productionApproach);
+  const noFreeMaterial = productionApproach === 'material_cut'
+    && !selected.refs.length;
+  const lockedProductUnavailable = Boolean(selected.productSceneReplication
+    && selected.productSceneReplication.productIdentity.groups.length === 0);
+  const feasibility = noFreeMaterial || lockedProductUnavailable
+    ? 'goal_degraded'
     : selected.strategy === 'customer_real_asset' || selected.strategy === 'customer_product_image_animation'
       || selected.strategy === 'aigc_product_scene_replication'
       ? 'full_fidelity'
@@ -446,16 +558,16 @@ function planShot(
     requestedDescription: shot.requestedDescription ?? null,
     sourceStrategy: selected.strategy,
     sourceRefs: selected.refs,
-    fallbackSourceStrategy: fallbackFor(selected.strategy),
+    fallbackSourceStrategy: fallbackFor(selected.strategy, productionApproach),
     productionInstruction: selected.instruction,
     truthBoundary: {
-      subject: 'none',
-      syntheticVisualAllowed: true,
+      subject,
+      syntheticVisualAllowed: selected.strategy !== 'customer_real_asset',
       customerEvidenceRequired: false,
       customerEvidenceRefs: [],
       confirmedFactRefs,
       mustNotImplyCustomerReality: selected.strategy !== 'customer_real_asset',
-      prohibitedRepresentations: prohibitionsFor('none'),
+      prohibitedRepresentations: prohibitionsFor(subject),
     },
     functionalEquivalentReplacement: {
       required: false,
@@ -468,9 +580,12 @@ function planShot(
     feasibilityReason: feasibility === 'full_fidelity'
       ? '已有客户素材，可在不改变真实主体的情况下完整实现'
       : feasibility === 'functional_equivalent'
-        ? '已有确认事实，可通过授权能力或非证据型画面保持镜头功能'
-        : '尚未确认最基本的产品事实，不能安全生成对外内容',
+        ? '可使用当前已入库素材或已配置生成能力完成该镜头'
+        : lockedProductUnavailable
+          ? '用户明确锁定的产品暂无对应参考素材；只有 locked 策略会停止异品替换'
+          : '免费方案当前没有可裁切的已入库素材',
     customerShootRequired: false,
+    ...(canonicalVisualContract ? { visualContract: structuredClone(canonicalVisualContract) } : {}),
     ...(selected.productSceneReplication ? {
       productSceneReplication: structuredClone(selected.productSceneReplication),
     } : {}),
@@ -500,19 +615,17 @@ function planShot(
   };
 }
 
-/**
- * Produces an executable plan even when the customer supplies no media. The
- * plan replaces unsupported factory, case and effect claims instead of asking
- * the customer to shoot or generating fake evidence.
- */
+/** Produces the selected route without turning legacy facts, rights or product
+ * metadata into a second admission gate for tenant-visible library media. */
 export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanInput): SocialAssetSupplyPlan {
   const inventory = normalizeInventory(input.inventory ?? EMPTY_INVENTORY);
   const confirmedFactRefs = unique(input.confirmedFactRefs);
   const availability = input.assetAvailability ?? inferSocialAssetAvailability(inventory);
   const managementMode = input.managementMode ?? 'one_click_managed';
   const requestedShots = input.shots?.length ? input.shots : DEFAULT_SHOTS[input.creationMode];
-  const needsFacts = confirmedFactRefs.length === 0;
-  const needsRights = input.rightsConfirmationRequired === true;
+  // `readMaterialLibrary` is the production visibility boundary. Historic
+  // rights flags remain audit metadata and no longer block editing an item
+  // which is already visible in that library.
   const shots = requestedShots.map(shot => planShot(
     shot,
     inventory,
@@ -520,29 +633,22 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
     input.creationMode,
     input.accountPresenterLock,
     input.referenceShots,
+    input.productionApproach ?? 'ai_enhanced',
   ));
-  const overallFeasibility = needsRights || shots.some(shot => shot.feasibility === 'blocked_for_facts_or_rights')
-    ? 'blocked_for_facts_or_rights'
-    : shots.some(shot => shot.feasibility === 'goal_degraded')
+  const overallFeasibility = shots.some(shot => shot.feasibility === 'goal_degraded')
       ? 'goal_degraded'
       : shots.some(shot => shot.feasibility === 'functional_equivalent')
         ? 'functional_equivalent'
         : 'full_fidelity';
-  const customerActions: SocialAssetSupplyPlan['customerActions'] = [
-    ...(needsFacts ? ['confirm_facts' as const] : []),
-    ...(needsRights ? ['confirm_rights' as const] : []),
-  ];
-  const status: SocialAssetSupplyPlan['status'] = needsRights
-    ? 'requires_rights_confirmation'
-    : needsFacts
-      ? 'requires_fact_confirmation'
-      : overallFeasibility === 'goal_degraded'
-        ? 'goal_degraded'
-        : 'ready';
+  const customerActions: SocialAssetSupplyPlan['customerActions'] = [];
+  const status: SocialAssetSupplyPlan['status'] = overallFeasibility === 'goal_degraded'
+    ? 'goal_degraded'
+    : 'ready';
 
   return {
     planVersion: input.planVersion?.trim() || 'historic-unversioned',
     creationMode: input.creationMode,
+    productionApproach: input.productionApproach ?? 'ai_enhanced',
     assetAvailability: availability,
     managementMode,
     productionRoute: productionRoute(availability, inventory),
@@ -563,7 +669,13 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
         ? ['绑定并复用发布账号的数字人身份版本；缺少时创建一次账号主播档案，不要求真人拍摄'] : []),
       ...(shots.some(shot => shot.sourceStrategy === 'aigc_product_scene_replication')
         ? ['根据产品真实参考图生成完整产品场景，并逐项校验产品身份、场景拓扑、产品槽位与镜头轨迹'] : []),
-      '自动制作配音、字幕、动态图文、数字人或辅助画面',
+      ...(input.productionApproach === 'shooting_plan'
+        ? ['输出逐镜代拍清单，不调用配音、数字人、IAIGC 或渲染能力']
+        : input.productionApproach === 'material_cut'
+        ? ['按逐句口播匹配“我的素材”，自动裁切、重排、变速并烧录字幕；不调用 Seedance、数字人或付费画面生成']
+        : input.productionApproach === 'material_polish'
+          ? ['在“我的素材”剪辑基础上增加本地图文、调色、字幕与转场；不调用 Seedance、数字人或付费画面生成']
+          : ['自动制作配音、字幕、动态图文、数字人或辅助画面']),
       '逐镜检查事实边界、素材来源和生成内容标识',
     ],
     optionalEnhancements: [

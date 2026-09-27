@@ -52,10 +52,12 @@ export default function CompetitorAccountsModal({
   open,
   onClose,
   onCrawled,
+  embedded = false,
 }: {
   open: boolean;
   onClose: () => void;
   onCrawled: (importedCount: number) => void;
+  embedded?: boolean;
 }) {
   const [accounts, setAccounts] = useState<CompetitorAccount[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,7 +69,7 @@ export default function CompetitorAccountsModal({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const dialogRef = useModalFocus<HTMLDivElement>({
-    open,
+    open: open && !embedded,
     onClose,
     closeOnEscape: () => !adding && !crawlingId && !deletingId,
   });
@@ -153,26 +155,20 @@ export default function CompetitorAccountsModal({
     }
   };
 
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          role="presentation"
-          onMouseDown={event => { if (event.target === event.currentTarget && !adding && !crawlingId && !deletingId) onClose(); }}
-          className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:px-5 sm:py-6"
-        >
+  const panel = open ? (
           <motion.div
             ref={dialogRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
+            tabIndex={embedded ? undefined : -1}
+            role={embedded ? 'region' : 'dialog'}
+            aria-modal={embedded ? undefined : true}
             aria-labelledby="competitor-accounts-title"
-            initial={{ opacity: 0, y: 16, scale: 0.98 }}
+            initial={embedded ? false : { opacity: 0, y: 16, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 16, scale: 0.98 }}
+            exit={embedded ? undefined : { opacity: 0, y: 16, scale: 0.98 }}
             onClick={e => e.stopPropagation()}
-            className="flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-lg border border-border bg-white shadow-xl sm:max-h-[86vh] sm:rounded-lg"
+            className={embedded
+              ? 'flex min-h-[560px] w-full flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm'
+              : 'flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-lg border border-border bg-white shadow-xl sm:max-h-[86vh] sm:rounded-lg'}
           >
             {/* Header */}
             <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:items-center sm:px-6">
@@ -181,14 +177,14 @@ export default function CompetitorAccountsModal({
                   <Users size={18} />
                 </span>
                 <div>
-                  <h2 id="competitor-accounts-title" className="text-base font-bold text-text-primary">对标账号库</h2>
-                  <p className="text-xs text-text-muted">粘贴对标账号主页，一键采集其最新视频进入爆款灵感</p>
+                  <h2 id="competitor-accounts-title" className="text-base font-bold text-text-primary">对标账号</h2>
+                  <p className="text-xs text-text-muted">集中查看已采集账号，并把最新内容送入灵感发现</p>
                 </div>
               </div>
-              <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭对标账号库"
+              {!embedded && <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭对标账号库"
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-text-muted hover:bg-surface-2" title="关闭">
                 <X size={16} />
-              </button>
+              </button>}
             </div>
 
             {/* Add form */}
@@ -305,9 +301,23 @@ export default function CompetitorAccountsModal({
             </div>
 
             <div className="border-t border-border bg-insight-soft px-4 py-3 text-xs text-insight-action sm:px-6">
-              采集到的视频会进入「爆款灵感」，并自动排队做视频级 AI 分析；标注来源为对标账号主页。
+              采集到的视频会进入「灵感发现」，并由编导 Agent 验收定时采集结果。
             </div>
           </motion.div>
+  ) : null;
+
+  if (embedded) return panel;
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          role="presentation"
+          onMouseDown={event => { if (event.target === event.currentTarget && !adding && !crawlingId && !deletingId) onClose(); }}
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:px-5 sm:py-6"
+        >
+          {panel}
         </motion.div>
       )}
     </AnimatePresence>

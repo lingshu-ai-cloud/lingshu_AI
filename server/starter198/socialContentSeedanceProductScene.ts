@@ -8,7 +8,7 @@ import { generateSeedanceConceptVideo } from '../lib/generativeVideoGateway.js';
 import { firstFrameInputFingerprint, type FirstFrameReference, type FirstFrameResult } from '../lib/firstFrameGenerator.js';
 import { SeedreamFirstFrameGenerator } from '../lib/seedreamFirstFrameGenerator.js';
 import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
-import { objectStorageDownload, objectStorageSignedGetUrl, objectStorageUploadFile } from '../storage/objectStorage.js';
+import { objectStorageDownload, objectStorageSignedGetUrl, objectStorageUpload, objectStorageUploadFile } from '../storage/objectStorage.js';
 import { store } from '../storage/index.js';
 import type { ProductSceneExecutionPorts, ProductSceneReferenceImage } from './socialContentProductSceneAdapter.js';
 
@@ -63,52 +63,25 @@ async function extractJpeg(inputPath: string, outputPath: string, second: number
   return fsp.readFile(outputPath);
 }
 
-async function exactProductComposite(environment: Buffer, product: Buffer): Promise<Buffer> {
+export async function exactProductComposite(environment: Buffer, product: Buffer): Promise<Buffer> {
   const target = await sharp(environment).metadata();
   const width = Math.max(720, Number(target.width || 1152));
   const height = Math.max(1280, Number(target.height || 2048));
-  const prepared = await sharp(product).rotate().resize({ width: Math.round(width * 0.82), height: Math.round(height * 0.66), fit: 'inside' })
-    .removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const pixels = prepared.data;
-  const count = prepared.info.width * prepared.info.height;
-  const background = new Uint8Array(count);
-  const queue = new Int32Array(count);
-  let head = 0; let tail = 0;
-  const lightBackground = (index: number) => {
-    const offset = index * prepared.info.channels;
-    const r = pixels[offset] || 0; const g = pixels[offset + 1] || 0; const b = pixels[offset + 2] || 0;
-    return r >= 238 && g >= 238 && b >= 238 && Math.max(r, g, b) - Math.min(r, g, b) <= 18;
-  };
-  const enqueue = (index: number) => {
-    if (index < 0 || index >= count || background[index] || !lightBackground(index)) return;
-    background[index] = 1; queue[tail++] = index;
-  };
-  for (let x = 0; x < prepared.info.width; x += 1) {
-    enqueue(x); enqueue((prepared.info.height - 1) * prepared.info.width + x);
-  }
-  for (let y = 0; y < prepared.info.height; y += 1) {
-    enqueue(y * prepared.info.width); enqueue(y * prepared.info.width + prepared.info.width - 1);
-  }
-  while (head < tail) {
-    const index = queue[head++]; const x = index % prepared.info.width;
-    if (x > 0) enqueue(index - 1);
-    if (x + 1 < prepared.info.width) enqueue(index + 1);
-    enqueue(index - prepared.info.width); enqueue(index + prepared.info.width);
-  }
-  const rgba = Buffer.alloc(count * 4);
-  for (let index = 0; index < count; index += 1) {
-    const source = index * prepared.info.channels; const destination = index * 4;
-    rgba[destination] = pixels[source] || 0;
-    rgba[destination + 1] = pixels[source + 1] || 0;
-    rgba[destination + 2] = pixels[source + 2] || 0;
-    rgba[destination + 3] = background[index] ? 0 : 255;
-  }
-  const cutout = await sharp(rgba, { raw: { width: prepared.info.width, height: prepared.info.height, channels: 4 } }).png().toBuffer();
-  const tableStart = Math.round(height * 0.18);
-  const stage = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="table" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#29332f"/><stop offset="0.35" stop-color="#111715"/><stop offset="1" stop-color="#020303"/></linearGradient></defs><rect x="0" y="${tableStart}" width="${width}" height="${height - tableStart}" fill="url(#table)"/><path d="M0 ${Math.round(height * 0.32)} H${width}" stroke="#87918d" stroke-opacity=".18" stroke-width="3"/></svg>`);
+  // Keep the complete source pixels. White packages cannot be separated from
+  // an off-white sweep with a threshold mask without destroying labels. A
+  // seamless light photography table preserves every SKU and merges the
+  // library flat lay into the generated white-wall/plant environment.
+  const prepared = await sharp(product).rotate().resize({
+    width: Math.round(width * 0.94),
+    height: Math.round(height * 0.68),
+    fit: 'inside',
+    withoutEnlargement: false,
+  }).jpeg({ quality: 96, chromaSubsampling: '4:4:4' }).toBuffer({ resolveWithObject: true });
+  const tableStart = Math.round(height * 0.07);
+  const stage = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="table" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef2f1"/><stop offset="0.16" stop-color="#f7f8f8"/><stop offset="1" stop-color="#ffffff"/></linearGradient></defs><rect x="0" y="${tableStart}" width="${width}" height="${height - tableStart}" fill="url(#table)"/></svg>`);
   return sharp(environment).resize(width, height, { fit: 'fill' }).composite([
     { input: stage, top: 0, left: 0 },
-    { input: cutout, top: Math.round(height * 0.24), left: Math.max(0, Math.round((width - prepared.info.width) / 2)) },
+    { input: prepared.data, top: Math.round(height * 0.20), left: Math.max(0, Math.round((width - prepared.info.width) / 2)) },
   ]).jpeg({ quality: 95, chromaSubsampling: '4:4:4' }).toBuffer();
 }
 
@@ -130,7 +103,9 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
     async execute(input) {
       const apiKey = String(process.env.SEEDANCE_API_KEY || '').trim();
       const seedreamKey = String(process.env.SEEDREAM_API_KEY || apiKey).trim();
-      if (!apiKey || !seedreamKey || process.env.SEEDANCE_VIDEO_ENABLED !== 'true') {
+      const seedanceModel = String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128');
+      const supportsFullModalReference = /seedance-(?:2-0|2-5)-/i.test(seedanceModel);
+      if (!apiKey || (!supportsFullModalReference && !seedreamKey) || process.env.SEEDANCE_VIDEO_ENABLED !== 'true') {
         return { status: 'failed', error: 'seedance_or_seedream_not_enabled' };
       }
       const referenceVideoAsset = await referenceVideo(input.spec.referenceSourceId);
@@ -144,23 +119,30 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
         role: 'source_composition', bytes: compositionBytes, mimeType: 'image/jpeg',
         sha256: createHash('sha256').update(compositionBytes).digest('hex'),
       };
-      const productReferences: FirstFrameReference[] = loadedProducts.map(item => ({
-        role: 'product_identity', bytes: item.bytes, mimeType: item.mimeType,
-        sha256: createHash('sha256').update(item.bytes).digest('hex'),
-      }));
-      const seedream = new SeedreamFirstFrameGenerator({ apiKey: seedreamKey });
       const firstFrameRequest = {
-        referenceMode: 'product_scene' as const,
+        referenceMode: 'environment_plate' as const,
         tenantId: input.tenantId,
         videoId: input.taskId,
         compositionId: input.spec.sceneTemplateKey,
-        presenterVersion: input.referenceImages.map(item => item.contentHash || item.assetId).join(':').slice(0, 300),
-        prompt: `${productScenePrompt(input.spec)}\nGenerate the exact first frame. Match image 1 environment and composition; replace every original product with only the product identity shown in the later reference image(s).`,
+        // The environment plate is reusable across product changes. Product
+        // identity is composited from exact source pixels below rather than
+        // entrusted to image generation, which can mutate labels and logos.
+        presenterVersion: `${input.spec.sceneTemplateKey}:${compositionReference.sha256}`,
+        prompt: [
+          'Generate a photorealistic vertical commercial environment plate from the supplied reference frame.',
+          `Preserve only this environment and composition: ${input.spec.sceneLock.environment}; ${input.spec.sceneLock.background}; ${input.spec.sceneLock.lighting}.`,
+          'Remove every product, person, caption, logo, watermark and readable text. Leave a clean foreground photography surface for exact product pixels to be composited later.',
+        ].join('\n'),
         ratio: '9:16' as const,
-        references: [compositionReference, ...productReferences],
+        references: [compositionReference],
         idempotencyKey: '',
       };
-      firstFrameRequest.idempotencyKey = firstFrameInputFingerprint(firstFrameRequest, seedream.provider, seedream.model);
+      const seedream = supportsFullModalReference ? null : new SeedreamFirstFrameGenerator({ apiKey: seedreamKey });
+      firstFrameRequest.idempotencyKey = firstFrameInputFingerprint(
+        firstFrameRequest,
+        seedream?.provider || 'seedream',
+        seedream?.model || 'source-composition',
+      );
       const cacheDirectory = path.resolve(
         process.cwd(),
         'data/media/generated/product-scene-cache',
@@ -169,9 +151,21 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
       await fsp.mkdir(cacheDirectory, { recursive: true });
       const cachedFirstFramePath = path.join(cacheDirectory, `${firstFrameRequest.idempotencyKey}.jpg`);
       const cachedFirstFrameMetaPath = path.join(cacheDirectory, `${firstFrameRequest.idempotencyKey}.json`);
-      let firstFrame: FirstFrameResult;
-      const cachedBytes = await fsp.readFile(cachedFirstFramePath).catch(() => null);
-      if (cachedBytes?.length) {
+      let firstFrame: FirstFrameResult | (Omit<FirstFrameResult, 'provider'> & { provider: 'reference-frame' });
+      const cachedBytes = supportsFullModalReference ? null : await fsp.readFile(cachedFirstFramePath).catch(() => null);
+      if (supportsFullModalReference) {
+        // Seedance 2.x already consumes the reference video and exact product
+        // images. Supplying a separately generated Seedream plate here adds
+        // latency/cost and can introduce a second, conflicting product set.
+        firstFrame = {
+          bytes: compositionBytes,
+          mimeType: 'image/jpeg',
+          provider: 'reference-frame',
+          model: 'source-composition',
+          providerRequestId: `reference-frame:${compositionReference.sha256}`,
+          estimatedCostCny: 0,
+        };
+      } else if (cachedBytes?.length && seedream) {
         const cachedMeta = await fsp.readFile(cachedFirstFrameMetaPath, 'utf8')
           .then(value => JSON.parse(value) as Record<string, unknown>)
           .catch((): Record<string, unknown> => ({}));
@@ -183,7 +177,7 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
           providerRequestId: String(cachedMeta.providerRequestId || `cached:${firstFrameRequest.idempotencyKey}`),
           estimatedCostCny: Number(cachedMeta.estimatedCostCny || seedream.estimatedCostCny),
         };
-      } else {
+      } else if (seedream) {
         firstFrame = await seedream.generate(firstFrameRequest);
         const temporary = `${cachedFirstFramePath}.${process.pid}.tmp`;
         await fsp.writeFile(temporary, firstFrame.bytes);
@@ -193,6 +187,8 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
           providerRequestId: firstFrame.providerRequestId,
           estimatedCostCny: firstFrame.estimatedCostCny,
         }), 'utf8');
+      } else {
+        throw new Error('seedream_first_frame_provider_unavailable');
       }
       const identityLockedFirstFrame = await exactProductComposite(firstFrame.bytes, loadedProducts[0]!.bytes);
       const identityLockedHash = createHash('sha256').update(identityLockedFirstFrame).digest('hex');
@@ -202,10 +198,21 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
       const firstFrameDataUrl = `data:image/jpeg;base64,${identityLockedFirstFrame.toString('base64')}`;
       const productDataUrls = loadedProducts.map(item => `data:${item.mimeType};base64,${item.bytes.toString('base64')}`);
       const duration = Math.max(4, Math.min(15, Math.round(input.spec.cameraLock.durationSeconds)));
-      const seedanceModel = String(process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128');
-      const supportsFullModalReference = /seedance-(?:2-0|2-5)-/i.test(seedanceModel);
       let referenceVideoUrl: string | undefined;
+      let firstFrameInput = firstFrameDataUrl;
+      let productInputs = productDataUrls;
       if (supportsFullModalReference) {
+        const inputPrefix = `generated/product-scene-inputs/${createHash('sha256').update(input.tenantId).digest('hex').slice(0, 24)}`;
+        const firstFrameKey = `${inputPrefix}/${identityLockedHash}-first-frame.jpg`;
+        await objectStorageUpload({ key: firstFrameKey, body: identityLockedFirstFrame, contentType: 'image/jpeg' });
+        firstFrameInput = await objectStorageSignedGetUrl(firstFrameKey, 3600);
+        productInputs = await Promise.all(loadedProducts.map(async (item, index) => {
+          const hash = createHash('sha256').update(item.bytes).digest('hex');
+          const extension = item.mimeType === 'image/png' ? 'png' : item.mimeType === 'image/webp' ? 'webp' : 'jpg';
+          const key = `${inputPrefix}/${hash}-product-${index + 1}.${extension}`;
+          await objectStorageUpload({ key, body: item.bytes, contentType: item.mimeType });
+          return objectStorageSignedGetUrl(key, 3600);
+        }));
         const referenceClipDuration = Math.max(2, Math.min(15,
           Number(input.spec.referenceEndSeconds || duration) - Number(input.spec.referenceStartSeconds || 0)));
         const referenceClipPath = path.join(input.outputDirectory, `${input.shotId}-seedance-reference.mp4`);
@@ -213,7 +220,8 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
           '-ss', Math.max(0, Number(input.spec.referenceStartSeconds || 0)).toFixed(2),
           '-i', referencePath,
           '-t', referenceClipDuration.toFixed(2),
-          '-map', '0:v:0', '-an', '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+          '-map', '0:v:0', '-an', '-vf', 'scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280',
+          '-c:v', 'libx264', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
           '-r', '24', '-movflags', '+faststart', '-y', referenceClipPath,
         ], false, { timeoutMs: 180_000 });
         if (!trim.ok || !fs.existsSync(referenceClipPath)) throw new Error(`seedance_reference_trim_failed:${trim.stderr || 'missing_output'}`);
@@ -235,8 +243,8 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
         resolution: '720p',
         idempotencyKey: input.idempotencyKey,
         timeoutMs: Math.max(180_000, Number(process.env.SEEDANCE_TIMEOUT_MS || 600_000)),
-        firstFrameDataUrl,
-        referenceImageDataUrls: supportsFullModalReference ? productDataUrls : undefined,
+        firstFrameDataUrl: firstFrameInput,
+        referenceImageDataUrls: supportsFullModalReference ? productInputs : undefined,
         referenceVideoUrl,
         checkpointPath: path.join(cacheDirectory, `${createHash('sha256').update(`${input.idempotencyKey}:${seedanceModel}:${identityLockedHash}`).digest('hex')}.seedance.json`),
       });
@@ -275,7 +283,7 @@ export function createEnvironmentSeedanceProductScenePorts(): ProductSceneExecut
       const contentHash = createHash('sha256').update(video.bytes).digest('hex');
       return {
         status: 'completed',
-        providerId: 'seedream-seedance',
+        providerId: firstFrame.provider === 'seedream' ? 'seedream-seedance' : 'seedance-full-modal',
         providerTaskId: video.providerTaskId,
         model: `${firstFrame.model}+${video.model}`,
         localPath,

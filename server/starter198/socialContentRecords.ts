@@ -5,6 +5,7 @@ import {
   SOCIAL_SOURCE_KINDS,
   SOCIAL_CONTENT_TASK_MODES,
   SOCIAL_CONTENT_PRODUCTION_MODES,
+  SOCIAL_PRODUCTION_APPROACHES,
   SOCIAL_ASSET_AVAILABILITIES,
   SOCIAL_CONTENT_CREATION_MODES,
   SOCIAL_CONTENT_MANAGEMENT_MODES,
@@ -56,9 +57,29 @@ import {
   parseStoredSocialReplicationScript,
   parseStoredSocialShotMaterialMap,
 } from './socialContentScriptSources.js';
-import { buildSocialAgentWorkflow } from './socialContentAgentWorkflow.js';
+import { buildSocialAgentWorkflow, type SocialWorkflowMaterialCandidate } from './socialContentAgentWorkflow.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
-import { decodeMaterialRef } from './socialContentProductionMaterials.js';
+import {
+  AUTO_TASK_KEY,
+  automaticMaterialScore,
+  automaticSocialMaterialEligible,
+  decodeMaterialRef,
+  materialTenantId,
+} from './socialContentProductionMaterials.js';
+import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
+import {
+  buildMaterialScriptAnalysis,
+  type MaterialScriptAnalysis,
+  type MaterialScriptShot,
+} from '../../shared/materialScriptAnalysis.js';
+import {
+  inferMaterialRoles,
+  normalizeSceneVisualContract,
+  resolveProductCompatibility,
+  type SocialMaterialRole,
+  type SocialProductPolicy,
+  type SocialSceneVisualContract,
+} from '../../shared/sceneVisualContract.js';
 
 type StoredPresenter = Record<string, unknown> & {
   id?: string; authorized?: boolean; avatarId?: string; voiceId?: string;
@@ -193,6 +214,10 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   if (!SOCIAL_CONTENT_PRODUCTION_MODES.includes(productionMode as NonNullable<SocialContentTaskBrief['productionMode']>)) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
+  const productionApproach = socialText(record.productionApproach);
+  if (productionApproach && !SOCIAL_PRODUCTION_APPROACHES.includes(productionApproach as NonNullable<SocialContentTaskBrief['productionApproach']>)) {
+    throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
+  }
   const creationMode = socialText(record.creationMode);
   const assetAvailability = socialText(record.assetAvailability);
   const managementMode = socialText(record.managementMode);
@@ -206,6 +231,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   return {
     title,
     objective,
+    productId: nullable(record.productId),
     productRef: nullable(record.productRef),
     audience: nullable(record.audience),
     markets: strings(record.markets, 'social_content_task_record_invalid'),
@@ -235,6 +261,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     ...(assetAvailability ? { assetAvailability: assetAvailability as NonNullable<SocialContentTaskBrief['assetAvailability']> } : {}),
     ...(managementMode ? { managementMode: managementMode as NonNullable<SocialContentTaskBrief['managementMode']> } : {}),
     productionMode: productionMode as SocialContentTaskBrief['productionMode'],
+    ...(productionApproach ? { productionApproach: productionApproach as NonNullable<SocialContentTaskBrief['productionApproach']> } : {}),
   };
 }
 
@@ -518,6 +545,235 @@ async function taskRows(
   return result.items;
 }
 
+export interface SocialWorkflowMaterialClipCandidate extends SocialWorkflowMaterialCandidate {
+  segmentId: string;
+  /** Stable material identity, independent from the task's requested product. */
+  productId: string | null;
+  productRef: string | null;
+  enterpriseCommon: boolean;
+  productPolicy: SocialProductPolicy;
+  materialRoles: SocialMaterialRole[];
+  visualContract: SocialSceneVisualContract;
+  timeRange: { startSeconds: number; endSeconds: number } | null;
+}
+
+export interface SocialWorkflowMaterialCandidateSet {
+  candidates: SocialWorkflowMaterialClipCandidate[];
+  productPolicy: SocialProductPolicy;
+  requestedProductId: string | null;
+  requestedProductRef: string | null;
+}
+
+function materialProductIdentity(record: MaterialRecord, preferredRef?: string | null): {
+  productId: string | null;
+  productRef: string | null;
+} {
+  const productId = socialText(record.productId || record.product_id) || null;
+  if (!productId && materialIsEnterpriseCommon(record)) return { productId: null, productRef: null };
+  // A current stable id owns the current display name. Historic provenance
+  // lists may contain prior bindings and must not override an explicit rebind.
+  const refs = [record.productName, record.productRef, ...(!productId && Array.isArray(record.productRefs) ? record.productRefs : [])]
+    .map(socialText).filter(Boolean);
+  const requested = socialText(preferredRef).normalize('NFKC').toLocaleLowerCase();
+  const productRef = (requested ? refs.find(value => value.normalize('NFKC').toLocaleLowerCase() === requested) : '')
+    || refs[0] || null;
+  return {
+    productId,
+    productRef,
+  };
+}
+
+function materialIsEnterpriseCommon(record: MaterialRecord): boolean {
+  const tags = socialText(record.tags).split(/[,，]/).map(value => value.trim().toLocaleLowerCase());
+  return record.enterpriseCommon === true
+    || record.enterprise_common === true
+    || record.isEnterpriseCommon === true
+    || ['enterprise_common', 'company_common'].includes(socialText(record.materialScope || record.material_scope))
+    || tags.includes('enterprise_common');
+}
+
+function analyzedMaterialShots(record: MaterialRecord): MaterialScriptShot[] {
+  const stored = socialObject(record.scriptAnalysis) as (Partial<MaterialScriptAnalysis> & Record<string, unknown>) | null;
+  if (stored?.status === 'ready' && Array.isArray(stored.shots)) {
+    return stored.shots.flatMap(shot => {
+      const row = socialObject(shot);
+      if (!row || !row.visualContract || !Array.isArray(row.materialRoles)) return [];
+      return [shot as MaterialScriptShot];
+    });
+  }
+  const segments = Array.isArray(record.segments) ? record.segments : [];
+  const mediaType = socialText(record.type);
+  // A video without analyzed intervals is not a usable clip candidate. Images
+  // are atomic, so their visual observations can safely form one indexed shot.
+  if (mediaType === 'video' && segments.length === 0) return [];
+  const duration = Number(record.duration);
+  const segmentEnds = segments.map(segment => Number(socialObject(segment)?.end ?? socialObject(segment)?.endTime ?? 0))
+    .filter(Number.isFinite);
+  const segmentEnd = Math.max(0, ...segmentEnds);
+  return buildMaterialScriptAnalysis({
+    materialId: socialText(record.id),
+    name: socialText(record.name || record.title) || '未命名素材',
+    sourceRevision: socialText(record.analysisSourceRevision || record.sourceRevision || record.updatedAt) || `material:${socialText(record.id)}`,
+    duration: Number.isFinite(duration) && duration >= 0 ? duration : segmentEnd,
+    segments,
+    visualObservations: [record.visualObservations, record.observations]
+      .flatMap(value => Array.isArray(value) ? value : [value]).map(socialText).filter(Boolean),
+    ...materialProductIdentity(record),
+  }).shots;
+}
+
+function sameProduct(
+  candidate: { productId: string | null; productRef: string | null },
+  requested: { productId: string | null; productRef: string | null },
+): boolean {
+  if (candidate.productId && requested.productId && candidate.productId === requested.productId) return true;
+  const candidateRef = socialText(candidate.productRef).normalize('NFKC').toLocaleLowerCase();
+  const requestedRef = socialText(requested.productRef).normalize('NFKC').toLocaleLowerCase();
+  return Boolean(candidateRef && requestedRef && candidateRef === requestedRef);
+}
+
+export function buildSocialWorkflowMaterialCandidates(input: {
+  records: MaterialRecord[];
+  tenantId: string;
+  voiceoverRows: Array<{ cueId: string; text: string }>;
+  selectedProductRef?: string | null;
+  selectedProductId?: string | null;
+  themeId?: (typeof SOCIAL_CONTENT_THEME_IDS)[number] | null;
+  linkedRecordIds?: Set<string>;
+}): SocialWorkflowMaterialCandidateSet {
+  const linkedRecordIds = input.linkedRecordIds ?? new Set<string>();
+  const raw = input.records
+    .filter(record => automaticSocialMaterialEligible(record, input.tenantId))
+    .flatMap(record => {
+      const assetId = socialText(record.id);
+      const mediaType = socialText(record.type) as 'video' | 'image';
+      if (!assetId || !['video', 'image'].includes(mediaType)) return [];
+      const identity = materialProductIdentity(record, input.selectedProductRef);
+      const enterpriseCommon = materialIsEnterpriseCommon(record);
+      return analyzedMaterialShots(record).flatMap(shot => {
+        const shotIdentity = {
+          productId: identity.productId || socialText(shot.visualContract.productUsage.productId) || null,
+          productRef: identity.productRef || socialText(shot.visualContract.productUsage.productRef) || null,
+        };
+        const startSeconds = Number(shot.startSeconds);
+        const endSeconds = Number(shot.endSeconds);
+        if (shot.needsReview || !Number.isFinite(shot.confidence) || shot.confidence < 0.6) return [];
+        if (mediaType === 'video' && (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds)) return [];
+        const observed = [
+          ...shot.observedEvidence,
+          ...shot.matchTags,
+          ...shot.editorial.subjects,
+          ...shot.editorial.actions,
+          ...shot.editorial.environments,
+          shot.visualContract.interaction.description,
+          shot.visualContract.productUsage.description,
+        ].map(socialText).filter(Boolean);
+        const cueScores = input.voiceoverRows.map(cue => ({ cueId: cue.cueId, score: visualEvidenceScore(cue.text, observed) }));
+        const materialRoles = [...new Set([
+          ...shot.materialRoles,
+          ...inferMaterialRoles(shot.visualContract),
+          ...(Array.isArray(record.materialRoles) ? record.materialRoles.map(socialText) : []),
+        ].filter(role => ['factory', 'customer_case', 'product', 'person_usage', 'presenter', 'environment', 'general'].includes(role)))] as SocialMaterialRole[];
+        return [{
+          record,
+          shot,
+          assetId,
+          mediaType,
+          identity: shotIdentity,
+          enterpriseCommon,
+          materialRoles,
+          cueScores,
+          baseScore: Math.max(0, ...cueScores.map(item => item.score)) * 100
+            + automaticMaterialScore({
+              record,
+              tenantId: input.tenantId,
+              productRef: input.selectedProductRef ?? null,
+              themeId: input.themeId ?? null,
+              linked: linkedRecordIds.has(assetId),
+            })
+            + Math.round(shot.confidence * 20),
+        }];
+      });
+    });
+
+  const selectedProductRef = socialText(input.selectedProductRef) || null;
+  const explicitProductId = socialText(input.selectedProductId) || null;
+  const hasExplicitProduct = Boolean(selectedProductRef || explicitProductId);
+  const selectedProductId = explicitProductId
+    || (selectedProductRef
+      ? raw.find(item => sameProduct(item.identity, { productId: null, productRef: selectedProductRef }))?.identity.productId
+      : null) || null;
+  const inferred = hasExplicitProduct ? null : raw
+    .filter(item => item.mediaType === 'image' && item.materialRoles.includes('product')
+      && (item.identity.productId || item.identity.productRef))
+    .sort((left, right) => right.baseScore - left.baseScore || left.assetId.localeCompare(right.assetId))[0] ?? null;
+  const requestedProductId = selectedProductId || inferred?.identity.productId || null;
+  const requestedProductRef = selectedProductRef
+    || (explicitProductId ? raw.find(item => item.identity.productId === explicitProductId)?.identity.productRef : null)
+    || inferred?.identity.productRef || null;
+  const productPolicy: SocialProductPolicy = hasExplicitProduct ? 'locked' : inferred ? 'preferred' : 'open';
+  const requested = { productId: requestedProductId, productRef: requestedProductRef };
+  const candidates = raw.flatMap(item => {
+    const productCompatibility = resolveProductCompatibility({
+      policy: productPolicy,
+      requestedProductId,
+      requestedProductRef,
+      candidateProductId: item.identity.productId,
+      candidateProductRef: item.identity.productRef,
+      candidateMaterialRoles: item.materialRoles,
+      enterpriseCommon: item.enterpriseCommon,
+    });
+    const evidenceRole = item.materialRoles.includes('factory') || item.materialRoles.includes('customer_case');
+    if (!productCompatibility.compatible && !evidenceRole) return [];
+    const trim = item.shot.editorial.trim;
+    const useSafeTrim = trim.boundaryConfidence >= 0.6 && trim.cleanEntry && trim.cleanExit
+      && trim.preferredEndSeconds > trim.preferredStartSeconds;
+    const timeRange = item.mediaType === 'video' ? {
+      startSeconds: Number((useSafeTrim ? trim.preferredStartSeconds : item.shot.startSeconds).toFixed(2)),
+      endSeconds: Number((useSafeTrim ? trim.preferredEndSeconds : item.shot.endSeconds).toFixed(2)),
+    } : null;
+    const visualContract = normalizeSceneVisualContract({
+      ...item.shot.visualContract,
+      product: {
+        policy: productPolicy,
+        requestedProductId,
+        requestedProductRef,
+        source: productPolicy === 'locked' ? 'user_explicit'
+          : productPolicy === 'preferred' ? 'agent_inferred' : 'inventory_open',
+      },
+      evidence: {
+        ...item.shot.visualContract.evidence,
+        sourceRange: timeRange,
+      },
+    });
+    const matchScore = item.baseScore
+      + Math.round(productCompatibility.score * 180)
+      + (item.enterpriseCommon ? 35 : 0)
+      + (evidenceRole ? 45 : 0);
+    return [{
+      assetId: item.assetId,
+      sourceRef: item.assetId,
+      segmentId: item.shot.segmentId,
+      label: `${socialText(item.record.name || item.record.title) || '未命名素材'} · ${item.shot.segmentId}`,
+      mediaType: item.mediaType,
+      previewUrl: null,
+      origin: materialTenantId(item.record) === input.tenantId ? 'my_materials' as const : 'shared_library' as const,
+      matchedVoiceoverCueIds: item.cueScores.filter(score => score.score > 0).map(score => score.cueId),
+      matchScore,
+      productId: item.identity.productId,
+      productRef: item.identity.productRef,
+      enterpriseCommon: item.enterpriseCommon,
+      productPolicy,
+      materialRoles: item.materialRoles,
+      visualContract,
+      timeRange,
+    }];
+  }).sort((left, right) => right.matchScore - left.matchScore
+    || left.assetId.localeCompare(right.assetId)
+    || left.segmentId.localeCompare(right.segmentId)).slice(0, 64);
+  return { candidates, productPolicy, requestedProductId, requestedProductRef };
+}
+
 export async function readSocialTaskDetail(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -533,6 +789,14 @@ export async function readSocialTaskDetail(input: {
     taskRows(input.repository, STARTER_COLLECTIONS.socialMetricSubmissions, input.tenantId, input.taskId),
   ]);
   const summary = socialTaskSummary(task);
+  const executionTaskRows = summary.runId
+    ? await input.repository.list(STARTER_COLLECTIONS.tasks, input.tenantId, {
+      where: { run_id: summary.runId, task_key: AUTO_TASK_KEY }, perPage: 2,
+    }).catch(() => ({ items: [] as StarterRecord[], totalItems: 0, page: 1, perPage: 2, totalPages: 0 }))
+    : null;
+  if (executionTaskRows && (executionTaskRows.totalItems > 1 || executionTaskRows.items.length > 1)) {
+    throw new SocialContentWorkflowError('social_content_execution_integrity_violation', 503);
+  }
   const sourceViews = sources.map(socialTaskSource);
   const artifactViews = artifacts.map(socialArtifact);
   const activeSources = sourceViews.filter(source => source.status === 'active');
@@ -556,42 +820,6 @@ export async function readSocialTaskDetail(input: {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
     return record ? [{ source, record }] : [];
   });
-  const searchable = (record: MaterialRecord) => [record.name, record.title, record.tags, record.visualObservations, record.observations]
-    .flatMap(value => Array.isArray(value) ? value : [value]).map(socialText).join(' ').toLocaleLowerCase();
-  const productImageScore = (record: MaterialRecord) => {
-    const text = searchable(record);
-    return (/产品|瓶|罐|包装|product|bottle|jar|package/.test(text) ? 30 : 0)
-      + (/组合|系列|陈列|静物|矩阵/.test(text) ? 20 : 0)
-      + (socialText(record.productRef || record.productName) ? 10 : 0)
-      - (/工具|化妆刷|黄瓜|人物|真人|口红上妆/.test(text) ? 50 : 0);
-  };
-  const productCandidates = [
-    ...linkedMaterialRows.filter(item => socialText(item.record.type) === 'image')
-      .map(item => ({ id: item.source.sourceId, record: item.record, linked: true })),
-    ...materialInventory.items.filter(record => socialText(record.type) === 'image')
-      .map(record => ({ id: socialText(record.id), record, linked: false })),
-  ].filter((item, index, rows) => productImageScore(item.record) > 0
-    && rows.findIndex(other => other.id === item.id) === index)
-    .sort((left, right) => Number(right.linked) - Number(left.linked)
-      || productImageScore(right.record) - productImageScore(left.record));
-  // A product scene may use multiple views only when the library explicitly
-  // identifies them as the same product. Otherwise use the strongest single
-  // product-family image instead of silently mixing unrelated SKUs.
-  const primaryProduct = productCandidates[0];
-  const primaryProductRef = socialText(primaryProduct?.record.productRef || primaryProduct?.record.productName)
-    || summary.brief.productRef || socialText(primaryProduct?.record.id) || 'task-product';
-  const productImageIds = primaryProduct ? productCandidates
-    .filter(item => item.id === primaryProduct.id || (socialText(item.record.productRef || item.record.productName)
-      && socialText(item.record.productRef || item.record.productName) === socialText(primaryProduct.record.productRef || primaryProduct.record.productName)))
-    .slice(0, 4).map(item => item.id) : [];
-  const linkedVideoRows = linkedMaterialRows.filter(item => socialText(item.record.type) === 'video');
-  const factoryRows = materialInventory.items.filter(record => socialText(record.type) === 'video'
-    && /工厂|车间|产线|生产|灌装|旋盖|包装|实验室|机器人|factory|production|manufactur|filling|capping/.test(searchable(record)));
-  const factoryEvidenceAssetIds = [...new Set(factoryRows.map(record => socialText(record.id)).filter(Boolean))];
-  const customerVideoIds = linkedVideoRows.filter(item => !factoryEvidenceAssetIds.includes(socialText(item.record.id)))
-    .map(item => item.source.sourceId);
-  const licensedStockAssetIds = materialInventory.items.filter(record => socialText(record.type) === 'video'
-    && !factoryEvidenceAssetIds.includes(socialText(record.id))).map(record => socialText(record.id)).filter(Boolean);
   const presenterInventory = await readAuthorizedPresenterInventory(
     input.repository,
     input.tenantId,
@@ -604,10 +832,68 @@ export async function readSocialTaskDetail(input: {
   const referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
   const replicationScript = parseStoredSocialReplicationScript(task.replication_script);
   const shotMaterialMap = parseStoredSocialShotMaterialMap(task.shot_material_map);
+  const voiceoverRows = (replicationScript?.shots ?? []).map(shot => ({
+    cueId: `${shot.shotId}:voiceover`,
+    text: socialText(shot.spokenText || shot.captionText || shot.visualInstruction),
+  })).filter(item => item.text);
+  const safeMaterialPreview = (record: MaterialRecord): string | null => {
+    const values = socialText(record.type) === 'video'
+      ? [record.poster, record.url]
+      : [record.url, record.poster];
+    return values.map(socialText).find(value => /^\/(?:media|studio-media|api\/overseas\/(?:studio\/materials\/pb|videos)\/)/.test(value)) ?? null;
+  };
+  const linkedRecordIds = new Set(linkedMaterialRows.map(item => socialText(item.record.id)));
+  const selectedTaskProductId = socialText(summary.brief.productId) || null;
+  const selectedTaskProductRef = socialText(summary.brief.productRef) || null;
+  const candidateSet = buildSocialWorkflowMaterialCandidates({
+    records: materialInventory.items,
+    tenantId: input.tenantId,
+    voiceoverRows,
+    selectedProductRef: selectedTaskProductRef,
+    selectedProductId: selectedTaskProductId,
+    themeId: summary.theme?.themeId ?? null,
+    linkedRecordIds,
+  });
+  const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
+    ...candidate,
+    previewUrl: safeMaterialPreview(materialById.get(candidate.assetId) ?? { id: candidate.assetId }),
+  }));
+  const uniqueAssetIds = (rows: SocialWorkflowMaterialClipCandidate[]) => [...new Set(rows.map(row => row.assetId))];
+  const sameRequestedProduct = (candidate: SocialWorkflowMaterialClipCandidate) => sameProduct(candidate, {
+    productId: candidateSet.requestedProductId,
+    productRef: candidateSet.requestedProductRef,
+  });
+  const productRows = materialCandidates.filter(candidate => candidate.mediaType === 'image'
+    && candidate.materialRoles.includes('product'));
+  const productFamilyRows = candidateSet.productPolicy === 'open'
+    ? productRows.filter(candidate => candidate.assetId === productRows[0]?.assetId
+      || Boolean(candidate.productRef && candidate.productRef === productRows[0]?.productRef))
+    : productRows.filter(sameRequestedProduct);
+  const productImageIds = uniqueAssetIds(productFamilyRows).slice(0, 4);
+  const primaryProductRef = candidateSet.requestedProductRef
+    || productFamilyRows[0]?.productRef
+    || productImageIds[0]
+    || 'task-product';
+  // Inventory routes are projected from analyzed clip roles. An unanalyzed
+  // full video never becomes a generic candidate merely because it is owned.
+  const ownedRenderableRows = materialCandidates.filter(candidate => candidate.origin === 'my_materials');
+  const factoryEvidenceAssetIds = uniqueAssetIds(ownedRenderableRows.filter(candidate => candidate.materialRoles.includes('factory')));
+  const customerCaseEvidenceAssetIds = uniqueAssetIds(ownedRenderableRows.filter(candidate => candidate.materialRoles.includes('customer_case')));
+  const productEffectEvidenceAssetIds = uniqueAssetIds(ownedRenderableRows.filter(candidate => candidate.materialRoles.includes('person_usage')));
+  const customerVideoIds = uniqueAssetIds(ownedRenderableRows.filter(candidate => (
+    candidate.mediaType === 'video'
+    && !candidate.materialRoles.includes('factory')
+    && !candidate.materialRoles.includes('customer_case')
+  )));
+  const licensedStockAssetIds = uniqueAssetIds(materialCandidates.filter(candidate => candidate.origin === 'shared_library'));
+  const referenceRecord = referenceVideoAnalysis?.referenceRecordId
+    ? materialById.get(referenceVideoAnalysis.referenceRecordId)
+    : undefined;
   const assetSupplyPlan = createSocialAssetSupplyPlan({
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
     managementMode: summary.brief.managementMode,
+    productionApproach: summary.brief.productionApproach ?? 'ai_enhanced',
     planVersion: summary.version,
     inventory: { customerVideoIds, productImageIds,
       productIdentityGroups: productImageIds.length ? [{
@@ -619,6 +905,8 @@ export async function readSocialTaskDetail(input: {
           ? `system-reference:${referenceVideoAnalysis.referenceRecordId}`
           : referenceVideoAnalysis.referenceSourceId] : [],
       factoryEvidenceAssetIds,
+      customerCaseEvidenceAssetIds,
+      productEffectEvidenceAssetIds,
       licensedStockAssetIds },
     confirmedFactRefs,
     accountPresenterLock: presenterInventory.accountPresenterLock,
@@ -644,7 +932,54 @@ export async function readSocialTaskDetail(input: {
     assetSupplyPlan,
     referenceAnalysis: referenceVideoAnalysis,
     replicationScript,
+    materialCandidates,
+    inferredProductRef: candidateSet.productPolicy === 'preferred' ? primaryProductRef : null,
+    referencePreviewUrl: referenceVideoAnalysis?.referenceRecordId
+      ? `/api/overseas/videos/${encodeURIComponent(referenceVideoAnalysis.referenceRecordId)}/thumbnail`
+      : referenceRecord ? safeMaterialPreview(referenceRecord) : null,
   });
+  const executionOutput = socialObject(socialJson(executionTaskRows?.items[0]?.output));
+  const storedProduction = socialObject(socialJson(executionOutput?.production));
+  const productionStage = socialText(storedProduction?.stage);
+  const productionMessage = socialText(storedProduction?.message);
+  const productionUpdatedAt = socialText(storedProduction?.updatedAt);
+  const remainingRatioByStage: Record<string, number> = {
+    execution_plan_approved: 0.92,
+    director_planning: 0.8,
+    asset_supply_completed: 0.65,
+    content_production: 0.52,
+    director_revision_required: 0.48,
+    rendering: 0.3,
+    quality_check: 0.18,
+    media_evaluation: 0.12,
+    creative_review: 0.06,
+    review_ready: 0,
+  };
+  const productionStepByStage: Record<string, string> = {
+    execution_plan_approved: '准备执行',
+    director_planning: '编导方案',
+    asset_supply_completed: '素材匹配',
+    content_production: '内容制作',
+    director_revision_required: '口播校准',
+    rendering: '剪辑合成',
+    quality_check: '成片质检',
+    media_evaluation: '复刻评估',
+    creative_review: '编导复核',
+    review_ready: '等待审核',
+    waiting_for_user_input: '等待确认',
+    automatic_recovery_exhausted: '等待重试',
+  };
+  const productionProgress = productionStage && productionMessage
+    ? {
+      step: productionStepByStage[productionStage] ?? '自动制作',
+      activity: productionMessage,
+      estimatedRemainingSeconds: Math.max(0, Math.round(
+        agentWorkflow.executionPlan.estimatedTotalSeconds
+          * (remainingRatioByStage[productionStage] ?? 0.75),
+      )),
+      updatedAt: productionUpdatedAt || summary.updatedAt,
+    }
+    : null;
   const productionResult = [...artifactViews].reverse().flatMap(artifact => {
     const row = socialObject(artifact.content?.productionResult);
     return row && socialText(row.productionResultId) && socialText(row.executionPlanId)
@@ -686,6 +1021,7 @@ export async function readSocialTaskDetail(input: {
     publications: publications.map(socialPublication),
     metricSubmissions: metrics.map(socialMetricSubmission),
     agentWorkflow,
+    productionProgress,
     ...(referenceVideoAnalysis ? { referenceVideoAnalysis } : {}),
     ...(replicationScript ? { replicationScript } : {}),
     ...(shotMaterialMap.length ? { shotMaterialMap } : {}),

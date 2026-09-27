@@ -44,6 +44,14 @@ import type {
   WeeklyWorkflowTask,
 } from '../../shared/contracts/socialProgram.js';
 import type { VersionedReferenceSelection } from '../socialDiscovery/orchestration.js';
+import {
+  normalizeSceneVisualContract,
+  scoreSceneVisualCompatibility,
+  type SocialMaterialRole,
+  type SocialProductPolicy,
+  type SocialProductPolicySource,
+  type SocialSceneVisualContract,
+} from '../../shared/sceneVisualContract.js';
 
 import {
   buildBusinessContext,
@@ -59,6 +67,25 @@ import {
   unique,
   type SocialContentCapabilityRuntimeRegistration,
 } from './socialContentAgentWorkflowContext.js';
+
+export interface SocialWorkflowMaterialCandidate {
+  assetId: string;
+  sourceRef: string;
+  label: string;
+  mediaType: 'video' | 'image';
+  previewUrl: string | null;
+  origin: 'my_materials' | 'shared_library';
+  matchedVoiceoverCueIds: string[];
+  matchScore: number;
+  segmentId?: string;
+  productId?: string | null;
+  productRef?: string | null;
+  enterpriseCommon?: boolean;
+  productPolicy?: SocialProductPolicy;
+  materialRoles?: SocialMaterialRole[];
+  visualContract?: SocialSceneVisualContract;
+  timeRange?: { startSeconds: number; endSeconds: number } | null;
+}
 export type {
   SocialContentCapabilityRuntime,
   SocialContentCapabilityRuntimeRegistration,
@@ -76,15 +103,29 @@ function safeBoundary(boundary: SocialShotTruthBoundary): SocialShotTruthBoundar
 }
 
 function requiredEvidence(boundary: SocialShotTruthBoundary, purpose: SocialDirectorBriefScene['purpose']): string[] {
-  const subjectLabel = boundary.subject === 'customer_factory' ? '本企业真实工厂或生产过程'
-    : boundary.subject === 'customer_case' ? '已授权且可核验的真实客户案例'
-      : boundary.subject === 'product_effect' ? '可核验的真实产品效果或测试结果'
+  const subjectLabel = boundary.subject === 'customer_factory' ? '优先使用“我的素材”中的真实工厂或生产过程'
+    : boundary.subject === 'customer_case' ? '优先使用“我的素材”中的客户案例'
+      : boundary.subject === 'product_effect' ? '人物使用产品的效果镜头使用数字人路线'
         : null;
   return unique([
     ...(subjectLabel ? [subjectLabel] : []),
-    ...(boundary.confirmedFactRefs.length ? ['只使用已确认企业事实'] : []),
-    ...(purpose === 'proof' ? ['证明内容必须能追溯到事实或授权证据'] : []),
+    ...(purpose === 'proof' ? ['直接优先调用已入库的工厂、客户案例或产品效果素材'] : []),
   ]);
+}
+
+function sceneProductSelection(input: BuildSocialAgentWorkflowInput): {
+  policy: SocialProductPolicy;
+  source: SocialProductPolicySource;
+  productId: string | null;
+  productRef: string | null;
+} {
+  if (input.brief.productId || input.brief.productRef) return {
+    policy: 'locked', source: 'user_explicit',
+    productId: input.brief.productId ?? null,
+    productRef: input.brief.productRef,
+  };
+  if (input.inferredProductRef) return { policy: 'preferred', source: 'agent_inferred', productId: null, productRef: input.inferredProductRef };
+  return { policy: 'open', source: 'inventory_open', productId: null, productRef: null };
 }
 
 function shotLanguage(reference: SocialReferenceShotAnalysis | undefined) {
@@ -104,18 +145,37 @@ function directorScene(input: {
   supply: SocialAssetSupplyShotPlan;
   reference: SocialReferenceShotAnalysis | undefined;
   replicationFactors: SocialReplicationFactorSpec[];
+  productSelection: ReturnType<typeof sceneProductSelection>;
 }): SocialDirectorBriefScene {
   const startSeconds = input.script?.startSeconds ?? input.reference?.startSeconds ?? input.index * 3;
   const endSeconds = input.script?.endSeconds ?? input.reference?.endSeconds ?? startSeconds + 3;
   const targetVisual = input.script?.visualInstruction || input.supply.requestedDescription || '用清楚、可验证的画面完成本镜头的信息作用';
   const boundary = safeBoundary(input.supply.truthBoundary);
   const evidence = requiredEvidence(boundary, input.supply.function);
+  const visualContract = normalizeSceneVisualContract({
+    ...(input.supply.visualContract ?? input.reference?.visualContract ?? {
+      subjects: input.reference?.tags.subjects ?? [],
+      interaction: input.reference?.action?.path ?? targetVisual,
+      environment: input.reference?.tags.sceneTypes?.[0] ?? '',
+      action: input.reference?.action ?? { path: targetVisual },
+      shotLanguage: input.reference?.shotLanguage ?? shotLanguage(input.reference),
+      evidence: { sourceRange: { startSeconds, endSeconds } },
+    }),
+    product: {
+      policy: input.productSelection.policy,
+      requestedProductId: input.productSelection.productId,
+      requestedProductRef: input.productSelection.productRef,
+      source: input.productSelection.source,
+    },
+    precision: startSeconds < 3 ? 'hook_high' : 'standard',
+  });
   return {
     sceneId: input.script?.shotId || input.supply.shotId,
     order: input.index + 1,
     referenceShotId: input.script?.referenceShotId ?? input.reference?.shotId ?? null,
     purpose: input.supply.function,
     targetVisual,
+    visualContract,
     requiredEvidence: evidence,
     action: {
       startState: input.index === 0 ? '第一帧立即出现清楚主体' : '承接上一镜的主体、方向和信息状态',
@@ -135,6 +195,22 @@ function directorScene(input: {
       music: input.script?.audioAndTransition ?? null,
       soundEffects: null,
     },
+    ...(input.script?.spokenText ? {
+      voiceoverAlignment: {
+        cueId: `${input.script.shotId}:voiceover`,
+        text: input.script.spokenText,
+        startSeconds,
+        endSeconds,
+        matchMode: 'verbatim_semantic' as const,
+        secondaryVisualTags: unique([
+          input.supply.function,
+          input.supply.requestedDescription || '',
+          ...(input.reference?.tags.subjects ?? []),
+          ...(input.reference?.action ? [input.reference.action.startState, input.reference.action.path, input.reference.action.endState] : []),
+          ...(input.reference?.tags.sceneTypes ?? []),
+        ].filter(Boolean)),
+      },
+    } : {}),
     duration: { startSeconds, endSeconds, targetSeconds: Math.max(0.2, +(endSeconds - startSeconds).toFixed(2)) },
     truthBoundary: boundary,
     allowedVariation: unique([
@@ -148,6 +224,10 @@ function directorScene(input: {
       `观众能够看懂本镜头的作用：${input.supply.function}`,
       `画面可观察地实现：${targetVisual}`,
       `镜头时长控制在约 ${Math.max(0.2, endSeconds - startSeconds).toFixed(1)} 秒`,
+      ...(startSeconds < 3 ? [
+        '前三秒钩子必须逐帧核对主体出现时间、动作峰值、构图、运镜、字幕与声音触发，不得用粗标签近似替代',
+        '前三秒候选素材必须同时通过逐句口播语义、主体动作、节奏和清晰度高阈值',
+      ] : []),
       ...evidence.map(item => `证据要求：${item}`),
       ...input.replicationFactors.map(factor => `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
       ...(boundary.mustNotImplyCustomerReality ? ['合成或通用画面不得被表述为客户真实证据'] : []),
@@ -184,6 +264,7 @@ function buildDirectorBrief(
   const supplyShots = input.assetSupplyPlan.shots;
   const supplyById = new Map(supplyShots.map(shot => [shot.shotId, shot]));
   const referenceById = new Map((input.referenceAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
+  const productSelection = sceneProductSelection(input);
   const scenes = (scriptShots.length ? scriptShots : supplyShots.map(() => null)).map((script, index) => {
     const supply = (script ? supplyById.get(script.shotId) : undefined) ?? supplyShots[index] ?? supplyShots[0];
     if (!supply) return null;
@@ -195,6 +276,7 @@ function buildDirectorBrief(
       replicationFactors: replicationJob?.factorSpecs.filter(factor => (
         factor.referenceShotId === (script?.referenceShotId ?? input.referenceAnalysis?.shots[index]?.shotId ?? null)
       )) ?? [],
+      productSelection,
     });
   }).filter((scene): scene is SocialDirectorBriefScene => Boolean(scene));
   const coverage = input.referenceAnalysis?.coverage;
@@ -207,6 +289,7 @@ function buildDirectorBrief(
   // Five Han characters or 2.7 whitespace-delimited words per second is a
   // deliberately conservative, deterministic speech-capacity gate.
   const dialogueFits = scenes.every(scene => {
+    if (scene.voiceoverAlignment?.matchMode === 'verbatim_semantic') return true;
     const speech = scene.audioLayers.dialogue ?? scene.audioLayers.voiceover;
     if (!speech) return true;
     const units = /[\u3400-\u9fff]/.test(speech)
@@ -217,6 +300,20 @@ function buildDirectorBrief(
   });
   const status = scenes.length > 0 && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
+  const inferredProductRef = productSelection.productRef;
+  const requirementText = [
+    inferredProductRef,
+    ...scenes.map(scene => `${scene.targetVisual} ${scene.audioLayers.voiceover || ''}`),
+    ...(input.referenceAnalysis?.shots ?? []).map(shot => `${shot.visualDescription} ${shot.tags.subjects.join(' ')} ${shot.tags.sceneTypes.join(' ')}`),
+  ].filter(Boolean).join(' ');
+  const productRequired = /产品|商品|包装|瓶|罐|盒|product|package|bottle|jar/i.test(requirementText);
+  const materialKinds = unique([
+    ...(productRequired ? ['product'] : []),
+    ...(/工厂|车间|产线|factory|workshop/i.test(requirementText) ? ['factory'] : []),
+    ...(/人物|真人|口播|person|presenter|human/i.test(requirementText) ? ['person'] : []),
+    ...(/场景|环境|使用|scenario|environment/i.test(requirementText) ? ['scenario'] : []),
+    ...(/细节|特写|detail|close/i.test(requirementText) ? ['detail'] : []),
+  ]) as NonNullable<SocialDirectorBrief['contentRequirements']>['primaryMaterialKinds'];
   return {
     directorBriefId: stableId('director_brief', { taskId: input.taskId }),
     version: input.taskVersion,
@@ -261,9 +358,28 @@ function buildDirectorBrief(
     factSourceRefs: input.authoritativeContext
       ? unique(input.authoritativeContext.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`))
       : input.factSourceRefs,
+    contentRequirements: {
+      product: {
+        required: productRequired,
+        productId: productRequired ? productSelection.productId : null,
+        productRef: productRequired ? inferredProductRef : null,
+        policy: productSelection.policy,
+        source: productSelection.source,
+        confidence: productRequired ? (inferredProductRef ? 0.9 : 0.55) : 0.75,
+        reason: productRequired
+          ? inferredProductRef ? '用户已选产品或系统已从企业中心与素材库自动优选' : '未指定产品，按 open 策略使用当前最匹配的产品或企业通用素材'
+          : '参考视频未要求产品主体持续出镜',
+      },
+      enterpriseFacts: {
+        required: false,
+        factSourceRefs: input.factSourceRefs,
+        reason: '内容制作前不要求用户补填事实；企业信息自动来自企业中心',
+      },
+      primaryMaterialKinds: materialKinds.length ? materialKinds : ['general'],
+    },
     rightsConstraints: unique([
-      '参考视频只用于分析结构和节奏，不复制原片素材、人物、声音、商标或原文案',
-      ...(input.assetSupplyPlan.status === 'requires_rights_confirmation' ? ['参考内容或素材权利尚待确认'] : []),
+      '参考视频的口播逐字冻结，仅替换企业名、品牌名和产品名',
+      '已入库的工厂、客户案例和企业通用素材可直接进入匹配与剪辑',
     ]),
     referenceEvidence: [
       ...(input.referenceAnalysis ? input.referenceAnalysis.shots.map(shot => ({
@@ -294,28 +410,53 @@ function capabilityCandidates(input: {
   sceneId: string;
   supply: SocialAssetSupplyShotPlan;
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
+  materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialExecutionCandidate[] {
   const runtimeRegistration = new Map((input.capabilityRuntime ?? EMBEDDED_RUNTIME_REGISTRATIONS)
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
-  const sourceExecutable = Boolean(sourceRuntime?.environmentReady && sourceRuntime.adapterIds.length);
   // Product image refs are inputs to the paid scene-generation capability,
   // not zero-cost finished clips. Keeping them out of `actualAssets` makes the
   // confirmation card report the real Seedream + Seedance route and estimate.
-  const finishedAssetRefs = input.supply.sourceStrategy === 'aigc_product_scene_replication'
-    ? [] : sourceExecutable ? input.supply.sourceRefs : [];
-  const actualAssets = finishedAssetRefs.map((sourceRef, index): SocialExecutionCandidate => ({
-    candidateId: stableId('candidate', { sceneId: input.sceneId, sourceRef }),
+  const generatedInputStrategies: SocialShotSourceStrategy[] = [
+    'aigc_product_scene_replication',
+    'authorized_digital_presenter',
+  ];
+  const finishedAssetRefs = generatedInputStrategies.includes(input.supply.sourceStrategy)
+    ? [] : input.supply.sourceRefs;
+  const actualAssetRows = finishedAssetRefs.flatMap<{ sourceRef: string; material: SocialWorkflowMaterialCandidate | null }>(sourceRef => {
+    const rows = input.materialCandidates?.filter(item => item.sourceRef === sourceRef || item.assetId === sourceRef) ?? [];
+    return rows.length
+      ? rows.map(material => ({ sourceRef, material }))
+      : [{ sourceRef, material: null }];
+  });
+  const cueId = `${input.sceneId}:voiceover`;
+  const actualAssets = actualAssetRows.map(({ sourceRef, material }, index): SocialExecutionCandidate => {
+    const cueMatched = material?.matchedVoiceoverCueIds.includes(cueId) ?? false;
+    const normalizedMatch = material ? Math.max(0, Math.min(1, material.matchScore / 1_000)) : 0;
+    const visualScore = material?.visualContract && input.supply.visualContract
+      ? scoreSceneVisualCompatibility(input.supply.visualContract, material.visualContract)
+      : 0.65;
+    const semanticScore = material
+      ? Math.min(1, (cueMatched ? 0.82 : 0.55) + normalizedMatch * 0.18)
+      : 0.5;
+    return ({
+    candidateId: stableId('candidate', {
+      sceneId: input.sceneId,
+      sourceRef,
+      segmentId: material?.segmentId ?? null,
+      timeRange: material?.timeRange ?? null,
+    }),
     kind: 'asset',
-    label: `客户或已授权素材 ${index + 1}`,
+    label: material?.label || `已入库素材 ${index + 1}`,
     sourceRef,
     sourceStrategy: input.supply.sourceStrategy,
     evidenceStrength: input.supply.truthBoundary.customerEvidenceRequired ? 'strong' : 'supporting',
     rightsStatus: 'confirmed',
-    enterpriseOwnershipScore: 1,
-    semanticScore: 0.96,
+    enterpriseOwnershipScore: material?.origin === 'shared_library' ? 0.6 : 1,
+    semanticScore,
     evidenceScore: input.supply.truthBoundary.customerEvidenceRequired ? 1 : 0.8,
-    actionAndShotScore: 0.85,
+    actionAndShotScore: visualScore,
     qualityScore: 0.85,
     durationFitScore: 0.9,
     repetitionPenalty: 0,
@@ -326,14 +467,38 @@ function capabilityCandidates(input: {
     providerId: sourceRuntime?.adapterIds[0] ?? null,
     modelId: null,
     clipId: sourceRef,
-    timeRange: null,
+    timeRange: material?.timeRange ?? null,
     promptRef: null,
+    previewUrl: material?.previewUrl ?? null,
+    mediaType: material?.mediaType ?? null,
+    matchedVoiceoverCueIds: material?.matchedVoiceoverCueIds ?? [],
+    productId: material?.productId ?? null,
+    productRef: material?.productRef ?? null,
+    enterpriseCommon: material?.enterpriseCommon ?? false,
+    materialRoles: material?.materialRoles ?? [],
+    ...(material?.visualContract && material.segmentId && material.timeRange ? {
+      materialSegments: [{
+        segmentId: material.segmentId,
+        startSeconds: material.timeRange.startSeconds,
+        endSeconds: material.timeRange.endSeconds,
+        visualContract: structuredClone(material.visualContract),
+        materialRoles: [...(material.materialRoles ?? [])],
+        matchedVoiceoverCueIds: [...material.matchedVoiceoverCueIds],
+        voiceoverScore: semanticScore,
+        visualCompatibilityScore: visualScore,
+      }],
+    } : {}),
     retryPolicy: { maxAttempts: 1, fallbackStrategies: input.supply.fallbackSourceStrategy ? [input.supply.fallbackSourceStrategy] : [] },
-    provenance: { origin: 'customer', inputVersion: input.taskVersion, authorizationRef: sourceRef, executionRecordId: null },
-  }));
+    provenance: {
+      origin: material?.origin === 'shared_library' ? 'licensed_library' : 'customer',
+      inputVersion: input.taskVersion,
+      authorizationRef: sourceRef,
+      executionRecordId: null,
+    },
+  });
+  });
   const capabilityRows = socialContentCapabilityRegistry(input.capabilityRuntime)
     .filter(capability => capability.executable)
-    .filter(capability => !input.supply.truthBoundary.customerEvidenceRequired || capability.evidenceStrength === 'strong')
     .filter(capability => capability.strategy !== 'authorized_digital_presenter'
       || (input.supply.digitalHumanPlan !== undefined
         && ['preview_only', 'ready_for_capability_check'].includes(input.supply.digitalHumanPlan.executionState)))
@@ -378,9 +543,12 @@ function executionScene(input: {
   scene: SocialDirectorBriefScene;
   supply: SocialAssetSupplyShotPlan;
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
+  materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialContentExecutionScenePlan {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
-  const preferred = candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy) ?? candidates[0];
+  const preferred = candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === input.supply.sourceStrategy)
+    ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy)
+    ?? candidates[0];
   const fallback = candidates.find(candidate => candidate.sourceStrategy === input.supply.fallbackSourceStrategy && candidate.candidateId !== preferred?.candidateId);
   return {
     sceneId: input.scene.sceneId,
@@ -421,8 +589,33 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
       scene,
       supply,
       capabilityRuntime: input.capabilityRuntime,
+      materialCandidates: input.materialCandidates,
     })] : [];
   });
+  const selectedApproach = input.brief.productionApproach ?? 'ai_enhanced';
+  const ownMaterials = (input.materialCandidates ?? []).filter(item => item.origin === 'my_materials');
+  const selectedMaterialIds = unique(scenes.flatMap(scene => {
+    const recommended = new Set(scene.recommendedCandidateIds);
+    return scene.candidates
+      .filter(candidate => recommended.has(candidate.candidateId)
+        && candidate.kind === 'asset' && candidate.sourceRef)
+      .map(candidate => input.materialCandidates?.find(item => (
+        item.sourceRef === candidate.sourceRef || item.assetId === candidate.sourceRef
+      ))?.assetId || '');
+  }).filter(Boolean));
+  const previewMaterial = selectedMaterialIds
+    .map(assetId => ownMaterials.find(item => item.assetId === assetId))
+    .find((item): item is SocialWorkflowMaterialCandidate => Boolean(item))
+    ?? ownMaterials[0]
+    ?? null;
+  const firstFramePreview = previewMaterial ? {
+    assetId: previewMaterial.assetId,
+    label: previewMaterial.label,
+    mediaType: previewMaterial.mediaType,
+    url: previewMaterial.previewUrl,
+    sourceTimestampSeconds: 0 as const,
+  } : null;
+  const currentEstimatedCost = +scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2);
   return {
     executionPlanId: stableId('execution_plan', { taskId: input.taskId }),
     version: input.taskVersion,
@@ -436,8 +629,56 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     accountPresenterLock: directorBrief.accountPresenterLock
       ? structuredClone(directorBrief.accountPresenterLock)
       : null,
-    estimatedTotalCostCny: +scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0).toFixed(2),
+    estimatedTotalCostCny: currentEstimatedCost,
     estimatedTotalSeconds: +scenes.reduce((sum, scene) => sum + scene.estimatedSeconds, 0).toFixed(1),
+    selectedApproach,
+    productionOptions: [
+      {
+        approach: 'ai_enhanced',
+        label: '智能混合制作·主推',
+        description: '人物出镜自动使用账号数字人，产品展示自动使用产品身份锁定 IAIGC，其余镜头逐句匹配“我的素材”。',
+        qualityTier: 'premium',
+        available: true,
+        unavailableReason: null,
+        usesPaidProviders: true,
+        estimatedCostCny: selectedApproach === 'ai_enhanced' ? currentEstimatedCost : Math.max(1, directorBrief.scenes.length * 3.6),
+        includedOperations: ['前三秒精细生成约束', '数字人动作复现', '产品 IAIGC 场景复现', '逐句素材剪辑', '完整质量检查'],
+        selectedMaterialIds,
+        firstFramePreview,
+      },
+      {
+        approach: 'material_cut',
+        label: '免费素材剪辑',
+        description: '逐句匹配“我的素材”，只做裁切、拼接、变速与字幕，不生成人物或产品画面。',
+        qualityTier: 'standard',
+        available: ownMaterials.length > 0,
+        unavailableReason: ownMaterials.length ? null : '“我的素材”中没有可读取的图片或视频',
+        usesPaidProviders: false,
+        estimatedCostCny: 0,
+        includedOperations: ['逐句语义匹配', '片段裁切', '节奏重排', '字幕与基础转场'],
+        selectedMaterialIds: selectedMaterialIds.length ? selectedMaterialIds : ownMaterials.slice(0, 8).map(item => item.assetId),
+        firstFramePreview,
+      },
+      {
+        approach: 'shooting_plan',
+        label: '建立代拍清单',
+        description: '不立即生成视频，把编导方案转成可交给代拍团队的镜头、动作、场景、产品状态和验收清单。',
+        qualityTier: 'enhanced',
+        available: true,
+        unavailableReason: null,
+        usesPaidProviders: false,
+        estimatedCostCny: 0,
+        includedOperations: ['镜头清单', '表演与动作指令', '场景与道具要求', '产品状态与效果要求', '验收标准'],
+        selectedMaterialIds: [],
+        firstFramePreview: null,
+      },
+    ],
+    referenceFirstFramePreview: input.referencePreviewUrl ? {
+      label: '参考视频前三秒首帧',
+      mediaType: 'image',
+      url: input.referencePreviewUrl,
+      sourceTimestampSeconds: 0,
+    } : null,
     scenes,
     createdBy: 'content_agent',
   };
@@ -454,11 +695,6 @@ function reviewScene(input: {
   const failedCriteria: string[] = [];
   const requiredRevision: string[] = [];
   const reasonCodes: SocialExecutionPlanReviewReason[] = [];
-  if (input.plan.feasibility === 'blocked_for_facts_or_rights' && !input.conceptPreview) {
-    failedCriteria.push('缺少不可替代的事实、真实证据或授权');
-    requiredRevision.push('补充最少必要事实/权利信息，或由经营 Agent 接受明确的目标降级');
-    reasonCodes.push(input.rightsMissing ? 'rights_missing' : 'facts_missing');
-  }
   if (input.plan.feasibility === 'goal_degraded') {
     failedCriteria.push('当前路线降低了镜头的核心证明强度或经营目标');
     requiredRevision.push('寻找能保持事实强度的替代路线，或显式返回经营 Agent 调整目标');
@@ -477,13 +713,6 @@ function reviewScene(input: {
     failedCriteria.push(`存在未被执行方案承接的裂变因素：${unique([...missingFactorIds, ...infeasibleFactorIds]).join('、')}`);
     requiredRevision.push('为每个冻结因素补充可执行候选和独立检测器，不得通过放宽因素规格绕过');
     reasonCodes.push('capability_mismatch');
-  }
-  if (input.scene.truthBoundary.customerEvidenceRequired
-    && input.plan.candidates.filter(candidate => input.plan.recommendedCandidateIds.includes(candidate.candidateId))
-      .some(candidate => candidate.evidenceStrength !== 'strong')) {
-    failedCriteria.push('证明型镜头的推荐候选不能承担真实证据');
-    requiredRevision.push('只选择可追溯的客户真实证据素材');
-    reasonCodes.push('material_insufficient');
   }
   if (input.budgetExceeded) {
     failedCriteria.push('预计成本超过单条预算');
@@ -506,8 +735,18 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
   const estimatedCost = plan.scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0);
   const budgetExceeded = plan.budgetLimitCny !== null && estimatedCost > plan.budgetLimitCny;
   const planByScene = new Map(plan.scenes.map(scene => [scene.sceneId, scene]));
+  const shootingPlanOnly = plan.selectedApproach === 'shooting_plan';
   const sceneResults = directorBrief.scenes.flatMap(scene => {
     const scenePlan = planByScene.get(scene.sceneId);
+    if (shootingPlanOnly && scenePlan) return [{
+      sceneId: scene.sceneId,
+      approved: true,
+      feasibility: scenePlan.feasibility,
+      failedCriteria: [],
+      requiredRevision: [],
+      goalImpact: 'none' as const,
+      reasonCodes: [],
+    }];
     return scenePlan ? [reviewScene({
       scene,
       plan: scenePlan,
@@ -605,6 +844,9 @@ export interface BuildSocialAgentWorkflowInput {
   };
   /** Runtime registrations after adapter and environment readiness checks. Omit to use only embedded adapters. */
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
+  materialCandidates?: SocialWorkflowMaterialCandidate[];
+  inferredProductRef?: string | null;
+  referencePreviewUrl?: string | null;
   now?: Date;
 }
 

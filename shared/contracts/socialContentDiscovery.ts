@@ -367,7 +367,14 @@ export interface SocialReplicationScriptShot {
   endSeconds: number;
   purpose: SocialShotFunction;
   visualInstruction: string;
+  /** Verbatim line recovered from the reference video before tenant identity substitution. */
+  referenceSpokenText?: string | null;
   spokenText: string | null;
+  /** New replication tasks only replace identity tokens; all other wording and timing stay frozen. */
+  voiceoverReplacement?: {
+    mode: 'identity_only';
+    replacedEntityTypes: Array<'company' | 'brand' | 'product'>;
+  };
   captionText: string | null;
   audioAndTransition: string | null;
   fidelityPoints: string[];

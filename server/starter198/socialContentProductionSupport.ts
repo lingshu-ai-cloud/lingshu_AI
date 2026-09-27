@@ -126,7 +126,9 @@ export async function taskProductionAssets(input: {
   });
   const linkedIds = new Set(linkedCandidates.map(item => socialText(item.record.id)));
   const libraryCandidates = inventory.items
-    .filter(record => !linkedIds.has(socialText(record.id)) && automaticSocialMaterialEligible(record, input.tenantId))
+    .filter(record => !linkedIds.has(socialText(record.id))
+      && automaticSocialMaterialEligible(record, input.tenantId)
+      && (input.allowAuthorizedSharedLibrary !== false || materialTenantId(record) === input.tenantId))
     .map(record => ({
       record,
       sourceId: `library_material_${socialRequestHash({ id: socialText(record.id) }).slice(0, 24)}`,
@@ -264,9 +266,23 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
       const candidates = context.availableAssets.filter(candidate => (
         context.shot.sourceRefs.includes(candidate.sourceId) || context.shot.sourceRefs.includes(candidate.id)
       ));
-      const seed = [...context.shot.shotId].reduce((sum, character) => sum + character.charCodeAt(0), 0);
-      const asset = candidates.length ? candidates[seed % candidates.length] : undefined;
-      if (!asset) return null;
+      const selected = context.shot.selectedMaterialSegment;
+      const matched = selected
+        ? candidates.find(candidate => selected.sourceRef === candidate.sourceId || selected.sourceRef === candidate.id)
+        : candidates[0];
+      if (!matched) return null;
+      const selectedSegments = selected
+        ? matched.segments.filter(segment => String(segment.id || '').trim() === selected.segmentId)
+        : matched.segments;
+      const selectedAnalysis = selected && matched.scriptAnalysis
+        ? { ...matched.scriptAnalysis, shots: matched.scriptAnalysis.shots.filter(shot => shot.segmentId === selected.segmentId) }
+        : matched.scriptAnalysis;
+      if (selected && !selectedSegments.length && !selectedAnalysis?.shots.length) return null;
+      const asset: SocialProductionAsset = selected ? {
+        ...matched,
+        segments: selectedSegments,
+        ...(selectedAnalysis ? { scriptAnalysis: selectedAnalysis } : {}),
+      } : matched;
       const customerEvidence = context.shot.truthBoundary.customerEvidenceRefs.includes(asset.sourceId)
         || context.shot.truthBoundary.customerEvidenceRefs.includes(asset.id);
       return {

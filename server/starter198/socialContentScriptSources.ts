@@ -21,6 +21,12 @@ import {
   socialText,
 } from './socialContentValidation.js';
 import { deriveNarrationStyleProfile, type NarrationStyleProfile } from '../digitalEmployees/narrationStyle.js';
+import {
+  normalizeSceneVisualContract,
+  type SocialSceneCapabilitySignature,
+  type SocialSceneProductionAdmission,
+  type SocialSceneVisualContract,
+} from '../../shared/sceneVisualContract.js';
 
 const THEME_TERMS: Record<SocialContentThemeId, readonly string[]> = {
   product_value: ['产品', '卖点', '细节', '成分', '材质', '性能', 'product', 'feature', 'detail'],
@@ -78,7 +84,7 @@ export function pendingSocialTaskReferenceAnalysis(
     hookAnalysis: null,
     rightsNotice: recommendation
       ? '系统正在寻找并分析适合当前任务的参考视频；推荐结果需要明确展示为系统推荐，不代表用户已确认，也不代表版权已经确认。'
-      : '参考链接正在进行逐镜分析。提交链接仅代表允许系统分析结构，不代表版权已经确认；系统不会复制原视频文件、原文案、人物身份、品牌标识、水印或原声音频。',
+      : '参考链接正在进行逐镜分析。提交链接仅代表允许系统分析，不代表版权已经确认；分析完成后口播会逐字逐句冻结并仅替换企业名、品牌名或产品名，系统不会复用原视频文件、人物身份、水印或原声音频。',
     createdAt: source.createdAt,
   };
 }
@@ -259,27 +265,130 @@ function safeReferenceNodes(
   });
 }
 
-function referenceTemplate(value: string): string {
-  return value
-    .replace(/@?topfeelpack1?/gi, '{{product}}')
-    .replace(/private\s+label\s+beauty\s+product/gi, '{{product}}')
-    .replace(/\bNOQ\b/g, 'MOQ')
-    .trim();
+function referenceNarrationLines(details: ExactReferenceDetail[]): string[] {
+  return details.map(item => {
+    const direct = [item.detail.spokenText, item.detail.dialogue, item.detail.voiceover]
+      .find(value => typeof value === 'string' && value.length > 0);
+    if (typeof direct === 'string') return direct;
+    const audio = typeof item.detail.audio === 'string' ? item.detail.audio : '';
+    const match = audio.match(/^ASR\s*:\s*([\s\S]*)$/i);
+    return match?.[1] ?? '';
+  });
 }
 
-function referenceNarrationLines(details: ExactReferenceDetail[]): string[] {
-  const dialogue = details.map(item => socialText(item.detail.dialogue))
-    .sort((left, right) => right.length - left.length)[0] || '';
-  const sentences = dialogue.match(/[^.!?。！？]+[.!?。！？]?/g)?.map(value => value.trim()).filter(Boolean) || [];
-  if (sentences.length >= 5 && details.length >= 6) {
-    const fourth = sentences[3]!.replace(/\bNOQ\b/g, 'MOQ');
-    const match = fourth.match(/^(.*?\bstarts\b)\s+(from\s+.+)$/i);
-    return [sentences[0]!, sentences[1]!, sentences[2]!, match?.[1] || fourth, match?.[2] || '', sentences[4]!, ...sentences.slice(5)];
-  }
+function referenceCaptionLines(details: ExactReferenceDetail[]): string[] {
   return details.map(item => {
-    const audio = socialText(item.detail.audio).replace(/^ASR\s*:\s*/i, '').replace(/^['"]|['"]$/g, '');
-    return /口播|旁白|voiceover/i.test(audio) ? '' : audio;
-  }).map((line, index) => line || sentences[index] || '');
+    const direct = [item.detail.captionText, item.detail.onScreenText, item.detail.subtitle]
+      .find(value => typeof value === 'string' && value.length > 0);
+    return typeof direct === 'string' ? direct : '';
+  });
+}
+
+type IdentityEntityType = 'company' | 'brand' | 'product';
+type ReferenceIdentityPlan = Record<IdentityEntityType, { originals: string[]; replacement: string | null }>;
+
+function identityStrings(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values.flatMap(item => typeof item === 'string' ? [item] : []).filter(Boolean);
+}
+
+function structuredIdentityTokens(
+  type: IdentityEntityType,
+  record: Record<string, unknown>,
+  exact: NonNullable<ReturnType<typeof exactAnalysis>>,
+): string[] {
+  const keys = type === 'company'
+    ? ['companyName', 'enterpriseName', 'company']
+    : type === 'brand'
+      ? ['brandName', 'brand']
+      : ['productName', 'productRef', 'product'];
+  const containers = [record, exact.analysis, exact.gemini, ...exact.details.map(item => item.detail)];
+  const direct = containers.flatMap(container => keys.flatMap(key => identityStrings(container[key])));
+  const entityRows = containers.flatMap(container => {
+    const value = container.identityEntities ?? container.namedEntities ?? container.entities;
+    return Array.isArray(value) ? value.map(recordObject) : [];
+  });
+  const tagged = entityRows.flatMap(entity => {
+    const entityType = socialText(entity.type || entity.kind || entity.entityType).toLocaleLowerCase();
+    const matches = type === 'company' ? /company|enterprise|企业|公司/.test(entityType)
+      : type === 'brand' ? /brand|品牌/.test(entityType)
+        : /product|sku|产品|商品/.test(entityType);
+    return matches ? identityStrings(entity.text ?? entity.value ?? entity.name) : [];
+  });
+  return [...new Set([...direct, ...tagged].map(value => value.trim()).filter(Boolean))];
+}
+
+/** Legacy exact analyses did not always emit named entities. Only infer a
+ * leading handle/acronym when it is repeated in title and visible analysis;
+ * ordinary nouns, claims and the remainder of the sentence are never touched. */
+function conservativeLegacyProductIdentity(
+  record: Record<string, unknown>,
+  exact: NonNullable<ReturnType<typeof exactAnalysis>>,
+  lines: string[],
+): string[] {
+  const first = lines.find(Boolean) ?? '';
+  const token = first.match(/^\s*((?:@[\p{L}\p{N}_.-]{2,40})|(?:[A-Z][A-Z0-9_-]{1,31}))(?=\s|[，,。.!！?？:：]|$)/u)?.[1];
+  if (!token) return [];
+  const title = socialText(record.title);
+  const visuals = exact.details.map(item => socialText(item.detail.visual)).join(' ');
+  return title.includes(token) && visuals.includes(token) ? [token] : [];
+}
+
+function identityPlan(input: {
+  record: Record<string, unknown>;
+  exact: NonNullable<ReturnType<typeof exactAnalysis>>;
+  referenceLines: string[];
+  verifiedContext: VerifiedSocialScriptContext;
+  replacements?: Partial<Record<`${IdentityEntityType}Name`, string | null>>;
+}): ReferenceIdentityPlan {
+  const explicitProduct = structuredIdentityTokens('product', input.record, input.exact);
+  return {
+    company: {
+      originals: structuredIdentityTokens('company', input.record, input.exact),
+      replacement: socialText(input.replacements?.companyName) || input.verifiedContext.enterpriseName || null,
+    },
+    brand: {
+      originals: structuredIdentityTokens('brand', input.record, input.exact),
+      replacement: socialText(input.replacements?.brandName) || input.verifiedContext.brandName || null,
+    },
+    product: {
+      originals: explicitProduct.length
+        ? explicitProduct
+        : conservativeLegacyProductIdentity(input.record, input.exact, input.referenceLines),
+      replacement: socialText(input.replacements?.productName) || input.verifiedContext.productName || null,
+    },
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function replaceIdentityOnly(text: string, plan: ReferenceIdentityPlan): {
+  text: string;
+  replacedEntityTypes: IdentityEntityType[];
+} {
+  let output = text;
+  const replaced = new Set<IdentityEntityType>();
+  const replacements = (['company', 'brand', 'product'] as const).flatMap(type => {
+    const replacement = plan[type].replacement;
+    if (!replacement) return [];
+    return plan[type].originals.map(original => ({ type, original, replacement }));
+  }).filter(item => item.original && item.original !== item.replacement)
+    .sort((left, right) => right.original.length - left.original.length);
+  for (const item of replacements) {
+    const escaped = escapeRegExp(item.original);
+    // ASCII names need token boundaries (so `ACME` does not alter
+    // `ACMECorp`). Chinese identity words are normally adjacent to particles
+    // such as “的”; Unicode word boundaries would incorrectly prevent those
+    // exact replacements.
+    const tokenLike = /^[A-Za-z0-9_@.-]+$/.test(item.original);
+    const pattern = new RegExp(tokenLike ? `(?<![\\p{L}\\p{N}_-])${escaped}(?![\\p{L}\\p{N}_-])` : escaped, 'giu');
+    const next = output.replace(pattern, item.replacement);
+    if (next !== output) replaced.add(item.type);
+    output = next;
+  }
+  return { text: output, replacedEntityTypes: (['company', 'brand', 'product'] as const).filter(type => replaced.has(type)) };
 }
 
 export function normalizedReferenceIdentity(value: unknown): string {
@@ -321,8 +430,12 @@ function truthBoundaryFor(input: {
   subject: string;
 }): SocialShotTruthBoundary {
   const factory = /生产现场|工厂|车间|产线/.test(input.subject);
-  const effect = input.purpose === 'proof' && /结果|效果|对比/.test(input.subject);
-  const subject = factory ? 'customer_factory' as const : effect ? 'product_effect' as const : 'none' as const;
+  const customerCase = /客户案例|客户现场|客户使用/.test(input.subject);
+  const effect = /(人物|人脸|模特|用户).*(使用|涂抹|上脸|效果|对比)|(使用|涂抹|上脸).*(产品|效果)/.test(input.subject);
+  const subject = factory ? 'customer_factory' as const
+    : customerCase ? 'customer_case' as const
+      : effect ? 'product_effect' as const
+        : 'none' as const;
   const evidenceRequired = subject !== 'none' || input.purpose === 'proof';
   return {
     subject,
@@ -341,10 +454,16 @@ function truthBoundaryFor(input: {
   };
 }
 
-function productionStrategyFor(boundary: SocialShotTruthBoundary, purpose: SocialShotFunction): SocialShotSourceStrategy {
-  if (boundary.customerEvidenceRequired) return 'verified_fact_card';
-  if (purpose === 'hook' || purpose === 'call_to_action') return 'authorized_digital_presenter';
-  return 'non_evidentiary_ai_visual';
+function productionStrategyFor(
+  boundary: SocialShotTruthBoundary,
+  _purpose: SocialShotFunction,
+  visualContract?: SocialSceneVisualContract | null,
+): SocialShotSourceStrategy {
+  if (boundary.subject === 'customer_factory' || boundary.subject === 'customer_case') return 'customer_real_asset';
+  const signature = visualContract ? capabilitySignature(visualContract) : null;
+  if (boundary.subject === 'product_effect' || signature?.requiresPerson) return 'authorized_digital_presenter';
+  if (signature?.requiresProductIdentity) return 'aigc_product_scene_replication';
+  return 'customer_real_asset';
 }
 
 function structuralFidelityPoints(input: {
@@ -360,23 +479,125 @@ function structuralFidelityPoints(input: {
 }
 
 const REQUIRED_DIFFERENCES = [
-  '保留口播与字幕的节奏功能，重新撰写所有文字并核对事实依据',
-  '替换原视频品牌、账号标识和水印',
+  '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；不得改写事实、句序、停顿与时长',
+  '字幕仅做同一组身份词替换；替换原视频账号标识和水印',
   '开场使用目标商品身份生成，后续优先使用素材库真实画面',
-  '保留信息顺序，同时增加全新音乐、音效和字幕动效包装',
+  '保持原信息顺序，同时增加全新音乐、音效和字幕动效包装',
 ] as const;
+
+function sceneContractForReference(input: {
+  row: ExactReferenceDetail;
+  productRef: string | null;
+}): SocialSceneVisualContract {
+  const raw = input.row.detail;
+  const visual = socialText(raw.visual);
+  const action = combinedText(raw, ['visual', 'observedFacts', 'beats']);
+  const subjects = [
+    ...listText(raw.subjects),
+    ...(/人物|真人|员工|工人|模特|主播|脸|手|person|people|human|worker|presenter|model|face|hand/i.test(visual) ? ['画面人物'] : []),
+    ...(/产品|商品|包装|瓶|罐|盒|膏体|液体|product|package|bottle|jar|box|cream|serum/i.test(visual) ? ['画面产品'] : []),
+    ...(/工厂|车间|产线|生产线|设备|factory|workshop|production.?line/i.test(visual) ? ['工厂环境'] : []),
+    socialText(raw.subject),
+  ].filter(Boolean);
+  return normalizeSceneVisualContract({
+    subjects: subjects.length ? subjects : [safeSubject(raw)],
+    interaction: socialText(raw.interaction) || action,
+    subjectRelations: raw.subjectRelations,
+    environment: socialText(raw.environment) || visual,
+    productUsage: socialText(raw.productUsage) || action,
+    product: {
+      policy: input.productRef ? 'preferred' : 'open',
+      requestedProductRef: input.productRef,
+      source: input.productRef ? 'agent_inferred' : 'inventory_open',
+    },
+    action: {
+      startState: socialText(raw.startState) || `${safeSubject(raw)}处于本镜头的可见初始状态`,
+      path: action,
+      peakState: socialText(raw.peakState),
+      endState: socialText(raw.endState) || `${safeSubject(raw)}停留在镜头结束状态`,
+      startSeconds: input.row.timing.startSeconds,
+      peakSeconds: Number.isFinite(Number(raw.actionPeak)) ? Number(raw.actionPeak) : null,
+      endSeconds: input.row.timing.endSeconds,
+    },
+    camera: {
+      shotSize: socialText(raw.shot),
+      angle: socialText(raw.angle),
+      movement: socialText(raw.camera),
+      composition: socialText(raw.composition),
+    },
+    precision: input.row.timing.startSeconds < 3 ? 'hook_high' : 'standard',
+    evidence: {
+      sourceRange: { startSeconds: input.row.timing.startSeconds, endSeconds: input.row.timing.endSeconds },
+      keyframeIds: listText(raw.keyframeIds),
+      confidence: Number.isFinite(Number(raw.confidence)) ? Number(raw.confidence) : null,
+    },
+  });
+}
+
+function capabilitySignature(contract: SocialSceneVisualContract): SocialSceneCapabilitySignature {
+  const subjectKinds = new Set(contract.subjects.map(subject => subject.kind));
+  const requiresPerson = subjectKinds.has('person') || contract.interaction.kind.startsWith('person_')
+    || contract.interaction.kind === 'apply_product_to_face';
+  const requiresProductIdentity = subjectKinds.has('product') || contract.productUsage.kind !== 'none'
+    || ['person_holding_product', 'person_using_product', 'apply_product_to_face', 'product_only_display', 'product_motion']
+      .includes(contract.interaction.kind);
+  const requiresPersonProductContact = ['person_holding_product', 'person_using_product', 'apply_product_to_face']
+    .includes(contract.interaction.kind) || ['hold', 'open_close', 'dispense', 'apply_to_face', 'apply_to_hand']
+      .includes(contract.productUsage.kind);
+  const requiresEnvironmentInteraction = contract.interaction.kind === 'person_factory_interaction';
+  const requiredCapabilities = [
+    ...(requiresPerson ? ['digital_human'] : []),
+    ...(requiresProductIdentity ? ['product_identity_control'] : []),
+    ...(requiresPersonProductContact ? ['person_product_interaction'] : []),
+    ...(requiresEnvironmentInteraction ? ['environment_interaction'] : []),
+    ...(!requiresPerson && requiresProductIdentity ? ['product_aigc'] : []),
+    ...(!requiresPerson && !requiresProductIdentity ? ['material_edit'] : []),
+  ];
+  return {
+    contractVersion: contract.schemaVersion,
+    requiresPerson,
+    requiresProductIdentity,
+    requiresPersonProductContact,
+    requiresEnvironmentInteraction,
+    interaction: contract.interaction.kind,
+    productUsage: contract.productUsage.kind,
+    requiredCapabilities: [...new Set(requiredCapabilities)],
+  };
+}
+
+function currentStackAdmission(signature: SocialSceneCapabilitySignature): SocialSceneProductionAdmission {
+  const route = signature.requiresPerson
+    ? 'digital_human' as const
+    : signature.requiresProductIdentity
+      ? 'product_aigc' as const
+      : 'material_edit' as const;
+  return {
+    status: 'admitted',
+    route,
+    executable: true,
+    confidence: signature.requiresPersonProductContact || signature.requiresEnvironmentInteraction ? 0.78 : 0.92,
+    requiredCapabilities: [...signature.requiredCapabilities],
+    unsupportedRequirements: [],
+    fallbackRoutes: route === 'digital_human'
+      ? ['material_edit', 'shooting_plan']
+      : route === 'product_aigc'
+        ? ['material_edit', 'shooting_plan']
+        : ['shooting_plan'],
+  };
+}
 
 function publicShot(input: {
   row: ExactReferenceDetail;
   index: number;
   themeId: SocialContentThemeId;
   spokenText?: string;
+  captionText?: string;
+  productRef?: string | null;
 }): SocialReferenceShotAnalysis {
   const purpose = shotPurpose(input.row.detail, input.themeId);
   const subject = safeSubject(input.row.detail);
   const structure = safeReferenceStructure(input.row);
   const truth = truthBoundaryFor({ purpose, subject });
-  const strategy = productionStrategyFor(truth, purpose);
   const detailText = (fields: string[]) => combinedText(input.row.detail, fields);
   const shotText = detailText(['shot', 'visual']);
   const angleText = detailText(['angle', 'camera']);
@@ -386,14 +607,19 @@ function publicShot(input: {
   const ambientDetected = Boolean(detailText(['ambientSound']));
   const musicDetected = Boolean(detailText(['bgm']));
   const effectsDetected = Boolean(detailText(['soundEffects']));
+  const visualContract = sceneContractForReference({
+    row: input.row,
+    productRef: input.productRef ?? null,
+  });
+  const strategy = productionStrategyFor(truth, purpose, visualContract);
   return {
     shotId: `reference-shot-${input.index + 1}`,
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
     visualDescription: `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
-    spokenText: null,
-    captionText: null,
-    audioDescription: '保留声画配合与节奏功能，重新制作配音、配乐和音效。',
+    spokenText: input.spokenText ?? null,
+    captionText: input.captionText ?? null,
+    audioDescription: '口播逐字逐句冻结并仅替换身份词；保留声画配合，重新制作配音、配乐和音效。',
     rhythmDescription: `${structure.pace}节奏，${structure.transition}`,
     purpose,
     action: {
@@ -421,14 +647,15 @@ function publicShot(input: {
       causalGaps: structure.transition === '自然衔接' ? [] : ['转场可能压缩真实过程，不能据此推断未展示的因果关系'],
       postProductionOverlays: captionDetected ? ['字幕或平台文字属于后期叠加层，不属于物理场景'] : [],
     },
+    visualContract,
     tags: {
       sceneTypes: [/生产现场/.test(subject) ? '工厂实拍结构' : purpose === 'demonstration' ? '使用演示结构' : '产品内容结构'],
       subjects: [subject],
       subjectRelations: [purpose === 'demonstration' ? '主体执行动作' : '主体承担镜头信息'],
       cameraLanguage: [structure.shotScale, structure.cameraMovement, structure.transition],
       contentFunctions: [purpose],
-      soundTypes: ['原口播关键词替换', '重新配乐与音效'],
-      onScreenInformation: ['原字幕关键词替换与动效重制'],
+      soundTypes: ['原口播仅做企业名、品牌名或产品名替换', '重新配乐与音效'],
+      onScreenInformation: ['原字幕仅做身份词替换与动效重制'],
       truthRequirements: [truth.subject],
       suggestedProductionMethods: [strategy],
     },
@@ -447,6 +674,8 @@ function hookOption(input: {
   narrationStyle?: NarrationStyleProfile | null;
 }): SocialThreeSecondHook {
   const truthBoundary = truthBoundaryFor({ purpose: 'hook', subject: input.firstShot.visualDescription });
+  const signature = capabilitySignature(input.firstShot.visualContract
+    ?? normalizeSceneVisualContract({ subjects: input.firstShot.tags.subjects, interaction: input.firstShot.action?.path, precision: 'hook_high' }));
   const alternatives = [
     {
       firstFrame: `直接展示${input.firstShot.visualDescription}`,
@@ -487,99 +716,58 @@ function hookOption(input: {
     truthBoundary,
     referencePoints: input.firstShot.fidelityPoints.slice(0, 3),
     mustDifferPoints: [...REQUIRED_DIFFERENCES],
+    detailedAnalysis: {
+      firstFrameComposition: input.firstShot.shotLanguage?.composition
+        || input.firstShot.tags.cameraLanguage.join('、') || '首帧主体与字幕安全区关系',
+      primarySubject: input.firstShot.tags.subjects.join('、') || input.firstShot.visualDescription,
+      subjectScaleAndPosition: `${input.firstShot.shotLanguage?.shotSize || '明确景别'}；${input.firstShot.shotLanguage?.cameraAngle || '主体位置可辨识'}`,
+      actionStartAndPeak: input.firstShot.action
+        ? `${input.firstShot.action.startState} → ${input.firstShot.action.path} → ${input.firstShot.action.endState}`
+        : input.firstShot.visualDescription,
+      cameraMovement: input.firstShot.shotLanguage?.movement || input.firstShot.tags.cameraLanguage.join('、') || '无可验证运镜记录',
+      captionTrigger: input.firstShot.captionText || input.firstShot.tags.onScreenInformation.join('、') || '无首屏字幕触发',
+      audioTrigger: input.firstShot.audioDescription || input.firstShot.tags.soundTypes.join('、') || '无明确声音触发',
+      informationDensity: input.firstShot.tags.onScreenInformation.length + input.firstShot.tags.subjects.length >= 3 ? '高' : '中',
+      swipeRisk: input.firstShot.startSeconds > 0.15 ? '主体出现偏晚' : '需确保第一帧主体可辨识且首秒动作有进展',
+      minimumMaterialMatchScore: 0.78,
+    },
+    capabilitySignature: signature,
+    productionAdmission: currentStackAdmission(signature),
     status: input.role === 'primary' ? 'recommended' : 'draft',
   };
 }
 
-function safeScriptCopy(input: {
-  shot: SocialReferenceShotAnalysis;
-  index: number;
-  verifiedContext: VerifiedSocialScriptContext;
-  narrationStyle?: NarrationStyleProfile | null;
-}): { spokenText: string; captionText: string } {
-  const product = input.verifiedContext.productName || '这类产品';
-  const productKeyword = product.split(/[：:｜|]/)[0]!.trim().slice(0, 28) || '这类产品';
-  const fact = input.verifiedContext.facts[input.index % Math.max(1, input.verifiedContext.facts.length)];
-  if (input.shot.purpose === 'hook') {
-    const spokenText = input.narrationStyle?.hookMechanism === 'question' ? `你选${product}时，最容易忽略什么？`
-      : input.narrationStyle?.hookMechanism === 'contrast' ? `看${product}，不是先听形容词，而是先核对真正影响判断的信息。`
-        : `看${product}，先别急着听形容词，三秒抓住真正值得核对的细节。`;
-    return { spokenText, captionText: `3 秒看关键细节` };
-  }
-  if (fact) {
-    const lines = [
-      `${product}有个具体信息值得留意：${fact.label}是${fact.value}。`,
-      `再看${fact.label}，资料给出的信息是${fact.value}。`,
-      `如果你正在做选型，记得单独核对${fact.label}：${fact.value}。`,
-      `落到实际采购判断，${fact.label}的${fact.value}不能略过。`,
-    ];
-    return {
-      spokenText: input.narrationStyle?.cadence === 'tight' ? `${fact.label}：${fact.value}。` : lines[input.index % lines.length]!,
-      captionText: `${fact.label}：${fact.value}`,
-    };
-  }
-  const educational: Record<SocialShotFunction, { spokenText: string; captionText: string }> = {
-    hook: { spokenText: `看${product}，先别急着下结论，只讲一个可核验的判断方法。`, captionText: `先看判断方法` },
-    problem: { spokenText: '做选择时，先把使用条件和核验标准问清楚。', captionText: '先确认使用条件' },
-    value: { spokenText: '没有明确资料支持的卖点，先不要当成采购结论。', captionText: '卖点需要资料支持' },
-    demonstration: { spokenText: '操作是否合适，要结合正式说明和自己的使用条件判断。', captionText: '按使用条件判断' },
-    proof: { spokenText: '效果到底怎么样，还是要回到能核验的测试和资料。', captionText: '证据要可核验' },
-    trust: { spokenText: '真正让人放心的，是流程和证据能够一一对应。', captionText: '流程与证据对应' },
-    transition: { spokenText: '再换一个判断角度，仍然只采用可以核验的信息。', captionText: '继续核对信息' },
-    call_to_action: { spokenText: '最后保留这条原则：结论只以正式资料和真实验证为准。', captionText: '以正式资料为准' },
-  };
-  return educational[input.shot.purpose];
-}
-
-function fitSpokenTextToDuration(text: string, durationSeconds: number): string {
-  const source = text.trim();
-  if (!source) return source;
-  const hanLimit = Math.max(1, Math.floor(durationSeconds * 5));
-  const hanCount = [...source].filter(char => /[\u3400-\u9fff]/.test(char)).length;
-  if (hanCount > 0) {
-    if (hanCount <= hanLimit) return source;
-    let seen = 0;
-    let clipped = '';
-    for (const char of source) {
-      if (/[\u3400-\u9fff]/.test(char)) {
-        if (seen >= hanLimit) break;
-        seen += 1;
-      }
-      clipped += char;
-    }
-    return `${clipped.replace(/[，。；：、！？,.!?;:\s]+$/u, '')}。`;
-  }
-  const wordLimit = Math.max(1, Math.floor(durationSeconds * 2.7));
-  const words = source.split(/\s+/).filter(Boolean);
-  return words.length <= wordLimit ? source : words.slice(0, wordLimit).join(' ');
-}
-
 function materialPlanForShot(shot: SocialReferenceShotAnalysis): SocialReplicationScriptShot['materialPlan'] {
   const truthBoundary = truthBoundaryFor({ purpose: shot.purpose, subject: shot.visualDescription });
-  const sourceStrategy = productionStrategyFor(truthBoundary, shot.purpose);
-  const replacementRequired = truthBoundary.customerEvidenceRequired;
+  const sourceStrategy = productionStrategyFor(truthBoundary, shot.purpose, shot.visualContract);
+  const usesDigitalHuman = sourceStrategy === 'authorized_digital_presenter';
+  const usesProductAigc = sourceStrategy === 'aigc_product_scene_replication';
   return {
     shotId: shot.shotId,
     function: shot.purpose,
     requestedDescription: shot.visualDescription,
     sourceStrategy,
     sourceRefs: [],
-    fallbackSourceStrategy: sourceStrategy === 'verified_fact_card' ? 'motion_graphics' : 'licensed_stock_asset',
-    productionInstruction: replacementRequired
-      ? '没有客户真实证据时，改成非证据型流程说明或已确认事实卡，不生成虚假的客户现场、案例或效果。'
-      : `按${shot.rhythmDescription}制作全新画面，保留镜头功能但不复用原片素材。`,
+    fallbackSourceStrategy: usesDigitalHuman || usesProductAigc ? null : 'motion_graphics',
+    productionInstruction: usesDigitalHuman
+      ? '按冻结口播与详细动作契约调用数字人；人物原素材只作画面参考，原声静音。'
+      : usesProductAigc
+        ? '锁定企业中心产品身份与参考画面的场景、构图、动作和运镜，再调用产品 IAIGC；不得把产品图简单叠到底图。'
+        : `按口播逐字逐句在已入库素材中匹配精确片段，工厂、客户案例和企业通用素材可直接剪辑；${shot.rhythmDescription}只约束裁切与节奏。`,
     truthBoundary,
     functionalEquivalentReplacement: {
-      required: replacementRequired,
+      required: false,
       preservesFunction: shot.purpose,
-      replacesSubject: replacementRequired ? truthBoundary.subject : null,
-      description: replacementRequired ? '用流程动画或已确认事实卡承担同一信息功能。' : null,
-      reason: replacementRequired ? '当前没有可作为客户真实证据的已授权素材。' : null,
+      replacesSubject: null,
+      description: null,
+      reason: null,
     },
-    feasibility: replacementRequired ? 'goal_degraded' : 'functional_equivalent',
-    feasibilityReason: replacementRequired
-      ? '当前缺少承担真实证明作用的客户素材，必须由内容 Agent 重新评估事实强度'
-      : '可用全新画面保持参考镜头的叙事功能，不复用原片素材',
+    feasibility: 'functional_equivalent',
+    feasibilityReason: usesDigitalHuman
+      ? '人物出镜或人物使用产品由数字人承接，无需用户补充内容制作信息'
+      : usesProductAigc
+        ? '纯产品展示由产品身份锁定 IAIGC 承接，并按前三秒精细视觉契约执行'
+        : '内容 Agent 按冻结口播优先选用已入库的可用素材片段，产品未指定时可使用企业通用素材',
     customerShootRequired: false,
   };
 }
@@ -589,6 +777,13 @@ export function buildSocialTaskReferencePackage(input: {
   source: Pick<SocialTaskSource, 'sourceId' | 'sourceRef' | 'sourceVersion' | 'createdAt'>;
   themeId: SocialContentThemeId;
   verifiedContext: VerifiedSocialScriptContext;
+  /** Target tenant identities. Product falls back to verified enterprise
+   * knowledge; company and brand are replaced only when explicitly supplied. */
+  identityReplacements?: {
+    companyName?: string | null;
+    brandName?: string | null;
+    productName?: string | null;
+  };
 }): ResolvedSocialTaskReference | null {
   const exact = exactAnalysis(input.record);
   if (!exact || synthetic(input.record, exact.analysis)) return null;
@@ -604,31 +799,54 @@ export function buildSocialTaskReferencePackage(input: {
     analysis: input.record.aiAnalysis,
   }).slice(0, 20)}`;
   const referenceLines = referenceNarrationLines(exact.details);
-  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({ row, index, themeId: input.themeId, spokenText: referenceLines[index] }));
-  const narrationStyle = deriveNarrationStyleProfile(exact.details.map(row => row.detail));
-  const hookCopy = safeScriptCopy({
-    shot: shots[0]!,
-    index: 0,
+  const referenceCaptions = referenceCaptionLines(exact.details);
+  const replacements = identityPlan({
+    record: input.record,
+    exact,
+    referenceLines,
     verifiedContext: input.verifiedContext,
-    narrationStyle,
+    replacements: input.identityReplacements,
   });
+  const shots = exact.details.slice(0, 12).map((row, index) => publicShot({
+    row,
+    index,
+    themeId: input.themeId,
+    spokenText: referenceLines[index],
+    captionText: referenceCaptions[index],
+    productRef: input.identityReplacements?.productName || input.verifiedContext.productName,
+  }));
+  const narrationStyle = deriveNarrationStyleProfile(exact.details.map(row => row.detail));
+  const hookVoiceover = replaceIdentityOnly(referenceLines[0] ?? '', replacements);
+  const hookCaption = replaceIdentityOnly(referenceCaptions[0] ?? '', replacements);
   const primaryHook = {
     ...hookOption({
     analysisId,
     role: 'primary',
     index: 0,
     firstShot: shots[0]!,
-    strategy: productionStrategyFor(truthBoundaryFor({ purpose: 'hook', subject: shots[0]!.visualDescription }), 'hook'),
+    strategy: productionStrategyFor(
+      truthBoundaryFor({ purpose: 'hook', subject: shots[0]!.visualDescription }),
+      'hook',
+      shots[0]!.visualContract,
+    ),
     productLabel: input.verifiedContext.productName || '这类产品',
     narrationStyle,
     }),
-    spokenLine: fitSpokenTextToDuration(hookCopy.spokenText, shots[0]!.endSeconds - shots[0]!.startSeconds),
-    caption: hookCopy.captionText,
+    spokenLine: hookVoiceover.text || null,
+    caption: hookCaption.text || null,
   } satisfies SocialThreeSecondHook;
   const hookOptions: SocialThreeSecondHook[] = [
     primaryHook,
-    hookOption({ analysisId, role: 'alternative', index: 1, firstShot: shots[0]!, strategy: 'authorized_digital_presenter', productLabel: input.verifiedContext.productName || '这类产品' }),
-    hookOption({ analysisId, role: 'alternative', index: 2, firstShot: shots[0]!, strategy: 'motion_graphics', productLabel: input.verifiedContext.productName || '这类产品' }),
+    {
+      ...hookOption({ analysisId, role: 'alternative', index: 1, firstShot: shots[0]!, strategy: 'authorized_digital_presenter', productLabel: input.verifiedContext.productName || '这类产品' }),
+      spokenLine: hookVoiceover.text || null,
+      caption: hookCaption.text || null,
+    },
+    {
+      ...hookOption({ analysisId, role: 'alternative', index: 2, firstShot: shots[0]!, strategy: 'motion_graphics', productLabel: input.verifiedContext.productName || '这类产品' }),
+      spokenLine: hookVoiceover.text || null,
+      caption: hookCaption.text || null,
+    },
   ];
   const createdAt = socialText(input.record.updatedAt)
     || socialText(input.record.updated)
@@ -652,12 +870,13 @@ export function buildSocialTaskReferencePackage(input: {
     coverage,
     shots,
     hookAnalysis: primaryHook,
-    rightsNotice: '素材库内容可按其授权范围用于本任务制作；参考链接仅用于结构分析，不代表版权已经确认。系统借鉴镜头功能与节奏，重新制作口播、字幕和视觉包装，不复用原视频声画内容。',
+    rightsNotice: '已入库的工厂、客户案例和企业通用素材可直接用于匹配与剪辑。口播按参考逐字逐句冻结，仅替换企业名、品牌名或产品名，不改写事实、句序、停顿与时长；画面、配乐、音效和字幕动效重新制作。',
     createdAt,
   };
   const scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
-    const copy = safeScriptCopy({ shot, index, verifiedContext: input.verifiedContext, narrationStyle });
-    const rawSpokenText = copy.spokenText;
+    const referenceSpokenText = referenceLines[index] ?? '';
+    const adjustedVoiceover = replaceIdentityOnly(referenceSpokenText, replacements);
+    const adjustedCaption = replaceIdentityOnly(referenceCaptions[index] ?? '', replacements);
     return {
     shotId: `replication-${shot.shotId}`,
     referenceShotId: shot.shotId,
@@ -665,8 +884,13 @@ export function buildSocialTaskReferencePackage(input: {
     endSeconds: shot.endSeconds,
     purpose: shot.purpose,
     visualInstruction: `按${shot.visualDescription}的镜头功能制作全新内容。`,
-    spokenText: fitSpokenTextToDuration(rawSpokenText || '', shot.endSeconds - shot.startSeconds),
-    captionText: shot.purpose === 'hook' ? primaryHook.caption : copy.captionText,
+    referenceSpokenText: referenceSpokenText || null,
+    spokenText: adjustedVoiceover.text || null,
+    voiceoverReplacement: {
+      mode: 'identity_only',
+      replacedEntityTypes: adjustedVoiceover.replacedEntityTypes,
+    },
+    captionText: adjustedCaption.text || null,
     audioAndTransition: shot.audioDescription,
     fidelityPoints: [...shot.fidelityPoints],
     mustDifferPoints: [...shot.mustDifferPoints],
@@ -684,8 +908,8 @@ export function buildSocialTaskReferencePackage(input: {
     primaryHookId: primaryHook.hookId,
     hookOptions,
     shots: scriptShots,
-    structureFidelitySummary: '保留参考视频的前三秒机制、镜头功能顺序、时长分配、景别、运镜、节奏和转场关系。',
-    originalityDifferenceSummary: '口播和字幕保持原视频的信息顺序并做产品关键词替换；画面使用目标商品 AIGC 开场与素材库真实工厂片段，重制音乐、音效、字幕动效和视觉包装。',
+    structureFidelitySummary: '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
+    originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
   };
   return {

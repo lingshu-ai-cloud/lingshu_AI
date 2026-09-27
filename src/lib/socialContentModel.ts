@@ -265,7 +265,7 @@ export type SocialContentCreationPath = SocialContentCreationMode;
 export type SocialContentMaterialInput = SocialAssetAvailability;
 
 export const SOCIAL_CONTENT_CREATION_PATH_LABEL: Record<SocialContentCreationPath, string> = {
-  material_processing: '素材加工',
+  material_processing: '自由创作',
   viral_replication: '爆款裂变',
 };
 
@@ -331,6 +331,7 @@ export function socialContentMaterialCanStart(
 export interface SocialContentDraft {
   mode: SocialContentTaskMode;
   productionMode: 'social_ready' | 'concept_preview';
+  productionApproach: 'material_cut' | 'material_polish' | 'ai_enhanced' | 'shooting_plan';
   creationPath: SocialContentCreationPath;
   materialInput: SocialContentMaterialInput;
   managedMode: SocialContentManagementMode;
@@ -338,6 +339,9 @@ export interface SocialContentDraft {
   customTopic: string;
   topic: string;
   title: string;
+  /** Stable Enterprise Center product identity selected from the catalog. */
+  productId: string;
+  /** Display-only product label retained for task titles and historic data. */
   productName: string;
   primaryGoal: string;
   audience: string;
@@ -367,6 +371,7 @@ export interface SocialContentDraft {
 export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   mode: 'instant',
   productionMode: 'social_ready',
+  productionApproach: 'ai_enhanced',
   creationPath: 'material_processing',
   materialInput: 'none',
   managedMode: 'one_click_managed',
@@ -374,6 +379,7 @@ export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   customTopic: '',
   topic: '',
   title: '',
+  productId: '',
   productName: '',
   primaryGoal: '',
   audience: '',
@@ -413,7 +419,6 @@ export function validateSocialContentDraft(draft: SocialContentDraft): Record<nu
   if (draft.customTopic.length > 300) add(0, '自定义主题不超过 300 字');
   if (draft.topic.length > 300) add(0, '一句话选题不超过 300 字');
   if (!draft.title.trim()) add(0, '请填写任务名称');
-  if (!fastStart && !draft.productName.trim()) add(0, '请填写产品或业务主题');
   if (!draft.primaryGoal.trim()) add(0, '请选择本次主要目标');
   if (!fastStart && !draft.audience.trim()) add(0, '请填写目标客户');
   if (!fastStart && !draft.market.trim()) add(0, '请填写目标市场');

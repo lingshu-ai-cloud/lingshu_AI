@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { SocialContentTaskBrief, SocialContentThemeId, SocialProductionResult, SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialAssetSupplyPlan, SocialContentTaskBrief, SocialContentTaskDetail, SocialContentThemeId, SocialProductionResult, SocialTaskSource } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
@@ -71,6 +71,126 @@ export interface SocialContentAutoProductionRuntime {
   evaluateReplication?: typeof evaluateSocialReplicationResult;
   backendFilePort?: SocialContentBackendFilePort;
 }
+
+export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
+
+/** Freeze the Content Agent's reviewed candidate back into the executable
+ * supply plan. This makes the keyframe/range shown for review authoritative. */
+export function assetSupplyPlanWithExecutionSelections(
+  plan: SocialAssetSupplyPlan,
+  workflow: NonNullable<SocialContentTaskDetail['agentWorkflow']>,
+): SocialAssetSupplyPlan {
+  const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
+  return {
+    ...structuredClone(plan),
+    shots: plan.shots.map(shot => {
+      const execution = executionByScene.get(shot.shotId);
+      if (!execution) return structuredClone(shot);
+      const recommendedId = execution.recommendedCandidateIds[0];
+      const candidate = execution.candidates.find(item => item.candidateId === recommendedId);
+      if (!candidate) return {
+        ...structuredClone(shot),
+        sourceStrategy: execution.selectedSourceStrategy,
+        fallbackSourceStrategy: execution.fallbackSourceStrategy,
+      };
+      const segment = candidate.materialSegments?.[0];
+      return {
+        ...structuredClone(shot),
+        sourceStrategy: execution.selectedSourceStrategy,
+        fallbackSourceStrategy: execution.fallbackSourceStrategy,
+        ...(candidate.kind === 'asset' && candidate.sourceRef ? {
+          sourceRefs: [candidate.sourceRef],
+          selectedMaterialSegment: segment ? {
+            sourceRef: candidate.sourceRef,
+            segmentId: segment.segmentId,
+            startSeconds: segment.startSeconds,
+            endSeconds: segment.endSeconds,
+          } : null,
+        } : {}),
+      };
+    }),
+  };
+}
+
+/** Pure projection used by the non-rendering third option. Keeping this
+ * separate from the worker makes it testable that a shooting-plan request has
+ * all Director controls without touching TTS, providers or the renderer. */
+export function buildSocialShootingPlanArtifactContent(
+  detail: Pick<SocialContentTaskDetail, 'taskId' | 'version' | 'brief' | 'agentWorkflow' | 'referenceVideoAnalysis'>,
+): Record<string, unknown> {
+  const workflow = detail.agentWorkflow;
+  if (!workflow) throw new Error('shooting_plan_director_brief_missing');
+  const director = workflow.directorBrief;
+  return {
+    workflowSchema: SOCIAL_SHOOTING_PLAN_SCHEMA,
+    sourceKey: `social_task_shooting_plan:${detail.taskId}`,
+    contentType: 'shooting_plan',
+    taskVersion: detail.version,
+    title: `${detail.brief.title || '社媒内容'}·代拍清单`,
+    estimatedOutputDurationSeconds: director.totalDurationSeconds,
+    productionMode: 'non_rendering_checklist',
+    providerCallsRequired: false,
+    product: director.contentRequirements?.product ?? {
+      required: Boolean(detail.brief.productRef),
+      productRef: detail.brief.productRef,
+      confidence: detail.brief.productRef ? 1 : 0,
+      reason: detail.brief.productRef ? '任务已指定产品' : '未锁定产品，代拍可使用现场可用产品',
+    },
+    hook: {
+      intervalSeconds: [0, Math.min(3, director.totalDurationSeconds)],
+      precision: 'hook_high',
+      referenceAnalysisId: director.referenceAnalysis?.analysisId ?? detail.referenceVideoAnalysis?.analysisId ?? null,
+      instruction: '前三秒必须逐帧复核第一帧主体、人物动作、人物-产品-环境交互、镜头轨迹、字幕和声音触发',
+    },
+    scenes: director.scenes.map(scene => ({
+      sceneId: scene.sceneId,
+      order: scene.order,
+      timing: structuredClone(scene.duration),
+      purpose: scene.purpose,
+      voiceover: scene.audioLayers.voiceover,
+      caption: scene.audioLayers.captionIntent,
+      targetVisual: scene.targetVisual,
+      action: structuredClone(scene.action),
+      shotLanguage: structuredClone(scene.shotLanguage),
+      spaceAndContinuity: [...scene.spaceAndContinuity],
+      requiredEvidence: [...scene.requiredEvidence],
+      productSceneReplication: scene.productSceneReplication
+        ? structuredClone(scene.productSceneReplication) : null,
+      truthBoundary: structuredClone(scene.truthBoundary),
+      acceptanceCriteria: [...scene.acceptanceCriteria],
+      hookPrecision: scene.duration.startSeconds < 3,
+    })),
+    createdBy: 'content_agent',
+  };
+}
+
+async function finishShootingPlanExecution(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  runId: string;
+  backendFilePort?: SocialContentBackendFilePort;
+}, artifactId: string): Promise<void> {
+  await writeExecutionStage({
+    ...input,
+    stage: 'review_ready',
+    status: 'completed',
+    message: '逐镜代拍清单已生成，等待用户审核。',
+    extra: { artifactId, artifactKind: 'shooting_plan' },
+  });
+  // Do not call the video finalizer here: an approved checklist must never be
+  // scheduled for media delivery or publication. A checklist has no render
+  // evidence to review, so its worker run completes when the artifact exists.
+  const run = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId);
+  if (run) await input.repository.update(STARTER_COLLECTIONS.runs, input.tenantId, run.id, {
+    status: 'completed',
+    current_controller: 'system',
+    pause_reason: '',
+    completed_at: new Date().toISOString(),
+  });
+}
+
 export async function runSocialContentAutoProduction(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -85,14 +205,21 @@ export async function runSocialContentAutoProduction(input: {
 }): Promise<void> {
   const detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
-  const revisionParent = [...detail.artifacts].reverse().find(artifact => artifact.kind === 'short_video'
+  const productionApproach = detail.brief.productionApproach ?? 'ai_enhanced';
+  const targetArtifactKind = productionApproach === 'shooting_plan' ? 'shooting_plan' : 'short_video';
+  const targetWorkflowSchema = productionApproach === 'shooting_plan' ? SOCIAL_SHOOTING_PLAN_SCHEMA : AUTO_SCHEMA;
+  const revisionParent = productionApproach === 'shooting_plan' ? undefined : [...detail.artifacts].reverse().find(artifact => artifact.kind === 'short_video'
     && artifact.status === 'changes_requested');
   const existing = detail.artifacts.find(artifact => artifact.origin === 'agent'
-    && artifact.kind === 'short_video'
-    && socialText(artifact.content?.workflowSchema) === AUTO_SCHEMA
+    && artifact.kind === targetArtifactKind
+    && socialText(artifact.content?.workflowSchema) === targetWorkflowSchema
     && !['superseded', 'changes_requested'].includes(artifact.status));
   if (!revisionParent && existing) {
-    await finishExecution({ ...input, backendFilePort: input.runtime?.backendFilePort, artifactId: existing.artifactId });
+    if (productionApproach === 'shooting_plan') {
+      await finishShootingPlanExecution({ ...input, backendFilePort: input.runtime?.backendFilePort }, existing.artifactId);
+    } else {
+      await finishExecution({ ...input, backendFilePort: input.runtime?.backendFilePort, artifactId: existing.artifactId });
+    }
     return;
   }
   const agentWorkflow = detail.agentWorkflow;
@@ -119,6 +246,37 @@ export async function runSocialContentAutoProduction(input: {
     },
   });
   const taskRecord = await requireSocialTask(input);
+  if (productionApproach === 'shooting_plan') {
+    await writeExecutionStage({
+      ...input,
+      stage: 'shooting_plan',
+      message: '内容 Agent 正在把编导方案整理为逐镜代拍清单，不调用配音、数字人、IAIGC 或渲染服务。',
+      extra: {
+        directorBriefId: agentWorkflow.directorBrief.directorBriefId,
+        sceneCount: agentWorkflow.directorBrief.scenes.length,
+      },
+    });
+    const artifactResult = await createSocialContentArtifact({
+      repository: input.repository,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      taskId: input.taskId,
+      idempotencyKey: `social-shooting-plan:${input.runId}`,
+      trustedAgentOrigin: true,
+      backendFilePort: input.runtime?.backendFilePort,
+      value: {
+        kind: 'shooting_plan',
+        platform: detail.brief.platforms[0] ?? null,
+        language: detail.brief.languages[0] ?? null,
+        origin: 'agent',
+        resourceRef: null,
+        content: buildSocialShootingPlanArtifactContent(detail),
+      },
+    });
+    await finishShootingPlanExecution({ ...input, backendFilePort: input.runtime?.backendFilePort },
+      artifactResult.artifact.artifactId);
+    return;
+  }
   let revisionNote = '';
   if (revisionParent) {
     const revisionRows = await input.repository.list(STARTER_COLLECTIONS.socialContentArtifacts, input.tenantId, {
@@ -222,6 +380,7 @@ export async function runSocialContentAutoProduction(input: {
 	  await withSocialContentRenderWorkspace(async outputDir => {
 	  let activeBaseline = initialBaseline;
 	  const productionMode = detail.brief.productionMode ?? 'concept_preview';
+	  const paidVisualProvidersAllowed = productionApproach === 'ai_enhanced';
 	  const zeroAssetRoute = detail.assetSupplyPlan?.productionRoute === 'zero_asset_generation';
 	  const rawAssets = await taskProductionAssets({
 	    tenantId: input.tenantId,
@@ -230,7 +389,7 @@ export async function runSocialContentAutoProduction(input: {
 	    themeId: detail.theme?.themeId ?? null,
 	    productionMode,
 	    outputDirectory: outputDir,
-	    allowAuthorizedSharedLibrary: true,
+	    allowAuthorizedSharedLibrary: paidVisualProvidersAllowed,
 	  }).catch(error => {
 	    if (zeroAssetRoute) return [];
 	    throw error;
@@ -239,23 +398,28 @@ export async function runSocialContentAutoProduction(input: {
 	  let assets = analyzed.assets;
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
 	  if (detail.assetSupplyPlan) {
-	    const environmentPresenter = input.repository.dataStore
+	    const environmentPresenter = paidVisualProvidersAllowed && input.repository.dataStore
 	      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
 	      : null;
+	    const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
+	      paidVisualProvidersAllowed
+	        || adapter.adapterId === 'existing_customer_asset.v1'
+	        || (productionApproach === 'material_polish' && adapter.adapterId === 'system_safe_motion_graphics.v1')
+	    ));
 	    const supplied = await executeSocialAssetSupplyPlan({
 	      tenantId: input.tenantId,
 	      taskId: input.taskId,
 	      outputDirectory: outputDir,
-	      plan: detail.assetSupplyPlan,
+	      plan: assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow),
 	      baseline: activeBaseline,
 	      availableAssets: assets,
-	      adapters: [
+	      adapters: paidVisualProvidersAllowed ? [
 	        ...(input.assetSupplyAdapters ?? []),
 	        createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
 	        ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
 	        createConfiguredSocialAiVisualAdapter(),
-	        ...existingAssetSupplyAdapters(),
-	      ],
+	        ...existingAdapters,
+	      ] : existingAdapters,
 	    });
 	    // Only assets selected by the Director's per-shot router enter the edit.
 	    assets = supplied.assets;
@@ -263,7 +427,9 @@ export async function runSocialContentAutoProduction(input: {
 	    await writeExecutionStage({
 	      ...input,
 	      stage: 'asset_supply_completed',
-	      message: '内容 Agent 已逐镜完成素材库、Seedream/Seedance 与真实工厂素材路由。',
+	      message: paidVisualProvidersAllowed
+	        ? '内容 Agent 已逐镜完成素材库与高质量生成能力路由。'
+	        : '内容 Agent 已按逐句口播完成“我的素材”片段路由，未调用 Seedance 或数字人。',
 	      extra: { assetSupplyExecution },
 	    });
 	  }
@@ -301,7 +467,7 @@ export async function runSocialContentAutoProduction(input: {
     }
   }
   let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
-  if (!plan.ok) {
+  if (!plan.ok && productionApproach !== 'material_cut') {
     if (productionMode === 'social_ready' && rawAssets.length === 0 && !assetSupplyExecution) {
       throw new Error('production_input_required:当前没有可用于正式成片的客户画面。请上传至少一段产品视频或三张产品图片；系统不会把说明卡片冒充正式成片。');
     }
@@ -313,6 +479,9 @@ export async function runSocialContentAutoProduction(input: {
         ? '客户素材不足，内容 Agent 按已审核的零素材路线使用可追溯系统图形、口播和字幕完成正式制作。'
         : '现有素材覆盖不足，内容 Agent 按编导真实性边界使用平台安全主题图形完成预览版。');
     }
+  }
+  if (!plan.ok && productionApproach === 'material_cut') {
+    throw new Error(`production_input_required:纯素材方案没有找到足够的逐句匹配片段。${plan.message}`);
   }
   plan.unusedAssets.push(...analyzed.failures.map(item => ({
     assetId: item.assetId,

@@ -46,6 +46,8 @@ test('Seedance concept gateway releases reservation only when submission was not
 
 test('Seedance full-modal request uses only reference roles and an HTTPS video URL', async () => {
   let submitted: any;
+  const previousPrice = process.env.SEEDANCE_2_FAST_CNY_PER_MILLION;
+  process.env.SEEDANCE_2_FAST_CNY_PER_MILLION = '16.5';
   const transport: typeof fetch = async (url, init) => {
     const address = String(url);
     if (address.endsWith('/contents/generations/tasks')) {
@@ -53,11 +55,11 @@ test('Seedance full-modal request uses only reference roles and an HTTPS video U
       return Response.json({ id: 'task-reference-1' });
     }
     if (address.includes('/tasks/task-reference-1')) {
-      return Response.json({ status: 'succeeded', content: { video_url: 'https://media.example/reference.mp4' } });
+      return Response.json({ status: 'succeeded', usage: { total_tokens: 173_700 }, content: { video_url: 'https://media.example/reference.mp4' } });
     }
     return new Response(Buffer.from('reference-video'), { status: 200 });
   };
-  await generateSeedanceConceptVideo({
+  const result = await generateSeedanceConceptVideo({
     tenantId: 'tenant-a', prompt: 'follow the supplied camera reference', durationSeconds: 4, ratio: '9:16',
     idempotencyKey: 'reference-key', timeoutMs: 1_000, apiKey: 'secret', model: 'doubao-seedance-2-0-fast-test',
     firstFrameDataUrl: 'data:image/jpeg;base64,Zmlyc3Q=',
@@ -71,6 +73,27 @@ test('Seedance full-modal request uses only reference roles and an HTTPS video U
     ['image_url', 'reference_image'], ['image_url', 'reference_image'], ['video_url', 'reference_video'],
   ]);
   assert.equal(submitted.content[3].video_url.url, 'https://assets.example/reference.mp4');
+  assert.equal(result.estimatedCostCny, 2.8661);
+  if (previousPrice === undefined) delete process.env.SEEDANCE_2_FAST_CNY_PER_MILLION;
+  else process.env.SEEDANCE_2_FAST_CNY_PER_MILLION = previousPrice;
+});
+
+test('Seedance terminal supplier failure clears its checkpoint and releases the reservation', async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'seedance-failed-'));
+  const checkpointPath = path.join(root, 'task.json');
+  const released: string[] = [];
+  await assert.rejects(generateSeedanceConceptVideo({
+    tenantId: 'tenant-a', prompt: 'product shot', durationSeconds: 4, ratio: '9:16',
+    idempotencyKey: 'failed-key', timeoutMs: 1_000, apiKey: 'secret', model: 'doubao-seedance-2-0-fast-test',
+    checkpointPath, pollMs: 1,
+    transport: async url => String(url).endsWith('/contents/generations/tasks')
+      ? Response.json({ id: 'failed-task' })
+      : Response.json({ status: 'failed', error: { message: 'usage limit' } }),
+    reserveBudget: () => ({ ok: true, reservationId: 'budget-failed', limitCny: 20, usedCny: 6, reservedCny: 6, remainingCny: 14 }),
+    releaseBudget: (_tenantId, reservationId) => { released.push(reservationId); },
+  }), /usage limit/);
+  assert.deepEqual(released, ['budget-failed']);
+  await assert.rejects(fsp.access(checkpointPath));
 });
 
 test('Veo concept gateway consumes only a controlled worker output file', async () => {

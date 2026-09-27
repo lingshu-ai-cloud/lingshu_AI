@@ -12,6 +12,10 @@ import {
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const socialOperatingSummarySource = fs.readFileSync('src/components/socialProgram/SocialOperatingSummary.tsx', 'utf8');
+const inspirationSource = fs.readFileSync('src/components/InspirationDashboard.tsx', 'utf8');
+const competitorAccountsSource = fs.readFileSync('src/components/CompetitorAccountsModal.tsx', 'utf8');
 const reviewSource = fs.readFileSync('src/components/WeeklyReviewPanel.tsx', 'utf8');
 const insightSource = fs.readFileSync('src/lib/reviewInsights.ts', 'utf8');
 const packageSource = fs.readFileSync('src/components/WeeklyPackagePanel.tsx', 'utf8');
@@ -26,6 +30,16 @@ const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.t
 const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
 const taskPackagePresetSource = fs.readFileSync('src/lib/weeklyTaskPackagePresets.ts', 'utf8');
 const executionStatusSource = fs.readFileSync('src/components/AgentExecutionStatus.tsx', 'utf8');
+const digitalEmployeeRouteSource = fs.readFileSync('server/routes/digitalEmployees.ts', 'utf8');
+const enterpriseRouteSource = fs.readFileSync('server/routes/enterprise.ts', 'utf8');
+const firstOnboardingSource = pageSource.slice(
+  pageSource.indexOf('if (mode === "first" && !profileConfirmed)'),
+  pageSource.indexOf('if (mode === "first" && profileConfirmed)'),
+);
+const productTableOnboardingSource = pageSource.slice(
+  pageSource.indexOf('if (mode === "first" && profileConfirmed)'),
+  pageSource.indexOf('  return (', pageSource.indexOf('if (mode === "first" && profileConfirmed)')),
+);
 
 const assistantOrbitSource = assistantSource.slice(
   assistantSource.indexOf('const SKILL_AGENTS'),
@@ -41,8 +55,8 @@ assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内�
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
 
-assert.match(pageSource, /自动交付语言/);
-assert.match(pageSource, /每种语言独立生成成片/);
+assert.match(pageSource, /输出内容语言/);
+assert.match(pageSource, /需要输出的语言/);
 assert.match(pageSource, /需要你观看成片并做判断/, 'the quality gate must explain the exact human decision');
 assert.match(pageSource, /查看成片并处理/, 'the quality gate must expose a direct review action');
 assert.match(pageSource, /<ProductionTaskScene[^>]+runId=\{data\.run\.id\}[^>]+taskId=\{selectedTask\.id\}/, 'Smart Operations must use the shared production scene');
@@ -70,27 +84,31 @@ for (const period of ['本周', '上周', '本月', '上月']) {
 assert.doesNotMatch(productionSource, /流量转化漏斗|平台贡献/, 'production must not duplicate the home results dashboard');
 assert.doesNotMatch(pageSource, /<NextActionBanner[\s\S]{0,500}workspaceView === ["']today["']/, 'the overview must not mix its data center with the old task-oriented hero');
 assert.match(pageSource, /Agent 设置/, 'Agent settings must remain available as a secondary management entry');
-assert.match(pageSource, /通用设置/, 'Agent settings must expose shared rules once');
-assert.match(pageSource, /这些规则同时作用于四个 Agent，只需在这里设置一次/, 'shared rules must explain that they are not repeated per Agent');
-assert.match(pageSource, /useState<"common" \| "business" \| "director" \| "content" \| "customer">\("common"\)/, 'Agent settings must enter the shared settings view first');
-assert.match(pageSource, /activeRuleAgent === "common" \? group\.role === "orchestrator" : group\.role === activeRuleAgent/, 'shared approvals and individual Agent approvals must be separated');
-assert.match(pageSource, /系统已准备一套安全默认方案/, 'Agent settings should start with a lightweight confirmation summary');
-assert.match(pageSource, /查看并修改设置/);
-assert.match(pageSource, /确认设置，进入周任务/);
-assert.match(pageSource, /默认创作流程[\s\S]{0,500}系统托管/, 'content Agent settings must explain the managed dual-entry workflow');
-assert.match(pageSource, /选制作方式 → 系统盘点素材 → 编导 Agent 逐镜定方案 → 内容 Agent 成片 → 用户验收/, 'the managed workflow must show the director-to-content handoff');
-assert.doesNotMatch(pageSource, /<Field label="默认创作方式">/, 'content Agent settings must not expose the legacy route selector');
-assert.match(pageSource, /activeRuleAgent === "director" \? <>[\s\S]{0,1800}社媒视频制作[\s\S]{0,1800}: agentRoleGroups/, 'legacy content capabilities must be grouped behind the director social-video switch');
+assert.doesNotMatch(pageSource, /通用设置|本 Agent 审批红线|总体审批红线/, 'Agent settings must hide general settings and every per-Agent approval-redline panel');
+assert.match(pageSource, /useState<"business" \| "director" \| "content" \| "customer">\("business"\)/, 'Agent settings must enter the business Agent settings directly');
+assert.match(pageSource, /每周生成的草稿条数/, 'business Agent settings must expose the editable weekly draft count');
+assert.match(pageSource, /默认向所有已连接账号和平台发布/, 'business Agent settings must default to every connected account and platform');
+assert.match(pageSource, /每周发布/, 'business Agent settings must expose per-platform publishing counts');
+assert.match(pageSource, /关键词语言[\s\S]{0,400}默认同步企业中心产品手册语言/, 'director collection language must follow the product-manual language');
+assert.match(pageSource, /采集平台（可多选）/, 'director collection platforms must use a multi-select control');
+assert.match(pageSource, /定时任务负责执行，编导 Agent 负责验收/, 'director settings must explain the shared Inspiration collection pipeline');
+assert.match(pageSource, /输出内容语言/, 'content Agent settings must retain only its output-language requirement');
+assert.doesNotMatch(socialOperatingSummarySource, /业务配置|SocialOperatingConfiguration/, 'the obsolete business-configuration entry must be removed');
+for (const label of ['经营总览', '内容队列', '数据复盘']) assert.match(pageSource, new RegExp(label), `Smart Business must expose ${label}`);
+for (const label of ['运营平台账号', '获得询盘', '实际增长', '投流消耗', '经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '生产实况']) assert.match(smartBusinessSource, new RegExp(label), `Smart Business overview must expose ${label}`);
+assert.match(smartBusinessSource, /animate-spin/, 'a running Agent must have a rotating halo');
+assert.match(smartBusinessSource, /成本待核算|成本建议/, 'the content queue must expose per-item cost truth and advice');
+for (const platform of ['YouTube', 'TikTok', 'Instagram', 'Facebook']) assert.match(smartBusinessSource, new RegExp(platform), `review ranking must expose ${platform}`);
+assert.match(smartBusinessSource, /纳入下周待办[\s\S]{0,1000}下周待办/, 'Agent advice must feed the simplified next-week todo list');
+assert.match(inspirationSource, /对标账号/, 'Inspiration Center must expose benchmark accounts as its own page');
+assert.match(competitorAccountsSource, /embedded/, 'benchmark accounts must support an embedded standalone page instead of only a modal');
 for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {
   assert.match(pageSource, new RegExp(`id: ["']${role}["']`), `settings must expose the ${role} role card`);
 }
 assert.doesNotMatch(pageSource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
 assert.match(pageSource, /id: "business"[\s\S]{0,400}workflows: \["content_publish"\]/, 'content publishing belongs to the business Agent');
 assert.match(pageSource, /id: "content"[\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
-assert.match(pageSource, /policyRole: "industry"/, 'the director UI must preserve the legacy approval-policy storage key');
-assert.match(pageSource, /agentApprovalPolicies\[group\.policyRole\]/, 'public roles must read legacy approval policies through an explicit compatibility key');
-assert.match(pageSource, /setAgentApproval\(group\.policyRole/, 'public roles must write legacy approval policies through an explicit compatibility key');
-assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2000}内容发布与回执/, 'publishing controls belong to the business Agent panel');
+assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2200}周草稿与发布矩阵/, 'publishing controls belong to the business Agent panel');
 for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '当前动作', '查看详情']) {
   assert.match(executionStatusSource, new RegExp(label), `live Agent status must expose ${label}`);
 }
@@ -128,12 +146,14 @@ for (const capability of ['\u793e\u5a92\u5b9a\u65f6\u4efb\u52a1', '\u9009\u62e9\
   assert.match(pageSource, new RegExp(capability), `task-flow map must expose ${capability}`);
 }
 assert.match(pageSource, /\u6570\u5b57\u5458\u5de5\u4efb\u52a1\u6d41\u8f6c\u56fe/, 'the business-native task-flow diagram must remain visible');
-assert.match(pageSource, /displayedReadiness\.map[\s\S]{0,5000}item\.status === ["']ready["']/, 'first login must render readiness from saved facts and the latest business snapshot instead of inventing it');
+assert.match(pageSource, /readiness=\{data\.businessSnapshot\?\.readiness\s*\|\|\s*\[\]\}/, 'Agent settings must receive readiness from the saved business snapshot instead of inventing it');
 assert.match(packageSource, /确认范围并启动/, 'first-run goal approval must expose the package scope confirmation');
 assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan preview must translate each task status source instead of collapsing every task to a generic placeholder');
-assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'focus products must be loaded from the tenant enterprise knowledge profile');
-assert.match(pageSource, /aria-multiselectable="true"/, 'focus product selector must expose a multi-select listbox');
-assert.match(pageSource, /搜索企业知识库产品或型号/, 'focus product selector must support searching product names and models');
+assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
+assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
+assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
+assert.match(productTableOnboardingSource, /上传产品表[\s\S]*确认产品表并开始使用/, 'second onboarding step must only import or confirm the product table');
+assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 
 for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
   assert.match(pageSource, new RegExp(label), `Today Overview must include ${label}`);
@@ -247,22 +267,25 @@ assert.match(libSource, /workflowTaskId:\s*link\.taskId/, 'Studio navigation mus
 assert.match(libSource, /CustomEvent\(["']lingshu:navigate["'],\s*\{\s*detail:\s*navigationDetail\s*\}\)/, 'deep-link navigation must emit the full workflow/business reference');
 assert.match(appSource, /setSmartAssetsView\(detail\.view === ["']publish["'] \? ["']publish["'] : ["']create["']\)/, 'the application shell must honor create versus publish deep links');
 
-for (const label of ['已启用', '未启用', '依赖客户分层', '至少启用一条工作流', '保存为后续运行规则']) {
-  assert.match(pageSource, new RegExp(label), `workflow configuration must explain ${label}`);
-}
-assert.match(pageSource, /素材不足时允许生成 AI 画面/, 'generated visuals must require an explicit user-facing opt-in');
 assert.match(pageSource, /allowGeneratedVisuals:\s*false/, 'generated visuals must default to fail-closed');
-assert.match(pageSource, /禁止虚构产品外观、参数与效果/, 'the opt-in must still explain its product-truthfulness boundary');
 assert.match(pageSource, /setWorkspaceView\(["']live["']\)[\s\S]{0,500}setSelectedTaskId/, 'approving a plan must focus the live production scene');
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*["']smooth["']/, 'first-run transitions must focus the next required panel');
-assert.doesNotMatch(pageSource, /setProductStepSaved\(Boolean\(form\.focusProducts\.trim\(\)\)\)/, 'saving the enterprise profile must not skip explicit focus-product confirmation');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
-assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*productSelectionConfirmedAt:[\s\S]{0,160}continuedWithoutProducts:\s*true/, 'the explicit no-product decision must survive a refresh without inventing a product');
-assert.match(pageSource, /if \(profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt\) setProfileConfirmed\(true\)/, 'persisted onboarding progress must restore step two after a remount');
+assert.match(pageSource, /minimalOnboarding:\s*true,\s*brandName:/, 'finishing the product table must directly complete minimal onboarding');
+assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');
 assert.match(pageSource, /overviewRequestVersionRef/, 'late overview responses must be versioned so they cannot overwrite a completed mutation');
-assert.doesNotMatch(pageSource, /第四步/, 'onboarding must end after Agent rules are confirmed in step three');
+assert.doesNotMatch(pageSource, /第三步|第四步/, 'first-time onboarding must end after the product-table step');
 assert.doesNotMatch(pageSource, /rulesStepSaved/, 'onboarding must not keep a redundant fourth-step state');
+assert.match(digitalEmployeeRouteSource, /minimalOnboarding[\s\S]{0,1800}enabledWorkflows:\s*\['viral_clone', 'product_content', 'material_content'\]/, 'minimal onboarding must resolve to an internal fail-closed default config');
+assert.match(digitalEmployeeRouteSource, /const enterprisePatch = minimalOnboarding \? \{[\s\S]{0,500}brand:\s*\{ \.\.\.enterprise\.brand, name: minimalBrandName \}/, 'minimal defaults must not be written as fabricated enterprise facts');
+assert.match(enterpriseRouteSource, /brand:\s*\{[\s\S]{0,100}name:\s*string/, 'EnterpriseProfile must store a brand name');
+assert.match(enterpriseRouteSource, /const brandInput[\s\S]{0,500}name:\s*text\(brandInput\.name\)/, 'brand name must be normalized as text');
+assert.match(pageSource, /id:\s*String\(existing\.id \|\| existing\.productId \|\| product\.id\)/,
+  're-importing the onboarding product table must retain the existing stable product id');
+assert.match(enterpriseRouteSource, /mergeEnterpriseProductIdentity\(next\[index\], product, index\)/,
+  'server-side product API upserts must retain the existing stable product id');
+assert.match(enterpriseRouteSource, /return \{[\s\S]{0,200}\bcompany,[\s\S]{0,100}\bbrand,/, 'normalized brand must be returned and preserved by recursive profile merge');
 assert.match(pageSource, /activeRun && newGoal[\s\S]{0,120}setNewGoal\(false\)/, 'an active run must close any duplicate goal form');
 assert.match(pageSource, /完成或取消当前运行后才能制定下一周目标/, 'the UI must explain why a second active goal is unavailable');
 assert.match(pageSource, /requiredReadiness[\s\S]{0,300}firstMissingReadiness/, 'plan approval must derive its blocker from real resource readiness');

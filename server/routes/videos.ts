@@ -2005,6 +2005,15 @@ async function isAdminForAssetRequest(req: Request): Promise<boolean> {
   return Boolean(await requireAdminUser(proxied));
 }
 
+function isSharedInspirationThumbnailReadable(record: Record<string, unknown>): boolean {
+  const sharedTenantId = String(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID || 'demo-shared-video-pool').trim();
+  const analysis = videoAnalysisOf(record);
+  return Boolean(sharedTenantId)
+    && String(record.tenantId || '') === sharedTenantId
+    && analysis.userVisible === true
+    && isPublicTestTenantVideo(record);
+}
+
 async function generateThumbnailFromStoredVideo(record: Record<string, unknown>): Promise<{ buf: Buffer; contentType: string } | null> {
   const recordId = String(record.id || '');
   if (!recordId) return null;
@@ -2071,9 +2080,13 @@ async function generateThumbnailFromStoredVideo(record: Record<string, unknown>)
 // <img> 带不了 Authorization 头，但 requireAuth 会回落到 asset session cookie。
 videosRouter.get('/:id/thumbnail', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const record = await store.getById(COL, req.params.id);
+  const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
   if (!record) { res.status(404).end(); return; }
-  if (record.tenantId !== tenantId && !await isAdminForAssetRequest(req)) { res.status(404).end(); return; }
+  const ownsRecord = String(record.tenantId || '') === tenantId;
+  if (!ownsRecord && !isSharedInspirationThumbnailReadable(record) && !await isAdminForAssetRequest(req)) {
+    res.status(404).end();
+    return;
+  }
 
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const cosKey = String(analysis.thumbnailObjectKey || '');
@@ -5520,6 +5533,7 @@ async function analyzeExactLongVideoChunks(input: {
     const observationSeconds = Math.max(2, Math.min(5, Number(process.env.VIDEO_EXACT_OBSERVATION_SECONDS || 4)));
     const timeline: QwenTimelinePlan = {
       theme: String(input.title || '真实视频画面分析'),
+      identityEntities: [],
       hooks: [], sellingPoints: [], mood: '', structure: '', baseRequirements: '',
       firstTenSeconds: {}, coarseStructure: [], scriptSummary15s: {}, recommendedScriptType: 'storyboard',
       boundaries: Array.from({ length: Math.ceil(localDuration / observationSeconds) }, (_, index) => ({

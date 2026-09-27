@@ -112,6 +112,12 @@ import {
   type SocialReplicationScriptVersion,
   type SocialShotMaterialMapEntry,
 } from './socialContentWorkflow.js';
+import type {
+  SocialMaterialRole,
+  SocialProductPolicy,
+  SocialProductPolicySource,
+  SocialSceneVisualContract,
+} from '../sceneVisualContract.js';
 
 export const SOCIAL_AGENT_WORKFLOW_STAGES = [
   'planned',
@@ -185,6 +191,8 @@ export interface SocialDirectorBriefScene {
   referenceShotId: string | null;
   purpose: SocialShotFunction;
   targetVisual: string;
+  /** Shared Director-to-Content visual contract. Optional on historic briefs. */
+  visualContract?: SocialSceneVisualContract;
   requiredEvidence: string[];
   action: { startState: string; path: string; endState: string };
   shotLanguage: { shotSize: string; cameraAngle: string; movement: string; composition: string };
@@ -196,6 +204,16 @@ export interface SocialDirectorBriefScene {
     ambient: string | null;
     music: string | null;
     soundEffects: string | null;
+  };
+  /** The Content Agent must retrieve material against this exact spoken line.
+   * Subject/action tags are secondary filters, never the primary query. */
+  voiceoverAlignment?: {
+    cueId: string;
+    text: string;
+    startSeconds: number;
+    endSeconds: number;
+    matchMode: 'verbatim_semantic';
+    secondaryVisualTags: string[];
   };
   duration: { startSeconds: number; endSeconds: number; targetSeconds: number };
   truthBoundary: SocialShotTruthBoundary;
@@ -259,6 +277,28 @@ export interface SocialDirectorBrief {
   languages: string[];
   brandRequirements: string[];
   factSourceRefs: string[];
+  /** Director-owned automatic labels; users review the result instead of
+   * manually deciding whether a product or enterprise facts are needed. */
+  contentRequirements?: {
+    product: {
+      required: boolean;
+      /** Stable Enterprise Center identity; absent on historic briefs. */
+      productId?: string | null;
+      productRef: string | null;
+      /** Missing only on historic Director briefs. */
+      policy?: SocialProductPolicy;
+      /** Distinguishes an explicit customer lock from automatic selection. */
+      source?: SocialProductPolicySource;
+      confidence: number;
+      reason: string;
+    };
+    enterpriseFacts: {
+      required: boolean;
+      factSourceRefs: string[];
+      reason: string;
+    };
+    primaryMaterialKinds: Array<'product' | 'factory' | 'person' | 'scenario' | 'detail' | 'general'>;
+  };
   rightsConstraints: string[];
   referenceEvidence: Array<{
     analysisId: string;
@@ -296,6 +336,25 @@ export interface SocialExecutionCandidate {
   clipId: string | null;
   timeRange: { startSeconds: number; endSeconds: number } | null;
   promptRef: string | null;
+  previewUrl?: string | null;
+  mediaType?: 'video' | 'image' | null;
+  matchedVoiceoverCueIds?: string[];
+  /** Stable product identity is retained separately from its display label. */
+  productId?: string | null;
+  productRef?: string | null;
+  enterpriseCommon?: boolean;
+  materialRoles?: SocialMaterialRole[];
+  /** Segment-level candidates let Content Agent trim one asset by exact cue. */
+  materialSegments?: Array<{
+    segmentId: string;
+    startSeconds: number;
+    endSeconds: number;
+    visualContract: SocialSceneVisualContract;
+    materialRoles: SocialMaterialRole[];
+    matchedVoiceoverCueIds: string[];
+    voiceoverScore: number;
+    visualCompatibilityScore: number;
+  }>;
   retryPolicy: { maxAttempts: number; fallbackStrategies: SocialShotSourceStrategy[] };
   provenance: {
     origin: 'customer' | 'licensed_library' | 'system_capability';
@@ -303,6 +362,26 @@ export interface SocialExecutionCandidate {
     authorizationRef: string | null;
     executionRecordId: string | null;
   };
+}
+
+export interface SocialProductionOption {
+  approach: import('./socialContentReplication.js').SocialProductionApproach;
+  label: string;
+  description: string;
+  qualityTier: 'standard' | 'enhanced' | 'premium';
+  available: boolean;
+  unavailableReason: string | null;
+  usesPaidProviders: boolean;
+  estimatedCostCny: number;
+  includedOperations: string[];
+  selectedMaterialIds: string[];
+  firstFramePreview: {
+    assetId: string;
+    label: string;
+    mediaType: 'video' | 'image';
+    url: string | null;
+    sourceTimestampSeconds: 0;
+  } | null;
 }
 
 export interface SocialContentExecutionScenePlan {
@@ -345,6 +424,14 @@ export interface SocialContentExecutionPlan {
   accountPresenterLock?: SocialAccountPresenterLock | null;
   estimatedTotalCostCny: number;
   estimatedTotalSeconds: number;
+  selectedApproach?: import('./socialContentReplication.js').SocialProductionApproach;
+  productionOptions?: SocialProductionOption[];
+  referenceFirstFramePreview?: {
+    label: string;
+    mediaType: 'video' | 'image';
+    url: string | null;
+    sourceTimestampSeconds: 0;
+  } | null;
   scenes: SocialContentExecutionScenePlan[];
   createdBy: 'content_agent';
 }

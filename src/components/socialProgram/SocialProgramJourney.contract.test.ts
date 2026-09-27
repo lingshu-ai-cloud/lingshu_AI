@@ -9,9 +9,9 @@ assert.doesNotMatch(layout, /SOCIAL_PROGRAM_NAV|navItem\('socialWorkspace'/,
   'the removed workbench must not reappear in the sidebar');
 assert.doesNotMatch(app, /page === 'socialWorkspace' &&/,
   'the removed workbench must not be rendered as a page');
-assert.equal(resolvePage('socialWorkspace'), 'digitalEmployees');
-assert.equal(resolvePage('socialSetup'), 'digitalEmployees');
-assert.equal(resolvePage('socialPlanning'), 'digitalEmployees');
+assert.equal(resolvePage('socialWorkspace'), 'smartAssets');
+assert.equal(resolvePage('socialSetup'), 'smartAssets');
+assert.equal(resolvePage('socialPlanning'), 'smartAssets');
 assert.equal(resolvePage('socialAccounts'), 'traffic');
 
 console.log('removed social workbench navigation and legacy route compatibility passed');

@@ -20,6 +20,7 @@ import type {
   SocialContentTaskDetail,
   SocialContentTaskMode,
   SocialContentTaskSummary,
+  SocialProductionApproach,
 } from '../../../shared/contracts/socialContentWorkflow';
 import {
   socialContentCanRegisterPublication,
@@ -28,9 +29,8 @@ import {
 } from '../../lib/socialContentModel';
 import SocialArtifactPreviewDialog from './SocialArtifactPreviewDialog';
 import SocialProductionProgressPanel from './SocialProductionProgressPanel';
-import SocialReplicationAnalysisPanel from './SocialReplicationAnalysisPanel';
-import SocialAgentWorkflowPanel from './SocialAgentWorkflowPanel';
 import SocialGenerationConfirmationCard from './SocialGenerationConfirmationCard';
+import SocialTaskRunStatusPanel, { isLiveSocialProduction } from './SocialTaskRunStatusPanel';
 import SocialWeeklySummary from './SocialWeeklySummary';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 import { PLATFORM_OPTIONS, artifactKindLabel, contentLanguageLabel, optionLabel, packageVersionLabel } from './socialContentUi';
@@ -74,7 +74,7 @@ interface SocialTaskOverviewProps {
   onLoadMoreTasks: () => void;
   onCreate: () => void;
   onEdit: () => void;
-  onStart: () => void;
+  onStart: (approach?: SocialProductionApproach) => void;
   onDownload: () => void;
   onOpenPublication: () => void;
   onOpenMetrics: () => void;
@@ -104,7 +104,7 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
         ? '还需要确认素材权利'
         : task.agentWorkflow?.stage === 'goal_degraded'
           ? '需要确认是否接受目标降级'
-          : '编导分析或执行方案尚未完成'
+          : '制作方案尚未准备好'
     : managedWithoutShoot
     ? '零素材托管方案已就绪，可直接制作'
     : hasMaterial && canStart
@@ -121,7 +121,7 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
     <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-black text-text-primary">{readinessTitle}</h3>{canStart && !hasKnowledge && <p className="mt-1 text-[10px] text-text-muted">企业资料可选；未提供时系统不会编造参数或功效。</p>}{managedWithoutShoot && <p className="mt-1 text-[10px] text-emerald-700">系统已逐镜确认可以完整实现或功能等价实现；补充实拍只作为可选增强。</p>}{task.assetSupplyPlan?.overallFeasibility === 'blocked_for_facts_or_rights' && <p className="mt-1 text-[10px] text-amber-800">部分镜头缺少不可替代的事实或权利信息，系统不会用生成画面冒充真实证据。</p>}</div><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${canStart ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{canStart ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">{sourceStats.map(item => <div key={item.label} className="rounded-xl bg-surface-2 px-3 py-2.5"><item.icon size={14} className="text-text-muted" /><strong className="mt-2 block text-lg text-text-primary">{item.value}</strong><span className="text-[10px] font-semibold text-text-muted">{item.label}</span></div>)}</div>
-      {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-black text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；编导 Agent 会结合现有素材安排导演方案。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-xl border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}
+      {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-black text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；系统会结合现有素材安排画面。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-xl border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}
       {!canStart && task.readiness.missing.length > 0 && <ul className="mt-4 space-y-1.5">{task.readiness.missing.filter(item => !item.startsWith('material_requirement:') && item !== 'publish_ready_material' && item !== 'source_material').slice(0, 4).map(item => <li key={item} className="flex items-start gap-2 text-xs text-amber-800"><Circle size={6} fill="currentColor" className="mt-1.5 shrink-0" />{`请补充${READINESS_LABEL[item] || '任务资料'}`}</li>)}</ul>}
     </section>
   );
@@ -175,7 +175,7 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-accent"><Sparkles size={18} /></span>
-            <div><p className="text-sm font-black text-text-primary">{weekly ? '还没有本周内容计划' : '还没有内容任务'}</p><p className="mt-1 text-xs text-text-muted">{weekly ? '先安排本周重点，后续单条内容会进入内容制作页。' : '从上方选择素材加工或爆款裂变；没有素材也能开始。'}</p></div>
+            <div><p className="text-sm font-black text-text-primary">{weekly ? '还没有本周内容计划' : '还没有内容任务'}</p><p className="mt-1 text-xs text-text-muted">{weekly ? '先安排本周重点，后续单条内容会进入内容制作页。' : '选择自由创作或爆款裂变，开始制作第一条内容。'}</p></div>
           </div>
           <button type="button" onClick={onCreate} className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-black text-text-secondary transition hover:border-border-bright hover:bg-surface-2"><Plus size={14} />{weekly ? '安排本周内容' : '从空白创建'}</button>
         </div>
@@ -188,6 +188,16 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
     || task.metricSubmissions.length > 0
     || socialContentCanRegisterPublication(task),
   );
+  const running = isLiveSocialProduction(task);
+  const preparing = task.status === 'draft'
+    || task.status === 'needs_input'
+    || task.status === 'paused'
+    || (task.status === 'attention' && !task.productionProgress);
+  const reviewing = task.status === 'asset_review';
+  const finished = task.status === 'delivered'
+    || task.status === 'awaiting_publish'
+    || task.status === 'awaiting_metrics'
+    || task.status === 'reviewed';
   return (
     <div className="space-y-4 pb-8">
       <SocialProductionProgressPanel
@@ -206,15 +216,16 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         onReview={() => document.getElementById('social-task-artifacts')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
       />
       <div className="min-w-0 space-y-4">
-        <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />
-        {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
-        <div className={`grid gap-4 ${showDelivery ? 'xl:grid-cols-2' : ''}`}>
-          <ReadinessPanel task={task} />
-          {showDelivery && <DeliveryPanel task={task} busy={props.busy} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} />}
-        </div>
-        <SocialAgentWorkflowPanel task={task} />
-        <SocialReplicationAnalysisPanel task={task} />
-        <ArtifactPanel task={task} busy={props.busy} onArtifactDecision={props.onArtifactDecision} onBatchDecision={props.onBatchDecision} onCreateDeliveryPackage={props.onCreateDeliveryPackage} />
+        {running && <SocialTaskRunStatusPanel task={task} />}
+        {!running && task.status === 'plan_review' && <SocialGenerationConfirmationCard task={task} busy={props.busy} onConfirm={props.onStart} />}
+        {!running && preparing && <ReadinessPanel task={task} />}
+        {!running && preparing && task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
+        {!running && (reviewing || finished) && (
+          <div className={`grid items-start gap-4 ${showDelivery ? 'xl:grid-cols-[minmax(0,1.45fr)_minmax(20rem,0.55fr)]' : ''}`}>
+            <ArtifactPanel task={task} busy={props.busy} onArtifactDecision={props.onArtifactDecision} onBatchDecision={props.onBatchDecision} onCreateDeliveryPackage={props.onCreateDeliveryPackage} />
+            {showDelivery && <DeliveryPanel task={task} busy={props.busy} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} />}
+          </div>
+        )}
       </div>
     </div>
   );

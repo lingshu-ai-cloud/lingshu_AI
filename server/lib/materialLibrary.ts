@@ -11,7 +11,9 @@ export interface SocialTaskMaterialRecordInput {
   taskId: string;
   taskFileRef: string;
   contentSha256: string;
+  productId?: string | null;
   productRef?: string | null;
+  productName?: string | null;
   record: MaterialRecord;
 }
 export function materialLibraryFile() { return path.resolve(process.cwd(), 'data', 'materials.json'); }
@@ -52,7 +54,9 @@ export function upsertSocialTaskMaterial(input: SocialTaskMaterialRecordInput): 
     ...(index >= 0 && Array.isArray(records[index]!.sourceTaskFileRefs) ? records[index]!.sourceTaskFileRefs : []),
     input.taskFileRef,
   ].map(value => String(value || '').trim()).filter(Boolean)));
-  const productRef = String(input.productRef || '').trim();
+  const productId = String(input.productId || '').trim();
+  const productName = String(input.productName || '').trim();
+  const productRef = String(input.productRef || productName || productId).trim();
   const productRefs = Array.from(new Set([
     ...(index >= 0 && Array.isArray(records[index]!.productRefs) ? records[index]!.productRefs : []),
     productRef,
@@ -63,9 +67,9 @@ export function upsertSocialTaskMaterial(input: SocialTaskMaterialRecordInput): 
     const next: MaterialRecord = {
       ...current,
       ...associations,
-      // productRef is currently free text in the social brief, so keep it as
-      // productName compatibility data and as an explicit future-proof field.
-      ...(productRef ? { productRef, productName: productRef } : {}),
+      ...(productRef ? { productRef } : {}),
+      ...(productId ? { productId } : {}),
+      ...(productName ? { productName } : {}),
       updatedAt: new Date().toISOString(),
     };
     records[index] = next;
@@ -78,7 +82,9 @@ export function upsertSocialTaskMaterial(input: SocialTaskMaterialRecordInput): 
     tenantId: input.tenantId,
     contentSha256: sha256,
     ...associations,
-    ...(productRef ? { productRef, productName: productRef } : {}),
+    ...(productRef ? { productRef } : {}),
+    ...(productId ? { productId } : {}),
+    ...(productName ? { productName } : {}),
   };
   records.push(created);
   saveLocalMaterials(records);

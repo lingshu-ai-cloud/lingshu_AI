@@ -1,5 +1,11 @@
 /** Public contracts for the Starter 198 social-content workflow. */
 
+import type {
+  SocialSceneCapabilitySignature,
+  SocialSceneProductionAdmission,
+  SocialSceneVisualContract,
+} from '../sceneVisualContract.js';
+
 export const SOCIAL_CONTENT_TASK_STATUSES = [
   'draft',
   'needs_input',
@@ -68,6 +74,15 @@ export type SocialContentManagementMode = typeof SOCIAL_CONTENT_MANAGEMENT_MODES
  */
 export const SOCIAL_CONTENT_PRODUCTION_MODES = ['social_ready', 'concept_preview'] as const;
 export type SocialContentProductionMode = typeof SOCIAL_CONTENT_PRODUCTION_MODES[number];
+
+/**
+ * Customer-selected implementation route. `material_polish` remains readable
+ * for historic tasks but is no longer offered by the current three-option UI.
+ * New tasks promote the hybrid `ai_enhanced` route, with `material_cut` as the
+ * free route and `shooting_plan` as a non-rendering production checklist.
+ */
+export const SOCIAL_PRODUCTION_APPROACHES = ['material_cut', 'material_polish', 'ai_enhanced', 'shooting_plan'] as const;
+export type SocialProductionApproach = typeof SOCIAL_PRODUCTION_APPROACHES[number];
 
 /**
  * Stable first-level themes. A free-form topic is classified into one of these
@@ -300,6 +315,16 @@ export interface SocialAssetSupplyShotPlan {
   feasibility: SocialProductionFeasibility;
   feasibilityReason: string;
   customerShootRequired: false;
+  /** Shared Director-to-Content visual requirements; absent on historic plans. */
+  visualContract?: SocialSceneVisualContract;
+  /** Content-Agent-selected material range. When present, execution must use
+   * this exact segment rather than selecting another part of the same file. */
+  selectedMaterialSegment?: {
+    sourceRef: string;
+    segmentId: string;
+    startSeconds: number;
+    endSeconds: number;
+  } | null;
   /** Present when real product reference images drive a full generated scene. */
   productSceneReplication?: SocialProductSceneReplicationSpec;
   /** Present only when this storyboard shot uses the shared digital-human stack. */
@@ -323,6 +348,8 @@ export interface SocialAssetSupplyShotPlan {
 export interface SocialAssetSupplyPlan {
   planVersion: string;
   creationMode: SocialContentCreationMode;
+  /** Optional only on plans created before customer-selectable production routes. */
+  productionApproach?: SocialProductionApproach;
   assetAvailability: SocialAssetAvailability;
   managementMode: SocialContentManagementMode;
   productionRoute: SocialAssetSupplyRoute;
@@ -376,6 +403,8 @@ export interface SocialReferenceShotAnalysis {
     causalGaps: string[];
     postProductionOverlays: string[];
   };
+  /** Shared machine-readable scene contract. Optional on historic analyses. */
+  visualContract?: SocialSceneVisualContract;
   tags: SocialReferenceShotTags;
   fidelityPoints: string[];
   mustDifferPoints: string[];
@@ -476,6 +505,23 @@ export interface SocialThreeSecondHook {
   truthBoundary: SocialShotTruthBoundary;
   referencePoints: string[];
   mustDifferPoints: string[];
+  /** High-threshold 0–3s reading used by Director and material matching; optional on historic analyses. */
+  detailedAnalysis?: {
+    firstFrameComposition: string;
+    primarySubject: string;
+    subjectScaleAndPosition: string;
+    actionStartAndPeak: string;
+    cameraMovement: string;
+    captionTrigger: string;
+    audioTrigger: string;
+    informationDensity: string;
+    swipeRisk: string;
+    minimumMaterialMatchScore: number;
+  };
+  /** Current-stack requirements derived from the high-precision hook contract. */
+  capabilitySignature?: SocialSceneCapabilitySignature;
+  /** Collection-time admission result. Optional on historic analyses. */
+  productionAdmission?: SocialSceneProductionAdmission;
   status: 'draft' | 'recommended' | 'confirmed' | 'rejected';
 }
 

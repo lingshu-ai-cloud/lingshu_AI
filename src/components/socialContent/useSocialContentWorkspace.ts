@@ -7,6 +7,7 @@ import type {
   SocialContentTaskPage,
   SocialContentTaskDetail,
   SocialContentWorkspace,
+  SocialProductionApproach,
   SocialWorkPackageKind,
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
@@ -25,6 +26,7 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
   return {
     title: draft.title.trim(),
     objective: draft.primaryGoal.trim(),
+    productId: draft.productId.trim() || null,
     productRef: draft.productName.trim() || null,
     audience: draft.audience.trim() || null,
     markets: splitBusinessList(draft.market),
@@ -50,6 +52,7 @@ function requestInput(draft: SocialContentDraft): CreateSocialContentTaskInput {
     assetAvailability: draft.materialInput,
     managementMode: draft.managedMode,
     productionMode: draft.productionMode,
+    productionApproach: draft.productionApproach,
     mode: draft.mode,
     themeId: draft.themeId || null,
     customTopic: draft.customTopic.trim() || null,
@@ -249,7 +252,9 @@ export function useSocialContentWorkspace() {
       }
     };
     const onVisible = () => { if (document.visibilityState === 'visible') void refreshTask(); };
-    const timer = window.setInterval(() => { void refreshTask(); }, 30_000 + Math.floor(Math.random() * 5_000));
+    const pollIntervalMs = ['producing', 'packaging', 'attention'].includes(task.status) ? 5_000 : 15_000;
+    void refreshTask();
+    const timer = window.setInterval(() => { void refreshTask(); }, pollIntervalMs);
     window.addEventListener('focus', refreshTask);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -285,6 +290,7 @@ export function useSocialContentWorkspace() {
         const planned = await socialContentApi.createWeeklyPlan({
           title: draft.title.trim(),
           objective: draft.primaryGoal.trim(),
+          productId: draft.productId.trim() || null,
           productRef: draft.productName.trim() || null,
           audience: draft.audience.trim() || null,
           items: [{
@@ -406,11 +412,19 @@ export function useSocialContentWorkspace() {
       : '内容生产任务已进入执行队列'
     : '草稿已保存'), [workspace, run, applyTask, fileOperationKey]);
 
-  const startTask = useCallback(async () => {
-    const task = workspace?.currentTask;
-    if (!task) return;
+  const startTask = useCallback(async (approach?: SocialProductionApproach) => {
+    const currentTask = workspace?.currentTask;
+    if (!currentTask) return;
     return run(async () => {
+      let task = currentTask;
       try {
+        if (approach && approach !== task.brief.productionApproach) {
+          task = await socialContentApi.updateTask(task.taskId, {
+            expectedVersion: task.version,
+            changes: { productionApproach: approach },
+          }, `social:approach:${operationSuffix(`${task.taskId}:${task.version}:${approach}`)}`);
+          applyTask(task);
+        }
         const next = await socialContentApi.startTask(task.taskId, task.version, `social:start:${operationSuffix(`${task.taskId}:${task.version}`)}`);
         applyTask(next);
         return next;

@@ -112,6 +112,13 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
   const pollInterval = Math.max(0, deps.pollIntervalMs ?? 5_000);
   return {
     maximumCostCny: Number(deps.budget.status('heygen').reservationCny) || 0,
+    // This bridge is the current talking-presenter integration. It does not
+    // claim guided body action, product contact, face application, reference
+    // motion, custom environment or camera-path support.
+    capabilities: {
+      methods: ['talking'],
+      controls: ['scripted_speech', 'timing_control'],
+    },
     async resolvePresenter({ tenantId, presenterAssetId, socialAccountId }) {
       const result = await deps.store.list<{ payload?: { presenters?: PresenterRecord[] } }>('studio_production_defaults',
         { where: { tenant_id: tenantId }, perPage: 2 });
@@ -140,7 +147,8 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
           provider: 'heygen', presenter_asset_id: input.presenter.presenterAssetId, authorization_ref: input.presenter.authorizationRef,
           consent_ref: input.presenter.consentRef, social_account_id: input.presenter.socialAccountId || '',
           presenter_profile_id: input.presenter.presenterProfileId || '', presenter_profile_version: input.presenter.presenterProfileVersion || '',
-          presenter_consistency_key: input.presenter.consistencyKey || '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: input.visualControl,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
         if (!record) return { status: 'uncertain', error: 'provider_job_claim_failed' };
         try {
           providerTaskId = await deps.client.create({ avatarId: input.presenter.providerPresenterId,

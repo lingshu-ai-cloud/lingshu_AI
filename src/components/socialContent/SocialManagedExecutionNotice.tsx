@@ -15,9 +15,9 @@ export default function SocialManagedExecutionNotice({ task }: { task: SocialCon
   if (!task?.managedExecution || task.status === 'paused') return null;
   const { reference, publishing } = task.managedExecution;
   const messages: string[] = [];
-  if (reference?.status === 'queued' && ['draft', 'needs_input', 'plan_review'].includes(task.status)) messages.push('编导 Agent 正在等待参考分析，系统将在后台继续，无需重复点击开始制作。');
+  if (reference?.status === 'queued' && ['draft', 'needs_input', 'plan_review'].includes(task.status)) messages.push('参考内容正在分析，完成后会自动继续，无需重复操作。');
   else if (reference?.status === 'blocked' && ['needs_input', 'attention'].includes(task.status)) messages.push(`参考分析待处理：${reason(reference.reason)}`);
-  if (publishing?.status === 'scheduled') messages.push('经营 Agent 已安排发布，系统正在跟踪真实平台回执。');
+  if (publishing?.status === 'scheduled') messages.push('发布已经安排，系统正在等待平台结果。');
   else if (publishing?.status === 'blocked') messages.push(`成片已保留，发布尚未完成：${reason(publishing.reason)}${publishing.retryExhausted ? '自动重试已达上限。' : '系统会在后台重新检查，期间不会重复制作。'}`);
   if (!messages.length) return null;
   return <div role="status" className="mb-4 space-y-1 rounded-xl border border-border bg-surface-2 px-4 py-3 text-xs leading-5 text-text-secondary">

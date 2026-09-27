@@ -31,6 +31,7 @@ import {
   type SocialAssetAvailability,
   type SocialContentManagementMode,
   type SocialContentProductionMode,
+  type SocialProductionApproach,
   type SocialContentThemeId,
   type SocialThemeClassificationStatus,
   type SocialContentThemeCard,
@@ -190,6 +191,9 @@ export interface SocialWorkPackageSelection {
 export interface SocialContentTaskBrief {
   title: string;
   objective: string;
+  /** Stable Enterprise Center product identity. */
+  productId?: string | null;
+  /** Human-readable product label retained for review and legacy records. */
   productRef: string | null;
   audience: string | null;
   markets: string[];
@@ -224,6 +228,8 @@ export interface SocialContentTaskBrief {
   managementMode?: SocialContentManagementMode;
   /** Always present on newly created tasks; optional for historic projections. */
   productionMode?: SocialContentProductionMode;
+  /** Defaults to the zero-paid-provider customer-material edit. */
+  productionApproach?: SocialProductionApproach;
 }
 
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
@@ -423,6 +429,13 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
   shotMaterialMap?: SocialShotMaterialMapEntry[];
   /** Unified Business → Director → Content Agent projection. */
   agentWorkflow?: SocialContentAgentWorkflow;
+  /** Customer-facing live production projection. Internal task keys and graph data stay server-side. */
+  productionProgress?: {
+    step: string;
+    activity: string;
+    estimatedRemainingSeconds: number;
+    updatedAt: string;
+  } | null;
 }
 
 export interface SocialWeeklyPlanItemInput {
@@ -436,6 +449,7 @@ export interface SocialWeeklyPlanItemInput {
 export interface CreateSocialWeeklyPlanInput {
   title: string;
   objective: string;
+  productId?: string | null;
   productRef?: string | null;
   audience?: string | null;
   items: SocialWeeklyPlanItemInput[];
@@ -445,6 +459,7 @@ export interface SocialWeeklyPlan {
   weeklyPlanId: string;
   title: string;
   objective: string;
+  productId?: string | null;
   productRef: string | null;
   audience: string | null;
   taskIds: string[];
@@ -476,6 +491,7 @@ export interface SocialContentWorkspace {
 export interface CreateSocialContentTaskInput {
   title: string;
   objective: string;
+  productId?: string | null;
   productRef?: string | null;
   audience?: string | null;
   markets?: string[];
@@ -504,6 +520,7 @@ export interface CreateSocialContentTaskInput {
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;
   productionMode?: SocialContentProductionMode;
+  productionApproach?: SocialProductionApproach;
   mode?: SocialContentTaskMode;
   weeklyPlanId?: string | null;
   themeId?: SocialContentThemeId | null;

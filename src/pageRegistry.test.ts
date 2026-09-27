@@ -40,9 +40,9 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLab
   '内容监控',
 ]);
 assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES, []);
-assert.equal(resolvePage('socialWorkspace'), 'digitalEmployees');
-assert.equal(resolvePage('socialSetup'), 'digitalEmployees');
-assert.equal(resolvePage('socialPlanning'), 'digitalEmployees');
+assert.equal(resolvePage('socialWorkspace'), 'smartAssets');
+assert.equal(resolvePage('socialSetup'), 'smartAssets');
+assert.equal(resolvePage('socialPlanning'), 'smartAssets');
 assert.equal(resolvePage('socialAccounts'), 'traffic');
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');

@@ -5,6 +5,7 @@ import { productMaterialLibraryParams } from './EnterprisePage.js';
 import {
   materialMatchesProductFilter,
   materialOwnershipTags,
+  materialSemanticLabel,
   parseMaterialLibraryEntry,
   visibleMaterialTags,
 } from './InspirationDashboard.js';
@@ -18,6 +19,10 @@ assert.deepEqual(
 assert.equal(materialOwnershipTags('factory, closeup', ''), 'factory, closeup, enterprise_common', '企业通用素材必须保留可区分的归属标记');
 assert.equal(materialOwnershipTags('factory, enterprise_common', 'product-1'), 'factory', '素材改绑具体产品后必须移除企业通用标记');
 assert.equal(visibleMaterialTags('factory, enterprise_common'), 'factory', '内部归属标记不得泄露到用户编辑框');
+assert.equal(materialSemanticLabel({ productName: '焕亮精华液' }), '产品：焕亮精华液', '已关联产品时素材卡必须优先显示产品名');
+assert.equal(materialSemanticLabel({ tags: 'enterprise_common, 工厂灌装, 自动产线, 包装' }), '内容：工厂灌装 · 自动产线 · 包装', '通用素材必须展示最多三个可读内容关键词');
+assert.equal(materialSemanticLabel({ visualObservations: ['滴管取液', '精华液质地特写'] }), '内容：滴管取液 · 精华液质地特写', '没有人工关键词时使用稳定视觉观察');
+assert.equal(materialSemanticLabel({}), '内容：待补充说明', '无可靠语义时使用可理解的待补充提示');
 assert.equal(materialMatchesProductFilter(
   { productId: 'product-2', productName: '同名面膜', tags: '' },
   { enabled: true, productId: 'product-1', productRef: '同名面膜' },
@@ -56,13 +61,13 @@ assert.doesNotMatch(enterpriseSource, /MAX_PRODUCT_ASSETS|实拍视频|产品主
 assert.doesNotMatch(enterpriseSource, /accept=['"](?:image|video)\/\*/, '企业知识页不得再提供图片或视频创作素材上传');
 
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
-assert.match(inspirationSource, /本次上传归属（必选）/, '上传前必须明确素材归属');
-assert.match(inspirationSource, /请选择产品或企业通用/, '上传和编辑都必须提供未选择占位状态');
+assert.match(inspirationSource, /本次上传关联产品（可选）/, '上传可选关联具体产品');
+assert.match(inspirationSource, /不指定（系统自动匹配）/, '上传和编辑都必须允许系统自动匹配');
 assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
 assert.match(inspirationSource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
-assert.match(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未确认产品归属时必须禁用保存');
-assert.doesNotMatch(inspirationSource, /通用素材 \/ 未关联产品/, '企业通用与未确认归属不得再混成一个选项');
+assert.doesNotMatch(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未关联产品不得成为保存卡点');
+assert.doesNotMatch(inspirationSource, /请先选择本次素材属于哪个产品|请先在“我的素材”顶部选择产品/, '产品归属不得阻塞素材上传');
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
@@ -71,5 +76,6 @@ assert.match(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.u
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');
 assert.doesNotMatch(inspirationSource, /采集参考 · 仅供分析|参考素材 ≠ 可商用素材|产品归属待确认|点击智能分类/, '我的素材卡片不得展示内部用途、归属和分类标注');
 assert.match(inspirationSource, /grid-cols-3 gap-3 items-start lg:grid-cols-4 xl:grid-cols-5/, '我的素材卡片密度必须与灵感卡片保持一致');
+assert.match(inspirationSource, /title=\{materialSemanticLabel\(material\)\}>\{materialSemanticLabel\(material\)\}<\/p>/, '每张我的素材卡片必须显示产品名或主要内容关键词');
 
 console.log('material ownership frontend contracts passed');

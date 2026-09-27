@@ -13,7 +13,7 @@ export interface FirstFrameReference {
 export interface FirstFrameRequest {
   /** Presenter replacement keeps the historic two-image contract. Product
    * scenes accept one composition frame plus one or more product references. */
-  referenceMode?: 'presenter_replace' | 'product_scene';
+  referenceMode?: 'presenter_replace' | 'product_scene' | 'environment_plate';
   tenantId: string;
   videoId: string;
   compositionId: string;
@@ -55,6 +55,10 @@ export function validateFirstFrameRequest(input: FirstFrameRequest, options: { r
     const products = roles.filter(role => role === 'product_identity').length;
     if (roles.filter(role => role === 'source_composition').length !== 1 || products < 1 || products > 9 || input.references.length !== products + 1) {
       throw new Error('产品场景首帧必须包含一张原构图和一至九张同产品参考图');
+    }
+  } else if (input.referenceMode === 'environment_plate') {
+    if (input.references.length !== 1 || roles[0] !== 'source_composition') {
+      throw new Error('环境空景首帧必须且只能包含一张原构图');
     }
   } else if (input.references.length !== 2 || roles.filter(role => role === 'source_composition').length !== 1 || roles.filter(role => role === 'authorized_presenter').length !== 1) {
     throw new Error('人物首帧必须且只能包含一张原构图和一张已授权人物参考图');

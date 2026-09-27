@@ -43,7 +43,13 @@ function reportedSeedanceCostCny(model: string, task: SeedanceTask, fallback: nu
     ? 4.2
     : /seedance-1-0-pro/i.test(model)
       ? 15
-      : null;
+      : /seedance-2-0-fast/i.test(model)
+        ? Math.max(0, Number(process.env.SEEDANCE_2_FAST_CNY_PER_MILLION || 22))
+        : /seedance-2-0-mini/i.test(model)
+          ? Math.max(0, Number(process.env.SEEDANCE_2_MINI_CNY_PER_MILLION || 14))
+          : /seedance-2-0(?!-)/i.test(model)
+            ? Math.max(0, Number(process.env.SEEDANCE_2_CNY_PER_MILLION || 28))
+            : null;
   return perMillion === null ? fallback : Math.round((tokens * perMillion / 1_000_000) * 10_000) / 10_000;
 }
 
@@ -113,6 +119,7 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
   if (!budget.ok || !budget.reservationId) throw new Error('seedance_monthly_budget_exceeded');
   const baseUrl = (input.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
   let accepted = Boolean(checkpoint);
+  let reservationReleased = false;
   try {
     const content: Array<Record<string, unknown>> = [{ type: 'text', text: input.prompt.slice(0, 8000) }];
     const fullModalReference = Boolean(input.referenceVideoUrl || input.referenceImageDataUrls?.length);
@@ -131,6 +138,7 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
     if (!taskId) {
       const created = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks`, input.apiKey, {
         method: 'POST',
+        headers: { 'X-Client-Request-Id': input.idempotencyKey },
         body: JSON.stringify({
           model: input.model,
           content,
@@ -168,6 +176,9 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
       const status = String(task.status || task.data?.status || task.task?.status || '').toLowerCase();
       if (['succeeded', 'success', 'completed', 'done'].includes(status)) { completed = task; break; }
       if (['failed', 'error', 'expired', 'cancelled', 'canceled'].includes(status)) {
+        if (input.checkpointPath) await fsp.rm(input.checkpointPath, { force: true });
+        release(input.tenantId, budget.reservationId);
+        reservationReleased = true;
         throw new Error(`Seedance ${status}: ${String(task.error?.message || task.message || task.error || '').slice(0, 500)}`);
       }
       await new Promise(resolve => setTimeout(resolve, input.pollMs || 8_000));
@@ -195,7 +206,7 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
       estimatedCostCny: actualCostCny,
     };
   } catch (error) {
-    if (!accepted) release(input.tenantId, budget.reservationId);
+    if (!accepted && !reservationReleased) release(input.tenantId, budget.reservationId);
     throw error;
   }
 }

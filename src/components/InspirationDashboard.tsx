@@ -33,7 +33,7 @@ import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ScriptType = 'voiceover' | 'storyboard';
 type SortMode = 'heat' | 'crawlTime';
-type InspirationInnerView = 'inspiration' | 'library' | 'shooting';
+type InspirationInnerView = 'inspiration' | 'accounts' | 'library' | 'shooting';
 type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
@@ -45,7 +45,6 @@ const INSPIRATION_PAGE_SIZE = 30;
 
 const MATERIAL_PRODUCT_ALL = '__all_products__';
 const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
-const MATERIAL_PRODUCT_UNSELECTED = '__select_product__';
 const MATERIAL_PRODUCT_LINKED_REF = '__linked_product_ref__';
 const ENTERPRISE_COMMON_MATERIAL_TAG = 'enterprise_common';
 
@@ -84,6 +83,38 @@ export function materialOwnershipTags(tags: string | undefined, productId: strin
 export function visibleMaterialTags(tags: string | undefined): string {
   return String(tags || '').split(/[,，]/).map(tag => tag.trim()).filter(Boolean)
     .filter(tag => tag !== ENTERPRISE_COMMON_MATERIAL_TAG).join(', ');
+}
+
+type MaterialSemanticSource = Pick<Material, 'productName' | 'tags' | 'visualObservations' | 'scriptAnalysis'>;
+
+const HIDDEN_MATERIAL_KEYWORDS = new Set([
+  'vertical', 'horizontal', '9:16', '16:9', 'image', 'video', 'audio',
+  'hook', 'proof', 'support', 'transition', 'closing', 'explanation', 'demonstration',
+  'local_upload', 'official_import', 'licensed_stock', 'seedance', 'gemini',
+]);
+
+function compactMaterialKeyword(value: unknown): string {
+  const normalized = String(value || '').trim().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  if (!normalized || HIDDEN_MATERIAL_KEYWORDS.has(normalized.toLowerCase())) return '';
+  return normalized.replace(/[。；;，,].*$/, '').slice(0, 24).trim();
+}
+
+/** One user-facing semantic line for a My Materials card; never exposes IDs or analysis state. */
+export function materialSemanticLabel(material: MaterialSemanticSource): string {
+  const productName = String(material.productName || '').trim();
+  if (productName) return `产品：${productName}`;
+
+  const manualKeywords = visibleMaterialTags(material.tags).split(/[,，]/)
+    .map(compactMaterialKeyword).filter(Boolean);
+  const analysis = material.scriptAnalysis;
+  const analyzedKeywords = [
+    ...(analysis?.directorIndex.subjects || []),
+    ...(analysis?.directorIndex.actions || []),
+    ...(analysis?.directorIndex.environments || []),
+    ...(material.visualObservations || []),
+  ].map(compactMaterialKeyword).filter(Boolean);
+  const keywords = [...new Set(manualKeywords.length ? manualKeywords : analyzedKeywords)].slice(0, 3);
+  return keywords.length ? `内容：${keywords.join(' · ')}` : '内容：待补充说明';
 }
 
 export function materialMatchesProductFilter(
@@ -2705,12 +2736,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [manageTarget, setManageTarget] = useState<(({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action: 'edit' | 'delete' }) | null>(null);
   const [manageName, setManageName] = useState('');
   const [manageTags, setManageTags] = useState('');
-  const [manageProductId, setManageProductId] = useState<string | null>(null);
+  const [manageProductId, setManageProductId] = useState('');
   const [materialProducts, setMaterialProducts] = useState<Array<{id:string;name:string}>>([]);
   const [materialProductFilterEnabled, setMaterialProductFilterEnabled] = useState(() => Boolean(materialEntry.productId || materialEntry.productRef));
   const [materialProductId, setMaterialProductId] = useState(materialEntry.productId);
   const [materialProductRef, setMaterialProductRef] = useState(materialEntry.productRef);
-  const [uploadProductId, setUploadProductId] = useState<string | null>(() => materialEntry.productId || null);
+  const [uploadProductId, setUploadProductId] = useState(() => materialEntry.productId || '');
   const [manageBusy, setManageBusy] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const previewMaterialDialogRef = useModalFocus<HTMLDivElement>({
@@ -2735,7 +2766,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [generatingNeedId, setGeneratingNeedId] = useState('');
   const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
-  const [showAccountsModal, setShowAccountsModal] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
   const inventoryRequestRef = useRef(0);
@@ -3086,7 +3116,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
       const functions = String(material.shotFunction || '').split(',').map(item => item.trim());
-      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName, material.scriptAnalysis?.searchableText].filter(Boolean).join(' ').toLowerCase();
+      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName, material.scriptAnalysis?.searchableText, materialSemanticLabel(material)].filter(Boolean).join(' ').toLowerCase();
       const orientationMatches = materialOrientation === 'all'
         || (materialOrientation === 'vertical' && /竖屏|vertical/i.test(String(material.tags || '')))
         || (materialOrientation === 'horizontal' && /横屏|horizontal/i.test(String(material.tags || '')));
@@ -3113,10 +3143,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
-    if (uploadProductId === null) {
-      setMaterialMessage('请先选择本次素材属于哪个产品，或明确选择“企业通用素材”');
-      return;
-    }
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
@@ -3159,11 +3185,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const requestMaterialUpload = (scriptGapId = '') => {
     setInnerView('library');
-    if (uploadProductId === null) {
-      setUploadingScriptGapId('');
-      setMaterialMessage('请先在“我的素材”顶部选择产品或“企业通用素材”，再上传文件');
-      return;
-    }
     setUploadingScriptGapId(scriptGapId);
     window.setTimeout(() => uploadInputRef.current?.click(), 50);
   };
@@ -3517,17 +3538,16 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const openManageDialog = (target: ({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action?: 'edit' | 'delete' }) => {
     if (!target.item.canManage) return;
     setManageTarget({ ...target, action: target.action || 'edit' });
-    // 旧素材无法区分“未分类”和“企业通用”，编辑时要求用户重新明确归属。
     setManageProductId(target.kind === 'material'
-      ? target.item.productId || (isEnterpriseCommonMaterial(target.item) ? '' : null)
-      : null);
+      ? target.item.productId || ''
+      : '');
     if (target.kind === 'material') void studioApi.materialProducts().then(result => setMaterialProducts(result.items));
     setManageName(target.kind === 'video' ? target.item.title : target.item.name);
     setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : visibleMaterialTags(target.item.tags));
   };
 
   const saveManagedItem = async () => {
-    if (!manageTarget || !manageName.trim() || manageBusy || (manageTarget.kind === 'material' && manageProductId === null)) return;
+    if (!manageTarget || !manageName.trim() || manageBusy) return;
     setManageBusy(true);
     try {
       if (manageTarget.kind === 'video') {
@@ -3546,8 +3566,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       } else {
         const result = await studioApi.updateMaterial(manageTarget.item.id, {
           name: manageName.trim(),
-          tags: materialOwnershipTags(manageTags.trim(), manageProductId ?? ''),
-          productId: manageProductId ?? '',
+          tags: materialOwnershipTags(manageTags.trim(), manageProductId),
+          productId: manageProductId,
         });
         if (!result.ok) throw new Error(result.error || '编辑失败');
         await refreshMaterials();
@@ -3679,6 +3699,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             <nav className="-mb-px flex min-w-0 max-w-full gap-1 overflow-x-auto" role="tablist" aria-label="灵感中心分类">
               {([
                 { id: 'inspiration' as const, label: '灵感发现', count: tenantVideoTotalItems ?? '…', icon: <Flame size={16} /> },
+                { id: 'accounts' as const, label: '对标账号', count: '管理', icon: <Users size={16} /> },
                 { id: 'library' as const, label: '我的素材', count: localMaterials.length, icon: <Film size={16} /> },
                 { id: 'shooting' as const, label: '拍摄任务', count: shootingNeeds.length + scriptGapTasks.length, icon: <Lightbulb size={16} /> },
               ]).map(item => {
@@ -3708,6 +3729,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 {materialMessage}
               </div>
             )}
+            {innerView === 'accounts' && <CompetitorAccountsModal
+              embedded
+              open
+              onClose={() => setInnerView('inspiration')}
+              onCrawled={() => {
+                setSortMode('crawlTime');
+                setPlatform('all');
+                setSearch('');
+                void refreshVideos(1, false);
+              }}
+            />}
             {innerView === 'inspiration' && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
               <label htmlFor="inspiration-creation-account" className="font-semibold">创作账号</label>
               <select id="inspiration-creation-account" value={creationAccountId} onChange={event => setCreationAccountId(event.target.value)} className="rounded-lg border border-border bg-surface px-3 py-2">
@@ -3931,24 +3963,23 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
               <div className="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-surface px-2.5 py-2">
-                <label htmlFor="material-upload-product" className="sr-only">本次上传归属（必选）</label>
+                <label htmlFor="material-upload-product" className="sr-only">本次上传关联产品（可选）</label>
                 <select
                   id="material-upload-product"
                   aria-label="本次上传素材归属"
-                  value={uploadProductId === null ? MATERIAL_PRODUCT_UNSELECTED : uploadProductId || MATERIAL_PRODUCT_COMMON}
-                  onChange={event => setUploadProductId(event.target.value === MATERIAL_PRODUCT_UNSELECTED ? null : event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)}
+                  value={uploadProductId || MATERIAL_PRODUCT_COMMON}
+                  onChange={event => setUploadProductId(event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)}
                   className="h-9 min-w-[190px] rounded-md border border-border bg-white px-3 text-xs font-bold text-text-primary outline-none focus:border-accent"
                 >
-                  <option value={MATERIAL_PRODUCT_UNSELECTED}>请选择产品或企业通用</option>
-                  <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
+                  <option value={MATERIAL_PRODUCT_COMMON}>不指定（系统自动匹配）</option>
                   {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
                   {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
                 <button
                   type="button"
                   onClick={() => uploadInputRef.current?.click()}
-                  disabled={uploadingMaterial || uploadProductId === null}
-                  title={uploadProductId === null ? '请先选择产品或企业通用素材' : '上传到我的素材'}
+                  disabled={uploadingMaterial}
+                  title="上传到我的素材"
                   className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-bold text-white transition hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {uploadingMaterial ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
@@ -3975,7 +4006,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       value={materialSearch}
                       onChange={e => setMaterialSearch(e.target.value)}
                       aria-label="搜索我的素材"
-                      placeholder="搜索素材名称、行业、场景或标签..."
+                      placeholder="搜索素材名称、产品或主要内容..."
                       className="h-10 w-full rounded-md border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
                     />
                   </div>
@@ -4099,6 +4130,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     </div>
                     <div className="flex flex-1 flex-col p-3">
                       <p className="min-h-9 text-sm font-bold leading-snug text-text-primary line-clamp-2">{material.name}</p>
+                      <p className="mt-1 line-clamp-1 min-h-5 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
                       {(material.usage !== 'reference_only' || material.canManage) && <div className="mt-auto flex items-center gap-2 pt-3">
                         {material.usage !== 'reference_only' && <button
                           type="button"
@@ -4254,17 +4286,6 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       <AnimatePresence>
         {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
       </AnimatePresence>
-      <CompetitorAccountsModal
-        open={showAccountsModal}
-        onClose={() => setShowAccountsModal(false)}
-        onCrawled={() => {
-          setInnerView('inspiration');
-          setSortMode('crawlTime');
-          setPlatform('all');
-          setSearch('');
-          void refreshVideos(1, false);
-        }}
-      />
       {manageTarget && (
         <div ref={manageDialogRef} tabIndex={-1} className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true" aria-labelledby="material-manage-title">
           <div className="w-full max-w-md rounded-lg border border-border bg-surface p-5 shadow-xl">
@@ -4278,11 +4299,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
               <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
               {manageTarget.kind === 'material' && <label className="mt-3 block text-xs font-bold text-text-secondary">关联产品
-                <select aria-label="素材关联产品" value={manageProductId === null ? MATERIAL_PRODUCT_UNSELECTED : manageProductId || MATERIAL_PRODUCT_COMMON} onChange={event => setManageProductId(event.target.value === MATERIAL_PRODUCT_UNSELECTED ? null : event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
-                  <option value={MATERIAL_PRODUCT_UNSELECTED}>请选择产品或企业通用</option>
-                  <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
+                <select aria-label="素材关联产品" value={manageProductId || MATERIAL_PRODUCT_COMMON} onChange={event => setManageProductId(event.target.value === MATERIAL_PRODUCT_COMMON ? '' : event.target.value)} className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
+                  <option value={MATERIAL_PRODUCT_COMMON}>不指定（系统自动匹配）</option>
                   {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select><span className="mt-1 block font-normal text-text-muted">必须明确选择一个产品或“企业通用素材”；未确认归属的旧素材不能直接保存。</span>
+                </select><span className="mt-1 block font-normal text-text-muted">可选。未指定时系统会按口播与画面语义自动匹配，也可作为企业通用素材使用。</span>
               </label>}
               <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
             </> : <p className="mt-4 border-l-2 border-red bg-red/5 p-3 text-sm text-red">确认删除“{manageName}”？删除后无法恢复。</p>}
@@ -4290,7 +4310,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               <button type="button" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md border border-border px-3 py-2 text-sm font-bold text-text-secondary hover:bg-surface-2">取消</button>
               {manageTarget.action === 'delete'
                 ? <button type="button" onClick={() => void deleteManagedItem()} disabled={manageBusy} className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={15} />{manageBusy ? '删除中...' : '确认删除'}</button>
-                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim() || (manageTarget.kind === 'material' && manageProductId === null)} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
+                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
             </div>
           </div>
         </div>

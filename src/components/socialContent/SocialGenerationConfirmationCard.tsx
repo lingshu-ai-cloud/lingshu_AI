@@ -1,99 +1,172 @@
-import { AlertTriangle, Bot, CheckCircle2, Clock3, Film, ReceiptText, Sparkles } from 'lucide-react';
-import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
-import { socialShotFunctionLabel, socialShotSourceStrategyLabel } from '../../lib/socialContentModel';
-import { FORMAT_OPTIONS, optionLabel } from './socialContentUi';
+import { useEffect, useMemo, useState } from 'react';
+import { Check, Clock3, Film, Image as ImageIcon, WalletCards } from 'lucide-react';
+import type {
+  SocialContentTaskDetail,
+  SocialProductionApproach,
+  SocialProductionOption,
+} from '../../../shared/contracts/socialContentWorkflow';
 
 function money(value: number): string {
   return `¥${Math.max(0, value).toFixed(2)}`;
 }
 
-export default function SocialGenerationConfirmationCard({
-  task,
-  busy,
-  onConfirm,
-}: {
+function durationLabel(seconds: number): string {
+  const safe = Math.max(1, Math.round(seconds));
+  return safe < 60 ? `约 ${safe} 秒` : `约 ${Math.ceil(safe / 60)} 分钟`;
+}
+
+function optionDescription(approach: SocialProductionApproach): string {
+  if (approach === 'ai_enhanced') return '人物画面使用智能人物生成，纯产品展示使用产品场景生成，工厂、案例和其他画面优先匹配已有素材。';
+  if (approach === 'shooting_plan') return '整理成可交给拍摄团队的镜头清单，本次不生成视频。';
+  return '使用你已有的素材完成剪辑，不产生画面生成费用。';
+}
+
+const CURRENT_OPTION_META: Record<'ai_enhanced' | 'material_cut' | 'shooting_plan', {
+  label: string;
+  qualityTier: SocialProductionOption['qualityTier'];
+}> = {
+  ai_enhanced: { label: '智能混合制作·主推', qualityTier: 'premium' },
+  material_cut: { label: '免费素材方案', qualityTier: 'standard' },
+  shooting_plan: { label: '建立代拍清单', qualityTier: 'enhanced' },
+};
+
+function fallbackOptions(task: SocialContentTaskDetail): SocialProductionOption[] {
+  const plan = task.agentWorkflow!.executionPlan;
+  const firstAsset = plan.scenes.flatMap(scene => scene.candidates)
+    .find(candidate => candidate.kind === 'asset' && candidate.mediaType);
+  const firstFramePreview = firstAsset?.sourceRef && firstAsset.mediaType ? {
+    assetId: firstAsset.sourceRef,
+    label: firstAsset.label,
+    mediaType: firstAsset.mediaType,
+    url: firstAsset.previewUrl ?? null,
+    sourceTimestampSeconds: 0 as const,
+  } : null;
+  return [
+    ['ai_enhanced', '智能混合制作·主推', true, 'premium'],
+    ['material_cut', '免费素材方案', false, 'standard'],
+    ['shooting_plan', '建立代拍清单', false, 'enhanced'],
+  ].map(([approach, label, paid, quality]) => ({
+    approach: approach as SocialProductionApproach,
+    label: label as string,
+    description: optionDescription(approach as SocialProductionApproach),
+    qualityTier: quality as SocialProductionOption['qualityTier'],
+    available: approach === 'shooting_plan' || Boolean(paid) || Boolean(firstFramePreview),
+    unavailableReason: approach === 'shooting_plan' || paid || firstFramePreview ? null : '“我的素材”中没有可用素材',
+    usesPaidProviders: Boolean(paid),
+    estimatedCostCny: paid ? plan.estimatedTotalCostCny : 0,
+    includedOperations: [],
+    selectedMaterialIds: firstFramePreview ? [firstFramePreview.assetId] : [],
+    firstFramePreview,
+  }));
+}
+
+function currentProductionOptions(task: SocialContentTaskDetail): SocialProductionOption[] {
+  const fallback = fallbackOptions(task);
+  const supplied = task.agentWorkflow?.executionPlan.productionOptions ?? [];
+  const normalized = new Map<SocialProductionApproach, SocialProductionOption>();
+  for (const option of supplied) {
+    const approach: SocialProductionApproach = option.approach === 'material_polish' ? 'material_cut' : option.approach;
+    if (!(approach in CURRENT_OPTION_META) || normalized.has(approach)) continue;
+    const meta = CURRENT_OPTION_META[approach as keyof typeof CURRENT_OPTION_META];
+    normalized.set(approach, {
+      ...option,
+      approach,
+      label: meta.label,
+      description: optionDescription(approach),
+      qualityTier: meta.qualityTier,
+    });
+  }
+  for (const option of fallback) {
+    if (!normalized.has(option.approach)) normalized.set(option.approach, option);
+  }
+  return (['ai_enhanced', 'material_cut', 'shooting_plan'] as const)
+    .map(approach => normalized.get(approach))
+    .filter((option): option is SocialProductionOption => Boolean(option));
+}
+
+function Keyframe({ title, url, mediaType, empty }: {
+  title: string;
+  url: string | null | undefined;
+  mediaType: 'video' | 'image';
+  empty: string;
+}) {
+  return (
+    <figure className="min-w-0 overflow-hidden rounded-xl border border-border bg-surface-2">
+      <div className="aspect-[9/16] max-h-64 bg-slate-950">
+        {url && mediaType === 'video'
+          ? <video src={url} aria-label={title} muted playsInline preload="metadata" onLoadedMetadata={event => { event.currentTarget.currentTime = Math.min(0.01, event.currentTarget.duration || 0.01); }} className="h-full w-full object-cover" />
+          : url
+            ? <img src={url} alt={title} className="h-full w-full object-cover" />
+          : <div className="flex h-full items-center justify-center px-4 text-center text-[11px] font-bold text-slate-300"><ImageIcon size={18} className="mr-2" />{empty}</div>}
+      </div>
+      <figcaption className="truncate bg-white px-3 py-2 text-center text-[10px] font-black text-text-secondary">{title}</figcaption>
+    </figure>
+  );
+}
+
+export default function SocialGenerationConfirmationCard({ task, busy, onConfirm }: {
   task: SocialContentTaskDetail;
   busy: boolean;
-  onConfirm: () => void;
+  onConfirm: (approach?: SocialProductionApproach) => void;
 }) {
   const workflow = task.agentWorkflow;
-  if (!workflow || task.status !== 'plan_review') return null;
+  const plan = workflow?.executionPlan;
+  const options = useMemo(() => workflow && plan
+    ? currentProductionOptions(task)
+    : [], [task, workflow, plan]);
+  const [selectedApproach, setSelectedApproach] = useState<SocialProductionApproach>(
+    task.brief.productionApproach === 'material_polish' ? 'material_cut' : task.brief.productionApproach ?? 'ai_enhanced',
+  );
+  useEffect(() => {
+    setSelectedApproach(task.brief.productionApproach === 'material_polish' ? 'material_cut' : task.brief.productionApproach ?? 'ai_enhanced');
+  }, [task.taskId, task.version, task.brief.productionApproach]);
+  if (!workflow || !plan || task.status !== 'plan_review') return null;
 
-  const plan = workflow.executionPlan;
-  const scenes = plan.scenes;
-  const scriptShots = task.replicationScript?.shots || [];
-  const storyboard = scriptShots.length > 0
-    ? scriptShots.map(shot => ({
-      id: shot.shotId,
-      time: `${shot.startSeconds.toFixed(1)}–${shot.endSeconds.toFixed(1)}s`,
-      duration: Math.max(0.5, shot.endSeconds - shot.startSeconds),
-      label: socialShotFunctionLabel(shot.purpose),
-      visual: shot.visualInstruction,
-    }))
-    : workflow.directorBrief.scenes.map(scene => ({
-      id: scene.sceneId,
-      time: `镜头 ${scene.order}`,
-      duration: 1,
-      label: socialShotFunctionLabel(scene.purpose),
-      visual: scene.targetVisual,
-    }));
-  const averageSuccess = scenes.length
-    ? scenes.reduce((sum, scene) => sum + scene.estimatedSuccessRate, 0) / scenes.length
-    : 0;
-  const feasibleCount = scenes.filter(scene => scene.feasibility === 'full_fidelity' || scene.feasibility === 'functional_equivalent').length;
-  const riskCount = scenes.reduce((sum, scene) => sum + scene.rightsRisks.length + scene.dataTransferRisks.length, 0)
-    + workflow.executionPlanReview.failedCriteria.length;
-  const approved = workflow.executionPlanReview.approved;
-  const explanationOnly = scenes.length > 0
-    && scenes.every(scene => ['motion_graphics', 'verified_fact_card'].includes(scene.selectedSourceStrategy));
-  const formalReplicationBlocked = task.brief.productionMode === 'social_ready'
-    && task.brief.creationMode === 'viral_replication'
-    && explanationOnly;
-  const canConfirm = approved && !formalReplicationBlocked;
-  const needsReplicationReview = task.brief.creationMode === 'viral_replication'
-    && task.replicationScript?.status !== 'confirmed';
-  const formats = task.brief.formats.map(value => optionLabel(FORMAT_OPTIONS, value)).filter(Boolean).join('、') || '内容成品';
-  const estimatedMinutes = Math.max(1, Math.round(plan.estimatedTotalSeconds / 60));
+  const selected = options.find(option => option.approach === selectedApproach) ?? options[0];
+  const preview = selected?.firstFramePreview;
+  const estimatedSeconds = selectedApproach === plan.selectedApproach
+    ? plan.estimatedTotalSeconds
+    : selectedApproach === 'shooting_plan'
+      ? Math.max(5, workflow.directorBrief.scenes.length * 2)
+    : selectedApproach === 'ai_enhanced'
+      ? Math.max(plan.estimatedTotalSeconds, workflow.directorBrief.scenes.length * 120)
+      : Math.max(30, workflow.directorBrief.scenes.length * 12);
+  const expectedDuration = workflow.directorBrief.totalDurationSeconds
+    || task.referenceVideoAnalysis?.durationSeconds
+    || 15;
+  const canConfirm = workflow.executionPlanReview.approved && Boolean(selected?.available);
 
   return (
     <section id="social-generation-confirmation" data-social-generation-confirmation className="overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm" aria-labelledby="social-generation-confirmation-title">
-      <div className="grid gap-px bg-border lg:grid-cols-3">
-        <div className="bg-white p-4 sm:p-5">
-          <p className="flex items-center gap-1.5 text-[10px] font-black text-emerald-700"><Film size={13} />这次会产出</p>
-          <h3 id="social-generation-confirmation-title" className="mt-2 text-base font-black text-text-primary">{task.brief.requestedOutputCount || 1} 条{formats}</h3>
-          <p className="mt-1 text-xs text-text-muted">{scenes.length} 个镜头 · 脚本、口播、字幕与成片</p>
+      <div className="border-b border-border px-4 py-4 sm:px-5">
+        <p className="text-[10px] font-black tracking-[0.08em] text-emerald-700">制作前审核</p>
+        <h3 id="social-generation-confirmation-title" className="mt-1 text-base font-black text-text-primary">选择制作方案并核对关键帧</h3>
+      </div>
+
+      <div className="grid gap-2 border-b border-border bg-[#f7faf8] p-4 sm:grid-cols-3 sm:p-5">
+        {options.map(option => {
+          const active = option.approach === selected?.approach;
+          return <button key={option.approach} type="button" disabled={!option.available || busy} onClick={() => setSelectedApproach(option.approach)} className={`rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${active ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_1px_#10b981]' : 'border-border bg-white hover:border-emerald-200'}`}><div className="flex items-center justify-between gap-2"><span className="text-xs font-black text-text-primary">{option.label}</span>{active && <Check size={14} className="text-emerald-700" />}</div><p className="mt-1 text-[10px] leading-4 text-text-muted">{optionDescription(option.approach)}</p><p className="mt-2 text-[10px] font-black text-emerald-700">{option.approach === 'shooting_plan' ? '输出代拍清单' : option.usesPaidProviders ? `预计 ${money(option.estimatedCostCny)}` : '无需画面生成费用'}</p></button>;
+        })}
+      </div>
+
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px] sm:p-5">
+        <div>
+          <p className="text-[10px] font-black text-text-muted">关键帧对比</p>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <Keyframe title="参考关键帧" url={plan.referenceFirstFramePreview?.url} mediaType={plan.referenceFirstFramePreview?.mediaType ?? 'image'} empty="参考画面准备中" />
+            <Keyframe title="预计成片关键帧" url={preview?.url} mediaType={preview?.mediaType ?? 'image'} empty="预计画面准备中" />
+          </div>
         </div>
-        <div className="bg-white p-4 sm:p-5">
-          <p className="flex items-center gap-1.5 text-[10px] font-black text-blue-700"><ReceiptText size={13} />预计费用</p>
-          <h3 className="mt-2 text-base font-black text-text-primary">{money(plan.estimatedTotalCostCny)}</h3>
-          <p className="mt-1 text-xs text-text-muted">{plan.budgetLimitCny === null ? '未设置单条预算上限' : `预算上限 ${money(plan.budgetLimitCny)}`} · 预计 {estimatedMinutes} 分钟</p>
-        </div>
-        <div className="bg-white p-4 sm:p-5">
-          <p className="flex items-center gap-1.5 text-[10px] font-black text-violet-700"><Sparkles size={13} />效果预判</p>
-          <h3 className="mt-2 text-base font-black text-text-primary">{feasibleCount}/{scenes.length} 镜头可完整或等价实现</h3>
-          <p className="mt-1 text-xs text-text-muted">模型路线成功率约 {Math.round(averageSuccess * 100)}% · {riskCount ? `${riskCount} 项需留意` : '暂无阻断风险'}</p>
+        <div className="grid content-start gap-2">
+          <div className="flex items-center gap-3 rounded-xl border border-border bg-white p-3"><Film size={17} className="text-emerald-700" /><div><p className="text-[10px] font-bold text-text-muted">成片预计时长</p><p className="mt-0.5 text-sm font-black text-text-primary">{durationLabel(expectedDuration)}</p></div></div>
+          <div className="flex items-center gap-3 rounded-xl border border-border bg-white p-3"><Clock3 size={17} className="text-blue-700" /><div><p className="text-[10px] font-bold text-text-muted">预计制作耗时</p><p className="mt-0.5 text-sm font-black text-text-primary">{durationLabel(estimatedSeconds)}</p></div></div>
+          <div className="flex items-center gap-3 rounded-xl border border-border bg-white p-3"><WalletCards size={17} className="text-violet-700" /><div><p className="text-[10px] font-bold text-text-muted">预计费用</p><p className="mt-0.5 text-sm font-black text-text-primary">{money(selected?.estimatedCostCny ?? 0)}</p></div></div>
         </div>
       </div>
 
-      {storyboard.length > 0 && <div className="border-t border-border bg-[#f7faf8] p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-[10px] font-black text-text-muted">低成本分镜预演 · 不调用模型</p><p className="mt-1 text-xs font-bold text-text-primary">生成前先看内容节奏与画面分布</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[9px] font-bold text-text-muted">不是实际生成关键帧</span></div>
-        <div className="mt-3 flex min-w-0 gap-2 overflow-x-auto pb-1">
-          {storyboard.map((shot, index) => {
-            const execution = scenes.find(scene => scene.sceneId === shot.id) || scenes[index];
-            return <article key={shot.id} style={{ flexGrow: Math.min(3, shot.duration) }} className="min-w-[150px] flex-1 rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#173d31] text-[9px] font-black text-white">{index + 1}</span><span className="text-[9px] font-bold text-text-muted">{shot.time}</span></div><p className="mt-3 text-xs font-black text-text-primary">{shot.label}</p><p className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">{shot.visual}</p>{execution && <p className="mt-2 truncate text-[9px] font-bold text-blue-700">{socialShotSourceStrategyLabel(execution.selectedSourceStrategy)} · {money(execution.estimatedCostCny)} · {Math.round(execution.estimatedSuccessRate * 100)}%</p>}</article>;
-          })}
-        </div>
-      </div>}
-
-      <div className={`border-t px-4 py-3 text-[10px] font-semibold leading-4 sm:px-5 ${formalReplicationBlocked ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-blue-100 bg-blue-50/60 text-blue-900'}`}>
-        {formalReplicationBlocked
-          ? '当前方案只会生成说明卡片，达不到爆款裂变的画面预期。请先补充产品视频或图片；也可以改为“概念样片”，但不可直接发布。'
-          : '若执行时必须改用更低质量的画面路线，系统会暂停并再次请你确认，不会静默生成占位稿。'}
-      </div>
-
-      <div className="flex flex-col gap-3 border-t border-border bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-        <div className="flex items-start gap-2 text-[10px] leading-4 text-text-muted">{canConfirm ? <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-700" /> : <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-700" />}<span>{formalReplicationBlocked ? '正式生成已阻止：补充真实产品素材后会重新计算费用和效果。' : approved ? '费用为当前执行方案预估，最终账单按实际调用结算；重试或改稿前会重新提示。' : workflow.executionPlanReview.requiredRevision.join('；') || '方案存在阻断项，请先补齐信息。'}</span></div>
-        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Bot size={14} />}{formalReplicationBlocked ? '请先补充产品素材' : approved ? needsReplicationReview ? '确认逐镜方案' : `开始生成 · 预计 ${money(plan.estimatedTotalCostCny)}` : '先处理方案风险'}</button>
+      <div className="flex justify-end border-t border-border p-4 sm:px-5">
+        <button type="button" disabled={busy || !canConfirm} onClick={() => onConfirm(selected?.approach)} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Clock3 size={14} className="animate-spin" /> : <Film size={14} />}{selected?.approach === 'shooting_plan' ? '确认并生成代拍清单' : '确认方案并开始制作'}</button>
       </div>
     </section>
   );

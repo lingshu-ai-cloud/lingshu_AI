@@ -12,6 +12,7 @@ export function agentRuleFields(config: { socialCadence?: string; followupCadenc
     collectionPlatforms: parts[0] || 'YouTube、TikTok、Instagram、Facebook',
     collectionSources: parts[1] || '公开行业关键词、已确认的对标账号',
     collectionKeywords: social.match(/关键词[：:]([^；]*)/)?.[1] || '',
+    collectionLanguage: social.match(/关键词语言[：:]([^；]*)/)?.[1] || '',
     collectionLookback: number(/近\s*(\d+)\s*天/, 7),
     collectionLimit: number(/每次最多\s*(\d+)\s*条/, 20),
     collectionTime: social.match(/；近\s*\d+\s*天；([^；]*)；每次最多/)?.[1] || parts.find(item => /^(每天|每周|工作日)/.test(item) && !item.startsWith('每周生成')) || '每天 09:00',

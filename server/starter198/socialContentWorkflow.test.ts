@@ -105,7 +105,7 @@ const [
   { assertSocialContentSubjectLease, runOutsideSocialContentMutationScope, withSocialContentSubjectLease },
   { MAX_SOCIAL_WORK_PACKAGE_VERSIONS, SOCIAL_PACKAGE_CATALOG_TENANT },
   { issueLocalIdentityTokenForTest },
-  { addSocialTaskSource, startSocialContentTask },
+  { addSocialTaskSource, startSocialContentTask, updateSocialContentTask },
   { buildSocialTaskReferencePackage },
   { runSocialContentAutoProduction },
 ] = await Promise.all([
@@ -1240,29 +1240,13 @@ try {
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('source_material'));
   assert.equal(zeroInputTask.body.task.scriptBaseline.source, 'system_theme_baseline');
-  const zeroInputBlocked = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
-    idempotencyKey: 'social-zero-input-start-blocked-001',
-    body: { expectedVersion: zeroInputTask.body.task.version },
-  });
-  assert.equal(zeroInputBlocked.status, 409, zeroInputBlocked.raw);
-  assert.equal(zeroInputBlocked.body.error, 'social_content_execution_facts_required',
-    'zero media is supported, but public production stops when even the minimum business facts are unavailable');
-  const zeroInputKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/sources`, {
-    idempotencyKey: 'social-zero-input-knowledge-001',
-    body: {
-      kind: 'knowledge', sourceRef: 'socialknowledge:enterprise-profile',
-      sourceVersion: 'profile-social-content-tenant', label: '企业资料',
-    },
-  });
-  assert.equal(zeroInputKnowledge.status, 201, zeroInputKnowledge.raw);
-  assert.equal(zeroInputKnowledge.body.task.assetSupplyPlan.overallFeasibility, 'functional_equivalent',
-    'zero customer media remains producible after the minimum business facts are available');
   const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
     idempotencyKey: 'social-zero-input-start-001',
-    body: { expectedVersion: zeroInputKnowledge.body.task.version },
+    body: { expectedVersion: zeroInputTask.body.task.version },
   });
   assert.equal(zeroInputStarted.status, 202, zeroInputStarted.raw);
-  assert.equal(zeroInputStarted.body.task.status, 'producing');
+  assert.equal(zeroInputStarted.body.task.status, 'producing',
+    '内容制作不再因用户未手工补填事实而阻塞；企业中心信息由系统自动读取');
 
   const zeroInputTaskId = zeroInputTask.body.task.taskId as string;
   const fakeVoicePath = path.join(temporaryRoot, 'zero-input-worker-voice.wav');
@@ -1444,19 +1428,44 @@ try {
   assert.equal(resolvedReference.task.replicationScript?.hookOptions.length, 3,
     'the Director exposes one primary three-second hook and at least two alternatives');
   assert.equal(resolvedReference.task.replicationScript?.hookOptions[0]?.role, 'primary');
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.hookAnalysis?.detailedAnalysis?.minimumMaterialMatchScore, 0.78,
+    'the first three seconds carry a dedicated high-threshold material-matching analysis');
+  assert.ok(resolvedReference.task.referenceVideoAnalysis?.hookAnalysis?.detailedAnalysis?.firstFrameComposition,
+    'the hook analysis must preserve first-frame composition instead of only coarse scene tags');
   assert.equal(resolvedReference.task.replicationScript?.shots.every(shot => (
     shot.fidelityPoints.length >= 4 && shot.mustDifferPoints.length >= 4
   )), true, 'every shot carries explicit fidelity and originality constraints');
   assert.equal(resolvedReference.task.scriptBaseline?.referenceSourceId, resolvedReference.source.sourceId,
     'the selected task reference identity survives into the frozen baseline');
-  assert.match(resolvedReference.task.referenceVideoAnalysis?.rightsNotice ?? '', /不代表版权已经确认/);
-  const safeReferenceOutput = JSON.stringify({
-    analysis: resolvedReference.task.referenceVideoAnalysis,
-    script: resolvedReference.task.replicationScript,
+  const renamedReference = await updateSocialContentTask({
+    repository,
+    tenantId: tenant,
+    userId: `${tenant}-user`,
+    taskId: viralReferenceTask.body.task.taskId,
+    idempotencyKey: 'social-viral-reference-product-rename-001',
+    value: {
+      expectedVersion: resolvedReference.task.version,
+      changes: { productRef: '韩系护肤产品组合' },
+    },
+    referenceResolver: exactReferenceResolver,
+    now: new Date('2026-09-14T08:00:30.000Z'),
   });
-  for (const forbidden of ['ACME', '张女士', '全网第一', '立刻年轻十岁']) {
-    assert.doesNotMatch(safeReferenceOutput, new RegExp(forbidden), `public replication output must remove ${forbidden}`);
-  }
+  assert.match(renamedReference.replicationScript?.shots[0]?.spokenText ?? '', /韩系护肤产品组合/,
+    'editing the product refreshes the visible replication copy before generation starts');
+  assert.doesNotMatch(renamedReference.replicationScript?.shots[0]?.spokenText ?? '', /ACME/,
+    'the refreshed preview does not retain the reference product keyword');
+  assert.match(resolvedReference.task.referenceVideoAnalysis?.rightsNotice ?? '', /已入库的工厂、客户案例和企业通用素材可直接用于匹配与剪辑/);
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.shots[0]?.spokenText, 'ACME 全网第一',
+    'public reference analysis retains the exact recovered spoken line');
+  assert.equal(resolvedReference.task.referenceVideoAnalysis?.shots[0]?.captionText, '立刻年轻十岁',
+    'public reference analysis retains the exact recovered caption for review');
+  assert.equal(renamedReference.replicationScript?.shots[0]?.referenceSpokenText, 'ACME 全网第一',
+    'the replication package keeps the immutable reference transcript beside the identity-adjusted line');
+  assert.equal(renamedReference.replicationScript?.shots[0]?.spokenText, '韩系护肤产品组合 全网第一',
+    'identity substitution must preserve every non-identity character and claim without factual rewriting');
+  assert.deepEqual(renamedReference.replicationScript?.shots[0]?.voiceoverReplacement, {
+    mode: 'identity_only', replacedEntityTypes: ['product'],
+  });
   const referenceKnowledge = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}/sources`, {
     idempotencyKey: 'social-viral-reference-knowledge-001',
     body: {

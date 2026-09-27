@@ -293,6 +293,7 @@ export async function upsertSocialTaskCloudMaterial(
 ): Promise<Record<string, unknown>> {
   const existing = await ownedCloudMaterialByHash(input.tenantId, input.sha256, request);
   const productRef = String(input.productRef || '').trim();
+  const productId = String(input.productId || '').trim();
   if (existing) {
     const current = existing.provenance && typeof existing.provenance === 'object'
       ? existing.provenance as Record<string, unknown>
@@ -315,7 +316,7 @@ export async function upsertSocialTaskCloudMaterial(
     };
     const response = await request(`/api/collections/materials/records/${encodeURIComponent(existing.id)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provenance: merged, ...(productRef ? { productName: productRef } : {}) }),
+      body: JSON.stringify({ provenance: merged, ...(productId ? { productId } : {}) }),
     });
     if (!response.ok) throw new Error(`material association update failed (${response.status})`);
     return cloudMaterialView(await response.json() as CloudMaterialRecord);
@@ -337,7 +338,7 @@ export async function upsertSocialTaskCloudMaterial(
     sourceName: input.title,
     sourceProvider: 'tenant',
     licenseEvidence: 'tenant_upload_unverified',
-    productName: productRef || input.productName,
+    productName: input.productName,
     provenance,
   }, request);
   return cloudMaterialView(created);

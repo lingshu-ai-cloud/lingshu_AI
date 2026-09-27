@@ -57,6 +57,10 @@ const ports = createSocialHeyGenBridgePorts({ store,
   head: async () => ({ size: 12_000, etag: 'etag-a', contentType: 'video/mp4', lastModified: new Date() }),
   pollIntervalMs: 0,
 });
+assert.deepEqual(ports.capabilities, {
+  methods: ['talking'],
+  controls: ['scripted_speech', 'timing_control'],
+});
 const adapter = createSocialDigitalPresenterAdapter(ports);
 const context: any = { tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: tmp,
   shot: { shotId: 'shot-a', sourceStrategy: 'authorized_digital_presenter', sourceRefs: ['presenter-a'],
@@ -68,6 +72,8 @@ assert.equal(result?.asset.authorizationRef, 'rights://tenant-a/presenter-a/v1')
 assert.equal(creates, 1);
 assert.equal(reserves, 1);
 assert.equal(store.rows.get('studio_social_presenter_jobs')?.[0]?.status, 'completed');
+assert.equal(store.rows.get('studio_social_presenter_jobs')?.[0]?.visual_control?.interaction, 'talking');
+assert.equal(store.rows.get('studio_social_presenter_jobs')?.[0]?.visual_control?.precision, 'hook_high');
 
 // The same logical request resumes the recorded supplier task. It may poll and
 // verify storage again, but must not create or reserve another paid generation.

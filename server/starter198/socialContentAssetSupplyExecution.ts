@@ -122,6 +122,14 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     .filter(shot => shot.truthBoundary.subject === 'customer_factory')
     .flatMap(shot => shot.truthBoundary.customerEvidenceRefs.length
       ? shot.truthBoundary.customerEvidenceRefs : shot.sourceRefs))];
+  const customerCaseEvidenceAssetIds = [...new Set(input.plan.shots
+    .filter(shot => shot.truthBoundary.subject === 'customer_case')
+    .flatMap(shot => shot.truthBoundary.customerEvidenceRefs.length
+      ? shot.truthBoundary.customerEvidenceRefs : shot.sourceRefs))];
+  const productEffectEvidenceAssetIds = [...new Set(input.plan.shots
+    .filter(shot => shot.truthBoundary.subject === 'product_effect')
+    .flatMap(shot => shot.truthBoundary.customerEvidenceRefs.length
+      ? shot.truthBoundary.customerEvidenceRefs : shot.sourceRefs))];
   const customerVideoIds = [...new Set(input.plan.shots
     .filter(shot => shot.sourceStrategy === 'customer_real_asset' && shot.truthBoundary.subject === 'none')
     .flatMap(shot => shot.sourceRefs))];
@@ -130,6 +138,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     .flatMap(shot => shot.sourceRefs))];
   const aligned = createSocialAssetSupplyPlan({
     creationMode: input.plan.creationMode,
+    productionApproach: input.plan.productionApproach ?? 'ai_enhanced',
     assetAvailability: input.plan.assetAvailability,
     managementMode: input.plan.managementMode,
     planVersion: input.plan.planVersion,
@@ -145,11 +154,15 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
       presenterAssetIds,
       referenceVideoIds,
       factoryEvidenceAssetIds,
+      customerCaseEvidenceAssetIds,
+      productEffectEvidenceAssetIds,
       customerVideoIds,
       licensedStockAssetIds,
     },
     confirmedFactRefs,
-    rightsConfirmationRequired: input.plan.status === 'requires_rights_confirmation',
+    // Anything already admitted to the tenant material library is executable;
+    // missing legacy rights metadata must not silently reroute a production.
+    rightsConfirmationRequired: false,
     shots: input.baseline.scenes.map((scene, index) => {
       const original = input.plan.shots.find(shot => shot.shotId === scene.sceneId) ?? input.plan.shots[index];
       return {
@@ -158,6 +171,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
         requestedDescription: [scene.shotFunction, scene.subject, scene.action].filter(Boolean).join(' · '),
         truthSensitiveSubject: truthSensitiveSubject(scene),
         referenceShotId: original?.productSceneReplication?.referenceShotId ?? null,
+        ...(original?.visualContract ? { visualContract: structuredClone(original.visualContract) } : {}),
         ...(original?.productSceneReplication
           ? { productSceneReplication: structuredClone(original.productSceneReplication) }
           : {}),
@@ -169,17 +183,33 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     ...aligned,
     shots: aligned.shots.map((shot, index) => {
       const original = originalById.get(shot.shotId) ?? input.plan.shots[index];
-      if (shot.truthBoundary.subject !== 'none') return shot;
+      if (original?.selectedMaterialSegment) {
+        return {
+          ...shot,
+          sourceStrategy: original.sourceStrategy,
+          sourceRefs: [...original.sourceRefs],
+          fallbackSourceStrategy: original.fallbackSourceStrategy,
+          selectedMaterialSegment: structuredClone(original.selectedMaterialSegment),
+          productionInstruction: original.productionInstruction,
+          feasibility: original.feasibility,
+          feasibilityReason: original.feasibilityReason,
+          ...(original.visualContract ? { visualContract: structuredClone(original.visualContract) } : {}),
+        };
+      }
+      if (shot.truthBoundary.subject !== 'none') return original?.visualContract
+        ? { ...shot, visualContract: structuredClone(original.visualContract) }
+        : shot;
       if (original?.productSceneReplication) {
         return {
           ...shot,
           sourceStrategy: 'aigc_product_scene_replication',
           sourceRefs: original.productSceneReplication.productIdentity.groups.flatMap(group => group.referenceImageIds),
-          fallbackSourceStrategy: original.fallbackSourceStrategy ?? 'motion_graphics',
+          fallbackSourceStrategy: original.fallbackSourceStrategy,
           productionInstruction: original.productionInstruction,
           feasibility: original.feasibility,
           feasibilityReason: original.feasibilityReason,
           productSceneReplication: structuredClone(original.productSceneReplication),
+          ...(original.visualContract ? { visualContract: structuredClone(original.visualContract) } : {}),
         };
       }
       if (!original?.digitalHumanPlan) return shot;
@@ -187,11 +217,12 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
         ...shot,
         sourceStrategy: 'authorized_digital_presenter',
         sourceRefs: [...original.digitalHumanPlan.presenterAssetIds],
-        fallbackSourceStrategy: original.fallbackSourceStrategy ?? 'motion_graphics',
+        fallbackSourceStrategy: original.fallbackSourceStrategy,
         productionInstruction: original.productionInstruction,
         feasibility: original.feasibility,
         feasibilityReason: original.feasibilityReason,
         digitalHumanPlan: structuredClone(original.digitalHumanPlan),
+        ...(original.visualContract ? { visualContract: structuredClone(original.visualContract) } : {}),
       };
     }),
   };
@@ -243,10 +274,18 @@ function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrateg
     return shot.productSceneReplication && shot.sourceRefs.length > 0
       ? ['aigc_product_scene_replication'] : [];
   }
+  // A person/presenter shot must not be silently represented as a generic
+  // graphic. If the registered digital-human capability is unavailable, the
+  // run remains visibly unavailable so the user can choose the free or shoot
+  // plan instead.
+  if (shot.sourceStrategy === 'authorized_digital_presenter') {
+    return shot.digitalHumanPlan
+      && ['preview_only', 'ready_for_capability_check'].includes(shot.digitalHumanPlan.executionState)
+      ? ['authorized_digital_presenter'] : [];
+  }
   return [...new Set([
     shot.sourceStrategy,
     ...(shot.fallbackSourceStrategy ? [shot.fallbackSourceStrategy] : []),
-    ...(shot.truthBoundary.syntheticVisualAllowed ? ['motion_graphics' as const] : []),
   ])].filter(strategy => {
     if (strategy === 'authorized_digital_presenter') {
       return Boolean(shot.digitalHumanPlan

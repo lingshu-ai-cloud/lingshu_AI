@@ -220,6 +220,7 @@ export async function updateSocialContentTask(input: {
   taskId: string;
   idempotencyKey: string;
   value: UpdateSocialContentTaskInput;
+  referenceResolver?: SocialTaskReferenceResolver;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   const mutation = await executeSocialContentMutation<{ task: SocialContentTaskDetail }>({
@@ -272,7 +273,7 @@ export async function updateSocialContentTask(input: {
           : briefChanges.requestedOutputCount ?? current.requestedOutputCount,
       };
       const scriptFieldsChanged = [
-        'title', 'objective', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
+        'title', 'objective', 'productId', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
       ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
       let scriptBaseline = currentBaseline;
       if (!theme || theme.classificationStatus !== 'confirmed' || !theme.themeId) {
@@ -316,6 +317,14 @@ export async function updateSocialContentTask(input: {
         updated_by: input.userId,
         updated_at: timestamp,
       });
+      if (brief.creationMode === 'viral_replication'
+        && (themeChanged || hasThemeInput || scriptFieldsChanged)) {
+        await refreshSocialTaskReferenceOutputs({
+          ...input,
+          operationId,
+          referenceResolver: input.referenceResolver,
+        });
+      }
       return { task: (await readSocialTaskDetail(input))! };
     },
   });
@@ -750,6 +759,7 @@ export async function createSocialWeeklyPlan(input: {
         createIdempotencyKey: input.idempotencyKey,
         title: input.value.title,
         objective: input.value.objective,
+        productId: input.value.productId ?? null,
         productRef: input.value.productRef ?? null,
         audience: input.value.audience ?? null,
         taskIds: [],
@@ -771,6 +781,7 @@ export async function createSocialWeeklyPlan(input: {
       value: {
         title: item.title,
         objective: item.objective,
+        productId: input.value.productId ?? null,
         productRef: input.value.productRef ?? null,
         audience: input.value.audience ?? null,
         mode: 'weekly',

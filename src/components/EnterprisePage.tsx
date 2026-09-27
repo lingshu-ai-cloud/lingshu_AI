@@ -613,6 +613,9 @@ export function productMaterialLibraryParams(product: Pick<ProductItem, 'id' | '
 
 function emptyProduct(index: number): ProductItem {
   return {
+    id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `product-${Date.now()}-${index}`,
     name: `产品${index + 1}`,
     images: [],
     videos: [],

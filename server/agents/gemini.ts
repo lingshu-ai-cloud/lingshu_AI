@@ -295,6 +295,15 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
 export function normalizeVideoAnalysis(parsed: Partial<VideoAiAnalysis>): VideoAiAnalysis {
   return {
     theme: String(parsed.theme ?? ''),
+    identityEntities: Array.isArray(parsed.identityEntities) ? parsed.identityEntities.flatMap(entity => {
+      if (!entity || !['company', 'brand', 'product'].includes(String(entity.type)) || !String(entity.text || '').trim()) return [];
+      return [{
+        type: entity.type,
+        text: String(entity.text).trim(),
+        evidence: String(entity.evidence || '').trim(),
+        confidence: Math.max(0, Math.min(1, Number(entity.confidence ?? 0) || 0)),
+      }];
+    }) : [],
     hooks: Array.isArray(parsed.hooks) ? parsed.hooks.map(String) : [],
     sellingPoints: Array.isArray(parsed.sellingPoints) ? parsed.sellingPoints.map(String) : [],
     mood: String(parsed.mood ?? ''),
@@ -329,6 +338,7 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
 
 必需 JSON 字段：
 - theme: string，用一句中文概括视频核心主题/产品/场景
+- identityEntities: array，仅提取口播、字幕或画面中明确出现的企业名、品牌名和产品名；每项包含 type("company"|"brand"|"product")、text、evidence、confidence，不确定时不输出
 - hooks: string[], 2–4 个中文开头钩子或吸引注意力的方法
 - sellingPoints: string[], 3–6 个中文卖点、利益点或画面展示点
 - mood: string，中文情绪/风格描述，例如“高能评测”“种草感”“教程感”“幽默反差”

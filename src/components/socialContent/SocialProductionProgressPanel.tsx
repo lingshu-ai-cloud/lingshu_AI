@@ -1,29 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import {
-  Bot,
   CheckCircle2,
   ChevronRight,
-  Clapperboard,
-  Clock3,
-  FileCheck2,
-  Film,
+  ListTodo,
   Loader2,
-  Mic2,
   RefreshCcw,
   RotateCcw,
-  Subtitles,
   X,
 } from 'lucide-react';
 import type {
   SocialContentTaskDetail,
   SocialContentTaskStatus,
   SocialContentTaskSummary,
-  SocialDirectorPlanSummary,
 } from '../../../shared/contracts/socialContentWorkflow';
-import {
-  socialContentCurrentArtifacts,
-  socialContentStatusLabel,
-} from '../../lib/socialContentModel';
+import { socialContentStatusLabel } from '../../lib/socialContentModel';
 
 interface SocialProductionProgressPanelProps {
   task: SocialContentTaskDetail;
@@ -43,9 +33,7 @@ interface SocialProductionProgressPanelProps {
 
 type TaskListItem = SocialContentTaskSummary | SocialContentTaskDetail;
 
-const ACTIVE_STATUSES = new Set<SocialContentTaskStatus>(['producing', 'attention', 'paused', 'packaging']);
 const COMPLETE_STATUSES = new Set<SocialContentTaskStatus>(['delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed']);
-const CONTENT_COMPLETE_STATUSES = new Set<SocialContentTaskStatus>(['asset_review', 'packaging', ...COMPLETE_STATUSES]);
 
 function isTaskDetail(task: TaskListItem): task is SocialContentTaskDetail {
   return 'artifacts' in task;
@@ -60,34 +48,12 @@ function contentReleaseBlocked(task: TaskListItem): boolean {
 function workflowInterruption(task: TaskListItem): string | null {
   if (!isTaskDetail(task)) return null;
   const stage = task.agentWorkflow?.stage;
-  if (stage === 'needs_facts') return '缺少可核验的产品事实，请补充资料后继续';
-  if (stage === 'needs_rights') return '素材使用权尚未确认，请确认后继续';
-  if (stage === 'needs_budget') return '预计费用超出预算，请调整方案后继续';
-  if (stage === 'goal_degraded') return '当前方案会降低成片目标，请补充素材或改为概念样片';
-  if (stage === 'failed_recoverable') return '本次制作未完成；请查看原因并补充素材后继续';
+  if (stage === 'needs_facts') return '还需要补充产品或企业资料';
+  if (stage === 'needs_rights') return '还需要确认素材使用范围';
+  if (stage === 'needs_budget') return '当前方案超出预算';
+  if (stage === 'goal_degraded') return '当前素材无法达到预期效果';
+  if (stage === 'failed_recoverable') return '本次制作未完成，可以直接重新尝试';
   return null;
-}
-
-function taskCounts(task: TaskListItem): { generated: number; pendingReview: number } {
-  if (isTaskDetail(task)) {
-    const artifacts = socialContentCurrentArtifacts(task.artifacts);
-    return {
-      generated: artifacts.length,
-      pendingReview: artifacts.filter(item => item.status === 'review_required').length,
-    };
-  }
-  return {
-    generated: task.artifactCount,
-    pendingReview: task.status === 'asset_review'
-      ? Math.max(0, task.artifactCount - task.approvedArtifactCount)
-      : 0,
-  };
-}
-
-function directorPlanComplete(task: TaskListItem): boolean {
-  return (isTaskDetail(task) && task.agentWorkflow?.directorBrief.status === 'ready')
-    || task.directorPlan?.status === 'ready'
-    || CONTENT_COMPLETE_STATUSES.has(task.status);
 }
 
 function canProduceWithoutCustomerShoot(task: TaskListItem): boolean {
@@ -95,139 +61,10 @@ function canProduceWithoutCustomerShoot(task: TaskListItem): boolean {
   return feasibility === 'full_fidelity' || feasibility === 'functional_equivalent';
 }
 
-function automaticStep(task: TaskListItem): string {
-  const interruption = workflowInterruption(task);
-  if (interruption) return interruption;
-  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜方案已确认可完整或等价实现，确认事实后即可自动制作';
-  if (task.status === 'draft' || task.status === 'needs_input') return '等待必要资料确认';
-  if (task.status === 'plan_review') return '确认任务后，编导 Agent 会先完成导演方案';
-  if (task.status === 'producing' && !directorPlanComplete(task)) return '编导 Agent 正在整理脚本、口播、字幕与镜头节奏';
-  if (task.status === 'producing') return '内容 Agent 正按编导方案生成配音、字幕并剪辑视频';
-  if (task.status === 'attention') return '系统正在自动切换可用模型或素材来源；如需确认产品事实或版权，会单独列出';
-  if (task.status === 'paused') {
-    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'needs_facts') return '缺少可核验的产品事实，请补充资料后继续';
-    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'needs_rights') return '素材使用权尚未确认，请确认后继续';
-    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'needs_budget') return '预计费用超出预算，请调整方案后继续';
-    if (isTaskDetail(task) && task.agentWorkflow?.stage === 'goal_degraded') return '当前只能降低目标，需要你确认生成概念样片还是补充素材';
-    return '自动处理遇到可恢复问题，现有方案和素材已保留';
-  }
-  if (task.status === 'asset_review') return contentReleaseBlocked(task) ? '视频已生成，但内容检查未通过，需要修改' : '视频、口播和字幕已经生成，等待你审核';
-  if (task.status === 'packaging') return '正在整理视频、封面、文案和发布包';
-  if (task.status === 'delivered' || task.status === 'awaiting_publish') return '成品与发布包已经准备完成';
-  if (task.status === 'awaiting_metrics') return '等待发布数据回收';
-  return '本轮内容任务已经完成';
-}
-
-function compactHeadline(task: SocialContentTaskDetail): string {
-  const counts = taskCounts(task);
-  if (workflowInterruption(task)) return '制作遇到问题，已有资料和进度均已保留';
-  if ((counts.pendingReview > 0 || task.status === 'asset_review') && contentReleaseBlocked(task)) return '成片需要修改，当前不可发布';
-  if (counts.pendingReview > 0 || task.status === 'asset_review') return '内容已经生成，等待你审核';
-  if (COMPLETE_STATUSES.has(task.status)) return '本轮内容已经制作完成';
-  if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜托管方案已就绪，可以开始自动制作';
-  if (task.status === 'draft' || task.status === 'needs_input') return '确认必要信息后，机器人会自动开始制作';
-  if (task.status === 'plan_review') return '确认后，编导 Agent 会先完成导演方案';
-  if (task.directorPlan?.status === 'blocked') return '编导方案正在自动检查与修复';
-  if (!directorPlanComplete(task)) return '编导 Agent 正在准备导演方案';
-  return '内容 Agent 正在按导演方案生成视频';
-}
-
-function activeAgentLabel(task: TaskListItem): string {
-  if (workflowInterruption(task)) return '需要处理';
-  if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return '等待开始';
-  if (task.directorPlan?.status === 'blocked') return '编导 Agent 自动修复中';
-  if (!directorPlanComplete(task)) return '编导 Agent 策划中';
-  if (!CONTENT_COMPLETE_STATUSES.has(task.status)) return '内容 Agent 制作中';
-  if (contentReleaseBlocked(task)) return '成片需要修改';
-  return socialContentStatusLabel(task.status);
-}
-
-type AgentStepState = 'pending' | 'current' | 'complete' | 'blocked' | 'unavailable';
-
-function agentStepTone(state: AgentStepState): string {
-  if (state === 'complete') return 'border-emerald-200 bg-emerald-50/70 text-emerald-800';
-  if (state === 'current') return 'border-blue-200 bg-blue-50/70 text-blue-800';
-  if (state === 'blocked') return 'border-amber-200 bg-amber-50/70 text-amber-800';
-  return 'border-slate-200 bg-slate-50 text-slate-500';
-}
-
-function agentStepLabel(state: AgentStepState): string {
-  if (state === 'complete') return '已完成';
-  if (state === 'current') return '进行中';
-  if (state === 'blocked') return '自动修复中';
-  if (state === 'unavailable') return '未记录';
-  return '等待中';
-}
-
-function directorSourceLabel(source: SocialDirectorPlanSummary['scriptSource']): string {
-  if (source === 'reference_analysis') return '参考视频逐镜分析';
-  if (source === 'asset_supply_plan') return '系统托管素材方案';
-  if (source === 'inspiration_script') return '灵感中心参考脚本';
-  if (source === 'knowledge_fallback') return '已确认的企业资料与素材';
-  return '平台通用安全结构';
-}
-
-function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
-  const plan = task.directorPlan;
-  const beforeStart = ['draft', 'needs_input', 'plan_review'].includes(task.status);
-  const directorComplete = directorPlanComplete(task);
-  const contentComplete = CONTENT_COMPLETE_STATUSES.has(task.status);
-  const directorState: AgentStepState = !plan && contentComplete
-    ? 'unavailable'
-    : plan?.status === 'blocked'
-      ? 'blocked'
-      : directorComplete
-        ? 'complete'
-        : beforeStart
-          ? 'pending'
-          : 'current';
-  const contentState: AgentStepState = contentComplete
-    ? 'complete'
-    : directorComplete && !beforeStart
-      ? 'current'
-      : 'pending';
-  const summaryRows = plan?.status === 'ready' ? [
-    { label: '脚本', value: plan.scriptSummary, icon: Clapperboard },
-    { label: '口播', value: plan.voiceoverSummary, icon: Mic2 },
-    { label: '字幕', value: plan.subtitleSummary, icon: Subtitles },
-    { label: '镜头与节奏', value: plan.shotRhythmSummary, icon: Film },
-  ] : [];
-
-  return (
-    <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-      <p className="text-[9px] font-black tracking-[0.08em] text-slate-500">自动制作接力</p>
-      <div className="mt-2 grid gap-2">
-        <div className={`rounded-xl border px-3 py-2.5 ${agentStepTone(directorState)}`}>
-          <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2 text-xs font-black"><Clapperboard size={14} />编导 Agent</span>
-            <span className="text-[9px] font-black">{agentStepLabel(directorState)}</span>
-          </div>
-          <p className="mt-1 text-[10px] leading-4 opacity-80">定义钩子、叙事、逐镜视觉目标、事实边界和验收标准，不预选模型或供应商</p>
-        </div>
-        <div className={`rounded-xl border px-3 py-2.5 ${agentStepTone(contentState)}`}>
-          <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2 text-xs font-black"><Bot size={14} />内容 Agent</span>
-            <span className="text-[9px] font-black">{agentStepLabel(contentState)}</span>
-          </div>
-          <p className="mt-1 text-[10px] leading-4 opacity-80">检索候选素材与能力，比较成本、耗时、成功率和权利风险；编导审核通过后执行</p>
-        </div>
-      </div>
-
-      {plan?.status === 'ready' && (
-        <details className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-[11px] font-black text-slate-800">
-            <span>查看导演方案摘要</span>
-            <span className="shrink-0 text-[9px] font-bold text-slate-500">{plan.sceneCount} 个镜头 · {plan.language === 'zh' ? '中文' : '英文'}</span>
-          </summary>
-          <div className="space-y-2 border-t border-slate-100 bg-slate-50/70 p-3">
-            <p className="text-[10px] leading-4 text-slate-500">方案依据：{directorSourceLabel(plan.scriptSource)}。导演方案会直接交给内容 Agent，不需要你逐项填写。</p>
-            {summaryRows.map(row => <div key={row.label} className="rounded-lg bg-white px-3 py-2 shadow-sm"><p className="flex items-center gap-1.5 text-[9px] font-black text-emerald-700"><row.icon size={11} />{row.label}</p><p className="mt-1 text-[10px] leading-4 text-slate-700">{row.value}</p></div>)}
-          </div>
-        </details>
-      )}
-      {plan?.status === 'blocked' && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-800">编导方案暂未通过自动检查，机器人会保留现有资料、切换素材来源并继续修复。</p>}
-    </div>
-  );
+function taskContext(task: TaskListItem): string {
+  return task.brief.productRef?.trim()
+    || task.brief.objective?.trim()
+    || '内容任务';
 }
 
 function statusTone(status: SocialContentTaskStatus): string {
@@ -235,24 +72,6 @@ function statusTone(status: SocialContentTaskStatus): string {
   if (COMPLETE_STATUSES.has(status)) return 'bg-emerald-50 text-emerald-800';
   if (status === 'attention' || status === 'paused') return 'bg-amber-50 text-amber-800';
   return 'bg-blue-50 text-blue-700';
-}
-
-function StatusGraphic({ task }: { task: SocialContentTaskDetail }) {
-  const counts = taskCounts(task);
-  const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
-  const review = counts.pendingReview > 0 || task.status === 'asset_review';
-  const complete = COMPLETE_STATUSES.has(task.status);
-
-  if (review) return <CheckCircle2 size={19} aria-hidden />;
-  if (complete) return <FileCheck2 size={19} aria-hidden />;
-  return (
-    <span className="relative flex h-10 w-10 shrink-0 items-center justify-center" aria-hidden>
-      {active && <span className="absolute inset-0 animate-spin rounded-full border-2 border-emerald-100 border-t-emerald-600 motion-reduce:animate-none" />}
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
-        <Bot size={17} />
-      </span>
-    </span>
-  );
 }
 
 export default function SocialProductionProgressPanel({
@@ -275,8 +94,6 @@ export default function SocialProductionProgressPanel({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
-  const counts = taskCounts(task);
-  const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
   const remainingTaskCount = Math.max(0, taskTotalItems - tasks.length);
   const taskItems: TaskListItem[] = [task, ...tasks.filter(item => item.taskId !== task.taskId)];
 
@@ -311,67 +128,58 @@ export default function SocialProductionProgressPanel({
 
   const selectTask = (taskId: string) => {
     if (taskId !== task.taskId) onSelectTask?.(taskId);
+    setOpen(false);
   };
 
   const currentAction = (() => {
+    if (task.status === 'paused' && task.agentWorkflow?.stage === 'failed_recoverable') {
+      return onStart ? { label: '重新尝试', icon: <RotateCcw size={14} />, action: onStart } : null;
+    }
     if (workflowInterruption(task)) {
-      return onEdit ? { label: '查看原因并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
+      return onEdit ? { label: '查看并补充', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'draft' || task.status === 'needs_input') {
       return onEdit ? { label: canProduceWithoutCustomerShoot(task) ? '确认任务信息' : '补充任务资料', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'plan_review') {
-      const estimate = task.agentWorkflow?.executionPlan.estimatedTotalCostCny;
-      return onPlanReview ? { label: typeof estimate === 'number' ? `查看费用与效果 · 预计 ¥${estimate.toFixed(2)}` : '查看费用与效果', icon: <Bot size={14} />, action: onPlanReview } : null;
+      return onPlanReview ? { label: '查看方案与费用', icon: <ChevronRight size={14} />, action: onPlanReview } : null;
     }
     if (task.status === 'attention') {
       return onEdit ? { label: '查看需确认事项', icon: <ChevronRight size={14} />, action: onEdit } : null;
     }
     if (task.status === 'paused') {
-      return onStart ? { label: '继续自动处理', icon: <RotateCcw size={14} />, action: onStart } : null;
+      return onStart ? { label: '继续处理', icon: <RotateCcw size={14} />, action: onStart } : null;
     }
     if (task.status === 'asset_review') {
       if (contentReleaseBlocked(task)) {
-        return onEdit ? { label: '继续修改并补充素材', icon: <ChevronRight size={14} />, action: onEdit } : null;
+        return onEdit ? { label: '继续修改', icon: <ChevronRight size={14} />, action: onEdit } : null;
       }
-      return onReview ? { label: '审核生成结果', icon: <CheckCircle2 size={14} />, action: onReview } : null;
+      return onReview ? { label: '审核成片', icon: <CheckCircle2 size={14} />, action: onReview } : null;
     }
     return null;
   })();
 
   return (
-    <div className="fixed bottom-24 right-4 z-40 sm:right-6" data-social-production-progress>
+    <div className="fixed bottom-24 right-4 z-40 sm:right-6" data-social-task-list>
       <button
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="group flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-2xl border border-emerald-200 bg-white px-3 py-2.5 text-left shadow-[0_10px_30px_rgba(15,23,42,0.16)] transition hover:border-emerald-300 hover:shadow-[0_14px_34px_rgba(16,185,129,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:max-w-[19rem]"
+        className="group flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 text-left shadow-[0_10px_30px_rgba(15,23,42,0.14)] transition hover:border-emerald-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
       >
-        <span className={counts.pendingReview > 0 ? 'text-amber-700' : 'text-emerald-700'}>
-          <StatusGraphic task={task} />
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700" aria-hidden><ListTodo size={18} /></span>
+        <span>
+          <span className="block text-xs font-black text-slate-900">全部任务</span>
+          <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">共 {taskTotalItems} 个</span>
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-[10px] font-black tracking-[0.08em] text-emerald-700">
-            {active ? activeAgentLabel(task) : socialContentStatusLabel(task.status)}
-          </span>
-          <span role="status" aria-live="polite" className="mt-0.5 block truncate text-xs font-black leading-5 text-slate-900">
-            {compactHeadline(task)}
-          </span>
-          <span className="mt-0.5 block truncate text-[10px] font-semibold text-slate-500">查看制作任务</span>
-        </span>
-        <ChevronRight size={17} className="shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-emerald-700" aria-hidden />
+        <ChevronRight size={16} className="text-slate-400 transition group-hover:translate-x-0.5" aria-hidden />
       </button>
 
       {open && (
         <div className="fixed inset-0 z-[80]" role="presentation">
-          <button
-            type="button"
-            aria-label="关闭制作任务详情"
-            className="absolute inset-0 bg-slate-950/35 backdrop-blur-[1px]"
-            onClick={() => setOpen(false)}
-          />
+          <button type="button" aria-label="关闭任务列表" className="absolute inset-0 bg-slate-950/35 backdrop-blur-[1px]" onClick={() => setOpen(false)} />
           <aside
             ref={drawerRef}
             role="dialog"
@@ -381,22 +189,20 @@ export default function SocialProductionProgressPanel({
           >
             <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
               <div>
-                <p className="text-[10px] font-black tracking-[0.1em] text-emerald-700">AI 制作团队</p>
-                <h2 id={drawerTitleId} className="mt-0.5 text-lg font-black text-slate-950">制作任务</h2>
-                <p className="mt-1 text-xs text-slate-500">编导 Agent 定方案，内容 Agent 生成视频</p>
+                <p className="text-[10px] font-black tracking-[0.1em] text-emerald-700">内容制作</p>
+                <h2 id={drawerTitleId} className="mt-0.5 text-lg font-black text-slate-950">任务列表</h2>
+                <p className="mt-1 text-xs text-slate-500">选择任务，查看或继续处理</p>
               </div>
               <div className="flex items-center gap-1.5">
-                <button type="button" disabled={busy} onClick={onRefresh} aria-label="刷新制作任务" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50"><RefreshCcw size={16} /></button>
-                <button ref={closeButtonRef} type="button" onClick={() => setOpen(false)} aria-label="关闭制作任务" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+                <button type="button" disabled={busy} onClick={onRefresh} aria-label="刷新任务列表" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50"><RefreshCcw size={16} /></button>
+                <button ref={closeButtonRef} type="button" onClick={() => setOpen(false)} aria-label="关闭任务列表" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100"><X size={18} /></button>
               </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5" aria-live="polite">
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
               <div className="space-y-3">
                 {taskItems.map(item => {
                   const selected = item.taskId === task.taskId;
-                  const itemCounts = taskCounts(item);
-                  const itemActive = ACTIVE_STATUSES.has(item.status);
                   return (
                     <article key={item.taskId} className={`overflow-hidden rounded-2xl border bg-white transition ${selected ? 'border-emerald-300 shadow-[0_8px_24px_rgba(16,185,129,0.10)]' : 'border-slate-200'}`}>
                       <button
@@ -408,35 +214,12 @@ export default function SocialProductionProgressPanel({
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">
                             <span className="block truncate text-sm font-black text-slate-950">{item.brief.title}</span>
-                            <span className="mt-1 block text-[10px] font-semibold text-slate-500">更新于 {new Date(item.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            <span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-slate-600">{taskContext(item)}</span>
                           </span>
-                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${statusTone(item.status)}`}>{itemActive ? activeAgentLabel(item) : socialContentStatusLabel(item.status)}</span>
+                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${statusTone(item.status)}`}>{socialContentStatusLabel(item.status)}</span>
                         </span>
-
-                        <span className="mt-4 flex items-start gap-2.5 rounded-xl bg-slate-50 px-3 py-3">
-                          <span className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 shadow-sm">
-                            {itemActive && <span className="absolute inset-0 animate-spin rounded-full border border-transparent border-t-emerald-600 motion-reduce:animate-none" aria-hidden />}
-                            <Bot size={14} aria-hidden />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block text-[9px] font-black tracking-[0.06em] text-slate-500">当前自动步骤</span>
-                            <span className="mt-0.5 block text-xs font-bold leading-5 text-slate-800">{automaticStep(item)}</span>
-                          </span>
-                        </span>
-
-                        <span className="mt-3 grid grid-cols-2 gap-2">
-                          <span className="rounded-xl border border-slate-100 px-3 py-2.5">
-                            <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><FileCheck2 size={11} />已完成产物</span>
-                            <strong className="mt-1 block text-xs text-slate-900">{itemCounts.generated > 0 ? `${itemCounts.generated} 项` : '生成中'}</strong>
-                          </span>
-                          <span className="rounded-xl border border-slate-100 px-3 py-2.5">
-                            <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><Clock3 size={11} />待用户审核</span>
-                            <strong className={`mt-1 block text-xs ${itemCounts.pendingReview > 0 ? 'text-amber-700' : 'text-slate-900'}`}>{itemCounts.pendingReview > 0 ? `${itemCounts.pendingReview} 项` : '暂无'}</strong>
-                          </span>
-                        </span>
+                        <span className="mt-2 block text-[10px] font-semibold text-slate-400">{selected ? '当前查看 · ' : ''}更新于 {new Date(item.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                       </button>
-
-                      {selected && <DirectorAgentHandoff task={item} />}
 
                       {selected && currentAction && (
                         <div className="border-t border-slate-100 px-4 py-3">

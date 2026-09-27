@@ -49,6 +49,8 @@ const SocialContentPlanningPage = lazy(() => import('./components/socialContent/
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
 const DesignPrototype = lazy(() => import('./dev/DesignPrototype'));
+const SocialContentPreview = lazy(() => import('./dev/SocialContentPreview'));
+const SmartBusinessPreview = lazy(() => import('./dev/SmartBusinessPreview'));
 const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 export type { Page } from './pageRegistry';
@@ -67,6 +69,20 @@ export default function App() {
     return (
       <Suspense fallback={<PageLoading />}>
         <DesignPrototype />
+      </Suspense>
+    );
+  }
+  if (import.meta.env.DEV && publicPath === '/social-content-preview') {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <SocialContentPreview />
+      </Suspense>
+    );
+  }
+  if (import.meta.env.DEV && publicPath === '/smart-business-preview') {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <SmartBusinessPreview />
       </Suspense>
     );
   }
@@ -337,10 +353,6 @@ export default function App() {
 
   const handleNavigate = useCallback((p: Page) => {
     const next = resolvePage(p) || 'digitalEmployees';
-    if (p === 'socialSetup') {
-      try { sessionStorage.setItem('lingshu:operating-config:open', '1'); } catch { /* optional storage */ }
-      window.dispatchEvent(new CustomEvent('lingshu:operating-config'));
-    }
     if (next === 'traffic') setTrafficEntryView((p === 'accountManagement' || p === 'socialAccounts') ? 'accounts' : 'publish');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
@@ -405,7 +417,6 @@ export default function App() {
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
-      if (incomingDetail.page === 'socialSetup') window.dispatchEvent(new CustomEvent('lingshu:operating-config'));
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
@@ -561,11 +572,11 @@ export default function App() {
   }
 
   const starterMode = starterAccess === 'starter_198';
-  const showSocialContentPlanning = page === 'smartAssets' && smartAssetsView === 'create' && !socialContentNavigation?.taskId && !smartAssetsWorkflowContext;
   const activeSocialContentTaskId = isSocialTaskContextPage(page)
     && socialContentNavigation?.page === page
     ? socialContentNavigation.taskId
     : null;
+  const showSocialContentPlanning = page === 'smartAssets' && smartAssetsView === 'create' && !activeSocialContentTaskId && !smartAssetsWorkflowContext;
 
 
   return (
