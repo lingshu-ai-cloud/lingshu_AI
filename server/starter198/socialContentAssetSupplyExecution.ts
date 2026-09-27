@@ -270,22 +270,26 @@ export function assertSocialAssetSupplyTruthBoundary(input: {
 function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] {
   // The fee card promises a real product-scene generation. Provider or quality
   // failure must pause instead of silently returning a lower-quality graphic.
-  if (shot.sourceStrategy === 'aigc_product_scene_replication') {
-    return shot.productSceneReplication && shot.sourceRefs.length > 0
-      ? ['aigc_product_scene_replication'] : [];
+  if (shot.sourceStrategy === 'aigc_product_scene_replication'
+    && shot.productSceneReplication && shot.sourceRefs.length > 0) {
+    return ['aigc_product_scene_replication'];
   }
   // A person/presenter shot must not be silently represented as a generic
-  // graphic. If the registered digital-human capability is unavailable, the
-  // run remains visibly unavailable so the user can choose the free or shoot
-  // plan instead.
-  if (shot.sourceStrategy === 'authorized_digital_presenter') {
-    return shot.digitalHumanPlan
-      && ['preview_only', 'ready_for_capability_check'].includes(shot.digitalHumanPlan.executionState)
-      ? ['authorized_digital_presenter'] : [];
+  // graphic once an authorized presenter plan has been confirmed without an
+  // explicit fallback. A reviewed fallback remains a valid recovery route.
+  if (shot.sourceStrategy === 'authorized_digital_presenter'
+    && shot.digitalHumanPlan
+    && shot.fallbackSourceStrategy === null
+    && ['preview_only', 'ready_for_capability_check'].includes(shot.digitalHumanPlan.executionState)) {
+    return ['authorized_digital_presenter'];
   }
+  // If a preliminary route names a capability that was never made executable,
+  // exclude that route and retain the plan's safe fallback. This keeps the
+  // zero-input free path usable without weakening a confirmed paid route.
   return [...new Set([
     shot.sourceStrategy,
     ...(shot.fallbackSourceStrategy ? [shot.fallbackSourceStrategy] : []),
+    ...(shot.truthBoundary.syntheticVisualAllowed ? ['motion_graphics' as const] : []),
   ])].filter(strategy => {
     if (strategy === 'authorized_digital_presenter') {
       return Boolean(shot.digitalHumanPlan
