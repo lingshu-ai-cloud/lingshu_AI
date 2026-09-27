@@ -43,6 +43,30 @@ try {
   assert.equal(budget, 5500);
   const runs = await store.list(AD_AUTOMATION_RUNS, { where: { tenant_id: 'tenant', taskId: task.id } });
   assert.ok(runs.items.some(r => r.status === 'VERIFIED'));
+  const evidence = runs.items.find(r => r.status === 'VERIFIED')!.decision as Record<string, unknown>;
+  assert.equal(evidence.planVersion, managed.version);
+  assert.equal(evidence.budgetBefore, 50);
+  assert.equal(evidence.budgetAfter, 55);
+  assert.ok(evidence.executionId);
+  // A schema that silently discards JSON must never allow a provider write.
+  const originalRead = store.getById;
+  const originalList = store.list;
+  store.getById = async <T>(collection: string, id: string) => {
+    const row = await originalRead(collection, id);
+    if (collection === AD_AUTOMATION_RUNS && row) delete row.decision;
+    return row as T | null;
+  };
+  store.list = async <T>(collection: string, query?: import('../storage/datastore.js').ListQuery) => {
+    const result = await originalList<T>(collection, query);
+    if (collection === 'platform_ad_executions') result.items = result.items.filter(row => (row as Record<string, unknown>).action === 'create');
+    return result;
+  };
+  budget = 5000;
+  await assert.rejects(runAdAutomationRule(rule), /持久化/);
+  assert.equal(writes, 1, 'missing durable decision prevents platform writes');
+  store.getById = originalRead;
+  store.list = originalList;
+  budget = 5500;
   await runAdAutomationRule(rule);
   assert.equal(writes, 1, 'cooldown prevents repeated writes');
   missingLinkClicks = true;

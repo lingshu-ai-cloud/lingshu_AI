@@ -75,12 +75,8 @@ export const PAGE_REGISTRY: Record<Page, PageDefinition> = {
   organizationPermissions: { navLabel: '组织与权限', canonicalTitle: '组织与权限' },
 } satisfies Record<Page, PageDefinition>;
 
-export const SOCIAL_PROGRAM_NAV_PAGES = [
-  'socialWorkspace',
-  'socialSetup',
-  'socialAccounts',
-  'socialPlanning',
-] as const satisfies readonly Page[];
+/** Legacy identifiers are accepted by resolvePage, never rendered as navigation. */
+export const SOCIAL_PROGRAM_NAV_PAGES = [] as const satisfies readonly Page[];
 
 /** Primary organic-content destinations. Account authorization stays in settings. */
 export const PRIMARY_SOCIAL_NAV_PAGES = [
@@ -103,6 +99,8 @@ export function isPage(value: unknown): value is Page {
  */
 export function resolvePage(value: unknown): Page | null {
   if (!isPage(value)) return null;
+  if (value === 'socialWorkspace' || value === 'socialSetup' || value === 'socialPlanning') return 'digitalEmployees';
+  if (value === 'socialAccounts') return 'traffic';
   if (value === 'retention') return 'conversion';
   if (value === 'accountManagement') return 'traffic';
   return value;

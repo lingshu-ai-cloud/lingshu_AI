@@ -1,3 +1,8 @@
+import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
+import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
+import { randomUUID } from 'node:crypto';
+import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant.js';
+import { applyManagedPublishingGrant, managedPublishingGrantCovers } from '../digitalEmployees/managedPublishingGrant.js';
 import { productionQualitySummary } from '../digitalEmployees/productionQualitySummary.js';
 import { productionFailureState } from '../digitalEmployees/productionPreflight.js';
 import { reopenNoDataCustomerBranch } from '../digitalEmployees/customerReentry.js';
@@ -1529,6 +1534,11 @@ async function applyPackageGrant(tenantId: string, goal: GoalRecord, run: RunRec
   const pack = body.businessPackage as WeeklyPackage | undefined;
   const actor = String(body.packageApprovedBy || '');
   if (!pack || !actor || pack.authorization.mode !== 'bounded' || beijingDate(new Date()) < goal.starts_at) return false;
+  const recurringGrantId = String(body.managedPublishingGrantId || '');
+  if (recurringGrantId) {
+    const latest = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+    if (task.task_key !== 'content_release_approval' || !latest || !managedPublishingGrantCovers(pack, latest.config, recurringGrantId, goal.ends_at)) return false;
+  }
   // Edited/re-approved subjects always return to a human; grants are not renewed implicitly.
   const previous = await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, task_id: task.id }, perPage: 100 });
   if (previous.items.some(a => a.status !== 'pending')) return false;
@@ -1554,7 +1564,7 @@ async function applyPackageGrant(tenantId: string, goal: GoalRecord, run: RunRec
     // Use createApproval's exact schedule anchor/hash for immutable receipts.
     publishing = await publishingApprovalPackage(tenantId, goal, run, task, tasks, approval.created_at);
     if (publishing.contentHash !== approval.content_hash || publishing.items.some(i => beijingDate(new Date(i.scheduledAt)) > goal.ends_at)) return false;
-    entries = await createPublishingCalendarEntries({ tenantId, runId: run.id, approvalTaskId: task.id, approvalId: approval.id, approvedContentHash: publishing.contentHash, package: publishing });
+    entries = await createPublishingCalendarEntries({ tenantId, runId: run.id, approvalTaskId: task.id, approvalId: approval.id, approvedContentHash: publishing.contentHash, package: publishing, managedPublishingGrantId: recurringGrantId || undefined });
   }
   if (batch) await applyFollowupBatchDecision({ tenantId, batchId: batch.id, decision: 'approved', userId: actor, approvalId: approval.id });
   const note = `依据本周经营包第 ${pack.revision} 版的范围授权`;
@@ -2077,6 +2087,11 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   }
   const existing = await configForTenant(tenantId);
   const now = new Date().toISOString();
+  const grantErrors = managedPublishingGrantErrors(submittedConfig.managedPublishingGrant, submittedConfig, beijingDate(new Date(now)));
+  if (grantErrors.length) { res.status(400).json({ error: 'managed_publishing_grant_invalid', message: grantErrors.join('；') }); return; }
+  if (submittedConfig.managedPublishingGrant?.enabled) {
+    submittedConfig.managedPublishingGrant = { ...submittedConfig.managedPublishingGrant, grantId: randomUUID(), authorizedBy: userId, authorizedAt: now };
+  } else delete submittedConfig.managedPublishingGrant;
   const enterprise = await readTenantEnterpriseProfile(tenantId);
   const customerAgentEnabled = submittedConfig.enabledWorkflows.some(workflow => (
     workflow === 'customer_segmentation' || workflow === 'batch_followup'
@@ -2428,7 +2443,7 @@ async function ensureReviewRunTasks(tenantId: string, goal: GoalRecord, plan: Pl
   }
 }
 
-async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>) {
+export async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>) {
   return withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
   const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
   if (!goal) { return { status: 404, body: { error: 'goal_not_found' } }; }
@@ -2481,7 +2496,12 @@ async function approveGoalForReview(tenantId: string, userId: string, goalId: st
   // Account and delivery readiness are checked by the affected task at runtime.
   // Do not clear the content production platforms when no publishing account exists.
   const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
-  const pack = savedBody.businessPackage as WeeklyPackage | undefined;
+  let pack = savedBody.businessPackage as WeeklyPackage | undefined;
+  let managedPublishingGrantId = String(savedBody.managedPublishingGrantId || '');
+  if (pack && !managedPublishingGrantId) {
+    const authorized = applyManagedPublishingGrant(pack, currentConfig, goal.ends_at);
+    if (authorized.grantId) { pack = authorized.pack; managedPublishingGrantId = authorized.grantId; }
+  }
   if (pack) {
     if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
@@ -2491,12 +2511,12 @@ async function approveGoalForReview(tenantId: string, userId: string, goalId: st
   const planDraft = pack ? compilePackage(pack, goalInput(goal), config) : buildWeeklyPlan(goalInput(goal), config);
   const now = new Date().toISOString();
   const productionTask = pack?.tasks.find(t => t.templateId === 'production');
-  if (productionTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: productionTask.videoPlans };
+  if (productionTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: productionTask.videoPlans };
   await store.update(COLLECTION.goals, goal.id, { status: 'active', updated_at: now, ...(pack ? { scope: goal.scope, content_platforms: goal.content_platforms } : {}) });
   const frozenPlanMetadata = existingPlan
     ? jsonObject<Record<string, unknown>>(existingPlan.plan, {})
     : configurationSnapshot(resolvedConfiguration);
-  const approvedPlanBody = { ...frozenPlanMetadata, ...planDraft, ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}) };
+  const approvedPlanBody = { ...frozenPlanMetadata, ...planDraft, ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}), ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}) };
   let plan: PlanRecord;
   if (existingPlan) {
     const updated = await store.update(COLLECTION.plans, existingPlan.id, { status: 'approved', plan: approvedPlanBody });
@@ -3588,6 +3608,65 @@ async function cancelDigitalEmployeeRunRoute(req: Request, res: Response): Promi
 
 digitalEmployeesRouter.post('/runs/:runId/cancel', cancelDigitalEmployeeRunRoute);
 
+/** Background continuation uses a database lease and durable source linkage. */
+export async function continueManagedOperatingCycle(tenantId: string, sourceRunId: string, now = new Date()): Promise<string | null> {
+  const elapsedStart = Date.now();
+  const leaseNow = () => new Date(now.getTime() + Date.now() - elapsedStart);
+  const lease = await acquireDurableOperationLease({ dataStore: store, tenantId, scope: 'managed-operating-cycle', subjectId: 'next-cycle', ownerId: `runtime-${process.pid}`, now, leaseDurationMs: 30 * 60_000 });
+  if (!lease) return null;
+  try {
+    const sourceRun = await tenantRecord<RunRecord>(COLLECTION.runs, sourceRunId, tenantId);
+    if (!sourceRun || sourceRun.status !== 'succeeded' || ['starter_198', 'starter_social_content'].includes(String(sourceRun.product_profile || ''))) return null;
+    const source = await tenantRecord<GoalRecord>(COLLECTION.goals, sourceRun.goal_id, tenantId);
+    const sourcePlan = await tenantRecord<PlanRecord>(COLLECTION.plans, sourceRun.plan_id, tenantId);
+    const review = await first<StoredRecord>(COLLECTION.reviews, { tenant_id: tenantId, run_id: sourceRunId });
+    if (!source || source.status !== 'completed' || !sourcePlan || sourcePlan.status !== 'approved' || !review || review.status !== 'generated') return null;
+    const body = jsonObject<Record<string, unknown>>(sourcePlan.plan, {});
+    const sourcePack = body.businessPackage as WeeklyPackage | undefined;
+    const resolved = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+    const window = nextManagedCycleWindow(source, now);
+    if (!sourcePack || !resolved || !window) return null;
+    const summary = jsonObject<Record<string, unknown>>(review.summary, {});
+    const recommendations = Array.isArray(summary.nextPlanRecommendations) ? summary.nextPlanRecommendations.filter((value): value is string => typeof value === 'string') : [];
+    const prepared = prepareManagedCyclePackage(sourcePack, resolved.config, window.endsAt, recommendations, now);
+    if (!prepared) return null;
+    let target: GoalRecord | null = null;
+    // Recover a goal saved before the source checkpoint, including after restart.
+    for (let page = 1; ; page++) {
+      const goals = await store.list<GoalRecord>(COLLECTION.goals, { where: { tenant_id: tenantId }, page, perPage: 100, sort: '-created_at' });
+      for (const candidate of goals.items) {
+        const context = jsonObject<{ managedContinuation?: { sourceRunId?: string } }>(candidate.scope, {});
+        if (context.managedContinuation?.sourceRunId === sourceRunId) { target = candidate; break; }
+      }
+      if (target || page >= goals.totalPages || !goals.items.length) break;
+    }
+    if (target && (target.starts_at !== window.startsAt || target.ends_at !== window.endsAt)) return target.id;
+    if (target) {
+      const existingRun = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: target.id });
+      if (existingRun && existingRun.status !== 'initializing') return target.id;
+    }
+    const input = { ...goalInput(source), title: '社媒托管经营周期', startsAt: window.startsAt, endsAt: window.endsAt, businessLine: 'content_growth' as const };
+    const issues = validatePackage(prepared.pack, input, resolved.config);
+    if (issues.length) throw Error(issues.join('；'));
+    await assertDurableOperationLease({ dataStore: store, lease, now: leaseNow() });
+    if (!target) {
+      const busy = await store.list<RunRecord>(COLLECTION.runs, { where: { tenant_id: tenantId }, perPage: 500 });
+      if (busy.items.some(run => !['succeeded', 'failed', 'cancelled'].includes(run.status))) return null;
+      target = await requiredCreate<GoalRecord>(COLLECTION.goals, { tenant_id: tenantId, business_line: 'content_growth', content_platforms: source.content_platforms, objective: source.objective, metric: source.metric, baseline: source.baseline, target: source.target, unit: source.unit, constraints: source.constraints, scope: { description: input.scope, videoPlans: prepared.pack.tasks.find(task => task.templateId === 'production')?.videoPlans, managedContinuation: { sourceRunId, sourceGoalId: source.id, reviewId: review.id, grantId: prepared.grantId, cycleKey: `${sourceRunId}:${window.startsAt}` } }, title: input.title, starts_at: input.startsAt, ends_at: input.endsAt, owner_id: resolved.config.managedPublishingGrant!.authorizedBy, status: 'draft', version: 1, created_at: now.toISOString(), updated_at: now.toISOString() });
+    }
+    let targetPlan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: target.id });
+    if (!targetPlan) targetPlan = await requiredCreate<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: target.id, status: 'draft', plan: { ...configurationSnapshot(resolved), ...compilePackage(prepared.pack, input, resolved.config), managedPublishingGrantId: prepared.grantId, managedSourceRunId: sourceRunId }, created_at: now.toISOString() });
+    await assertDurableOperationLease({ dataStore: store, lease, now: leaseNow() });
+    if (String(jsonObject<Record<string, unknown>>(targetPlan.plan, {}).managedPublishingGrantId || '') !== prepared.grantId) return null;
+    // Re-check revocation after writes and before activating paid work.
+    const latest = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+    if (!latest || !managedPublishingGrantCovers(prepared.pack, latest.config, prepared.grantId, target.ends_at, now.toISOString())) return null;
+    const result = await approveGoalForReview(tenantId, latest.config.managedPublishingGrant!.authorizedBy!, target.id, prepared.pack.revision, []);
+    if (result.status !== 200) { const error = result.body as { message?: string; error?: string }; throw Error(error.message || error.error || 'managed_cycle_activation_failed'); }
+    return target.id;
+  } finally { await releaseDurableOperationLease({ dataStore: store, lease }); }
+}
+
 /** Persist assignments before starting. Replays use source IDs stored in the plan. */
 export async function allocateReviewTodos(tenantId: string, userId: string, board: ReviewTodoBoard): Promise<string> {
   const targetId = await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
@@ -3641,13 +3720,14 @@ export async function allocateReviewTodos(tenantId: string, userId: string, boar
     const alreadyApplied = board.items.every(i => pack.reviewTodos?.some(p => sameTodoRequirements(p, i)));
     if (target.status !== 'draft') { if (alreadyApplied) return target.id; throw Error('下周目标已启动，请在任务执行页调整，不能自动追加'); }
     const updated = applyReviewTodoPlan(pack, board.items);
-    // Review scheduling authorizes preparation, never an inherited bounded external grant.
-    updated.authorization.mode = 'each';
+    // Never inherit last cycle's grant. Resolve explicit, current expiring consent.
+    const recurring = applyManagedPublishingGrant(updated, resolved.config, target.ends_at);
+    updated.authorization = recurring.pack.authorization;
     if (updated.tasks.some(t => t.ownerId)) throw Error('下周目标包含团队分工，请在目标页核对负责人后启动');
     const config = executionConfigForPlan(plan, resolved.config);
     const issues = validatePackage(updated, goalInput(target), configSnapshotForPlan(plan, resolved.config));
     if (issues.length) throw Error(issues.join('；'));
-    if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...compilePackage(updated, goalInput(target), config) } })) throw Error('下周计划保存失败');
+    if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...compilePackage(updated, goalInput(target), config), managedPublishingGrantId: recurring.grantId || '' } })) throw Error('下周计划保存失败');
     return target.id;
   });
   const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: targetId });

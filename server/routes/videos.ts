@@ -2809,7 +2809,8 @@ export async function queueExactSourceAnalysisForTenant(input: {
     return 'already_ready';
   }
   if (String(previous.requestedAnalysisMode) === 'exact'
-    && ['queued', 'waiting_for_video', 'analyzing'].includes(String(previous.geminiStatus || ''))) {
+    && ['queued', 'waiting_for_video', 'analyzing'].includes(String(previous.geminiStatus || ''))
+    && !(previous.geminiStatus === 'waiting_for_video' && previous.analysisError)) {
     return 'queued';
   }
   const analysisRunId = randomUUID();

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   SOCIAL_ASSET_AVAILABILITIES,
+  SOCIAL_REPLICATION_REFERENCE_MODES,
   SOCIAL_CONTENT_CREATION_MODES,
   SOCIAL_CONTENT_MANAGEMENT_MODES,
   SOCIAL_CONTENT_TASK_MODES,
@@ -126,6 +127,7 @@ const BRIEF_KEYS = [
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
   'customTopic', 'topic', 'legacyCreationRoute',
   'productionMode', 'creationMode', 'assetAvailability', 'managementMode',
+  'programRef', 'targetAccountRef', 'accountPlaybookRef', 'referenceMode', 'primaryExperimentVariable',
 ] as const;
 
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
@@ -135,6 +137,30 @@ function optionalNumber(value: unknown, code: string, maximum: number, integer =
     throw new SocialContentWorkflowError(code, 400);
   }
   return Math.round(parsed * 100) / 100;
+}
+
+/** Validate optional replication context consistently on input and stored projections. */
+export function parseSocialReplicationContext(source: Record<string, unknown>) {
+  const ref = (key: string, objectType: string) => {
+    const value = source[key];
+    if (value == null) return null;
+    const record = socialObject(value);
+    if (!record || record.objectType !== objectType) throw new SocialContentWorkflowError('social_content_reference_invalid', 400);
+    assertKeys(record, key === 'accountPlaybookRef' ? ['objectType', 'id', 'version', 'accountRef'] : ['objectType', 'id', 'version']);
+    return { objectType, id: requiredText(record.id, 'social_content_reference_invalid', 200), version: requiredText(record.version, 'social_content_reference_invalid', 200) };
+  };
+  const playbook = ref('accountPlaybookRef', 'account_playbook');
+  const referenceMode = source.referenceMode;
+  if (referenceMode !== undefined && !SOCIAL_REPLICATION_REFERENCE_MODES.includes(referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number])) {
+    throw new SocialContentWorkflowError('social_content_reference_mode_invalid', 400);
+  }
+  return {
+    programRef: ref('programRef', 'social_program'),
+    targetAccountRef: ref('targetAccountRef', 'social_owned_account'),
+    accountPlaybookRef: playbook ? { ...playbook, objectType: 'account_playbook' as const, accountRef: requiredText(socialObject(source.accountPlaybookRef)!.accountRef, 'social_content_reference_invalid', 200) } : null,
+    ...(referenceMode === undefined ? {} : { referenceMode: referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number] }),
+    primaryExperimentVariable: optionalText(source.primaryExperimentVariable, 'social_content_experiment_variable_invalid', 500),
+  };
 }
 
 export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskInput {
@@ -187,6 +213,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     throw new SocialContentWorkflowError('social_content_legacy_route_invalid', 400);
   }
   return {
+    ...parseSocialReplicationContext(source),
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
     productRef: optionalText(source.productRef, 'social_content_product_ref_invalid', 200),

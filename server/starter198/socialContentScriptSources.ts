@@ -886,3 +886,18 @@ export function parseStoredSocialShotMaterialMap(value: unknown): SocialShotMate
   if (!Array.isArray(raw)) throw new SocialContentWorkflowError('social_shot_material_map_record_invalid', 503);
   return structuredClone(raw) as SocialShotMaterialMapEntry[];
 }
+
+/** Read-only projection: expose actionable codes, never provider logs or local paths. */
+export async function readReferencePreparation(tenantId: string, sources: SocialTaskSource[]) {
+  const source = sources.find(item => item.status === 'active' && item.kind === 'reference_link');
+  if (!source) return { status: 'blocked' as const, reason: 'reference_missing' };
+  const tenants = [...new Set([tenantId, socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID) || 'demo-shared-video-pool'])];
+  for (const owner of tenants) {
+    const result = await store.list<Record<string, unknown>>('trend_videos', { where: { tenantId: owner, sourceUrl: source.sourceRef }, page: 1, perPage: 1 });
+    const row = result.items[0];
+    const analysis = socialObject(socialJson(row?.aiAnalysis));
+    const error = socialText(analysis?.analysisError);
+    if (error) return { status: 'blocked' as const, reason: /Monthly usage hard limit|quota|额度/i.test(error) ? 'reference_provider_quota' : 'reference_download_failed' };
+  }
+  return { status: 'pending' as const, reason: null };
+}

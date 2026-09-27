@@ -25,6 +25,9 @@ import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import InspirationEmptyState from './InspirationEmptyState';
 import { scoreSocialInspirationCandidate } from '../../shared/socialInspirationStrategy';
 import DiscoveryScopePanel from './inspiration/DiscoveryScopePanel';
+import { resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
+import { useSocialProgram } from '../contexts/SocialProgramContext';
+import { setActiveSocialContentTaskId } from '../lib/socialContentContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
@@ -2382,9 +2385,11 @@ interface VideoCardProps {
   onWatch: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
+  createLabel?: string;
+  creating?: boolean;
 }
 
-function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial }: VideoCardProps) {
+function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, createLabel, creating }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const inspirationScores = inspirationScoresForVideo(video);
@@ -2472,9 +2477,9 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFa
               className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-border px-2 text-xs font-bold text-text-secondary transition hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
               <Eye size={12} />查看详情
             </button>
-            <button type="button" onClick={onCreate}
+            <button type="button" onClick={onCreate} disabled={creating}
               className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-accent px-2 text-xs font-bold text-white transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30">
-              <Sparkles size={12} />用于创作
+              <Sparkles size={12} />{createLabel || (isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻')}
             </button>
           </div>
           <div className="mt-2 flex items-center justify-between text-[10px] font-semibold text-text-muted">
@@ -2492,7 +2497,7 @@ function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFa
 }
 
 // ── Video List Item ───────────────────────────────────────────────────────────
-function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial }: {
+function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, createLabel, creating }: {
   video: TrendVideo;
   isSelected: boolean;
   onSelect: () => void;
@@ -2500,6 +2505,8 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavor
   onWatch: () => void;
   onFavoriteMaterial?: () => void;
   favoritingMaterial?: boolean;
+  createLabel?: string;
+  creating?: boolean;
 }) {
   const meta = getPlatformMeta(video.platform);
   const trendColor = video.trend === 'hot' ? 'text-accent' : video.trend === 'rising' ? 'text-green' : 'text-text-muted';
@@ -2538,9 +2545,9 @@ function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, onFavor
         <p className="text-[10px] text-text-muted">{video.views}</p>
       </div>
       <div className="ml-auto flex w-full items-center justify-end gap-1.5 sm:ml-0 sm:w-auto">
-        <button type="button" onClick={onCreate}
+        <button type="button" onClick={onCreate} disabled={creating}
           className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white transition hover:brightness-95">
-          <Sparkles size={12} />用此灵感创作
+          <Sparkles size={12} />{createLabel || (isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻')}
         </button>
         <button type="button" onClick={onWatch} aria-label="预览内容" title="预览内容" className="rounded-lg p-2 text-text-muted transition hover:bg-surface hover:text-accent">
           {isImagePost ? <Images size={13} /> : <Play size={13} fill="currentColor" />}
@@ -3007,7 +3014,7 @@ function DirectorVideoDetailPanel({
             {!isImagePost && !exactQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={pending} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-accent px-3 text-xs font-bold text-accent disabled:opacity-50">{pending ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}全片精确分析</button>}
             {(payload?.analysisError || video.status === 'failed') && <button type="button" onClick={onRetry} disabled={analyzing} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary disabled:opacity-50">重新分析</button>}
             <button type="button" onClick={onPreview} className="min-h-10 rounded-lg border border-border px-3 text-xs font-bold text-text-secondary">预览原内容</button>
-            <button type="button" onClick={onCreate} disabled={!analysis && !imageEvidence} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />带分析进入内容制作</button>
+            <button type="button" onClick={onCreate} className="ml-auto inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-45"><Sparkles size={14} />{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</button>
           </div>
         </footer>
       </motion.aside>
@@ -3039,6 +3046,14 @@ interface InspirationDashboardProps {
 }
 
 export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow }: InspirationDashboardProps) {
+  const { activeProgram, accounts } = useSocialProgram();
+  const [creationAccountId, setCreationAccountId] = useState('');
+  useEffect(() => {
+    setCreationAccountId(soleInspirationCreationAccount(accounts, activeProgram?.programId));
+  }, [activeProgram?.programId, accounts]);
+  const inspirationLaunches = useRef(new Set<string>());
+  const [replicationTasks, setReplicationTasks] = useState<Record<string, string>>({});
+  const [launchingReferences, setLaunchingReferences] = useState<string[]>([]);
   const [materialEntry] = useState(initialMaterialLibraryEntry);
   const [innerView, setInnerView] = useState<InspirationInnerView>(() => materialEntry.openLibrary ? 'library' : 'inspiration');
   const [platform, setPlatform] = useState<Platform>('all');
@@ -3652,27 +3667,52 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  const enterInspirationWorkflow = (video: TrendVideo) => {
-    setMaterialMessage('');
-    if (!canProcessVideo(video)) {
-      setMaterialMessage('该内容缺少可用的时长或媒体信息，请先完成素材分析。');
+  const enterInspirationWorkflow = async (video: TrendVideo) => {
+    if (video.contentFormat === 'image' || video.id.startsWith('material-')) {
+      const analysis = getAnalysis(video);
+      onEnterWorkflow?.({
+        source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
+        video, scriptType: 'storyboard',
+        referenceAnalysis: analysis ? { title: video.title, visualStyle: analysis.scriptSummary15s.visualStyle,
+          coreEmotion: analysis.scriptSummary15s.coreEmotion, details: analysis.scriptDetails15s } : undefined,
+      });
       return;
     }
-    if (needsVideoEnhancement(video)) void analyzeVideoOnly(video, true);
-    const analysis = getAnalysis(video);
-    onEnterWorkflow?.({
-      source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
-      video,
-      scriptType: 'storyboard',
-      language: 'zh',
-      productInfo: '',
-      referenceAnalysis: analysis ? {
-        title: video.title,
-        visualStyle: analysis.scriptSummary15s.visualStyle,
-        coreEmotion: analysis.scriptSummary15s.coreEmotion,
-        details: analysis.scriptDetails15s,
-      } : undefined,
-    });
+    if (inspirationLaunches.current.has(video.id)) return;
+    const openTask = (taskId: string) => {
+      setActiveSocialContentTaskId(taskId);
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+        page: 'smartAssets', socialContentPage: 'smartAssets', socialContentTaskId: taskId, socialContentView: 'managed',
+      } }));
+    };
+    const candidateKey = `${video.id}:${creationAccountId}`;
+    const existing = replicationTasks[candidateKey];
+    if (existing) { openTask(existing); return; }
+    inspirationLaunches.current.add(video.id);
+    setLaunchingReferences(ids => [...ids, video.id]);
+    setMaterialMessage('正在关联参考与经营背景，交给编导 Agent 和内容 Agent 执行…');
+    try {
+      const program = activeProgram?.status === 'active' ? activeProgram : undefined;
+      const creationAccount = accounts.find(account => account.accountId === creationAccountId && account.status === 'active');
+      const result = await resumeOrCreateInspirationTask({
+        id: video.recordId || video.id, title: video.title,
+        sourceUrl: video.sourceUrl, crawledAt: video.crawledAt,
+        ...(creationAccount ? { context: {
+          targetAccountRef: { objectType: 'social_owned_account', id: creationAccount.accountId, version: String(creationAccount.version) },
+          platforms: [creationAccount.platform],
+        } } : {}),
+      }, program);
+      setReplicationTasks(tasks => ({ ...tasks, [candidateKey]: result.task.taskId }));
+      if (result.warning) {
+        setMaterialMessage(`${result.warning} 已保留原任务，点击“继续制作”查看和恢复。`);
+      }
+      openTask(result.task.taskId);
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '复刻任务暂时无法创建，请重试。');
+    } finally {
+      inspirationLaunches.current.delete(video.id);
+      setLaunchingReferences(ids => ids.filter(id => id !== video.id));
+    }
   };
 
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
@@ -4029,6 +4069,14 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 {materialMessage}
               </div>
             )}
+            {innerView === 'inspiration' && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+              <label htmlFor="inspiration-creation-account" className="font-semibold">创作账号</label>
+              <select id="inspiration-creation-account" value={creationAccountId} onChange={event => setCreationAccountId(event.target.value)} className="rounded-lg border border-border bg-surface px-3 py-2">
+                <option value="">暂不指定，仅制作内容</option>
+                {accounts.filter(account => account.status === 'active').map(account => <option key={account.accountId} value={account.accountId}>{account.displayName} · {account.platform}</option>)}
+              </select>
+              <span className="text-xs text-text-muted">已授权账号的合格成片可进入托管发布；未指定账号不会自动发布。</span>
+            </div>}
             {innerView === 'inspiration' && <DiscoveryScopePanel />}
             {innerView === 'inspiration' && <div className="mb-4 space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
               <div className="space-y-2.5">
@@ -4176,7 +4224,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                     <div key={video.id} className="relative">
                       <VideoCard video={video} index={i} isSelected={false}
                         onSelect={() => openDirectorAnalysis(video)}
-                        onCreate={() => enterInspirationWorkflow(video)}
+                        onCreate={() => void enterInspirationWorkflow(video)}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        creating={launchingReferences.includes(video.id)}
                         onWatch={() => handleWatch(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
                         favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
@@ -4195,7 +4245,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   {filtered.map(video => (
                     <VideoListItem key={video.id} video={video} isSelected={false}
                       onSelect={() => openDirectorAnalysis(video)}
-                      onCreate={() => enterInspirationWorkflow(video)}
+                      onCreate={() => void enterInspirationWorkflow(video)}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        creating={launchingReferences.includes(video.id)}
                       onWatch={() => handleWatch(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
                       favoritingMaterial={favoritingMaterialIds.includes(video.id)} />

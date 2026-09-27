@@ -354,6 +354,18 @@ async function ensureCollection(name: string, fields: FieldDef[]): Promise<void>
 }
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('platform_ad_worker_health', [
+    ...'tenant_id workerId state lastStartedAt lastCompletedAt lastFailedAt nextCheckAt updatedAt'.split(' ').map(name => ({ name, type: 'text' as const })),
+  ]);
+  await ensureCollection('platform_ad_metric_snapshots', [
+    ...'tenant_id provider accountId campaignId date currency metricDefinition metricLabel reportedAt reportTimezone updatedAt'.split(' ').map(name => ({ name, type: 'text' as const })),
+    { name: 'values', type: 'json' }, { name: 'taskIds', type: 'json' },
+  ]);
+  await ensureCollection('platform_ad_creatives', [
+    ...['tenant_id', 'taskId', 'sourceTaskId', 'artifactId', 'fileRef', 'sha256', 'mimeType', 'name', 'connectionId', 'provider', 'platformVideoId', 'status', 'createdAt', 'updatedAt', 'attemptId', 'uploadError', 'uploadStartedAt'].map(name => ({ name, type: 'text' as const })),
+    ...['size', 'taskVersion'].map(name => ({ name, type: 'number' as const })),
+    { name: 'uploadReceipt', type: 'json' },
+  ]);
   await ensureCollection('platform_ad_imports', [
     ...['tenant_id', 'provider', 'accountId', 'connectionId', 'campaignId', 'taskId', 'status', 'capability', 'createdAt', 'updatedAt'].map(name => ({ name, type: 'text' as const })),
     { name: 'providerSnapshot', type: 'json' },
@@ -383,6 +395,7 @@ export async function ensureDeliveryCollections(): Promise<void> {
   await ensureCollection('platform_ad_automation_runs', [
     ...['tenant_id', 'taskId', 'ruleId', 'status', 'reason', 'createdAt'].map(name => ({ name, type: 'text' as const })),
     { name: 'metrics', type: 'json' },
+    { name: 'decision', type: 'json' },
     { name: 'receipt', type: 'json' },
   ]);
   await ensureCollection('platform_ad_executions', [

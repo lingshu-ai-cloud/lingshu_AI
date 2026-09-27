@@ -1,3 +1,4 @@
+import { socialContentApi } from '../lib/socialContentApi';
 import { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
 export { enterpriseBuyerText, validateStudioTimeline, pendingClaimLocations } from '../lib/studioValidation';
 import { mediaType, fileToDataUrl, blobToDataUrl, localFileName } from '../lib/studioFileInputs';
@@ -27,7 +28,7 @@ import { useModalFocus } from '../hooks/useModalFocus';
 import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
 import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifactMedia';
 import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
-import { useStudioSocialTaskHydration, type StudioSocialTaskSeed } from './socialContent/useStudioSocialTaskHydration';
+import { useStudioSocialTaskHydration, socialTaskReferenceKickoff, type StudioSocialTaskSeed } from './socialContent/useStudioSocialTaskHydration';
 import { reconcileShootingSlots, shootingRefillTarget, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
 import ShootingTaskDialog from './ShootingTaskDialog';
 import ShotProductionPanel from './ShotProductionPanel';
@@ -3388,14 +3389,41 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const generationSessionId = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   const [storyboardVideoVersions, setStoryboardVideoVersions] = useState<Record<string, VideoGenerationVersion[]>>({});
   const [productVideoVersions, setProductVideoVersions] = useState<VideoGenerationVersion[]>([]);
+  const [referenceRecoveryMessage, setReferenceRecoveryMessage] = useState('');
+  const [retryingReference, setRetryingReference] = useState(false);
+  const retryReference = async () => {
+    if (!socialContentTaskId || retryingReference) return;
+    setRetryingReference(true);
+    try {
+      const task = await socialContentApi.getTask(socialContentTaskId);
+      await socialContentApi.startTask(task.taskId, task.version);
+      setReferenceRecoveryMessage('已重新检查参考分析，请等待状态更新。');
+    } catch (error) { setReferenceRecoveryMessage(error instanceof Error ? error.message : '参考分析重试失败'); }
+    finally { setRetryingReference(false); }
+  };
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
   useStudioSocialTaskHydration({
     taskId: socialTaskProjectLookupDone ? socialContentTaskId : null,
     canApply: () => !projectId && !autoGen.current && !studioSettingsEditedRef.current,
+    onRefresh: task => {
+      const reference = socialTaskReferenceKickoff(task);
+      if (reference) setVideoKickoff(reference);
+      const failure = task.referencePreparation;
+      setReferenceRecoveryMessage(failure?.status === 'blocked' ? (failure.reason === 'reference_provider_quota'
+        ? '参考视频下载失败：采集服务额度已耗尽，备用下载也未成功。恢复下载服务后可重试，或返回灵感中心更换参考视频。'
+        : '参考视频暂不可分析，请检查原视频与下载服务后重试，或返回灵感中心更换参考视频。') : '');
+      if (reference?.referenceAnalysis || failure?.status === 'blocked') setModeNotice('');
+    },
     onHydrate: seed => {
       studioSettingsEditedRef.current = true;
       autoGen.current = true;
       setSocialTaskProductReference(seed.productReference);
+      if (seed.reference) {
+        setVideoKickoff(seed.reference); setCanvasView('reference');
+        setScriptView('timestamp'); setStepIdx(1);
+        if (seed.reference.video?.duration) setDuration(seed.reference.video.duration);
+        setModeNotice(seed.reference.referenceAnalysis ? '已载入当前复刻任务的参考分析。' : '参考视频尚未完成分析；工作台已打开，分析完成后可继续脚本与口播制作。');
+      }
       setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
       setPlatform(seed.platform); setRatio(seed.aspectRatio); setLang(seed.languageCodes[0]!);
       setVoiceLangs(seed.languageCodes); setActiveVoiceLang(seed.languageCodes[0]!);
@@ -4069,6 +4097,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     });
   };
   useEffect(() => {
+    if (socialContentTaskId) { setSourceDraftCheckPending(false); return; }
     let raw = '';
     try {
       raw = localStorage.getItem('ow_video_kickoff') || localStorage.getItem('ow_seedance_kickoff') || '';
@@ -4105,7 +4134,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
       }).catch(() => setSourceDraftCheckPending(false));
       if (kickoff.video?.duration && kickoff.video.duration > 0) setDuration(+kickoff.video.duration.toFixed(1));
       const fromInspiration = kickoff.source === 'inspiration_analysis';
-      const fromImagePost = kickoff.source === 'inspiration_image_post' || kickoff.video?.contentFormat === 'image';
+      const fromImagePost = kickoff.source === 'inspiration_image_post' || (kickoff.source !== 'material_library' && kickoff.video?.contentFormat === 'image');
       if (fromImagePost) {
         setContentMode('poster');
         setMode('clone');
@@ -4211,7 +4240,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [duration, videoKickoff]);
 
   useEffect(() => {
-    if (!(videoKickoff?.source === 'inspiration_image_post' || videoKickoff?.video?.contentFormat === 'image')) return;
+    if (videoKickoff?.source === 'material_library' || !(videoKickoff?.source === 'inspiration_image_post' || videoKickoff?.video?.contentFormat === 'image')) return;
     const thumb = videoKickoff.video?.thumbnail || videoKickoff.video?.aiAnalysis?.materialPoster || '';
     const sourceUrl = videoKickoff.video?.sourceUrl || '';
     const id = `hot-image-${sourceUrl || videoKickoff.video?.title || Date.now()}`;
@@ -7226,6 +7255,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
     activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
     videoKickoff,
+    ...(socialContentTaskId ? { socialContentTaskId } : {}),
     productInfo, productSelectMode, selectedProductIds, audience, primaryCta, productContentGoal, reachCta, cooperationRoute, sellingPoints, tone,
     videoThemeId, themePainPoint, themeConversionGoal, lastGeneratedSetupSignature, presenterMode, presentationMode, presentationSources,
     selected, scriptRecommendedMaterialIds, storyboardAssignments, storyboardSourcePlans, assemblyName, hookMaterialId, materialSnapshots,
@@ -8050,7 +8080,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
     void studioApi.listProjects().then(list => {
       if (disposed) return;
       setProjects(list);
-      const project = list.find(item => item.status !== 'template');
+      const project = list.find(item => item.status !== 'template' && item.spec?.socialContentTaskId === taskId);
       if (!project) return;
       loadProject(project);
       setModeNotice(`已恢复任务“${project.title}”的上次制作进度。`);
@@ -8085,7 +8115,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   }, [agentProduction.active]);
 
   useEffect(() => {
-    if (workflowContext) {
+    if (workflowContext || socialContentTaskId) {
       try { localStorage.removeItem(STUDIO_OPEN_PROJECT_KEY); } catch { /* ignore */ }
       return;
     }
@@ -12259,7 +12289,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   const primaryActionBlockedReason = primaryGeneratesSetupScript && mode === 'material' && !selectedVisualClips.length
     ? '先选择本次创作素材，脚本才会按真实画面生成。'
     : (primaryGeneratesSetupScript || primaryGeneratesStoryboard) && mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff)
-    ? '参考视频尚未完成分析，请稍后再生成脚本。'
+    ? referenceRecoveryMessage || '参考视频尚未完成分析，请稍后再生成脚本。'
     : step === 'script' && scriptStageTab !== 'theme' && !hasTimestampScript
       ? '请先生成并确认分镜脚本。'
     : primaryGeneratesCopy && !hasTimestampScript
@@ -12516,8 +12546,9 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
   return (
     <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {linkedProductionContext && <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} /></div>}
-      {!linkedProductionContext && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
-      {!linkedProductionContext && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
+      {referenceRecoveryMessage && <div role="alert" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><span>{referenceRecoveryMessage}</span><button type="button" disabled={retryingReference} onClick={() => void retryReference()} className="ml-3 font-bold underline disabled:opacity-50">{retryingReference ? '正在重试…' : '重试参考分析'}</button><button type="button" onClick={() => onNavigate?.('socialInspiration')} className="ml-3 font-bold underline">更换参考视频</button></div>}
+      {!socialContentTaskId && !linkedProductionContext && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
+      {!socialContentTaskId && !linkedProductionContext && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
       {!linkedProductionContext && modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
       {!linkedProductionContext && managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
         <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
@@ -12678,7 +12709,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
                       <button type="button" onClick={() => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }} className="mt-3 w-full rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary hover:bg-surface-2">查看并处理素材方案</button>
                     </div>
                   </>
-                ) : <div className="rounded-xl border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-xs text-text-muted">尚未生成分镜，请返回创作设置选择素材并生成脚本。</div>}
+                ) : <div className="rounded-xl border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-xs text-text-muted">{referenceRecoveryMessage || '尚未生成分镜。参考分析完成后，可在当前工作台继续生成脚本与口播。'}</div>}
               </section>
             )}
             {step === 'script' && scriptStageTab !== 'theme' && (
@@ -12861,7 +12892,7 @@ export default function AiCreateStudio({ onNavigate, onGoPublish, openProjectsSi
             </div>
             <input aria-label="整片时间轴" type="range" min="0" max={workbenchTimelineDuration} step="0.05" value={Math.min(workbenchTimelineTime, workbenchTimelineDuration)} onChange={event => seekWorkbenchTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
           </div>
-        ) : undefined}
+        ) : socialContentTaskId ? <div role="status" className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-text-muted">00:00 · 等待参考分析与分镜脚本，完成后在这里显示逐镜时间戳。</div> : undefined}
         previousAction={{ label: '上一步', onClick: prev, disabled: stepIdx === 0 }}
         previewAction={{
           label: '预览',

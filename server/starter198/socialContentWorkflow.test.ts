@@ -9,11 +9,21 @@ const previous = {
   NODE_ENV: process.env.NODE_ENV,
   DISABLE_LOCAL_AUTH_FALLBACK: process.env.DISABLE_LOCAL_AUTH_FALLBACK,
   PB_URL: process.env.PB_URL,
+  OBJECT_STORAGE_DRIVER: process.env.OBJECT_STORAGE_DRIVER,
+  COS_REGION: process.env.COS_REGION,
+  OBJECT_STORAGE_REGION: process.env.OBJECT_STORAGE_REGION,
+  SOCIAL_CONTENT_FORCE_BACKEND_FILES: process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES,
   cwd: process.cwd(),
 };
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-social-content-test-'));
 process.chdir(temporaryRoot);
 process.env.NODE_ENV = 'test';
+// This HTTP suite injects a verified PB file port and asserts backend ownership.
+process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES = 'true';
+// Disable ambient local/COS storage: this suite exercises its injected PB file adapter.
+process.env.OBJECT_STORAGE_DRIVER = 'cos';
+process.env.COS_REGION = '';
+process.env.OBJECT_STORAGE_REGION = '';
 process.env.DISABLE_LOCAL_AUTH_FALLBACK = 'false';
 process.env.PB_URL = 'http://127.0.0.1:1';
 
@@ -357,9 +367,11 @@ try {
   assert.equal(sourceOptions.body.items[0].sourceVersion, `profile-${tenant}`);
 
   const durableCreated = await request('/api/default-social-content/tasks', {
-    idempotencyKey: 'social-durable-create', body: { ...completeBrief, title: '默认调度路径' },
+    idempotencyKey: 'social-durable-create', body: { ...completeBrief, title: '默认调度路径', referenceMode: 'single_source_fidelity', programRef: { objectType: 'social_program', id: 'program-1', version: '2' } },
   });
   assert.equal(durableCreated.status, 201);
+  assert.equal(durableCreated.body.task.brief.referenceMode, 'single_source_fidelity');
+  assert.deepEqual(durableCreated.body.task.brief.programRef, { objectType: 'social_program', id: 'program-1', version: '2' });
   const durableTaskId = durableCreated.body.task.taskId as string;
   const durableReference = await request(`/api/default-social-content/tasks/${durableTaskId}/sources`, {
     idempotencyKey: 'social-durable-reference',
@@ -852,11 +864,12 @@ try {
   packageRow.package_hash = originalHash;
 
   const mediaRow = dataStore.rows.get(STARTER_COLLECTIONS.socialContentFiles)!.find(row => row.file_id === uploadedMedia.body.file.fileId)!;
-  const mediaPath = path.join(temporaryRoot, 'data', 'social-content-sources', String(mediaRow.storage_key));
-  fs.writeFileSync(mediaPath, Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x62, 0x61, 0x64, 0x21]));
+  const mediaStorageKey = `${STARTER_COLLECTIONS.socialContentFiles}/${mediaRow.id}/${mediaRow.storage_key}`;
+  const backendMedia = backendPayloads.get(mediaStorageKey)!;
+  backendPayloads.set(mediaStorageKey, { ...backendMedia, buf: Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x62, 0x61, 0x64, 0x21]) });
   const corruptMediaDownload = await request(`/api/overseas/starter-198/social-content/delivery-packages/${packageId}/download`);
   assert.equal(corruptMediaDownload.status, 503, 'checksum mismatch must fail before a media ZIP is served');
-  fs.writeFileSync(mediaPath, mediaBytes);
+  backendPayloads.set(mediaStorageKey, { ...backendMedia, buf: mediaBytes });
 
   dataStore.rows.get(STARTER_COLLECTIONS.socialDeliveryPackages)!.push({
     id: 'preparing-package', tenant_id: tenant, package_id: 'socialpkg_preparing', task_id: taskId,
@@ -1324,10 +1337,14 @@ try {
   });
   const zeroInputCompleted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTaskId}`);
   assert.equal(zeroInputCompleted.status, 200, zeroInputCompleted.raw);
-  assert.equal(zeroInputCompleted.body.task.status, 'asset_review',
-    'the zero-material worker produces a reviewable artifact without asking the novice customer to shoot');
+  assert.equal(zeroInputCompleted.body.task.status, 'delivered',
+    'managed production automatically accepts verified media and builds the delivery package');
+  assert.equal(zeroInputCompleted.body.task.deliveryPackages.length, 1);
+  assert.equal(zeroInputCompleted.body.task.publications.length, 0, 'creation does not imply external publishing authorization');
   const zeroArtifact = zeroInputCompleted.body.task.artifacts.find((artifact: any) => artifact.origin === 'agent');
-  assert.ok(zeroArtifact, 'the worker persists a customer-review artifact');
+  assert.ok(zeroArtifact, 'the worker persists the verified artifact');
+  assert.equal(zeroArtifact.status, 'approved');
+  assert.equal(zeroArtifact.content.review.state, 'automatically_approved');
   const zeroExecution = zeroArtifact.content.assetSupplyExecution;
   assert.equal(zeroExecution.creationMode, 'material_processing');
   assert.equal(zeroExecution.productionRoute, 'zero_asset_generation');
@@ -1356,9 +1373,15 @@ try {
     idempotencyKey: 'social-viral-reference-start-pending-001',
     body: { expectedVersion: viralReferenceTask.body.task.version },
   });
-  assert.equal(pendingViralStart.status, 409, pendingViralStart.raw);
-  assert.equal(pendingViralStart.body.error, 'social_content_reference_analysis_pending',
+  assert.equal(pendingViralStart.status, 202, pendingViralStart.raw);
+  assert.equal(pendingViralStart.body.task.status, 'needs_input',
     'viral production waits for exact reference analysis instead of silently using an unrelated trend');
+  const pendingReferenceRow = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(row => row.task_id === viralReferenceTask.body.task.taskId)!;
+  assert.equal((pendingReferenceRow.brief as any)._managedStart.status, 'queued', 'pending reference start is durable after the browser closes');
+  const { runSocialContentManagedRecovery } = await import('./socialContentManagedRecovery.js');
+  await runSocialContentManagedRecovery({ dataStore, now: new Date('2026-09-14T08:01:00.000Z') });
+  assert.equal((pendingReferenceRow.brief as any)._managedStart.attempts, 1, 'background resumes the same start without another user click');
+  assert.equal((pendingReferenceRow.brief as any)._managedStart.status, 'queued', 'incomplete analysis remains retriable without fake production');
   const exactReferenceRecord = {
     id: 'trend-exact-user-reference', tenantId: tenant,
     title: 'ACME 张女士全网第一原片', sourceUrl: 'https://example.com/exact-user-reference',
@@ -1447,7 +1470,7 @@ try {
       return { queueItemId: 'viral-reference-queue-item', runId: 'viral-reference-run', disposition: 'queued' as const };
     },
   };
-  await assert.rejects(() => startSocialContentTask({
+  const autoStartedReference = await startSocialContentTask({
     repository,
     orchestratorQueue: referenceQueue,
     tenantId: tenant,
@@ -1457,8 +1480,9 @@ try {
     idempotencyKey: 'social-viral-reference-review-001',
     referenceResolver: exactReferenceResolver,
     now: new Date('2026-09-14T08:01:00.000Z'),
-  }), (error: any) => error?.code === 'social_content_reference_review_required');
-  assert.equal(referenceQueueCalls, 0, 'the first start click confirms the visible hook plan without enqueueing production');
+  });
+  assert.equal(autoStartedReference.status, 'producing');
+  assert.equal(referenceQueueCalls, 1, 'managed admission confirms the reference and starts production without a second user action');
   const reviewedReference = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}`);
   assert.equal(reviewedReference.status, 200, reviewedReference.raw);
   assert.equal(reviewedReference.body.task.replicationScript.status, 'confirmed');
@@ -1468,13 +1492,13 @@ try {
     tenantId: tenant,
     userId: `${tenant}-user`,
     taskId: viralReferenceTask.body.task.taskId,
-    expectedVersion: reviewedReference.body.task.version,
-    idempotencyKey: 'social-viral-reference-start-002',
+    expectedVersion: referenceKnowledge.body.task.version,
+    idempotencyKey: 'social-viral-reference-review-001',
     referenceResolver: exactReferenceResolver,
     now: new Date('2026-09-14T08:02:00.000Z'),
   });
   assert.equal(startedReference.status, 'producing');
-  assert.equal(referenceQueueCalls, 1, 'the second click starts production with the confirmed reference plan');
+  assert.equal(referenceQueueCalls, 1, 'replaying the managed admission does not enqueue another production');
 
   const conceptPreviewTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-zero-input-preview-create-001',
@@ -1642,5 +1666,10 @@ try {
   if (previous.NODE_ENV === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous.NODE_ENV;
   if (previous.DISABLE_LOCAL_AUTH_FALLBACK === undefined) delete process.env.DISABLE_LOCAL_AUTH_FALLBACK;
   else process.env.DISABLE_LOCAL_AUTH_FALLBACK = previous.DISABLE_LOCAL_AUTH_FALLBACK;
+  for (const key of ['OBJECT_STORAGE_DRIVER', 'COS_REGION', 'OBJECT_STORAGE_REGION'] as const) {
+    if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+  }
+  if (previous.SOCIAL_CONTENT_FORCE_BACKEND_FILES === undefined) delete process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES;
+  else process.env.SOCIAL_CONTENT_FORCE_BACKEND_FILES = previous.SOCIAL_CONTENT_FORCE_BACKEND_FILES;
   if (previous.PB_URL === undefined) delete process.env.PB_URL; else process.env.PB_URL = previous.PB_URL;
 }

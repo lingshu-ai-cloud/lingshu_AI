@@ -17,7 +17,7 @@ import {
   type SocialContentNavigationEventDetail,
 } from './lib/socialContentContext';
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
-import { PAGE_REGISTRY, SOCIAL_PROGRAM_NAV_PAGES, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
+import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
 
 // 业务页面体积较大（尤其智能素材与灵感大屏），仅在用户真正进入时下载和解析。
@@ -41,11 +41,7 @@ const ScriptLibraryPage = lazy(() => import('./components/WorkspaceManagementPag
 const DigitalEmployeePage = lazy(() => import('./components/DigitalEmployeePage'));
 const AgentMonitorPage = lazy(() => import('./components/AgentMonitorPage'));
 const StarterWorkspacePage = lazy(() => import('./components/starter/StarterWorkspacePage'));
-const SocialContentPlanningPage = lazy(() => import('./components/socialContent/SocialContentPlanningPage'));
-const SocialWorkspacePage = lazy(() => import('./components/socialProgram/SocialWorkspacePage'));
-const SocialSetupPage = lazy(() => import('./components/socialProgram/SocialSetupPage'));
-const SocialAccountsPage = lazy(() => import('./components/socialProgram/SocialAccountsPage'));
-const SocialPlanningPage = lazy(() => import('./components/socialProgram/SocialPlanningPage'));
+const SocialOperatingSummary = lazy(() => import('./components/socialProgram/SocialOperatingSummary'));
 const SocialTaskContextBar = lazy(() => import('./components/starter/SocialTaskContextBar'));
 const StarterWorkflowContextBar = lazy(() => import('./components/starter/StarterWorkflowContextBar'));
 const DesignPrototype = lazy(() => import('./dev/DesignPrototype'));
@@ -121,7 +117,7 @@ const loadPage = (): Page => {
 const loadTrafficEntryView = (): 'publish' | 'accounts' => {
   try {
     const query = new URLSearchParams(window.location.search);
-    return query.get('page') === 'accountManagement' || query.get('view') === 'accounts' ? 'accounts' : 'publish';
+    return ['accountManagement', 'socialAccounts'].includes(query.get('page') || '') || query.get('view') === 'accounts' ? 'accounts' : 'publish';
   } catch {
     return 'publish';
   }
@@ -479,8 +475,12 @@ export default function App() {
   };
 
   const handleNavigate = useCallback((p: Page) => {
-    const next = p === 'retention' ? 'conversion' : p === 'accountManagement' ? 'traffic' : p;
-    if (next === 'traffic') setTrafficEntryView(p === 'accountManagement' ? 'accounts' : 'publish');
+    const next = resolvePage(p) || 'digitalEmployees';
+    if (p === 'socialSetup') {
+      try { sessionStorage.setItem('lingshu:operating-config:open', '1'); } catch { /* optional storage */ }
+      window.dispatchEvent(new CustomEvent('lingshu:operating-config'));
+    }
+    if (next === 'traffic') setTrafficEntryView((p === 'accountManagement' || p === 'socialAccounts') ? 'accounts' : 'publish');
     if (next !== pageRef.current) pushProductionLocation(next);
     else window.history.replaceState({
       ...window.history.state,
@@ -536,17 +536,20 @@ export default function App() {
         workflowTaskId?: string;
         socialContentTaskId?: string;
         socialContentPage?: string;
+        socialContentView?: 'managed';
+        studioEntry?: boolean;
         businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
-      if (nextPage === 'traffic') setTrafficEntryView(incomingDetail.view === 'accounts' ? 'accounts' : 'publish');
+      if (incomingDetail.page === 'socialSetup') window.dispatchEvent(new CustomEvent('lingshu:operating-config'));
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
       if (!detail.restoreHistory) {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
-        handleNavigate(nextPage);
+        handleNavigate(incomingDetail.page === 'socialSetup' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? incomingDetail.page : nextPage);
+        if (nextPage === 'traffic') setTrafficEntryView(incomingDetail.view === 'accounts' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? 'accounts' : 'publish');
         window.history.replaceState({ ...window.history.state, productionDetail: detail }, '');
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
         if (socialTaskId && isSocialTaskContextPage(nextPage)
@@ -698,13 +701,10 @@ export default function App() {
     && socialContentNavigation?.page === page
     ? socialContentNavigation.taskId
     : null;
-  const showSocialContentPlanning = page === 'smartAssets'
-    && smartAssetsView === 'create'
-    && !activeSocialContentTaskId
-    && !smartAssetsWorkflowContext;
-  const isSocialProgramPage = (SOCIAL_PROGRAM_NAV_PAGES as readonly Page[]).includes(page);
+
 
   return (
+    <SocialProgramProvider scope={session.tenant?.id || session.user.tenantId} enabled={!starterMode}>
     <Layout page={page} onNavigate={handleNavigate} conversation={conversation} session={session} onLogout={handleLogout}
       starterMode={starterMode}
       onSessionUpdate={setSession}
@@ -742,19 +742,15 @@ export default function App() {
         <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
+            <div className="flex h-full min-h-0 flex-col">
+            <SocialOperatingSummary onNavigate={handleNavigate} />
+            <div className="min-h-0 flex-1">
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
               : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
+            </div></div>
           </Activity>
           {monitorMounted && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
-          {isSocialProgramPage && (
-            <SocialProgramProvider scope={session.tenant?.id || session.user.tenantId}>
-              {page === 'socialWorkspace' && <SocialWorkspacePage onNavigate={handleNavigate} />}
-              {page === 'socialSetup' && <SocialSetupPage onNavigate={handleNavigate} />}
-              {page === 'socialAccounts' && <SocialAccountsPage onNavigate={handleNavigate} />}
-              {page === 'socialPlanning' && <SocialPlanningPage onNavigate={handleNavigate} />}
-            </SocialProgramProvider>
-          )}
           {page === 'strategy' && (
             <StrategyPage
               onEnterConversation={enterConversation}
@@ -808,12 +804,6 @@ export default function App() {
           )}
           {(page === 'smartAssets' || smartAssetsMounted) && (
             <div className={page === 'smartAssets' ? 'h-full min-h-0' : 'hidden'} aria-hidden={page !== 'smartAssets'}>
-              {showSocialContentPlanning ? (
-                <SocialContentPlanningPage
-                  onNavigate={handleNavigate}
-                  onNavigateWithTask={handleSocialContentNavigate}
-                />
-              ) : (
                 <TrafficPage
                   key={`smart-assets-${smartAssetsInstanceKey}`}
                   onEnterConversation={enterConversation}
@@ -830,7 +820,6 @@ export default function App() {
                   workflowContextSignal={smartAssetsWorkflowContext}
                   socialContentTaskId={activeSocialContentTaskId}
                 />
-              )}
             </div>
           )}
           {page === 'socialMonitoring' && <SocialMonitoringPage onNavigate={handleNavigate} />}
@@ -869,5 +858,6 @@ export default function App() {
         </PageErrorBoundary>
       </div>
     </Layout>
+    </SocialProgramProvider>
   );
 }

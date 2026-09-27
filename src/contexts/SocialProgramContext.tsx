@@ -16,6 +16,7 @@ import type {
 import { socialProgramApi } from '../lib/socialProgramApi';
 
 interface SocialProgramContextValue {
+  available: boolean;
   programs: SocialProgram[];
   activeProgram: SocialProgram | null;
   activeProgramId: string | null;
@@ -38,7 +39,7 @@ const SocialProgramContext = createContext<SocialProgramContextValue | null>(nul
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '社媒经营数据请求失败，请稍后重试。';
 
-export function SocialProgramProvider({ scope, children }: { scope: string; children: ReactNode }) {
+export function SocialProgramProvider({ scope, children, enabled = true }: { scope: string; children: ReactNode; enabled?: boolean }) {
   const storageKey = `lingshu:social-program:active:${scope}`;
   const [programs, setPrograms] = useState<SocialProgram[]>([]);
   const [activeProgramId, setActiveProgramId] = useState<string | null>(null);
@@ -52,7 +53,10 @@ export function SocialProgramProvider({ scope, children }: { scope: string; chil
   const accountRequestRef = useRef(0);
 
   const preferredProgramId = useCallback(() => {
-    try { return localStorage.getItem(storageKey); } catch { return null; }
+    try {
+      const query = new URLSearchParams(window.location.search);
+      return query.get('programId') || localStorage.getItem(storageKey);
+    } catch { return null; }
   }, [storageKey]);
 
   const persistProgramId = useCallback((programId: string | null) => {
@@ -63,6 +67,7 @@ export function SocialProgramProvider({ scope, children }: { scope: string; chil
   }, [storageKey]);
 
   const refreshPrograms = useCallback(async () => {
+    if (!enabled) { setPrograms([]); setActiveProgramId(null); setLoading(false); return; }
     const requestId = ++programRequestRef.current;
     setLoading(true);
     setError('');
@@ -81,7 +86,7 @@ export function SocialProgramProvider({ scope, children }: { scope: string; chil
     } finally {
       if (requestId === programRequestRef.current) setLoading(false);
     }
-  }, [persistProgramId, preferredProgramId]);
+  }, [enabled, persistProgramId, preferredProgramId]);
 
   const refreshAccountsFor = useCallback(async (programId: string | null) => {
     const requestId = ++accountRequestRef.current;
@@ -190,6 +195,7 @@ export function SocialProgramProvider({ scope, children }: { scope: string; chil
   }, [activeProgram, refreshPrograms]);
 
   const value = useMemo<SocialProgramContextValue>(() => ({
+    available: enabled,
     programs,
     activeProgram,
     activeProgramId,
@@ -207,7 +213,7 @@ export function SocialProgramProvider({ scope, children }: { scope: string; chil
     createAccount,
     saveMonthlyPlan,
   }), [
-    accounts, accountsError, accountsLoading, activeProgram, activeProgramId, createAccount, createProgram,
+    enabled, accounts, accountsError, accountsLoading, activeProgram, activeProgramId, createAccount, createProgram,
     error, loading, mutating, programs, refreshAccountsFor, refreshPrograms, saveMonthlyPlan, selectProgram,
     updateActiveProgram,
   ]);

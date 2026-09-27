@@ -1,3 +1,4 @@
+import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
   SOCIAL_ARTIFACT_STATUSES,
   SOCIAL_CONTENT_TASK_STATUSES,
@@ -154,6 +155,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     brandNotes: nullable(record.brandNotes),
     restrictions: strings(record.restrictions, 'social_content_task_record_invalid'),
     callToAction: nullable(record.callToAction),
+    ...parseSocialReplicationContext(record),
     ...(creationMode ? { creationMode: creationMode as NonNullable<SocialContentTaskBrief['creationMode']> } : {}),
     ...(assetAvailability ? { assetAvailability: assetAvailability as NonNullable<SocialContentTaskBrief['assetAvailability']> } : {}),
     ...(managementMode ? { managementMode: managementMode as NonNullable<SocialContentTaskBrief['managementMode']> } : {}),
@@ -537,8 +539,22 @@ export async function readSocialTaskDetail(input: {
   })[0] ?? null;
   agentWorkflow.productionResult = productionResult;
   agentWorkflow.replicationEvaluation = replicationEvaluation;
+  const privateBrief = socialObject(socialJson(task.brief));
+  const referenceRecovery = socialObject(privateBrief?._managedStart);
+  const publishingRecovery = socialObject(privateBrief?._managedPublishing);
+  const recoveryView = (value: Record<string, unknown>) => ({
+    status: socialText(value.status), attempts: Number(value.attempts) || 0,
+    nextAttemptAt: socialText(value.nextAttemptAt) || null, reason: socialText(value.reason) || null,
+  });
   return {
     ...summary,
+    ...(referenceRecovery || publishingRecovery ? { managedExecution: {
+      ...(referenceRecovery ? { reference: { ...recoveryView(referenceRecovery),
+        ...(['producing', 'asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(summary.status)
+          ? { status: 'completed', nextAttemptAt: null, reason: null } : {}),
+      } } : {}),
+      ...(publishingRecovery ? { publishing: { ...recoveryView(publishingRecovery), retryExhausted: publishingRecovery.retryExhausted === true } } : {}),
+    } } : {}),
     assetSupplyPlan,
     sources: sourceViews,
     artifacts: artifactViews,

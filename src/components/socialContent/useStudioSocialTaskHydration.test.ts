@@ -87,3 +87,10 @@ assert.deepEqual(digitalHumanSeed.digitalHumanShotPlans, [{
 }]);
 
 console.log('studio social task hydration tests passed');
+
+const replication = socialTaskToStudioSeed({ ...task, brief: { ...task.brief, creationMode: 'viral_replication', formats: [] }, sources: [{ ...task.sources[0], kind: 'reference_link', sourceRef: 'https://www.youtube.com/watch?v=current', label: '当前参考' }] });
+assert.equal(replication.creationMode, 'clone');
+assert.equal(replication.contentMode, 'video', 'an unanalyzed replication is still video');
+assert.equal(replication.reference?.video?.sourceUrl, 'https://www.youtube.com/watch?v=current');
+assert.equal(replication.reference?.referenceAnalysis, undefined, 'pending analysis must not fabricate shots');
+assert.deepEqual(replication.selectedMaterialIds, [], 'reference video is not an authorized output material');

@@ -23,14 +23,14 @@ const good = await auditAdSchema(async (pathname, init) => {
 });
 assert.equal(good.ready, true);
 assert.equal(good.mutated, false);
-assert.equal(calls, 10);
+assert.equal(calls, Object.keys(AD_SCHEMA_REQUIREMENTS).length);
 const bad = await auditAdSchema(async pathname => {
   if (pathname.endsWith('platform_ad_launches')) return new Response('{}', { status: 404 });
   if (pathname.endsWith('platform_ad_tasks')) return new Response('secret-value', { status: 403 });
   throw new Error('credential=do-not-echo');
 });
 assert.equal(bad.ready, false);
-assert.equal(bad.issues.length, 10);
+assert.equal(bad.issues.length, Object.keys(AD_SCHEMA_REQUIREMENTS).length);
 assert.ok(!JSON.stringify(bad).includes('secret-value'));
 assert.ok(!JSON.stringify(bad).includes('do-not-echo'));
 assert.equal(bad.issues.find(issue => issue.collection === 'platform_ad_launches')?.code, 'missing_collection');

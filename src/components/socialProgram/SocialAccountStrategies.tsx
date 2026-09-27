@@ -10,9 +10,9 @@ const PLATFORM_LABELS: Record<SocialPlatform, string> = {
   douyin: '抖音', xiaohongshu: '小红书', other: '其他',
 };
 
-export default function SocialAccountsPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export default function SocialAccountStrategies({ onNavigate }: { onNavigate: (page: Page) => void }) {
   const {
-    activeProgram, accounts, accountsLoading, accountsError, mutating,
+    available, activeProgram, accounts, accountsLoading, accountsError, mutating,
     createAccount, refreshAccounts, updateActiveProgram,
   } = useSocialProgram();
   const [showCreate, setShowCreate] = useState(false);
@@ -44,13 +44,15 @@ export default function SocialAccountsPage({ onNavigate }: { onNavigate: (page: 
     } catch { /* context shows the server error */ }
   };
 
+  if (!available) return null;
+
   if (!activeProgram) {
-    return <SocialProgramPageFrame title="自有账号矩阵" description="定义每个真实账号的业务角色、受众和内容承诺。"><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><Users size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">请先创建经营项目</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">前往项目搭建</button></section></SocialProgramPageFrame>;
+    return <SocialProgramPageFrame title="账号经营策略" description="定义每个真实账号的业务角色、受众和内容承诺。"><section className="rounded-xl border border-dashed border-border-bright bg-white px-6 py-14 text-center"><Users size={32} className="mx-auto text-accent" /><h2 className="mt-4 text-lg font-bold">尚未配置经营背景，可先连接平台账号</h2><button type="button" onClick={() => onNavigate('socialSetup')} className="btn-primary mt-5">补充业务背景</button></section></SocialProgramPageFrame>;
   }
 
   return (
     <SocialProgramPageFrame
-      title="自有账号矩阵"
+      title="账号经营策略"
       description="账号定义与平台授权分开保存；这里不会把候选平台伪装成已连接账号。"
       action={<button type="button" onClick={() => setShowCreate(value => !value)} className="btn-primary inline-flex items-center gap-2"><Plus size={15} />新增账号</button>}
     >
@@ -72,9 +74,9 @@ export default function SocialAccountsPage({ onNavigate }: { onNavigate: (page: 
       )}
 
       <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">账号列表</h2><p className="mt-1 text-sm text-text-muted">只展示当前项目从 API 读取的账号。</p></div><button type="button" onClick={() => void refreshAccounts()} disabled={accountsLoading} className="btn-ghost inline-flex items-center gap-2 px-3 py-2">{accountsLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}刷新</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">账号列表</h2><p className="mt-1 text-sm text-text-muted">只展示当前业务从 API 读取的账号。</p></div><button type="button" onClick={() => void refreshAccounts()} disabled={accountsLoading} className="btn-ghost inline-flex items-center gap-2 px-3 py-2">{accountsLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}刷新</button></div>
         {!accountsLoading && !accounts.length ? (
-          <div className="mt-5 rounded-lg border border-dashed border-border-bright px-5 py-10 text-center text-sm text-text-muted">当前项目尚未保存账号定义。</div>
+          <div className="mt-5 rounded-lg border border-dashed border-border-bright px-5 py-10 text-center text-sm text-text-muted">当前业务尚未保存账号定义。</div>
         ) : (
           <div className="mt-5 grid gap-3 lg:grid-cols-2">{accounts.map(account => (
             <article key={account.accountId} className="rounded-lg border border-border p-4">
@@ -86,7 +88,7 @@ export default function SocialAccountsPage({ onNavigate }: { onNavigate: (page: 
         )}
         <div className="mt-5 flex flex-wrap gap-2">
           {activeProgram.route === 'account_repair' && !activeProgram.readiness.accountImportConfirmed && accounts.length > 0 && <button type="button" onClick={() => void confirmAccountImport()} disabled={mutating} className="btn-primary inline-flex items-center gap-2"><CheckCircle2 size={15} />确认账号录入完成</button>}
-          <button type="button" onClick={() => onNavigate('socialPlanning')} className="btn-ghost inline-flex items-center gap-2">查看计划前置条件<ArrowRight size={15} /></button>
+          <button type="button" onClick={() => onNavigate('socialInspiration')} className="btn-ghost inline-flex items-center gap-2">查看推荐选题<ArrowRight size={15} /></button>
         </div>
       </section>
     </SocialProgramPageFrame>

@@ -18,6 +18,7 @@ import {
 import { ArtifactBatchChangesDialog, ArtifactChangesDialog, MetricsDialog, PublicationDialog } from './SocialTaskActionDialogs';
 import SocialTaskEditorDialog from './SocialTaskEditorDialog';
 import SocialTaskOverview from './SocialTaskOverview';
+import SocialManagedExecutionNotice from './SocialManagedExecutionNotice';
 import { useSocialContentWorkspace, type SocialContentSaveTarget } from './useSocialContentWorkspace';
 
 interface EditorSession {
@@ -155,7 +156,9 @@ export default function SocialContentWorkspace({
     <section aria-labelledby="social-content-workspace-title">
       {(state.error || state.notice) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span>{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</div>}
 
-      <h1 id="social-content-workspace-title" className="sr-only">社媒内容任务</h1>
+      <h1 id="social-content-workspace-title" className="mb-4 text-lg font-bold text-text-primary">{task?.brief.title || '社媒内容任务'}</h1>
+
+      <SocialManagedExecutionNotice task={task} />
 
       <SocialTaskOverview
         task={task}

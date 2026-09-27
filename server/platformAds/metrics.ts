@@ -1,3 +1,4 @@
+import type { PlatformAdMetricResource } from '../../shared/platformAdMetricHistory.js';
 import { getPlatformAdTask } from './tasks.js';
 import { listAdExecutions } from './execution.js';
 import { getConnectionCredential } from './connections.js';
@@ -47,9 +48,10 @@ export async function getAdTaskMetrics(tenantId: string, taskId: string) {
     const group = await new TikTokExecutionAdapter(firstConnection.accessToken).read(firstConnection.connection.accountId, 'adgroup', ids.adgroupId);
     if (String(group.campaign_id) !== creates[0].resourceId) throw new AdProviderError('TikTok 广告组关联已变化', 'RESOURCE_MISMATCH');
     const result = await getTikTokCampaignMetrics({ accessToken: firstConnection.accessToken, accountId: firstConnection.connection.accountId, campaignId: creates[0].resourceId, since, until, optimizationGoal: String(group.optimization_goal || '') });
-    return { ...result, currency: task.currency, forecast: { status: 'insufficient_data', reason: '当前展示平台报告值；尚未建立经过验证的收益预测模型。' } };
+    return { ...result, resources: [{ provider: 'tiktok' as const, accountId: firstConnection.connection.accountId, campaignId: creates[0].resourceId, currency: task.currency, metricDefinition: `tiktok:${String(group.optimization_goal || 'unknown')}`, metricLabel: result.metricLabel, reportTimezone: '', daily: result.daily }], currency: task.currency, forecast: { status: 'insufficient_data', reason: '当前展示平台报告值；尚未建立经过验证的收益预测模型。' } };
   }
   const rows: MetricRow[] = [];
+  const resources: PlatformAdMetricResource[] = [];
   const seen = new Set<string>();
   for (const item of creates) {
     const key = `${item.connectionId}:${item.resourceId}`;
@@ -64,10 +66,14 @@ export async function getAdTaskMetrics(tenantId: string, taskId: string) {
       time_range: { since, until }, time_increment: 1, limit: 100,
     });
     if (!Array.isArray(response.data) || response.paging?.next) throw new AdProviderError('效果数据不完整，请稍后重试', 'METRICS_NOT_READY');
+    const aggregated = aggregateAdMetrics(response.data, task.goal);
+    const resourceKey = `${connection.accountId}:${item.resourceId}`;
+    if (resources.some(resource => `${resource.accountId}:${resource.campaignId}` === resourceKey)) continue;
+    resources.push({ provider: 'meta', accountId: connection.accountId, campaignId: item.resourceId, currency: task.currency, metricDefinition: task.goal === '提升有效视频观看' ? 'meta:thruplay' : task.goal === '提升网站访问' ? 'meta:inline_link_clicks' : 'meta:unmapped', metricLabel: aggregated.metricLabel, reportTimezone: '', daily: aggregated.daily });
     rows.push(...response.data);
   }
   return { provider: 'meta', currency: task.currency, reportedAt: new Date().toISOString(), window: { since, until },
-    source: 'provider', ...aggregateAdMetrics(rows, task.goal),
+    source: 'provider', resources, ...aggregateAdMetrics(rows, task.goal),
     forecast: { status: 'insufficient_data', reason: '当前展示平台报告值；尚未建立经过验证的收益预测模型。' },
     dataNote: '时间范围以广告账户时区解释，平台报告可能延迟或回补；空数据不表示零消耗。',
   };

@@ -1,3 +1,4 @@
+import SocialAccountStrategies from './socialProgram/SocialAccountStrategies';
 import { lazy, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -313,10 +314,16 @@ export default function TrafficPage({
   }, [pageTitle, showModeTabs, viewMode]);
 
   const handleEnterWorkflow = (payload: unknown) => {
-    try { localStorage.setItem('ow_video_kickoff', JSON.stringify(payload)); } catch { /* ignore */ }
+    try {
+      localStorage.setItem('ow_video_kickoff', JSON.stringify(payload));
+      localStorage.removeItem('ow_studio_open_project');
+      const destination = new URL(window.location.href);
+      destination.searchParams.delete('project');
+      window.history.replaceState(window.history.state, '', destination);
+    } catch { /* ignore */ }
     const targetPage = resolveWorkflowNavigationPage(initialView, showModeTabs);
     if (targetPage) {
-      navigateWithinSocialTask(targetPage);
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: targetPage, view: 'create', studioEntry: true } }));
       return;
     }
     setViewMode('create');
@@ -395,6 +402,7 @@ export default function TrafficPage({
           ) : (
             <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
               <AccountActivity />
+              <SocialAccountStrategies onNavigate={page => onNavigate?.(page)} />
             </motion.div>
           )}
         </AnimatePresence>

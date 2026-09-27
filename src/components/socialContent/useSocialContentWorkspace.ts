@@ -11,7 +11,7 @@ import type {
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { SocialContentRequestError, socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
-import { readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
+import { SOCIAL_CONTENT_NAVIGATION_EVENT, readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
 import type { SocialContentDraft } from '../../lib/socialContentModel';
 import { mergeSocialContentTaskSummaries, restoreSavedSocialContentTask } from '../../lib/socialContentTaskPagination';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
@@ -144,6 +144,13 @@ export function useSocialContentWorkspace() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const restore = (event: Event) => {
+      if ((event as CustomEvent<{ page: string }>).detail?.page === 'smartAssets') void load();
+    };
+    window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT, restore);
+    return () => window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT, restore);
+  }, [load]);
 
   const loadMoreTasks = useCallback(async () => {
     const snapshot = workspace;
@@ -223,7 +230,9 @@ export function useSocialContentWorkspace() {
 
   useEffect(() => {
     const task = workspace?.currentTask;
-    if (!task || busy || !['producing', 'asset_review', 'packaging', 'attention'].includes(task.status)) return;
+    const managedPending = task?.status !== 'paused' && ((task?.managedExecution?.reference?.status === 'queued' && ['draft', 'needs_input', 'plan_review'].includes(task?.status || ''))
+      || ['scheduled', 'blocked'].includes(task?.managedExecution?.publishing?.status || ''));
+    if (!task || busy || (!managedPending && !['producing', 'asset_review', 'packaging', 'attention'].includes(task.status))) return;
     let disposed = false;
     let polling = false;
     const refreshTask = async () => {
@@ -249,7 +258,7 @@ export function useSocialContentWorkspace() {
       window.removeEventListener('focus', refreshTask);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [workspace?.currentTask?.taskId, workspace?.currentTask?.status, busy, applyTask]);
+  }, [workspace?.currentTask?.taskId, workspace?.currentTask?.status, workspace?.currentTask?.managedExecution?.reference?.status, workspace?.currentTask?.managedExecution?.publishing?.status, busy, applyTask]);
 
   const saveDraft = useCallback(async (
     draft: SocialContentDraft,

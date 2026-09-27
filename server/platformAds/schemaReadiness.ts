@@ -26,8 +26,11 @@ export const AD_SCHEMA_REQUIREMENTS: Readonly<Record<string, readonly Field[]>> 
   platform_ad_executions: [...fields('text', 'tenant_id taskId requestId action connectionId resourceId status createdAt error'), ...fields('number', 'expectedDailyBudget'), ...fields('json', 'result')],
   platform_ad_oauth_states: [...fields('text', 'tenant_id userId stateHash expiresAt status tokenCipher'), ...fields('json', 'accounts')],
   platform_ad_automation_rules: [...fields('text', 'tenant_id taskId connectionId resourceId updatedAt'), ...fields('number', 'targetCpc minClicks cooldownMinutes maxMetricAgeMinutes'), ...fields('bool', 'enabled')],
-  platform_ad_automation_runs: [...fields('text', 'tenant_id taskId ruleId status reason createdAt'), ...fields('json', 'metrics receipt')],
+  platform_ad_automation_runs: [...fields('text', 'tenant_id taskId ruleId status reason createdAt'), ...fields('json', 'metrics receipt decision')],
   platform_ad_handoffs: [...fields('text', 'tenant_id goalId adTaskId objective evidence expectedOutcome createdAt createdBy'), ...fields('json', 'constraints')],
+  platform_ad_worker_health: [...fields('text', 'tenant_id workerId state lastStartedAt lastCompletedAt lastFailedAt nextCheckAt updatedAt')],
+  platform_ad_metric_snapshots: [...fields('text', 'tenant_id provider accountId campaignId date currency metricDefinition metricLabel reportedAt reportTimezone updatedAt'), ...fields('json', 'values taskIds')],
+  platform_ad_creatives: [...fields('text', 'tenant_id taskId sourceTaskId artifactId fileRef sha256 mimeType name connectionId provider platformVideoId status createdAt updatedAt attemptId uploadError uploadStartedAt'), ...fields('number', 'size taskVersion'), ...fields('json', 'uploadReceipt')],
   platform_ad_imports: [...fields('text', 'tenant_id provider accountId connectionId campaignId taskId status capability createdAt updatedAt'), ...fields('json', 'providerSnapshot')],
 };
 

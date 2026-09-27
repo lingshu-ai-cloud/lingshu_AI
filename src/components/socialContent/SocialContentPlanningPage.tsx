@@ -6,7 +6,9 @@ import SocialContentLanding, { type SocialContentLaunchOptions } from './SocialC
 export default function SocialContentPlanningPage({
   onNavigate,
   onNavigateWithTask,
+  taskOnly = false,
 }: {
+  taskOnly?: boolean;
   onNavigate: (page: Page) => void;
   onNavigateWithTask: (page: Page, taskId: string) => void;
 }) {
@@ -24,7 +26,7 @@ export default function SocialContentPlanningPage({
   return (
     <div className="h-full min-h-0 overflow-y-auto bg-[#f6f8f5]">
       <main className="mx-auto max-w-[1440px] space-y-5 px-4 py-5 sm:px-8 sm:py-7">
-        <SocialContentLanding onStart={startCreation} />
+        {!taskOnly && <SocialContentLanding onStart={startCreation} />}
 
         <SocialContentWorkspace
           onNavigate={onNavigate}

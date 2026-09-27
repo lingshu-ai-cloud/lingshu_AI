@@ -1,3 +1,6 @@
+import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
+import { discoveryKeywords } from '../../shared/socialDiscoveryKeywords';
+import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -384,6 +387,13 @@ function normalizeCrawlerLimit(value: string): string {
 }
 
 export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) {
+  const [discoveryScope, setDiscoveryScope] = useState<SocialCrawlStrategy | null>(null);
+  useEffect(() => {
+    const refresh = () => { void socialDiscoveryApi.getScope().then(result => setDiscoveryScope(result.persisted ? result.scope : null)).catch(() => setDiscoveryScope(null)); };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(true);
   const agentProduction = useAgentProductionAction('scheduler');
@@ -639,7 +649,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   async function createTask() {
     const selectedTemplates = TASK_TEMPLATES.filter(template => selectedTemplateIds.includes(template.templateId));
     if (!selectedTemplates.length || creatingTasks) return;
-    const keywordTemplates = selectedTemplates.filter(template => ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType));
+    const keywordTemplates = selectedTemplates.filter(template => template.taskType === 'image_post_crawl' || (template.taskType === 'video_keyword_crawl' && !discoveryScope));
     const reviews = keywordTemplates.map(template => {
       const platform = String(('config' in template ? template.config?.platforms : '') || 'youtube') as KeywordPlatform;
       return { template, platform, review: normalizeKeywordInput(taskKeywords, platform) };
@@ -666,7 +676,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           scheduleLabel(scheduleTime, scheduleDays),
           false,
           ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType)
-            ? { ...templateConfig, keywords: cleanedKeywords }
+            ? template.taskType === 'video_keyword_crawl' && discoveryScope ? { ...templateConfig, keywords: '', keywordSource: 'discovery_scope' } : { ...templateConfig, keywords: cleanedKeywords }
             : templateConfig,
         );
         created.push(saved);
@@ -841,7 +851,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const visibleTemplates = TASK_TEMPLATES.filter(t => taskAgentGroup(t.taskType) === activeGroup);
   const selectedTemplates = TASK_TEMPLATES.filter(template => selectedTemplateIds.includes(template.templateId));
   const selectedTemplate = selectedTemplates[0] ?? null;
-  const keywordTemplates = selectedTemplates.filter(template => ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType));
+  const keywordTemplates = selectedTemplates.filter(template => template.taskType === 'image_post_crawl' || (template.taskType === 'video_keyword_crawl' && !discoveryScope));
   const keywordReviews = [...new Set(keywordTemplates.map(template => String(('config' in template ? template.config?.platforms : '') || 'youtube') as KeywordPlatform))]
     .map(platform => ({ platform, review: normalizeKeywordInput(taskKeywords, platform) }));
   const keywordSignature = keywordReviews.map(({ platform, review }) => `${platform}:${review.serialized}`).join('|');
@@ -1816,10 +1826,12 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         <div className="mt-3">
                           <div className="grid grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
                             <label className="block min-w-0">
-                              <span className="block text-[10px] text-gray-400 mb-1">进阶覆盖词（可选）</span>
+                              <span className="block text-[10px] text-gray-400 mb-1">{discoveryScope ? `发现范围 · v${discoveryScope.keywordSet.version}` : '进阶覆盖词（可选）'}</span>
                               <input
-                                defaultValue={task.config.keywords || task.config.keyword || ''}
-                                onBlur={e => { void updateCrawlerConfig(task, { keywords: e.currentTarget.value }); }}
+                                key={discoveryScope?.version || 'legacy'}
+                                readOnly={Boolean(discoveryScope)}
+                                defaultValue={discoveryScope ? discoveryKeywords(discoveryScope).join('、') : task.config.keywords || task.config.keyword || ''}
+                                onBlur={e => { if (!discoveryScope) void updateCrawlerConfig(task, { keywords: e.currentTarget.value }); }}
                                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                 className="h-9 w-full rounded-lg border border-gray-200 px-2.5 text-xs text-gray-700 focus:outline-none focus:border-green-400"
                                 placeholder="留空则使用当前发现范围"
@@ -1992,7 +2004,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                       <button type="button" onClick={() => setSelectedTemplateIds([])} className="text-[11px] text-green-700 hover:text-green-900">清空</button>
                     </div>
                   )}
-                  {selectedTemplates.some(template => ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType)) && (
+                  {discoveryScope && selectedTemplates.some(template => template.taskType === 'video_keyword_crawl') && <div className="mb-4 rounded-xl bg-green-50 p-3 text-xs text-green-900"><p>发现范围：{discoveryScope.keywordSet.name} · v{discoveryScope.keywordSet.version}</p><p className="mt-2">{discoveryKeywords(discoveryScope).join('、')}</p><p className="mt-2">每次执行读取灵感中心最新保存的范围。平台、时间和数量沿用本任务设置。</p></div>}
+                  {keywordTemplates.length > 0 && (
                     <div className="mb-4">
                       <label className="block text-xs font-medium text-gray-700 mb-1.5">采集关键词</label>
                       <textarea

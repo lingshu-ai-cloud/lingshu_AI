@@ -1,3 +1,5 @@
+import { readSavedDiscoveryScope } from '../lib/socialDiscoveryScope.js';
+import { discoveryKeywords } from '../../shared/socialDiscoveryKeywords.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -1025,12 +1027,14 @@ function normalizedKeywordList(value: string | undefined, platform: Platform, fa
 async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const tenantId = await resolveSchedulerTenantId(task);
   const requestedKeywords = task.config.keywordSource ? (task.config.keywordInput || '') : (task.config.keywords || task.config.keyword || '');
-  const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
-  const selection = resolveCrawlKeywords(requestedKeywords, enterpriseProfile);
+  const savedScope = await readSavedDiscoveryScope(tenantId);
+  const enterpriseProfile = savedScope ? {} : await readTenantEnterpriseProfile(tenantId);
+  const selection = savedScope ? { keywords: discoveryKeywords(savedScope), source: 'discovery_scope', evidence: [savedScope.keywordSet.name] } : resolveCrawlKeywords(requestedKeywords, enterpriseProfile);
   const resolvedKeywords = selection.keywords.join(', ');
+  if (!selection.keywords.length) throw new Error('发现范围没有启用的关键词，请在灵感中心调整。');
   const platforms = splitConfigList(task.config.platforms, ['youtube'])
     .filter((platform): platform is Platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
-  const crawlStrategy = resolveCrawlStrategy({
+  const crawlStrategy = savedScope ?? resolveCrawlStrategy({
     explicit: requestedKeywords,
     profile: enterpriseProfile,
     platforms,
@@ -1534,14 +1538,14 @@ schedulerRouter.get('/:id/export-pdf', async (req: Request, res: Response) => {
   }
 });
 
-schedulerRouter.post('/', (req: Request, res: Response) => {
+schedulerRouter.post('/', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const tasks = load();
   const isCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(req.body.taskType);
   const requestedCronExpr = String(req.body.cronExpr ?? (isCrawler ? '0 1 * * *' : '0 8 * * *'));
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const crawlerPlatform = resolveCrawlerPlatform(req.body.config?.platforms);
-  if (['video_keyword_crawl', 'image_post_crawl'].includes(req.body.taskType)) {
+  if (['video_keyword_crawl', 'image_post_crawl'].includes(req.body.taskType) && !(req.body.taskType === 'video_keyword_crawl' && await readSavedDiscoveryScope(tenantId))) {
     const keywordReview = normalizeKeywordInput(String(req.body.config?.keywords || req.body.config?.keyword || ''), crawlerPlatform as KeywordPlatform);
     if (!keywordReview.items.length) {
       res.status(400).json({ error: 'invalid_keywords', message: '没有识别到当前平台可用的关键词', rejected: keywordReview.rejected });
@@ -1568,7 +1572,7 @@ schedulerRouter.post('/', (req: Request, res: Response) => {
   res.json(task);
 });
 
-schedulerRouter.put('/:id', (req: Request, res: Response) => {
+schedulerRouter.put('/:id', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const tasks = load();
   const idx = tasks.findIndex(t => t.id === req.params.id && t.tenantId === tenantId);
@@ -1579,7 +1583,7 @@ schedulerRouter.put('/:id', (req: Request, res: Response) => {
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const nextIsCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(nextTaskType);
   const mergedConfig = { ...current.config, ...(req.body.config ?? {}) };
-  if (['video_keyword_crawl', 'image_post_crawl'].includes(nextTaskType)) {
+  if (['video_keyword_crawl', 'image_post_crawl'].includes(nextTaskType) && !(nextTaskType === 'video_keyword_crawl' && await readSavedDiscoveryScope(tenantId))) {
     const platform = resolveCrawlerPlatform(mergedConfig.platforms, current.config.platforms || 'youtube');
     const keywordReview = normalizeKeywordInput(String(mergedConfig.keywords || mergedConfig.keyword || ''), platform as KeywordPlatform);
     if (!keywordReview.items.length) {

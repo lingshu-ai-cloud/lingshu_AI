@@ -1,4 +1,8 @@
+import { discoveryCatalog } from '../lib/discoveryCatalog.js';
+import { discoveryPerspective, generateProductKeywords } from '../lib/productDiscovery.js';
+import { fiveProductKeywords } from '../../shared/productDiscovery.js';
 import { Router } from 'express';
+import { recommendDiscoveryKeywords } from '../lib/discoveryRecommendations.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { readTenantEnterpriseProfile } from './enterprise.js';
@@ -91,6 +95,60 @@ socialDiscoveryRouter.get('/scope', async (_req, res) => {
   }
 });
 
+socialDiscoveryRouter.get('/product-sources', async (_req, res) => {
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    res.json({ products: discoveryCatalog(await readTenantEnterpriseProfile(tenantId)) });
+  } catch { res.status(503).json({ message: '企业产品目录暂时无法读取，请重试。' }); }
+});
+
+socialDiscoveryRouter.post('/product-keywords', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const body = req.body || {};
+  if (typeof body.market !== 'string' || !body.market.trim() || typeof body.language !== 'string' || !body.language.trim()) {
+    res.status(400).json({ message: '请先确认目标市场和内容语言。' }); return;
+  }
+  if (body.documentText !== undefined && (typeof body.documentText !== 'string' || body.documentText.length > 80000)) {
+    res.status(400).json({ message: '资料文字过多，请按产品方向拆分。' }); return;
+  }
+  try {
+    const profile = await readTenantEnterpriseProfile(tenantId);
+    const source = body.documentText?.trim() || JSON.stringify({ product: body.productRef, products: profile.products.items?.map(item => ({ name: item.name, category: item.category, highlights: item.highlights })) });
+    if (source.length < 10 || source.length > 80000) { res.status(400).json({ message: '请上传适量产品资料或补全企业产品信息。' }); return; }
+    const perspective = discoveryPerspective(String(body.companyRole || profile.company.companyType || ''), profile.socialStrategy?.enabledRoutes ?? []);
+    let sourceRefs: string[] | undefined;
+    if (Array.isArray(body.sourceRefs) && body.sourceRefs.length) {
+      const catalog = discoveryCatalog(profile);
+      const allowed = new Set(catalog.flatMap(product => [product.id, ...product.files.map(file => file.id)]));
+      const refs = body.sourceRefs.filter((id: unknown): id is string => typeof id === 'string');
+      if (refs.length !== body.sourceRefs.length || refs.some((id: string) => !allowed.has(id))) { res.status(400).json({ message: '所选产品资料已变化，请刷新目录重新选择。' }); return; }
+      sourceRefs = refs;
+    }
+    const result = await generateProductKeywords({ source, sourceName: String(body.sourceName || '企业产品资料').slice(0, 180), perspective, market: body.market.slice(0, 100), language: body.language.slice(0, 100), focus: String(body.focus || '').slice(0, 300) });
+    if (sourceRefs) result.sourceRefs = sourceRefs;
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({ message: error instanceof Error && error.message.startsWith('未生成') ? error.message : '产品关键词生成失败，请稍后重试。' });
+  }
+});
+
+socialDiscoveryRouter.post('/recommend', async (req, res) => {
+  const body = req.body || {};
+  if (![body.productRef, body.market, body.language].every(value => typeof value === 'string' && value.trim())) {
+    res.status(400).json({ message: '请先填写主产品、目标市场和内容语言。' }); return;
+  }
+  try {
+    const recommendations = await recommendDiscoveryKeywords({
+      productRef: body.productRef.slice(0, 300), market: body.market.slice(0, 100), language: body.language.slice(0, 100),
+      companyRole: companyRole(body.companyRole), audienceRole: audienceRole(body.audienceRole),
+      scenes: unique(body.scenes, 20),
+    });
+    res.json(recommendations);
+  } catch {
+    res.status(502).json({ message: '推荐关键词暂时生成失败，请重试；已保存范围未改变。' });
+  }
+});
+
 socialDiscoveryRouter.put('/scope', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   const body = (req.body || {}) as Record<string, unknown>;
@@ -125,11 +183,16 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
     };
   }).filter(item => item.label);
 
+  let approvedQueries: string[] | undefined;
+  if (body.keywordRecommendation) {
+    try { approvedQueries = fiveProductKeywords(body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation); }
+    catch { res.status(400).json({ message: '请确认2个大词和3个中词，搜索词不能为空或重复。' }); return; }
+  }
   const previous = await latestScope(tenantId);
   const strategy = buildSocialCrawlStrategy({
     businessGoal: String(body.businessGoal || '发现与当前产品、市场和沟通对象相符，并可迁移到生产的内容机会').trim(),
     productTerms: products,
-    sceneClusters,
+    sceneClusters: approvedQueries ? [] : sceneClusters,
     competitorTerms: unique(body.competitorTerms, 20),
     platforms: unique(body.platforms, 4).length ? unique(body.platforms, 4) : ['tiktok', 'instagram', 'youtube'],
     market,
@@ -141,6 +204,13 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
     budgetLimitCny: body.budgetLimitCny === null || body.budgetLimitCny === '' ? null : Number(body.budgetLimitCny),
     productionGap: String(body.productionGap || '').trim() || null,
   });
+  if (approvedQueries) strategy.keywordRecommendation = body.keywordRecommendation as import('../../shared/productDiscovery.js').ProductKeywordRecommendation;
+  const productQueries = approvedQueries ?? unique(body.productQueries, 5);
+  if (productQueries.length) {
+    strategy.keywordSet.graph.discoverySeeds = strategy.keywordSet.graph.discoverySeeds.slice(0, 1);
+    strategy.keywordSet.graph.discoverySeeds[0].queryVariants = productQueries;
+    strategy.keywords.find(item => item.category === 'discovery_seed')!.values = productQueries;
+  }
   strategy.keywordSet.createdBy = 'user';
   strategy.keywordSet.version = Math.max(1, Number(previous?.version || 0) + 1);
   strategy.discoveryBrief.keywordSetVersion = strategy.keywordSet.version;

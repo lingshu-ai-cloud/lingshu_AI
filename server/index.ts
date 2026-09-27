@@ -59,6 +59,10 @@ import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
 import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
 import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
 import { platformAdImportsRouter } from './routes/platformAdImports.js';
+import { platformAdCreativesRouter } from './routes/platformAdCreatives.js';
+import { platformAdMetricHistoryRouter } from './routes/platformAdMetricHistory.js';
+import { platformAdAutomationStatusRouter } from './routes/platformAdAutomationStatus.js';
+import { platformAdPreflightRouter } from './routes/platformAdPreflight.js';
 import { accountHubRouter } from './routes/accountHub.js';
 import {
   apiRateLimitConfig,
@@ -237,6 +241,10 @@ app.use('/api/overseas/platform-ads', platformAdHandoffRouter);
 app.use('/api/overseas/platform-ads', platformAdExecutionRouter);
 app.use('/api/overseas/platform-ads', platformAdMetricsRouter);
 app.use('/api/overseas/platform-ads', platformAdImportsRouter);
+app.use('/api/overseas/platform-ads', platformAdCreativesRouter);
+app.use('/api/overseas/platform-ads', platformAdPreflightRouter);
+app.use('/api/overseas/platform-ads', platformAdMetricHistoryRouter);
+app.use('/api/overseas/platform-ads', platformAdAutomationStatusRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 

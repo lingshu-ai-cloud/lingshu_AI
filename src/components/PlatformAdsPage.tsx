@@ -23,6 +23,7 @@ import { useModalFocus } from "../hooks/useModalFocus";
 import { platformAdsApi, type PlatformAdTask } from "../lib/platformAds";
 import { emptyAdPlanConfiguration, creationSourceLabels, managementModeLabels, type AdManagement } from '../lib/platformAdsDomain';
 import "./platformAds.css";
+import { getAdPlanCapability, PLATFORM_AD_CAPABILITIES, PLATFORM_AD_GOALS } from "../../shared/platformAdCapabilities";
 import type { AdConnection } from './AdAccountConnections';
 import { AdAccountConnections, AdTaskControls, AdTaskMetrics } from './PlatformAdsOperations';
 import AdPerformanceOverview from './AdPerformanceOverview';
@@ -110,6 +111,7 @@ export default function PlatformAdsPage({
     channels: ["Facebook", "Instagram"],
     configuration: { ...emptyAdPlanConfiguration },
   });
+  const formCapability = getAdPlanCapability(form);
   const isOverviewPage = page === "adsOverview" || page === "adsCreatives";
   useEffect(() => {
     if (page === "adsCreatives") setOverviewTab("creatives");
@@ -215,6 +217,17 @@ export default function PlatformAdsPage({
   return (
     <div className="ads-workspace">
       <main className="ads-main">
+        <div className="ads-page-purpose">
+          <strong>{page === 'adsManaged' ? 'AI 托管' : page === 'adsPlans' ? '投放计划' : '投放总览'}</strong>
+          <p>{page === 'adsManaged' ? '查看 Agent 建议、审批与授权边界，追踪执行依据和异常。' : page === 'adsPlans' ? '配置目标、素材与预算，审阅方案并追踪平台执行回执。' : '查看花费、效果与数据覆盖，定位需要处理的投放计划。'}</p>
+          <details>
+            <summary>查看各平台已实现能力与限制</summary>
+            <p className="ads-muted">以下为当前产品实现范围；连接账户或保存配置不代表可实际投递，真实账户验收尚未完成。</p>
+            <div className="ads-table-wrap"><table><thead><tr><th>平台</th><th>创建目标 / 币种</th><th>管理与动作</th><th>素材要求</th></tr></thead><tbody>
+              {PLATFORM_AD_CAPABILITIES.map(item => <tr key={item.provider}><td>{item.name}</td><td>{item.goals.join('、')}<small>{item.currencies.join(' / ')}</small></td><td>{item.management}<small>{item.actions}</small></td><td>{item.material}</td></tr>)}
+            </tbody></table></div>
+          </details>
+        </div>
         <div className={isOverviewPage ? "ads-overview-toolbar" : "ads-page-toolbar"}>
           {isOverviewPage && (
             <nav className="ads-overview-tabs" aria-label="投放总览视图">
@@ -378,7 +391,7 @@ export default function PlatformAdsPage({
                     <span className="ads-count">{filtered.length}</span>
                   </h2>
                   <p className="ads-muted">
-                    一份营销任务，关联多个渠道的投放计划。
+                    按广告平台分别创建计划；Facebook 与 Instagram 可共用一份 Meta 计划。
                   </p>
                 </div>
                 <select
@@ -594,6 +607,11 @@ export default function PlatformAdsPage({
                     </span>
                   ))}
                 </div>
+                <div className="ads-capability-hint" role="status">
+                  <strong>{formCapability.supportsCreate ? '目标支持情况' : '当前组合仅用于规划'}</strong>
+                  <p>{formCapability.reason}</p>
+                  {entry === 'ai_managed' && !formCapability.supportsManaged && <p>此组合尚未开放托管执行；AI 可以生成方案，后续执行需选择受支持的平台与管理方式。</p>}
+                </div>
                 {step === 0 && (
                   <div className="ads-form-fields">
                     <label>
@@ -628,11 +646,7 @@ export default function PlatformAdsPage({
                           setForm({ ...form, goal: e.target.value })
                         }
                       >
-                        <option>提升网站访问</option>
-                        <option>提升有效视频观看</option>
-                        <option>提升互动与主页增长</option>
-                        <option>扩大目标人群覆盖</option>
-                        <option>获取线索或转化</option>
+                        {PLATFORM_AD_GOALS.map(goal => <option key={goal} value={goal}>{goal}{getAdPlanCapability({ ...form, goal }).supportsCreate ? ' · 已实现创建流程' : ' · 仅草稿规划'}</option>)}
                       </select>
                     </label>
                     <label>

@@ -1,3 +1,4 @@
+import { withAdWorkerEvidence } from './workerHealth.js';
 import { store } from '../storage/index.js';
 import { assertAdReleaseAction } from './releasePolicy.js';
 import { getPlatformAdTask, withPlatformAdTaskLock, PlatformAdTaskValidationError, PlatformAdTaskConflictError } from './tasks.js';
@@ -88,7 +89,7 @@ export async function runAdLaunchesOnce() {
       if (page >= records.totalPages) break;
     }
     for (const launch of all) {
-      try { await runAdLaunch(launch); } catch (error) { console.error('[ad-launch]', error instanceof Error ? error.message : 'failed'); }
+      try { await withAdWorkerEvidence(launch.tenant_id, () => runAdLaunch(launch)); } catch (error) { console.error('[ad-launch]', error instanceof Error ? error.message : 'failed'); }
     }
   }
 }

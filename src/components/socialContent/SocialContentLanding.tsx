@@ -2,13 +2,9 @@ import { useState, type ComponentType } from 'react';
 import {
   ArrowRight,
   Check,
-  Link2,
-  PackageOpen,
   Scissors,
-  ShieldCheck,
   Sparkles,
   TrendingUp,
-  Upload,
 } from 'lucide-react';
 import type {
   SocialContentCreationPath,
@@ -49,20 +45,8 @@ const CREATION_PATHS: CreationPathCard[] = [
   },
 ];
 
-const MATERIAL_INPUTS: Array<{
-  id: SocialContentMaterialInput;
-  title: string;
-  description: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
-}> = [
-  { id: 'ready', title: '有视频或图片', description: '上传原始素材，系统负责选镜、口播、字幕和剪辑', icon: Upload },
-  { id: 'limited', title: '只有商品链接或一张图', description: '系统保护商品真实信息，并补齐可生成的画面', icon: Link2 },
-  { id: 'none', title: '完全没素材', description: '不用找人拍摄，系统改用数字人、合规素材和生成画面', icon: PackageOpen },
-];
-
 export default function SocialContentLanding({ onStart }: { onStart: (options: SocialContentLaunchOptions) => void }) {
   const [creationPath, setCreationPath] = useState<SocialContentCreationPath | null>(null);
-  const [materialInput, setMaterialInput] = useState<SocialContentMaterialInput>('none');
 
   return (
     <>
@@ -106,25 +90,8 @@ export default function SocialContentLanding({ onStart }: { onStart: (options: S
 
         {creationPath && (
           <div className="mt-6 border-t border-border pt-5">
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">第二步</p>
-            <div className="mt-1 flex flex-wrap items-end justify-between gap-2">
-              <div><h3 className="text-base font-black text-text-primary">你手头有什么？</h3><p className="mt-1 text-[11px] text-text-muted">没有素材也可以开始，系统不会反复要求你补拍。</p></div>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-800"><ShieldCheck size={13} />默认一键托管</span>
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-3">
-              {MATERIAL_INPUTS.map(option => {
-                const Icon = option.icon;
-                const active = materialInput === option.id;
-                return (
-                  <button key={option.id} type="button" aria-pressed={active} onClick={() => setMaterialInput(option.id)} className={`flex min-h-24 items-start gap-3 rounded-xl border p-3 text-left transition ${active ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-white hover:border-border-bright'}`}>
-                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-accent text-white' : 'bg-surface-2 text-text-muted'}`}><Icon size={17} /></span>
-                    <span><strong className="block text-xs font-black text-text-primary">{option.title}</strong><span className="mt-1 block text-[10px] leading-4 text-text-muted">{option.description}</span></span>
-                  </button>
-                );
-              })}
-            </div>
             <div className="mt-4 flex justify-end">
-              <button type="button" onClick={() => onStart({ creationPath, materialInput, managedMode: 'one_click_managed' })} className="inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-xs font-black text-white shadow-sm hover:bg-accent-dim">一键托管生成<ArrowRight size={15} /></button>
+              <button type="button" onClick={() => onStart({ creationPath, materialInput: 'none', managedMode: 'one_click_managed' })} className="inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-xs font-black text-white shadow-sm hover:bg-accent-dim">一键托管生成<ArrowRight size={15} /></button>
             </div>
           </div>
         )}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { dayRange, overviewData, percentChange, type ReportEntry } from './adOverview';
+import { dayRange, overviewData, overviewEntries, percentChange, type ReportEntry } from './adOverview';
 const entry: ReportEntry = { id: 'a', name: 'a', currency: 'CNY', budget: 100, report: { source: 'provider_snapshot', stale: true, currency: 'CNY', spend: 6.74, clicks: 3, impressions: 94, daily: [{ date: '2026-09-13', spend: 6.74, clicks: 3, impressions: 94 }] } };
 let result = overviewData([entry], 'CNY', '2026-09-12', '2026-09-14');
 assert.equal(result.spend, 6.74);
@@ -20,3 +20,25 @@ assert.equal(overviewData([{ ...entry, report: { ...entry.report!, currency: 'US
 assert.deepEqual(dayRange('', ''), []);
 assert.deepEqual(dayRange('2026-09-14', '2026-09-13'), []);
 console.log('Ad overview: currency isolation, missing/zero, snapshot date scope and comparison guards passed');
+
+// A fast first batch cannot hide pending plans and falsely enable comparisons.
+const pending = { id: 'pending', name: 'pending', currency: 'CNY', budget: 50 };
+const fullScope = overviewEntries([zero, pending], [zero]);
+result = overviewData(fullScope, 'CNY', '2026-09-13', '2026-09-13');
+assert.equal(result.selected.length, 2);
+assert.equal(result.usable.length, 1);
+assert.equal(result.daily[0].reportingTasks, 1);
+assert.equal(result.complete, false);
+assert.equal(result.spend, 0, 'real zero is retained even under partial coverage');
+assert.equal(overviewEntries([pending], [zero]).length, 1, 'removed plans cannot leak back from old responses');
+assert.equal(overviewEntries([{ ...zero, currency: 'USD' }], [zero])[0].currency, 'USD', 'current plan metadata wins over stale request metadata');
+assert.equal(overviewData(overviewEntries([{ ...zero, currency: 'USD' }], [zero]), 'USD', '2026-09-13', '2026-09-13').spend, null);
+assert.deepEqual(dayRange('2026-02-30', '2026-03-03'), [], 'impossible dates must not silently normalize');
+assert.deepEqual(dayRange('2026-9-1', '2026-09-03'), []);
+assert.deepEqual(dayRange('2026-09-13', '2026-09-14'), ['2026-09-13', '2026-09-14']);
+const incompleteMetrics = { ...zero, report: { ...zero.report, daily: [{ date: '2026-09-13', spend: null, clicks: 3, impressions: 20 }] } };
+result = overviewData([incompleteMetrics], 'CNY', '2026-09-13', '2026-09-13');
+assert.equal(result.spend, null);
+assert.equal(result.clicks, 3);
+assert.equal(result.complete, false);
+console.log('Ad overview: pending coverage, stale response isolation, strict UTC dates and partial metrics passed');

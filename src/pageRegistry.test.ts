@@ -39,18 +39,11 @@ assert.deepEqual(PRIMARY_SOCIAL_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLab
   '发布与渠道',
   '内容监控',
 ]);
-assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES, [
-  'socialWorkspace',
-  'socialSetup',
-  'socialAccounts',
-  'socialPlanning',
-]);
-assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES.map(page => PAGE_REGISTRY[page].navLabel), [
-  '经营工作台',
-  '项目搭建',
-  '账号矩阵',
-  '月周计划',
-]);
+assert.deepEqual(SOCIAL_PROGRAM_NAV_PAGES, []);
+assert.equal(resolvePage('socialWorkspace'), 'digitalEmployees');
+assert.equal(resolvePage('socialSetup'), 'digitalEmployees');
+assert.equal(resolvePage('socialPlanning'), 'digitalEmployees');
+assert.equal(resolvePage('socialAccounts'), 'traffic');
 
 assert.equal(resolvePage('retention'), 'conversion', 'the old retention deep link stays compatible');
 assert.equal(resolvePage('accountManagement'), 'traffic', 'the removed account settings surface forwards to publishing');

@@ -1,3 +1,4 @@
+import { resolveAdCreativeExecution } from './creativeExecution.js';
 import { store } from '../storage/index.js';
 import { assertAdReleaseAction } from './releasePolicy.js';
 import { getPlatformAdTask, withPlatformAdTaskLock } from './tasks.js';
@@ -40,6 +41,7 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     const connectionId = String(input.connectionId || '');
     const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
     assertAdReleaseAction(connection.provider, action);
+    if (input.creativeId && (connection.provider !== 'meta' || action !== 'create' || mode !== 'manual')) throw new AdProviderError('绑定成片当前仅用于 Meta 人工创建', 'NOT_SUPPORTED');
     if (connection.provider === 'tiktok') return executeTikTokWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, leaseGuard);
     if (connection.provider === 'google') return executeGoogleWithinLock(tenantId, task, connection, accessToken, input, mode, allReceipts, leaseGuard);
     if (connection.provider !== 'meta') throw new AdProviderError('此平台执行适配尚未开放', 'NOT_SUPPORTED');
@@ -75,7 +77,8 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
       const receipts = await listAdExecutions(tenantId, taskId);
       if (!receipts.some(r => r.connectionId === connectionId && r.resourceId === resourceId && r.status === 'VERIFIED')) throw new AdProviderError('该资源尚未关联到当前计划', 'RESOURCE_MISMATCH');
     }
-    const metaInput = action === 'create' ? validateMetaVideoInput(input.meta, task.budget, task.goal === '提升有效视频观看') : null;
+    const creativeInput = action === 'create' ? await resolveAdCreativeExecution(tenantId, task, connection, input, mode) : { meta: input.meta, evidence: {} };
+    const metaInput = action === 'create' ? validateMetaVideoInput(creativeInput.meta, task.budget, task.goal === '提升有效视频观看') : null;
     if (action === 'create' || action === 'activate' || action === 'resume') {
       const { startsAt, endsAt } = task.configuration;
       for (const date of [startsAt, endsAt]) if (date && (!/T.*(?:Z|[+-]\d{2}:\d{2})$/.test(date) || !Number.isFinite(Date.parse(date)))) throw new AdProviderError('投放排期无效', 'INVALID_INPUT');
@@ -113,10 +116,10 @@ async function execute(tenantId: string, taskId: string, input: Record<string, u
     }
     const now = new Date().toISOString();
     await leaseGuard.beforeEffect();
-    const receipt = await store.create<AdExecution>(AD_EXECUTIONS, { tenant_id: tenantId, taskId, requestId, action, connectionId, resourceId, status: 'EXECUTING', createdAt: now, expectedDailyBudget: action === 'adjust_budget' ? dailyBudget : 0 });
+    const receipt = await store.create<AdExecution>(AD_EXECUTIONS, { tenant_id: tenantId, taskId, requestId, action, connectionId, resourceId, status: 'EXECUTING', createdAt: now, ...(action === 'create' ? { result: creativeInput.evidence } : {}), expectedDailyBudget: action === 'adjust_budget' ? dailyBudget : 0 });
     if (!receipt) throw new AdProviderError('无法保存执行记录，未发起操作', 'STORAGE_ERROR');
     let accepted = false;
-    const createdResources: Record<string, string> = {};
+    const createdResources: Record<string, string> = { ...creativeInput.evidence };
     try {
       let result: any;
       let actualId = resourceId;

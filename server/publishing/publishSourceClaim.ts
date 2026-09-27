@@ -13,7 +13,7 @@ import { store } from '../storage/index.js';
 
 export const PUBLISH_VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.avi']);
 export type PublishSourceRequestKind = 'project' | 'manual_upload';
-export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload';
+export type FrozenPublishSourceKind = 'studio_project' | 'digital_employee_project' | 'manual_upload' | 'social_content_artifact';
 
 export interface PublishSourceRequest {
   sourceKind?: PublishSourceRequestKind;
@@ -32,9 +32,10 @@ export interface FrozenPublishSourceClaim {
   schemaVersion: 1;
   sourceKind: FrozenPublishSourceKind;
   projectId: string;
+  artifactId?: string;
   sourceVideoPath: string;
   deliveryVideoPath: string;
-  generationKind: 'script' | 'poster' | 'digital_employee' | 'manual_upload';
+  generationKind: 'script' | 'poster' | 'digital_employee' | 'manual_upload' | 'social_content';
   generationProvenance: 'ai' | 'digital_employee' | 'human_upload';
   qualityStatus: 'passed' | 'not_applicable';
   publishable: true;
@@ -288,7 +289,10 @@ export async function verifyFrozenPublishSourceClaim(
     throw new PublishSourceVerificationError('publish_source_claim_missing', 409, '排期缺少冻结的发布来源，请重新审核。');
   }
   let current: FrozenPublishSourceClaim;
-  if (claim.sourceKind === 'manual_upload') {
+  if (claim.sourceKind === 'social_content_artifact') {
+    const { verifySocialContentPublishSource } = await import('./socialContentSourceClaim.js');
+    current = await verifySocialContentPublishSource(tenantId, claim);
+  } else if (claim.sourceKind === 'manual_upload') {
     current = manualUploadClaim(tenantId, claim.deliveryVideoPath);
   } else {
     const project = await store.getById<StoredProject>('studio_projects', text(claim.projectId));
