@@ -4,7 +4,7 @@ import {
   Home, Users, LayoutGrid, BarChart3, Megaphone, Bot,
   Building2, PlugZap,
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
-  Clapperboard, WandSparkles, BrainCircuit, UserRoundCog, Clock, Send, Target, PanelRightOpen,
+  Clapperboard, WandSparkles, BrainCircuit, UserRoundCog, Clock, Send, PanelRightOpen,
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { PAGE_REGISTRY, PRIMARY_SOCIAL_NAV_PAGES } from '../pageRegistry';
@@ -24,13 +24,6 @@ interface NavSection {
 const navItem = (id: Page, icon: ReactNode) => ({ id, label: PAGE_REGISTRY[id].navLabel, icon });
 
 const HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
-
-const OPERATIONS_NAV: NavSection = {
-  label: '经营管理',
-  items: [
-    navItem('strategy', <Home size={16} />),
-  ],
-};
 
 const SOCIAL_NAV_ICONS: Record<(typeof PRIMARY_SOCIAL_NAV_PAGES)[number], ReactNode> = {
   socialInspiration: <Clapperboard size={16} />,
@@ -87,15 +80,9 @@ const SYSTEM_NAV: NavSection = {
   ],
 };
 
-const NAV_SECTIONS = [OPERATIONS_NAV, SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
+const NAV_SECTIONS = [SOCIAL_NAV, ADS_NAV, CUSTOMER_NAV, AGENT_NAV, SYSTEM_NAV];
 
 const STARTER_HOME_NAV_ITEM = navItem('digitalEmployees', <Home size={16} />);
-const STARTER_BUSINESS_OVERVIEW_NAV: NavSection = {
-  label: '经营管理',
-  items: [
-    navItem('strategy', <Target size={16} />),
-  ],
-};
 
 const ROLE_PAGE_ACCESS: Record<OrganizationRole, Set<Page>> = {
   super_admin: new Set<Page>(['digitalEmployees', 'agentMonitor', 'strategy', 'socialWorkspace', 'socialSetup', 'socialAccounts', 'socialPlanning', 'traffic', 'socialInspiration', 'scriptLibrary', 'smartAssets', 'socialMonitoring', 'accountManagement', 'adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged', 'conversion', 'wecomCustomerService', 'orders', 'enterprise', 'agentMemory', 'scheduled', 'plugins', 'organizationPermissions']),
@@ -265,12 +252,9 @@ export default function Layout({ page, onNavigate, conversation, children, sessi
     .map(section => ({ ...section, items: section.items.filter(item => allowedPages.has(item.id)) }))
     .filter(section => section.items.length > 0);
   const customerSections = starterMode
-    ? [
-      { ...STARTER_BUSINESS_OVERVIEW_NAV, items: STARTER_BUSINESS_OVERVIEW_NAV.items.filter(item => allowedPages.has(item.id)) },
-      ...roleSections
-        .map(section => ({ ...section, items: section.items.filter(item => item.id !== 'digitalEmployees' && item.id !== 'strategy') }))
-        .filter(section => section.items.length > 0),
-    ].filter(section => section.items.length > 0)
+    ? roleSections
+      .map(section => ({ ...section, items: section.items.filter(item => item.id !== 'digitalEmployees' && item.id !== 'strategy') }))
+      .filter(section => section.items.length > 0)
     : roleSections;
   const navSections = isAdminSession(activeSession) ? [...customerSections, ADMIN_NAV] : customerSections;
   const homeNavItem = starterMode ? STARTER_HOME_NAV_ITEM : HOME_NAV_ITEM;
