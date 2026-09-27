@@ -54,6 +54,7 @@ import {
   resolveSocialDirectorArtifactLineage,
 } from './socialContentDirectorPlanVersions.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
+import { assertSocialDeliveryCopyAndDuration } from './socialContentDeliveryGate.js';
 
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as { composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }> };
@@ -376,6 +377,11 @@ export async function runSocialContentAutoProduction(input: {
     updated_at: directorPlan.createdAt,
   });
   let contentHandoff = socialDirectorContentHandoff(directorPlan);
+  assertSocialDeliveryCopyAndDuration({
+    narration: contentHandoff.narration,
+    requirements: detail.brief.specialRequirements,
+    plannedMaximumSeconds: contentHandoff.outputSpec.maximumDurationSeconds,
+  });
   await writeExecutionStage({
     ...input,
     stage: 'content_production',
@@ -515,6 +521,12 @@ export async function runSocialContentAutoProduction(input: {
   if (!result.ok || !result.outputPath || !existsSync(result.outputPath)) {
     throw new Error(result.error || '视频渲染没有生成输出文件');
   }
+  assertSocialDeliveryCopyAndDuration({
+    narration: adaptedScript,
+    requirements: detail.brief.specialRequirements,
+    plannedMaximumSeconds: contentHandoff.outputSpec.maximumDurationSeconds,
+    renderedSeconds: duration,
+  });
   await writeExecutionStage({
     ...input,
     stage: 'quality_check',

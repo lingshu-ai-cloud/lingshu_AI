@@ -480,6 +480,9 @@ try {
   const reviewDirective = socialReviewRevisionDirective('请缩短口播和字幕，开头更直接；配乐更沉稳');
   assert.deepEqual(reviewDirective.categories, ['shorter', 'opening', 'captions', 'music']);
   assert.equal(reviewDirective.musicMood, '稳重、可信、商务');
+  const tooShortDirective = socialReviewRevisionDirective('成片太短，约14.65秒才符合要求；字幕含内部占位语，请重写');
+  assert.equal(tooShortDirective.categories.includes('shorter'), false);
+  assert.equal(tooShortDirective.narrationRatio, 1, 'mentioning subtitles must not shorten a video reported as too short');
   const revisedPlan = applySocialReviewRevision(plan, reviewDirective);
   assert.ok(revisedPlan.scenes.every((scene, index) => (
     [...scene.narration].length <= [...plan.scenes[index]!.narration].length

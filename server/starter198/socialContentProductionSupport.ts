@@ -505,7 +505,8 @@ export function applyZeroAssetTruthSafeNarration(plan: SocialProductionPlan): So
 export function socialReviewRevisionDirective(noteValue: unknown): SocialReviewRevisionDirective {
   const note = socialText(noteValue).replace(/\s+/g, ' ').slice(0, 2_000);
   const categories: SocialReviewRevisionDirective['categories'] = [];
-  if (/短|精简|太长|啰嗦|节奏.{0,3}快|shorter|too long/i.test(note)) categories.push('shorter');
+  if (/缩短|精简|太长|过长|啰嗦|节奏.{0,3}快|shorter|too long/i.test(note)
+    && !/太短|过短|不够长|时长不足|too short/i.test(note)) categories.push('shorter');
   if (/开头|第一秒|前.{0,2}秒|hook|opening/i.test(note)) categories.push('opening');
   if (/字幕|caption|subtitle/i.test(note)) categories.push('captions');
   if (/配乐|音乐|bgm|music/i.test(note)) categories.push('music');
@@ -518,7 +519,7 @@ export function socialReviewRevisionDirective(noteValue: unknown): SocialReviewR
   return {
     feedbackHash: createHash('sha256').update(note || 'revision-without-note').digest('hex'),
     categories,
-    narrationRatio: categories.includes('shorter') || categories.includes('captions') ? 0.78 : 1,
+    narrationRatio: categories.includes('shorter') ? 0.78 : 1,
     musicMood,
   };
 }
