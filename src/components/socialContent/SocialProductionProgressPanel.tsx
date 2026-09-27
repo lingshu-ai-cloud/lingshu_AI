@@ -42,7 +42,7 @@ interface SocialProductionProgressPanelProps {
 
 type TaskListItem = SocialContentTaskSummary | SocialContentTaskDetail;
 
-const ACTIVE_STATUSES = new Set<SocialContentTaskStatus>(['producing', 'attention', 'paused', 'packaging']);
+const ACTIVE_STATUSES = new Set<SocialContentTaskStatus>(['producing', 'attention', 'packaging']);
 const COMPLETE_STATUSES = new Set<SocialContentTaskStatus>(['delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed']);
 const CONTENT_COMPLETE_STATUSES = new Set<SocialContentTaskStatus>(['asset_review', 'packaging', ...COMPLETE_STATUSES]);
 
@@ -95,6 +95,7 @@ function automaticStep(task: TaskListItem): string {
 function compactHeadline(task: SocialContentTaskDetail): string {
   const counts = taskCounts(task);
   if (counts.pendingReview > 0 || task.status === 'asset_review') return '内容已经生成，等待你审核';
+  if (task.status === 'paused') return '自动制作已暂停，已保留素材、产物和退回记录';
   if (COMPLETE_STATUSES.has(task.status)) return '本轮内容已经制作完成';
   if ((task.status === 'draft' || task.status === 'needs_input') && canProduceWithoutCustomerShoot(task)) return '逐镜托管方案已就绪，可以开始自动制作';
   if (task.status === 'draft' || task.status === 'needs_input') return '确认必要信息后，机器人会自动开始制作';
@@ -106,6 +107,7 @@ function compactHeadline(task: SocialContentTaskDetail): string {
 
 function activeAgentLabel(task: TaskListItem): string {
   if (task.status === 'draft' || task.status === 'needs_input' || task.status === 'plan_review') return '等待开始';
+  if (task.status === 'paused') return '自动制作已暂停';
   if (task.directorPlan?.status === 'blocked') return '编导 Agent 自动修复中';
   if (!directorPlanComplete(task)) return '编导 Agent 策划中';
   if (!CONTENT_COMPLETE_STATUSES.has(task.status)) return '内容 Agent 制作中';
@@ -209,7 +211,7 @@ function statusTone(status: SocialContentTaskStatus): string {
 
 function StatusGraphic({ task }: { task: SocialContentTaskDetail }) {
   const counts = taskCounts(task);
-  const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
+  const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.status === 'producing' && task.runId && counts.generated === 0);
   const review = counts.pendingReview > 0 || task.status === 'asset_review';
   const complete = COMPLETE_STATUSES.has(task.status);
 
@@ -245,7 +247,7 @@ export default function SocialProductionProgressPanel({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   const counts = taskCounts(task);
-  const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
+  const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.status === 'producing' && task.runId && counts.generated === 0);
   const remainingTaskCount = Math.max(0, taskTotalItems - tasks.length);
   const taskItems: TaskListItem[] = [task, ...tasks.filter(item => item.taskId !== task.taskId)];
 

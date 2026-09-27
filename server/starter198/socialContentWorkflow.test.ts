@@ -1256,7 +1256,7 @@ try {
   const zeroInputTaskId = zeroInputTask.body.task.taskId as string;
   const fakeVoicePath = path.join(temporaryRoot, 'zero-input-worker-voice.wav');
   fs.writeFileSync(fakeVoicePath, Buffer.from('RIFF0000WAVEfmt '));
-  await runSocialContentAutoProduction({
+  await assert.rejects(runSocialContentAutoProduction({
     repository,
     tenantId: tenant,
     userId: 'operator-user',
@@ -1325,26 +1325,11 @@ try {
       },
       backendFilePort,
     },
-  });
+  }), /director_revision_required:口播含内部来源或质检占位语/);
   const zeroInputCompleted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTaskId}`);
   assert.equal(zeroInputCompleted.status, 200, zeroInputCompleted.raw);
-  assert.equal(zeroInputCompleted.body.task.status, 'asset_review',
-    'the zero-material worker produces a reviewable artifact without asking the novice customer to shoot');
-  const zeroArtifact = zeroInputCompleted.body.task.artifacts.find((artifact: any) => artifact.origin === 'agent');
-  assert.ok(zeroArtifact, 'the worker persists a customer-review artifact');
-  const zeroExecution = zeroArtifact.content.assetSupplyExecution;
-  assert.equal(zeroExecution.creationMode, 'material_processing');
-  assert.equal(zeroExecution.productionRoute, 'zero_asset_generation');
-  assert.equal(zeroExecution.shots.length, zeroArtifact.content.scriptBaseline.scenes.length);
-  assert.equal(zeroExecution.shots.every((shot: any) => shot.sourceStrategy && shot.truthBoundary), true,
-    'every rendered shot retains its actual source strategy and truth boundary');
-  assert.equal(zeroExecution.shots.every((shot: any) => shot.provenance.representation === 'non_evidentiary_visual'), true,
-    'zero-material generated visuals are never represented as customer factory, case or effect evidence');
-  assert.equal(zeroExecution.shots.some((shot: any) => shot.attempts.some((attempt: any) => (
-    attempt.sourceStrategy === 'authorized_digital_presenter'
-  ))), false, 'without an authorized enterprise presenter asset the agent must not call a digital-human provider');
-  assert.equal(zeroExecution.shots.every((shot: any) => shot.sourceStrategy !== 'authorized_digital_presenter'), true,
-    'zero-input production uses a traceable non-evidentiary route instead of inventing a presenter');
+  assert.equal(zeroInputCompleted.body.task.artifacts.some((artifact: any) => artifact.origin === 'agent'), false,
+    'an internally worded safety skeleton cannot be mislabeled as a publishable finished video');
 
   const viralReferenceTask = await request('/api/overseas/starter-198/social-content/tasks', {
     idempotencyKey: 'social-viral-reference-create-001',
